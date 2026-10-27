@@ -11,11 +11,12 @@ import ./status.bend as Status
 
 # The line naming the worker's boundary schema, then Bend's bounds, sent once
 # at start: the finish bound, the pending-peer bound and the
-# synchronized-output bound in milliseconds, and the interactive client's
-# output bound in bytes (one maximum frame, one maximum payload, two headers
-# and 4 KiB).
+# synchronized-output bound in milliseconds, the interactive client's output
+# bound in bytes (one maximum frame, one maximum payload, two headers and
+# 4 KiB), and its resource queue's bound in chunk payload bytes (four chunks,
+# ORB-C16).
 def bounds() -> String:
-  Boundary.schema() ++ Boundary.encode([Boundary.Bounds{1000, 1000, 1000, 13094971}])
+  Boundary.schema() ++ Boundary.encode([Boundary.Bounds{1000, 1000, 1000, 13094971, 1048576}])
 
 @unsafe
 def wrote_answer(

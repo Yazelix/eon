@@ -2,6 +2,7 @@ import Base
 import ../LAWS.bend as Laws
 import ../src/session.bend as Session
 import ../src/status.bend as Status
+import ../src/resource.bend as Resource
 import ../src/boundary.bend as Boundary
 import ../src/lifecycle.bend as Orbit
 import ../src/admission.bend as Admission
@@ -52347,6 +52348,7792 @@ def fits_program_status(
     case Orbit.Stopped{pid}:
       {==}
 
+def fits_resources(
+  delivered: Bool, idle: Bool, capped: Bool, due: Bool, life: Orbit.Lifecycle, observer: Bool, waiting: Session.Waiting, pointer: Session.Pointer, written: Bool, explicit: Bool, manage: Management.Slot, tracker: Status.Tracker, revision: Revision.Revision, was: Bool, future: Bool, held: Bool, unanchored: Bool, clipboard_overflow: Bool, clipboard: Bool, routed: Bool, room: Bool, frame_room: Bool, alternate: Bool, above_live: Bool, tracking: Bool, shift: Bool, result_frame_room: Bool, outside: Bool, host_room: Bool, terminal_room: Bool, pty_full: Bool, metadata_changed: Bool, metadata_fresh: Bool
+) ->
+  {Laws.check(Laws.phase(Session.State{Session.Session{life, written, observer, explicit, waiting, pointer, manage}, Session.Shown{revision, was}, tracker}), Boundary.Resources{delivered, idle, capped, due}, Laws.moves(Laws.decided(Session.begun(Session.fact_advanced(Boundary.Resources{delivered, idle, capped, due}, was, revision), held, Nil{}, tracker, Session.anchored(unanchored, Boundary.Resources{delivered, idle, capped, due}, Boundary.Flags{held, routed, room, alternate, frame_room, above_live, clipboard, clipboard_overflow, tracking, shift, unanchored, result_frame_room, outside, host_room, terminal_room, pty_full, metadata_changed, metadata_fresh}, future, Session.Session{life, written, observer, explicit, waiting, pointer, manage}))))) == choose(Laws.check(Laws.phase(Session.State{Session.Session{life, written, observer, explicit, waiting, pointer, manage}, Session.Shown{revision, was}, tracker}), Boundary.Resources{delivered, idle, capped, due}, Laws.moves(Laws.decided(Session.begun(Session.fact_advanced(Boundary.Resources{delivered, idle, capped, due}, was, revision), held, Nil{}, tracker, Session.anchored(unanchored, Boundary.Resources{delivered, idle, capped, due}, Boundary.Flags{held, routed, room, alternate, frame_room, above_live, clipboard, clipboard_overflow, tracking, shift, unanchored, result_frame_room, outside, host_room, terminal_room, pty_full, metadata_changed, metadata_fresh}, future, Session.Session{life, written, observer, explicit, waiting, pointer, manage}))))), Laws.phase(Laws.after(Session.begun(Session.fact_advanced(Boundary.Resources{delivered, idle, capped, due}, was, revision), held, Nil{}, tracker, Session.anchored(unanchored, Boundary.Resources{delivered, idle, capped, due}, Boundary.Flags{held, routed, room, alternate, frame_room, above_live, clipboard, clipboard_overflow, tracking, shift, unanchored, result_frame_room, outside, host_room, terminal_room, pty_full, metadata_changed, metadata_fresh}, future, Session.Session{life, written, observer, explicit, waiting, pointer, manage}))))) : Laws.Phase}:
+  match delivered:
+    case True{}:
+      match idle:
+        case True{}:
+          match capped:
+            case True{}:
+              match life:
+                case Orbit.Detached{pid}:
+                  {==}
+                case Orbit.Attached{pid}:
+                  match observer:
+                    case True{}:
+                      match waiting:
+                        case Session.Clear{}:
+                          match pointer:
+                            case Session.Pointer{route, lit, copied}:
+                              match route:
+                                case Selection.Idle{}:
+                                  match was:
+                                    case True{}:
+                                      match held:
+                                        case True{}:
+                                          match unanchored:
+                                            case True{}:
+                                              {==}
+                                            case False{}:
+                                              {==}
+                                        case False{}:
+                                          match unanchored:
+                                            case True{}:
+                                              match metadata_changed:
+                                                case True{}:
+                                                  {==}
+                                                case False{}:
+                                                  {==}
+                                            case False{}:
+                                              match metadata_changed:
+                                                case True{}:
+                                                  {==}
+                                                case False{}:
+                                                  {==}
+                                    case False{}:
+                                      match held:
+                                        case True{}:
+                                          match unanchored:
+                                            case True{}:
+                                              {==}
+                                            case False{}:
+                                              {==}
+                                        case False{}:
+                                          match unanchored:
+                                            case True{}:
+                                              match metadata_changed:
+                                                case True{}:
+                                                  {==}
+                                                case False{}:
+                                                  {==}
+                                            case False{}:
+                                              match metadata_changed:
+                                                case True{}:
+                                                  {==}
+                                                case False{}:
+                                                  {==}
+                                case Selection.Host{}:
+                                  match was:
+                                    case True{}:
+                                      match held:
+                                        case True{}:
+                                          match unanchored:
+                                            case True{}:
+                                              {==}
+                                            case False{}:
+                                              {==}
+                                        case False{}:
+                                          match unanchored:
+                                            case True{}:
+                                              match metadata_changed:
+                                                case True{}:
+                                                  {==}
+                                                case False{}:
+                                                  {==}
+                                            case False{}:
+                                              match metadata_changed:
+                                                case True{}:
+                                                  {==}
+                                                case False{}:
+                                                  {==}
+                                    case False{}:
+                                      match held:
+                                        case True{}:
+                                          match unanchored:
+                                            case True{}:
+                                              {==}
+                                            case False{}:
+                                              {==}
+                                        case False{}:
+                                          match unanchored:
+                                            case True{}:
+                                              match metadata_changed:
+                                                case True{}:
+                                                  {==}
+                                                case False{}:
+                                                  {==}
+                                            case False{}:
+                                              match metadata_changed:
+                                                case True{}:
+                                                  {==}
+                                                case False{}:
+                                                  {==}
+                                case Selection.Terminal{}:
+                                  match was:
+                                    case True{}:
+                                      match held:
+                                        case True{}:
+                                          match unanchored:
+                                            case True{}:
+                                              {==}
+                                            case False{}:
+                                              {==}
+                                        case False{}:
+                                          match unanchored:
+                                            case True{}:
+                                              match metadata_changed:
+                                                case True{}:
+                                                  {==}
+                                                case False{}:
+                                                  {==}
+                                            case False{}:
+                                              match metadata_changed:
+                                                case True{}:
+                                                  {==}
+                                                case False{}:
+                                                  {==}
+                                    case False{}:
+                                      match held:
+                                        case True{}:
+                                          match unanchored:
+                                            case True{}:
+                                              {==}
+                                            case False{}:
+                                              {==}
+                                        case False{}:
+                                          match unanchored:
+                                            case True{}:
+                                              match metadata_changed:
+                                                case True{}:
+                                                  {==}
+                                                case False{}:
+                                                  {==}
+                                            case False{}:
+                                              match metadata_changed:
+                                                case True{}:
+                                                  {==}
+                                                case False{}:
+                                                  {==}
+                        case Session.Waiting{request}:
+                          match request:
+                            case Session.PreviewRequest{direction}:
+                              match pointer:
+                                case Session.Pointer{route, lit, copied}:
+                                  match route:
+                                    case Selection.Idle{}:
+                                      match was:
+                                        case True{}:
+                                          match held:
+                                            case True{}:
+                                              match unanchored:
+                                                case True{}:
+                                                  {==}
+                                                case False{}:
+                                                  {==}
+                                            case False{}:
+                                              match unanchored:
+                                                case True{}:
+                                                  match routed:
+                                                    case True{}:
+                                                      match metadata_changed:
+                                                        case True{}:
+                                                          {==}
+                                                        case False{}:
+                                                          {==}
+                                                    case False{}:
+                                                      match metadata_changed:
+                                                        case True{}:
+                                                          {==}
+                                                        case False{}:
+                                                          {==}
+                                                case False{}:
+                                                  match routed:
+                                                    case True{}:
+                                                      match metadata_changed:
+                                                        case True{}:
+                                                          {==}
+                                                        case False{}:
+                                                          {==}
+                                                    case False{}:
+                                                      match metadata_changed:
+                                                        case True{}:
+                                                          {==}
+                                                        case False{}:
+                                                          {==}
+                                        case False{}:
+                                          match held:
+                                            case True{}:
+                                              match unanchored:
+                                                case True{}:
+                                                  {==}
+                                                case False{}:
+                                                  {==}
+                                            case False{}:
+                                              match unanchored:
+                                                case True{}:
+                                                  match routed:
+                                                    case True{}:
+                                                      match metadata_changed:
+                                                        case True{}:
+                                                          {==}
+                                                        case False{}:
+                                                          {==}
+                                                    case False{}:
+                                                      match metadata_changed:
+                                                        case True{}:
+                                                          {==}
+                                                        case False{}:
+                                                          {==}
+                                                case False{}:
+                                                  match routed:
+                                                    case True{}:
+                                                      match metadata_changed:
+                                                        case True{}:
+                                                          {==}
+                                                        case False{}:
+                                                          {==}
+                                                    case False{}:
+                                                      match metadata_changed:
+                                                        case True{}:
+                                                          {==}
+                                                        case False{}:
+                                                          {==}
+                                    case Selection.Host{}:
+                                      match was:
+                                        case True{}:
+                                          match held:
+                                            case True{}:
+                                              match unanchored:
+                                                case True{}:
+                                                  {==}
+                                                case False{}:
+                                                  {==}
+                                            case False{}:
+                                              match unanchored:
+                                                case True{}:
+                                                  match routed:
+                                                    case True{}:
+                                                      match metadata_changed:
+                                                        case True{}:
+                                                          {==}
+                                                        case False{}:
+                                                          {==}
+                                                    case False{}:
+                                                      match metadata_changed:
+                                                        case True{}:
+                                                          {==}
+                                                        case False{}:
+                                                          {==}
+                                                case False{}:
+                                                  match routed:
+                                                    case True{}:
+                                                      match metadata_changed:
+                                                        case True{}:
+                                                          {==}
+                                                        case False{}:
+                                                          {==}
+                                                    case False{}:
+                                                      match metadata_changed:
+                                                        case True{}:
+                                                          {==}
+                                                        case False{}:
+                                                          {==}
+                                        case False{}:
+                                          match held:
+                                            case True{}:
+                                              match unanchored:
+                                                case True{}:
+                                                  {==}
+                                                case False{}:
+                                                  {==}
+                                            case False{}:
+                                              match unanchored:
+                                                case True{}:
+                                                  match routed:
+                                                    case True{}:
+                                                      match metadata_changed:
+                                                        case True{}:
+                                                          {==}
+                                                        case False{}:
+                                                          {==}
+                                                    case False{}:
+                                                      match metadata_changed:
+                                                        case True{}:
+                                                          {==}
+                                                        case False{}:
+                                                          {==}
+                                                case False{}:
+                                                  match routed:
+                                                    case True{}:
+                                                      match metadata_changed:
+                                                        case True{}:
+                                                          {==}
+                                                        case False{}:
+                                                          {==}
+                                                    case False{}:
+                                                      match metadata_changed:
+                                                        case True{}:
+                                                          {==}
+                                                        case False{}:
+                                                          {==}
+                                    case Selection.Terminal{}:
+                                      match was:
+                                        case True{}:
+                                          match held:
+                                            case True{}:
+                                              match unanchored:
+                                                case True{}:
+                                                  {==}
+                                                case False{}:
+                                                  {==}
+                                            case False{}:
+                                              match unanchored:
+                                                case True{}:
+                                                  match routed:
+                                                    case True{}:
+                                                      match metadata_changed:
+                                                        case True{}:
+                                                          {==}
+                                                        case False{}:
+                                                          {==}
+                                                    case False{}:
+                                                      match metadata_changed:
+                                                        case True{}:
+                                                          {==}
+                                                        case False{}:
+                                                          {==}
+                                                case False{}:
+                                                  match routed:
+                                                    case True{}:
+                                                      match metadata_changed:
+                                                        case True{}:
+                                                          {==}
+                                                        case False{}:
+                                                          {==}
+                                                    case False{}:
+                                                      match metadata_changed:
+                                                        case True{}:
+                                                          {==}
+                                                        case False{}:
+                                                          {==}
+                                        case False{}:
+                                          match held:
+                                            case True{}:
+                                              match unanchored:
+                                                case True{}:
+                                                  {==}
+                                                case False{}:
+                                                  {==}
+                                            case False{}:
+                                              match unanchored:
+                                                case True{}:
+                                                  match routed:
+                                                    case True{}:
+                                                      match metadata_changed:
+                                                        case True{}:
+                                                          {==}
+                                                        case False{}:
+                                                          {==}
+                                                    case False{}:
+                                                      match metadata_changed:
+                                                        case True{}:
+                                                          {==}
+                                                        case False{}:
+                                                          {==}
+                                                case False{}:
+                                                  match routed:
+                                                    case True{}:
+                                                      match metadata_changed:
+                                                        case True{}:
+                                                          {==}
+                                                        case False{}:
+                                                          {==}
+                                                    case False{}:
+                                                      match metadata_changed:
+                                                        case True{}:
+                                                          {==}
+                                                        case False{}:
+                                                          {==}
+                            case Session.ScrollRequest{rows}:
+                              match pointer:
+                                case Session.Pointer{route, lit, copied}:
+                                  match route:
+                                    case Selection.Idle{}:
+                                      match was:
+                                        case True{}:
+                                          match held:
+                                            case True{}:
+                                              match unanchored:
+                                                case True{}:
+                                                  {==}
+                                                case False{}:
+                                                  {==}
+                                            case False{}:
+                                              match unanchored:
+                                                case True{}:
+                                                  match routed:
+                                                    case True{}:
+                                                      match metadata_changed:
+                                                        case True{}:
+                                                          {==}
+                                                        case False{}:
+                                                          {==}
+                                                    case False{}:
+                                                      match room:
+                                                        case True{}:
+                                                          match metadata_changed:
+                                                            case True{}:
+                                                              {==}
+                                                            case False{}:
+                                                              {==}
+                                                        case False{}:
+                                                          match metadata_changed:
+                                                            case True{}:
+                                                              {==}
+                                                            case False{}:
+                                                              {==}
+                                                case False{}:
+                                                  match routed:
+                                                    case True{}:
+                                                      match metadata_changed:
+                                                        case True{}:
+                                                          {==}
+                                                        case False{}:
+                                                          {==}
+                                                    case False{}:
+                                                      match room:
+                                                        case True{}:
+                                                          match metadata_changed:
+                                                            case True{}:
+                                                              {==}
+                                                            case False{}:
+                                                              {==}
+                                                        case False{}:
+                                                          match metadata_changed:
+                                                            case True{}:
+                                                              {==}
+                                                            case False{}:
+                                                              {==}
+                                        case False{}:
+                                          match held:
+                                            case True{}:
+                                              match unanchored:
+                                                case True{}:
+                                                  {==}
+                                                case False{}:
+                                                  {==}
+                                            case False{}:
+                                              match unanchored:
+                                                case True{}:
+                                                  match routed:
+                                                    case True{}:
+                                                      match metadata_changed:
+                                                        case True{}:
+                                                          {==}
+                                                        case False{}:
+                                                          {==}
+                                                    case False{}:
+                                                      match room:
+                                                        case True{}:
+                                                          match metadata_changed:
+                                                            case True{}:
+                                                              {==}
+                                                            case False{}:
+                                                              {==}
+                                                        case False{}:
+                                                          match metadata_changed:
+                                                            case True{}:
+                                                              {==}
+                                                            case False{}:
+                                                              {==}
+                                                case False{}:
+                                                  match routed:
+                                                    case True{}:
+                                                      match metadata_changed:
+                                                        case True{}:
+                                                          {==}
+                                                        case False{}:
+                                                          {==}
+                                                    case False{}:
+                                                      match room:
+                                                        case True{}:
+                                                          match metadata_changed:
+                                                            case True{}:
+                                                              {==}
+                                                            case False{}:
+                                                              {==}
+                                                        case False{}:
+                                                          match metadata_changed:
+                                                            case True{}:
+                                                              {==}
+                                                            case False{}:
+                                                              {==}
+                                    case Selection.Host{}:
+                                      match was:
+                                        case True{}:
+                                          match held:
+                                            case True{}:
+                                              match unanchored:
+                                                case True{}:
+                                                  {==}
+                                                case False{}:
+                                                  {==}
+                                            case False{}:
+                                              match unanchored:
+                                                case True{}:
+                                                  match routed:
+                                                    case True{}:
+                                                      match metadata_changed:
+                                                        case True{}:
+                                                          {==}
+                                                        case False{}:
+                                                          {==}
+                                                    case False{}:
+                                                      match room:
+                                                        case True{}:
+                                                          match metadata_changed:
+                                                            case True{}:
+                                                              {==}
+                                                            case False{}:
+                                                              {==}
+                                                        case False{}:
+                                                          match metadata_changed:
+                                                            case True{}:
+                                                              {==}
+                                                            case False{}:
+                                                              {==}
+                                                case False{}:
+                                                  match routed:
+                                                    case True{}:
+                                                      match metadata_changed:
+                                                        case True{}:
+                                                          {==}
+                                                        case False{}:
+                                                          {==}
+                                                    case False{}:
+                                                      match room:
+                                                        case True{}:
+                                                          match metadata_changed:
+                                                            case True{}:
+                                                              {==}
+                                                            case False{}:
+                                                              {==}
+                                                        case False{}:
+                                                          match metadata_changed:
+                                                            case True{}:
+                                                              {==}
+                                                            case False{}:
+                                                              {==}
+                                        case False{}:
+                                          match held:
+                                            case True{}:
+                                              match unanchored:
+                                                case True{}:
+                                                  {==}
+                                                case False{}:
+                                                  {==}
+                                            case False{}:
+                                              match unanchored:
+                                                case True{}:
+                                                  match routed:
+                                                    case True{}:
+                                                      match metadata_changed:
+                                                        case True{}:
+                                                          {==}
+                                                        case False{}:
+                                                          {==}
+                                                    case False{}:
+                                                      match room:
+                                                        case True{}:
+                                                          match metadata_changed:
+                                                            case True{}:
+                                                              {==}
+                                                            case False{}:
+                                                              {==}
+                                                        case False{}:
+                                                          match metadata_changed:
+                                                            case True{}:
+                                                              {==}
+                                                            case False{}:
+                                                              {==}
+                                                case False{}:
+                                                  match routed:
+                                                    case True{}:
+                                                      match metadata_changed:
+                                                        case True{}:
+                                                          {==}
+                                                        case False{}:
+                                                          {==}
+                                                    case False{}:
+                                                      match room:
+                                                        case True{}:
+                                                          match metadata_changed:
+                                                            case True{}:
+                                                              {==}
+                                                            case False{}:
+                                                              {==}
+                                                        case False{}:
+                                                          match metadata_changed:
+                                                            case True{}:
+                                                              {==}
+                                                            case False{}:
+                                                              {==}
+                                    case Selection.Terminal{}:
+                                      match was:
+                                        case True{}:
+                                          match held:
+                                            case True{}:
+                                              match unanchored:
+                                                case True{}:
+                                                  {==}
+                                                case False{}:
+                                                  {==}
+                                            case False{}:
+                                              match unanchored:
+                                                case True{}:
+                                                  match routed:
+                                                    case True{}:
+                                                      match metadata_changed:
+                                                        case True{}:
+                                                          {==}
+                                                        case False{}:
+                                                          {==}
+                                                    case False{}:
+                                                      match room:
+                                                        case True{}:
+                                                          match metadata_changed:
+                                                            case True{}:
+                                                              {==}
+                                                            case False{}:
+                                                              {==}
+                                                        case False{}:
+                                                          match metadata_changed:
+                                                            case True{}:
+                                                              {==}
+                                                            case False{}:
+                                                              {==}
+                                                case False{}:
+                                                  match routed:
+                                                    case True{}:
+                                                      match metadata_changed:
+                                                        case True{}:
+                                                          {==}
+                                                        case False{}:
+                                                          {==}
+                                                    case False{}:
+                                                      match room:
+                                                        case True{}:
+                                                          match metadata_changed:
+                                                            case True{}:
+                                                              {==}
+                                                            case False{}:
+                                                              {==}
+                                                        case False{}:
+                                                          match metadata_changed:
+                                                            case True{}:
+                                                              {==}
+                                                            case False{}:
+                                                              {==}
+                                        case False{}:
+                                          match held:
+                                            case True{}:
+                                              match unanchored:
+                                                case True{}:
+                                                  {==}
+                                                case False{}:
+                                                  {==}
+                                            case False{}:
+                                              match unanchored:
+                                                case True{}:
+                                                  match routed:
+                                                    case True{}:
+                                                      match metadata_changed:
+                                                        case True{}:
+                                                          {==}
+                                                        case False{}:
+                                                          {==}
+                                                    case False{}:
+                                                      match room:
+                                                        case True{}:
+                                                          match metadata_changed:
+                                                            case True{}:
+                                                              {==}
+                                                            case False{}:
+                                                              {==}
+                                                        case False{}:
+                                                          match metadata_changed:
+                                                            case True{}:
+                                                              {==}
+                                                            case False{}:
+                                                              {==}
+                                                case False{}:
+                                                  match routed:
+                                                    case True{}:
+                                                      match metadata_changed:
+                                                        case True{}:
+                                                          {==}
+                                                        case False{}:
+                                                          {==}
+                                                    case False{}:
+                                                      match room:
+                                                        case True{}:
+                                                          match metadata_changed:
+                                                            case True{}:
+                                                              {==}
+                                                            case False{}:
+                                                              {==}
+                                                        case False{}:
+                                                          match metadata_changed:
+                                                            case True{}:
+                                                              {==}
+                                                            case False{}:
+                                                              {==}
+                            case Session.LiveRequest{}:
+                              match pointer:
+                                case Session.Pointer{route, lit, copied}:
+                                  match route:
+                                    case Selection.Idle{}:
+                                      match was:
+                                        case True{}:
+                                          match held:
+                                            case True{}:
+                                              match unanchored:
+                                                case True{}:
+                                                  {==}
+                                                case False{}:
+                                                  {==}
+                                            case False{}:
+                                              match unanchored:
+                                                case True{}:
+                                                  match routed:
+                                                    case True{}:
+                                                      match metadata_changed:
+                                                        case True{}:
+                                                          {==}
+                                                        case False{}:
+                                                          {==}
+                                                    case False{}:
+                                                      match frame_room:
+                                                        case True{}:
+                                                          match alternate:
+                                                            case True{}:
+                                                              match metadata_changed:
+                                                                case True{}:
+                                                                  {==}
+                                                                case False{}:
+                                                                  {==}
+                                                            case False{}:
+                                                              match metadata_changed:
+                                                                case True{}:
+                                                                  {==}
+                                                                case False{}:
+                                                                  {==}
+                                                        case False{}:
+                                                          match alternate:
+                                                            case True{}:
+                                                              match metadata_changed:
+                                                                case True{}:
+                                                                  {==}
+                                                                case False{}:
+                                                                  {==}
+                                                            case False{}:
+                                                              match metadata_changed:
+                                                                case True{}:
+                                                                  {==}
+                                                                case False{}:
+                                                                  {==}
+                                                case False{}:
+                                                  match routed:
+                                                    case True{}:
+                                                      match metadata_changed:
+                                                        case True{}:
+                                                          {==}
+                                                        case False{}:
+                                                          {==}
+                                                    case False{}:
+                                                      match frame_room:
+                                                        case True{}:
+                                                          match alternate:
+                                                            case True{}:
+                                                              match metadata_changed:
+                                                                case True{}:
+                                                                  {==}
+                                                                case False{}:
+                                                                  {==}
+                                                            case False{}:
+                                                              match metadata_changed:
+                                                                case True{}:
+                                                                  {==}
+                                                                case False{}:
+                                                                  {==}
+                                                        case False{}:
+                                                          match alternate:
+                                                            case True{}:
+                                                              match metadata_changed:
+                                                                case True{}:
+                                                                  {==}
+                                                                case False{}:
+                                                                  {==}
+                                                            case False{}:
+                                                              match metadata_changed:
+                                                                case True{}:
+                                                                  {==}
+                                                                case False{}:
+                                                                  {==}
+                                        case False{}:
+                                          match held:
+                                            case True{}:
+                                              match unanchored:
+                                                case True{}:
+                                                  {==}
+                                                case False{}:
+                                                  {==}
+                                            case False{}:
+                                              match unanchored:
+                                                case True{}:
+                                                  match routed:
+                                                    case True{}:
+                                                      match metadata_changed:
+                                                        case True{}:
+                                                          {==}
+                                                        case False{}:
+                                                          {==}
+                                                    case False{}:
+                                                      match frame_room:
+                                                        case True{}:
+                                                          match alternate:
+                                                            case True{}:
+                                                              match metadata_changed:
+                                                                case True{}:
+                                                                  {==}
+                                                                case False{}:
+                                                                  {==}
+                                                            case False{}:
+                                                              match metadata_changed:
+                                                                case True{}:
+                                                                  {==}
+                                                                case False{}:
+                                                                  {==}
+                                                        case False{}:
+                                                          match alternate:
+                                                            case True{}:
+                                                              match metadata_changed:
+                                                                case True{}:
+                                                                  {==}
+                                                                case False{}:
+                                                                  {==}
+                                                            case False{}:
+                                                              match metadata_changed:
+                                                                case True{}:
+                                                                  {==}
+                                                                case False{}:
+                                                                  {==}
+                                                case False{}:
+                                                  match routed:
+                                                    case True{}:
+                                                      match metadata_changed:
+                                                        case True{}:
+                                                          {==}
+                                                        case False{}:
+                                                          {==}
+                                                    case False{}:
+                                                      match frame_room:
+                                                        case True{}:
+                                                          match alternate:
+                                                            case True{}:
+                                                              match metadata_changed:
+                                                                case True{}:
+                                                                  {==}
+                                                                case False{}:
+                                                                  {==}
+                                                            case False{}:
+                                                              match metadata_changed:
+                                                                case True{}:
+                                                                  {==}
+                                                                case False{}:
+                                                                  {==}
+                                                        case False{}:
+                                                          match alternate:
+                                                            case True{}:
+                                                              match metadata_changed:
+                                                                case True{}:
+                                                                  {==}
+                                                                case False{}:
+                                                                  {==}
+                                                            case False{}:
+                                                              match metadata_changed:
+                                                                case True{}:
+                                                                  {==}
+                                                                case False{}:
+                                                                  {==}
+                                    case Selection.Host{}:
+                                      match was:
+                                        case True{}:
+                                          match held:
+                                            case True{}:
+                                              match unanchored:
+                                                case True{}:
+                                                  {==}
+                                                case False{}:
+                                                  {==}
+                                            case False{}:
+                                              match unanchored:
+                                                case True{}:
+                                                  match routed:
+                                                    case True{}:
+                                                      match metadata_changed:
+                                                        case True{}:
+                                                          {==}
+                                                        case False{}:
+                                                          {==}
+                                                    case False{}:
+                                                      match frame_room:
+                                                        case True{}:
+                                                          match alternate:
+                                                            case True{}:
+                                                              match metadata_changed:
+                                                                case True{}:
+                                                                  {==}
+                                                                case False{}:
+                                                                  {==}
+                                                            case False{}:
+                                                              match metadata_changed:
+                                                                case True{}:
+                                                                  {==}
+                                                                case False{}:
+                                                                  {==}
+                                                        case False{}:
+                                                          match alternate:
+                                                            case True{}:
+                                                              match metadata_changed:
+                                                                case True{}:
+                                                                  {==}
+                                                                case False{}:
+                                                                  {==}
+                                                            case False{}:
+                                                              match metadata_changed:
+                                                                case True{}:
+                                                                  {==}
+                                                                case False{}:
+                                                                  {==}
+                                                case False{}:
+                                                  match routed:
+                                                    case True{}:
+                                                      match metadata_changed:
+                                                        case True{}:
+                                                          {==}
+                                                        case False{}:
+                                                          {==}
+                                                    case False{}:
+                                                      match frame_room:
+                                                        case True{}:
+                                                          match alternate:
+                                                            case True{}:
+                                                              match metadata_changed:
+                                                                case True{}:
+                                                                  {==}
+                                                                case False{}:
+                                                                  {==}
+                                                            case False{}:
+                                                              match metadata_changed:
+                                                                case True{}:
+                                                                  {==}
+                                                                case False{}:
+                                                                  {==}
+                                                        case False{}:
+                                                          match alternate:
+                                                            case True{}:
+                                                              match metadata_changed:
+                                                                case True{}:
+                                                                  {==}
+                                                                case False{}:
+                                                                  {==}
+                                                            case False{}:
+                                                              match metadata_changed:
+                                                                case True{}:
+                                                                  {==}
+                                                                case False{}:
+                                                                  {==}
+                                        case False{}:
+                                          match held:
+                                            case True{}:
+                                              match unanchored:
+                                                case True{}:
+                                                  {==}
+                                                case False{}:
+                                                  {==}
+                                            case False{}:
+                                              match unanchored:
+                                                case True{}:
+                                                  match routed:
+                                                    case True{}:
+                                                      match metadata_changed:
+                                                        case True{}:
+                                                          {==}
+                                                        case False{}:
+                                                          {==}
+                                                    case False{}:
+                                                      match frame_room:
+                                                        case True{}:
+                                                          match alternate:
+                                                            case True{}:
+                                                              match metadata_changed:
+                                                                case True{}:
+                                                                  {==}
+                                                                case False{}:
+                                                                  {==}
+                                                            case False{}:
+                                                              match metadata_changed:
+                                                                case True{}:
+                                                                  {==}
+                                                                case False{}:
+                                                                  {==}
+                                                        case False{}:
+                                                          match alternate:
+                                                            case True{}:
+                                                              match metadata_changed:
+                                                                case True{}:
+                                                                  {==}
+                                                                case False{}:
+                                                                  {==}
+                                                            case False{}:
+                                                              match metadata_changed:
+                                                                case True{}:
+                                                                  {==}
+                                                                case False{}:
+                                                                  {==}
+                                                case False{}:
+                                                  match routed:
+                                                    case True{}:
+                                                      match metadata_changed:
+                                                        case True{}:
+                                                          {==}
+                                                        case False{}:
+                                                          {==}
+                                                    case False{}:
+                                                      match frame_room:
+                                                        case True{}:
+                                                          match alternate:
+                                                            case True{}:
+                                                              match metadata_changed:
+                                                                case True{}:
+                                                                  {==}
+                                                                case False{}:
+                                                                  {==}
+                                                            case False{}:
+                                                              match metadata_changed:
+                                                                case True{}:
+                                                                  {==}
+                                                                case False{}:
+                                                                  {==}
+                                                        case False{}:
+                                                          match alternate:
+                                                            case True{}:
+                                                              match metadata_changed:
+                                                                case True{}:
+                                                                  {==}
+                                                                case False{}:
+                                                                  {==}
+                                                            case False{}:
+                                                              match metadata_changed:
+                                                                case True{}:
+                                                                  {==}
+                                                                case False{}:
+                                                                  {==}
+                                    case Selection.Terminal{}:
+                                      match was:
+                                        case True{}:
+                                          match held:
+                                            case True{}:
+                                              match unanchored:
+                                                case True{}:
+                                                  {==}
+                                                case False{}:
+                                                  {==}
+                                            case False{}:
+                                              match unanchored:
+                                                case True{}:
+                                                  match routed:
+                                                    case True{}:
+                                                      match metadata_changed:
+                                                        case True{}:
+                                                          {==}
+                                                        case False{}:
+                                                          {==}
+                                                    case False{}:
+                                                      match frame_room:
+                                                        case True{}:
+                                                          match alternate:
+                                                            case True{}:
+                                                              match metadata_changed:
+                                                                case True{}:
+                                                                  {==}
+                                                                case False{}:
+                                                                  {==}
+                                                            case False{}:
+                                                              match metadata_changed:
+                                                                case True{}:
+                                                                  {==}
+                                                                case False{}:
+                                                                  {==}
+                                                        case False{}:
+                                                          match alternate:
+                                                            case True{}:
+                                                              match metadata_changed:
+                                                                case True{}:
+                                                                  {==}
+                                                                case False{}:
+                                                                  {==}
+                                                            case False{}:
+                                                              match metadata_changed:
+                                                                case True{}:
+                                                                  {==}
+                                                                case False{}:
+                                                                  {==}
+                                                case False{}:
+                                                  match routed:
+                                                    case True{}:
+                                                      match metadata_changed:
+                                                        case True{}:
+                                                          {==}
+                                                        case False{}:
+                                                          {==}
+                                                    case False{}:
+                                                      match frame_room:
+                                                        case True{}:
+                                                          match alternate:
+                                                            case True{}:
+                                                              match metadata_changed:
+                                                                case True{}:
+                                                                  {==}
+                                                                case False{}:
+                                                                  {==}
+                                                            case False{}:
+                                                              match metadata_changed:
+                                                                case True{}:
+                                                                  {==}
+                                                                case False{}:
+                                                                  {==}
+                                                        case False{}:
+                                                          match alternate:
+                                                            case True{}:
+                                                              match metadata_changed:
+                                                                case True{}:
+                                                                  {==}
+                                                                case False{}:
+                                                                  {==}
+                                                            case False{}:
+                                                              match metadata_changed:
+                                                                case True{}:
+                                                                  {==}
+                                                                case False{}:
+                                                                  {==}
+                                        case False{}:
+                                          match held:
+                                            case True{}:
+                                              match unanchored:
+                                                case True{}:
+                                                  {==}
+                                                case False{}:
+                                                  {==}
+                                            case False{}:
+                                              match unanchored:
+                                                case True{}:
+                                                  match routed:
+                                                    case True{}:
+                                                      match metadata_changed:
+                                                        case True{}:
+                                                          {==}
+                                                        case False{}:
+                                                          {==}
+                                                    case False{}:
+                                                      match frame_room:
+                                                        case True{}:
+                                                          match alternate:
+                                                            case True{}:
+                                                              match metadata_changed:
+                                                                case True{}:
+                                                                  {==}
+                                                                case False{}:
+                                                                  {==}
+                                                            case False{}:
+                                                              match metadata_changed:
+                                                                case True{}:
+                                                                  {==}
+                                                                case False{}:
+                                                                  {==}
+                                                        case False{}:
+                                                          match alternate:
+                                                            case True{}:
+                                                              match metadata_changed:
+                                                                case True{}:
+                                                                  {==}
+                                                                case False{}:
+                                                                  {==}
+                                                            case False{}:
+                                                              match metadata_changed:
+                                                                case True{}:
+                                                                  {==}
+                                                                case False{}:
+                                                                  {==}
+                                                case False{}:
+                                                  match routed:
+                                                    case True{}:
+                                                      match metadata_changed:
+                                                        case True{}:
+                                                          {==}
+                                                        case False{}:
+                                                          {==}
+                                                    case False{}:
+                                                      match frame_room:
+                                                        case True{}:
+                                                          match alternate:
+                                                            case True{}:
+                                                              match metadata_changed:
+                                                                case True{}:
+                                                                  {==}
+                                                                case False{}:
+                                                                  {==}
+                                                            case False{}:
+                                                              match metadata_changed:
+                                                                case True{}:
+                                                                  {==}
+                                                                case False{}:
+                                                                  {==}
+                                                        case False{}:
+                                                          match alternate:
+                                                            case True{}:
+                                                              match metadata_changed:
+                                                                case True{}:
+                                                                  {==}
+                                                                case False{}:
+                                                                  {==}
+                                                            case False{}:
+                                                              match metadata_changed:
+                                                                case True{}:
+                                                                  {==}
+                                                                case False{}:
+                                                                  {==}
+                            case Session.TickRequest{tx, ty}:
+                              match pointer:
+                                case Session.Pointer{route, lit, copied}:
+                                  match route:
+                                    case Selection.Idle{}:
+                                      match was:
+                                        case True{}:
+                                          match held:
+                                            case True{}:
+                                              match unanchored:
+                                                case True{}:
+                                                  {==}
+                                                case False{}:
+                                                  {==}
+                                            case False{}:
+                                              match unanchored:
+                                                case True{}:
+                                                  match room:
+                                                    case True{}:
+                                                      match metadata_changed:
+                                                        case True{}:
+                                                          {==}
+                                                        case False{}:
+                                                          {==}
+                                                    case False{}:
+                                                      match metadata_changed:
+                                                        case True{}:
+                                                          {==}
+                                                        case False{}:
+                                                          {==}
+                                                case False{}:
+                                                  match room:
+                                                    case True{}:
+                                                      match metadata_changed:
+                                                        case True{}:
+                                                          {==}
+                                                        case False{}:
+                                                          {==}
+                                                    case False{}:
+                                                      match metadata_changed:
+                                                        case True{}:
+                                                          {==}
+                                                        case False{}:
+                                                          {==}
+                                        case False{}:
+                                          match held:
+                                            case True{}:
+                                              match unanchored:
+                                                case True{}:
+                                                  {==}
+                                                case False{}:
+                                                  {==}
+                                            case False{}:
+                                              match unanchored:
+                                                case True{}:
+                                                  match room:
+                                                    case True{}:
+                                                      match metadata_changed:
+                                                        case True{}:
+                                                          {==}
+                                                        case False{}:
+                                                          {==}
+                                                    case False{}:
+                                                      match metadata_changed:
+                                                        case True{}:
+                                                          {==}
+                                                        case False{}:
+                                                          {==}
+                                                case False{}:
+                                                  match room:
+                                                    case True{}:
+                                                      match metadata_changed:
+                                                        case True{}:
+                                                          {==}
+                                                        case False{}:
+                                                          {==}
+                                                    case False{}:
+                                                      match metadata_changed:
+                                                        case True{}:
+                                                          {==}
+                                                        case False{}:
+                                                          {==}
+                                    case Selection.Host{}:
+                                      match was:
+                                        case True{}:
+                                          match held:
+                                            case True{}:
+                                              match unanchored:
+                                                case True{}:
+                                                  {==}
+                                                case False{}:
+                                                  {==}
+                                            case False{}:
+                                              match unanchored:
+                                                case True{}:
+                                                  match room:
+                                                    case True{}:
+                                                      match metadata_changed:
+                                                        case True{}:
+                                                          {==}
+                                                        case False{}:
+                                                          {==}
+                                                    case False{}:
+                                                      match metadata_changed:
+                                                        case True{}:
+                                                          {==}
+                                                        case False{}:
+                                                          {==}
+                                                case False{}:
+                                                  match room:
+                                                    case True{}:
+                                                      match metadata_changed:
+                                                        case True{}:
+                                                          {==}
+                                                        case False{}:
+                                                          {==}
+                                                    case False{}:
+                                                      match metadata_changed:
+                                                        case True{}:
+                                                          {==}
+                                                        case False{}:
+                                                          {==}
+                                        case False{}:
+                                          match held:
+                                            case True{}:
+                                              match unanchored:
+                                                case True{}:
+                                                  {==}
+                                                case False{}:
+                                                  {==}
+                                            case False{}:
+                                              match unanchored:
+                                                case True{}:
+                                                  match room:
+                                                    case True{}:
+                                                      match metadata_changed:
+                                                        case True{}:
+                                                          {==}
+                                                        case False{}:
+                                                          {==}
+                                                    case False{}:
+                                                      match metadata_changed:
+                                                        case True{}:
+                                                          {==}
+                                                        case False{}:
+                                                          {==}
+                                                case False{}:
+                                                  match room:
+                                                    case True{}:
+                                                      match metadata_changed:
+                                                        case True{}:
+                                                          {==}
+                                                        case False{}:
+                                                          {==}
+                                                    case False{}:
+                                                      match metadata_changed:
+                                                        case True{}:
+                                                          {==}
+                                                        case False{}:
+                                                          {==}
+                                    case Selection.Terminal{}:
+                                      match was:
+                                        case True{}:
+                                          match held:
+                                            case True{}:
+                                              match unanchored:
+                                                case True{}:
+                                                  {==}
+                                                case False{}:
+                                                  {==}
+                                            case False{}:
+                                              match unanchored:
+                                                case True{}:
+                                                  match room:
+                                                    case True{}:
+                                                      match metadata_changed:
+                                                        case True{}:
+                                                          {==}
+                                                        case False{}:
+                                                          {==}
+                                                    case False{}:
+                                                      match metadata_changed:
+                                                        case True{}:
+                                                          {==}
+                                                        case False{}:
+                                                          {==}
+                                                case False{}:
+                                                  match room:
+                                                    case True{}:
+                                                      match metadata_changed:
+                                                        case True{}:
+                                                          {==}
+                                                        case False{}:
+                                                          {==}
+                                                    case False{}:
+                                                      match metadata_changed:
+                                                        case True{}:
+                                                          {==}
+                                                        case False{}:
+                                                          {==}
+                                        case False{}:
+                                          match held:
+                                            case True{}:
+                                              match unanchored:
+                                                case True{}:
+                                                  {==}
+                                                case False{}:
+                                                  {==}
+                                            case False{}:
+                                              match unanchored:
+                                                case True{}:
+                                                  match room:
+                                                    case True{}:
+                                                      match metadata_changed:
+                                                        case True{}:
+                                                          {==}
+                                                        case False{}:
+                                                          {==}
+                                                    case False{}:
+                                                      match metadata_changed:
+                                                        case True{}:
+                                                          {==}
+                                                        case False{}:
+                                                          {==}
+                                                case False{}:
+                                                  match room:
+                                                    case True{}:
+                                                      match metadata_changed:
+                                                        case True{}:
+                                                          {==}
+                                                        case False{}:
+                                                          {==}
+                                                    case False{}:
+                                                      match metadata_changed:
+                                                        case True{}:
+                                                          {==}
+                                                        case False{}:
+                                                          {==}
+                    case False{}:
+                      match waiting:
+                        case Session.Clear{}:
+                          match pointer:
+                            case Session.Pointer{route, lit, copied}:
+                              match route:
+                                case Selection.Idle{}:
+                                  match was:
+                                    case True{}:
+                                      match held:
+                                        case True{}:
+                                          match unanchored:
+                                            case True{}:
+                                              {==}
+                                            case False{}:
+                                              {==}
+                                        case False{}:
+                                          match unanchored:
+                                            case True{}:
+                                              {==}
+                                            case False{}:
+                                              {==}
+                                    case False{}:
+                                      match held:
+                                        case True{}:
+                                          match unanchored:
+                                            case True{}:
+                                              {==}
+                                            case False{}:
+                                              {==}
+                                        case False{}:
+                                          match unanchored:
+                                            case True{}:
+                                              {==}
+                                            case False{}:
+                                              {==}
+                                case Selection.Host{}:
+                                  match was:
+                                    case True{}:
+                                      match held:
+                                        case True{}:
+                                          match unanchored:
+                                            case True{}:
+                                              {==}
+                                            case False{}:
+                                              {==}
+                                        case False{}:
+                                          match unanchored:
+                                            case True{}:
+                                              {==}
+                                            case False{}:
+                                              {==}
+                                    case False{}:
+                                      match held:
+                                        case True{}:
+                                          match unanchored:
+                                            case True{}:
+                                              {==}
+                                            case False{}:
+                                              {==}
+                                        case False{}:
+                                          match unanchored:
+                                            case True{}:
+                                              {==}
+                                            case False{}:
+                                              {==}
+                                case Selection.Terminal{}:
+                                  match was:
+                                    case True{}:
+                                      match held:
+                                        case True{}:
+                                          match unanchored:
+                                            case True{}:
+                                              {==}
+                                            case False{}:
+                                              {==}
+                                        case False{}:
+                                          match unanchored:
+                                            case True{}:
+                                              {==}
+                                            case False{}:
+                                              {==}
+                                    case False{}:
+                                      match held:
+                                        case True{}:
+                                          match unanchored:
+                                            case True{}:
+                                              {==}
+                                            case False{}:
+                                              {==}
+                                        case False{}:
+                                          match unanchored:
+                                            case True{}:
+                                              {==}
+                                            case False{}:
+                                              {==}
+                        case Session.Waiting{request}:
+                          match request:
+                            case Session.PreviewRequest{direction}:
+                              match pointer:
+                                case Session.Pointer{route, lit, copied}:
+                                  match route:
+                                    case Selection.Idle{}:
+                                      match was:
+                                        case True{}:
+                                          match held:
+                                            case True{}:
+                                              match unanchored:
+                                                case True{}:
+                                                  {==}
+                                                case False{}:
+                                                  {==}
+                                            case False{}:
+                                              match unanchored:
+                                                case True{}:
+                                                  match routed:
+                                                    case True{}:
+                                                      {==}
+                                                    case False{}:
+                                                      {==}
+                                                case False{}:
+                                                  match routed:
+                                                    case True{}:
+                                                      {==}
+                                                    case False{}:
+                                                      {==}
+                                        case False{}:
+                                          match held:
+                                            case True{}:
+                                              match unanchored:
+                                                case True{}:
+                                                  {==}
+                                                case False{}:
+                                                  {==}
+                                            case False{}:
+                                              match unanchored:
+                                                case True{}:
+                                                  match routed:
+                                                    case True{}:
+                                                      {==}
+                                                    case False{}:
+                                                      {==}
+                                                case False{}:
+                                                  match routed:
+                                                    case True{}:
+                                                      {==}
+                                                    case False{}:
+                                                      {==}
+                                    case Selection.Host{}:
+                                      match was:
+                                        case True{}:
+                                          match held:
+                                            case True{}:
+                                              match unanchored:
+                                                case True{}:
+                                                  {==}
+                                                case False{}:
+                                                  {==}
+                                            case False{}:
+                                              match unanchored:
+                                                case True{}:
+                                                  match routed:
+                                                    case True{}:
+                                                      {==}
+                                                    case False{}:
+                                                      {==}
+                                                case False{}:
+                                                  match routed:
+                                                    case True{}:
+                                                      {==}
+                                                    case False{}:
+                                                      {==}
+                                        case False{}:
+                                          match held:
+                                            case True{}:
+                                              match unanchored:
+                                                case True{}:
+                                                  {==}
+                                                case False{}:
+                                                  {==}
+                                            case False{}:
+                                              match unanchored:
+                                                case True{}:
+                                                  match routed:
+                                                    case True{}:
+                                                      {==}
+                                                    case False{}:
+                                                      {==}
+                                                case False{}:
+                                                  match routed:
+                                                    case True{}:
+                                                      {==}
+                                                    case False{}:
+                                                      {==}
+                                    case Selection.Terminal{}:
+                                      match was:
+                                        case True{}:
+                                          match held:
+                                            case True{}:
+                                              match unanchored:
+                                                case True{}:
+                                                  {==}
+                                                case False{}:
+                                                  {==}
+                                            case False{}:
+                                              match unanchored:
+                                                case True{}:
+                                                  match routed:
+                                                    case True{}:
+                                                      {==}
+                                                    case False{}:
+                                                      {==}
+                                                case False{}:
+                                                  match routed:
+                                                    case True{}:
+                                                      {==}
+                                                    case False{}:
+                                                      {==}
+                                        case False{}:
+                                          match held:
+                                            case True{}:
+                                              match unanchored:
+                                                case True{}:
+                                                  {==}
+                                                case False{}:
+                                                  {==}
+                                            case False{}:
+                                              match unanchored:
+                                                case True{}:
+                                                  match routed:
+                                                    case True{}:
+                                                      {==}
+                                                    case False{}:
+                                                      {==}
+                                                case False{}:
+                                                  match routed:
+                                                    case True{}:
+                                                      {==}
+                                                    case False{}:
+                                                      {==}
+                            case Session.ScrollRequest{rows}:
+                              match pointer:
+                                case Session.Pointer{route, lit, copied}:
+                                  match route:
+                                    case Selection.Idle{}:
+                                      match was:
+                                        case True{}:
+                                          match held:
+                                            case True{}:
+                                              match unanchored:
+                                                case True{}:
+                                                  {==}
+                                                case False{}:
+                                                  {==}
+                                            case False{}:
+                                              match unanchored:
+                                                case True{}:
+                                                  match routed:
+                                                    case True{}:
+                                                      {==}
+                                                    case False{}:
+                                                      match room:
+                                                        case True{}:
+                                                          {==}
+                                                        case False{}:
+                                                          {==}
+                                                case False{}:
+                                                  match routed:
+                                                    case True{}:
+                                                      {==}
+                                                    case False{}:
+                                                      match room:
+                                                        case True{}:
+                                                          {==}
+                                                        case False{}:
+                                                          {==}
+                                        case False{}:
+                                          match held:
+                                            case True{}:
+                                              match unanchored:
+                                                case True{}:
+                                                  {==}
+                                                case False{}:
+                                                  {==}
+                                            case False{}:
+                                              match unanchored:
+                                                case True{}:
+                                                  match routed:
+                                                    case True{}:
+                                                      {==}
+                                                    case False{}:
+                                                      match room:
+                                                        case True{}:
+                                                          {==}
+                                                        case False{}:
+                                                          {==}
+                                                case False{}:
+                                                  match routed:
+                                                    case True{}:
+                                                      {==}
+                                                    case False{}:
+                                                      match room:
+                                                        case True{}:
+                                                          {==}
+                                                        case False{}:
+                                                          {==}
+                                    case Selection.Host{}:
+                                      match was:
+                                        case True{}:
+                                          match held:
+                                            case True{}:
+                                              match unanchored:
+                                                case True{}:
+                                                  {==}
+                                                case False{}:
+                                                  {==}
+                                            case False{}:
+                                              match unanchored:
+                                                case True{}:
+                                                  match routed:
+                                                    case True{}:
+                                                      {==}
+                                                    case False{}:
+                                                      match room:
+                                                        case True{}:
+                                                          {==}
+                                                        case False{}:
+                                                          {==}
+                                                case False{}:
+                                                  match routed:
+                                                    case True{}:
+                                                      {==}
+                                                    case False{}:
+                                                      match room:
+                                                        case True{}:
+                                                          {==}
+                                                        case False{}:
+                                                          {==}
+                                        case False{}:
+                                          match held:
+                                            case True{}:
+                                              match unanchored:
+                                                case True{}:
+                                                  {==}
+                                                case False{}:
+                                                  {==}
+                                            case False{}:
+                                              match unanchored:
+                                                case True{}:
+                                                  match routed:
+                                                    case True{}:
+                                                      {==}
+                                                    case False{}:
+                                                      match room:
+                                                        case True{}:
+                                                          {==}
+                                                        case False{}:
+                                                          {==}
+                                                case False{}:
+                                                  match routed:
+                                                    case True{}:
+                                                      {==}
+                                                    case False{}:
+                                                      match room:
+                                                        case True{}:
+                                                          {==}
+                                                        case False{}:
+                                                          {==}
+                                    case Selection.Terminal{}:
+                                      match was:
+                                        case True{}:
+                                          match held:
+                                            case True{}:
+                                              match unanchored:
+                                                case True{}:
+                                                  {==}
+                                                case False{}:
+                                                  {==}
+                                            case False{}:
+                                              match unanchored:
+                                                case True{}:
+                                                  match routed:
+                                                    case True{}:
+                                                      {==}
+                                                    case False{}:
+                                                      match room:
+                                                        case True{}:
+                                                          {==}
+                                                        case False{}:
+                                                          {==}
+                                                case False{}:
+                                                  match routed:
+                                                    case True{}:
+                                                      {==}
+                                                    case False{}:
+                                                      match room:
+                                                        case True{}:
+                                                          {==}
+                                                        case False{}:
+                                                          {==}
+                                        case False{}:
+                                          match held:
+                                            case True{}:
+                                              match unanchored:
+                                                case True{}:
+                                                  {==}
+                                                case False{}:
+                                                  {==}
+                                            case False{}:
+                                              match unanchored:
+                                                case True{}:
+                                                  match routed:
+                                                    case True{}:
+                                                      {==}
+                                                    case False{}:
+                                                      match room:
+                                                        case True{}:
+                                                          {==}
+                                                        case False{}:
+                                                          {==}
+                                                case False{}:
+                                                  match routed:
+                                                    case True{}:
+                                                      {==}
+                                                    case False{}:
+                                                      match room:
+                                                        case True{}:
+                                                          {==}
+                                                        case False{}:
+                                                          {==}
+                            case Session.LiveRequest{}:
+                              match pointer:
+                                case Session.Pointer{route, lit, copied}:
+                                  match route:
+                                    case Selection.Idle{}:
+                                      match was:
+                                        case True{}:
+                                          match held:
+                                            case True{}:
+                                              match unanchored:
+                                                case True{}:
+                                                  {==}
+                                                case False{}:
+                                                  {==}
+                                            case False{}:
+                                              match unanchored:
+                                                case True{}:
+                                                  match routed:
+                                                    case True{}:
+                                                      {==}
+                                                    case False{}:
+                                                      match frame_room:
+                                                        case True{}:
+                                                          match alternate:
+                                                            case True{}:
+                                                              {==}
+                                                            case False{}:
+                                                              {==}
+                                                        case False{}:
+                                                          match alternate:
+                                                            case True{}:
+                                                              {==}
+                                                            case False{}:
+                                                              {==}
+                                                case False{}:
+                                                  match routed:
+                                                    case True{}:
+                                                      {==}
+                                                    case False{}:
+                                                      match frame_room:
+                                                        case True{}:
+                                                          match alternate:
+                                                            case True{}:
+                                                              {==}
+                                                            case False{}:
+                                                              {==}
+                                                        case False{}:
+                                                          match alternate:
+                                                            case True{}:
+                                                              {==}
+                                                            case False{}:
+                                                              {==}
+                                        case False{}:
+                                          match held:
+                                            case True{}:
+                                              match unanchored:
+                                                case True{}:
+                                                  {==}
+                                                case False{}:
+                                                  {==}
+                                            case False{}:
+                                              match unanchored:
+                                                case True{}:
+                                                  match routed:
+                                                    case True{}:
+                                                      {==}
+                                                    case False{}:
+                                                      match frame_room:
+                                                        case True{}:
+                                                          match alternate:
+                                                            case True{}:
+                                                              {==}
+                                                            case False{}:
+                                                              {==}
+                                                        case False{}:
+                                                          match alternate:
+                                                            case True{}:
+                                                              {==}
+                                                            case False{}:
+                                                              {==}
+                                                case False{}:
+                                                  match routed:
+                                                    case True{}:
+                                                      {==}
+                                                    case False{}:
+                                                      match frame_room:
+                                                        case True{}:
+                                                          match alternate:
+                                                            case True{}:
+                                                              {==}
+                                                            case False{}:
+                                                              {==}
+                                                        case False{}:
+                                                          match alternate:
+                                                            case True{}:
+                                                              {==}
+                                                            case False{}:
+                                                              {==}
+                                    case Selection.Host{}:
+                                      match was:
+                                        case True{}:
+                                          match held:
+                                            case True{}:
+                                              match unanchored:
+                                                case True{}:
+                                                  {==}
+                                                case False{}:
+                                                  {==}
+                                            case False{}:
+                                              match unanchored:
+                                                case True{}:
+                                                  match routed:
+                                                    case True{}:
+                                                      {==}
+                                                    case False{}:
+                                                      match frame_room:
+                                                        case True{}:
+                                                          match alternate:
+                                                            case True{}:
+                                                              {==}
+                                                            case False{}:
+                                                              {==}
+                                                        case False{}:
+                                                          match alternate:
+                                                            case True{}:
+                                                              {==}
+                                                            case False{}:
+                                                              {==}
+                                                case False{}:
+                                                  match routed:
+                                                    case True{}:
+                                                      {==}
+                                                    case False{}:
+                                                      match frame_room:
+                                                        case True{}:
+                                                          match alternate:
+                                                            case True{}:
+                                                              {==}
+                                                            case False{}:
+                                                              {==}
+                                                        case False{}:
+                                                          match alternate:
+                                                            case True{}:
+                                                              {==}
+                                                            case False{}:
+                                                              {==}
+                                        case False{}:
+                                          match held:
+                                            case True{}:
+                                              match unanchored:
+                                                case True{}:
+                                                  {==}
+                                                case False{}:
+                                                  {==}
+                                            case False{}:
+                                              match unanchored:
+                                                case True{}:
+                                                  match routed:
+                                                    case True{}:
+                                                      {==}
+                                                    case False{}:
+                                                      match frame_room:
+                                                        case True{}:
+                                                          match alternate:
+                                                            case True{}:
+                                                              {==}
+                                                            case False{}:
+                                                              {==}
+                                                        case False{}:
+                                                          match alternate:
+                                                            case True{}:
+                                                              {==}
+                                                            case False{}:
+                                                              {==}
+                                                case False{}:
+                                                  match routed:
+                                                    case True{}:
+                                                      {==}
+                                                    case False{}:
+                                                      match frame_room:
+                                                        case True{}:
+                                                          match alternate:
+                                                            case True{}:
+                                                              {==}
+                                                            case False{}:
+                                                              {==}
+                                                        case False{}:
+                                                          match alternate:
+                                                            case True{}:
+                                                              {==}
+                                                            case False{}:
+                                                              {==}
+                                    case Selection.Terminal{}:
+                                      match was:
+                                        case True{}:
+                                          match held:
+                                            case True{}:
+                                              match unanchored:
+                                                case True{}:
+                                                  {==}
+                                                case False{}:
+                                                  {==}
+                                            case False{}:
+                                              match unanchored:
+                                                case True{}:
+                                                  match routed:
+                                                    case True{}:
+                                                      {==}
+                                                    case False{}:
+                                                      match frame_room:
+                                                        case True{}:
+                                                          match alternate:
+                                                            case True{}:
+                                                              {==}
+                                                            case False{}:
+                                                              {==}
+                                                        case False{}:
+                                                          match alternate:
+                                                            case True{}:
+                                                              {==}
+                                                            case False{}:
+                                                              {==}
+                                                case False{}:
+                                                  match routed:
+                                                    case True{}:
+                                                      {==}
+                                                    case False{}:
+                                                      match frame_room:
+                                                        case True{}:
+                                                          match alternate:
+                                                            case True{}:
+                                                              {==}
+                                                            case False{}:
+                                                              {==}
+                                                        case False{}:
+                                                          match alternate:
+                                                            case True{}:
+                                                              {==}
+                                                            case False{}:
+                                                              {==}
+                                        case False{}:
+                                          match held:
+                                            case True{}:
+                                              match unanchored:
+                                                case True{}:
+                                                  {==}
+                                                case False{}:
+                                                  {==}
+                                            case False{}:
+                                              match unanchored:
+                                                case True{}:
+                                                  match routed:
+                                                    case True{}:
+                                                      {==}
+                                                    case False{}:
+                                                      match frame_room:
+                                                        case True{}:
+                                                          match alternate:
+                                                            case True{}:
+                                                              {==}
+                                                            case False{}:
+                                                              {==}
+                                                        case False{}:
+                                                          match alternate:
+                                                            case True{}:
+                                                              {==}
+                                                            case False{}:
+                                                              {==}
+                                                case False{}:
+                                                  match routed:
+                                                    case True{}:
+                                                      {==}
+                                                    case False{}:
+                                                      match frame_room:
+                                                        case True{}:
+                                                          match alternate:
+                                                            case True{}:
+                                                              {==}
+                                                            case False{}:
+                                                              {==}
+                                                        case False{}:
+                                                          match alternate:
+                                                            case True{}:
+                                                              {==}
+                                                            case False{}:
+                                                              {==}
+                            case Session.TickRequest{tx, ty}:
+                              match pointer:
+                                case Session.Pointer{route, lit, copied}:
+                                  match route:
+                                    case Selection.Idle{}:
+                                      match was:
+                                        case True{}:
+                                          match held:
+                                            case True{}:
+                                              match unanchored:
+                                                case True{}:
+                                                  {==}
+                                                case False{}:
+                                                  {==}
+                                            case False{}:
+                                              match unanchored:
+                                                case True{}:
+                                                  match room:
+                                                    case True{}:
+                                                      {==}
+                                                    case False{}:
+                                                      {==}
+                                                case False{}:
+                                                  match room:
+                                                    case True{}:
+                                                      {==}
+                                                    case False{}:
+                                                      {==}
+                                        case False{}:
+                                          match held:
+                                            case True{}:
+                                              match unanchored:
+                                                case True{}:
+                                                  {==}
+                                                case False{}:
+                                                  {==}
+                                            case False{}:
+                                              match unanchored:
+                                                case True{}:
+                                                  match room:
+                                                    case True{}:
+                                                      {==}
+                                                    case False{}:
+                                                      {==}
+                                                case False{}:
+                                                  match room:
+                                                    case True{}:
+                                                      {==}
+                                                    case False{}:
+                                                      {==}
+                                    case Selection.Host{}:
+                                      match was:
+                                        case True{}:
+                                          match held:
+                                            case True{}:
+                                              match unanchored:
+                                                case True{}:
+                                                  {==}
+                                                case False{}:
+                                                  {==}
+                                            case False{}:
+                                              match unanchored:
+                                                case True{}:
+                                                  match room:
+                                                    case True{}:
+                                                      {==}
+                                                    case False{}:
+                                                      {==}
+                                                case False{}:
+                                                  match room:
+                                                    case True{}:
+                                                      {==}
+                                                    case False{}:
+                                                      {==}
+                                        case False{}:
+                                          match held:
+                                            case True{}:
+                                              match unanchored:
+                                                case True{}:
+                                                  {==}
+                                                case False{}:
+                                                  {==}
+                                            case False{}:
+                                              match unanchored:
+                                                case True{}:
+                                                  match room:
+                                                    case True{}:
+                                                      {==}
+                                                    case False{}:
+                                                      {==}
+                                                case False{}:
+                                                  match room:
+                                                    case True{}:
+                                                      {==}
+                                                    case False{}:
+                                                      {==}
+                                    case Selection.Terminal{}:
+                                      match was:
+                                        case True{}:
+                                          match held:
+                                            case True{}:
+                                              match unanchored:
+                                                case True{}:
+                                                  {==}
+                                                case False{}:
+                                                  {==}
+                                            case False{}:
+                                              match unanchored:
+                                                case True{}:
+                                                  match room:
+                                                    case True{}:
+                                                      {==}
+                                                    case False{}:
+                                                      {==}
+                                                case False{}:
+                                                  match room:
+                                                    case True{}:
+                                                      {==}
+                                                    case False{}:
+                                                      {==}
+                                        case False{}:
+                                          match held:
+                                            case True{}:
+                                              match unanchored:
+                                                case True{}:
+                                                  {==}
+                                                case False{}:
+                                                  {==}
+                                            case False{}:
+                                              match unanchored:
+                                                case True{}:
+                                                  match room:
+                                                    case True{}:
+                                                      {==}
+                                                    case False{}:
+                                                      {==}
+                                                case False{}:
+                                                  match room:
+                                                    case True{}:
+                                                      {==}
+                                                    case False{}:
+                                                      {==}
+                case Orbit.Stopping{pid}:
+                  match observer:
+                    case True{}:
+                      match pointer:
+                        case Session.Pointer{route, lit, copied}:
+                          match route:
+                            case Selection.Idle{}:
+                              match was:
+                                case True{}:
+                                  match held:
+                                    case True{}:
+                                      match unanchored:
+                                        case True{}:
+                                          {==}
+                                        case False{}:
+                                          {==}
+                                    case False{}:
+                                      match unanchored:
+                                        case True{}:
+                                          match metadata_changed:
+                                            case True{}:
+                                              {==}
+                                            case False{}:
+                                              {==}
+                                        case False{}:
+                                          match metadata_changed:
+                                            case True{}:
+                                              {==}
+                                            case False{}:
+                                              {==}
+                                case False{}:
+                                  match held:
+                                    case True{}:
+                                      match unanchored:
+                                        case True{}:
+                                          {==}
+                                        case False{}:
+                                          {==}
+                                    case False{}:
+                                      match unanchored:
+                                        case True{}:
+                                          match metadata_changed:
+                                            case True{}:
+                                              {==}
+                                            case False{}:
+                                              {==}
+                                        case False{}:
+                                          match metadata_changed:
+                                            case True{}:
+                                              {==}
+                                            case False{}:
+                                              {==}
+                            case Selection.Host{}:
+                              match was:
+                                case True{}:
+                                  match held:
+                                    case True{}:
+                                      match unanchored:
+                                        case True{}:
+                                          {==}
+                                        case False{}:
+                                          {==}
+                                    case False{}:
+                                      match unanchored:
+                                        case True{}:
+                                          match metadata_changed:
+                                            case True{}:
+                                              {==}
+                                            case False{}:
+                                              {==}
+                                        case False{}:
+                                          match metadata_changed:
+                                            case True{}:
+                                              {==}
+                                            case False{}:
+                                              {==}
+                                case False{}:
+                                  match held:
+                                    case True{}:
+                                      match unanchored:
+                                        case True{}:
+                                          {==}
+                                        case False{}:
+                                          {==}
+                                    case False{}:
+                                      match unanchored:
+                                        case True{}:
+                                          match metadata_changed:
+                                            case True{}:
+                                              {==}
+                                            case False{}:
+                                              {==}
+                                        case False{}:
+                                          match metadata_changed:
+                                            case True{}:
+                                              {==}
+                                            case False{}:
+                                              {==}
+                            case Selection.Terminal{}:
+                              match was:
+                                case True{}:
+                                  match held:
+                                    case True{}:
+                                      match unanchored:
+                                        case True{}:
+                                          {==}
+                                        case False{}:
+                                          {==}
+                                    case False{}:
+                                      match unanchored:
+                                        case True{}:
+                                          match metadata_changed:
+                                            case True{}:
+                                              {==}
+                                            case False{}:
+                                              {==}
+                                        case False{}:
+                                          match metadata_changed:
+                                            case True{}:
+                                              {==}
+                                            case False{}:
+                                              {==}
+                                case False{}:
+                                  match held:
+                                    case True{}:
+                                      match unanchored:
+                                        case True{}:
+                                          {==}
+                                        case False{}:
+                                          {==}
+                                    case False{}:
+                                      match unanchored:
+                                        case True{}:
+                                          match metadata_changed:
+                                            case True{}:
+                                              {==}
+                                            case False{}:
+                                              {==}
+                                        case False{}:
+                                          match metadata_changed:
+                                            case True{}:
+                                              {==}
+                                            case False{}:
+                                              {==}
+                    case False{}:
+                      match pointer:
+                        case Session.Pointer{route, lit, copied}:
+                          match route:
+                            case Selection.Idle{}:
+                              match was:
+                                case True{}:
+                                  match held:
+                                    case True{}:
+                                      match unanchored:
+                                        case True{}:
+                                          {==}
+                                        case False{}:
+                                          {==}
+                                    case False{}:
+                                      match unanchored:
+                                        case True{}:
+                                          {==}
+                                        case False{}:
+                                          {==}
+                                case False{}:
+                                  match held:
+                                    case True{}:
+                                      match unanchored:
+                                        case True{}:
+                                          {==}
+                                        case False{}:
+                                          {==}
+                                    case False{}:
+                                      match unanchored:
+                                        case True{}:
+                                          {==}
+                                        case False{}:
+                                          {==}
+                            case Selection.Host{}:
+                              match was:
+                                case True{}:
+                                  match held:
+                                    case True{}:
+                                      match unanchored:
+                                        case True{}:
+                                          {==}
+                                        case False{}:
+                                          {==}
+                                    case False{}:
+                                      match unanchored:
+                                        case True{}:
+                                          {==}
+                                        case False{}:
+                                          {==}
+                                case False{}:
+                                  match held:
+                                    case True{}:
+                                      match unanchored:
+                                        case True{}:
+                                          {==}
+                                        case False{}:
+                                          {==}
+                                    case False{}:
+                                      match unanchored:
+                                        case True{}:
+                                          {==}
+                                        case False{}:
+                                          {==}
+                            case Selection.Terminal{}:
+                              match was:
+                                case True{}:
+                                  match held:
+                                    case True{}:
+                                      match unanchored:
+                                        case True{}:
+                                          {==}
+                                        case False{}:
+                                          {==}
+                                    case False{}:
+                                      match unanchored:
+                                        case True{}:
+                                          {==}
+                                        case False{}:
+                                          {==}
+                                case False{}:
+                                  match held:
+                                    case True{}:
+                                      match unanchored:
+                                        case True{}:
+                                          {==}
+                                        case False{}:
+                                          {==}
+                                    case False{}:
+                                      match unanchored:
+                                        case True{}:
+                                          {==}
+                                        case False{}:
+                                          {==}
+                case Orbit.Stopped{pid}:
+                  {==}
+            case False{}:
+              match life:
+                case Orbit.Detached{pid}:
+                  {==}
+                case Orbit.Attached{pid}:
+                  match observer:
+                    case True{}:
+                      match waiting:
+                        case Session.Clear{}:
+                          match pointer:
+                            case Session.Pointer{route, lit, copied}:
+                              match route:
+                                case Selection.Idle{}:
+                                  match was:
+                                    case True{}:
+                                      match held:
+                                        case True{}:
+                                          match unanchored:
+                                            case True{}:
+                                              {==}
+                                            case False{}:
+                                              {==}
+                                        case False{}:
+                                          match unanchored:
+                                            case True{}:
+                                              match metadata_changed:
+                                                case True{}:
+                                                  {==}
+                                                case False{}:
+                                                  {==}
+                                            case False{}:
+                                              match metadata_changed:
+                                                case True{}:
+                                                  {==}
+                                                case False{}:
+                                                  {==}
+                                    case False{}:
+                                      match held:
+                                        case True{}:
+                                          match unanchored:
+                                            case True{}:
+                                              {==}
+                                            case False{}:
+                                              {==}
+                                        case False{}:
+                                          match unanchored:
+                                            case True{}:
+                                              match metadata_changed:
+                                                case True{}:
+                                                  {==}
+                                                case False{}:
+                                                  {==}
+                                            case False{}:
+                                              match metadata_changed:
+                                                case True{}:
+                                                  {==}
+                                                case False{}:
+                                                  {==}
+                                case Selection.Host{}:
+                                  match was:
+                                    case True{}:
+                                      match held:
+                                        case True{}:
+                                          match unanchored:
+                                            case True{}:
+                                              {==}
+                                            case False{}:
+                                              {==}
+                                        case False{}:
+                                          match unanchored:
+                                            case True{}:
+                                              match metadata_changed:
+                                                case True{}:
+                                                  {==}
+                                                case False{}:
+                                                  {==}
+                                            case False{}:
+                                              match metadata_changed:
+                                                case True{}:
+                                                  {==}
+                                                case False{}:
+                                                  {==}
+                                    case False{}:
+                                      match held:
+                                        case True{}:
+                                          match unanchored:
+                                            case True{}:
+                                              {==}
+                                            case False{}:
+                                              {==}
+                                        case False{}:
+                                          match unanchored:
+                                            case True{}:
+                                              match metadata_changed:
+                                                case True{}:
+                                                  {==}
+                                                case False{}:
+                                                  {==}
+                                            case False{}:
+                                              match metadata_changed:
+                                                case True{}:
+                                                  {==}
+                                                case False{}:
+                                                  {==}
+                                case Selection.Terminal{}:
+                                  match was:
+                                    case True{}:
+                                      match held:
+                                        case True{}:
+                                          match unanchored:
+                                            case True{}:
+                                              {==}
+                                            case False{}:
+                                              {==}
+                                        case False{}:
+                                          match unanchored:
+                                            case True{}:
+                                              match metadata_changed:
+                                                case True{}:
+                                                  {==}
+                                                case False{}:
+                                                  {==}
+                                            case False{}:
+                                              match metadata_changed:
+                                                case True{}:
+                                                  {==}
+                                                case False{}:
+                                                  {==}
+                                    case False{}:
+                                      match held:
+                                        case True{}:
+                                          match unanchored:
+                                            case True{}:
+                                              {==}
+                                            case False{}:
+                                              {==}
+                                        case False{}:
+                                          match unanchored:
+                                            case True{}:
+                                              match metadata_changed:
+                                                case True{}:
+                                                  {==}
+                                                case False{}:
+                                                  {==}
+                                            case False{}:
+                                              match metadata_changed:
+                                                case True{}:
+                                                  {==}
+                                                case False{}:
+                                                  {==}
+                        case Session.Waiting{request}:
+                          match request:
+                            case Session.PreviewRequest{direction}:
+                              match pointer:
+                                case Session.Pointer{route, lit, copied}:
+                                  match route:
+                                    case Selection.Idle{}:
+                                      match was:
+                                        case True{}:
+                                          match held:
+                                            case True{}:
+                                              match unanchored:
+                                                case True{}:
+                                                  {==}
+                                                case False{}:
+                                                  {==}
+                                            case False{}:
+                                              match unanchored:
+                                                case True{}:
+                                                  match routed:
+                                                    case True{}:
+                                                      match metadata_changed:
+                                                        case True{}:
+                                                          {==}
+                                                        case False{}:
+                                                          {==}
+                                                    case False{}:
+                                                      match metadata_changed:
+                                                        case True{}:
+                                                          {==}
+                                                        case False{}:
+                                                          {==}
+                                                case False{}:
+                                                  match routed:
+                                                    case True{}:
+                                                      match metadata_changed:
+                                                        case True{}:
+                                                          {==}
+                                                        case False{}:
+                                                          {==}
+                                                    case False{}:
+                                                      match metadata_changed:
+                                                        case True{}:
+                                                          {==}
+                                                        case False{}:
+                                                          {==}
+                                        case False{}:
+                                          match held:
+                                            case True{}:
+                                              match unanchored:
+                                                case True{}:
+                                                  {==}
+                                                case False{}:
+                                                  {==}
+                                            case False{}:
+                                              match unanchored:
+                                                case True{}:
+                                                  match routed:
+                                                    case True{}:
+                                                      match metadata_changed:
+                                                        case True{}:
+                                                          {==}
+                                                        case False{}:
+                                                          {==}
+                                                    case False{}:
+                                                      match metadata_changed:
+                                                        case True{}:
+                                                          {==}
+                                                        case False{}:
+                                                          {==}
+                                                case False{}:
+                                                  match routed:
+                                                    case True{}:
+                                                      match metadata_changed:
+                                                        case True{}:
+                                                          {==}
+                                                        case False{}:
+                                                          {==}
+                                                    case False{}:
+                                                      match metadata_changed:
+                                                        case True{}:
+                                                          {==}
+                                                        case False{}:
+                                                          {==}
+                                    case Selection.Host{}:
+                                      match was:
+                                        case True{}:
+                                          match held:
+                                            case True{}:
+                                              match unanchored:
+                                                case True{}:
+                                                  {==}
+                                                case False{}:
+                                                  {==}
+                                            case False{}:
+                                              match unanchored:
+                                                case True{}:
+                                                  match routed:
+                                                    case True{}:
+                                                      match metadata_changed:
+                                                        case True{}:
+                                                          {==}
+                                                        case False{}:
+                                                          {==}
+                                                    case False{}:
+                                                      match metadata_changed:
+                                                        case True{}:
+                                                          {==}
+                                                        case False{}:
+                                                          {==}
+                                                case False{}:
+                                                  match routed:
+                                                    case True{}:
+                                                      match metadata_changed:
+                                                        case True{}:
+                                                          {==}
+                                                        case False{}:
+                                                          {==}
+                                                    case False{}:
+                                                      match metadata_changed:
+                                                        case True{}:
+                                                          {==}
+                                                        case False{}:
+                                                          {==}
+                                        case False{}:
+                                          match held:
+                                            case True{}:
+                                              match unanchored:
+                                                case True{}:
+                                                  {==}
+                                                case False{}:
+                                                  {==}
+                                            case False{}:
+                                              match unanchored:
+                                                case True{}:
+                                                  match routed:
+                                                    case True{}:
+                                                      match metadata_changed:
+                                                        case True{}:
+                                                          {==}
+                                                        case False{}:
+                                                          {==}
+                                                    case False{}:
+                                                      match metadata_changed:
+                                                        case True{}:
+                                                          {==}
+                                                        case False{}:
+                                                          {==}
+                                                case False{}:
+                                                  match routed:
+                                                    case True{}:
+                                                      match metadata_changed:
+                                                        case True{}:
+                                                          {==}
+                                                        case False{}:
+                                                          {==}
+                                                    case False{}:
+                                                      match metadata_changed:
+                                                        case True{}:
+                                                          {==}
+                                                        case False{}:
+                                                          {==}
+                                    case Selection.Terminal{}:
+                                      match was:
+                                        case True{}:
+                                          match held:
+                                            case True{}:
+                                              match unanchored:
+                                                case True{}:
+                                                  {==}
+                                                case False{}:
+                                                  {==}
+                                            case False{}:
+                                              match unanchored:
+                                                case True{}:
+                                                  match routed:
+                                                    case True{}:
+                                                      match metadata_changed:
+                                                        case True{}:
+                                                          {==}
+                                                        case False{}:
+                                                          {==}
+                                                    case False{}:
+                                                      match metadata_changed:
+                                                        case True{}:
+                                                          {==}
+                                                        case False{}:
+                                                          {==}
+                                                case False{}:
+                                                  match routed:
+                                                    case True{}:
+                                                      match metadata_changed:
+                                                        case True{}:
+                                                          {==}
+                                                        case False{}:
+                                                          {==}
+                                                    case False{}:
+                                                      match metadata_changed:
+                                                        case True{}:
+                                                          {==}
+                                                        case False{}:
+                                                          {==}
+                                        case False{}:
+                                          match held:
+                                            case True{}:
+                                              match unanchored:
+                                                case True{}:
+                                                  {==}
+                                                case False{}:
+                                                  {==}
+                                            case False{}:
+                                              match unanchored:
+                                                case True{}:
+                                                  match routed:
+                                                    case True{}:
+                                                      match metadata_changed:
+                                                        case True{}:
+                                                          {==}
+                                                        case False{}:
+                                                          {==}
+                                                    case False{}:
+                                                      match metadata_changed:
+                                                        case True{}:
+                                                          {==}
+                                                        case False{}:
+                                                          {==}
+                                                case False{}:
+                                                  match routed:
+                                                    case True{}:
+                                                      match metadata_changed:
+                                                        case True{}:
+                                                          {==}
+                                                        case False{}:
+                                                          {==}
+                                                    case False{}:
+                                                      match metadata_changed:
+                                                        case True{}:
+                                                          {==}
+                                                        case False{}:
+                                                          {==}
+                            case Session.ScrollRequest{rows}:
+                              match pointer:
+                                case Session.Pointer{route, lit, copied}:
+                                  match route:
+                                    case Selection.Idle{}:
+                                      match was:
+                                        case True{}:
+                                          match held:
+                                            case True{}:
+                                              match unanchored:
+                                                case True{}:
+                                                  {==}
+                                                case False{}:
+                                                  {==}
+                                            case False{}:
+                                              match unanchored:
+                                                case True{}:
+                                                  match routed:
+                                                    case True{}:
+                                                      match metadata_changed:
+                                                        case True{}:
+                                                          {==}
+                                                        case False{}:
+                                                          {==}
+                                                    case False{}:
+                                                      match room:
+                                                        case True{}:
+                                                          match metadata_changed:
+                                                            case True{}:
+                                                              {==}
+                                                            case False{}:
+                                                              {==}
+                                                        case False{}:
+                                                          match metadata_changed:
+                                                            case True{}:
+                                                              {==}
+                                                            case False{}:
+                                                              {==}
+                                                case False{}:
+                                                  match routed:
+                                                    case True{}:
+                                                      match metadata_changed:
+                                                        case True{}:
+                                                          {==}
+                                                        case False{}:
+                                                          {==}
+                                                    case False{}:
+                                                      match room:
+                                                        case True{}:
+                                                          match metadata_changed:
+                                                            case True{}:
+                                                              {==}
+                                                            case False{}:
+                                                              {==}
+                                                        case False{}:
+                                                          match metadata_changed:
+                                                            case True{}:
+                                                              {==}
+                                                            case False{}:
+                                                              {==}
+                                        case False{}:
+                                          match held:
+                                            case True{}:
+                                              match unanchored:
+                                                case True{}:
+                                                  {==}
+                                                case False{}:
+                                                  {==}
+                                            case False{}:
+                                              match unanchored:
+                                                case True{}:
+                                                  match routed:
+                                                    case True{}:
+                                                      match metadata_changed:
+                                                        case True{}:
+                                                          {==}
+                                                        case False{}:
+                                                          {==}
+                                                    case False{}:
+                                                      match room:
+                                                        case True{}:
+                                                          match metadata_changed:
+                                                            case True{}:
+                                                              {==}
+                                                            case False{}:
+                                                              {==}
+                                                        case False{}:
+                                                          match metadata_changed:
+                                                            case True{}:
+                                                              {==}
+                                                            case False{}:
+                                                              {==}
+                                                case False{}:
+                                                  match routed:
+                                                    case True{}:
+                                                      match metadata_changed:
+                                                        case True{}:
+                                                          {==}
+                                                        case False{}:
+                                                          {==}
+                                                    case False{}:
+                                                      match room:
+                                                        case True{}:
+                                                          match metadata_changed:
+                                                            case True{}:
+                                                              {==}
+                                                            case False{}:
+                                                              {==}
+                                                        case False{}:
+                                                          match metadata_changed:
+                                                            case True{}:
+                                                              {==}
+                                                            case False{}:
+                                                              {==}
+                                    case Selection.Host{}:
+                                      match was:
+                                        case True{}:
+                                          match held:
+                                            case True{}:
+                                              match unanchored:
+                                                case True{}:
+                                                  {==}
+                                                case False{}:
+                                                  {==}
+                                            case False{}:
+                                              match unanchored:
+                                                case True{}:
+                                                  match routed:
+                                                    case True{}:
+                                                      match metadata_changed:
+                                                        case True{}:
+                                                          {==}
+                                                        case False{}:
+                                                          {==}
+                                                    case False{}:
+                                                      match room:
+                                                        case True{}:
+                                                          match metadata_changed:
+                                                            case True{}:
+                                                              {==}
+                                                            case False{}:
+                                                              {==}
+                                                        case False{}:
+                                                          match metadata_changed:
+                                                            case True{}:
+                                                              {==}
+                                                            case False{}:
+                                                              {==}
+                                                case False{}:
+                                                  match routed:
+                                                    case True{}:
+                                                      match metadata_changed:
+                                                        case True{}:
+                                                          {==}
+                                                        case False{}:
+                                                          {==}
+                                                    case False{}:
+                                                      match room:
+                                                        case True{}:
+                                                          match metadata_changed:
+                                                            case True{}:
+                                                              {==}
+                                                            case False{}:
+                                                              {==}
+                                                        case False{}:
+                                                          match metadata_changed:
+                                                            case True{}:
+                                                              {==}
+                                                            case False{}:
+                                                              {==}
+                                        case False{}:
+                                          match held:
+                                            case True{}:
+                                              match unanchored:
+                                                case True{}:
+                                                  {==}
+                                                case False{}:
+                                                  {==}
+                                            case False{}:
+                                              match unanchored:
+                                                case True{}:
+                                                  match routed:
+                                                    case True{}:
+                                                      match metadata_changed:
+                                                        case True{}:
+                                                          {==}
+                                                        case False{}:
+                                                          {==}
+                                                    case False{}:
+                                                      match room:
+                                                        case True{}:
+                                                          match metadata_changed:
+                                                            case True{}:
+                                                              {==}
+                                                            case False{}:
+                                                              {==}
+                                                        case False{}:
+                                                          match metadata_changed:
+                                                            case True{}:
+                                                              {==}
+                                                            case False{}:
+                                                              {==}
+                                                case False{}:
+                                                  match routed:
+                                                    case True{}:
+                                                      match metadata_changed:
+                                                        case True{}:
+                                                          {==}
+                                                        case False{}:
+                                                          {==}
+                                                    case False{}:
+                                                      match room:
+                                                        case True{}:
+                                                          match metadata_changed:
+                                                            case True{}:
+                                                              {==}
+                                                            case False{}:
+                                                              {==}
+                                                        case False{}:
+                                                          match metadata_changed:
+                                                            case True{}:
+                                                              {==}
+                                                            case False{}:
+                                                              {==}
+                                    case Selection.Terminal{}:
+                                      match was:
+                                        case True{}:
+                                          match held:
+                                            case True{}:
+                                              match unanchored:
+                                                case True{}:
+                                                  {==}
+                                                case False{}:
+                                                  {==}
+                                            case False{}:
+                                              match unanchored:
+                                                case True{}:
+                                                  match routed:
+                                                    case True{}:
+                                                      match metadata_changed:
+                                                        case True{}:
+                                                          {==}
+                                                        case False{}:
+                                                          {==}
+                                                    case False{}:
+                                                      match room:
+                                                        case True{}:
+                                                          match metadata_changed:
+                                                            case True{}:
+                                                              {==}
+                                                            case False{}:
+                                                              {==}
+                                                        case False{}:
+                                                          match metadata_changed:
+                                                            case True{}:
+                                                              {==}
+                                                            case False{}:
+                                                              {==}
+                                                case False{}:
+                                                  match routed:
+                                                    case True{}:
+                                                      match metadata_changed:
+                                                        case True{}:
+                                                          {==}
+                                                        case False{}:
+                                                          {==}
+                                                    case False{}:
+                                                      match room:
+                                                        case True{}:
+                                                          match metadata_changed:
+                                                            case True{}:
+                                                              {==}
+                                                            case False{}:
+                                                              {==}
+                                                        case False{}:
+                                                          match metadata_changed:
+                                                            case True{}:
+                                                              {==}
+                                                            case False{}:
+                                                              {==}
+                                        case False{}:
+                                          match held:
+                                            case True{}:
+                                              match unanchored:
+                                                case True{}:
+                                                  {==}
+                                                case False{}:
+                                                  {==}
+                                            case False{}:
+                                              match unanchored:
+                                                case True{}:
+                                                  match routed:
+                                                    case True{}:
+                                                      match metadata_changed:
+                                                        case True{}:
+                                                          {==}
+                                                        case False{}:
+                                                          {==}
+                                                    case False{}:
+                                                      match room:
+                                                        case True{}:
+                                                          match metadata_changed:
+                                                            case True{}:
+                                                              {==}
+                                                            case False{}:
+                                                              {==}
+                                                        case False{}:
+                                                          match metadata_changed:
+                                                            case True{}:
+                                                              {==}
+                                                            case False{}:
+                                                              {==}
+                                                case False{}:
+                                                  match routed:
+                                                    case True{}:
+                                                      match metadata_changed:
+                                                        case True{}:
+                                                          {==}
+                                                        case False{}:
+                                                          {==}
+                                                    case False{}:
+                                                      match room:
+                                                        case True{}:
+                                                          match metadata_changed:
+                                                            case True{}:
+                                                              {==}
+                                                            case False{}:
+                                                              {==}
+                                                        case False{}:
+                                                          match metadata_changed:
+                                                            case True{}:
+                                                              {==}
+                                                            case False{}:
+                                                              {==}
+                            case Session.LiveRequest{}:
+                              match pointer:
+                                case Session.Pointer{route, lit, copied}:
+                                  match route:
+                                    case Selection.Idle{}:
+                                      match was:
+                                        case True{}:
+                                          match held:
+                                            case True{}:
+                                              match unanchored:
+                                                case True{}:
+                                                  {==}
+                                                case False{}:
+                                                  {==}
+                                            case False{}:
+                                              match unanchored:
+                                                case True{}:
+                                                  match routed:
+                                                    case True{}:
+                                                      match metadata_changed:
+                                                        case True{}:
+                                                          {==}
+                                                        case False{}:
+                                                          {==}
+                                                    case False{}:
+                                                      match frame_room:
+                                                        case True{}:
+                                                          match alternate:
+                                                            case True{}:
+                                                              match metadata_changed:
+                                                                case True{}:
+                                                                  {==}
+                                                                case False{}:
+                                                                  {==}
+                                                            case False{}:
+                                                              match metadata_changed:
+                                                                case True{}:
+                                                                  {==}
+                                                                case False{}:
+                                                                  {==}
+                                                        case False{}:
+                                                          match alternate:
+                                                            case True{}:
+                                                              match metadata_changed:
+                                                                case True{}:
+                                                                  {==}
+                                                                case False{}:
+                                                                  {==}
+                                                            case False{}:
+                                                              match metadata_changed:
+                                                                case True{}:
+                                                                  {==}
+                                                                case False{}:
+                                                                  {==}
+                                                case False{}:
+                                                  match routed:
+                                                    case True{}:
+                                                      match metadata_changed:
+                                                        case True{}:
+                                                          {==}
+                                                        case False{}:
+                                                          {==}
+                                                    case False{}:
+                                                      match frame_room:
+                                                        case True{}:
+                                                          match alternate:
+                                                            case True{}:
+                                                              match metadata_changed:
+                                                                case True{}:
+                                                                  {==}
+                                                                case False{}:
+                                                                  {==}
+                                                            case False{}:
+                                                              match metadata_changed:
+                                                                case True{}:
+                                                                  {==}
+                                                                case False{}:
+                                                                  {==}
+                                                        case False{}:
+                                                          match alternate:
+                                                            case True{}:
+                                                              match metadata_changed:
+                                                                case True{}:
+                                                                  {==}
+                                                                case False{}:
+                                                                  {==}
+                                                            case False{}:
+                                                              match metadata_changed:
+                                                                case True{}:
+                                                                  {==}
+                                                                case False{}:
+                                                                  {==}
+                                        case False{}:
+                                          match held:
+                                            case True{}:
+                                              match unanchored:
+                                                case True{}:
+                                                  {==}
+                                                case False{}:
+                                                  {==}
+                                            case False{}:
+                                              match unanchored:
+                                                case True{}:
+                                                  match routed:
+                                                    case True{}:
+                                                      match metadata_changed:
+                                                        case True{}:
+                                                          {==}
+                                                        case False{}:
+                                                          {==}
+                                                    case False{}:
+                                                      match frame_room:
+                                                        case True{}:
+                                                          match alternate:
+                                                            case True{}:
+                                                              match metadata_changed:
+                                                                case True{}:
+                                                                  {==}
+                                                                case False{}:
+                                                                  {==}
+                                                            case False{}:
+                                                              match metadata_changed:
+                                                                case True{}:
+                                                                  {==}
+                                                                case False{}:
+                                                                  {==}
+                                                        case False{}:
+                                                          match alternate:
+                                                            case True{}:
+                                                              match metadata_changed:
+                                                                case True{}:
+                                                                  {==}
+                                                                case False{}:
+                                                                  {==}
+                                                            case False{}:
+                                                              match metadata_changed:
+                                                                case True{}:
+                                                                  {==}
+                                                                case False{}:
+                                                                  {==}
+                                                case False{}:
+                                                  match routed:
+                                                    case True{}:
+                                                      match metadata_changed:
+                                                        case True{}:
+                                                          {==}
+                                                        case False{}:
+                                                          {==}
+                                                    case False{}:
+                                                      match frame_room:
+                                                        case True{}:
+                                                          match alternate:
+                                                            case True{}:
+                                                              match metadata_changed:
+                                                                case True{}:
+                                                                  {==}
+                                                                case False{}:
+                                                                  {==}
+                                                            case False{}:
+                                                              match metadata_changed:
+                                                                case True{}:
+                                                                  {==}
+                                                                case False{}:
+                                                                  {==}
+                                                        case False{}:
+                                                          match alternate:
+                                                            case True{}:
+                                                              match metadata_changed:
+                                                                case True{}:
+                                                                  {==}
+                                                                case False{}:
+                                                                  {==}
+                                                            case False{}:
+                                                              match metadata_changed:
+                                                                case True{}:
+                                                                  {==}
+                                                                case False{}:
+                                                                  {==}
+                                    case Selection.Host{}:
+                                      match was:
+                                        case True{}:
+                                          match held:
+                                            case True{}:
+                                              match unanchored:
+                                                case True{}:
+                                                  {==}
+                                                case False{}:
+                                                  {==}
+                                            case False{}:
+                                              match unanchored:
+                                                case True{}:
+                                                  match routed:
+                                                    case True{}:
+                                                      match metadata_changed:
+                                                        case True{}:
+                                                          {==}
+                                                        case False{}:
+                                                          {==}
+                                                    case False{}:
+                                                      match frame_room:
+                                                        case True{}:
+                                                          match alternate:
+                                                            case True{}:
+                                                              match metadata_changed:
+                                                                case True{}:
+                                                                  {==}
+                                                                case False{}:
+                                                                  {==}
+                                                            case False{}:
+                                                              match metadata_changed:
+                                                                case True{}:
+                                                                  {==}
+                                                                case False{}:
+                                                                  {==}
+                                                        case False{}:
+                                                          match alternate:
+                                                            case True{}:
+                                                              match metadata_changed:
+                                                                case True{}:
+                                                                  {==}
+                                                                case False{}:
+                                                                  {==}
+                                                            case False{}:
+                                                              match metadata_changed:
+                                                                case True{}:
+                                                                  {==}
+                                                                case False{}:
+                                                                  {==}
+                                                case False{}:
+                                                  match routed:
+                                                    case True{}:
+                                                      match metadata_changed:
+                                                        case True{}:
+                                                          {==}
+                                                        case False{}:
+                                                          {==}
+                                                    case False{}:
+                                                      match frame_room:
+                                                        case True{}:
+                                                          match alternate:
+                                                            case True{}:
+                                                              match metadata_changed:
+                                                                case True{}:
+                                                                  {==}
+                                                                case False{}:
+                                                                  {==}
+                                                            case False{}:
+                                                              match metadata_changed:
+                                                                case True{}:
+                                                                  {==}
+                                                                case False{}:
+                                                                  {==}
+                                                        case False{}:
+                                                          match alternate:
+                                                            case True{}:
+                                                              match metadata_changed:
+                                                                case True{}:
+                                                                  {==}
+                                                                case False{}:
+                                                                  {==}
+                                                            case False{}:
+                                                              match metadata_changed:
+                                                                case True{}:
+                                                                  {==}
+                                                                case False{}:
+                                                                  {==}
+                                        case False{}:
+                                          match held:
+                                            case True{}:
+                                              match unanchored:
+                                                case True{}:
+                                                  {==}
+                                                case False{}:
+                                                  {==}
+                                            case False{}:
+                                              match unanchored:
+                                                case True{}:
+                                                  match routed:
+                                                    case True{}:
+                                                      match metadata_changed:
+                                                        case True{}:
+                                                          {==}
+                                                        case False{}:
+                                                          {==}
+                                                    case False{}:
+                                                      match frame_room:
+                                                        case True{}:
+                                                          match alternate:
+                                                            case True{}:
+                                                              match metadata_changed:
+                                                                case True{}:
+                                                                  {==}
+                                                                case False{}:
+                                                                  {==}
+                                                            case False{}:
+                                                              match metadata_changed:
+                                                                case True{}:
+                                                                  {==}
+                                                                case False{}:
+                                                                  {==}
+                                                        case False{}:
+                                                          match alternate:
+                                                            case True{}:
+                                                              match metadata_changed:
+                                                                case True{}:
+                                                                  {==}
+                                                                case False{}:
+                                                                  {==}
+                                                            case False{}:
+                                                              match metadata_changed:
+                                                                case True{}:
+                                                                  {==}
+                                                                case False{}:
+                                                                  {==}
+                                                case False{}:
+                                                  match routed:
+                                                    case True{}:
+                                                      match metadata_changed:
+                                                        case True{}:
+                                                          {==}
+                                                        case False{}:
+                                                          {==}
+                                                    case False{}:
+                                                      match frame_room:
+                                                        case True{}:
+                                                          match alternate:
+                                                            case True{}:
+                                                              match metadata_changed:
+                                                                case True{}:
+                                                                  {==}
+                                                                case False{}:
+                                                                  {==}
+                                                            case False{}:
+                                                              match metadata_changed:
+                                                                case True{}:
+                                                                  {==}
+                                                                case False{}:
+                                                                  {==}
+                                                        case False{}:
+                                                          match alternate:
+                                                            case True{}:
+                                                              match metadata_changed:
+                                                                case True{}:
+                                                                  {==}
+                                                                case False{}:
+                                                                  {==}
+                                                            case False{}:
+                                                              match metadata_changed:
+                                                                case True{}:
+                                                                  {==}
+                                                                case False{}:
+                                                                  {==}
+                                    case Selection.Terminal{}:
+                                      match was:
+                                        case True{}:
+                                          match held:
+                                            case True{}:
+                                              match unanchored:
+                                                case True{}:
+                                                  {==}
+                                                case False{}:
+                                                  {==}
+                                            case False{}:
+                                              match unanchored:
+                                                case True{}:
+                                                  match routed:
+                                                    case True{}:
+                                                      match metadata_changed:
+                                                        case True{}:
+                                                          {==}
+                                                        case False{}:
+                                                          {==}
+                                                    case False{}:
+                                                      match frame_room:
+                                                        case True{}:
+                                                          match alternate:
+                                                            case True{}:
+                                                              match metadata_changed:
+                                                                case True{}:
+                                                                  {==}
+                                                                case False{}:
+                                                                  {==}
+                                                            case False{}:
+                                                              match metadata_changed:
+                                                                case True{}:
+                                                                  {==}
+                                                                case False{}:
+                                                                  {==}
+                                                        case False{}:
+                                                          match alternate:
+                                                            case True{}:
+                                                              match metadata_changed:
+                                                                case True{}:
+                                                                  {==}
+                                                                case False{}:
+                                                                  {==}
+                                                            case False{}:
+                                                              match metadata_changed:
+                                                                case True{}:
+                                                                  {==}
+                                                                case False{}:
+                                                                  {==}
+                                                case False{}:
+                                                  match routed:
+                                                    case True{}:
+                                                      match metadata_changed:
+                                                        case True{}:
+                                                          {==}
+                                                        case False{}:
+                                                          {==}
+                                                    case False{}:
+                                                      match frame_room:
+                                                        case True{}:
+                                                          match alternate:
+                                                            case True{}:
+                                                              match metadata_changed:
+                                                                case True{}:
+                                                                  {==}
+                                                                case False{}:
+                                                                  {==}
+                                                            case False{}:
+                                                              match metadata_changed:
+                                                                case True{}:
+                                                                  {==}
+                                                                case False{}:
+                                                                  {==}
+                                                        case False{}:
+                                                          match alternate:
+                                                            case True{}:
+                                                              match metadata_changed:
+                                                                case True{}:
+                                                                  {==}
+                                                                case False{}:
+                                                                  {==}
+                                                            case False{}:
+                                                              match metadata_changed:
+                                                                case True{}:
+                                                                  {==}
+                                                                case False{}:
+                                                                  {==}
+                                        case False{}:
+                                          match held:
+                                            case True{}:
+                                              match unanchored:
+                                                case True{}:
+                                                  {==}
+                                                case False{}:
+                                                  {==}
+                                            case False{}:
+                                              match unanchored:
+                                                case True{}:
+                                                  match routed:
+                                                    case True{}:
+                                                      match metadata_changed:
+                                                        case True{}:
+                                                          {==}
+                                                        case False{}:
+                                                          {==}
+                                                    case False{}:
+                                                      match frame_room:
+                                                        case True{}:
+                                                          match alternate:
+                                                            case True{}:
+                                                              match metadata_changed:
+                                                                case True{}:
+                                                                  {==}
+                                                                case False{}:
+                                                                  {==}
+                                                            case False{}:
+                                                              match metadata_changed:
+                                                                case True{}:
+                                                                  {==}
+                                                                case False{}:
+                                                                  {==}
+                                                        case False{}:
+                                                          match alternate:
+                                                            case True{}:
+                                                              match metadata_changed:
+                                                                case True{}:
+                                                                  {==}
+                                                                case False{}:
+                                                                  {==}
+                                                            case False{}:
+                                                              match metadata_changed:
+                                                                case True{}:
+                                                                  {==}
+                                                                case False{}:
+                                                                  {==}
+                                                case False{}:
+                                                  match routed:
+                                                    case True{}:
+                                                      match metadata_changed:
+                                                        case True{}:
+                                                          {==}
+                                                        case False{}:
+                                                          {==}
+                                                    case False{}:
+                                                      match frame_room:
+                                                        case True{}:
+                                                          match alternate:
+                                                            case True{}:
+                                                              match metadata_changed:
+                                                                case True{}:
+                                                                  {==}
+                                                                case False{}:
+                                                                  {==}
+                                                            case False{}:
+                                                              match metadata_changed:
+                                                                case True{}:
+                                                                  {==}
+                                                                case False{}:
+                                                                  {==}
+                                                        case False{}:
+                                                          match alternate:
+                                                            case True{}:
+                                                              match metadata_changed:
+                                                                case True{}:
+                                                                  {==}
+                                                                case False{}:
+                                                                  {==}
+                                                            case False{}:
+                                                              match metadata_changed:
+                                                                case True{}:
+                                                                  {==}
+                                                                case False{}:
+                                                                  {==}
+                            case Session.TickRequest{tx, ty}:
+                              match pointer:
+                                case Session.Pointer{route, lit, copied}:
+                                  match route:
+                                    case Selection.Idle{}:
+                                      match was:
+                                        case True{}:
+                                          match held:
+                                            case True{}:
+                                              match unanchored:
+                                                case True{}:
+                                                  {==}
+                                                case False{}:
+                                                  {==}
+                                            case False{}:
+                                              match unanchored:
+                                                case True{}:
+                                                  match room:
+                                                    case True{}:
+                                                      match metadata_changed:
+                                                        case True{}:
+                                                          {==}
+                                                        case False{}:
+                                                          {==}
+                                                    case False{}:
+                                                      match metadata_changed:
+                                                        case True{}:
+                                                          {==}
+                                                        case False{}:
+                                                          {==}
+                                                case False{}:
+                                                  match room:
+                                                    case True{}:
+                                                      match metadata_changed:
+                                                        case True{}:
+                                                          {==}
+                                                        case False{}:
+                                                          {==}
+                                                    case False{}:
+                                                      match metadata_changed:
+                                                        case True{}:
+                                                          {==}
+                                                        case False{}:
+                                                          {==}
+                                        case False{}:
+                                          match held:
+                                            case True{}:
+                                              match unanchored:
+                                                case True{}:
+                                                  {==}
+                                                case False{}:
+                                                  {==}
+                                            case False{}:
+                                              match unanchored:
+                                                case True{}:
+                                                  match room:
+                                                    case True{}:
+                                                      match metadata_changed:
+                                                        case True{}:
+                                                          {==}
+                                                        case False{}:
+                                                          {==}
+                                                    case False{}:
+                                                      match metadata_changed:
+                                                        case True{}:
+                                                          {==}
+                                                        case False{}:
+                                                          {==}
+                                                case False{}:
+                                                  match room:
+                                                    case True{}:
+                                                      match metadata_changed:
+                                                        case True{}:
+                                                          {==}
+                                                        case False{}:
+                                                          {==}
+                                                    case False{}:
+                                                      match metadata_changed:
+                                                        case True{}:
+                                                          {==}
+                                                        case False{}:
+                                                          {==}
+                                    case Selection.Host{}:
+                                      match was:
+                                        case True{}:
+                                          match held:
+                                            case True{}:
+                                              match unanchored:
+                                                case True{}:
+                                                  {==}
+                                                case False{}:
+                                                  {==}
+                                            case False{}:
+                                              match unanchored:
+                                                case True{}:
+                                                  match room:
+                                                    case True{}:
+                                                      match metadata_changed:
+                                                        case True{}:
+                                                          {==}
+                                                        case False{}:
+                                                          {==}
+                                                    case False{}:
+                                                      match metadata_changed:
+                                                        case True{}:
+                                                          {==}
+                                                        case False{}:
+                                                          {==}
+                                                case False{}:
+                                                  match room:
+                                                    case True{}:
+                                                      match metadata_changed:
+                                                        case True{}:
+                                                          {==}
+                                                        case False{}:
+                                                          {==}
+                                                    case False{}:
+                                                      match metadata_changed:
+                                                        case True{}:
+                                                          {==}
+                                                        case False{}:
+                                                          {==}
+                                        case False{}:
+                                          match held:
+                                            case True{}:
+                                              match unanchored:
+                                                case True{}:
+                                                  {==}
+                                                case False{}:
+                                                  {==}
+                                            case False{}:
+                                              match unanchored:
+                                                case True{}:
+                                                  match room:
+                                                    case True{}:
+                                                      match metadata_changed:
+                                                        case True{}:
+                                                          {==}
+                                                        case False{}:
+                                                          {==}
+                                                    case False{}:
+                                                      match metadata_changed:
+                                                        case True{}:
+                                                          {==}
+                                                        case False{}:
+                                                          {==}
+                                                case False{}:
+                                                  match room:
+                                                    case True{}:
+                                                      match metadata_changed:
+                                                        case True{}:
+                                                          {==}
+                                                        case False{}:
+                                                          {==}
+                                                    case False{}:
+                                                      match metadata_changed:
+                                                        case True{}:
+                                                          {==}
+                                                        case False{}:
+                                                          {==}
+                                    case Selection.Terminal{}:
+                                      match was:
+                                        case True{}:
+                                          match held:
+                                            case True{}:
+                                              match unanchored:
+                                                case True{}:
+                                                  {==}
+                                                case False{}:
+                                                  {==}
+                                            case False{}:
+                                              match unanchored:
+                                                case True{}:
+                                                  match room:
+                                                    case True{}:
+                                                      match metadata_changed:
+                                                        case True{}:
+                                                          {==}
+                                                        case False{}:
+                                                          {==}
+                                                    case False{}:
+                                                      match metadata_changed:
+                                                        case True{}:
+                                                          {==}
+                                                        case False{}:
+                                                          {==}
+                                                case False{}:
+                                                  match room:
+                                                    case True{}:
+                                                      match metadata_changed:
+                                                        case True{}:
+                                                          {==}
+                                                        case False{}:
+                                                          {==}
+                                                    case False{}:
+                                                      match metadata_changed:
+                                                        case True{}:
+                                                          {==}
+                                                        case False{}:
+                                                          {==}
+                                        case False{}:
+                                          match held:
+                                            case True{}:
+                                              match unanchored:
+                                                case True{}:
+                                                  {==}
+                                                case False{}:
+                                                  {==}
+                                            case False{}:
+                                              match unanchored:
+                                                case True{}:
+                                                  match room:
+                                                    case True{}:
+                                                      match metadata_changed:
+                                                        case True{}:
+                                                          {==}
+                                                        case False{}:
+                                                          {==}
+                                                    case False{}:
+                                                      match metadata_changed:
+                                                        case True{}:
+                                                          {==}
+                                                        case False{}:
+                                                          {==}
+                                                case False{}:
+                                                  match room:
+                                                    case True{}:
+                                                      match metadata_changed:
+                                                        case True{}:
+                                                          {==}
+                                                        case False{}:
+                                                          {==}
+                                                    case False{}:
+                                                      match metadata_changed:
+                                                        case True{}:
+                                                          {==}
+                                                        case False{}:
+                                                          {==}
+                    case False{}:
+                      match waiting:
+                        case Session.Clear{}:
+                          match pointer:
+                            case Session.Pointer{route, lit, copied}:
+                              match route:
+                                case Selection.Idle{}:
+                                  match was:
+                                    case True{}:
+                                      match held:
+                                        case True{}:
+                                          match unanchored:
+                                            case True{}:
+                                              {==}
+                                            case False{}:
+                                              {==}
+                                        case False{}:
+                                          match unanchored:
+                                            case True{}:
+                                              {==}
+                                            case False{}:
+                                              {==}
+                                    case False{}:
+                                      match held:
+                                        case True{}:
+                                          match unanchored:
+                                            case True{}:
+                                              {==}
+                                            case False{}:
+                                              {==}
+                                        case False{}:
+                                          match unanchored:
+                                            case True{}:
+                                              {==}
+                                            case False{}:
+                                              {==}
+                                case Selection.Host{}:
+                                  match was:
+                                    case True{}:
+                                      match held:
+                                        case True{}:
+                                          match unanchored:
+                                            case True{}:
+                                              {==}
+                                            case False{}:
+                                              {==}
+                                        case False{}:
+                                          match unanchored:
+                                            case True{}:
+                                              {==}
+                                            case False{}:
+                                              {==}
+                                    case False{}:
+                                      match held:
+                                        case True{}:
+                                          match unanchored:
+                                            case True{}:
+                                              {==}
+                                            case False{}:
+                                              {==}
+                                        case False{}:
+                                          match unanchored:
+                                            case True{}:
+                                              {==}
+                                            case False{}:
+                                              {==}
+                                case Selection.Terminal{}:
+                                  match was:
+                                    case True{}:
+                                      match held:
+                                        case True{}:
+                                          match unanchored:
+                                            case True{}:
+                                              {==}
+                                            case False{}:
+                                              {==}
+                                        case False{}:
+                                          match unanchored:
+                                            case True{}:
+                                              {==}
+                                            case False{}:
+                                              {==}
+                                    case False{}:
+                                      match held:
+                                        case True{}:
+                                          match unanchored:
+                                            case True{}:
+                                              {==}
+                                            case False{}:
+                                              {==}
+                                        case False{}:
+                                          match unanchored:
+                                            case True{}:
+                                              {==}
+                                            case False{}:
+                                              {==}
+                        case Session.Waiting{request}:
+                          match request:
+                            case Session.PreviewRequest{direction}:
+                              match pointer:
+                                case Session.Pointer{route, lit, copied}:
+                                  match route:
+                                    case Selection.Idle{}:
+                                      match was:
+                                        case True{}:
+                                          match held:
+                                            case True{}:
+                                              match unanchored:
+                                                case True{}:
+                                                  {==}
+                                                case False{}:
+                                                  {==}
+                                            case False{}:
+                                              match unanchored:
+                                                case True{}:
+                                                  match routed:
+                                                    case True{}:
+                                                      {==}
+                                                    case False{}:
+                                                      {==}
+                                                case False{}:
+                                                  match routed:
+                                                    case True{}:
+                                                      {==}
+                                                    case False{}:
+                                                      {==}
+                                        case False{}:
+                                          match held:
+                                            case True{}:
+                                              match unanchored:
+                                                case True{}:
+                                                  {==}
+                                                case False{}:
+                                                  {==}
+                                            case False{}:
+                                              match unanchored:
+                                                case True{}:
+                                                  match routed:
+                                                    case True{}:
+                                                      {==}
+                                                    case False{}:
+                                                      {==}
+                                                case False{}:
+                                                  match routed:
+                                                    case True{}:
+                                                      {==}
+                                                    case False{}:
+                                                      {==}
+                                    case Selection.Host{}:
+                                      match was:
+                                        case True{}:
+                                          match held:
+                                            case True{}:
+                                              match unanchored:
+                                                case True{}:
+                                                  {==}
+                                                case False{}:
+                                                  {==}
+                                            case False{}:
+                                              match unanchored:
+                                                case True{}:
+                                                  match routed:
+                                                    case True{}:
+                                                      {==}
+                                                    case False{}:
+                                                      {==}
+                                                case False{}:
+                                                  match routed:
+                                                    case True{}:
+                                                      {==}
+                                                    case False{}:
+                                                      {==}
+                                        case False{}:
+                                          match held:
+                                            case True{}:
+                                              match unanchored:
+                                                case True{}:
+                                                  {==}
+                                                case False{}:
+                                                  {==}
+                                            case False{}:
+                                              match unanchored:
+                                                case True{}:
+                                                  match routed:
+                                                    case True{}:
+                                                      {==}
+                                                    case False{}:
+                                                      {==}
+                                                case False{}:
+                                                  match routed:
+                                                    case True{}:
+                                                      {==}
+                                                    case False{}:
+                                                      {==}
+                                    case Selection.Terminal{}:
+                                      match was:
+                                        case True{}:
+                                          match held:
+                                            case True{}:
+                                              match unanchored:
+                                                case True{}:
+                                                  {==}
+                                                case False{}:
+                                                  {==}
+                                            case False{}:
+                                              match unanchored:
+                                                case True{}:
+                                                  match routed:
+                                                    case True{}:
+                                                      {==}
+                                                    case False{}:
+                                                      {==}
+                                                case False{}:
+                                                  match routed:
+                                                    case True{}:
+                                                      {==}
+                                                    case False{}:
+                                                      {==}
+                                        case False{}:
+                                          match held:
+                                            case True{}:
+                                              match unanchored:
+                                                case True{}:
+                                                  {==}
+                                                case False{}:
+                                                  {==}
+                                            case False{}:
+                                              match unanchored:
+                                                case True{}:
+                                                  match routed:
+                                                    case True{}:
+                                                      {==}
+                                                    case False{}:
+                                                      {==}
+                                                case False{}:
+                                                  match routed:
+                                                    case True{}:
+                                                      {==}
+                                                    case False{}:
+                                                      {==}
+                            case Session.ScrollRequest{rows}:
+                              match pointer:
+                                case Session.Pointer{route, lit, copied}:
+                                  match route:
+                                    case Selection.Idle{}:
+                                      match was:
+                                        case True{}:
+                                          match held:
+                                            case True{}:
+                                              match unanchored:
+                                                case True{}:
+                                                  {==}
+                                                case False{}:
+                                                  {==}
+                                            case False{}:
+                                              match unanchored:
+                                                case True{}:
+                                                  match routed:
+                                                    case True{}:
+                                                      {==}
+                                                    case False{}:
+                                                      match room:
+                                                        case True{}:
+                                                          {==}
+                                                        case False{}:
+                                                          {==}
+                                                case False{}:
+                                                  match routed:
+                                                    case True{}:
+                                                      {==}
+                                                    case False{}:
+                                                      match room:
+                                                        case True{}:
+                                                          {==}
+                                                        case False{}:
+                                                          {==}
+                                        case False{}:
+                                          match held:
+                                            case True{}:
+                                              match unanchored:
+                                                case True{}:
+                                                  {==}
+                                                case False{}:
+                                                  {==}
+                                            case False{}:
+                                              match unanchored:
+                                                case True{}:
+                                                  match routed:
+                                                    case True{}:
+                                                      {==}
+                                                    case False{}:
+                                                      match room:
+                                                        case True{}:
+                                                          {==}
+                                                        case False{}:
+                                                          {==}
+                                                case False{}:
+                                                  match routed:
+                                                    case True{}:
+                                                      {==}
+                                                    case False{}:
+                                                      match room:
+                                                        case True{}:
+                                                          {==}
+                                                        case False{}:
+                                                          {==}
+                                    case Selection.Host{}:
+                                      match was:
+                                        case True{}:
+                                          match held:
+                                            case True{}:
+                                              match unanchored:
+                                                case True{}:
+                                                  {==}
+                                                case False{}:
+                                                  {==}
+                                            case False{}:
+                                              match unanchored:
+                                                case True{}:
+                                                  match routed:
+                                                    case True{}:
+                                                      {==}
+                                                    case False{}:
+                                                      match room:
+                                                        case True{}:
+                                                          {==}
+                                                        case False{}:
+                                                          {==}
+                                                case False{}:
+                                                  match routed:
+                                                    case True{}:
+                                                      {==}
+                                                    case False{}:
+                                                      match room:
+                                                        case True{}:
+                                                          {==}
+                                                        case False{}:
+                                                          {==}
+                                        case False{}:
+                                          match held:
+                                            case True{}:
+                                              match unanchored:
+                                                case True{}:
+                                                  {==}
+                                                case False{}:
+                                                  {==}
+                                            case False{}:
+                                              match unanchored:
+                                                case True{}:
+                                                  match routed:
+                                                    case True{}:
+                                                      {==}
+                                                    case False{}:
+                                                      match room:
+                                                        case True{}:
+                                                          {==}
+                                                        case False{}:
+                                                          {==}
+                                                case False{}:
+                                                  match routed:
+                                                    case True{}:
+                                                      {==}
+                                                    case False{}:
+                                                      match room:
+                                                        case True{}:
+                                                          {==}
+                                                        case False{}:
+                                                          {==}
+                                    case Selection.Terminal{}:
+                                      match was:
+                                        case True{}:
+                                          match held:
+                                            case True{}:
+                                              match unanchored:
+                                                case True{}:
+                                                  {==}
+                                                case False{}:
+                                                  {==}
+                                            case False{}:
+                                              match unanchored:
+                                                case True{}:
+                                                  match routed:
+                                                    case True{}:
+                                                      {==}
+                                                    case False{}:
+                                                      match room:
+                                                        case True{}:
+                                                          {==}
+                                                        case False{}:
+                                                          {==}
+                                                case False{}:
+                                                  match routed:
+                                                    case True{}:
+                                                      {==}
+                                                    case False{}:
+                                                      match room:
+                                                        case True{}:
+                                                          {==}
+                                                        case False{}:
+                                                          {==}
+                                        case False{}:
+                                          match held:
+                                            case True{}:
+                                              match unanchored:
+                                                case True{}:
+                                                  {==}
+                                                case False{}:
+                                                  {==}
+                                            case False{}:
+                                              match unanchored:
+                                                case True{}:
+                                                  match routed:
+                                                    case True{}:
+                                                      {==}
+                                                    case False{}:
+                                                      match room:
+                                                        case True{}:
+                                                          {==}
+                                                        case False{}:
+                                                          {==}
+                                                case False{}:
+                                                  match routed:
+                                                    case True{}:
+                                                      {==}
+                                                    case False{}:
+                                                      match room:
+                                                        case True{}:
+                                                          {==}
+                                                        case False{}:
+                                                          {==}
+                            case Session.LiveRequest{}:
+                              match pointer:
+                                case Session.Pointer{route, lit, copied}:
+                                  match route:
+                                    case Selection.Idle{}:
+                                      match was:
+                                        case True{}:
+                                          match held:
+                                            case True{}:
+                                              match unanchored:
+                                                case True{}:
+                                                  {==}
+                                                case False{}:
+                                                  {==}
+                                            case False{}:
+                                              match unanchored:
+                                                case True{}:
+                                                  match routed:
+                                                    case True{}:
+                                                      {==}
+                                                    case False{}:
+                                                      match frame_room:
+                                                        case True{}:
+                                                          match alternate:
+                                                            case True{}:
+                                                              {==}
+                                                            case False{}:
+                                                              {==}
+                                                        case False{}:
+                                                          match alternate:
+                                                            case True{}:
+                                                              {==}
+                                                            case False{}:
+                                                              {==}
+                                                case False{}:
+                                                  match routed:
+                                                    case True{}:
+                                                      {==}
+                                                    case False{}:
+                                                      match frame_room:
+                                                        case True{}:
+                                                          match alternate:
+                                                            case True{}:
+                                                              {==}
+                                                            case False{}:
+                                                              {==}
+                                                        case False{}:
+                                                          match alternate:
+                                                            case True{}:
+                                                              {==}
+                                                            case False{}:
+                                                              {==}
+                                        case False{}:
+                                          match held:
+                                            case True{}:
+                                              match unanchored:
+                                                case True{}:
+                                                  {==}
+                                                case False{}:
+                                                  {==}
+                                            case False{}:
+                                              match unanchored:
+                                                case True{}:
+                                                  match routed:
+                                                    case True{}:
+                                                      {==}
+                                                    case False{}:
+                                                      match frame_room:
+                                                        case True{}:
+                                                          match alternate:
+                                                            case True{}:
+                                                              {==}
+                                                            case False{}:
+                                                              {==}
+                                                        case False{}:
+                                                          match alternate:
+                                                            case True{}:
+                                                              {==}
+                                                            case False{}:
+                                                              {==}
+                                                case False{}:
+                                                  match routed:
+                                                    case True{}:
+                                                      {==}
+                                                    case False{}:
+                                                      match frame_room:
+                                                        case True{}:
+                                                          match alternate:
+                                                            case True{}:
+                                                              {==}
+                                                            case False{}:
+                                                              {==}
+                                                        case False{}:
+                                                          match alternate:
+                                                            case True{}:
+                                                              {==}
+                                                            case False{}:
+                                                              {==}
+                                    case Selection.Host{}:
+                                      match was:
+                                        case True{}:
+                                          match held:
+                                            case True{}:
+                                              match unanchored:
+                                                case True{}:
+                                                  {==}
+                                                case False{}:
+                                                  {==}
+                                            case False{}:
+                                              match unanchored:
+                                                case True{}:
+                                                  match routed:
+                                                    case True{}:
+                                                      {==}
+                                                    case False{}:
+                                                      match frame_room:
+                                                        case True{}:
+                                                          match alternate:
+                                                            case True{}:
+                                                              {==}
+                                                            case False{}:
+                                                              {==}
+                                                        case False{}:
+                                                          match alternate:
+                                                            case True{}:
+                                                              {==}
+                                                            case False{}:
+                                                              {==}
+                                                case False{}:
+                                                  match routed:
+                                                    case True{}:
+                                                      {==}
+                                                    case False{}:
+                                                      match frame_room:
+                                                        case True{}:
+                                                          match alternate:
+                                                            case True{}:
+                                                              {==}
+                                                            case False{}:
+                                                              {==}
+                                                        case False{}:
+                                                          match alternate:
+                                                            case True{}:
+                                                              {==}
+                                                            case False{}:
+                                                              {==}
+                                        case False{}:
+                                          match held:
+                                            case True{}:
+                                              match unanchored:
+                                                case True{}:
+                                                  {==}
+                                                case False{}:
+                                                  {==}
+                                            case False{}:
+                                              match unanchored:
+                                                case True{}:
+                                                  match routed:
+                                                    case True{}:
+                                                      {==}
+                                                    case False{}:
+                                                      match frame_room:
+                                                        case True{}:
+                                                          match alternate:
+                                                            case True{}:
+                                                              {==}
+                                                            case False{}:
+                                                              {==}
+                                                        case False{}:
+                                                          match alternate:
+                                                            case True{}:
+                                                              {==}
+                                                            case False{}:
+                                                              {==}
+                                                case False{}:
+                                                  match routed:
+                                                    case True{}:
+                                                      {==}
+                                                    case False{}:
+                                                      match frame_room:
+                                                        case True{}:
+                                                          match alternate:
+                                                            case True{}:
+                                                              {==}
+                                                            case False{}:
+                                                              {==}
+                                                        case False{}:
+                                                          match alternate:
+                                                            case True{}:
+                                                              {==}
+                                                            case False{}:
+                                                              {==}
+                                    case Selection.Terminal{}:
+                                      match was:
+                                        case True{}:
+                                          match held:
+                                            case True{}:
+                                              match unanchored:
+                                                case True{}:
+                                                  {==}
+                                                case False{}:
+                                                  {==}
+                                            case False{}:
+                                              match unanchored:
+                                                case True{}:
+                                                  match routed:
+                                                    case True{}:
+                                                      {==}
+                                                    case False{}:
+                                                      match frame_room:
+                                                        case True{}:
+                                                          match alternate:
+                                                            case True{}:
+                                                              {==}
+                                                            case False{}:
+                                                              {==}
+                                                        case False{}:
+                                                          match alternate:
+                                                            case True{}:
+                                                              {==}
+                                                            case False{}:
+                                                              {==}
+                                                case False{}:
+                                                  match routed:
+                                                    case True{}:
+                                                      {==}
+                                                    case False{}:
+                                                      match frame_room:
+                                                        case True{}:
+                                                          match alternate:
+                                                            case True{}:
+                                                              {==}
+                                                            case False{}:
+                                                              {==}
+                                                        case False{}:
+                                                          match alternate:
+                                                            case True{}:
+                                                              {==}
+                                                            case False{}:
+                                                              {==}
+                                        case False{}:
+                                          match held:
+                                            case True{}:
+                                              match unanchored:
+                                                case True{}:
+                                                  {==}
+                                                case False{}:
+                                                  {==}
+                                            case False{}:
+                                              match unanchored:
+                                                case True{}:
+                                                  match routed:
+                                                    case True{}:
+                                                      {==}
+                                                    case False{}:
+                                                      match frame_room:
+                                                        case True{}:
+                                                          match alternate:
+                                                            case True{}:
+                                                              {==}
+                                                            case False{}:
+                                                              {==}
+                                                        case False{}:
+                                                          match alternate:
+                                                            case True{}:
+                                                              {==}
+                                                            case False{}:
+                                                              {==}
+                                                case False{}:
+                                                  match routed:
+                                                    case True{}:
+                                                      {==}
+                                                    case False{}:
+                                                      match frame_room:
+                                                        case True{}:
+                                                          match alternate:
+                                                            case True{}:
+                                                              {==}
+                                                            case False{}:
+                                                              {==}
+                                                        case False{}:
+                                                          match alternate:
+                                                            case True{}:
+                                                              {==}
+                                                            case False{}:
+                                                              {==}
+                            case Session.TickRequest{tx, ty}:
+                              match pointer:
+                                case Session.Pointer{route, lit, copied}:
+                                  match route:
+                                    case Selection.Idle{}:
+                                      match was:
+                                        case True{}:
+                                          match held:
+                                            case True{}:
+                                              match unanchored:
+                                                case True{}:
+                                                  {==}
+                                                case False{}:
+                                                  {==}
+                                            case False{}:
+                                              match unanchored:
+                                                case True{}:
+                                                  match room:
+                                                    case True{}:
+                                                      {==}
+                                                    case False{}:
+                                                      {==}
+                                                case False{}:
+                                                  match room:
+                                                    case True{}:
+                                                      {==}
+                                                    case False{}:
+                                                      {==}
+                                        case False{}:
+                                          match held:
+                                            case True{}:
+                                              match unanchored:
+                                                case True{}:
+                                                  {==}
+                                                case False{}:
+                                                  {==}
+                                            case False{}:
+                                              match unanchored:
+                                                case True{}:
+                                                  match room:
+                                                    case True{}:
+                                                      {==}
+                                                    case False{}:
+                                                      {==}
+                                                case False{}:
+                                                  match room:
+                                                    case True{}:
+                                                      {==}
+                                                    case False{}:
+                                                      {==}
+                                    case Selection.Host{}:
+                                      match was:
+                                        case True{}:
+                                          match held:
+                                            case True{}:
+                                              match unanchored:
+                                                case True{}:
+                                                  {==}
+                                                case False{}:
+                                                  {==}
+                                            case False{}:
+                                              match unanchored:
+                                                case True{}:
+                                                  match room:
+                                                    case True{}:
+                                                      {==}
+                                                    case False{}:
+                                                      {==}
+                                                case False{}:
+                                                  match room:
+                                                    case True{}:
+                                                      {==}
+                                                    case False{}:
+                                                      {==}
+                                        case False{}:
+                                          match held:
+                                            case True{}:
+                                              match unanchored:
+                                                case True{}:
+                                                  {==}
+                                                case False{}:
+                                                  {==}
+                                            case False{}:
+                                              match unanchored:
+                                                case True{}:
+                                                  match room:
+                                                    case True{}:
+                                                      {==}
+                                                    case False{}:
+                                                      {==}
+                                                case False{}:
+                                                  match room:
+                                                    case True{}:
+                                                      {==}
+                                                    case False{}:
+                                                      {==}
+                                    case Selection.Terminal{}:
+                                      match was:
+                                        case True{}:
+                                          match held:
+                                            case True{}:
+                                              match unanchored:
+                                                case True{}:
+                                                  {==}
+                                                case False{}:
+                                                  {==}
+                                            case False{}:
+                                              match unanchored:
+                                                case True{}:
+                                                  match room:
+                                                    case True{}:
+                                                      {==}
+                                                    case False{}:
+                                                      {==}
+                                                case False{}:
+                                                  match room:
+                                                    case True{}:
+                                                      {==}
+                                                    case False{}:
+                                                      {==}
+                                        case False{}:
+                                          match held:
+                                            case True{}:
+                                              match unanchored:
+                                                case True{}:
+                                                  {==}
+                                                case False{}:
+                                                  {==}
+                                            case False{}:
+                                              match unanchored:
+                                                case True{}:
+                                                  match room:
+                                                    case True{}:
+                                                      {==}
+                                                    case False{}:
+                                                      {==}
+                                                case False{}:
+                                                  match room:
+                                                    case True{}:
+                                                      {==}
+                                                    case False{}:
+                                                      {==}
+                case Orbit.Stopping{pid}:
+                  match observer:
+                    case True{}:
+                      match pointer:
+                        case Session.Pointer{route, lit, copied}:
+                          match route:
+                            case Selection.Idle{}:
+                              match was:
+                                case True{}:
+                                  match held:
+                                    case True{}:
+                                      match unanchored:
+                                        case True{}:
+                                          {==}
+                                        case False{}:
+                                          {==}
+                                    case False{}:
+                                      match unanchored:
+                                        case True{}:
+                                          match metadata_changed:
+                                            case True{}:
+                                              {==}
+                                            case False{}:
+                                              {==}
+                                        case False{}:
+                                          match metadata_changed:
+                                            case True{}:
+                                              {==}
+                                            case False{}:
+                                              {==}
+                                case False{}:
+                                  match held:
+                                    case True{}:
+                                      match unanchored:
+                                        case True{}:
+                                          {==}
+                                        case False{}:
+                                          {==}
+                                    case False{}:
+                                      match unanchored:
+                                        case True{}:
+                                          match metadata_changed:
+                                            case True{}:
+                                              {==}
+                                            case False{}:
+                                              {==}
+                                        case False{}:
+                                          match metadata_changed:
+                                            case True{}:
+                                              {==}
+                                            case False{}:
+                                              {==}
+                            case Selection.Host{}:
+                              match was:
+                                case True{}:
+                                  match held:
+                                    case True{}:
+                                      match unanchored:
+                                        case True{}:
+                                          {==}
+                                        case False{}:
+                                          {==}
+                                    case False{}:
+                                      match unanchored:
+                                        case True{}:
+                                          match metadata_changed:
+                                            case True{}:
+                                              {==}
+                                            case False{}:
+                                              {==}
+                                        case False{}:
+                                          match metadata_changed:
+                                            case True{}:
+                                              {==}
+                                            case False{}:
+                                              {==}
+                                case False{}:
+                                  match held:
+                                    case True{}:
+                                      match unanchored:
+                                        case True{}:
+                                          {==}
+                                        case False{}:
+                                          {==}
+                                    case False{}:
+                                      match unanchored:
+                                        case True{}:
+                                          match metadata_changed:
+                                            case True{}:
+                                              {==}
+                                            case False{}:
+                                              {==}
+                                        case False{}:
+                                          match metadata_changed:
+                                            case True{}:
+                                              {==}
+                                            case False{}:
+                                              {==}
+                            case Selection.Terminal{}:
+                              match was:
+                                case True{}:
+                                  match held:
+                                    case True{}:
+                                      match unanchored:
+                                        case True{}:
+                                          {==}
+                                        case False{}:
+                                          {==}
+                                    case False{}:
+                                      match unanchored:
+                                        case True{}:
+                                          match metadata_changed:
+                                            case True{}:
+                                              {==}
+                                            case False{}:
+                                              {==}
+                                        case False{}:
+                                          match metadata_changed:
+                                            case True{}:
+                                              {==}
+                                            case False{}:
+                                              {==}
+                                case False{}:
+                                  match held:
+                                    case True{}:
+                                      match unanchored:
+                                        case True{}:
+                                          {==}
+                                        case False{}:
+                                          {==}
+                                    case False{}:
+                                      match unanchored:
+                                        case True{}:
+                                          match metadata_changed:
+                                            case True{}:
+                                              {==}
+                                            case False{}:
+                                              {==}
+                                        case False{}:
+                                          match metadata_changed:
+                                            case True{}:
+                                              {==}
+                                            case False{}:
+                                              {==}
+                    case False{}:
+                      match pointer:
+                        case Session.Pointer{route, lit, copied}:
+                          match route:
+                            case Selection.Idle{}:
+                              match was:
+                                case True{}:
+                                  match held:
+                                    case True{}:
+                                      match unanchored:
+                                        case True{}:
+                                          {==}
+                                        case False{}:
+                                          {==}
+                                    case False{}:
+                                      match unanchored:
+                                        case True{}:
+                                          {==}
+                                        case False{}:
+                                          {==}
+                                case False{}:
+                                  match held:
+                                    case True{}:
+                                      match unanchored:
+                                        case True{}:
+                                          {==}
+                                        case False{}:
+                                          {==}
+                                    case False{}:
+                                      match unanchored:
+                                        case True{}:
+                                          {==}
+                                        case False{}:
+                                          {==}
+                            case Selection.Host{}:
+                              match was:
+                                case True{}:
+                                  match held:
+                                    case True{}:
+                                      match unanchored:
+                                        case True{}:
+                                          {==}
+                                        case False{}:
+                                          {==}
+                                    case False{}:
+                                      match unanchored:
+                                        case True{}:
+                                          {==}
+                                        case False{}:
+                                          {==}
+                                case False{}:
+                                  match held:
+                                    case True{}:
+                                      match unanchored:
+                                        case True{}:
+                                          {==}
+                                        case False{}:
+                                          {==}
+                                    case False{}:
+                                      match unanchored:
+                                        case True{}:
+                                          {==}
+                                        case False{}:
+                                          {==}
+                            case Selection.Terminal{}:
+                              match was:
+                                case True{}:
+                                  match held:
+                                    case True{}:
+                                      match unanchored:
+                                        case True{}:
+                                          {==}
+                                        case False{}:
+                                          {==}
+                                    case False{}:
+                                      match unanchored:
+                                        case True{}:
+                                          {==}
+                                        case False{}:
+                                          {==}
+                                case False{}:
+                                  match held:
+                                    case True{}:
+                                      match unanchored:
+                                        case True{}:
+                                          {==}
+                                        case False{}:
+                                          {==}
+                                    case False{}:
+                                      match unanchored:
+                                        case True{}:
+                                          {==}
+                                        case False{}:
+                                          {==}
+                case Orbit.Stopped{pid}:
+                  {==}
+        case False{}:
+          match life:
+            case Orbit.Detached{pid}:
+              {==}
+            case Orbit.Attached{pid}:
+              match observer:
+                case True{}:
+                  match waiting:
+                    case Session.Clear{}:
+                      match pointer:
+                        case Session.Pointer{route, lit, copied}:
+                          match route:
+                            case Selection.Idle{}:
+                              match was:
+                                case True{}:
+                                  match held:
+                                    case True{}:
+                                      match unanchored:
+                                        case True{}:
+                                          {==}
+                                        case False{}:
+                                          {==}
+                                    case False{}:
+                                      match unanchored:
+                                        case True{}:
+                                          match metadata_changed:
+                                            case True{}:
+                                              {==}
+                                            case False{}:
+                                              {==}
+                                        case False{}:
+                                          match metadata_changed:
+                                            case True{}:
+                                              {==}
+                                            case False{}:
+                                              {==}
+                                case False{}:
+                                  match held:
+                                    case True{}:
+                                      match unanchored:
+                                        case True{}:
+                                          {==}
+                                        case False{}:
+                                          {==}
+                                    case False{}:
+                                      match unanchored:
+                                        case True{}:
+                                          match metadata_changed:
+                                            case True{}:
+                                              {==}
+                                            case False{}:
+                                              {==}
+                                        case False{}:
+                                          match metadata_changed:
+                                            case True{}:
+                                              {==}
+                                            case False{}:
+                                              {==}
+                            case Selection.Host{}:
+                              match was:
+                                case True{}:
+                                  match held:
+                                    case True{}:
+                                      match unanchored:
+                                        case True{}:
+                                          {==}
+                                        case False{}:
+                                          {==}
+                                    case False{}:
+                                      match unanchored:
+                                        case True{}:
+                                          match metadata_changed:
+                                            case True{}:
+                                              {==}
+                                            case False{}:
+                                              {==}
+                                        case False{}:
+                                          match metadata_changed:
+                                            case True{}:
+                                              {==}
+                                            case False{}:
+                                              {==}
+                                case False{}:
+                                  match held:
+                                    case True{}:
+                                      match unanchored:
+                                        case True{}:
+                                          {==}
+                                        case False{}:
+                                          {==}
+                                    case False{}:
+                                      match unanchored:
+                                        case True{}:
+                                          match metadata_changed:
+                                            case True{}:
+                                              {==}
+                                            case False{}:
+                                              {==}
+                                        case False{}:
+                                          match metadata_changed:
+                                            case True{}:
+                                              {==}
+                                            case False{}:
+                                              {==}
+                            case Selection.Terminal{}:
+                              match was:
+                                case True{}:
+                                  match held:
+                                    case True{}:
+                                      match unanchored:
+                                        case True{}:
+                                          {==}
+                                        case False{}:
+                                          {==}
+                                    case False{}:
+                                      match unanchored:
+                                        case True{}:
+                                          match metadata_changed:
+                                            case True{}:
+                                              {==}
+                                            case False{}:
+                                              {==}
+                                        case False{}:
+                                          match metadata_changed:
+                                            case True{}:
+                                              {==}
+                                            case False{}:
+                                              {==}
+                                case False{}:
+                                  match held:
+                                    case True{}:
+                                      match unanchored:
+                                        case True{}:
+                                          {==}
+                                        case False{}:
+                                          {==}
+                                    case False{}:
+                                      match unanchored:
+                                        case True{}:
+                                          match metadata_changed:
+                                            case True{}:
+                                              {==}
+                                            case False{}:
+                                              {==}
+                                        case False{}:
+                                          match metadata_changed:
+                                            case True{}:
+                                              {==}
+                                            case False{}:
+                                              {==}
+                    case Session.Waiting{request}:
+                      match request:
+                        case Session.PreviewRequest{direction}:
+                          match pointer:
+                            case Session.Pointer{route, lit, copied}:
+                              match route:
+                                case Selection.Idle{}:
+                                  match was:
+                                    case True{}:
+                                      match held:
+                                        case True{}:
+                                          match unanchored:
+                                            case True{}:
+                                              {==}
+                                            case False{}:
+                                              {==}
+                                        case False{}:
+                                          match unanchored:
+                                            case True{}:
+                                              match routed:
+                                                case True{}:
+                                                  match metadata_changed:
+                                                    case True{}:
+                                                      {==}
+                                                    case False{}:
+                                                      {==}
+                                                case False{}:
+                                                  match metadata_changed:
+                                                    case True{}:
+                                                      {==}
+                                                    case False{}:
+                                                      {==}
+                                            case False{}:
+                                              match routed:
+                                                case True{}:
+                                                  match metadata_changed:
+                                                    case True{}:
+                                                      {==}
+                                                    case False{}:
+                                                      {==}
+                                                case False{}:
+                                                  match metadata_changed:
+                                                    case True{}:
+                                                      {==}
+                                                    case False{}:
+                                                      {==}
+                                    case False{}:
+                                      match held:
+                                        case True{}:
+                                          match unanchored:
+                                            case True{}:
+                                              {==}
+                                            case False{}:
+                                              {==}
+                                        case False{}:
+                                          match unanchored:
+                                            case True{}:
+                                              match routed:
+                                                case True{}:
+                                                  match metadata_changed:
+                                                    case True{}:
+                                                      {==}
+                                                    case False{}:
+                                                      {==}
+                                                case False{}:
+                                                  match metadata_changed:
+                                                    case True{}:
+                                                      {==}
+                                                    case False{}:
+                                                      {==}
+                                            case False{}:
+                                              match routed:
+                                                case True{}:
+                                                  match metadata_changed:
+                                                    case True{}:
+                                                      {==}
+                                                    case False{}:
+                                                      {==}
+                                                case False{}:
+                                                  match metadata_changed:
+                                                    case True{}:
+                                                      {==}
+                                                    case False{}:
+                                                      {==}
+                                case Selection.Host{}:
+                                  match was:
+                                    case True{}:
+                                      match held:
+                                        case True{}:
+                                          match unanchored:
+                                            case True{}:
+                                              {==}
+                                            case False{}:
+                                              {==}
+                                        case False{}:
+                                          match unanchored:
+                                            case True{}:
+                                              match routed:
+                                                case True{}:
+                                                  match metadata_changed:
+                                                    case True{}:
+                                                      {==}
+                                                    case False{}:
+                                                      {==}
+                                                case False{}:
+                                                  match metadata_changed:
+                                                    case True{}:
+                                                      {==}
+                                                    case False{}:
+                                                      {==}
+                                            case False{}:
+                                              match routed:
+                                                case True{}:
+                                                  match metadata_changed:
+                                                    case True{}:
+                                                      {==}
+                                                    case False{}:
+                                                      {==}
+                                                case False{}:
+                                                  match metadata_changed:
+                                                    case True{}:
+                                                      {==}
+                                                    case False{}:
+                                                      {==}
+                                    case False{}:
+                                      match held:
+                                        case True{}:
+                                          match unanchored:
+                                            case True{}:
+                                              {==}
+                                            case False{}:
+                                              {==}
+                                        case False{}:
+                                          match unanchored:
+                                            case True{}:
+                                              match routed:
+                                                case True{}:
+                                                  match metadata_changed:
+                                                    case True{}:
+                                                      {==}
+                                                    case False{}:
+                                                      {==}
+                                                case False{}:
+                                                  match metadata_changed:
+                                                    case True{}:
+                                                      {==}
+                                                    case False{}:
+                                                      {==}
+                                            case False{}:
+                                              match routed:
+                                                case True{}:
+                                                  match metadata_changed:
+                                                    case True{}:
+                                                      {==}
+                                                    case False{}:
+                                                      {==}
+                                                case False{}:
+                                                  match metadata_changed:
+                                                    case True{}:
+                                                      {==}
+                                                    case False{}:
+                                                      {==}
+                                case Selection.Terminal{}:
+                                  match was:
+                                    case True{}:
+                                      match held:
+                                        case True{}:
+                                          match unanchored:
+                                            case True{}:
+                                              {==}
+                                            case False{}:
+                                              {==}
+                                        case False{}:
+                                          match unanchored:
+                                            case True{}:
+                                              match routed:
+                                                case True{}:
+                                                  match metadata_changed:
+                                                    case True{}:
+                                                      {==}
+                                                    case False{}:
+                                                      {==}
+                                                case False{}:
+                                                  match metadata_changed:
+                                                    case True{}:
+                                                      {==}
+                                                    case False{}:
+                                                      {==}
+                                            case False{}:
+                                              match routed:
+                                                case True{}:
+                                                  match metadata_changed:
+                                                    case True{}:
+                                                      {==}
+                                                    case False{}:
+                                                      {==}
+                                                case False{}:
+                                                  match metadata_changed:
+                                                    case True{}:
+                                                      {==}
+                                                    case False{}:
+                                                      {==}
+                                    case False{}:
+                                      match held:
+                                        case True{}:
+                                          match unanchored:
+                                            case True{}:
+                                              {==}
+                                            case False{}:
+                                              {==}
+                                        case False{}:
+                                          match unanchored:
+                                            case True{}:
+                                              match routed:
+                                                case True{}:
+                                                  match metadata_changed:
+                                                    case True{}:
+                                                      {==}
+                                                    case False{}:
+                                                      {==}
+                                                case False{}:
+                                                  match metadata_changed:
+                                                    case True{}:
+                                                      {==}
+                                                    case False{}:
+                                                      {==}
+                                            case False{}:
+                                              match routed:
+                                                case True{}:
+                                                  match metadata_changed:
+                                                    case True{}:
+                                                      {==}
+                                                    case False{}:
+                                                      {==}
+                                                case False{}:
+                                                  match metadata_changed:
+                                                    case True{}:
+                                                      {==}
+                                                    case False{}:
+                                                      {==}
+                        case Session.ScrollRequest{rows}:
+                          match pointer:
+                            case Session.Pointer{route, lit, copied}:
+                              match route:
+                                case Selection.Idle{}:
+                                  match was:
+                                    case True{}:
+                                      match held:
+                                        case True{}:
+                                          match unanchored:
+                                            case True{}:
+                                              {==}
+                                            case False{}:
+                                              {==}
+                                        case False{}:
+                                          match unanchored:
+                                            case True{}:
+                                              match routed:
+                                                case True{}:
+                                                  match metadata_changed:
+                                                    case True{}:
+                                                      {==}
+                                                    case False{}:
+                                                      {==}
+                                                case False{}:
+                                                  match room:
+                                                    case True{}:
+                                                      match metadata_changed:
+                                                        case True{}:
+                                                          {==}
+                                                        case False{}:
+                                                          {==}
+                                                    case False{}:
+                                                      match metadata_changed:
+                                                        case True{}:
+                                                          {==}
+                                                        case False{}:
+                                                          {==}
+                                            case False{}:
+                                              match routed:
+                                                case True{}:
+                                                  match metadata_changed:
+                                                    case True{}:
+                                                      {==}
+                                                    case False{}:
+                                                      {==}
+                                                case False{}:
+                                                  match room:
+                                                    case True{}:
+                                                      match metadata_changed:
+                                                        case True{}:
+                                                          {==}
+                                                        case False{}:
+                                                          {==}
+                                                    case False{}:
+                                                      match metadata_changed:
+                                                        case True{}:
+                                                          {==}
+                                                        case False{}:
+                                                          {==}
+                                    case False{}:
+                                      match held:
+                                        case True{}:
+                                          match unanchored:
+                                            case True{}:
+                                              {==}
+                                            case False{}:
+                                              {==}
+                                        case False{}:
+                                          match unanchored:
+                                            case True{}:
+                                              match routed:
+                                                case True{}:
+                                                  match metadata_changed:
+                                                    case True{}:
+                                                      {==}
+                                                    case False{}:
+                                                      {==}
+                                                case False{}:
+                                                  match room:
+                                                    case True{}:
+                                                      match metadata_changed:
+                                                        case True{}:
+                                                          {==}
+                                                        case False{}:
+                                                          {==}
+                                                    case False{}:
+                                                      match metadata_changed:
+                                                        case True{}:
+                                                          {==}
+                                                        case False{}:
+                                                          {==}
+                                            case False{}:
+                                              match routed:
+                                                case True{}:
+                                                  match metadata_changed:
+                                                    case True{}:
+                                                      {==}
+                                                    case False{}:
+                                                      {==}
+                                                case False{}:
+                                                  match room:
+                                                    case True{}:
+                                                      match metadata_changed:
+                                                        case True{}:
+                                                          {==}
+                                                        case False{}:
+                                                          {==}
+                                                    case False{}:
+                                                      match metadata_changed:
+                                                        case True{}:
+                                                          {==}
+                                                        case False{}:
+                                                          {==}
+                                case Selection.Host{}:
+                                  match was:
+                                    case True{}:
+                                      match held:
+                                        case True{}:
+                                          match unanchored:
+                                            case True{}:
+                                              {==}
+                                            case False{}:
+                                              {==}
+                                        case False{}:
+                                          match unanchored:
+                                            case True{}:
+                                              match routed:
+                                                case True{}:
+                                                  match metadata_changed:
+                                                    case True{}:
+                                                      {==}
+                                                    case False{}:
+                                                      {==}
+                                                case False{}:
+                                                  match room:
+                                                    case True{}:
+                                                      match metadata_changed:
+                                                        case True{}:
+                                                          {==}
+                                                        case False{}:
+                                                          {==}
+                                                    case False{}:
+                                                      match metadata_changed:
+                                                        case True{}:
+                                                          {==}
+                                                        case False{}:
+                                                          {==}
+                                            case False{}:
+                                              match routed:
+                                                case True{}:
+                                                  match metadata_changed:
+                                                    case True{}:
+                                                      {==}
+                                                    case False{}:
+                                                      {==}
+                                                case False{}:
+                                                  match room:
+                                                    case True{}:
+                                                      match metadata_changed:
+                                                        case True{}:
+                                                          {==}
+                                                        case False{}:
+                                                          {==}
+                                                    case False{}:
+                                                      match metadata_changed:
+                                                        case True{}:
+                                                          {==}
+                                                        case False{}:
+                                                          {==}
+                                    case False{}:
+                                      match held:
+                                        case True{}:
+                                          match unanchored:
+                                            case True{}:
+                                              {==}
+                                            case False{}:
+                                              {==}
+                                        case False{}:
+                                          match unanchored:
+                                            case True{}:
+                                              match routed:
+                                                case True{}:
+                                                  match metadata_changed:
+                                                    case True{}:
+                                                      {==}
+                                                    case False{}:
+                                                      {==}
+                                                case False{}:
+                                                  match room:
+                                                    case True{}:
+                                                      match metadata_changed:
+                                                        case True{}:
+                                                          {==}
+                                                        case False{}:
+                                                          {==}
+                                                    case False{}:
+                                                      match metadata_changed:
+                                                        case True{}:
+                                                          {==}
+                                                        case False{}:
+                                                          {==}
+                                            case False{}:
+                                              match routed:
+                                                case True{}:
+                                                  match metadata_changed:
+                                                    case True{}:
+                                                      {==}
+                                                    case False{}:
+                                                      {==}
+                                                case False{}:
+                                                  match room:
+                                                    case True{}:
+                                                      match metadata_changed:
+                                                        case True{}:
+                                                          {==}
+                                                        case False{}:
+                                                          {==}
+                                                    case False{}:
+                                                      match metadata_changed:
+                                                        case True{}:
+                                                          {==}
+                                                        case False{}:
+                                                          {==}
+                                case Selection.Terminal{}:
+                                  match was:
+                                    case True{}:
+                                      match held:
+                                        case True{}:
+                                          match unanchored:
+                                            case True{}:
+                                              {==}
+                                            case False{}:
+                                              {==}
+                                        case False{}:
+                                          match unanchored:
+                                            case True{}:
+                                              match routed:
+                                                case True{}:
+                                                  match metadata_changed:
+                                                    case True{}:
+                                                      {==}
+                                                    case False{}:
+                                                      {==}
+                                                case False{}:
+                                                  match room:
+                                                    case True{}:
+                                                      match metadata_changed:
+                                                        case True{}:
+                                                          {==}
+                                                        case False{}:
+                                                          {==}
+                                                    case False{}:
+                                                      match metadata_changed:
+                                                        case True{}:
+                                                          {==}
+                                                        case False{}:
+                                                          {==}
+                                            case False{}:
+                                              match routed:
+                                                case True{}:
+                                                  match metadata_changed:
+                                                    case True{}:
+                                                      {==}
+                                                    case False{}:
+                                                      {==}
+                                                case False{}:
+                                                  match room:
+                                                    case True{}:
+                                                      match metadata_changed:
+                                                        case True{}:
+                                                          {==}
+                                                        case False{}:
+                                                          {==}
+                                                    case False{}:
+                                                      match metadata_changed:
+                                                        case True{}:
+                                                          {==}
+                                                        case False{}:
+                                                          {==}
+                                    case False{}:
+                                      match held:
+                                        case True{}:
+                                          match unanchored:
+                                            case True{}:
+                                              {==}
+                                            case False{}:
+                                              {==}
+                                        case False{}:
+                                          match unanchored:
+                                            case True{}:
+                                              match routed:
+                                                case True{}:
+                                                  match metadata_changed:
+                                                    case True{}:
+                                                      {==}
+                                                    case False{}:
+                                                      {==}
+                                                case False{}:
+                                                  match room:
+                                                    case True{}:
+                                                      match metadata_changed:
+                                                        case True{}:
+                                                          {==}
+                                                        case False{}:
+                                                          {==}
+                                                    case False{}:
+                                                      match metadata_changed:
+                                                        case True{}:
+                                                          {==}
+                                                        case False{}:
+                                                          {==}
+                                            case False{}:
+                                              match routed:
+                                                case True{}:
+                                                  match metadata_changed:
+                                                    case True{}:
+                                                      {==}
+                                                    case False{}:
+                                                      {==}
+                                                case False{}:
+                                                  match room:
+                                                    case True{}:
+                                                      match metadata_changed:
+                                                        case True{}:
+                                                          {==}
+                                                        case False{}:
+                                                          {==}
+                                                    case False{}:
+                                                      match metadata_changed:
+                                                        case True{}:
+                                                          {==}
+                                                        case False{}:
+                                                          {==}
+                        case Session.LiveRequest{}:
+                          match pointer:
+                            case Session.Pointer{route, lit, copied}:
+                              match route:
+                                case Selection.Idle{}:
+                                  match was:
+                                    case True{}:
+                                      match held:
+                                        case True{}:
+                                          match unanchored:
+                                            case True{}:
+                                              {==}
+                                            case False{}:
+                                              {==}
+                                        case False{}:
+                                          match unanchored:
+                                            case True{}:
+                                              match routed:
+                                                case True{}:
+                                                  match metadata_changed:
+                                                    case True{}:
+                                                      {==}
+                                                    case False{}:
+                                                      {==}
+                                                case False{}:
+                                                  match frame_room:
+                                                    case True{}:
+                                                      match alternate:
+                                                        case True{}:
+                                                          match metadata_changed:
+                                                            case True{}:
+                                                              {==}
+                                                            case False{}:
+                                                              {==}
+                                                        case False{}:
+                                                          match metadata_changed:
+                                                            case True{}:
+                                                              {==}
+                                                            case False{}:
+                                                              {==}
+                                                    case False{}:
+                                                      match alternate:
+                                                        case True{}:
+                                                          match metadata_changed:
+                                                            case True{}:
+                                                              {==}
+                                                            case False{}:
+                                                              {==}
+                                                        case False{}:
+                                                          match metadata_changed:
+                                                            case True{}:
+                                                              {==}
+                                                            case False{}:
+                                                              {==}
+                                            case False{}:
+                                              match routed:
+                                                case True{}:
+                                                  match metadata_changed:
+                                                    case True{}:
+                                                      {==}
+                                                    case False{}:
+                                                      {==}
+                                                case False{}:
+                                                  match frame_room:
+                                                    case True{}:
+                                                      match alternate:
+                                                        case True{}:
+                                                          match metadata_changed:
+                                                            case True{}:
+                                                              {==}
+                                                            case False{}:
+                                                              {==}
+                                                        case False{}:
+                                                          match metadata_changed:
+                                                            case True{}:
+                                                              {==}
+                                                            case False{}:
+                                                              {==}
+                                                    case False{}:
+                                                      match alternate:
+                                                        case True{}:
+                                                          match metadata_changed:
+                                                            case True{}:
+                                                              {==}
+                                                            case False{}:
+                                                              {==}
+                                                        case False{}:
+                                                          match metadata_changed:
+                                                            case True{}:
+                                                              {==}
+                                                            case False{}:
+                                                              {==}
+                                    case False{}:
+                                      match held:
+                                        case True{}:
+                                          match unanchored:
+                                            case True{}:
+                                              {==}
+                                            case False{}:
+                                              {==}
+                                        case False{}:
+                                          match unanchored:
+                                            case True{}:
+                                              match routed:
+                                                case True{}:
+                                                  match metadata_changed:
+                                                    case True{}:
+                                                      {==}
+                                                    case False{}:
+                                                      {==}
+                                                case False{}:
+                                                  match frame_room:
+                                                    case True{}:
+                                                      match alternate:
+                                                        case True{}:
+                                                          match metadata_changed:
+                                                            case True{}:
+                                                              {==}
+                                                            case False{}:
+                                                              {==}
+                                                        case False{}:
+                                                          match metadata_changed:
+                                                            case True{}:
+                                                              {==}
+                                                            case False{}:
+                                                              {==}
+                                                    case False{}:
+                                                      match alternate:
+                                                        case True{}:
+                                                          match metadata_changed:
+                                                            case True{}:
+                                                              {==}
+                                                            case False{}:
+                                                              {==}
+                                                        case False{}:
+                                                          match metadata_changed:
+                                                            case True{}:
+                                                              {==}
+                                                            case False{}:
+                                                              {==}
+                                            case False{}:
+                                              match routed:
+                                                case True{}:
+                                                  match metadata_changed:
+                                                    case True{}:
+                                                      {==}
+                                                    case False{}:
+                                                      {==}
+                                                case False{}:
+                                                  match frame_room:
+                                                    case True{}:
+                                                      match alternate:
+                                                        case True{}:
+                                                          match metadata_changed:
+                                                            case True{}:
+                                                              {==}
+                                                            case False{}:
+                                                              {==}
+                                                        case False{}:
+                                                          match metadata_changed:
+                                                            case True{}:
+                                                              {==}
+                                                            case False{}:
+                                                              {==}
+                                                    case False{}:
+                                                      match alternate:
+                                                        case True{}:
+                                                          match metadata_changed:
+                                                            case True{}:
+                                                              {==}
+                                                            case False{}:
+                                                              {==}
+                                                        case False{}:
+                                                          match metadata_changed:
+                                                            case True{}:
+                                                              {==}
+                                                            case False{}:
+                                                              {==}
+                                case Selection.Host{}:
+                                  match was:
+                                    case True{}:
+                                      match held:
+                                        case True{}:
+                                          match unanchored:
+                                            case True{}:
+                                              {==}
+                                            case False{}:
+                                              {==}
+                                        case False{}:
+                                          match unanchored:
+                                            case True{}:
+                                              match routed:
+                                                case True{}:
+                                                  match metadata_changed:
+                                                    case True{}:
+                                                      {==}
+                                                    case False{}:
+                                                      {==}
+                                                case False{}:
+                                                  match frame_room:
+                                                    case True{}:
+                                                      match alternate:
+                                                        case True{}:
+                                                          match metadata_changed:
+                                                            case True{}:
+                                                              {==}
+                                                            case False{}:
+                                                              {==}
+                                                        case False{}:
+                                                          match metadata_changed:
+                                                            case True{}:
+                                                              {==}
+                                                            case False{}:
+                                                              {==}
+                                                    case False{}:
+                                                      match alternate:
+                                                        case True{}:
+                                                          match metadata_changed:
+                                                            case True{}:
+                                                              {==}
+                                                            case False{}:
+                                                              {==}
+                                                        case False{}:
+                                                          match metadata_changed:
+                                                            case True{}:
+                                                              {==}
+                                                            case False{}:
+                                                              {==}
+                                            case False{}:
+                                              match routed:
+                                                case True{}:
+                                                  match metadata_changed:
+                                                    case True{}:
+                                                      {==}
+                                                    case False{}:
+                                                      {==}
+                                                case False{}:
+                                                  match frame_room:
+                                                    case True{}:
+                                                      match alternate:
+                                                        case True{}:
+                                                          match metadata_changed:
+                                                            case True{}:
+                                                              {==}
+                                                            case False{}:
+                                                              {==}
+                                                        case False{}:
+                                                          match metadata_changed:
+                                                            case True{}:
+                                                              {==}
+                                                            case False{}:
+                                                              {==}
+                                                    case False{}:
+                                                      match alternate:
+                                                        case True{}:
+                                                          match metadata_changed:
+                                                            case True{}:
+                                                              {==}
+                                                            case False{}:
+                                                              {==}
+                                                        case False{}:
+                                                          match metadata_changed:
+                                                            case True{}:
+                                                              {==}
+                                                            case False{}:
+                                                              {==}
+                                    case False{}:
+                                      match held:
+                                        case True{}:
+                                          match unanchored:
+                                            case True{}:
+                                              {==}
+                                            case False{}:
+                                              {==}
+                                        case False{}:
+                                          match unanchored:
+                                            case True{}:
+                                              match routed:
+                                                case True{}:
+                                                  match metadata_changed:
+                                                    case True{}:
+                                                      {==}
+                                                    case False{}:
+                                                      {==}
+                                                case False{}:
+                                                  match frame_room:
+                                                    case True{}:
+                                                      match alternate:
+                                                        case True{}:
+                                                          match metadata_changed:
+                                                            case True{}:
+                                                              {==}
+                                                            case False{}:
+                                                              {==}
+                                                        case False{}:
+                                                          match metadata_changed:
+                                                            case True{}:
+                                                              {==}
+                                                            case False{}:
+                                                              {==}
+                                                    case False{}:
+                                                      match alternate:
+                                                        case True{}:
+                                                          match metadata_changed:
+                                                            case True{}:
+                                                              {==}
+                                                            case False{}:
+                                                              {==}
+                                                        case False{}:
+                                                          match metadata_changed:
+                                                            case True{}:
+                                                              {==}
+                                                            case False{}:
+                                                              {==}
+                                            case False{}:
+                                              match routed:
+                                                case True{}:
+                                                  match metadata_changed:
+                                                    case True{}:
+                                                      {==}
+                                                    case False{}:
+                                                      {==}
+                                                case False{}:
+                                                  match frame_room:
+                                                    case True{}:
+                                                      match alternate:
+                                                        case True{}:
+                                                          match metadata_changed:
+                                                            case True{}:
+                                                              {==}
+                                                            case False{}:
+                                                              {==}
+                                                        case False{}:
+                                                          match metadata_changed:
+                                                            case True{}:
+                                                              {==}
+                                                            case False{}:
+                                                              {==}
+                                                    case False{}:
+                                                      match alternate:
+                                                        case True{}:
+                                                          match metadata_changed:
+                                                            case True{}:
+                                                              {==}
+                                                            case False{}:
+                                                              {==}
+                                                        case False{}:
+                                                          match metadata_changed:
+                                                            case True{}:
+                                                              {==}
+                                                            case False{}:
+                                                              {==}
+                                case Selection.Terminal{}:
+                                  match was:
+                                    case True{}:
+                                      match held:
+                                        case True{}:
+                                          match unanchored:
+                                            case True{}:
+                                              {==}
+                                            case False{}:
+                                              {==}
+                                        case False{}:
+                                          match unanchored:
+                                            case True{}:
+                                              match routed:
+                                                case True{}:
+                                                  match metadata_changed:
+                                                    case True{}:
+                                                      {==}
+                                                    case False{}:
+                                                      {==}
+                                                case False{}:
+                                                  match frame_room:
+                                                    case True{}:
+                                                      match alternate:
+                                                        case True{}:
+                                                          match metadata_changed:
+                                                            case True{}:
+                                                              {==}
+                                                            case False{}:
+                                                              {==}
+                                                        case False{}:
+                                                          match metadata_changed:
+                                                            case True{}:
+                                                              {==}
+                                                            case False{}:
+                                                              {==}
+                                                    case False{}:
+                                                      match alternate:
+                                                        case True{}:
+                                                          match metadata_changed:
+                                                            case True{}:
+                                                              {==}
+                                                            case False{}:
+                                                              {==}
+                                                        case False{}:
+                                                          match metadata_changed:
+                                                            case True{}:
+                                                              {==}
+                                                            case False{}:
+                                                              {==}
+                                            case False{}:
+                                              match routed:
+                                                case True{}:
+                                                  match metadata_changed:
+                                                    case True{}:
+                                                      {==}
+                                                    case False{}:
+                                                      {==}
+                                                case False{}:
+                                                  match frame_room:
+                                                    case True{}:
+                                                      match alternate:
+                                                        case True{}:
+                                                          match metadata_changed:
+                                                            case True{}:
+                                                              {==}
+                                                            case False{}:
+                                                              {==}
+                                                        case False{}:
+                                                          match metadata_changed:
+                                                            case True{}:
+                                                              {==}
+                                                            case False{}:
+                                                              {==}
+                                                    case False{}:
+                                                      match alternate:
+                                                        case True{}:
+                                                          match metadata_changed:
+                                                            case True{}:
+                                                              {==}
+                                                            case False{}:
+                                                              {==}
+                                                        case False{}:
+                                                          match metadata_changed:
+                                                            case True{}:
+                                                              {==}
+                                                            case False{}:
+                                                              {==}
+                                    case False{}:
+                                      match held:
+                                        case True{}:
+                                          match unanchored:
+                                            case True{}:
+                                              {==}
+                                            case False{}:
+                                              {==}
+                                        case False{}:
+                                          match unanchored:
+                                            case True{}:
+                                              match routed:
+                                                case True{}:
+                                                  match metadata_changed:
+                                                    case True{}:
+                                                      {==}
+                                                    case False{}:
+                                                      {==}
+                                                case False{}:
+                                                  match frame_room:
+                                                    case True{}:
+                                                      match alternate:
+                                                        case True{}:
+                                                          match metadata_changed:
+                                                            case True{}:
+                                                              {==}
+                                                            case False{}:
+                                                              {==}
+                                                        case False{}:
+                                                          match metadata_changed:
+                                                            case True{}:
+                                                              {==}
+                                                            case False{}:
+                                                              {==}
+                                                    case False{}:
+                                                      match alternate:
+                                                        case True{}:
+                                                          match metadata_changed:
+                                                            case True{}:
+                                                              {==}
+                                                            case False{}:
+                                                              {==}
+                                                        case False{}:
+                                                          match metadata_changed:
+                                                            case True{}:
+                                                              {==}
+                                                            case False{}:
+                                                              {==}
+                                            case False{}:
+                                              match routed:
+                                                case True{}:
+                                                  match metadata_changed:
+                                                    case True{}:
+                                                      {==}
+                                                    case False{}:
+                                                      {==}
+                                                case False{}:
+                                                  match frame_room:
+                                                    case True{}:
+                                                      match alternate:
+                                                        case True{}:
+                                                          match metadata_changed:
+                                                            case True{}:
+                                                              {==}
+                                                            case False{}:
+                                                              {==}
+                                                        case False{}:
+                                                          match metadata_changed:
+                                                            case True{}:
+                                                              {==}
+                                                            case False{}:
+                                                              {==}
+                                                    case False{}:
+                                                      match alternate:
+                                                        case True{}:
+                                                          match metadata_changed:
+                                                            case True{}:
+                                                              {==}
+                                                            case False{}:
+                                                              {==}
+                                                        case False{}:
+                                                          match metadata_changed:
+                                                            case True{}:
+                                                              {==}
+                                                            case False{}:
+                                                              {==}
+                        case Session.TickRequest{tx, ty}:
+                          match pointer:
+                            case Session.Pointer{route, lit, copied}:
+                              match route:
+                                case Selection.Idle{}:
+                                  match was:
+                                    case True{}:
+                                      match held:
+                                        case True{}:
+                                          match unanchored:
+                                            case True{}:
+                                              {==}
+                                            case False{}:
+                                              {==}
+                                        case False{}:
+                                          match unanchored:
+                                            case True{}:
+                                              match room:
+                                                case True{}:
+                                                  match metadata_changed:
+                                                    case True{}:
+                                                      {==}
+                                                    case False{}:
+                                                      {==}
+                                                case False{}:
+                                                  match metadata_changed:
+                                                    case True{}:
+                                                      {==}
+                                                    case False{}:
+                                                      {==}
+                                            case False{}:
+                                              match room:
+                                                case True{}:
+                                                  match metadata_changed:
+                                                    case True{}:
+                                                      {==}
+                                                    case False{}:
+                                                      {==}
+                                                case False{}:
+                                                  match metadata_changed:
+                                                    case True{}:
+                                                      {==}
+                                                    case False{}:
+                                                      {==}
+                                    case False{}:
+                                      match held:
+                                        case True{}:
+                                          match unanchored:
+                                            case True{}:
+                                              {==}
+                                            case False{}:
+                                              {==}
+                                        case False{}:
+                                          match unanchored:
+                                            case True{}:
+                                              match room:
+                                                case True{}:
+                                                  match metadata_changed:
+                                                    case True{}:
+                                                      {==}
+                                                    case False{}:
+                                                      {==}
+                                                case False{}:
+                                                  match metadata_changed:
+                                                    case True{}:
+                                                      {==}
+                                                    case False{}:
+                                                      {==}
+                                            case False{}:
+                                              match room:
+                                                case True{}:
+                                                  match metadata_changed:
+                                                    case True{}:
+                                                      {==}
+                                                    case False{}:
+                                                      {==}
+                                                case False{}:
+                                                  match metadata_changed:
+                                                    case True{}:
+                                                      {==}
+                                                    case False{}:
+                                                      {==}
+                                case Selection.Host{}:
+                                  match was:
+                                    case True{}:
+                                      match held:
+                                        case True{}:
+                                          match unanchored:
+                                            case True{}:
+                                              {==}
+                                            case False{}:
+                                              {==}
+                                        case False{}:
+                                          match unanchored:
+                                            case True{}:
+                                              match room:
+                                                case True{}:
+                                                  match metadata_changed:
+                                                    case True{}:
+                                                      {==}
+                                                    case False{}:
+                                                      {==}
+                                                case False{}:
+                                                  match metadata_changed:
+                                                    case True{}:
+                                                      {==}
+                                                    case False{}:
+                                                      {==}
+                                            case False{}:
+                                              match room:
+                                                case True{}:
+                                                  match metadata_changed:
+                                                    case True{}:
+                                                      {==}
+                                                    case False{}:
+                                                      {==}
+                                                case False{}:
+                                                  match metadata_changed:
+                                                    case True{}:
+                                                      {==}
+                                                    case False{}:
+                                                      {==}
+                                    case False{}:
+                                      match held:
+                                        case True{}:
+                                          match unanchored:
+                                            case True{}:
+                                              {==}
+                                            case False{}:
+                                              {==}
+                                        case False{}:
+                                          match unanchored:
+                                            case True{}:
+                                              match room:
+                                                case True{}:
+                                                  match metadata_changed:
+                                                    case True{}:
+                                                      {==}
+                                                    case False{}:
+                                                      {==}
+                                                case False{}:
+                                                  match metadata_changed:
+                                                    case True{}:
+                                                      {==}
+                                                    case False{}:
+                                                      {==}
+                                            case False{}:
+                                              match room:
+                                                case True{}:
+                                                  match metadata_changed:
+                                                    case True{}:
+                                                      {==}
+                                                    case False{}:
+                                                      {==}
+                                                case False{}:
+                                                  match metadata_changed:
+                                                    case True{}:
+                                                      {==}
+                                                    case False{}:
+                                                      {==}
+                                case Selection.Terminal{}:
+                                  match was:
+                                    case True{}:
+                                      match held:
+                                        case True{}:
+                                          match unanchored:
+                                            case True{}:
+                                              {==}
+                                            case False{}:
+                                              {==}
+                                        case False{}:
+                                          match unanchored:
+                                            case True{}:
+                                              match room:
+                                                case True{}:
+                                                  match metadata_changed:
+                                                    case True{}:
+                                                      {==}
+                                                    case False{}:
+                                                      {==}
+                                                case False{}:
+                                                  match metadata_changed:
+                                                    case True{}:
+                                                      {==}
+                                                    case False{}:
+                                                      {==}
+                                            case False{}:
+                                              match room:
+                                                case True{}:
+                                                  match metadata_changed:
+                                                    case True{}:
+                                                      {==}
+                                                    case False{}:
+                                                      {==}
+                                                case False{}:
+                                                  match metadata_changed:
+                                                    case True{}:
+                                                      {==}
+                                                    case False{}:
+                                                      {==}
+                                    case False{}:
+                                      match held:
+                                        case True{}:
+                                          match unanchored:
+                                            case True{}:
+                                              {==}
+                                            case False{}:
+                                              {==}
+                                        case False{}:
+                                          match unanchored:
+                                            case True{}:
+                                              match room:
+                                                case True{}:
+                                                  match metadata_changed:
+                                                    case True{}:
+                                                      {==}
+                                                    case False{}:
+                                                      {==}
+                                                case False{}:
+                                                  match metadata_changed:
+                                                    case True{}:
+                                                      {==}
+                                                    case False{}:
+                                                      {==}
+                                            case False{}:
+                                              match room:
+                                                case True{}:
+                                                  match metadata_changed:
+                                                    case True{}:
+                                                      {==}
+                                                    case False{}:
+                                                      {==}
+                                                case False{}:
+                                                  match metadata_changed:
+                                                    case True{}:
+                                                      {==}
+                                                    case False{}:
+                                                      {==}
+                case False{}:
+                  match waiting:
+                    case Session.Clear{}:
+                      match pointer:
+                        case Session.Pointer{route, lit, copied}:
+                          match route:
+                            case Selection.Idle{}:
+                              match was:
+                                case True{}:
+                                  match held:
+                                    case True{}:
+                                      match unanchored:
+                                        case True{}:
+                                          {==}
+                                        case False{}:
+                                          {==}
+                                    case False{}:
+                                      match unanchored:
+                                        case True{}:
+                                          {==}
+                                        case False{}:
+                                          {==}
+                                case False{}:
+                                  match held:
+                                    case True{}:
+                                      match unanchored:
+                                        case True{}:
+                                          {==}
+                                        case False{}:
+                                          {==}
+                                    case False{}:
+                                      match unanchored:
+                                        case True{}:
+                                          {==}
+                                        case False{}:
+                                          {==}
+                            case Selection.Host{}:
+                              match was:
+                                case True{}:
+                                  match held:
+                                    case True{}:
+                                      match unanchored:
+                                        case True{}:
+                                          {==}
+                                        case False{}:
+                                          {==}
+                                    case False{}:
+                                      match unanchored:
+                                        case True{}:
+                                          {==}
+                                        case False{}:
+                                          {==}
+                                case False{}:
+                                  match held:
+                                    case True{}:
+                                      match unanchored:
+                                        case True{}:
+                                          {==}
+                                        case False{}:
+                                          {==}
+                                    case False{}:
+                                      match unanchored:
+                                        case True{}:
+                                          {==}
+                                        case False{}:
+                                          {==}
+                            case Selection.Terminal{}:
+                              match was:
+                                case True{}:
+                                  match held:
+                                    case True{}:
+                                      match unanchored:
+                                        case True{}:
+                                          {==}
+                                        case False{}:
+                                          {==}
+                                    case False{}:
+                                      match unanchored:
+                                        case True{}:
+                                          {==}
+                                        case False{}:
+                                          {==}
+                                case False{}:
+                                  match held:
+                                    case True{}:
+                                      match unanchored:
+                                        case True{}:
+                                          {==}
+                                        case False{}:
+                                          {==}
+                                    case False{}:
+                                      match unanchored:
+                                        case True{}:
+                                          {==}
+                                        case False{}:
+                                          {==}
+                    case Session.Waiting{request}:
+                      match request:
+                        case Session.PreviewRequest{direction}:
+                          match pointer:
+                            case Session.Pointer{route, lit, copied}:
+                              match route:
+                                case Selection.Idle{}:
+                                  match was:
+                                    case True{}:
+                                      match held:
+                                        case True{}:
+                                          match unanchored:
+                                            case True{}:
+                                              {==}
+                                            case False{}:
+                                              {==}
+                                        case False{}:
+                                          match unanchored:
+                                            case True{}:
+                                              match routed:
+                                                case True{}:
+                                                  {==}
+                                                case False{}:
+                                                  {==}
+                                            case False{}:
+                                              match routed:
+                                                case True{}:
+                                                  {==}
+                                                case False{}:
+                                                  {==}
+                                    case False{}:
+                                      match held:
+                                        case True{}:
+                                          match unanchored:
+                                            case True{}:
+                                              {==}
+                                            case False{}:
+                                              {==}
+                                        case False{}:
+                                          match unanchored:
+                                            case True{}:
+                                              match routed:
+                                                case True{}:
+                                                  {==}
+                                                case False{}:
+                                                  {==}
+                                            case False{}:
+                                              match routed:
+                                                case True{}:
+                                                  {==}
+                                                case False{}:
+                                                  {==}
+                                case Selection.Host{}:
+                                  match was:
+                                    case True{}:
+                                      match held:
+                                        case True{}:
+                                          match unanchored:
+                                            case True{}:
+                                              {==}
+                                            case False{}:
+                                              {==}
+                                        case False{}:
+                                          match unanchored:
+                                            case True{}:
+                                              match routed:
+                                                case True{}:
+                                                  {==}
+                                                case False{}:
+                                                  {==}
+                                            case False{}:
+                                              match routed:
+                                                case True{}:
+                                                  {==}
+                                                case False{}:
+                                                  {==}
+                                    case False{}:
+                                      match held:
+                                        case True{}:
+                                          match unanchored:
+                                            case True{}:
+                                              {==}
+                                            case False{}:
+                                              {==}
+                                        case False{}:
+                                          match unanchored:
+                                            case True{}:
+                                              match routed:
+                                                case True{}:
+                                                  {==}
+                                                case False{}:
+                                                  {==}
+                                            case False{}:
+                                              match routed:
+                                                case True{}:
+                                                  {==}
+                                                case False{}:
+                                                  {==}
+                                case Selection.Terminal{}:
+                                  match was:
+                                    case True{}:
+                                      match held:
+                                        case True{}:
+                                          match unanchored:
+                                            case True{}:
+                                              {==}
+                                            case False{}:
+                                              {==}
+                                        case False{}:
+                                          match unanchored:
+                                            case True{}:
+                                              match routed:
+                                                case True{}:
+                                                  {==}
+                                                case False{}:
+                                                  {==}
+                                            case False{}:
+                                              match routed:
+                                                case True{}:
+                                                  {==}
+                                                case False{}:
+                                                  {==}
+                                    case False{}:
+                                      match held:
+                                        case True{}:
+                                          match unanchored:
+                                            case True{}:
+                                              {==}
+                                            case False{}:
+                                              {==}
+                                        case False{}:
+                                          match unanchored:
+                                            case True{}:
+                                              match routed:
+                                                case True{}:
+                                                  {==}
+                                                case False{}:
+                                                  {==}
+                                            case False{}:
+                                              match routed:
+                                                case True{}:
+                                                  {==}
+                                                case False{}:
+                                                  {==}
+                        case Session.ScrollRequest{rows}:
+                          match pointer:
+                            case Session.Pointer{route, lit, copied}:
+                              match route:
+                                case Selection.Idle{}:
+                                  match was:
+                                    case True{}:
+                                      match held:
+                                        case True{}:
+                                          match unanchored:
+                                            case True{}:
+                                              {==}
+                                            case False{}:
+                                              {==}
+                                        case False{}:
+                                          match unanchored:
+                                            case True{}:
+                                              match routed:
+                                                case True{}:
+                                                  {==}
+                                                case False{}:
+                                                  match room:
+                                                    case True{}:
+                                                      {==}
+                                                    case False{}:
+                                                      {==}
+                                            case False{}:
+                                              match routed:
+                                                case True{}:
+                                                  {==}
+                                                case False{}:
+                                                  match room:
+                                                    case True{}:
+                                                      {==}
+                                                    case False{}:
+                                                      {==}
+                                    case False{}:
+                                      match held:
+                                        case True{}:
+                                          match unanchored:
+                                            case True{}:
+                                              {==}
+                                            case False{}:
+                                              {==}
+                                        case False{}:
+                                          match unanchored:
+                                            case True{}:
+                                              match routed:
+                                                case True{}:
+                                                  {==}
+                                                case False{}:
+                                                  match room:
+                                                    case True{}:
+                                                      {==}
+                                                    case False{}:
+                                                      {==}
+                                            case False{}:
+                                              match routed:
+                                                case True{}:
+                                                  {==}
+                                                case False{}:
+                                                  match room:
+                                                    case True{}:
+                                                      {==}
+                                                    case False{}:
+                                                      {==}
+                                case Selection.Host{}:
+                                  match was:
+                                    case True{}:
+                                      match held:
+                                        case True{}:
+                                          match unanchored:
+                                            case True{}:
+                                              {==}
+                                            case False{}:
+                                              {==}
+                                        case False{}:
+                                          match unanchored:
+                                            case True{}:
+                                              match routed:
+                                                case True{}:
+                                                  {==}
+                                                case False{}:
+                                                  match room:
+                                                    case True{}:
+                                                      {==}
+                                                    case False{}:
+                                                      {==}
+                                            case False{}:
+                                              match routed:
+                                                case True{}:
+                                                  {==}
+                                                case False{}:
+                                                  match room:
+                                                    case True{}:
+                                                      {==}
+                                                    case False{}:
+                                                      {==}
+                                    case False{}:
+                                      match held:
+                                        case True{}:
+                                          match unanchored:
+                                            case True{}:
+                                              {==}
+                                            case False{}:
+                                              {==}
+                                        case False{}:
+                                          match unanchored:
+                                            case True{}:
+                                              match routed:
+                                                case True{}:
+                                                  {==}
+                                                case False{}:
+                                                  match room:
+                                                    case True{}:
+                                                      {==}
+                                                    case False{}:
+                                                      {==}
+                                            case False{}:
+                                              match routed:
+                                                case True{}:
+                                                  {==}
+                                                case False{}:
+                                                  match room:
+                                                    case True{}:
+                                                      {==}
+                                                    case False{}:
+                                                      {==}
+                                case Selection.Terminal{}:
+                                  match was:
+                                    case True{}:
+                                      match held:
+                                        case True{}:
+                                          match unanchored:
+                                            case True{}:
+                                              {==}
+                                            case False{}:
+                                              {==}
+                                        case False{}:
+                                          match unanchored:
+                                            case True{}:
+                                              match routed:
+                                                case True{}:
+                                                  {==}
+                                                case False{}:
+                                                  match room:
+                                                    case True{}:
+                                                      {==}
+                                                    case False{}:
+                                                      {==}
+                                            case False{}:
+                                              match routed:
+                                                case True{}:
+                                                  {==}
+                                                case False{}:
+                                                  match room:
+                                                    case True{}:
+                                                      {==}
+                                                    case False{}:
+                                                      {==}
+                                    case False{}:
+                                      match held:
+                                        case True{}:
+                                          match unanchored:
+                                            case True{}:
+                                              {==}
+                                            case False{}:
+                                              {==}
+                                        case False{}:
+                                          match unanchored:
+                                            case True{}:
+                                              match routed:
+                                                case True{}:
+                                                  {==}
+                                                case False{}:
+                                                  match room:
+                                                    case True{}:
+                                                      {==}
+                                                    case False{}:
+                                                      {==}
+                                            case False{}:
+                                              match routed:
+                                                case True{}:
+                                                  {==}
+                                                case False{}:
+                                                  match room:
+                                                    case True{}:
+                                                      {==}
+                                                    case False{}:
+                                                      {==}
+                        case Session.LiveRequest{}:
+                          match pointer:
+                            case Session.Pointer{route, lit, copied}:
+                              match route:
+                                case Selection.Idle{}:
+                                  match was:
+                                    case True{}:
+                                      match held:
+                                        case True{}:
+                                          match unanchored:
+                                            case True{}:
+                                              {==}
+                                            case False{}:
+                                              {==}
+                                        case False{}:
+                                          match unanchored:
+                                            case True{}:
+                                              match routed:
+                                                case True{}:
+                                                  {==}
+                                                case False{}:
+                                                  match frame_room:
+                                                    case True{}:
+                                                      match alternate:
+                                                        case True{}:
+                                                          {==}
+                                                        case False{}:
+                                                          {==}
+                                                    case False{}:
+                                                      match alternate:
+                                                        case True{}:
+                                                          {==}
+                                                        case False{}:
+                                                          {==}
+                                            case False{}:
+                                              match routed:
+                                                case True{}:
+                                                  {==}
+                                                case False{}:
+                                                  match frame_room:
+                                                    case True{}:
+                                                      match alternate:
+                                                        case True{}:
+                                                          {==}
+                                                        case False{}:
+                                                          {==}
+                                                    case False{}:
+                                                      match alternate:
+                                                        case True{}:
+                                                          {==}
+                                                        case False{}:
+                                                          {==}
+                                    case False{}:
+                                      match held:
+                                        case True{}:
+                                          match unanchored:
+                                            case True{}:
+                                              {==}
+                                            case False{}:
+                                              {==}
+                                        case False{}:
+                                          match unanchored:
+                                            case True{}:
+                                              match routed:
+                                                case True{}:
+                                                  {==}
+                                                case False{}:
+                                                  match frame_room:
+                                                    case True{}:
+                                                      match alternate:
+                                                        case True{}:
+                                                          {==}
+                                                        case False{}:
+                                                          {==}
+                                                    case False{}:
+                                                      match alternate:
+                                                        case True{}:
+                                                          {==}
+                                                        case False{}:
+                                                          {==}
+                                            case False{}:
+                                              match routed:
+                                                case True{}:
+                                                  {==}
+                                                case False{}:
+                                                  match frame_room:
+                                                    case True{}:
+                                                      match alternate:
+                                                        case True{}:
+                                                          {==}
+                                                        case False{}:
+                                                          {==}
+                                                    case False{}:
+                                                      match alternate:
+                                                        case True{}:
+                                                          {==}
+                                                        case False{}:
+                                                          {==}
+                                case Selection.Host{}:
+                                  match was:
+                                    case True{}:
+                                      match held:
+                                        case True{}:
+                                          match unanchored:
+                                            case True{}:
+                                              {==}
+                                            case False{}:
+                                              {==}
+                                        case False{}:
+                                          match unanchored:
+                                            case True{}:
+                                              match routed:
+                                                case True{}:
+                                                  {==}
+                                                case False{}:
+                                                  match frame_room:
+                                                    case True{}:
+                                                      match alternate:
+                                                        case True{}:
+                                                          {==}
+                                                        case False{}:
+                                                          {==}
+                                                    case False{}:
+                                                      match alternate:
+                                                        case True{}:
+                                                          {==}
+                                                        case False{}:
+                                                          {==}
+                                            case False{}:
+                                              match routed:
+                                                case True{}:
+                                                  {==}
+                                                case False{}:
+                                                  match frame_room:
+                                                    case True{}:
+                                                      match alternate:
+                                                        case True{}:
+                                                          {==}
+                                                        case False{}:
+                                                          {==}
+                                                    case False{}:
+                                                      match alternate:
+                                                        case True{}:
+                                                          {==}
+                                                        case False{}:
+                                                          {==}
+                                    case False{}:
+                                      match held:
+                                        case True{}:
+                                          match unanchored:
+                                            case True{}:
+                                              {==}
+                                            case False{}:
+                                              {==}
+                                        case False{}:
+                                          match unanchored:
+                                            case True{}:
+                                              match routed:
+                                                case True{}:
+                                                  {==}
+                                                case False{}:
+                                                  match frame_room:
+                                                    case True{}:
+                                                      match alternate:
+                                                        case True{}:
+                                                          {==}
+                                                        case False{}:
+                                                          {==}
+                                                    case False{}:
+                                                      match alternate:
+                                                        case True{}:
+                                                          {==}
+                                                        case False{}:
+                                                          {==}
+                                            case False{}:
+                                              match routed:
+                                                case True{}:
+                                                  {==}
+                                                case False{}:
+                                                  match frame_room:
+                                                    case True{}:
+                                                      match alternate:
+                                                        case True{}:
+                                                          {==}
+                                                        case False{}:
+                                                          {==}
+                                                    case False{}:
+                                                      match alternate:
+                                                        case True{}:
+                                                          {==}
+                                                        case False{}:
+                                                          {==}
+                                case Selection.Terminal{}:
+                                  match was:
+                                    case True{}:
+                                      match held:
+                                        case True{}:
+                                          match unanchored:
+                                            case True{}:
+                                              {==}
+                                            case False{}:
+                                              {==}
+                                        case False{}:
+                                          match unanchored:
+                                            case True{}:
+                                              match routed:
+                                                case True{}:
+                                                  {==}
+                                                case False{}:
+                                                  match frame_room:
+                                                    case True{}:
+                                                      match alternate:
+                                                        case True{}:
+                                                          {==}
+                                                        case False{}:
+                                                          {==}
+                                                    case False{}:
+                                                      match alternate:
+                                                        case True{}:
+                                                          {==}
+                                                        case False{}:
+                                                          {==}
+                                            case False{}:
+                                              match routed:
+                                                case True{}:
+                                                  {==}
+                                                case False{}:
+                                                  match frame_room:
+                                                    case True{}:
+                                                      match alternate:
+                                                        case True{}:
+                                                          {==}
+                                                        case False{}:
+                                                          {==}
+                                                    case False{}:
+                                                      match alternate:
+                                                        case True{}:
+                                                          {==}
+                                                        case False{}:
+                                                          {==}
+                                    case False{}:
+                                      match held:
+                                        case True{}:
+                                          match unanchored:
+                                            case True{}:
+                                              {==}
+                                            case False{}:
+                                              {==}
+                                        case False{}:
+                                          match unanchored:
+                                            case True{}:
+                                              match routed:
+                                                case True{}:
+                                                  {==}
+                                                case False{}:
+                                                  match frame_room:
+                                                    case True{}:
+                                                      match alternate:
+                                                        case True{}:
+                                                          {==}
+                                                        case False{}:
+                                                          {==}
+                                                    case False{}:
+                                                      match alternate:
+                                                        case True{}:
+                                                          {==}
+                                                        case False{}:
+                                                          {==}
+                                            case False{}:
+                                              match routed:
+                                                case True{}:
+                                                  {==}
+                                                case False{}:
+                                                  match frame_room:
+                                                    case True{}:
+                                                      match alternate:
+                                                        case True{}:
+                                                          {==}
+                                                        case False{}:
+                                                          {==}
+                                                    case False{}:
+                                                      match alternate:
+                                                        case True{}:
+                                                          {==}
+                                                        case False{}:
+                                                          {==}
+                        case Session.TickRequest{tx, ty}:
+                          match pointer:
+                            case Session.Pointer{route, lit, copied}:
+                              match route:
+                                case Selection.Idle{}:
+                                  match was:
+                                    case True{}:
+                                      match held:
+                                        case True{}:
+                                          match unanchored:
+                                            case True{}:
+                                              {==}
+                                            case False{}:
+                                              {==}
+                                        case False{}:
+                                          match unanchored:
+                                            case True{}:
+                                              match room:
+                                                case True{}:
+                                                  {==}
+                                                case False{}:
+                                                  {==}
+                                            case False{}:
+                                              match room:
+                                                case True{}:
+                                                  {==}
+                                                case False{}:
+                                                  {==}
+                                    case False{}:
+                                      match held:
+                                        case True{}:
+                                          match unanchored:
+                                            case True{}:
+                                              {==}
+                                            case False{}:
+                                              {==}
+                                        case False{}:
+                                          match unanchored:
+                                            case True{}:
+                                              match room:
+                                                case True{}:
+                                                  {==}
+                                                case False{}:
+                                                  {==}
+                                            case False{}:
+                                              match room:
+                                                case True{}:
+                                                  {==}
+                                                case False{}:
+                                                  {==}
+                                case Selection.Host{}:
+                                  match was:
+                                    case True{}:
+                                      match held:
+                                        case True{}:
+                                          match unanchored:
+                                            case True{}:
+                                              {==}
+                                            case False{}:
+                                              {==}
+                                        case False{}:
+                                          match unanchored:
+                                            case True{}:
+                                              match room:
+                                                case True{}:
+                                                  {==}
+                                                case False{}:
+                                                  {==}
+                                            case False{}:
+                                              match room:
+                                                case True{}:
+                                                  {==}
+                                                case False{}:
+                                                  {==}
+                                    case False{}:
+                                      match held:
+                                        case True{}:
+                                          match unanchored:
+                                            case True{}:
+                                              {==}
+                                            case False{}:
+                                              {==}
+                                        case False{}:
+                                          match unanchored:
+                                            case True{}:
+                                              match room:
+                                                case True{}:
+                                                  {==}
+                                                case False{}:
+                                                  {==}
+                                            case False{}:
+                                              match room:
+                                                case True{}:
+                                                  {==}
+                                                case False{}:
+                                                  {==}
+                                case Selection.Terminal{}:
+                                  match was:
+                                    case True{}:
+                                      match held:
+                                        case True{}:
+                                          match unanchored:
+                                            case True{}:
+                                              {==}
+                                            case False{}:
+                                              {==}
+                                        case False{}:
+                                          match unanchored:
+                                            case True{}:
+                                              match room:
+                                                case True{}:
+                                                  {==}
+                                                case False{}:
+                                                  {==}
+                                            case False{}:
+                                              match room:
+                                                case True{}:
+                                                  {==}
+                                                case False{}:
+                                                  {==}
+                                    case False{}:
+                                      match held:
+                                        case True{}:
+                                          match unanchored:
+                                            case True{}:
+                                              {==}
+                                            case False{}:
+                                              {==}
+                                        case False{}:
+                                          match unanchored:
+                                            case True{}:
+                                              match room:
+                                                case True{}:
+                                                  {==}
+                                                case False{}:
+                                                  {==}
+                                            case False{}:
+                                              match room:
+                                                case True{}:
+                                                  {==}
+                                                case False{}:
+                                                  {==}
+            case Orbit.Stopping{pid}:
+              match observer:
+                case True{}:
+                  match pointer:
+                    case Session.Pointer{route, lit, copied}:
+                      match route:
+                        case Selection.Idle{}:
+                          match was:
+                            case True{}:
+                              match held:
+                                case True{}:
+                                  match unanchored:
+                                    case True{}:
+                                      {==}
+                                    case False{}:
+                                      {==}
+                                case False{}:
+                                  match unanchored:
+                                    case True{}:
+                                      match metadata_changed:
+                                        case True{}:
+                                          {==}
+                                        case False{}:
+                                          {==}
+                                    case False{}:
+                                      match metadata_changed:
+                                        case True{}:
+                                          {==}
+                                        case False{}:
+                                          {==}
+                            case False{}:
+                              match held:
+                                case True{}:
+                                  match unanchored:
+                                    case True{}:
+                                      {==}
+                                    case False{}:
+                                      {==}
+                                case False{}:
+                                  match unanchored:
+                                    case True{}:
+                                      match metadata_changed:
+                                        case True{}:
+                                          {==}
+                                        case False{}:
+                                          {==}
+                                    case False{}:
+                                      match metadata_changed:
+                                        case True{}:
+                                          {==}
+                                        case False{}:
+                                          {==}
+                        case Selection.Host{}:
+                          match was:
+                            case True{}:
+                              match held:
+                                case True{}:
+                                  match unanchored:
+                                    case True{}:
+                                      {==}
+                                    case False{}:
+                                      {==}
+                                case False{}:
+                                  match unanchored:
+                                    case True{}:
+                                      match metadata_changed:
+                                        case True{}:
+                                          {==}
+                                        case False{}:
+                                          {==}
+                                    case False{}:
+                                      match metadata_changed:
+                                        case True{}:
+                                          {==}
+                                        case False{}:
+                                          {==}
+                            case False{}:
+                              match held:
+                                case True{}:
+                                  match unanchored:
+                                    case True{}:
+                                      {==}
+                                    case False{}:
+                                      {==}
+                                case False{}:
+                                  match unanchored:
+                                    case True{}:
+                                      match metadata_changed:
+                                        case True{}:
+                                          {==}
+                                        case False{}:
+                                          {==}
+                                    case False{}:
+                                      match metadata_changed:
+                                        case True{}:
+                                          {==}
+                                        case False{}:
+                                          {==}
+                        case Selection.Terminal{}:
+                          match was:
+                            case True{}:
+                              match held:
+                                case True{}:
+                                  match unanchored:
+                                    case True{}:
+                                      {==}
+                                    case False{}:
+                                      {==}
+                                case False{}:
+                                  match unanchored:
+                                    case True{}:
+                                      match metadata_changed:
+                                        case True{}:
+                                          {==}
+                                        case False{}:
+                                          {==}
+                                    case False{}:
+                                      match metadata_changed:
+                                        case True{}:
+                                          {==}
+                                        case False{}:
+                                          {==}
+                            case False{}:
+                              match held:
+                                case True{}:
+                                  match unanchored:
+                                    case True{}:
+                                      {==}
+                                    case False{}:
+                                      {==}
+                                case False{}:
+                                  match unanchored:
+                                    case True{}:
+                                      match metadata_changed:
+                                        case True{}:
+                                          {==}
+                                        case False{}:
+                                          {==}
+                                    case False{}:
+                                      match metadata_changed:
+                                        case True{}:
+                                          {==}
+                                        case False{}:
+                                          {==}
+                case False{}:
+                  match pointer:
+                    case Session.Pointer{route, lit, copied}:
+                      match route:
+                        case Selection.Idle{}:
+                          match was:
+                            case True{}:
+                              match held:
+                                case True{}:
+                                  match unanchored:
+                                    case True{}:
+                                      {==}
+                                    case False{}:
+                                      {==}
+                                case False{}:
+                                  match unanchored:
+                                    case True{}:
+                                      {==}
+                                    case False{}:
+                                      {==}
+                            case False{}:
+                              match held:
+                                case True{}:
+                                  match unanchored:
+                                    case True{}:
+                                      {==}
+                                    case False{}:
+                                      {==}
+                                case False{}:
+                                  match unanchored:
+                                    case True{}:
+                                      {==}
+                                    case False{}:
+                                      {==}
+                        case Selection.Host{}:
+                          match was:
+                            case True{}:
+                              match held:
+                                case True{}:
+                                  match unanchored:
+                                    case True{}:
+                                      {==}
+                                    case False{}:
+                                      {==}
+                                case False{}:
+                                  match unanchored:
+                                    case True{}:
+                                      {==}
+                                    case False{}:
+                                      {==}
+                            case False{}:
+                              match held:
+                                case True{}:
+                                  match unanchored:
+                                    case True{}:
+                                      {==}
+                                    case False{}:
+                                      {==}
+                                case False{}:
+                                  match unanchored:
+                                    case True{}:
+                                      {==}
+                                    case False{}:
+                                      {==}
+                        case Selection.Terminal{}:
+                          match was:
+                            case True{}:
+                              match held:
+                                case True{}:
+                                  match unanchored:
+                                    case True{}:
+                                      {==}
+                                    case False{}:
+                                      {==}
+                                case False{}:
+                                  match unanchored:
+                                    case True{}:
+                                      {==}
+                                    case False{}:
+                                      {==}
+                            case False{}:
+                              match held:
+                                case True{}:
+                                  match unanchored:
+                                    case True{}:
+                                      {==}
+                                    case False{}:
+                                      {==}
+                                case False{}:
+                                  match unanchored:
+                                    case True{}:
+                                      {==}
+                                    case False{}:
+                                      {==}
+            case Orbit.Stopped{pid}:
+              {==}
+    case False{}:
+      match life:
+        case Orbit.Detached{pid}:
+          {==}
+        case Orbit.Attached{pid}:
+          match unanchored:
+            case True{}:
+              {==}
+            case False{}:
+              {==}
+        case Orbit.Stopping{pid}:
+          match unanchored:
+            case True{}:
+              {==}
+            case False{}:
+              {==}
+        case Orbit.Stopped{pid}:
+          {==}
+
 # Every fact: the per-fact lemma, with the future flag step computes.
 def step_fits(state: Session.State, flags: Boundary.Flags, fact: Boundary.Fact) ->
   {Laws.check(Laws.phase(state), fact, Laws.moves(Laws.decided(Session.step(fact, flags, state)))) == choose(Laws.check(Laws.phase(state), fact, Laws.moves(Laws.decided(Session.step(fact, flags, state)))), Laws.phase(Laws.after(Session.step(fact, flags, state)))) : Laws.Phase}:
@@ -52470,4 +60257,8 @@ def step_fits(state: Session.State, flags: Boundary.Flags, fact: Boundary.Fact) 
                     case Boundary.ProgramStatus{+foreground}:
                       fits_program_status(
                         foreground, life, observer, waiting, pointer, written, explicit, manage, tracker, revision, was, Session.future_of(Boundary.ProgramStatus{foreground}, revision), held, unanchored, clipboard_overflow, clipboard, routed, room, frame_room, alternate, above_live, tracking, shift, result_frame_room, outside, host_room, terminal_room, pty_full, metadata_changed, metadata_fresh
+                      )
+                    case Boundary.Resources{+delivered, +idle, +capped, +due}:
+                      fits_resources(
+                        delivered, idle, capped, due, life, observer, waiting, pointer, written, explicit, manage, tracker, revision, was, Session.future_of(Boundary.Resources{delivered, idle, capped, due}, revision), held, unanchored, clipboard_overflow, clipboard, routed, room, frame_room, alternate, above_live, tracking, shift, result_frame_room, outside, host_room, terminal_room, pty_full, metadata_changed, metadata_fresh
                       )

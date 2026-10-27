@@ -7,6 +7,7 @@ import ./management.bend as Management
 import ./revision.bend as Revision
 import ./boundary.bend as Boundary
 import ./status.bend as Status
+import ./resource.bend as Resource
 
 # The session policy of the C-free host (docs/HOST.md). The host reports one
 # fact per event with its flags, and step answers it with typed decisions
@@ -1054,6 +1055,31 @@ def program_status(session: Session) -> Next():
         Session{life, written, observer, explicit, waiting, pointer, manage}
       )
 
+# A resource's last chunk was written, which changes presented state: it
+# publishes as any change does (ORB-C16).
+def delivered_publish(delivered: Bool, +flags: Boundary.Flags, session: Session) -> Next():
+  match delivered:
+    case True{}:
+      republished(flags, session)
+    case False{}:
+      (session, Nil{})
+
+# The client's resource plane changed: the proved policy
+# (src/resource.bend) answers from what the host reports, and starts or
+# retires nothing once the stop begins.
+def resources(
+  delivered: Bool, idle: Bool, capped: Bool, due: Bool, +flags: Boundary.Flags,
+  session: Session
+) -> Next():
+  match session:
+    case Session{+life, written, observer, explicit, waiting, pointer, manage}:
+      followed(
+        delivered_publish(
+          delivered, flags, Session{life, written, observer, explicit, waiting, pointer, manage}
+        ),
+        Resource.answer(Resource.Plane{runs(life), idle, capped, due})
+      )
+
 def drained_stop(flags: Boundary.Flags, pair: Next()) -> Next():
   (session, first) = pair
   prefixed(first, exit_stop(flags, session))
@@ -1156,6 +1182,8 @@ def decide(
       program_status(session)
     case Boundary.ChildExited{drained}:
       exited(drained, flags, session)
+    case Boundary.Resources{delivered, idle, capped, due}:
+      resources(delivered, idle, capped, due, flags, session)
     case Boundary.Crowded{}:
       admit(Admission.Crowded{}, flags, session)
     case Boundary.ObserverMessage{}:
@@ -1221,7 +1249,8 @@ def anchored(
 # fact the host applied before Bend answers advances it first: a PTY turn that
 # fed output to the terminal, unless a synchronized update was held before it,
 # so the update's frame takes the revision its first turn advanced to; a
-# resize; and a host phase or tick that applied.
+# resource whose last chunk was written, by the same rule; a resize; and a
+# host phase or tick that applied.
 def output_advanced(held: Bool, revision: Revision.Revision) -> Revision.Revision:
   match held:
     case True{}:
@@ -1260,6 +1289,8 @@ def fact_advanced(
       output_advanced(held, revision)
     case Boundary.ChildExited{drained}:
       drained_advanced(drained, held, revision)
+    case Boundary.Resources{delivered, idle, capped, due}:
+      drained_advanced(delivered, held, revision)
     case Boundary.Applied{effect}:
       resized(effect, revision)
     case Boundary.Selected{outcome, presented}:

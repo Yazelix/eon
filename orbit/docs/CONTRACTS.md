@@ -1121,10 +1121,11 @@ on. Its PTY pixel size rule needs no wire change.
       chunks.
     - **Order and copies.** Orbit sends each resource at most once per
       attachment, and none before the attachment's first complete frame. After
-      that it starts a resource before the first frame that references it when
-      the resource queue below has room. It copies the pixels out of libghostty
-      storage once, when it starts the announcement, and finishes the transfer
-      from that copy even if storage later replaces or drops the image.
+      that it starts a resource once it has queued the first frame that
+      references it, when the resource queue below has room. It copies the
+      pixels out of libghostty storage once, when it starts the announcement,
+      and finishes the transfer from that copy even if storage later replaces
+      or drops the image.
     - **Pending.** While the resource queue is full, Orbit sends frames with
       the entry pending. Once room returns it starts the resource from
       libghostty storage if a current frame still references it, and starts

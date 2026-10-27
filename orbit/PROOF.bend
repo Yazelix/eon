@@ -10,6 +10,7 @@ import ./proof/word.bend as Words
 import ./src/session.bend as Session
 import ./src/boundary.bend as Boundary
 import ./src/status.bend as Status
+import ./src/resource.bend as Resource
 import ./proof/step.bend as Step
 import ./proof/view.bend as Views
 import ./proof/lease.bend as Leases
@@ -520,6 +521,9 @@ def Laws.management_program_status_needs_a_live_lease(slot, live):
           {==}
         case False{}:
           {==}
+
+def Laws.resource_starts_stay_within_budget(live, idle, capped, due):
+  {==}
 
 # The revision counter: an increment is ahead unless it wraps.
 

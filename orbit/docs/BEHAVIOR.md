@@ -419,14 +419,15 @@ While the switch is on, every complete frame carries a graphics block:
 The list stops at the first entry that would pass 4,096 entries or 256
 resources, and the frame then says placements were omitted. Each image
 generation that a frame references takes the attachment's next identity
-number. It keeps that number while frames keep referencing it, and a new
-attachment starts again. No resource is sent yet, so an entry is pending. It
-is unavailable when its image is not 8-bit RGB or RGBA, 1 to 4,096 pixels on
-each side and at most 10,000,000 bytes, or when the storage cannot look the
-image up. Placeholder cells (U+10EEEE) are
-blank in frames and previews. They keep their width, colors, inverse,
-selection and protection, and drop their text, link, underline and other
-text attributes.
+number. It keeps that number while frames keep referencing it, or from the
+start of its resource until it retires, and a new attachment starts again.
+An entry is ready once its resource's last chunk has been written in this
+attachment, and pending until then. It is unavailable when its image is not
+8-bit RGB or RGBA, 1 to 4,096 pixels on each side and at most 10,000,000
+bytes, or when the storage cannot look the image up. Placeholder cells
+(U+10EEEE) are blank in frames and previews. They keep their width, colors,
+inverse, selection and protection, and drop their text, link, underline and
+other text attributes.
 
 The frame unit test `placeholder_rows_are_pending_entries_over_blank_cells`
 covers Yazi's placeholder stream:
@@ -445,13 +446,106 @@ image id, an unavailable image 4,097 pixels wide, and the cut with the
 omitted flag at 256 resources and at 4,096 entries. Without the sort, the
 order check failed.
 
+While a client is attached and the switch is on, Orbit sends the pixels
+through a resource queue beside the client's output queue. Once a frame is
+queued for the client, its pending references that have not started become
+the candidates; a frame built but never queued makes none. A resource starts
+only while the queue has room: no transfer is in progress and its chunk
+payload is below Bend's 1,048,576 bytes. When Bend decides a `Transfer` that
+starts, Orbit copies the lowest-numbered candidate's pixels out of storage
+once, queues its announcement, and queues its chunks of 262,144 bytes, the
+last carrying the rest, while their payload stays within the bound; written
+chunks make room for the rest. A candidate whose copy fails starts nothing;
+its entries stay pending under the old number until a later frame gives the
+resource a fresh one. The writer finishes the message it has started;
+otherwise it writes the output queue first, so a frame waits at most for the
+rest of one resource message. Resource messages never count against the
+output bound and never make the client pressured. Once a resource's last
+chunk is written, Bend publishes a frame at the next revision in which its
+entries are ready. A frame extraction that finds a started resource gone
+from its screen's storage marks it gone, and Orbit retires it with one
+message once a frame from that extraction or later has been written and its
+chunks are all queued. A resource counts toward the 1,024 announced and not
+retired until its retirement message is written whole, so a slow client
+cannot gather more. When Orbit sees the child exit, before Bend publishes
+anything for it, the resource queue drops the copy and the messages it has
+not started writing and starts nothing more; it finishes the one it is
+writing, and Exited follows.
+
+The law `resource_starts_stay_within_budget` constrains Bend's answer to the
+plane Orbit reports; the unit tests below, not the law, cover how the host
+computes `idle`, `capped` and `due`.
+
+The socket unit tests cover the queue:
+- `a_frame_waits_only_for_the_started_resource_message`: a frame queued
+  while a chunk is partly written follows that chunk and precedes the
+  resource's other chunks;
+- `resource_chunks_stay_within_the_lane_bound`: a 1,024,000-byte resource
+  under a 600,000-byte bound never queues more chunk payload than the bound,
+  arrives as one announcement and four chunks in order, and drops its copy
+  once its last chunk is queued;
+- `lane_room_retirements_and_stop`: a resource whose chunk fills the bound
+  leaves no room for a start until that chunk is written; a queued
+  retirement counts until it is written whole; stopping the queue at exit
+  keeps only the partly written retirement and leaves no room;
+- `resource_messages_never_pressure_the_client_and_end_before_exited`: a
+  4 MiB resource that the client does not read leaves its output bound
+  untouched and the client unpressured, and at exit the partly written chunk
+  finishes, the rest is dropped, and Exited comes last.
+
+The frame unit tests cover the records:
+- `resources_are_ready_once_delivered_and_retire_after_a_written_frame`: an
+  extracted frame that was not queued makes nothing startable; a queued one
+  starts its image with a copy of its pixels; its entry turns ready only after
+  the delivery; once the image and its pixels are deleted, the resource is
+  due only after a frame from that extraction is written and its chunks are
+  queued, and then retires;
+- `retirements_count_toward_the_cap_until_written`: 1,024 resources whose
+  retirements are queued but not written keep the plane capped and refuse a
+  start, and one written retirement leaves room for one;
+- `a_failed_copy_takes_a_fresh_number`: a candidate that the active screen's
+  storage does not hold starts nothing, and the next frame numbers it afresh.
+
 The real-PTY kitty-placements check runs Orbit with the switch on. After a
-client gives a 10x20-pixel cell, the child plays Yazi's stream for a 30x40
-image in 3x2 placeholder cells, then a file-medium image with its own
-placeholder cell. The frame carries the two expected pending entries for one
-resource and blank placeholder cells, and nothing for the file-medium image.
-With the file medium allowed, that image showed up as a third entry and the
-check failed.
+client gives a 10x20-pixel cell, the child sends Yazi's stream for a 300x400
+RGB image in Kitty chunks, then, in one synchronized update, its 3x2
+placeholder cells and a file-medium image with its own placeholder cell.
+The first frame carries the two expected pending entries for one resource
+and blank placeholder cells, and nothing for the file-medium image. With the
+file medium allowed, that image showed up as a third entry and the check
+failed. The image then arrives as one announcement and two chunks in order,
+of 262,144 and 97,856 bytes, holding its pixels. Without further output from
+the child, a frame at a later revision shows both entries ready.
+
+## Resource plane law
+
+Bend decides when a resource starts and when retirements are queued, with
+the pure policy in [src/resource.bend](../src/resource.bend). The host
+reports fact `Resources` whenever the attached client's resource plane
+changed, with whether a resource was delivered, whether no transfer is in
+progress, whether 1,024 resources are announced and not retired, and whether
+a retirement is due ([HOST.md](HOST.md#decisions)). While the child runs,
+Bend answers one `Transfer` that retires when one is due and starts when no
+transfer is in progress and the cap leaves room. Once the stop begins, it
+does neither. A delivered resource advances the revision as output does
+and publishes as output does, so its frame waits for a synchronized update
+to end. The law `resource_starts_stay_within_budget` in
+[LAWS.bend](../LAWS.bend) says that the answer starts a resource exactly
+when the child runs, no transfer is in progress and the cap is not reached,
+so Orbit holds at most one copy outside storage and never passes the cap
+(ORB-C16). The lifecycle law covers that `Resources` never ends the
+attachment, and the scrolling and selection law covers the delivered
+resource's advance and its frame.
+
+A sensitivity check let the policy start while a transfer was in progress,
+ignoring `idle`, in a scratch copy, and the proof failed at this law: the
+answer's `start` was `and(live, not capped)` where the law expects
+`and(live, and(idle, not capped))`. A second one
+made `step` answer `Resources` with `Detach` as well, and the lifecycle law's
+proof for `Resources` failed on an attached session, expecting the
+automaton's `Broken` where the state `step` reached is attached. As with
+the other laws, the proof covers Bend's decisions, not the truth of Rust's
+facts or their delivery.
 
 ## PTY output wake
 
@@ -952,8 +1046,10 @@ any session state, `step`'s decisions never break the automaton:
   and one observer, Busy only for a taken slot, a repeated role ends the
   attachment, and an observer that speaks is expelled.
 - A client that closes is detached; any other fact from the client, and
-  output, may end the attachment and do nothing else. Nothing a client does
-  stops the session, and a closed PTY alone does not either (ORB-C1).
+  output, may end the attachment and do nothing else. A report of the
+  client's resource plane does neither, before or after a stop begins
+  (ORB-C16). Nothing a client does stops the session, and a closed PTY alone
+  does not either (ORB-C1).
 - A stop begins only from the child's exit, which asks the host to reap, or
   from a management Stop. Once it begins, a child the escalation did not reap
   is waited on again with one `Reap`, and the only other lifecycle decision is
@@ -1123,8 +1219,9 @@ says that over any list of facts with their flags, from any session state,
   sequence on either route, and a failed host phase and a lost anchor end the
   host's; a tick needs a held host gesture on the primary screen.
 - Authority advances once for each viewport move and not for a
-  terminal-owned wheel; once for output fed outside a held update, a resize,
-  and an applied host phase or tick (ORB-C4); and once for each clear that
+  terminal-owned wheel; once for output fed and for a resource delivered
+  (ORB-C16) outside a held update, a resize, and an applied host phase or
+  tick (ORB-C4); and once for each clear that
   `step` marks as advancing. A request is from the future when it names a
   revision ahead of the automaton's own, so a `step` whose revision departs
   from the automaton's answers some later request wrongly.
@@ -1188,7 +1285,7 @@ rest. [PROOF.bend](../PROOF.bend) proves it by the same induction, and
 [proof/lease.bend](../proof/lease.bend), which `step-proof management`
 generates, holds each fact's lemma; rerun it, too, after changing `step` or
 this automaton. The whole proof, with the three laws over `step`, checks in
-about fifteen seconds.
+about twenty seconds and 2.7 GB.
 
 Two sensitivity checks broke `step` in a scratch copy and made the proof
 fail: one kept the slot from before each event, so an Acquire after a

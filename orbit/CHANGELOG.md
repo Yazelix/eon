@@ -137,6 +137,22 @@ remain canonical in `docs/CONTRACTS.md`, dependency decisions in
   previews. The shipped wire is unchanged: the switch is off, so frames
   still state Kitty graphics unsupported, and Orbit sends no resources
   (`orb-j2i.6`).
+- Behind ORB-C16's internal switch, Orbit sends the pixels of the images its
+  queued frames reference: one announcement and chunks of 262,144 bytes per
+  resource, one resource at a time, from a copy taken when the resource
+  starts, through a resource queue beside the output queue that holds at
+  most 1,048,576 bytes of chunk payload. Resource messages never count
+  against the output bound or make a client pressured, and a frame waits at
+  most for the rest of the one resource message being written. Entries turn
+  ready once their resource's last chunk is written, in a frame Bend
+  publishes at the next revision, and a resource that leaves its screen's
+  storage is retired once a frame without it has been written. On exit the
+  resource messages not started are dropped before Exited. The worker's
+  bounds gain the resource queue's bound, and its boundary gains fact
+  `Resources` and decision `Transfer`. ORB-C16's "Order and copies" now says
+  a resource starts once Orbit has queued the first frame that references
+  it. The shipped wire is unchanged: the switch is off, so Orbit still sends
+  no resources (`orb-j2i.7`).
 
 ## Before this repository
 

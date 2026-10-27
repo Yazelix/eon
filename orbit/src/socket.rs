@@ -9,8 +9,9 @@ use crate::{
 use orbit_protocol::{
     MAX_FRAME_BYTES,
     session::{
-        self, ClientMessage, Failure, FailureCode, Metadata, ScrollOutcome, SelectionAction,
-        ServerMessage, VerticalDirection, WheelOutcome,
+        self, ClientMessage, Failure, FailureCode, Metadata, RESOURCE_CHUNK_BYTES,
+        ResourceAnnounce, ResourceChunk, ScrollOutcome, SelectionAction, ServerMessage,
+        VerticalDirection, WheelOutcome,
     },
 };
 use std::{
@@ -220,14 +221,29 @@ impl MessageClass {
 /// a frame.
 #[derive(Default)]
 pub(crate) struct OutputQueue {
-    messages: VecDeque<(Vec<u8>, MessageClass)>,
+    /// Each message with the serial of the frame extraction it carries, or 0.
+    messages: VecDeque<(Vec<u8>, MessageClass, u64)>,
     offset: usize,
     bytes: usize,
+    /// The highest frame serial written whole (ORB-C16).
+    written_serial: u64,
 }
 
 impl OutputQueue {
     /// Queues one message unless it would exceed `bound` bytes.
     fn push(&mut self, bytes: Vec<u8>, class: MessageClass, bound: usize) -> bool {
+        self.push_serial(bytes, class, 0, bound)
+    }
+
+    /// Queues one message like `push`, carrying the serial of the frame
+    /// extraction it carries.
+    fn push_serial(
+        &mut self,
+        bytes: Vec<u8>,
+        class: MessageClass,
+        serial: u64,
+        bound: usize,
+    ) -> bool {
         let (remove, removed_bytes) = self.replaceable_suffix(class);
         if self
             .bytes
@@ -239,8 +255,13 @@ impl OutputQueue {
         }
         self.messages.truncate(self.messages.len() - remove);
         self.bytes = self.bytes - removed_bytes + bytes.len();
-        self.messages.push_back((bytes, class));
+        self.messages.push_back((bytes, class, serial));
         true
+    }
+
+    /// The highest serial of a frame-bearing message written whole.
+    pub(crate) fn written_serial(&self) -> u64 {
+        self.written_serial
     }
 
     fn replaceable_suffix(&self, class: MessageClass) -> (usize, usize) {
@@ -254,7 +275,7 @@ impl OutputQueue {
         };
         let mut remove = 0;
         let mut removed_bytes = 0;
-        for (index, (bytes, back)) in self.messages.iter().enumerate().rev() {
+        for (index, (bytes, back, _)) in self.messages.iter().enumerate().rev() {
             if !replaceable(*back) || index == 0 && self.offset != 0 {
                 break;
             }
@@ -333,13 +354,14 @@ impl OutputQueue {
     /// Writes until the queue empties or the peer would block; false when the
     /// peer has gone.
     fn flush(&mut self, mut write: impl FnMut(&[u8]) -> io::Result<usize>) -> io::Result<bool> {
-        while let Some((message, _)) = self.messages.front() {
+        while let Some((message, _, serial)) = self.messages.front() {
             match write(&message[self.offset..]) {
                 Ok(0) => return Ok(false),
                 Ok(written) => {
                     self.offset += written;
                     self.bytes -= written;
                     if self.offset == message.len() {
+                        self.written_serial = self.written_serial.max(*serial);
                         self.messages.pop_front();
                         self.offset = 0;
                     }
@@ -354,6 +376,204 @@ impl OutputQueue {
     }
 }
 
+/// How far writing one queue's front message got.
+enum Written {
+    /// The message is written whole.
+    Whole,
+    /// The queue is empty, or the peer takes no more bytes now.
+    Waiting,
+    /// The peer has gone.
+    Gone,
+}
+
+/// An attached client's resource messages (ORB-C16), apart from its output
+/// queue: announcements, chunks and retirements in order, and the one
+/// transfer in progress, whose copy queues chunks while their payload stays
+/// within `bound` bytes. Nothing here counts against the output bound.
+#[derive(Default)]
+pub(crate) struct ResourceLane {
+    /// Each message with its chunk payload bytes, the resource whose last
+    /// chunk it is, and whether it is a retirement.
+    messages: VecDeque<(Vec<u8>, usize, Option<u64>, bool)>,
+    offset: usize,
+    /// The payload bytes of the queued chunks.
+    chunk_bytes: usize,
+    pub(crate) bound: usize,
+    transfer: Option<Transfer>,
+    /// Resources whose last chunk was written since the host last took them.
+    delivered: Vec<u64>,
+    /// Queued retirements not yet written whole; their resources still count
+    /// as announced and not retired.
+    retiring: usize,
+    /// The child exited: nothing more starts or is queued.
+    stopped: bool,
+}
+
+/// The resource being queued: its pixels, copied once out of libghostty
+/// storage, and the next chunk's index.
+struct Transfer {
+    resource: u64,
+    pixels: Vec<u8>,
+    next: u32,
+}
+
+impl ResourceLane {
+    /// Queues a resource's announcement and as many of its chunks as the
+    /// bound allows; the rest follow as written chunks free room.
+    fn start(&mut self, announce: ResourceAnnounce, pixels: Vec<u8>) -> io::Result<()> {
+        if !self.room() || pixels.len() != announce.byte_length as usize {
+            return Err(errno(libc::EPROTO));
+        }
+        self.queue(&ServerMessage::ResourceAnnounce(announce), 0, None, false)?;
+        self.transfer = Some(Transfer {
+            resource: announce.resource,
+            pixels,
+            next: 0,
+        });
+        self.pump()
+    }
+
+    /// Queues one retirement behind everything queued.
+    fn retire(&mut self, resource: u64) -> io::Result<()> {
+        self.retiring += 1;
+        self.queue(&ServerMessage::ResourceRetire { resource }, 0, None, true)
+    }
+
+    fn queue(
+        &mut self,
+        message: &ServerMessage,
+        payload: usize,
+        last: Option<u64>,
+        retires: bool,
+    ) -> io::Result<()> {
+        let encoded = session::encode_server_message(message).map_err(|_| errno(libc::EPROTO))?;
+        self.messages.push_back((encoded, payload, last, retires));
+        self.chunk_bytes += payload;
+        Ok(())
+    }
+
+    /// Queues the transfer's next chunks while they fit the bound; once its
+    /// last chunk is queued the copy is dropped.
+    fn pump(&mut self) -> io::Result<()> {
+        while let Some(transfer) = &mut self.transfer {
+            let start = transfer.next as usize * RESOURCE_CHUNK_BYTES as usize;
+            let end = (start + RESOURCE_CHUNK_BYTES as usize).min(transfer.pixels.len());
+            if self.chunk_bytes + (end - start) > self.bound {
+                break;
+            }
+            let chunk = ServerMessage::ResourceChunk(ResourceChunk {
+                resource: transfer.resource,
+                index: transfer.next,
+                bytes: transfer.pixels[start..end].to_vec(),
+            });
+            transfer.next += 1;
+            let last = (end == transfer.pixels.len()).then_some(transfer.resource);
+            if last.is_some() {
+                self.transfer = None;
+            }
+            self.queue(&chunk, end - start, last, false)?;
+        }
+        Ok(())
+    }
+
+    /// The resource whose chunks are still being queued, if any.
+    pub(crate) fn transferring(&self) -> Option<u64> {
+        self.transfer.as_ref().map(|transfer| transfer.resource)
+    }
+
+    /// Takes the resources whose last chunk was written.
+    pub(crate) fn take_delivered(&mut self) -> Vec<u64> {
+        std::mem::take(&mut self.delivered)
+    }
+
+    fn is_empty(&self) -> bool {
+        self.messages.is_empty()
+    }
+
+    /// Whether a resource may start: no transfer is in progress, the queued
+    /// chunk payload is below the bound, and the child has not exited.
+    pub(crate) fn room(&self) -> bool {
+        !self.stopped && self.transfer.is_none() && self.chunk_bytes < self.bound
+    }
+
+    /// The queued retirements not yet written whole.
+    pub(crate) fn retiring(&self) -> usize {
+        self.retiring
+    }
+
+    /// The child exited: drops the transfer and the messages not started,
+    /// and starts and queues nothing more (ORB-C16).
+    pub(crate) fn stop(&mut self) {
+        self.stopped = true;
+        self.drop_unstarted();
+    }
+
+    /// Drops the transfer and every message not started, keeping only the
+    /// one partly written.
+    fn drop_unstarted(&mut self) {
+        self.transfer = None;
+        self.messages.truncate(usize::from(self.offset != 0));
+        let front = self.messages.front();
+        self.chunk_bytes = front.map_or(0, |(_, payload, ..)| *payload);
+        self.retiring = usize::from(front.is_some_and(|(.., retires)| *retires));
+    }
+
+    /// Writes the front message until it is whole or the peer would block.
+    fn write_front(
+        &mut self,
+        mut write: impl FnMut(&[u8]) -> io::Result<usize>,
+    ) -> io::Result<Written> {
+        while let Some((message, payload, last, retires)) = self.messages.front() {
+            match write(&message[self.offset..]) {
+                Ok(0) => return Ok(Written::Gone),
+                Ok(written) => {
+                    self.offset += written;
+                    if self.offset == message.len() {
+                        self.chunk_bytes -= payload;
+                        self.retiring -= usize::from(*retires);
+                        self.delivered.extend(*last);
+                        self.messages.pop_front();
+                        self.offset = 0;
+                        self.pump()?;
+                        return Ok(Written::Whole);
+                    }
+                }
+                Err(error) if error.kind() == io::ErrorKind::Interrupted => {}
+                Err(error) if error.kind() == io::ErrorKind::WouldBlock => break,
+                Err(error) if peer_disconnected(&error) => return Ok(Written::Gone),
+                Err(error) => return Err(error),
+            }
+        }
+        Ok(Written::Waiting)
+    }
+}
+
+/// Writes a client's queues until both are empty or the peer would block;
+/// false when the peer has gone. The one message partly written finishes
+/// first; otherwise the output queue goes first, so a frame waits at most for
+/// the rest of one resource message (ORB-C16).
+fn flush_lanes(
+    output: &mut OutputQueue,
+    resources: &mut ResourceLane,
+    mut write: impl FnMut(&[u8]) -> io::Result<usize>,
+) -> io::Result<bool> {
+    loop {
+        if resources.offset == 0 {
+            if !output.flush(&mut write)? {
+                return Ok(false);
+            }
+            if !output.is_empty() {
+                return Ok(true);
+            }
+        }
+        match resources.write_front(&mut write)? {
+            Written::Whole => {}
+            Written::Waiting => return Ok(true),
+            Written::Gone => return Ok(false),
+        }
+    }
+}
+
 pub(crate) struct Peer {
     pub(crate) stream: UnixStream,
     read_closed: bool,
@@ -361,6 +581,8 @@ pub(crate) struct Peer {
     /// An attached interactive client's messages, bounded by Bend.
     pub(crate) output: OutputQueue,
     pub(crate) output_bound: usize,
+    /// An attached interactive client's resource messages (ORB-C16).
+    pub(crate) resources: ResourceLane,
     session: Session,
     incoming: Vec<u8>,
     pub(crate) request: Option<ClientMessage>,
@@ -474,6 +696,7 @@ impl Peer {
             pending: PendingWrite::default(),
             output: OutputQueue::default(),
             output_bound: 0,
+            resources: ResourceLane::default(),
             session: Session::default(),
             incoming: Vec::new(),
             request: None,
@@ -621,27 +844,81 @@ impl Peer {
         &mut self,
         message: impl FnOnce() -> io::Result<ServerMessage>,
     ) -> io::Result<()> {
+        self.send_serial(|| Ok((message()?, 0))).map(drop)
+    }
+
+    /// Queues one message like `send_server`, with the serial of the frame
+    /// extraction that built it, which a frame-bearing message keeps until it
+    /// is written (ORB-C16). Reports whether a frame-bearing message was
+    /// queued.
+    pub(crate) fn send_serial(
+        &mut self,
+        message: impl FnOnce() -> io::Result<(ServerMessage, u64)>,
+    ) -> io::Result<bool> {
         // Let the current Bend effect finish; wake reports the lost or pressured peer.
         if matches!(self.session, Session::Disconnected | Session::Pressured) {
-            return Ok(());
+            return Ok(false);
         }
         if !matches!(self.session, Session::Attached(Role::Interactive)) || self.request.is_some() {
             return Err(errno(libc::EPROTO));
         }
-        let message = message()?;
+        let (message, serial) = message()?;
         let class = MessageClass::of(&message);
+        let frame = matches!(class, MessageClass::Frame | MessageClass::ScrollOutcome);
         let encoded = session::encode_server_message(&message).map_err(|_| errno(libc::EPROTO))?;
-        if !self.output.push(encoded, class, self.output_bound) {
+        let serial = if frame { serial } else { 0 };
+        if !self
+            .output
+            .push_serial(encoded, class, serial, self.output_bound)
+        {
             self.session = Session::Pressured;
+            return Ok(false);
+        }
+        self.flush_output()?;
+        Ok(frame)
+    }
+
+    /// Queues a resource's announcement and the chunks that fit, then writes
+    /// what the socket takes now; nothing for a client already lost.
+    pub(crate) fn start_resource(
+        &mut self,
+        announce: ResourceAnnounce,
+        pixels: Vec<u8>,
+    ) -> io::Result<()> {
+        if !matches!(self.session, Session::Attached(Role::Interactive)) {
             return Ok(());
+        }
+        self.resources.start(announce, pixels)?;
+        self.flush_output()
+    }
+
+    /// Queues retirements in the resource lane and writes what the socket
+    /// takes now; nothing for a client already lost.
+    pub(crate) fn retire_resources(&mut self, resources: &[u64]) -> io::Result<()> {
+        if !matches!(self.session, Session::Attached(Role::Interactive)) || self.resources.stopped {
+            return Ok(());
+        }
+        for &resource in resources {
+            self.resources.retire(resource)?;
         }
         self.flush_output()
     }
 
-    /// Writes queued output without blocking; a lost peer becomes Disconnected.
+    /// Whether neither queue holds a message.
+    fn drained(&self) -> bool {
+        self.output.is_empty() && self.resources.is_empty()
+    }
+
+    /// Writes queued output and resource messages without blocking; a lost
+    /// peer becomes Disconnected.
     fn flush_output(&mut self) -> io::Result<()> {
-        let Self { stream, output, .. } = self;
-        match output.flush(|bytes| stream.write(bytes)) {
+        let Self {
+            stream,
+            output,
+            resources,
+            ..
+        } = self;
+        match flush_lanes(output, resources, |bytes| stream.write(bytes)) {
             Ok(true) => Ok(()),
             Ok(false) => {
                 self.session = Session::Disconnected;
@@ -655,9 +932,11 @@ impl Peer {
     }
 
     /// Queues Exited once, then waits until the client has taken all output,
-    /// because Bend closes the socket next.
+    /// because Bend closes the socket next. Resource messages not yet started
+    /// are dropped, and the one partly written finishes first (ORB-C16).
     pub(crate) fn send_exited(&mut self, code: i32) -> io::Result<Step> {
         if matches!(self.session, Session::Attached(Role::Interactive)) {
+            self.resources.drop_unstarted();
             self.send_server(|| Ok(ServerMessage::Exited { code }))?;
             if matches!(self.session, Session::Attached(Role::Interactive)) {
                 self.session = Session::Exiting;
@@ -667,9 +946,7 @@ impl Peer {
             Session::Exiting => {
                 self.flush_output()?;
                 Ok(match self.session {
-                    Session::Exiting if !self.output.is_empty() => {
-                        Step::Blocked(self.stream.as_raw_fd())
-                    }
+                    Session::Exiting if !self.drained() => Step::Blocked(self.stream.as_raw_fd()),
                     _ => Step::Done,
                 })
             }
@@ -752,18 +1029,14 @@ impl Peer {
     }
 
     /// The events the host waits for: requests until the client closes its
-    /// write side, and room to write while output is queued. A full close is
-    /// reported as a hangup either way.
+    /// write side, and room to write while output or resource messages are
+    /// queued. A full close is reported as a hangup either way.
     pub(crate) fn wait_events(&self) -> i16 {
         (if self.read_closed {
             0
         } else {
             platform::POLLIN
-        }) | if self.output.is_empty() {
-            0
-        } else {
-            platform::POLLOUT
-        }
+        }) | if self.drained() { 0 } else { platform::POLLOUT }
     }
 
     /// Serves a ready client: a whole request, or its close. Room to write
@@ -788,11 +1061,13 @@ impl Peer {
         Ok(Some(ClientEvent::Closed { full }))
     }
 
-    /// Writes what a refused client's queue still holds; true once it is all
-    /// written or the client is gone.
+    /// Writes what a refused client's queue still holds, dropping resource
+    /// messages not yet started; true once it is all written or the client is
+    /// gone.
     pub(crate) fn drain(&mut self) -> bool {
+        self.resources.drop_unstarted();
         let _ = self.flush_output();
-        self.output.is_empty() || matches!(self.session, Session::Disconnected | Session::Failed)
+        self.drained() || matches!(self.session, Session::Disconnected | Session::Failed)
     }
 
     /// Whether a client whose write side closed has closed its read side too.
@@ -1118,7 +1393,7 @@ mod tests {
         assert!(queue.push(vec![2; 4], MessageClass::Preview, 16));
         assert!(queue.push(vec![3; 6], MessageClass::Frame, 16));
         assert!(queue.push(vec![4; 6], MessageClass::Frame, 16));
-        let classes: Vec<_> = queue.messages.iter().map(|(bytes, _)| bytes[0]).collect();
+        let classes: Vec<_> = queue.messages.iter().map(|(bytes, ..)| bytes[0]).collect();
         assert_eq!((classes, queue.bytes), (vec![0, 4], 10));
         assert!(!queue.push(vec![5; 7], MessageClass::Ordered, 16));
         assert_eq!(queue.bytes, 10);
@@ -1153,7 +1428,7 @@ mod tests {
         assert!(queue.push(vec![3; 8], MessageClass::ScrollOutcome, 64));
         assert!(queue.push(vec![4; 4], MessageClass::Frame, 64));
         assert!(queue.push(vec![5; 4], MessageClass::ScrollOutcome, 64));
-        let kept: Vec<_> = queue.messages.iter().map(|(bytes, _)| bytes[0]).collect();
+        let kept: Vec<_> = queue.messages.iter().map(|(bytes, ..)| bytes[0]).collect();
         assert_eq!(kept, vec![3, 5]);
 
         let largest = session::MAX_PAYLOAD_BYTES + session::HEADER_BYTES;
@@ -1191,6 +1466,251 @@ mod tests {
         let outcome = vec![0; session::MAX_PAYLOAD_BYTES + session::HEADER_BYTES];
         assert!(queue.push(outcome, MessageClass::ScrollOutcome, bound));
         assert_eq!(queue.messages.len(), 2);
+    }
+
+    /// An RGBA resource of this size whose pixels all hold its number.
+    fn resource(number: u64, width: u32, height: u32) -> (ResourceAnnounce, Vec<u8>) {
+        let announce = ResourceAnnounce::new(
+            number,
+            number + 100,
+            session::PixelFormat::Rgba,
+            width,
+            height,
+        )
+        .unwrap();
+        (announce, vec![number as u8; announce.byte_length as usize])
+    }
+
+    /// The whole server messages in `bytes`, decoded.
+    fn decode_all(mut bytes: &[u8]) -> Vec<ServerMessage> {
+        let mut messages = Vec::new();
+        while !bytes.is_empty() {
+            let length = session::server_message_len(bytes).unwrap().unwrap();
+            messages.push(session::decode_server_message(&bytes[..length]).unwrap());
+            bytes = &bytes[length..];
+        }
+        messages
+    }
+
+    /// A resource message, briefly: its kind (a, c or r), its resource or chunk
+    /// index, and its chunk length.
+    fn resource_message(message: &ServerMessage) -> Option<(char, u64, usize)> {
+        match message {
+            ServerMessage::ResourceAnnounce(announce) => Some(('a', announce.resource, 0)),
+            ServerMessage::ResourceChunk(chunk) => {
+                Some(('c', u64::from(chunk.index), chunk.bytes.len()))
+            }
+            ServerMessage::ResourceRetire { resource } => Some(('r', *resource, 0)),
+            _ => None,
+        }
+    }
+
+    /// A frame queued while a resource chunk is partly written waits only for
+    /// the rest of that chunk, then goes before the resource's other chunks
+    /// (ORB-C16). Writing the resource lane while output waits failed this.
+    #[test]
+    fn a_frame_waits_only_for_the_started_resource_message() {
+        let mut output = OutputQueue::default();
+        let mut lane = ResourceLane {
+            bound: 1 << 20,
+            ..ResourceLane::default()
+        };
+        let (announce, pixels) = resource(1, 512, 300);
+        let announced =
+            session::encode_server_message(&ServerMessage::ResourceAnnounce(announce)).unwrap();
+        lane.start(announce, pixels).unwrap();
+        let mut written = Vec::new();
+        let mut room = announced.len() + 10;
+        let mut write = |bytes: &[u8], room: &mut usize| {
+            let length = bytes.len().min(*room);
+            if length == 0 {
+                return Err(io::ErrorKind::WouldBlock.into());
+            }
+            *room -= length;
+            written.extend_from_slice(&bytes[..length]);
+            Ok(length)
+        };
+        assert!(flush_lanes(&mut output, &mut lane, |bytes| write(bytes, &mut room)).unwrap());
+        let accepted = session::encode_server_message(&ServerMessage::Accepted).unwrap();
+        assert!(output.push_serial(accepted, MessageClass::Frame, 7, usize::MAX));
+        let mut room = usize::MAX;
+        assert!(flush_lanes(&mut output, &mut lane, |bytes| write(bytes, &mut room)).unwrap());
+        let order: Vec<_> = decode_all(&written)
+            .iter()
+            .map(|message| resource_message(message).unwrap_or(('f', 0, 0)))
+            .collect();
+        assert_eq!(
+            order,
+            [
+                ('a', 1, 0),
+                ('c', 0, 262_144),
+                ('f', 0, 0),
+                ('c', 1, 262_144),
+                ('c', 2, 90_112),
+            ]
+        );
+        assert_eq!(output.written_serial(), 7);
+        assert_eq!(lane.take_delivered(), [1]);
+        assert!(lane.is_empty() && lane.transferring().is_none());
+    }
+
+    /// A transfer queues chunks only while their payload fits the lane's
+    /// bound, and queues the rest as written chunks free room; its copy is
+    /// dropped once the last chunk is queued (ORB-C16).
+    #[test]
+    fn resource_chunks_stay_within_the_lane_bound() {
+        let mut output = OutputQueue::default();
+        let mut lane = ResourceLane {
+            bound: 600_000,
+            ..ResourceLane::default()
+        };
+        lane.start(resource(3, 512, 500).0, resource(3, 512, 500).1)
+            .unwrap();
+        assert_eq!((lane.messages.len(), lane.chunk_bytes), (3, 524_288));
+        let mut written = Vec::new();
+        let mut transferring = Vec::new();
+        while !lane.is_empty() {
+            let mut room = 100_000;
+            flush_lanes(&mut output, &mut lane, |bytes| {
+                let length = bytes.len().min(room);
+                if length == 0 {
+                    return Err(io::ErrorKind::WouldBlock.into());
+                }
+                room -= length;
+                written.extend_from_slice(&bytes[..length]);
+                Ok(length)
+            })
+            .unwrap();
+            assert!(lane.chunk_bytes <= lane.bound);
+            transferring.push(lane.transferring());
+        }
+        let chunks: Vec<_> = decode_all(&written)
+            .iter()
+            .filter_map(resource_message)
+            .collect();
+        assert_eq!(
+            chunks,
+            [
+                ('a', 3, 0),
+                ('c', 0, 262_144),
+                ('c', 1, 262_144),
+                ('c', 2, 262_144),
+                ('c', 3, 237_568),
+            ]
+        );
+        assert_eq!(transferring.first(), Some(&Some(3)));
+        assert_eq!(transferring.last(), Some(&None));
+        assert_eq!(lane.take_delivered(), [3]);
+    }
+
+    /// A resource may start only while the lane has chunk room and no
+    /// transfer; a queued retirement counts until it is written whole; and
+    /// stopping the lane at the child's exit keeps only the message partly
+    /// written and starts nothing more (ORB-C16).
+    #[test]
+    fn lane_room_retirements_and_stop() {
+        let mut output = OutputQueue::default();
+        let mut lane = ResourceLane {
+            bound: RESOURCE_CHUNK_BYTES as usize,
+            ..ResourceLane::default()
+        };
+        assert!(lane.room());
+        let (announce, pixels) = resource(1, 256, 256);
+        lane.start(announce, pixels).unwrap();
+        // The whole resource is queued, so no transfer is in progress, but
+        // its chunk fills the bound.
+        assert!(lane.transferring().is_none() && !lane.room());
+        lane.retire(0).unwrap();
+        lane.retire(2).unwrap();
+        assert_eq!(lane.retiring(), 2);
+        let announced =
+            session::encode_server_message(&ServerMessage::ResourceAnnounce(announce)).unwrap();
+        let chunk = RESOURCE_CHUNK_BYTES as usize + session::HEADER_BYTES + 12;
+        let mut room = announced.len() + chunk + 5;
+        let mut written = Vec::new();
+        let mut write = |bytes: &[u8], room: &mut usize| {
+            let length = bytes.len().min(*room);
+            if length == 0 {
+                return Err(io::ErrorKind::WouldBlock.into());
+            }
+            *room -= length;
+            written.extend_from_slice(&bytes[..length]);
+            Ok(length)
+        };
+        assert!(flush_lanes(&mut output, &mut lane, |bytes| write(bytes, &mut room)).unwrap());
+        // The chunk is written, the first retirement only partly.
+        assert!(lane.room());
+        assert_eq!(lane.retiring(), 2);
+        lane.stop();
+        assert_eq!((lane.messages.len(), lane.retiring()), (1, 1));
+        assert!(!lane.room());
+        let mut room = usize::MAX;
+        assert!(flush_lanes(&mut output, &mut lane, |bytes| write(bytes, &mut room)).unwrap());
+        assert_eq!(lane.retiring(), 0);
+        let order: Vec<_> = decode_all(&written)
+            .iter()
+            .filter_map(resource_message)
+            .collect();
+        assert_eq!(
+            order,
+            [
+                ('a', 1, 0),
+                ('c', 0, RESOURCE_CHUNK_BYTES as usize),
+                ('r', 0, 0)
+            ]
+        );
+    }
+
+    /// A client that reads nothing while a large resource waits keeps its
+    /// whole output bound and is never pressured by it. On exit the resource
+    /// messages not started are dropped: the partly written one finishes,
+    /// then Exited follows (ORB-C16).
+    #[test]
+    fn resource_messages_never_pressure_the_client_and_end_before_exited() {
+        let _guard = FORK_AND_SOCKET_TEST.lock().unwrap();
+        let (stream, mut peer) = UnixStream::pair().unwrap();
+        stream.set_nonblocking(true).unwrap();
+        peer.set_nonblocking(true).unwrap();
+        let mut socket = Peer::new(stream);
+        socket.session = Session::Attached(Role::Interactive);
+        socket.output_bound = 64 * 1024;
+        socket.resources.bound = 1 << 20;
+        let (announce, pixels) = resource(5, 1024, 1024);
+        socket.start_resource(announce, pixels).unwrap();
+        assert!(!socket.resources.is_empty());
+        assert_eq!(socket.output.bytes, 0);
+        socket.send_server(|| Ok(ServerMessage::Accepted)).unwrap();
+        assert_eq!(socket.prepare_wait().unwrap(), ClientState::Open);
+        assert_eq!(socket.wait_events(), platform::POLLIN | platform::POLLOUT);
+        assert!(
+            socket
+                .output
+                .can_push_ordered(&ServerMessage::Accepted, socket.output_bound)
+                .unwrap()
+        );
+
+        let mut bytes = Vec::new();
+        let mut buffer = vec![0; 1 << 20];
+        loop {
+            let step = socket.send_exited(3).unwrap();
+            while let Ok(length @ 1..) = peer.read(&mut buffer) {
+                bytes.extend_from_slice(&buffer[..length]);
+            }
+            if step == Step::Done {
+                break;
+            }
+        }
+        while let Ok(length @ 1..) = peer.read(&mut buffer) {
+            bytes.extend_from_slice(&buffer[..length]);
+        }
+        let messages = decode_all(&bytes);
+        assert_eq!(messages.last(), Some(&ServerMessage::Exited { code: 3 }));
+        let chunks = messages
+            .iter()
+            .filter(|message| matches!(message, ServerMessage::ResourceChunk(_)))
+            .count();
+        assert!(chunks < announce.chunk_count as usize, "{chunks} chunks");
+        assert!(socket.resources.is_empty() && socket.resources.transferring().is_none());
     }
 
     #[test]

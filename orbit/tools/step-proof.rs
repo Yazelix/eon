@@ -8,10 +8,11 @@
 //! unordered state (Outside, Unordered). Its proof splits cases until every
 //! leaf holds by computation, since Bend reduces a call only once the values
 //! it matches on are constructors. The tool starts from the splits already in
-//! the law's file, or in proof/step.bend for a new law, checks each lemma with
-//! Bend, and where a leaf fails, splits the variable that the leaf's stuck call
-//! matches on. Rerun it for each law after changing step (src/session.bend),
-//! and for a law after changing its automaton.
+//! the law's file, or in proof/step.bend for a new law or a fact new to the
+//! law's file, checks each lemma with Bend, and where a leaf fails, splits the
+//! variable that the leaf's stuck call matches on. Rerun it for each law after
+//! changing step (src/session.bend), and for a law after changing its
+//! automaton.
 //!
 //! Usage, from the orbit directory:
 //!   mkdir -p target
@@ -33,9 +34,10 @@ const USAGE: &str = "usage: step-proof LAW BEND2_MAIN_TS [FACT,...]
 LAW is lifecycle, view or management. BEND2_MAIN_TS is bend2/main.ts of the
 Bend that flake.nix pins. JOBS (default 8) checks that many facts at once.";
 
-const MODULES: [(&str, &str); 9] = [
+const MODULES: [(&str, &str); 10] = [
     ("session", "Session"),
     ("status", "Status"),
+    ("resource", "Resource"),
     ("boundary", "Boundary"),
     ("lifecycle", "Orbit"),
     ("admission", "Admission"),
@@ -46,7 +48,7 @@ const MODULES: [(&str, &str); 9] = [
 ];
 
 // The facts of src/boundary.schema, with names for their fields.
-const FACTS: [(&str, &[(&str, &str)]); 28] = [
+const FACTS: [(&str, &[(&str, &str)]); 29] = [
     ("Started", &[("pid", "U32")]),
     (
         "Output",
@@ -103,6 +105,15 @@ const FACTS: [(&str, &[(&str, &str)]); 28] = [
     ("ReturnToLive", &[]),
     ("ExitedBeforeStop", &[("status", "U32")]),
     ("ProgramStatus", &[("foreground", "Boundary.Foreground")]),
+    (
+        "Resources",
+        &[
+            ("delivered", "Bool"),
+            ("idle", "Bool"),
+            ("capped", "Bool"),
+            ("due", "Bool"),
+        ],
+    ),
 ];
 const SESSION: [&str; 7] = [
     "life", "written", "observer", "explicit", "waiting", "pointer", "manage",
@@ -596,22 +607,21 @@ fn parse_tree(lines: &[&str]) -> Node {
 }
 
 fn existing_trees(ctx: &Ctx) -> HashMap<&'static str, Node> {
-    // A new law starts from the lifecycle law's splits, which step needs anyway.
+    // A new law, or a fact new to the law's file, starts from the lifecycle
+    // law's splits, which step needs anyway.
     let step = ctx.root.join("proof").join("step.bend");
-    let source = if ctx.target.exists() {
-        ctx.target.clone()
-    } else {
-        step
-    };
-    let Ok(text) = fs::read_to_string(&source) else {
-        return HashMap::new();
-    };
-    let text: Vec<&str> = text.split('\n').collect();
+    let own = fs::read_to_string(&ctx.target).unwrap_or_default();
+    let seed = fs::read_to_string(&step).unwrap_or_default();
+    let own: Vec<&str> = own.split('\n').collect();
+    let seed: Vec<&str> = seed.split('\n').collect();
     let mut trees = HashMap::new();
     for (fact, _) in FACTS {
         let start = format!("def fits_{}(", snake(fact));
-        let Some(mut k) = text.iter().position(|l| l.starts_with(&start)) else {
-            continue;
+        let found = |text: &Vec<&str>| text.iter().position(|l| l.starts_with(&start));
+        let (text, seeded, mut k) = match (found(&own), found(&seed)) {
+            (Some(k), _) => (&own, false, k),
+            (None, Some(k)) => (&seed, true, k),
+            (None, None) => continue,
         };
         while !text[k].ends_with(':') || text[k].starts_with("def ") {
             k += 1;
@@ -626,7 +636,7 @@ fn existing_trees(ctx: &Ctx) -> HashMap<&'static str, Node> {
             .filter(|l| !l.trim().is_empty())
             .collect();
         let mut tree = parse_tree(&body);
-        if source != ctx.target {
+        if seeded {
             tree = plain_leaves(&tree);
         }
         trees.insert(fact, tree);

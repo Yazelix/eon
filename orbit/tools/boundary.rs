@@ -401,7 +401,14 @@ fn rust(schema: &Schema, identity: &str) -> String {
             }
         }
         let arm = format!("Self::{}{pattern} =>", fact.name);
-        let body = format!("format!(\"{text}\\n\"{args})");
+        let mut body = format!("format!(\"{text}\\n\"{args})");
+        // A body past max_width in the block takes one argument a line.
+        if format!("                {body}").len() > 100 {
+            body = format!(
+                "format!(\n                    \"{text}\\n\"{}\n                )",
+                args.replace(", ", ",\n                    ")
+            );
+        }
         // The arm on one line, against rustfmt's max_width; a broken pattern
         // takes a block.
         let width = format!("            {arm} {body},").len();

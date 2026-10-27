@@ -255,6 +255,17 @@ fact 27 ExitedBeforeStop status:u32
 # A ProgramStatus request on the management connection (ORB-C15), with the
 # foreground group the host sampled when it read it, between PTY turns.
 fact 28 ProgramStatus foreground:Foreground
+# The client's resource plane changed (ORB-C16): a queued frame references a
+# pending resource that has not started, a start left more to start, a
+# resource's last chunk was written, a resource retired, or whether one may
+# start, the cap is reached or a retirement is due changed. Reported only
+# while a client is attached.
+# `delivered` tells that a resource's last chunk was written since the last
+# report; `idle`, that the resource queue has room to start one: the child
+# runs, no transfer is in progress and its queued chunk payload is below the
+# bound; `capped`, that 1,024 resources are announced and their retirements
+# not yet written; `due`, that a resource awaits retirement.
+fact 29 Resources delivered:bool idle:bool capped:bool due:bool
 
 # Why Bend rejects a request with Failure. The host owns each reason's code
 # and exact text.
@@ -312,9 +323,10 @@ enum Reason
   23 PtyClosed
 
 # The worker's first answer, before any fact: the finish bound, the
-# pending-peer bound and the synchronized-output bound in milliseconds, and
-# the interactive client's output bound in bytes.
-decision 0 Bounds finish_ms:u32 peer_ms:u32 sync_ms:u32 output_bytes:u32
+# pending-peer bound and the synchronized-output bound in milliseconds, the
+# interactive client's output bound in bytes, and the most chunk payload
+# bytes its separate resource queue holds (ORB-C16).
+decision 0 Bounds finish_ms:u32 peer_ms:u32 sync_ms:u32 output_bytes:u32 resource_bytes:u32
 # Admits the pending peer as the interactive client (Attached).
 decision 1 Attach
 # Admits the pending peer as the metadata observer (ObservingMetadata).
@@ -439,3 +451,12 @@ decision 40 StatusLifetime edge:bool marks:bool
 decision 41 ManageProgramStatus
 # Answers the connection Busy; the lease stays.
 decision 42 ManageRefuse
+# Moves the client's resource plane (ORB-C16). When `retire`, it first queues
+# one retirement for each sent resource that left its screen's storage once
+# a frame written after that no longer references it, except while its own
+# transfer still queues chunks. When `start`, it starts the lowest-numbered
+# pending resource that the last queued frame references, if storage still
+# holds it at its generation: it copies its pixels out of storage, queues its
+# announcement, and queues its chunks as the resource queue's bound allows. A
+# resource whose copy fails is not started and loses its number.
+decision 43 Transfer start:bool retire:bool

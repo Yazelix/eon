@@ -336,6 +336,22 @@ pub(crate) enum Fact {
     /// A ProgramStatus request on the management connection (ORB-C15), with the
     /// foreground group the host sampled when it read it, between PTY turns.
     ProgramStatus(Foreground),
+    /// The client's resource plane changed (ORB-C16): a queued frame references a
+    /// pending resource that has not started, a start left more to start, a
+    /// resource's last chunk was written, a resource retired, or whether one may
+    /// start, the cap is reached or a retirement is due changed. Reported only
+    /// while a client is attached.
+    /// `delivered` tells that a resource's last chunk was written since the last
+    /// report; `idle`, that the resource queue has room to start one: the child
+    /// runs, no transfer is in progress and its queued chunk payload is below the
+    /// bound; `capped`, that 1,024 resources are announced and their retirements
+    /// not yet written; `due`, that a resource awaits retirement.
+    Resources {
+        delivered: bool,
+        idle: bool,
+        capped: bool,
+        due: bool,
+    },
 }
 
 impl Fact {
@@ -384,6 +400,20 @@ impl Fact {
             Self::ReturnToLive => format!("26 {word}\n"),
             Self::ExitedBeforeStop { status } => format!("27 {word} {status}\n"),
             Self::ProgramStatus(foreground) => format!("28 {word} {}\n", foreground as u32),
+            Self::Resources {
+                delivered,
+                idle,
+                capped,
+                due,
+            } => {
+                format!(
+                    "29 {word} {} {} {} {}\n",
+                    u32::from(delivered),
+                    u32::from(idle),
+                    u32::from(capped),
+                    u32::from(due)
+                )
+            }
         }
     }
 }
@@ -395,7 +425,7 @@ fn halves(revision: u64) -> String {
 
 /// The line the worker writes before its first answer, naming the schema
 /// it was generated from; the host refuses a worker that names another.
-pub(crate) const SCHEMA: &str = "schema 5acfe336dcbbaf50";
+pub(crate) const SCHEMA: &str = "schema 2d907a1c5bde0b23";
 
 /// The line that ends each of the worker's answers.
 pub(crate) const END: &str = "end";
@@ -404,13 +434,15 @@ pub(crate) const END: &str = "end";
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) enum Decision {
     /// The worker's first answer, before any fact: the finish bound, the
-    /// pending-peer bound and the synchronized-output bound in milliseconds, and
-    /// the interactive client's output bound in bytes.
+    /// pending-peer bound and the synchronized-output bound in milliseconds, the
+    /// interactive client's output bound in bytes, and the most chunk payload
+    /// bytes its separate resource queue holds (ORB-C16).
     Bounds {
         finish_ms: u32,
         peer_ms: u32,
         sync_ms: u32,
         output_bytes: u32,
+        resource_bytes: u32,
     },
     /// Admits the pending peer as the interactive client (Attached).
     Attach,
@@ -544,6 +576,15 @@ pub(crate) enum Decision {
     ManageProgramStatus,
     /// Answers the connection Busy; the lease stays.
     ManageRefuse,
+    /// Moves the client's resource plane (ORB-C16). When `retire`, it first queues
+    /// one retirement for each sent resource that left its screen's storage once
+    /// a frame written after that no longer references it, except while its own
+    /// transfer still queues chunks. When `start`, it starts the lowest-numbered
+    /// pending resource that the last queued frame references, if storage still
+    /// holds it at its generation: it copies its pixels out of storage, queues its
+    /// announcement, and queues its chunks as the resource queue's bound allows. A
+    /// resource whose copy fails is not started and loses its number.
+    Transfer { start: bool, retire: bool },
 }
 
 type Words<'a> = std::str::Split<'a, char>;
@@ -617,6 +658,7 @@ impl Decision {
                 peer_ms: number(&mut words)?,
                 sync_ms: number(&mut words)?,
                 output_bytes: number(&mut words)?,
+                resource_bytes: number(&mut words)?,
             },
             1 => Self::Attach,
             2 => Self::Observing,
@@ -699,6 +741,10 @@ impl Decision {
             },
             41 => Self::ManageProgramStatus,
             42 => Self::ManageRefuse,
+            43 => Self::Transfer {
+                start: flag(&mut words)?,
+                retire: flag(&mut words)?,
+            },
             _ => return None,
         };
         words.next().is_none().then_some(decision)

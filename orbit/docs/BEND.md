@@ -241,6 +241,17 @@ Rules for writing custom effects, learned before that move:
   observer's `metadata_changed` took `step` from about 7,800 leaves to 12,300
   and the check from about 2.3 to 3.4 seconds; a flag carried only as a
   decision's field, such as `metadata_fresh`, splits nothing (here, ueg.11).
+  Fact `Resources` first answered with two decisions, `RetireResources` and
+  `StartResource`, each in the list or not by its flags, under a publication
+  like output's: its lemmas took 3,900 to 5,000 leaves per law, the whole
+  proof went from about 2.3 GB to 5.1 GB, and the lifecycle search took 30
+  minutes at `JOBS=4`, since each split rechecks the whole lemma. One
+  decision, `Transfer`, that is always there and carries the choice as its
+  fields `start` and `retire`, halved that: 2,000 to 2,400 leaves per law,
+  2.7 GB, and an 11-minute lifecycle search. The law over the policy then
+  holds by computation alone. The tool seeds a fact new to a law's file from
+  `proof/step.bend`, as it seeds a new law: so seeded, the view search took
+  3 minutes and the management search 2 (here, orb-j2i.7).
 - A value computed from a variable that cannot be split, such as a revision
   comparison over symbolic `U32`s, blocks every split below it. Compute it
   once at the top and pass it down as a `Bool`, so the lemma can take it as a

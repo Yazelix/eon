@@ -3,7 +3,7 @@
 use crate::errno;
 use libghostty_vt::{
     Error as GhosttyError, RenderState, Terminal,
-    kitty::graphics::{Image, ImageFormat},
+    kitty::graphics::{Graphics as Storage, Image, ImageFormat},
     render::{
         CellIterator, CursorVisualStyle as GhosttyCursorShape, ImageIterator,
         ImageLayer as GhosttyImageLayer, ImageProtocol, RowIterator, Snapshot,
@@ -17,12 +17,10 @@ use orbit_protocol::{
     CursorViewport, Dimensions, FRAME_BUDGET_BYTES, Frame, FrameSize, Graphics, ImageLayer,
     MAX_CELLS, MAX_FRAME_RESOURCES, MAX_PLACEMENTS, Placement, PlacementState, Rgb, Row,
     Screen as ProtocolScreen, ScrollPosition, SourceRect, StyleColor, Underline,
-    session::{
-        MAX_RESOURCE_BYTES, MAX_RESOURCE_SIDE, PixelFormat, PreviewOutcome, VerticalDirection,
-    },
+    session::{PixelFormat, PreviewOutcome, ResourceAnnounce, VerticalDirection},
 };
 use std::{
-    collections::HashMap,
+    collections::{BTreeMap, HashMap},
     io::{self},
 };
 
@@ -30,6 +28,9 @@ pub(crate) const SCROLLBACK_BUDGET_BYTES: usize = 16 * 1024 * 1024;
 
 /// The Kitty graphics Unicode placeholder, which ORB-C16 frames carry blank.
 const PLACEHOLDER: char = '\u{10EEEE}';
+
+/// The most resources announced and not retired per attachment (ORB-C16).
+const MAX_UNRETIRED: usize = 1024;
 
 pub(crate) struct FrameExtractor {
     state: RenderState<'static>,
@@ -39,19 +40,100 @@ pub(crate) struct FrameExtractor {
     /// ORB-C16's internal switch: frames carry graphics state and blank
     /// placeholder cells.
     graphics: bool,
+    /// The last frame extraction's serial; each extraction takes the next.
+    serial: u64,
     resources: Resources,
 }
 
-/// The current attachment's resource identities (ORB-C16).
-#[derive(Default)]
+/// The current attachment's resources (ORB-C16).
 struct Resources {
     /// The number the next new resource takes.
     next: u64,
     /// Numbers by libghostty image generation, which no other image, screen
-    /// or terminal reuses, for the resources the last frame referenced. No
-    /// resource is ever started, so one that leaves the frames is skipped and
-    /// takes a fresh number when referenced again.
+    /// or terminal reuses: the resources the last frame referenced and the
+    /// started ones not retired. A resource that leaves the frames before it
+    /// starts is skipped and takes a fresh number when referenced again.
     numbers: HashMap<u64, u64>,
+    /// The started resources not retired, by number.
+    started: BTreeMap<u64, Started>,
+    /// The last extraction's pending references that have not started,
+    /// lowest number first; they become the candidates if its frame is
+    /// queued.
+    extracted: Vec<Candidate>,
+    /// The last queued frame's pending references that have not started,
+    /// which Bend's `Transfer` starts in number order.
+    candidates: Vec<Candidate>,
+    /// Whether a resource's last chunk was written since the last report.
+    delivered: bool,
+    /// Whether Bend has not heard of new candidates, a delivery, a start
+    /// that left candidates, or a retirement.
+    changed: bool,
+    /// The plane last reported to Bend.
+    reported: Plane,
+}
+
+/// A resource a queued frame references: its number, generation and Kitty
+/// image id.
+#[derive(Clone, Copy, PartialEq, Eq)]
+struct Candidate {
+    number: u64,
+    generation: u64,
+    image: u32,
+}
+
+/// A resource whose announcement was queued.
+struct Started {
+    generation: u64,
+    image: u32,
+    /// The screen whose storage it was copied from.
+    alternate: bool,
+    /// Whether its last chunk was written.
+    delivered: bool,
+    /// The serial of the first extraction that found it gone from its
+    /// screen's storage.
+    gone_after: Option<u64>,
+}
+
+/// The resource plane as fact `Resources` reports it.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) struct Plane {
+    pub(crate) delivered: bool,
+    pub(crate) idle: bool,
+    pub(crate) capped: bool,
+    pub(crate) due: bool,
+}
+
+impl Default for Resources {
+    fn default() -> Self {
+        Self {
+            next: 0,
+            numbers: HashMap::new(),
+            started: BTreeMap::new(),
+            extracted: Vec::new(),
+            candidates: Vec::new(),
+            delivered: false,
+            changed: false,
+            // A new attachment has nothing in transfer, started or due.
+            reported: Plane {
+                delivered: false,
+                idle: true,
+                capped: false,
+                due: false,
+            },
+        }
+    }
+}
+
+impl Resources {
+    /// The started resources whose retirement is due: gone after a frame
+    /// serial that has been written, and not still queueing chunks.
+    fn due(&self, written: u64, transferring: Option<u64>) -> impl Iterator<Item = u64> + '_ {
+        self.started.iter().filter_map(move |(&number, started)| {
+            (started.gone_after.is_some_and(|serial| serial <= written)
+                && transferring != Some(number))
+            .then_some(number)
+        })
+    }
 }
 
 impl FrameExtractor {
@@ -62,13 +144,132 @@ impl FrameExtractor {
             cells: CellIterator::new().map_err(|_| errno(libc::EIO))?,
             images: ImageIterator::new().map_err(|_| errno(libc::EIO))?,
             graphics,
+            serial: 0,
             resources: Resources::default(),
         })
     }
 
-    /// Starts a new attachment, which has no resource identities yet.
+    /// Starts a new attachment, which has no resources yet.
     pub(crate) fn attach(&mut self) {
         self.resources = Resources::default();
+    }
+
+    /// The last frame extraction's serial.
+    pub(crate) fn serial(&self) -> u64 {
+        self.serial
+    }
+
+    /// The last extraction's frame was queued for the client: its pending
+    /// references that have not started replace the candidates.
+    pub(crate) fn queued(&mut self) {
+        let resources = &mut self.resources;
+        let extracted = std::mem::take(&mut resources.extracted);
+        resources.changed |= !extracted.is_empty() && extracted != resources.candidates;
+        resources.candidates = extracted;
+    }
+
+    /// Starts the lowest-numbered candidate that a current frame still
+    /// numbers and storage still holds at its generation with its pixels:
+    /// copies them and returns its announcement. A candidate whose copy fails
+    /// starts nothing and loses its number, so a later frame gives it a
+    /// fresh one.
+    /// `retiring` counts the retirements queued but not yet written, whose
+    /// resources still count toward the cap.
+    pub(crate) fn start(
+        &mut self,
+        terminal: &Terminal<'static, '_>,
+        retiring: usize,
+    ) -> io::Result<Option<(ResourceAnnounce, Vec<u8>)>> {
+        let alternate = matches!(
+            terminal.active_screen().map_err(|_| errno(libc::EIO))?,
+            GhosttyScreen::Alternate
+        );
+        let storage = terminal.kitty_graphics().map_err(|_| errno(libc::EIO))?;
+        let resources = &mut self.resources;
+        if resources.started.len() + retiring >= MAX_UNRETIRED {
+            return Err(errno(libc::EPROTO));
+        }
+        while !resources.candidates.is_empty() {
+            let candidate = resources.candidates.remove(0);
+            let current = resources.numbers.get(&candidate.generation) == Some(&candidate.number)
+                && !resources.started.contains_key(&candidate.number);
+            if !current {
+                continue;
+            }
+            if let Some(copied) = copy(&storage, candidate)? {
+                resources.started.insert(
+                    candidate.number,
+                    Started {
+                        generation: candidate.generation,
+                        image: candidate.image,
+                        alternate,
+                        delivered: false,
+                        gone_after: None,
+                    },
+                );
+                resources.changed |= !resources.candidates.is_empty();
+                return Ok(Some(copied));
+            }
+            resources.numbers.remove(&candidate.generation);
+        }
+        Ok(None)
+    }
+
+    /// A resource's last chunk was written.
+    pub(crate) fn delivered(&mut self, resource: u64) {
+        if let Some(started) = self.resources.started.get_mut(&resource) {
+            started.delivered = true;
+            self.resources.delivered = true;
+            self.resources.changed = true;
+        }
+    }
+
+    /// Forgets the resources whose retirement is due, given the highest
+    /// frame serial written and the resource still queueing chunks, and
+    /// returns them for their retirements.
+    pub(crate) fn retire(&mut self, written: u64, transferring: Option<u64>) -> Vec<u64> {
+        let resources = &mut self.resources;
+        let due: Vec<_> = resources.due(written, transferring).collect();
+        for number in &due {
+            if let Some(started) = resources.started.remove(number) {
+                resources.numbers.remove(&started.generation);
+            }
+        }
+        resources.changed |= !due.is_empty();
+        due
+    }
+
+    /// The plane to report to Bend while the switch is on and it changed
+    /// since the last report: new candidates, a delivery, a start that left
+    /// candidates, a retirement, or a change in whether a resource may start
+    /// (`room`), the cap is reached or a retirement is due. A resource counts
+    /// toward the cap until its retirement is written, so `retiring` counts
+    /// the retirements queued but not yet written.
+    pub(crate) fn plane(
+        &mut self,
+        written: u64,
+        transferring: Option<u64>,
+        room: bool,
+        retiring: usize,
+    ) -> Option<Plane> {
+        let resources = &mut self.resources;
+        let plane = Plane {
+            delivered: resources.delivered,
+            idle: room,
+            capped: resources.started.len() + retiring >= MAX_UNRETIRED,
+            due: resources.due(written, transferring).next().is_some(),
+        };
+        let quiet = Plane {
+            delivered: false,
+            ..plane
+        };
+        if !self.graphics || !resources.changed && quiet == resources.reported {
+            return None;
+        }
+        resources.delivered = false;
+        resources.changed = false;
+        resources.reported = quiet;
+        Some(plane)
     }
 
     pub(crate) fn frame(
@@ -90,6 +291,7 @@ impl FrameExtractor {
         terminal: &Terminal<'static, '_>,
         budget: usize,
     ) -> io::Result<Frame> {
+        self.serial += 1;
         let snapshot = self.state.update(terminal).map_err(|_| errno(libc::EIO))?;
         let cols = snapshot.cols().map_err(|_| errno(libc::EIO))?;
         let rows = snapshot.rows().map_err(|_| errno(libc::EIO))?;
@@ -239,6 +441,7 @@ impl FrameExtractor {
                 &mut self.resources,
                 &snapshot,
                 terminal,
+                self.serial,
             )?)
         } else {
             None
@@ -414,15 +617,35 @@ pub(crate) fn viewport_preview(
 
 /// ORB-C16's graphics state for the snapshot's viewport: libghostty's
 /// placements by layer, z-index and Kitty image id, libghostty's order
-/// breaking ties, up to the first entry that would pass either cap. No
-/// resource is started, so every entry within the resource limits is pending.
+/// breaking ties, up to the first entry that would pass either cap. An entry
+/// within the resource limits is ready once its resource was delivered, and
+/// pending until then. A started resource of the active screen that its
+/// storage no longer holds is gone after this extraction's `serial`.
 fn graphics(
     images: &mut ImageIterator<'static>,
     resources: &mut Resources,
     snapshot: &Snapshot<'static, '_>,
     terminal: &Terminal<'static, '_>,
+    serial: u64,
 ) -> io::Result<Graphics> {
     let storage = terminal.kitty_graphics().map_err(|_| errno(libc::EIO))?;
+    let alternate = matches!(
+        terminal.active_screen().map_err(|_| errno(libc::EIO))?,
+        GhosttyScreen::Alternate
+    );
+    for started in resources.started.values_mut() {
+        if started.alternate == alternate && started.gone_after.is_none() {
+            let held = match storage.image(started.image) {
+                Some(image) => {
+                    image.generation().map_err(|_| errno(libc::EIO))? == started.generation
+                }
+                None => false,
+            };
+            if !held {
+                started.gone_after = Some(serial);
+            }
+        }
+    }
     let mut entries = Vec::new();
     let mut iteration = images.update(snapshot).map_err(|_| errno(libc::EIO))?;
     while let Some(placement) = iteration.next() {
@@ -433,7 +656,7 @@ fn graphics(
         };
         let id = placement.image_id().map_err(|_| errno(libc::EIO))?;
         let state = match storage.image(id) {
-            Some(image) if sendable(&image)? => PlacementState::Pending,
+            Some(image) if announcement(&image, 0, 0)?.is_some() => PlacementState::Pending,
             _ => PlacementState::Unavailable,
         };
         let entry = Placement {
@@ -462,9 +685,10 @@ fn graphics(
     // A stable sort keeps libghostty's order among equal keys.
     entries.sort_by_key(|(id, _, entry)| (entry.layer, entry.z, *id));
     let mut numbers = HashMap::new();
+    let mut extracted = BTreeMap::new();
     let mut placements = Vec::with_capacity(entries.len().min(MAX_PLACEMENTS));
     let mut placements_omitted = false;
-    for (_, generation, mut entry) in entries {
+    for (image, generation, mut entry) in entries {
         if placements.len() == MAX_PLACEMENTS
             || !numbers.contains_key(&generation) && numbers.len() == MAX_FRAME_RESOURCES
         {
@@ -482,9 +706,30 @@ fn graphics(
                     number
                 })
         });
+        if entry.state == PlacementState::Pending {
+            match resources.started.get(&entry.resource) {
+                Some(started) if started.delivered => entry.state = PlacementState::Ready,
+                Some(_) => {}
+                None => {
+                    extracted.insert(
+                        entry.resource,
+                        Candidate {
+                            number: entry.resource,
+                            generation,
+                            image,
+                        },
+                    );
+                }
+            }
+        }
         placements.push(entry);
     }
+    // A started resource keeps its number until it retires.
+    for (&number, started) in &resources.started {
+        numbers.insert(started.generation, number);
+    }
     resources.numbers = numbers;
+    resources.extracted = extracted.into_values().collect();
     // libghostty's geometry uses these cells; with no client size yet it
     // has none, and the list is empty.
     let cell = |pixels: libghostty_vt::error::Result<u32>, cells| {
@@ -506,21 +751,47 @@ fn graphics(
     })
 }
 
-/// Whether an image is within ORB-C16's resource limits: 8-bit RGB or RGBA,
-/// 1 to 4,096 pixels on each side and at most 10,000,000 decoded bytes.
-fn sendable(image: &Image<'_>) -> io::Result<bool> {
+/// An image's announcement as this resource, or None when it breaks
+/// ORB-C16's resource limits: 8-bit RGB or RGBA, 1 to 4,096 pixels on each
+/// side and at most 10,000,000 decoded bytes.
+fn announcement(
+    image: &Image<'_>,
+    resource: u64,
+    generation: u64,
+) -> io::Result<Option<ResourceAnnounce>> {
     let format = match image.format() {
         Ok(ImageFormat::Rgb) => PixelFormat::Rgb,
         Ok(ImageFormat::Rgba) => PixelFormat::Rgba,
-        _ => return Ok(false),
+        _ => return Ok(None),
     };
     let width = image.width().map_err(|_| errno(libc::EIO))?;
     let height = image.height().map_err(|_| errno(libc::EIO))?;
-    let side = 1..=MAX_RESOURCE_SIDE;
-    Ok(side.contains(&width)
-        && side.contains(&height)
-        && u64::from(width) * u64::from(height) * u64::from(format.bytes_per_pixel())
-            <= u64::from(MAX_RESOURCE_BYTES))
+    Ok(ResourceAnnounce::new(
+        resource, generation, format, width, height,
+    ))
+}
+
+/// A candidate's announcement and a copy of its pixels, if storage still
+/// holds its image at its generation with all of its pixels.
+fn copy(
+    storage: &Storage<'_>,
+    candidate: Candidate,
+) -> io::Result<Option<(ResourceAnnounce, Vec<u8>)>> {
+    let Some(image) = storage.image(candidate.image) else {
+        return Ok(None);
+    };
+    if image.generation().map_err(|_| errno(libc::EIO))? != candidate.generation {
+        return Ok(None);
+    }
+    let Some(announce) = announcement(&image, candidate.number, candidate.generation)? else {
+        return Ok(None);
+    };
+    Ok(match image.data().map_err(|_| errno(libc::EIO))? {
+        Some(pixels) if pixels.len() == announce.byte_length as usize => {
+            Some((announce, pixels.to_vec()))
+        }
+        _ => None,
+    })
 }
 
 fn image_layer(layer: GhosttyImageLayer) -> ImageLayer {
@@ -653,7 +924,7 @@ fn cell_style(style: Style, selected: bool, protected: bool) -> io::Result<CellS
 mod tests {
     use super::*;
     use libghostty_vt::terminal::ScrollViewport;
-    use orbit_protocol::session::{self, ServerMessage, VerticalPreview};
+    use orbit_protocol::session::{self, MAX_RESOURCE_SIDE, ServerMessage, VerticalPreview};
 
     /// Transmits a white RGB image of `width` by `height` pixels as Kitty
     /// image `id`, with the control keys `keys`.
@@ -836,6 +1107,137 @@ mod tests {
         assert_eq!(graphics(&frame).placements.len(), MAX_PLACEMENTS);
         assert!(graphics(&frame).placements_omitted);
         frame.encode().unwrap();
+    }
+
+    fn states(frame: &Frame) -> Vec<(u64, PlacementState)> {
+        graphics(frame)
+            .placements
+            .iter()
+            .map(|entry| (entry.resource, entry.state))
+            .collect()
+    }
+
+    /// Only a queued frame's pending references can start. An entry is
+    /// ready once its resource's last chunk was written, and a resource that
+    /// left storage retires only once a frame extracted after that is
+    /// written, and not while its chunks are still queueing (ORB-C16).
+    #[test]
+    fn resources_are_ready_once_delivered_and_retire_after_a_written_frame() {
+        let mut terminal = Terminal::new(10, 4).unwrap();
+        terminal.resize(10, 4, 10, 20).unwrap();
+        let mut extractor = FrameExtractor::new(true).unwrap();
+        transmit(&mut terminal, 1, 2, 1, "a=T,C=1");
+        let pending = PlacementState::Pending;
+        assert_eq!(
+            states(&extractor.frame(1, &terminal).unwrap()),
+            [(0, pending)]
+        );
+        // A frame built but never queued makes nothing startable.
+        assert!(extractor.start(&terminal, 0).unwrap().is_none());
+        assert_eq!(
+            states(&extractor.frame(2, &terminal).unwrap()),
+            [(0, pending)]
+        );
+        extractor.queued();
+        let (announce, pixels) = extractor.start(&terminal, 0).unwrap().unwrap();
+        assert_eq!((announce.resource, pixels), (0, vec![0xff; 6]));
+        assert_eq!(
+            states(&extractor.frame(3, &terminal).unwrap()),
+            [(0, pending)]
+        );
+        extractor.delivered(0);
+        let ready = PlacementState::Ready;
+        assert_eq!(
+            states(&extractor.frame(4, &terminal).unwrap()),
+            [(0, ready)]
+        );
+        let plane = extractor.plane(0, None, true, 0).unwrap();
+        assert!(plane.delivered && plane.idle && !plane.capped && !plane.due);
+        assert_eq!(extractor.plane(0, None, true, 0), None);
+
+        // Deleting the image and its pixels: it is gone after the next
+        // extraction, which no longer references it.
+        terminal.vt_write(b"\x1b_Ga=d,d=I,i=1,q=2\x1b\\");
+        assert!(states(&extractor.frame(5, &terminal).unwrap()).is_empty());
+        let gone = extractor.serial();
+        assert!(extractor.retire(gone - 1, None).is_empty());
+        assert!(extractor.retire(gone, Some(0)).is_empty());
+        assert_eq!(
+            extractor.plane(gone, None, true, 0).map(|plane| plane.due),
+            Some(true)
+        );
+        assert_eq!(extractor.retire(gone, None), [0]);
+        assert_eq!(
+            extractor.plane(gone, None, true, 0).map(|plane| plane.due),
+            Some(false)
+        );
+    }
+
+    /// A resource counts toward the 1,024 cap until its retirement is
+    /// written, not only until it is queued, so a slow client cannot gather
+    /// more announced resources than the cap (ORB-C16).
+    #[test]
+    fn retirements_count_toward_the_cap_until_written() {
+        let mut terminal = Terminal::new(10, 4).unwrap();
+        terminal.resize(10, 4, 10, 20).unwrap();
+        let mut extractor = FrameExtractor::new(true).unwrap();
+        transmit(&mut terminal, 1, 2, 1, "a=T,C=1");
+        extractor.frame(1, &terminal).unwrap();
+        extractor.queued();
+        // libghostty's generations are process-wide, so the fixture's are
+        // taken from the top of the range, where no real image reaches.
+        for number in u64::MAX - MAX_UNRETIRED as u64..u64::MAX {
+            extractor.resources.started.insert(
+                number,
+                Started {
+                    generation: number,
+                    image: 2,
+                    alternate: false,
+                    delivered: true,
+                    gone_after: Some(1),
+                },
+            );
+        }
+        let capped = |extractor: &mut FrameExtractor, retiring| {
+            extractor.resources.changed = true;
+            extractor.plane(1, None, true, retiring).unwrap().capped
+        };
+        assert!(capped(&mut extractor, 0));
+        assert_eq!(extractor.retire(1, None).len(), MAX_UNRETIRED);
+        // Every retirement is queued and none is written yet.
+        assert!(capped(&mut extractor, MAX_UNRETIRED));
+        assert!(extractor.start(&terminal, MAX_UNRETIRED).is_err());
+        // One retirement written leaves room for one start.
+        assert!(!capped(&mut extractor, MAX_UNRETIRED - 1));
+        let (announce, _) = extractor
+            .start(&terminal, MAX_UNRETIRED - 1)
+            .unwrap()
+            .unwrap();
+        assert_eq!(announce.resource, 0);
+    }
+
+    /// A copy that fails starts nothing, and the next frame gives the
+    /// resource a fresh number (ORB-C16). The alternate screen's storage does
+    /// not hold the primary screen's image.
+    #[test]
+    fn a_failed_copy_takes_a_fresh_number() {
+        let mut terminal = Terminal::new(10, 4).unwrap();
+        terminal.resize(10, 4, 10, 20).unwrap();
+        let mut extractor = FrameExtractor::new(true).unwrap();
+        transmit(&mut terminal, 1, 2, 1, "a=T,C=1");
+        let pending = PlacementState::Pending;
+        assert_eq!(
+            states(&extractor.frame(1, &terminal).unwrap()),
+            [(0, pending)]
+        );
+        extractor.queued();
+        terminal.vt_write(b"\x1b[?1049h");
+        assert!(extractor.start(&terminal, 0).unwrap().is_none());
+        terminal.vt_write(b"\x1b[?1049l");
+        assert_eq!(
+            states(&extractor.frame(2, &terminal).unwrap()),
+            [(1, pending)]
+        );
     }
 
     #[test]

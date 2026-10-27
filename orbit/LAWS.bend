@@ -8,6 +8,7 @@ import ./src/revision.bend as Revision
 import ./src/boundary.bend as Boundary
 import ./src/session.bend as Session
 import ./src/status.bend as Status
+import ./src/resource.bend as Resource
 
 law detach_preserves_pid:
   for pid: U32
@@ -85,6 +86,17 @@ law management_program_status_needs_a_live_lease:
   for slot: Management.Slot
   for live: Bool
   {Management.is_records(Management.answer(slot, Management.ProgramStatus{live})) == Bool.and(Management.is_leased(slot), live) : Bool}
+
+# ORB-C16: Orbit starts a resource exactly when the child runs, no transfer
+# is in progress and fewer than 1,024 resources are announced and not
+# retired, so it holds at most one copy outside storage and never passes the
+# cap.
+law resource_starts_stay_within_budget:
+  for live: Bool
+  for idle: Bool
+  for capped: Bool
+  for due: Bool
+  {Resource.starts(Resource.answer(Resource.Plane{live, idle, capped, due})) == Bool.and(live, Bool.and(idle, Bool.not(capped))) : Bool}
 
 law revision_next_is_ahead:
   for r: Revision.Revision
@@ -467,14 +479,23 @@ def live(
     # ORB-C15: a ProgramStatus answer changes no lifecycle.
     case Boundary.ProgramStatus{foreground}:
       quiet(moves, Live{client, observer})
+    # ORB-C16: the attached client's resource plane changes no lifecycle and
+    # never ends the attachment.
+    case Boundary.Resources{delivered, idle, capped, due}:
+      match client:
+        case True{}:
+          quiet(moves, Live{True{}, observer})
+        case False{}:
+          Outside{}
     # The host reports a reap only after Bend asks for one.
     case _:
       Outside{}
 
 # ORB-C12: the run finishes only once the direct child is reaped, with its
-# status; until then only an observer's loss and a tick or host phase that
-# was already queued arrive, and none changes the lifecycle, or the host
-# reports the child not reaped, which Bend answers with another reap.
+# status; until then only an observer's loss, a tick or host phase that was
+# already queued and a report of the still attached client's resource plane
+# arrive, and none changes the lifecycle, or the host reports the child not
+# reaped, which Bend answers with another reap.
 def same_status(equal: Bool, rest: List<&2, Move>) -> Phase:
   match equal:
     case True{}:
@@ -507,6 +528,8 @@ def stopping(fact: Boundary.Fact, moves: List<&2, Move>) -> Phase:
     case Boundary.Tick{state, x, y}:
       quiet(moves, Stopping{})
     case Boundary.Selected{outcome, presented}:
+      quiet(moves, Stopping{})
+    case Boundary.Resources{delivered, idle, capped, due}:
       quiet(moves, Stopping{})
     case _:
       Outside{}
@@ -1368,6 +1391,10 @@ def by_fact(
       )
     case Boundary.Tick{state, x, y}:
       client_only(client, tick(state, flags, acts, client, waiting, route, copied, revision))
+    # ORB-C16: a resource whose last chunk was written publishes as output
+    # does.
+    case Boundary.Resources{delivered, idle, capped, due}:
+      client_only(client, plain(acts, flags, False{}, client, waiting, route, copied, revision))
     # The host reports these only after Bend asks, and Fault only in place of
     # Started, for a worker that dies at once.
     case Boundary.Reaped{status}:
@@ -1421,8 +1448,9 @@ def fed(held: Bool, revision: Revision.Revision) -> Revision.Revision:
       Revision.next(revision)
 
 # ORB-C4: a fact the host applied before Bend answers changes presented state
-# once: a PTY turn that fed output to the terminal, unless an update was held
-# before it, a resize, and a host phase or tick that applied.
+# once: a PTY turn that fed output to the terminal, or a resource whose last
+# chunk was written (ORB-C16), unless an update was held before it, a resize,
+# and a host phase or tick that applied.
 def fact_advance(
   fact: Boundary.Fact, held: Bool, revision: Revision.Revision
 ) -> Revision.Revision:
@@ -1431,6 +1459,12 @@ def fact_advance(
       fed(held, revision)
     case Boundary.ChildExited{drained}:
       match drained:
+        case True{}:
+          fed(held, revision)
+        case False{}:
+          revision
+    case Boundary.Resources{delivered, idle, capped, due}:
+      match delivered:
         case True{}:
           fed(held, revision)
         case False{}:
@@ -1459,8 +1493,9 @@ def viewing(
     fact_advance(fact, held, revision)
   )
 
-# Once a stop began, the host sends only the reap, an observer's loss and a
-# tick or host phase that was already queued.
+# Once a stop began, the host sends only the reap, an observer's loss, a
+# tick or host phase that was already queued, and the resource plane's
+# reports.
 def ended_view(fact: Boundary.Fact) -> View:
   match fact:
     case Boundary.Reaped{status}:
@@ -1472,6 +1507,8 @@ def ended_view(fact: Boundary.Fact) -> View:
     case Boundary.Tick{state, x, y}:
       Ending{}
     case Boundary.Selected{outcome, presented}:
+      Ending{}
+    case Boundary.Resources{delivered, idle, capped, due}:
       Ending{}
     case _:
       Unordered{}
@@ -1701,8 +1738,9 @@ def on_lease(
     case _:
       unanswered(replies, Leasing{slot})
 
-# Once a stop began, the host sends only the reap, an observer's loss and a
-# tick or host phase that was already queued.
+# Once a stop began, the host sends only the reap, an observer's loss, a
+# tick or host phase that was already queued, and the resource plane's
+# reports.
 def ceased(fact: Boundary.Fact) -> Lease:
   match fact:
     case Boundary.Reaped{status}:
@@ -1714,6 +1752,8 @@ def ceased(fact: Boundary.Fact) -> Lease:
     case Boundary.Tick{state, x, y}:
       Ceased{}
     case Boundary.Selected{outcome, presented}:
+      Ceased{}
+    case Boundary.Resources{delivered, idle, capped, due}:
       Ceased{}
     case _:
       Disordered{}

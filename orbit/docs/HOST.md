@@ -99,7 +99,8 @@ from the client (its input, close, pressure, requests, pointer phases and
 their outcomes) comes only while one is attached. `Reaped`, `ExitedBeforeStop`
 and `NotReaped` come only after Bend decides `Reap` or `ManageStop`; before
 them come at most the observer losses, ticks and host-phase outcomes that the
-same decisions queued. After `Finish` comes only `Finished`. The laws check
+same decisions queued, and `Resources` while the client stays attached. After
+`Finish` comes only `Finished`. The laws check
 nothing after a fact out of this order.
 
 The observer's output waits in a queue under the client's bound. Rust
@@ -131,8 +132,9 @@ advances it once for each change of presented state
 (ORB-C4). One pass after each decision, `stamp` in
 [src/session.bend](../src/session.bend), owns that rule. A fact the host applied
 before Bend answers advances it first: a PTY turn that fed output to the
-terminal, unless a synchronized update was held at the previous fact, a
-resize, and a host phase or tick that applied. Then each decision that changes
+terminal or a `Resources` fact that delivered a resource, unless a
+synchronized update was held at the previous fact, a resize, and a host
+phase or tick that applied. Then each decision that changes
 presented state advances it as it is carried out: a viewport move, and an
 `Unselect` of a presented selection, unless the clear counts with
 the change that caused or accompanied it: a resize, a viewport move, output
@@ -156,6 +158,48 @@ discarded when the next turn starts, so none is retained or replayed. Bend
 sends them before the frame of the same turn, even while a synchronized update
 holds that frame, and answers a turn that passed the bound with `Detach`,
 sending none of them.
+
+While a client is attached, the host keeps its resource plane (ORB-C16):
+the records of the resources its queued frames reference, the one
+transfer's copy, and a resource queue beside the output queue, which holds
+at most Bend's `resource_bytes` of chunk payload. Pixel bytes never cross
+the pipe. Whenever the plane changed, the host reports fact `Resources` from
+its wake, with whether a resource's last chunk was written since the last
+report (`delivered`), whether the queue has room for a start: no transfer
+in progress, its chunk payload below the bound and the child not exited
+(`idle`), whether 1,024 resources are announced and not retired, counting
+each until its retirement is written (`capped`), and whether a retirement
+is due (`due`). The host owns these counts, and Bend keeps no copy of them.
+Bend answers with the proved policy in
+[src/resource.bend](../src/resource.bend): one `Transfer` whose `retire`
+says, while the child runs, that a retirement is due, and whose `start`
+says, while the child runs, that the queue has room and the cap leaves
+room; once the stop begins, both are false. A delivered resource changes
+presented state, so it advances the revision as output does, and Bend
+publishes it as it publishes output.
+
+Rust carries these out ([src/frame.rs](../src/frame.rs),
+[src/socket.rs](../src/socket.rs)). Each frame extraction takes the next
+serial, which the frame-bearing message built from it keeps in the output
+queue. Once such a message is queued, its frame's pending references that
+have not started become the candidates; a frame built but never queued makes
+none. A `Transfer` with `start` takes the lowest-numbered candidate that a
+current frame still numbers and that storage holds at its generation with
+all its pixels, copies them, queues the announcement and as many chunks as
+the bound admits, and queues the rest as written chunks free room; a
+candidate whose copy fails loses its number, and the next one is tried. A
+frame extraction that finds a started resource of the active screen gone
+from its storage marks it gone after its serial, and a `Transfer` with
+`retire` first queues one retirement for each such resource once a
+frame-bearing message of that serial or later is written, unless its chunks
+are still being queued. The client's writer finishes the one message it has
+started; otherwise it writes the output queue first and the resource queue
+only when the output queue is empty. Resource messages never count against
+the output bound or make the client `Pressured`. When the host sees the
+child exit, before Bend publishes anything for it, the resource queue drops
+the copy and the messages it has not started writing and starts nothing
+more; `Exited` follows the one partly written. A refused client's close
+drops them the same way.
 
 The host keeps the program status records of ORB-C15
 ([src/status.rs](../src/status.rs)). libghostty parses each OSC 7501 report,
@@ -226,8 +270,9 @@ none holds session state that Bend decides from.
   writing their last output, the PTY master and the direct child,
   libghostty's terminal, render state and gesture, whether its clipboard
   writes are captured, which Bend's `Capture` sets, the PTY input queue, each
-  peer's socket, partial write and bounded output queue, and each management
-  connection's buffers.
+  peer's socket, partial write and bounded output queue, the interactive
+  client's resource queue with the one transfer's pixel copy (ORB-C16), and
+  each management connection's buffers.
 - Timers and loop scheduling: the peer's negotiation deadline, the half-close
   probe, the synchronized-output watchdog and whether it is armed, the
   management connection's one-second bound, the source the next wait starts
@@ -240,7 +285,11 @@ none holds session state that Bend decides from.
   observer, the turn's program status events and the program status records
   with their neutral facts, a client's half-close, its unread bytes and
   negotiation phase, the identity a managed run publishes, a management peer's
-  UID, and the containment fixture's fault.
+  UID, the containment fixture's fault, and the attachment's resource
+  records: identity numbers by image generation, the started resources with
+  their image id, screen, delivery and the serial after which storage no
+  longer held them, the last queued frame's candidates, the last frame
+  serial extracted and the highest written, and the plane last reported.
 - Carry-out scratch, held only while Bend decides the current fact: the
   facts the host owes Bend before the next wait, a client's decoded or
   refused request, the wheel or pointer phase Bend is deciding on, a

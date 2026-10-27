@@ -187,6 +187,7 @@ struct Bounds {
     peer_ms: u32,
     sync_ms: u32,
     output_bytes: u32,
+    resource_bytes: u32,
 }
 
 /// The Bend worker and its two pipes: facts go out on its descriptor 3, and
@@ -304,12 +305,14 @@ impl Bend {
                     peer_ms,
                     sync_ms,
                     output_bytes,
+                    resource_bytes,
                 },
             ] => Ok(Bounds {
                 finish_ms,
                 peer_ms,
                 sync_ms,
                 output_bytes,
+                resource_bytes,
             }),
             _ => Err(protocol()),
         }
@@ -588,6 +591,7 @@ impl Host {
         self.orbit.writes.discard();
         if self.orbit.try_reap()?.is_some() {
             self.child_exited = true;
+            self.stop_resources();
             return Ok(Fact::ChildExited {
                 drained: output.is_some(),
             });
@@ -599,11 +603,21 @@ impl Host {
         Ok(output)
     }
 
+    /// The child exited: the client's resource queue drops what it has not
+    /// started writing, before any frame Bend publishes for the exit, and
+    /// starts nothing more (ORB-C16).
+    fn stop_resources(&mut self) {
+        if let Some(client) = self.client.as_mut() {
+            client.resources.stop();
+        }
+    }
+
     /// The direct child exited: the PTY's remaining output, at most four
     /// reads, reaches the terminal before the stop, so a descendant that
     /// keeps writing cannot hold the run open (ORB-C12).
     fn drain_exited(&mut self) -> io::Result<Fact> {
         self.child_exited = true;
+        self.stop_resources();
         self.orbit.start_turn();
         let mut drained = false;
         if self.pty_open {
@@ -636,6 +650,24 @@ impl Host {
                 ClientState::Open => {}
                 ClientState::Closed => return Ok(Some(Fact::Closed { full: true })),
                 ClientState::Pressured => return Ok(Some(Fact::Pressured)),
+            }
+            // The resource plane, while the switch is on and it changed (ORB-C16).
+            let extractor = &mut self.orbit.extractor;
+            for resource in client.resources.take_delivered() {
+                extractor.delivered(resource);
+            }
+            if let Some(plane) = extractor.plane(
+                client.output.written_serial(),
+                client.resources.transferring(),
+                client.resources.room(),
+                client.resources.retiring(),
+            ) {
+                return Ok(Some(Fact::Resources {
+                    delivered: plane.delivered,
+                    idle: plane.idle,
+                    capped: plane.capped,
+                    due: plane.due,
+                }));
             }
         }
         if let Some(fact) = self.negotiate()? {
@@ -1187,7 +1219,7 @@ impl Host {
             // The viewport moves even for a client found lost meanwhile, since
             // Bend advanced the revision for the move.
             let outcome = orbit.wheel(wheel.direction, revision)?;
-            client.send_server(|| Ok(outcome))
+            self.send(|_| Ok(outcome))
         }
     }
 
@@ -1231,10 +1263,10 @@ impl Host {
     /// Carries out Bend's answer to an upward selection tick from this
     /// position (fact Tick), whose frame is at `revision`.
     fn send_tick(&mut self, position: SelectionPosition, revision: u64) -> io::Result<()> {
-        let client = self.client.as_mut().ok_or_else(protocol)?;
+        self.client.as_ref().ok_or_else(protocol)?;
         let fact = match self.orbit.tick(position, revision)? {
             Some((outcome, presented)) => {
-                client.send_server(|| Ok(outcome))?;
+                self.send(|_| Ok(outcome))?;
                 Fact::Selected {
                     outcome: Selected::Ticked,
                     presented,
@@ -1249,13 +1281,54 @@ impl Host {
         Ok(())
     }
 
+    /// Queues a message for the client. A frame-bearing one carries the
+    /// serial of the extraction that built it, the last one, and once it is
+    /// queued its pending references become the resources Orbit may start
+    /// (ORB-C16).
     fn send(
         &mut self,
         message: impl FnOnce(&mut Orbit) -> io::Result<ServerMessage>,
     ) -> io::Result<()> {
         let client = self.client.as_mut().ok_or_else(protocol)?;
         let orbit = &mut self.orbit;
-        client.send_server(|| message(orbit))
+        let frame = client.send_serial(|| {
+            let message = message(orbit)?;
+            Ok((message, orbit.extractor.serial()))
+        })?;
+        if frame {
+            orbit.extractor.queued();
+        }
+        Ok(())
+    }
+
+    /// Carries out Bend's `Transfer` with `start`: the lowest-numbered
+    /// candidate whose pixels storage still holds is copied, announced and
+    /// queued in chunks as the resource lane's bound allows.
+    fn start_resource(&mut self) -> io::Result<()> {
+        let client = self.client.as_mut().ok_or_else(protocol)?;
+        // Bend starts only while the resource queue has room.
+        if !client.resources.room() {
+            return Err(protocol());
+        }
+        let retiring = client.resources.retiring();
+        if let Some((announce, pixels)) =
+            self.orbit.extractor.start(&self.orbit.terminal, retiring)?
+        {
+            client.start_resource(announce, pixels)?;
+        }
+        Ok(())
+    }
+
+    /// Carries out Bend's `Transfer` with `retire`: one retirement for each
+    /// resource gone from its screen's storage before a frame that has been
+    /// written, unless its chunks are still being queued.
+    fn retire_resources(&mut self) -> io::Result<()> {
+        let client = self.client.as_mut().ok_or_else(protocol)?;
+        let retired = self.orbit.extractor.retire(
+            client.output.written_serial(),
+            client.resources.transferring(),
+        );
+        client.retire_resources(&retired)
     }
 
     /// Sends the PTY turn's clipboard writes in order, each as one ordered
@@ -1369,6 +1442,14 @@ impl Host {
                     let fact = self.reap()?;
                     self.queued.push_back(fact);
                 }
+                Decision::Transfer { start, retire } => {
+                    if retire {
+                        self.retire_resources()?;
+                    }
+                    if start {
+                        self.start_resource()?;
+                    }
+                }
                 Decision::Finish { status, explicit } => {
                     self.exit(status, explicit)?;
                     // An explicit stop succeeds once the child is reaped.
@@ -1405,6 +1486,7 @@ impl Host {
     fn attach(&mut self) -> io::Result<()> {
         let mut client = self.peer.take().ok_or_else(protocol)?;
         client.output_bound = self.bounds.output_bytes as usize;
+        client.resources.bound = self.bounds.resource_bytes as usize;
         while let Step::Blocked(fd) = client.send_role(Role::Interactive)? {
             wait_fd(fd, platform::POLLOUT, None)?;
             terminated()?;

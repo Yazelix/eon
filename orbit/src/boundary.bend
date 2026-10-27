@@ -251,6 +251,17 @@ type Fact is Data:
   # A ProgramStatus request on the management connection (ORB-C15), with the
   # foreground group the host sampled when it read it, between PTY turns.
   ProgramStatus{foreground: Foreground}
+  # The client's resource plane changed (ORB-C16): a queued frame references a
+  # pending resource that has not started, a start left more to start, a
+  # resource's last chunk was written, a resource retired, or whether one may
+  # start, the cap is reached or a retirement is due changed. Reported only
+  # while a client is attached.
+  # `delivered` tells that a resource's last chunk was written since the last
+  # report; `idle`, that the resource queue has room to start one: the child
+  # runs, no transfer is in progress and its queued chunk payload is below the
+  # bound; `capped`, that 1,024 resources are announced and their retirements
+  # not yet written; `due`, that a resource awaits retirement.
+  Resources{delivered: Bool, idle: Bool, capped: Bool, due: Bool}
 
 # One line from the host: a fact and the flags it carries.
 type Line is Data:
@@ -772,6 +783,22 @@ def fact_program_status(args: List<&2, String>) -> Maybe<&2, Fact>:
     case _:
       None{}
 
+def fact_resources(args: List<&2, String>) -> Maybe<&2, Fact>:
+  match args:
+    case Con{a0, Con{a1, Con{a2, Con{a3, Nil{}}}}}:
+      do Maybe<&2, Fact>:
+        delivered_word : U32 <- U32.read(a0)
+        delivered : Bool <- decode_bool(delivered_word)
+        idle_word : U32 <- U32.read(a1)
+        idle : Bool <- decode_bool(idle_word)
+        capped_word : U32 <- U32.read(a2)
+        capped : Bool <- decode_bool(capped_word)
+        due_word : U32 <- U32.read(a3)
+        due : Bool <- decode_bool(due_word)
+        return Resources{delivered, idle, capped, due}
+    case _:
+      None{}
+
 def decode_fact(code: U32, args: List<&2, String>) -> Maybe<&2, Fact>:
   match code:
     case 0:
@@ -830,6 +857,8 @@ def decode_fact(code: U32, args: List<&2, String>) -> Maybe<&2, Fact>:
       fact_exited_before_stop(args)
     case 28:
       fact_program_status(args)
+    case 29:
+      fact_resources(args)
     case _:
       None{}
 
@@ -866,9 +895,10 @@ def decode(text: String) -> Maybe<&2, Line>:
 # One decision for the host.
 type Decision is Data:
   # The worker's first answer, before any fact: the finish bound, the
-  # pending-peer bound and the synchronized-output bound in milliseconds, and
-  # the interactive client's output bound in bytes.
-  Bounds{finish_ms: U32, peer_ms: U32, sync_ms: U32, output_bytes: U32}
+  # pending-peer bound and the synchronized-output bound in milliseconds, the
+  # interactive client's output bound in bytes, and the most chunk payload
+  # bytes its separate resource queue holds (ORB-C16).
+  Bounds{finish_ms: U32, peer_ms: U32, sync_ms: U32, output_bytes: U32, resource_bytes: U32}
   # Admits the pending peer as the interactive client (Attached).
   Attach{}
   # Admits the pending peer as the metadata observer (ObservingMetadata).
@@ -993,6 +1023,15 @@ type Decision is Data:
   ManageProgramStatus{}
   # Answers the connection Busy; the lease stays.
   ManageRefuse{}
+  # Moves the client's resource plane (ORB-C16). When `retire`, it first queues
+  # one retirement for each sent resource that left its screen's storage once
+  # a frame written after that no longer references it, except while its own
+  # transfer still queues chunks. When `start`, it starts the lowest-numbered
+  # pending resource that the last queued frame references, if storage still
+  # holds it at its generation: it copies its pixels out of storage, queues its
+  # announcement, and queues its chunks as the resource queue's bound allows. A
+  # resource whose copy fails is not started and loses its number.
+  Transfer{start: Bool, retire: Bool}
 
 def encode_bool(value: Bool) -> String:
   match value:
@@ -1066,8 +1105,8 @@ def encode_reason(value: Reason) -> String:
 
 def encode_decision(decision: Decision) -> String:
   match decision:
-    case Bounds{finish_ms, peer_ms, sync_ms, output_bytes}:
-      "0" ++ " " ++ U32.show(finish_ms) ++ " " ++ U32.show(peer_ms) ++ " " ++ U32.show(sync_ms) ++ " " ++ U32.show(output_bytes) ++ "\n"
+    case Bounds{finish_ms, peer_ms, sync_ms, output_bytes, resource_bytes}:
+      "0" ++ " " ++ U32.show(finish_ms) ++ " " ++ U32.show(peer_ms) ++ " " ++ U32.show(sync_ms) ++ " " ++ U32.show(output_bytes) ++ " " ++ U32.show(resource_bytes) ++ "\n"
     case Attach{}:
       "1" ++ "\n"
     case Observing{}:
@@ -1152,6 +1191,8 @@ def encode_decision(decision: Decision) -> String:
       "41" ++ "\n"
     case ManageRefuse{}:
       "42" ++ "\n"
+    case Transfer{start, retire}:
+      "43" ++ " " ++ encode_bool(start) ++ " " ++ encode_bool(retire) ++ "\n"
 
 # One answer: decisions, carried out in order.
 def Decisions() -> Type:
@@ -1168,4 +1209,4 @@ def encode(decisions: Decisions()) -> String:
 # The line the worker writes before its first answer, naming the schema it
 # was generated from; the host refuses a worker that names another.
 def schema() -> String:
-  "schema 5acfe336dcbbaf50\n"
+  "schema 2d907a1c5bde0b23\n"
