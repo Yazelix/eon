@@ -1,7 +1,7 @@
 use super::{
     cli::Inputs,
     diagnostics::{self, DiagnosticLog},
-    managed_environment,
+    managed_environment, platform,
     supervisor::{
         LaunchMode, SESSION_START_TIMEOUT, effective_uid, request_id, status_code, stop,
         validate_private_directory,
@@ -19,7 +19,7 @@ use std::{
     ffi::{OsStr, OsString},
     fs,
     io::{Read, Write},
-    os::fd::{AsRawFd, OwnedFd},
+    os::fd::OwnedFd,
     os::unix::{
         ffi::OsStrExt,
         fs::{FileTypeExt, MetadataExt, OpenOptionsExt, PermissionsExt},
@@ -422,35 +422,14 @@ fn read_management_response(
 }
 
 fn validate_management_peer(stream: &UnixStream, identity: &LiveIdentity) -> Result<(), String> {
-    let mut credentials: libc::ucred = unsafe { std::mem::zeroed() };
-    let mut length = std::mem::size_of::<libc::ucred>() as libc::socklen_t;
-    // SAFETY: credentials points to writable ucred storage of the declared length.
-    if unsafe {
-        libc::getsockopt(
-            stream.as_raw_fd(),
-            libc::SOL_SOCKET,
-            libc::SO_PEERCRED,
-            (&raw mut credentials).cast(),
-            &raw mut length,
-        )
-    } == -1
-        || length as usize != std::mem::size_of::<libc::ucred>()
-    {
-        return Err("cannot validate terminal management peer credentials".into());
-    }
-    if u32::try_from(credentials.pid).ok() != Some(identity.process_id)
-        || credentials.uid != identity.uid
-    {
+    let (process_id, uid) = platform::peer_identity(stream)
+        .ok_or("cannot validate terminal management peer credentials")?;
+    if u32::try_from(process_id).ok() != Some(identity.process_id) || uid != identity.uid {
         return Err("terminal management peer differs from its Ready process identity".into());
     }
-    let stat = fs::read_to_string(format!("/proc/{}/stat", identity.process_id))
-        .map_err(|error| format!("cannot validate terminal process identity: {error}"))?;
-    let start = stat
-        .rsplit_once(')')
-        .and_then(|(_, fields)| fields.split_whitespace().nth(19))
-        .and_then(|value| value.parse::<u64>().ok())
-        .ok_or("invalid terminal process identity")?;
-    if start != identity.process_start {
+    let process = platform::process(identity.process_id)?
+        .ok_or("cannot validate terminal process identity: no such process")?;
+    if process.start != identity.process_start {
         return Err("terminal process start differs from its Ready identity".into());
     }
     Ok(())
@@ -570,28 +549,13 @@ fn cleanup_record(path: &Path, expected: ObjectIdentity) -> Result<(), String> {
 }
 
 fn recorded_process_is_dead(identity: &LiveIdentity) -> Result<bool, String> {
-    let stat = match fs::read_to_string(format!("/proc/{}/stat", identity.process_id)) {
-        Ok(stat) => stat,
-        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(true),
-        Err(error) => {
-            return Err(format!(
-                "cannot validate terminal process identity: {error}"
-            ));
-        }
+    let Some(process) = platform::process(identity.process_id)? else {
+        return Ok(true);
     };
-    let mut fields = stat
-        .rsplit_once(')')
-        .map(|(_, fields)| fields.split_whitespace())
-        .ok_or("invalid terminal process identity")?;
-    let state = fields.next().ok_or("invalid terminal process identity")?;
-    let start = fields
-        .nth(18)
-        .and_then(|value| value.parse::<u64>().ok())
-        .ok_or("invalid terminal process identity")?;
-    if start != identity.process_start {
+    if process.start != identity.process_start {
         return Err("terminal process start differs from its Ready identity".into());
     }
-    Ok(matches!(state, "Z" | "X"))
+    Ok(process.ended)
 }
 
 fn remove_dead_endpoint(path: &Path, expected: &EndpointIdentity) -> Result<(), String> {
@@ -1804,6 +1768,53 @@ pub(crate) mod tests {
         );
         let _ = child.wait();
         fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn recorded_process_is_dead_checks_its_identity_until_reaped() {
+        let mut child = Command::new("sleep").arg("30").spawn().unwrap();
+        let start = crate::platform::process(child.id())
+            .unwrap()
+            .expect("live child has no process")
+            .start;
+        let endpoint = EndpointIdentity {
+            path: Vec::new(),
+            object: ObjectIdentity {
+                device: 1,
+                inode: 1,
+            },
+        };
+        let identity = LiveIdentity {
+            session_id: "session-1".into(),
+            run_id: "liveness".into(),
+            component_generation: "component-1".into(),
+            record_generation: management::RECORD_GENERATION,
+            management_generation: management::VERSION,
+            process_id: child.id(),
+            process_start: start,
+            uid: super::effective_uid(),
+            presentation: endpoint.clone(),
+            management: endpoint,
+        };
+        let mismatched = LiveIdentity {
+            process_start: start + 1,
+            ..identity.clone()
+        };
+        let assert_start_checked = || {
+            let error = super::recorded_process_is_dead(&mismatched).unwrap_err();
+            assert!(error.contains("process start differs"), "{error}");
+        };
+        assert!(!super::recorded_process_is_dead(&identity).unwrap());
+        assert_start_checked();
+        child.kill().unwrap();
+        let deadline = Instant::now() + Duration::from_secs(1);
+        while !super::recorded_process_is_dead(&identity).unwrap() {
+            assert!(Instant::now() < deadline, "test child did not exit");
+            thread::sleep(Duration::from_millis(1));
+        }
+        assert_start_checked();
+        child.wait().unwrap();
+        assert!(super::recorded_process_is_dead(&identity).unwrap());
     }
 
     #[test]
