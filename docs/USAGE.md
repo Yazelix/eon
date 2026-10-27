@@ -308,7 +308,8 @@ Alt+G jumps to the next agent that needs attention, in any workspace of the
 window, whether the sidebar is shown, hidden or turned off; jumping to an agent
 in another workspace shows that workspace. A finish or error in a workspace you
 are not showing stays new until you show it with that agent's terminal
-selected. Agents that need input come first, then errors, then finished agents,
+selected; a finish also stops being new once that terminal reports work again.
+Agents that need input come first, then errors, then finished agents,
 each oldest first; an error or a finish leaves the walk once you have looked at
 that agent. Each press moves one agent further, wrapping around; Alt+Shift+G
 steps back. The walk starts again from the front

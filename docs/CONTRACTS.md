@@ -2401,6 +2401,8 @@ socket names, JSON fields and protocol identifiers retain their spellings.
   Q1–Q8, every Q with its recommendation). `eon-agent-sidebar-yx8.6`
   implements the Runtime model; `eon-agent-sidebar-yx8.7` carries it over
   EONW; `eon-agent-sidebar-yx8.9` proves it on the installed product.
+  Amended on 2026-10-27 (approved by Lucca, relayed by eon-overseer) by
+  `eon-eon-attention-working-hides-finish-7df0`: newer work sees a finish.
 - **Consumer:** One person supervising coding agents across the tabs and workspaces (EON-C33)
   of one full-Eon window.
   eonbase has no poller and no sidebar; its `sidebar` is `Off`.
@@ -2476,8 +2478,15 @@ socket names, JSON fields and protocol identifiers retain their spellings.
 
     A focus action applies seen to the raise cached when the action was handled, and a poll in
     flight cannot undo it. Needs input is never cleared by viewing. A terminal in a hidden
-    workspace is never the focused target, so its raises stay unseen until its workspace is
-    shown and that exact terminal has focus.
+    workspace is never the focused target, so focus never sees its raises until its workspace
+    is shown and that exact terminal has focus.
+
+    Newer work also sees a finish, with or without a Venus attached and in any workspace. When
+    a `working` record in a terminal's reply changed later, by ORB-C15 change sequence, than
+    the raise of a finished record of the same terminal, that raise is seen: it no longer
+    shows, and it does not return when the work stops. An `idle` that keeps its `done`'s raise
+    compares at that `done`. A finish raised after the work's last change still shows
+    finished. An error and needs input are never seen this way.
   - **Rollup.** A tab's rollup is the highest-priority state among its terminals, and a
     workspace's rollup the highest among all its terminals (EON-C33), which EONW v22 carries
     as `attention` on each `WorkspaceInfo`. A stale terminal counts with its last state, and
@@ -2602,10 +2611,15 @@ socket names, JSON fields and protocol identifiers retain their spellings.
 
     All three are accepted for 1.0. In the first two the user is usually interacting with that
     terminal; the third needs an unusual number of records.
+  - **A cycle between two polls.** A record that goes `working`, `done` and `idle` between two
+    polls arrives as an `idle` from `done` and keeps the cached `done`'s raise. So the finish
+    of that cycle does not show when the cached raise was already seen, or when a `working`
+    record changed after the cached `done`. Polls at 2 Hz make this rare. This is accepted
+    for 1.0.
   - **Window focus.** Eon does not know desktop window focus, so a raise in the focused terminal
     counts as seen even while the window sits behind another app. This is accepted under D5.
-  - **Detached windows.** While no Venus is attached, nothing becomes seen. The supervisor knows
-    this because it holds the control stream (VEN-C14).
+  - **Detached windows.** While no Venus is attached, only newer work makes a raise seen. The
+    supervisor knows this because it holds the control stream (VEN-C14).
   - **Older generations.** The new `eon` treats a still-running EONW 17 generation as
     incompatible, exactly as it has since eon-igae.12.4. Nothing changes here.
     `eon-agent-sidebar-yx8.7`'s rollout follows igae.12.4's precedent.
@@ -2685,6 +2699,22 @@ socket names, JSON fields and protocol identifiers retain their spellings.
       - At the last process check every terminal, agent and popup was still
         running, and the later tab-6 pane read `live=true`.
       - `eon workspace --json` carried only `state`, `app` and `name`.
+  - **Amendment** (`eon-eon-attention-working-hides-finish-7df0`, newer work sees a finish):
+    the commit that carries this record is its revision.
+    - **Automated:** `newer_work_sees_an_older_finish_but_never_an_error` in
+      `runtime/crates/eon-runtime/src/attention.rs`, on the record shapes Claude Code 2.1.303
+      was observed to report, within `nix develop -c eon-test -p eon-runtime` (126 passed,
+      1 ignored). It fails when an `idle` that keeps its `done`'s raise compares at its own
+      change.
+    - **Installed:** private headless Sway 1.12 (pixman, 1600x900) on x86_64 Linux. The
+      candidate `/nix/store/wvsqcg8q7z2w3kn5xr57wspyzslrrpz9-eon-0.1.5`, built from this
+      commit's tree before this record was added, was run against the earlier profile build
+      `/nix/store/77w9f35fj1p8a9hz89j5wdcbii2b8bhc-eon-0.1.5`. A tab-1 pane reported a
+      session record `working`, then `done`, then a subagent record `working` under its own
+      `id`, then that id's clear, while tab 2 held focus. `eon workspace --json` read
+      `finished`, `working`, then `idle` on the candidate, and `finished` throughout on the
+      earlier build. The candidate's capture showed the spinner row with `+1` without a
+      click.
 - **Open proof:** A reply with a lower update sequence for the same run
   cannot be produced by an emitter, so only the automated test covers its
   discard.
@@ -2831,7 +2861,7 @@ socket names, JSON fields and protocol identifiers retain their spellings.
   - **Attention.** Each workspace carries the most urgent normalized EON-C31
     state of its terminals. The Alt+G queue (EON-C31) spans every workspace of
     the window, and a jump to a terminal in a hidden workspace shows that
-    workspace first. A raise becomes seen only while its terminal's workspace
+    workspace first. Focus sees a raise only while its terminal's workspace
     is shown, under EON-C31's rules. The sidebar lists the shown workspace's
     terminals only. Implemented on EONW v22, whose `WorkspaceInfo` carries
     each workspace's rollup as `attention` (`eon-workspace-switching-shn4.8`).

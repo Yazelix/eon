@@ -92,6 +92,8 @@ fn plain(text: &str) -> String {
 #[derive(Clone, Copy)]
 struct Raise {
     at: Instant,
+    /// The change sequence it raised at.
+    changed: u64,
     seen: bool,
 }
 
@@ -143,6 +145,28 @@ impl Terminal {
                 (record, state, at)
             })
             .min_by_key(|&(record, state, _)| (state, Reverse(record.record.changed)))
+    }
+
+    /// A `working` record that changed after an unseen finish shows the
+    /// program busy again, so that finish counts as seen. Errors stay.
+    fn see_finishes_before_work(&mut self) {
+        let Some(working) = self
+            .records
+            .iter()
+            .filter(|record| record.record.state == ProgramState::Working)
+            .map(|record| record.record.changed)
+            .max()
+        else {
+            return;
+        };
+        for record in self.records.iter_mut().chain(&mut self.omitted) {
+            if let (ProgramState::Done | ProgramState::Idle, Some(raise)) =
+                (record.record.state, record.raise.as_mut())
+                && raise.changed < working
+            {
+                raise.seen = true;
+            }
+        }
     }
 
     fn see(&mut self) {
@@ -293,6 +317,7 @@ impl Attention {
                     .unwrap_or(now);
                 let own = Some(Raise {
                     at: changed_at,
+                    changed: record.changed,
                     seen: false,
                 });
                 let raise = match (record.state, record.previous) {
@@ -319,7 +344,7 @@ impl Attention {
             .filter(|record| status.omitted.contains(&record.record.created))
             .take(status.omitted.len())
             .collect();
-        let terminal = Terminal {
+        let mut terminal = Terminal {
             session: session.into(),
             run: run.into(),
             update: status.update,
@@ -329,6 +354,7 @@ impl Attention {
             omitted,
             replied: now,
         };
+        terminal.see_finishes_before_work();
         match index {
             Some(index) => self.terminals[index] = terminal,
             None => self.terminals.push(terminal),
@@ -883,6 +909,116 @@ mod tests {
         assert_eq!(
             attention.entry(&targets, "s").map(|key| key.1),
             shown.changed_at
+        );
+    }
+
+    #[test]
+    fn newer_work_sees_an_older_finish_but_never_an_error() {
+        let (targets, _) = targets(&[snapshot("t", vec![tab("t", &["s"], &[], None)])]);
+        let mut attention = Attention::new(true);
+        let base = Instant::now();
+        let at = |attention: &mut Attention, update: u64, records: Vec<ProgramRecord>| {
+            let now = base + Duration::from_secs(update);
+            attention.apply(&targets, "s", "run", status(update, records), now);
+            state(attention, &targets, "s", now)
+        };
+        // As Claude Code reports: its session's record has no id, and each
+        // subagent's has its own, which goes working, then is cleared.
+        let main = |state, previous, changed| ProgramRecord {
+            created: 1,
+            ..record("", state, previous, changed)
+        };
+        let agent = |created| record("a8196066adeaa6815", Working, None, created);
+
+        // A finish after the work raises.
+        assert_eq!(
+            at(&mut attention, 2, vec![main(Working, None, 1), agent(2)]),
+            Some(State::Working)
+        );
+        assert_eq!(
+            at(&mut attention, 3, vec![main(Done, Some(Working), 3)]),
+            Some(State::Finished)
+        );
+        // Work that changed after an unseen finish hides it, and the finish
+        // stays seen once the work stops.
+        assert_eq!(
+            at(
+                &mut attention,
+                4,
+                vec![main(Done, Some(Working), 3), agent(4)]
+            ),
+            Some(State::Working)
+        );
+        assert_eq!(
+            at(&mut attention, 5, vec![main(Done, Some(Working), 3)]),
+            Some(State::Idle)
+        );
+        // An older working record does not hide a newer finish.
+        assert_eq!(
+            at(
+                &mut attention,
+                7,
+                vec![main(Done, Some(Working), 7), agent(6)]
+            ),
+            Some(State::Finished)
+        );
+        assert_eq!(
+            attention.entry(&targets, "s").map(|key| key.1),
+            Some(base + Duration::from_secs(7))
+        );
+        // Newer work never sees an error.
+        assert_eq!(
+            at(
+                &mut attention,
+                9,
+                vec![main(Error, Some(Done), 8), agent(9)]
+            ),
+            Some(State::Error)
+        );
+
+        // An idle that keeps its done's raise compares at that done: first
+        // seen beside work that changed between the two, it shows the work.
+        let c = |state, previous, changed| ProgramRecord {
+            created: 10,
+            ..record("c", state, previous, changed)
+        };
+        let w = |state, previous, changed| ProgramRecord {
+            created: 11,
+            ..record("w", state, previous, changed)
+        };
+        assert_eq!(
+            at(&mut attention, 10, vec![c(Done, None, 10)]),
+            Some(State::Finished)
+        );
+        assert_eq!(
+            at(
+                &mut attention,
+                12,
+                vec![c(Idle, Some(Done), 12), w(Working, None, 11)]
+            ),
+            Some(State::Working)
+        );
+        // The working record's own finish raises, and an idle raised from
+        // working, as Codex reports, is seen by newer work in turn.
+        assert_eq!(
+            at(
+                &mut attention,
+                13,
+                vec![c(Idle, Some(Done), 12), w(Idle, Some(Working), 13)]
+            ),
+            Some(State::Finished)
+        );
+        assert_eq!(
+            at(
+                &mut attention,
+                14,
+                vec![
+                    c(Idle, Some(Done), 12),
+                    w(Idle, Some(Working), 13),
+                    record("y", Working, None, 14)
+                ]
+            ),
+            Some(State::Working)
         );
     }
 

@@ -5,6 +5,13 @@ installation, and proven contract changes.
 
 ## Unreleased
 
+- Agent attention: an agent that is working again shows as working in the
+  sidebar, even when an older finish on the same terminal was never looked at.
+  Before, that finish's green check covered the spinner until you focused the
+  terminal. Work the program reports after a finish now counts that finish as
+  seen, so its check does not come back when the work stops. A finish reported
+  after the work still shows. Errors and needs input are unchanged.
+
 - Terminal images: programs that show pictures through the Kitty graphics
   protocol, such as Yazi's image previews, now draw them in Eon's panes and
   popups, between the cell backgrounds and the text. Until an image arrives,
