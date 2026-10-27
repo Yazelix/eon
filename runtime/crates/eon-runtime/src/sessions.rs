@@ -1664,7 +1664,7 @@ pub(crate) mod tests {
             },
         },
         path::{Path, PathBuf},
-        process::Command,
+        process::{Command, Stdio},
         thread,
         time::{Duration, Instant},
     };
@@ -2128,6 +2128,22 @@ pub(crate) mod tests {
         fs::remove_dir_all(root).unwrap();
     }
 
+    /// Writes an executable shell script to a fresh path. A child shell writes
+    /// it: had this process opened it for writing, a child forked meanwhile by
+    /// a parallel test would inherit that descriptor, and exec would fail with
+    /// ETXTBSY.
+    pub(crate) fn script(path: &Path, body: &str) {
+        let status = Command::new("/bin/sh")
+            .args(["-c", "printf '%s' \"$1\" > \"$0\""])
+            .arg(path)
+            .arg(body)
+            .stdin(Stdio::null())
+            .status()
+            .unwrap();
+        assert!(status.success(), "{status}");
+        fs::set_permissions(path, fs::Permissions::from_mode(0o700)).unwrap();
+    }
+
     /// A real Orbit run of `script`, leased by this Runtime. Orbit is the one
     /// at `ORBIT_BIN`, which eon-test and the eon package's check set.
     pub(crate) fn leased_orbit(root: &Path, script: &str) -> RunningSession {
@@ -2165,12 +2181,10 @@ pub(crate) mod tests {
         let root = temporary_directory();
         fs::set_permissions(&root, fs::Permissions::from_mode(0o700)).unwrap();
         let launcher = root.join("orbit-startup-failure");
-        fs::write(
+        script(
             &launcher,
             "#!/bin/sh\nprintf '%s\\n' 'orbit startup diagnostic' >&2\nexit 9\n",
-        )
-        .unwrap();
-        fs::set_permissions(&launcher, fs::Permissions::from_mode(0o700)).unwrap();
+        );
         let mut inputs = crate::fixtures::inputs();
         inputs.orbit = launcher;
         let log = DiagnosticLog::open_in(Ok(root.join("launch-logs")), "g1-test", "workspace");

@@ -2105,31 +2105,15 @@ mod tests {
     };
     use crate::sessions::{
         self,
-        tests::{leased_orbit, orbit_pid},
+        tests::{leased_orbit, orbit_pid, script},
     };
     use std::{
         ffi::OsString,
         fs,
         os::unix::fs::{MetadataExt, PermissionsExt},
         path::{Path, PathBuf},
-        process::{Command, Stdio},
+        process::Command,
     };
-
-    /// Writes an executable shell script to a fresh path. A child shell writes
-    /// it: had this process opened it for writing, a child forked meanwhile by
-    /// a parallel test would inherit that descriptor, and exec would fail with
-    /// ETXTBSY.
-    fn script(path: &Path, body: &str) {
-        let status = Command::new("/bin/sh")
-            .args(["-c", "printf '%s' \"$1\" > \"$0\""])
-            .arg(path)
-            .arg(body)
-            .stdin(Stdio::null())
-            .status()
-            .unwrap();
-        assert!(status.success(), "{status}");
-        fs::set_permissions(path, fs::Permissions::from_mode(0o700)).unwrap();
-    }
 
     /// Kills a test-owned Orbit's worker, which sends Orbit down its failure
     /// path: it removes its Live record and exits without a result.

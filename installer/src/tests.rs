@@ -69,12 +69,24 @@ fn extraction_rejects_escapes_and_special_files() {
     );
 }
 
+/// Runs `command` to write a file that a test then executes. Had this process
+/// opened the file for writing, a child forked meanwhile by a parallel test
+/// would inherit that descriptor, and exec would fail with ETXTBSY.
+fn child_writes(command: &mut Command) {
+    let status = command.stdin(Stdio::null()).status().unwrap();
+    assert!(status.success(), "{status}");
+}
+
 fn fixture_version(prefix: &Path, hash: &str) -> PathBuf {
     let root = prefix.join("versions").join(hash);
     fs::create_dir(&root).unwrap();
     fs::set_permissions(&root, fs::Permissions::from_mode(0o700)).unwrap();
     fs::create_dir(root.join("nix")).unwrap();
-    fs::copy(env::current_exe().unwrap(), root.join("nix/eon")).unwrap();
+    child_writes(
+        Command::new("cp")
+            .arg(env::current_exe().unwrap())
+            .arg(root.join("nix/eon")),
+    );
     symlink("nix/eon", root.join("eon")).unwrap();
     fs::write(
         root.join(".eon-source"),
@@ -210,14 +222,15 @@ fn smoke_timeout_stops_wrapper_and_child() {
     assert!(shell.status.success());
     let shell = String::from_utf8(shell.stdout).unwrap();
     let program = root.path().join("eon");
-    fs::write(
-        &program,
-        format!(
-            "#!{}\nsleep 300 &\necho $! > \"$0.pid\"\nwait\n",
-            shell.trim()
-        ),
-    )
-    .unwrap();
+    child_writes(
+        Command::new("sh")
+            .args(["-c", "printf '%s' \"$1\" > \"$0\""])
+            .arg(&program)
+            .arg(format!(
+                "#!{}\nsleep 300 &\necho $! > \"$0.pid\"\nwait\n",
+                shell.trim()
+            )),
+    );
     fs::set_permissions(&program, fs::Permissions::from_mode(0o700)).unwrap();
     std::thread::scope(|scope| {
         let check = scope.spawn(|| smoke(root.path()));
