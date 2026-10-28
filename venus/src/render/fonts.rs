@@ -4,7 +4,7 @@ use glyphon::{
     cosmic_text::{Fallback, PlatformFallback},
     fontdb,
 };
-use std::sync::OnceLock;
+use std::{ffi::OsStr, sync::OnceLock};
 use unicode_script::Script;
 
 /// Startup typography. Validation is shared by launch parsing and font resolution.
@@ -87,7 +87,18 @@ pub struct FontSetup {
 
 impl FontSetup {
     pub fn new(settings: &FontSettings) -> Result<Self, RenderError> {
-        Self::resolve(settings, FontSystem::new())
+        Self::with_directories(settings, None)
+    }
+
+    /// Adds a packaged font directory list to the platform fonts; fontdb reads no
+    /// fontconfig on macOS, so Eon's Darwin package supplies its fonts this way.
+    /// `directories` is an OS path list; empty entries are skipped, and a relative
+    /// or missing directory fails before the window opens.
+    pub fn with_directories(
+        settings: &FontSettings,
+        directories: Option<&OsStr>,
+    ) -> Result<Self, RenderError> {
+        Self::resolve(settings, load_directories(FontSystem::new(), directories)?)
     }
 
     pub(super) fn resolve(
@@ -269,6 +280,30 @@ impl FontSetup {
     }
 }
 
+fn load_directories(
+    font_system: FontSystem,
+    directories: Option<&OsStr>,
+) -> Result<FontSystem, RenderError> {
+    let Some(directories) = directories else {
+        return Ok(font_system);
+    };
+    // cosmic-text indexes monospace faces at construction, so rebuild after loading.
+    let (locale, mut db) = font_system.into_locale_and_db();
+    for directory in std::env::split_paths(directories) {
+        if directory.as_os_str().is_empty() {
+            continue;
+        }
+        if !directory.is_absolute() || !directory.is_dir() {
+            return Err(RenderError(format!(
+                "font directory is relative or unavailable: {}",
+                directory.display()
+            )));
+        }
+        db.load_fonts_dir(directory);
+    }
+    Ok(FontSystem::new_with_locale_and_db(locale, db))
+}
+
 #[cfg(test)]
 mod tests {
     use super::super::{cells::NERD_FONT_FAMILY, shaping};
@@ -314,6 +349,71 @@ mod tests {
                     face_metrics.units_per_em
                 );
             }
+        }
+    }
+
+    #[test]
+    fn packaged_font_directories_supply_fallbacks_missing_from_platform_fonts() {
+        let original = FontSystem::new();
+        let face = |name: &str| {
+            original
+                .db()
+                .face(
+                    original
+                        .db()
+                        .query(&fontdb::Query {
+                            families: &[Family::Name(name)],
+                            ..Default::default()
+                        })
+                        .expect("the accepted font environment supplies the tested face"),
+                )
+                .unwrap()
+                .clone()
+        };
+        let directory = |name: &str| {
+            let fontdb::Source::File(path) = face(name).source else {
+                panic!("fontconfig supplies {name} as a file");
+            };
+            path.parent().unwrap().to_path_buf()
+        };
+        // Model stock macOS: platform fonts lack Eon's default fallback families.
+        let platform = || {
+            let mut db = fontdb::Database::new();
+            for name in ["DejaVu Sans", "DejaVu Sans Mono"] {
+                db.push_face_info(face(name));
+            }
+            FontSystem::new_with_locale_and_db("en-US".into(), db)
+        };
+        let settings = FontSettings {
+            fallbacks: vec![NERD_FONT_FAMILY.into(), "Accelerando Terminal".into()],
+            ..FontSettings::default()
+        };
+        assert!(
+            FontSetup::resolve(&settings, platform())
+                .err()
+                .unwrap()
+                .to_string()
+                .contains("unavailable")
+        );
+        let directories = std::env::join_paths([
+            Default::default(),
+            directory(NERD_FONT_FAMILY),
+            directory("Accelerando Terminal"),
+        ])
+        .unwrap();
+        FontSetup::resolve(
+            &settings,
+            load_directories(platform(), Some(&directories)).unwrap(),
+        )
+        .unwrap();
+        for missing in ["/nonexistent/venus-fonts", "relative/venus-fonts"] {
+            assert!(
+                load_directories(platform(), Some(OsStr::new(missing)))
+                    .err()
+                    .unwrap()
+                    .to_string()
+                    .contains("font directory is relative or unavailable")
+            );
         }
     }
 

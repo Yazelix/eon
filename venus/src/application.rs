@@ -829,7 +829,11 @@ impl Application {
     }
 
     fn create_window(&mut self, event_loop: &ActiveEventLoop) -> Result {
-        let fonts = FontSetup::new(&self.fonts)?;
+        // The Darwin package wrapper sets this list; Linux gets its fonts from FONTCONFIG_FILE.
+        let fonts = FontSetup::with_directories(
+            &self.fonts,
+            std::env::var_os("EON_VENUS_FONT_DIRS").as_deref(),
+        )?;
         let initial = initial_window_size(
             self.columns,
             self.rows,
