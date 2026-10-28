@@ -1,25 +1,31 @@
 //! The macOS calls the scenario makes in-process: its grants, keys sent to
-//! Venus and the window list. Elsewhere each call fails, and run and
-//! scenario refuse to run off Apple Silicon before any step reaches one.
+//! Venus, the window list and the displays' modes. Elsewhere each call
+//! fails, and run and scenario refuse to run off Apple Silicon before any
+//! step reaches one.
 
 #[cfg(not(target_os = "macos"))]
-pub use elsewhere::{grants, press, windows};
+pub use elsewhere::{displays, grants, press, switch, windows};
 #[cfg(target_os = "macos")]
-pub use native::{grants, press, windows};
+pub use native::{displays, grants, press, switch, windows};
 
 #[cfg(target_os = "macos")]
 mod native {
+    use crate::retina::{Display, Mode};
     use objc2_app_kit::{NSApplicationActivationOptions, NSRunningApplication};
     use objc2_core_foundation::{
-        CFArray, CFDictionary, CFNumber, CFRetained, CFString, CFType, CGRect,
+        CFArray, CFBoolean, CFDictionary, CFNumber, CFRetained, CFString, CFType, CGRect,
     };
     use objc2_core_graphics::{
-        CGDisplayBounds, CGEvent, CGEventFlags, CGMainDisplayID, CGPreflightPostEventAccess,
-        CGPreflightScreenCaptureAccess, CGRectMakeWithDictionaryRepresentation,
-        CGWindowListCopyWindowInfo, CGWindowListOption, kCGNullWindowID, kCGWindowBounds,
+        CGBeginDisplayConfiguration, CGCancelDisplayConfiguration, CGCompleteDisplayConfiguration,
+        CGConfigureDisplayWithDisplayMode, CGConfigureOption, CGDirectDisplayID, CGDisplayBounds,
+        CGDisplayCopyAllDisplayModes, CGDisplayCopyDisplayMode, CGDisplayIsBuiltin,
+        CGDisplayIsMain, CGDisplayMode, CGError, CGEvent, CGEventFlags, CGGetActiveDisplayList,
+        CGMainDisplayID, CGPreflightPostEventAccess, CGPreflightScreenCaptureAccess,
+        CGRectMakeWithDictionaryRepresentation, CGWindowListCopyWindowInfo, CGWindowListOption,
+        kCGDisplayShowDuplicateLowResolutionModes, kCGNullWindowID, kCGWindowBounds,
         kCGWindowLayer, kCGWindowOwnerPID,
     };
-    use std::{thread, time::Duration};
+    use std::{ptr, thread, time::Duration};
 
     /// Whether this process may capture other windows (Screen Recording)
     /// and post key events (Accessibility), without asking.
@@ -108,10 +114,135 @@ mod native {
         let display = CGDisplayBounds(CGMainDisplayID());
         Ok((found, [display.size.width, display.size.height]))
     }
+
+    fn mode(mode: &CGDisplayMode) -> Mode {
+        let mode = Some(mode);
+        let size = |value: usize| u32::try_from(value).unwrap_or(u32::MAX);
+        Mode {
+            width: size(CGDisplayMode::width(mode)),
+            height: size(CGDisplayMode::height(mode)),
+            pixel_width: size(CGDisplayMode::pixel_width(mode)),
+            pixel_height: size(CGDisplayMode::pixel_height(mode)),
+            refresh: CGDisplayMode::refresh_rate(mode),
+            desktop: CGDisplayMode::is_usable_for_desktop_gui(mode),
+        }
+    }
+
+    /// Every mode of `display`, with the HiDPI ones that macOS lists only
+    /// on request.
+    fn modes(display: CGDirectDisplayID) -> Result<Vec<CFRetained<CGDisplayMode>>, String> {
+        // SAFETY: the key is a constant string.
+        let key: &CFString = unsafe { kCGDisplayShowDuplicateLowResolutionModes };
+        let options =
+            CFDictionary::<CFString, CFBoolean>::from_slices(&[key], &[CFBoolean::new(true)]);
+        // SAFETY: the options map a string key to a boolean, as
+        // CGDirectDisplay.h asks.
+        let list = unsafe { CGDisplayCopyAllDisplayModes(display, Some(options.as_opaque())) }
+            .ok_or_else(|| format!("display {display} lists no modes"))?;
+        // SAFETY: the list holds display modes (CGDirectDisplay.h).
+        let list = unsafe { CFRetained::cast_unchecked::<CFArray<CGDisplayMode>>(list) };
+        Ok(list.iter().collect())
+    }
+
+    /// Each active display, its current mode and every mode it offers.
+    pub fn displays() -> Result<Vec<Display>, String> {
+        let mut ids = [0; 16];
+        let mut count = 0;
+        // SAFETY: `ids` has room for the 16 displays asked for, and `count`
+        // is there for the call to fill.
+        let error = unsafe { CGGetActiveDisplayList(16, ids.as_mut_ptr(), &mut count) };
+        if error != CGError::Success {
+            return Err(format!(
+                "the display list is unavailable: CGError {}",
+                error.0
+            ));
+        }
+        ids.iter()
+            .take(count as usize)
+            .map(|&id| {
+                let current = CGDisplayCopyDisplayMode(id)
+                    .ok_or_else(|| format!("display {id} has no current mode"))?;
+                Ok(Display {
+                    id,
+                    main: CGDisplayIsMain(id),
+                    builtin: CGDisplayIsBuiltin(id),
+                    current: mode(&current),
+                    modes: modes(id)?.iter().map(|each| mode(each)).collect(),
+                })
+            })
+            .collect()
+    }
+
+    /// Sets `display` to `mode` for as long as this process runs, so that
+    /// macOS restores it when the process ends however it ends.
+    fn configure(display: CGDirectDisplayID, mode: &CGDisplayMode) -> Result<(), String> {
+        let failed = |call: &str, error: CGError| format!("{call}: CGError {}", error.0);
+        let mut config = ptr::null_mut();
+        // SAFETY: `config` is there for the call to fill, and each later
+        // call takes the configuration it filled in, once completed or
+        // cancelled.
+        unsafe {
+            let error = CGBeginDisplayConfiguration(&mut config);
+            if error != CGError::Success {
+                return Err(failed("CGBeginDisplayConfiguration", error));
+            }
+            let error = CGConfigureDisplayWithDisplayMode(config, display, Some(mode), None);
+            if error != CGError::Success {
+                CGCancelDisplayConfiguration(config);
+                return Err(failed("CGConfigureDisplayWithDisplayMode", error));
+            }
+            let error = CGCompleteDisplayConfiguration(config, CGConfigureOption::ForAppOnly);
+            if error != CGError::Success {
+                return Err(failed("CGCompleteDisplayConfiguration", error));
+            }
+        }
+        Ok(())
+    }
+
+    /// A display switched to another mode, which `restore` or dropping it
+    /// switches back.
+    pub struct Switched {
+        display: CGDirectDisplayID,
+        original: Option<CFRetained<CGDisplayMode>>,
+    }
+
+    impl Switched {
+        pub fn restore(&mut self) -> Result<(), String> {
+            if let Some(original) = &self.original {
+                configure(self.display, original)?;
+            }
+            // Kept after a failure, so that dropping it tries again.
+            self.original = None;
+            Ok(())
+        }
+    }
+
+    impl Drop for Switched {
+        fn drop(&mut self) {
+            let _ = self.restore();
+        }
+    }
+
+    /// Switches `display` to its mode equal to `to`.
+    pub fn switch(display: CGDirectDisplayID, to: Mode) -> Result<Switched, String> {
+        let original = CGDisplayCopyDisplayMode(display)
+            .ok_or_else(|| format!("display {display} has no current mode"))?;
+        let target = modes(display)?
+            .into_iter()
+            .find(|each| mode(each) == to)
+            .ok_or_else(|| format!("display {display} no longer offers {to}"))?;
+        configure(display, &target)?;
+        Ok(Switched {
+            display,
+            original: Some(original),
+        })
+    }
 }
 
 #[cfg(not(target_os = "macos"))]
 mod elsewhere {
+    use crate::retina::{Display, Mode};
+
     const MACOS: &str = "macOS only";
 
     pub fn grants() -> Result<(bool, bool), String> {
@@ -123,6 +254,22 @@ mod elsewhere {
     }
 
     pub fn windows(_pid: u32) -> Result<(Vec<[f64; 4]>, [f64; 2]), String> {
+        Err(MACOS.to_owned())
+    }
+
+    pub fn displays() -> Result<Vec<Display>, String> {
+        Err(MACOS.to_owned())
+    }
+
+    pub struct Switched;
+
+    impl Switched {
+        pub fn restore(&mut self) -> Result<(), String> {
+            Ok(())
+        }
+    }
+
+    pub fn switch(_display: u32, _to: Mode) -> Result<Switched, String> {
         Err(MACOS.to_owned())
     }
 }

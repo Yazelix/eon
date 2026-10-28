@@ -4,6 +4,7 @@
 use crate::{
     mac,
     picture::{Picture, Region},
+    retina,
     step::{Failure, Log, Outcome, Runner, check, execute, succeed},
 };
 use serde_json::Value;
@@ -103,6 +104,21 @@ const STEPS: &[Spec] = &[
         window: true,
         timeout: MINUTE,
         body: identity,
+    },
+    Spec {
+        name: "retina",
+        needs: GUI,
+        requires: &["launch"],
+        proves: "Venus logs a window scale factor of 2 or more and its window shows in a capture \
+                 at that scale, on the main display as it is or switched for the step to a HiDPI \
+                 mode it offers. It first records each display's scale and modes in \
+                 scenario/displays.json and system_profiler's report in \
+                 scenario/system-profiler-displays.json; without Screen Recording, or a HiDPI \
+                 mode it can switch to, it is then skipped for Yu. It switches back before it ends, having asked \
+                 macOS to undo the switch too when the tool exits",
+        window: true,
+        timeout: Duration::from_secs(2 * 60),
+        body: retina,
     },
     Spec {
         name: "picker",
@@ -237,11 +253,11 @@ mac-proof scenario: launch full Eon on this Mac's screen and drive it, mostly th
 is logged in to the Mac's screen. Accessibility, which lets the tool post key events, and
 Screen Recording must be granted once, by a click in System Settings > Privacy & Security, to
 the program that runs the tool (for SSH, the SSH server); nothing grants them silently. Without
-Accessibility only launch, identity and stop run, since the first tab's picker takes a key. The
-key steps bring Eon's window to the front, then post US-layout key codes to Venus's process:
-posting alone would leave the desktop's focus alone, but whether Venus takes Option and Command
-chords while inactive is unproven on a Mac. A step whose need is missing, or that requires such
-a step, is skipped and listed for Yu in summary.txt, never passed.
+Accessibility only launch, identity, retina and stop run, since the first tab's picker takes a
+key. The key steps bring Eon's window to the front, then post US-layout key codes to Venus's
+process: posting alone would leave the desktop's focus alone, but whether Venus takes Option and
+Command chords while inactive is unproven on a Mac. A step whose need is missing, or that
+requires such a step, is skipped and listed for Yu in summary.txt, never passed.
 
 Steps, in order:
 "
@@ -267,12 +283,12 @@ Steps, in order:
     text += "
 Evidence, beside the summaries: scenario/captures/NN-<label>.png, the desktop before launch
 and one capture after each step that shows the window, where Venus's window must differ from
-the desktop behind it, plus kitty's and views' own captures; scenario/eon.log with what `eon`
-printed; and scenario/logs with Eon's own logs.
+the desktop behind it, plus kitty's, views' and retina's own captures; scenario/eon.log with
+what `eon` printed; scenario/logs with Eon's own logs; and retina's scenario/displays.json and
+scenario/system-profiler-displays.json.
 
 Left for Yu: Command+C on a pointer selection, the Eon Bar's CPU and RAM chips (no CLI reads
-them yet: eon-agent-parity-a9g0.12), VoiceOver, Kotoeri input, blur, and the Retina display
-scale.";
+them yet: eon-agent-parity-a9g0.12), VoiceOver, Kotoeri input and blur.";
     text
 }
 
@@ -376,10 +392,15 @@ impl Scenario {
         if !spec.window || self.screen.is_err() {
             return Ok(());
         }
+        self.shown(spec.name, log, deadline)
+    }
+
+    /// Captures the screen until Venus's window shows in it.
+    fn shown(&mut self, label: &str, log: &mut Log, deadline: Instant) -> Outcome {
         // A window may still be drawing after its process starts.
         let shown = deadline.min(Instant::now() + Duration::from_secs(30));
         loop {
-            let (picture, region) = self.window_capture(spec.name, log, deadline)?;
+            let (picture, region) = self.window_capture(label, log, deadline)?;
             let desktop = self
                 .desktop
                 .as_ref()
@@ -1117,6 +1138,145 @@ fn identity(scenario: &mut Scenario, log: &mut Log, deadline: Instant) -> Outcom
         fs::canonicalize(&path).ok() == fs::canonicalize(&expected).ok(),
         || format!("eon config-path printed {path}, not {}", expected.display()),
     )
+}
+
+fn retina(scenario: &mut Scenario, log: &mut Log, deadline: Instant) -> Outcome {
+    let failed = |error: io::Error| Failure::Check(format!("recording the displays: {error}"));
+    let displays = mac::displays().map_err(Failure::Check)?;
+    for display in &displays {
+        log.line(&format!(
+            "mac-proof: display {}{}{} runs {}; {} modes, HiDPI ones among them: {:?}",
+            display.id,
+            if display.main { ", the main one," } else { "" },
+            if display.builtin { " (built in)" } else { "" },
+            display.current,
+            display.modes.len(),
+            display
+                .modes
+                .iter()
+                .filter(|mode| mode.scale() >= 2.0)
+                .map(ToString::to_string)
+                .collect::<Vec<_>>()
+        ));
+    }
+    fs::write(
+        scenario.evidence.join("displays.json"),
+        retina::report(&displays).to_string(),
+    )
+    .map_err(failed)?;
+    // A second witness, recorded whole; only the log reads it.
+    let profile = succeed(
+        log,
+        Command::new("system_profiler").args(["-json", "SPDisplaysDataType"]),
+        deadline,
+        true,
+    )?;
+    fs::write(
+        scenario.evidence.join("system-profiler-displays.json"),
+        &profile,
+    )
+    .map_err(failed)?;
+    match serde_json::from_slice(&profile)
+        .map_err(|error| error.to_string())
+        .and_then(|report| retina::profiled(&report))
+    {
+        Ok(profiled) => {
+            for display in profiled {
+                log.line(&format!(
+                    "mac-proof: system_profiler: {}{} has {:?} pixels as {:?} points, scale {}",
+                    display.name,
+                    if display.main {
+                        ", the main display,"
+                    } else {
+                        ""
+                    },
+                    display.pixels,
+                    display.points,
+                    display.scale()
+                ));
+            }
+        }
+        Err(error) => log.line(&format!(
+            "mac-proof: system_profiler's report does not parse: {error}"
+        )),
+    }
+    // The displays above stay recorded for Yu when the step cannot go on.
+    if let Err(reason) = &scenario.screen {
+        return Err(Failure::Unavailable(format!(
+            "needs {}: {reason}",
+            Need::Screen.as_str()
+        )));
+    }
+    let main = displays
+        .iter()
+        .find(|display| display.main)
+        .ok_or_else(|| Failure::Check("no main display among the active ones".to_owned()))?;
+    let output = scenario.evidence.join("eon.log");
+    let scales = || {
+        retina::venus_scales(&String::from_utf8_lossy(
+            &fs::read(&output).unwrap_or_default(),
+        ))
+    };
+    // Venus's scale once the last it logged after the first `seen` is
+    // `wanted`, as `fits` tells.
+    let logged = |seen: usize, wanted: &str, fits: &dyn Fn(f64) -> bool, log: &mut Log| {
+        let settled = deadline.min(Instant::now() + Duration::from_secs(30));
+        until(settled, || {
+            Ok(scales()
+                .get(seen..)
+                .and_then(|new| new.last().copied())
+                .filter(|scale| fits(*scale)))
+        })
+        .map_err(|_| {
+            Failure::Check(format!(
+                "Venus's window scale factor is not {wanted} after 30 seconds; eon.log has {:?}, the first {seen} from before",
+                scales()
+            ))
+        })
+        .inspect(|scale| {
+            log.line(&format!(
+                "mac-proof: Venus's window scale factor is {scale}"
+            ))
+        })
+    };
+    let mut switched = None;
+    let seen = if main.current.scale() >= 2.0 {
+        0
+    } else {
+        let mode = retina::hidpi(&main.current, &main.modes).ok_or_else(|| {
+            Failure::Unavailable(format!(
+                "no HiDPI display: the main display runs {} and offers no HiDPI mode",
+                main.current
+            ))
+        })?;
+        let seen = scales().len();
+        log.line(&format!("mac-proof: switching the main display to {mode}"));
+        switched = Some(mac::switch(main.id, mode).map_err(|error| {
+            Failure::Unavailable(format!("cannot switch the main display to {mode}: {error}"))
+        })?);
+        seen
+    };
+    let scale = logged(seen, "2 or more", &|scale| scale >= 2.0, log)?;
+    scenario.shown("retina", log, deadline)?;
+    log.line(&format!(
+        "mac-proof: Retina proved remotely: Venus's window at scale {scale} on the main display, in a capture"
+    ));
+    if let Some(mut switched) = switched {
+        let seen = scales().len();
+        log.line(&format!(
+            "mac-proof: switching the main display back to {}",
+            main.current
+        ));
+        switched.restore().map_err(Failure::Check)?;
+        let original = main.current.scale();
+        logged(
+            seen,
+            &format!("back at {original}"),
+            &|scale| scale == original,
+            log,
+        )?;
+    }
+    Ok(())
 }
 
 fn picker(scenario: &mut Scenario, log: &mut Log, deadline: Instant) -> Outcome {

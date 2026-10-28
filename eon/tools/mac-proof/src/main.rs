@@ -5,6 +5,7 @@
 mod mac;
 mod picture;
 mod remote;
+mod retina;
 mod run;
 mod scenario;
 mod step;

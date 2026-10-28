@@ -85,6 +85,7 @@ fn a_local_dry_run_round_trips_the_candidate_tree() {
             "session=planned",
             "launch=planned",
             "identity=planned",
+            "retina=planned",
             "picker=planned",
             "output=planned",
             "panes=planned",

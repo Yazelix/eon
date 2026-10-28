@@ -95,9 +95,11 @@ click in System Settings. A step that lacks what it needs is listed for Yu in
 `summary.txt`, never passed, so a hosted runner without these grants reports a
 failed run even when every suite passed; read the suites' steps there.
 Command+C on a pointer selection, the Eon Bar's chips (until
-`eon-agent-parity-a9g0.12` lets the CLI read them), VoiceOver, Kotoeri, blur
-and Retina are always left to Yu. `mac-proof scenario --help` lists the steps
-and what each needs. No Mac has run the scenario yet.
+`eon-agent-parity-a9g0.12` lets the CLI read them), VoiceOver, Kotoeri and
+blur are always left to Yu. Retina is too, unless the Mac's main display runs
+at scale 2 or offers a HiDPI mode that the `retina` step can switch to for the
+step. `mac-proof scenario --help` lists the steps and what each needs. No Mac
+has run the scenario yet.
 
 ## Sources of truth
 

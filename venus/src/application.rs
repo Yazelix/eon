@@ -882,6 +882,7 @@ impl Application {
         ))?;
         window.set_visible(true);
         let scale_factor = window.scale_factor();
+        report(format_args!("window scale factor {scale_factor}"));
 
         self.window = Some(WindowState {
             renderer,
@@ -3786,6 +3787,7 @@ impl ApplicationHandler<UserEvent> for Application {
                     .terminal_scroll
                     .cancel(&mut self.terminal.pending_viewport);
                 state.scale_factor = scale_factor;
+                report(format_args!("window scale factor {scale_factor}"));
                 self.presentation.invalidate();
                 self.cancel_pointer_sequence();
             }
