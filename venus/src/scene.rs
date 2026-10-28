@@ -250,7 +250,8 @@ impl TabBadge {
             AttentionState::NeedsInput => "needs input",
             AttentionState::Error => "error",
             AttentionState::Finished => "finished",
-            AttentionState::Working | AttentionState::Background => "working",
+            AttentionState::Working => "working",
+            AttentionState::Background => "waiting on background work",
             AttentionState::Idle | AttentionState::Unavailable => return None,
         };
         let dimmed = tab
@@ -1500,7 +1501,8 @@ fn sidebar_contents(
                 (AttentionState::NeedsInput, None) => "Needs input",
                 (AttentionState::Error, _) => "Error",
                 (AttentionState::Finished, _) => "Finished",
-                (AttentionState::Working | AttentionState::Background, _) => "Working",
+                (AttentionState::Working, _) => "Working",
+                (AttentionState::Background, _) => "Waiting on background work",
                 (AttentionState::Idle, _) => "Idle",
                 (AttentionState::Unavailable, _) => "Status unavailable",
             };
@@ -4765,6 +4767,20 @@ mod tests {
             ]
         );
 
+        // A row waiting on background work shows its own glyph and word.
+        let mut waiting = snapshot.clone();
+        if let Some(attention) = &mut waiting.tabs[2].columns[0].panes[0].attention {
+            attention.state = AttentionState::Background;
+        }
+        let waiting = project(&waiting, 800, None);
+        let row = &waiting.sidebar_rows()[2];
+        assert_eq!(row.glyph.state, AttentionState::Background);
+        assert_eq!(
+            row.accessible_label,
+            "Waiting on background work: Codex in tab 3, api, p4, Fix tests, changed just now, \
+             status stale"
+        );
+
         // Rows stack inside the card below the title, the needs-input row one line taller;
         // the icon sits after the glyph and the text after both.
         let card = scene.sidebar().unwrap();
@@ -5973,6 +5989,19 @@ mod tests {
         assert_eq!(
             tiny.tabs[0].accessible_label(),
             "Tab 1 of 8  /tmp/tab-1, needs input"
+        );
+        // Background work badges a tab and names its state.
+        let mut waiting = snapshot.clone();
+        waiting.tabs[4].columns[0].panes[0].attention = Some(attention(State::Background, false));
+        waiting.tabs[4].attention_rollup = Some(State::Background);
+        let scene = project(&waiting, 1600, 0.0);
+        assert_eq!(
+            scene.tabs[4].badge.map(|badge| (badge.state, badge.dimmed)),
+            Some((State::Background, false))
+        );
+        assert_eq!(
+            scene.tabs[4].accessible_label(),
+            "Tab 5 of 8  /tmp/tab-5, waiting on background work"
         );
         // While the sidebar shows, the tabs carry no badge or state; hidden for width, they do.
         let mut open = snapshot.clone();

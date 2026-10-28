@@ -2733,6 +2733,17 @@ socket names, JSON fields and protocol identifiers retain their spellings.
       `finished`, `working`, then `idle` on the candidate, and `finished` throughout on the
       earlier build. The candidate's capture showed the spinner row with `+1` without a
       click.
+  - **Amendment** (`eon-agent-background-work-yte0`, waiting on background work): the Runtime
+    tests that `eon-agent-background-work-yte0.2` recorded, and the installed observation of
+    `eon-agent-background-work-yte0.3`, whose commit carries this record.
+    - **Installed:** private headless Sway 1.12 (pixman, 1600x900) on x86_64 Linux, the
+      candidate `/nix/store/4pw8bqg1vrdafkr2mpa90mssmcdaqk9b-eon-0.1.6`, built from this
+      commit's tree on edge `8c42c73` before this record was added. In tab 1, Claude Code
+      2.1.303 ran a background `sleep 25` and reported `done` while it ran; tab 2 held focus.
+      `eon workspace --json` read `background` for tab 1's pane in every sample for 14 s,
+      then `finished` once the sleep ended, without a visit. A capture between the two
+      samples showed the working badge while Claude Code reported the ended task, and the
+      finish raised after it stayed unseen.
 - **Open proof:** A reply with a lower update sequence for the same run
   cannot be produced by an emitter, so only the automated test covers its
   discard.

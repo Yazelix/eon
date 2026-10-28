@@ -280,7 +280,7 @@ the panes' rows in pane order. A row shows:
 
 - the state: ◆ needs input, ✕ error, ✓ finished, stepping braille dots while
   working (still without GPU rendering or with
-  `[workspace] animate_working_badge = false`), the same dots shown still while
+  `[workspace] animate_working_badge = false`), three still dots in a row while
   the agent waits on background work (it reported done or idle while processes
   it started still run), or ○ idle;
 - the Claude or Codex icon;

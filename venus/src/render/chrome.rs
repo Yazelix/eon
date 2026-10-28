@@ -303,7 +303,7 @@ fn push_popup_marker(rectangles: &mut RectangleBatch, rect: SceneRect, color: Sc
 }
 
 /// Draws one attention badge's glyph inside its disc: ◆ needs input, ✕ error, ✓ finished, the
-/// braille frame at `phase` for working, or the first frame without one, that first frame for
+/// braille frame at `phase` for working, or the first frame without one, three still dots for
 /// background, and, in sidebar rows, ○ idle and · unavailable. Quads keep the glyphs independent
 /// of fonts.
 fn push_badge_glyph(rectangles: &mut RectangleBatch, badge: TabBadge, phase: Option<usize>) {
@@ -359,11 +359,15 @@ fn push_badge_glyph(rectangles: &mut RectangleBatch, badge: TabBadge, phase: Opt
                 alpha,
             );
         }
-        AttentionState::Working => {
-            push_braille(rectangles, glyph, SPINNER_FRAMES[phase.unwrap_or(0)], alpha)
-        }
-        // Until its own glyph, background shows the working badge's first frame, still.
-        AttentionState::Background => push_braille(rectangles, glyph, SPINNER_FRAMES[0], alpha),
+        AttentionState::Working => push_dots(
+            rectangles,
+            glyph,
+            (2, 3),
+            SPINNER_FRAMES[phase.unwrap_or(0)],
+            alpha,
+        ),
+        // Background never animates (VEN-C21), so it takes no phase.
+        AttentionState::Background => push_dots(rectangles, glyph, (3, 1), 0b111, alpha),
         AttentionState::Idle | AttentionState::Unavailable => {
             // A thin ring for idle and a small round dot for unavailable, each drawn as 16 joined
             // segments.
@@ -397,13 +401,21 @@ fn push_badge_glyph(rectangles: &mut RectangleBatch, badge: TabBadge, phase: Opt
     }
 }
 
-/// Draws a working badge's braille `frame` as a 2x3 grid of square dots centred on the whole
-/// pixels inside `glyph`: dots twice as wide as the gaps between them, two pixels and one at the
-/// default badge, scaled by whole pixels with the glyph. All six dots are pushed in every frame
-/// with unlit ones at zero alpha, so each phase writes the same vertices and only alpha changes.
-/// A glyph too small for the grid keeps the dots that fit; none leave `glyph`, so the badge's
-/// clip check covers them.
-fn push_braille(rectangles: &mut RectangleBatch, glyph: SceneRect, frame: u8, alpha: f32) {
+/// Draws a `columns` by `rows` grid of square dots centred on the whole pixels inside `glyph`,
+/// lighting the dots whose bit is set in `lit`, numbered down each column and then across, as a
+/// braille cell numbers them: a working badge's 2x3 braille frame, or the background badge's
+/// three dots in a row. Dots are twice as wide as the gaps between them, two pixels and one at
+/// the default badge, scaled by whole pixels with the glyph. Every dot is pushed, unlit ones at
+/// zero alpha, so each spinner phase writes the same vertices and only alpha changes. A glyph too
+/// small for the grid keeps the dots that fit; none leave `glyph`, so the badge's clip check
+/// covers them.
+fn push_dots(
+    rectangles: &mut RectangleBatch,
+    glyph: SceneRect,
+    (columns, rows): (u8, u8),
+    lit: u8,
+    alpha: f32,
+) {
     let left = glyph.left.ceil();
     let top = glyph.top.ceil();
     let area = SceneRect {
@@ -412,35 +424,36 @@ fn push_braille(rectangles: &mut RectangleBatch, glyph: SceneRect, frame: u8, al
         width: (glyph.right().floor() - left).max(0.0),
         height: (glyph.bottom().floor() - top).max(0.0),
     };
-    let unit = (area.height / 8.0).min(area.width / 5.0).floor();
+    // A grid of n dots spans 3n - 1 units: n dots of two and n - 1 gaps of one.
+    let (width, height) = (f32::from(columns), f32::from(rows));
+    let unit = (area.height / (height * 3.0 - 1.0))
+        .min(area.width / (width * 3.0 - 1.0))
+        .floor();
     let (dot, gap) = if unit >= 1.0 {
         (unit * 2.0, unit)
-    } else if area.height >= 5.0 && area.width >= 3.0 {
+    } else if area.height >= height * 2.0 - 1.0 && area.width >= width * 2.0 - 1.0 {
         (1.0, 1.0)
     } else {
         (1.0, 0.0)
     };
-    let x = left + ((area.width - dot * 2.0 - gap) / 2.0).floor().max(0.0);
-    let y = top
-        + ((area.height - dot * 3.0 - gap * 2.0) / 2.0)
-            .floor()
-            .max(0.0);
-    for bit in 0..6u8 {
+    let span = |count: f32| dot * count + gap * (count - 1.0);
+    let x = left + ((area.width - span(width)) / 2.0).floor().max(0.0);
+    let y = top + ((area.height - span(height)) / 2.0).floor().max(0.0);
+    for bit in 0..columns * rows {
         let rect = SceneRect {
-            left: x + f32::from(bit / 3) * (dot + gap),
-            top: y + f32::from(bit % 3) * (dot + gap),
+            left: x + f32::from(bit / rows) * (dot + gap),
+            top: y + f32::from(bit % rows) * (dot + gap),
             width: dot,
             height: dot,
         };
         if let Some(rect) = rect.intersection(area) {
-            let lit = (frame >> bit) & 1 == 1;
             rectangles.push(
                 rect.left,
                 rect.top,
                 rect.width,
                 rect.height,
                 palette::ATTENTION_WORKING,
-                if lit { alpha } else { 0.0 },
+                if (lit >> bit) & 1 == 1 { alpha } else { 0.0 },
             );
         }
     }
@@ -1846,54 +1859,62 @@ mod tests {
         }
     }
 
+    /// A badge's dots as one character per pixel: # a lit dot, . an unlit one.
+    fn badge_art(
+        state: AttentionState,
+        left: f32,
+        top: f32,
+        size: f32,
+        phase: Option<usize>,
+    ) -> Vec<String> {
+        let badge = TabBadge {
+            state,
+            dimmed: false,
+            rect: SceneRect {
+                left,
+                top,
+                width: size,
+                height: size,
+            },
+        };
+        let mut rectangles = RectangleBatch::new(800, 600);
+        push_badge_glyph(&mut rectangles, badge, phase);
+        let side = size as usize;
+        let mut rows = vec![vec![' '; side]; side];
+        // Each dot is one quad of six vertices of x, y, r, g, b, alpha, in clip space.
+        for dot in rectangles.bytes.chunks_exact(24 * 6) {
+            let value = |at: usize| f32::from_ne_bytes(dot[at..at + 4].try_into().unwrap());
+            let xs = [0, 24, 48].map(|at| (value(at) + 1.0) * 400.0);
+            let ys = [4, 28, 52].map(|at| (1.0 - value(at)) * 300.0);
+            let low = |values: [f32; 3]| values.into_iter().fold(f32::MAX, f32::min);
+            let high = |values: [f32; 3]| values.into_iter().fold(0.0, f32::max);
+            let (dot_left, dot_top, dot_right, dot_bottom) = (low(xs), low(ys), high(xs), high(ys));
+            for edge in [dot_left, dot_top, dot_right, dot_bottom] {
+                assert!(
+                    (edge - edge.round()).abs() < 1e-3,
+                    "dots keep to whole pixels"
+                );
+            }
+            let [dot_left, dot_top, dot_right, dot_bottom] =
+                [dot_left, dot_top, dot_right, dot_bottom].map(f32::round);
+            assert!(dot_left >= left && dot_right <= left + size);
+            assert!(dot_top >= top && dot_bottom <= top + size);
+            let mark = if value(20) > 0.0 { '#' } else { '.' };
+            let (x, y) = (left.ceil(), top.ceil());
+            for row in &mut rows[(dot_top - y) as usize..(dot_bottom - y) as usize] {
+                row[(dot_left - x) as usize..(dot_right - x) as usize].fill(mark);
+            }
+        }
+        rows.into_iter()
+            .map(|row| row.into_iter().collect::<String>())
+            .collect()
+    }
+
     #[test]
     fn working_badges_draw_braille_dots_on_whole_pixels() {
-        // The badges of the default typography at scales 1 and 2, as one character per pixel:
-        // # a lit dot, . an unlit one.
-        let art = |left: f32, top: f32, size: f32, phase| {
-            let badge = TabBadge {
-                state: AttentionState::Working,
-                dimmed: false,
-                rect: SceneRect {
-                    left,
-                    top,
-                    width: size,
-                    height: size,
-                },
-            };
-            let mut rectangles = RectangleBatch::new(800, 600);
-            push_badge_glyph(&mut rectangles, badge, phase);
-            let side = size as usize;
-            let mut rows = vec![vec![' '; side]; side];
-            // Each dot is one quad of six vertices of x, y, r, g, b, alpha, in clip space.
-            for dot in rectangles.bytes.chunks_exact(24 * 6) {
-                let value = |at: usize| f32::from_ne_bytes(dot[at..at + 4].try_into().unwrap());
-                let xs = [0, 24, 48].map(|at| (value(at) + 1.0) * 400.0);
-                let ys = [4, 28, 52].map(|at| (1.0 - value(at)) * 300.0);
-                let low = |values: [f32; 3]| values.into_iter().fold(f32::MAX, f32::min);
-                let high = |values: [f32; 3]| values.into_iter().fold(0.0, f32::max);
-                let (dot_left, dot_top, dot_right, dot_bottom) =
-                    (low(xs), low(ys), high(xs), high(ys));
-                for edge in [dot_left, dot_top, dot_right, dot_bottom] {
-                    assert!(
-                        (edge - edge.round()).abs() < 1e-3,
-                        "dots keep to whole pixels"
-                    );
-                }
-                let [dot_left, dot_top, dot_right, dot_bottom] =
-                    [dot_left, dot_top, dot_right, dot_bottom].map(f32::round);
-                assert!(dot_left >= left && dot_right <= left + size);
-                assert!(dot_top >= top && dot_bottom <= top + size);
-                let mark = if value(20) > 0.0 { '#' } else { '.' };
-                let (x, y) = (left.ceil(), top.ceil());
-                for row in &mut rows[(dot_top - y) as usize..(dot_bottom - y) as usize] {
-                    row[(dot_left - x) as usize..(dot_right - x) as usize].fill(mark);
-                }
-            }
-            rows.into_iter()
-                .map(|row| row.into_iter().collect::<String>())
-                .collect::<Vec<_>>()
-        };
+        // The badges of the default typography at scales 1 and 2.
+        let art =
+            |left, top, size, phase| badge_art(AttentionState::Working, left, top, size, phase);
         // Frame 0, ⠋, is also the still form.
         assert_eq!(
             art(4.0, 4.0, 12.0, None),
@@ -1946,6 +1967,37 @@ mod tests {
             // A badge between pixels still draws whole-pixel dots inside it.
             art(4.5, 3.25, size, Some(4));
         }
+    }
+
+    #[test]
+    fn background_badges_draw_three_still_dots_that_never_tick() {
+        let art = |size| badge_art(AttentionState::Background, 4.0, 4.0, size, None);
+        let mut small = vec!["            "; 12];
+        small[5..7].fill("  ## ## ##  ");
+        assert_eq!(art(12.0), small);
+        let mut large = vec!["                        "; 24];
+        large[10..14].fill("    ####  ####  ####    ");
+        assert_eq!(art(24.0), large);
+        let badge = TabBadge {
+            state: AttentionState::Background,
+            dimmed: false,
+            rect: SceneRect {
+                width: 12.0,
+                height: 12.0,
+                ..SceneRect::default()
+            },
+        };
+        let mut spinners = Spinners::new(true);
+        let mut rectangles = RectangleBatch::new(800, 600);
+        spinners.push_badge(badge, None, &mut rectangles);
+        assert!(
+            spinners.slots.is_empty(),
+            "a background badge schedules no tick"
+        );
+        // A phase never changes it.
+        let mut turned = RectangleBatch::new(800, 600);
+        push_badge_glyph(&mut turned, badge, Some(4));
+        assert_eq!(turned.bytes, rectangles.bytes);
     }
 
     #[test]

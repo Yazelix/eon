@@ -1324,13 +1324,15 @@ re-proved when that platform or feature is next touched.
   their one-pill minimum. With one unnamed workspace the bar is unchanged.
 - **Attention badges (EON-C31):** These rules apply while the agent sidebar is
   not visible (`Closed`, `Off`, or hidden for width):
-  - every tab whose rollup is needs input, error, finished or working shows a
-    corner badge (◆, ✕, ✓, or braille dots), the active tab included. A stale
-    tab's badge is dimmed;
+  - every tab whose rollup is needs input, error, finished, working or
+    background shows a corner badge (◆, ✕, ✓, braille dots, or three still
+    dots), the active tab included. A stale tab's badge is dimmed;
   - the working badge's dots step through ⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏, repainting at no more
     than 10 Hz under AP-PERF-001, and only the badge. On a software (CPU)
     graphics adapter, or when Eon passes `--animate-working-badge false`, it
     is the still frame ⠋ and never repaints to animate;
+  - the background badge (three dots) never animates; its accessible state is
+    `waiting on background work`.
   - the badge changes neither the tab's width nor its label text;
   - with tab overflow, the scroll edge shows the most urgent hidden badge;
   - a tab's accessible name appends its state, for example
@@ -1458,6 +1460,26 @@ re-proved when that platform or feature is next touched.
       sidebar. Venus CPU over 20 s: 6 ticks with the tab badge, 7 with the
       sidebar row, and 6 with no working terminal, at load average 1.5 to
       1.7.
+  - **Background badge (`eon-agent-background-work-yte0.3`):** automated
+    proof in `background_badges_draw_three_still_dots_that_never_tick`,
+    `working_badges_draw_braille_dots_on_whole_pixels` (the shared dot grid),
+    `attention_badges_mark_tab_corners_without_moving_tabs` (the tab badge and
+    its accessible name) and
+    `agent_sidebar_rows_show_attention_in_tab_order_and_reveal_the_focused_row`
+    (the row glyph and its accessible name). Isolated installed observation
+    of this commit's tree on edge `8c42c73`, the candidate's `nix build` of
+    `/nix/store/4pw8bqg1vrdafkr2mpa90mssmcdaqk9b-eon-0.1.6`, private headless
+    Sway 1.12 with the pixman renderer at 1600x900 and
+    `[workspace] animate_working_badge = false`. Tab 1 ran Claude Code
+    2.1.303, which started a background `sleep 25` and ended its turn; tab 2
+    held focus and a working Codex record. Captures every 2.3 s, each with the
+    sidebar open and then closed:
+    - while the sleep ran, tab 1's corner badge and its sidebar row showed
+      three dots in a row in the working blue, beside tab 2's still ⠋. The
+      row of three read apart from the ⠋ cluster at 1x and 2x;
+    - when the sleep ended, tab 1 showed the still ⠋ while Claude Code
+      reported the task, then ✓ in the tab badge and the row.
+    The accessible names were not read.
 - **Open proof:** Pending re-proof in this repository: compositor window drag
   from the empty header region, narrow-width captures, and AT-SPI header order.
 

@@ -7,12 +7,13 @@ installation, and proven contract changes.
 
 - Agent attention: an agent that reports done, or idle, while processes it
   started in its terminal still run shows as waiting on background work
-  instead of finished or idle, until that work ends. Until its own badge
-  lands, the window shows the working badge held still and reads it as
-  working. `eon workspace [--json]` and `eon workspaces [--json]` report the
-  state as `background`. EONW moves to v23 and Eon to 0.1.6, so after a
-  profile refresh the new `eon` cannot control a window started from an older
-  build until that window is restarted.
+  instead of finished or idle, until that work ends. Its tab badge and
+  sidebar row show three still dots in the working blue, and screen readers
+  name it "waiting on background work". `eon workspace [--json]` and
+  `eon workspaces [--json]` report the state as `background`. EONW moves to
+  v23 and Eon to 0.1.6, so after a profile refresh the new `eon` cannot
+  control a window started from an older build until that window is
+  restarted.
 
 - The Eon Bar's quota windows are colored by how sustainable their pace is:
   green while usage is comfortably under pace, a light green right on pace,

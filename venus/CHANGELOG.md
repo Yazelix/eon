@@ -3,10 +3,11 @@
 ## Unreleased
 
 - VEN-C21/VEN-C30: consume EONW v23, whose attention state adds background,
-  waiting on background work, ranked between working and idle. Until its own
-  badge (`eon-agent-background-work-yte0.3`), Venus draws background as the
-  working badge's first frame, still, and its tab badge and sidebar row read
-  as working (`eon-agent-background-work-yte0.2`).
+  waiting on background work, ranked between working and idle
+  (`eon-agent-background-work-yte0.2`). VEN-C21/VEN-C30: its tab badge and
+  sidebar row glyph are three still dots in the working blue that never animate, and
+  their accessible state is `waiting on background work`
+  (`eon-agent-background-work-yte0.3`).
 
 - VEN-C22/VEN-C26: each fresh quota window with a reset, past its first tenth,
   colors its text on a green, yellow, orange, red gradient by how early its

@@ -1068,6 +1068,13 @@ PTY pixel size rule needs no wire change.
         record.
       - A terminal host held under SIGSTOP answered nothing, and after
         SIGCONT it served its records unchanged, with its child still running.
+    - Installed (`eon-agent-background-work-yte0.3`). The run used the
+      candidate Eon package
+      `/nix/store/4pw8bqg1vrdafkr2mpa90mssmcdaqk9b-eon-0.1.6`, built from that
+      commit's tree on edge `8c42c73`, under private headless Sway. Claude Code
+      2.1.303 started a background `sleep 25` and reported `done`; through
+      Eon's poll the reply counted it, so the pane read `background`, and it
+      read `finished` after the sleep ended.
 
 ## ORB-C16 — Static graphics resource plane
 
