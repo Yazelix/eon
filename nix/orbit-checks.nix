@@ -54,13 +54,22 @@ let
         { cat ${boundarySource}/src/boundary.schema; echo 'flag 31 spare'; } > spare.schema
         ./generate spare.schema src
         (cd src && bun ${bend}/bend2/main.ts main.bend -o ../worker.c)
-        clang -std=c11 -O2 -Wl,-z,noexecstack worker.c -lpthread -lm -o "$out"
+        clang -std=c11 -O2 ${lib.optionalString pkgs.stdenv.isLinux "-Wl,-z,noexecstack "}worker.c -lpthread -lm -o "$out"
       '';
 
   # A child script, orbit/tests/SCRIPT.sh, with a bash shebang.
   shellScript =
     script: pkgs.writeShellScript "orbit-${script}" (builtins.readFile (../orbit/tests + "/${script}.sh"));
   bash = "${pkgs.bash}/bin/bash";
+  # nixpkgs builds no pgrep for macOS, and the real-PTY tests ask it only for
+  # a process's children (`pgrep -P PID`).
+  childPgrep = pkgs.writeShellScriptBin "pgrep" ''
+    if [ "$#" != 2 ] || [ "$1" != -P ]; then
+      echo "pgrep: only -P PID is supported" >&2
+      exit 2
+    fi
+    ${pkgs.procps}/bin/ps -A -o pid= -o ppid= | ${pkgs.gawk}/bin/awk -v parent="$2" '$2 == parent { print $1 }'
+  '';
   # Runs the real-PTY test NAME, with dashes as underscores. The child script,
   # orbit/tests/SCRIPT.sh, reaches the test in VARIABLE.
   realPtyCheck =
@@ -69,13 +78,20 @@ let
       variable ? null,
       script ? "${name}-shell",
       timeout ? "15s",
+      inputs ? [ ],
       env ? { },
     }:
     lib.nameValuePair "orbit-${name}" (
       pkgs.runCommand "orbit-${name}"
         (
           {
-            nativeBuildInputs = [ pkgs.procps ];
+            nativeBuildInputs =
+              [ pkgs.procps ]
+              ++ lib.optionals pkgs.stdenv.isDarwin [
+                pkgs.lsof
+                childPgrep
+              ]
+              ++ inputs;
             ORBIT_BIN = "${orbitPackage}/bin/yazelix-orbit";
           }
           // lib.optionalAttrs (variable != null) {
@@ -90,7 +106,8 @@ let
           touch "$out"
         ''
     );
-  realPtyChecks = builtins.listToAttrs (map realPtyCheck [
+  # orbit-unreaped-stop checks Linux's ptrace stop, which macOS lacks.
+  realPtyChecks = removeAttrs (builtins.listToAttrs (map realPtyCheck [
     {
       name = "lifecycle";
       variable = "PRESSURE_SHELL";
@@ -225,17 +242,14 @@ let
       name = "terminal-identity";
       variable = "IDENTITY_SHELL";
       timeout = "30s";
-      env.nativeBuildInputs = [
-        pkgs.procps
-        pkgs.ncurses
-      ];
+      inputs = [ pkgs.ncurses ];
     }
     {
       name = "stopped-client-exit";
       variable = "STOPPED_CLIENT_SHELL";
       timeout = "60s";
     }
-  ]);
+  ])) (lib.optional (!pkgs.stdenv.isLinux) "orbit-unreaped-stop");
 in
 realPtyChecks
 // {
