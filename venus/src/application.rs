@@ -7292,16 +7292,14 @@ mod tests {
                 .contains("timed out")
         );
         drop(opener);
-        // A zombie still has a /proc entry and is still listed by ps.
-        #[cfg(target_os = "linux")]
-        let reaped = !PathBuf::from(format!("/proc/{pid}")).exists();
-        #[cfg(not(target_os = "linux"))]
-        let reaped = !Command::new("/bin/ps")
-            .args(["-p", &pid.to_string()])
+        // Signal 0 reaches an unreaped zombie and fails once the child is reaped.
+        let status = Command::new("kill")
+            .args(["-0", &pid.to_string()])
             .stdout(Stdio::null())
+            .stderr(Stdio::null())
             .status()
-            .unwrap()
-            .success();
+            .unwrap();
+        let reaped = !status.success();
         assert!(reaped, "dispatcher must be reaped");
     }
 

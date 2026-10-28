@@ -58,11 +58,11 @@ tool runs ssh in batch mode), macOS 14 or later and Nix 2.20 or later,
 installed once with sudo by the
 [official installer](https://nixos.org/download/#nix-install-macos)
 or Determinate Systems' installer; the tool enables flakes itself. Keep Nix's
-macOS default `sandbox = false`, since Venus's build tests run `/bin/ps`
-(`eon-zuou`). Nix uses the flake's Cachix substituter only for a user named in
-`trusted-users`; otherwise the Mac builds everything. The run keeps going if
-SSH drops, and the tool then prints the command that fetches its evidence
-again. Otherwise its last line names the cleanup command:
+macOS default `sandbox = false`: only unsandboxed Darwin builds are proved;
+`eon-zuou` owns a sandboxed build. Nix uses the flake's Cachix substituter only
+for a user named in `trusted-users`; otherwise the Mac builds everything. The
+run keeps going if SSH drops, and the tool then prints the command that fetches
+its evidence again. Otherwise its last line names the cleanup command:
 `ssh USER@HOST rm -rf eon-proof/<run>`, then `nix-collect-garbage` on the Mac
 to free the store paths it built; `eon-test` also fills the Mac's `~/.cargo`
 with the locked crates. A Darwin build that fails mid-test can leave a

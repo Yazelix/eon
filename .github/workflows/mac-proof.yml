@@ -29,7 +29,7 @@ jobs:
           persist-credentials: false
       - uses: cachix/install-nix-action@13d8dd58da0234aa297dedd986986ccb8e7f3e24 # v31
         with:
-          # Venus's build tests run /bin/ps, which a sandboxed Darwin builder hides.
+          # Only unsandboxed Darwin builds are proved; eon-zuou owns sandboxed builds.
           extra_nix_config: sandbox = false
 
       # The run's limit leaves time inside the job's for setup and the upload.
