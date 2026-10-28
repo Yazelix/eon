@@ -2581,14 +2581,40 @@ pub(crate) mod tests {
     fn unix_connection_attempt_obeys_timeout() {
         let root = temporary_directory();
         let path = root.join("backlog.sock");
+        let address = socket2::SockAddr::unix(&path).unwrap();
         let socket =
             socket2::Socket::new(socket2::Domain::UNIX, socket2::Type::STREAM, None).unwrap();
-        socket
-            .bind(&socket2::SockAddr::unix(&path).unwrap())
-            .unwrap();
-        socket.listen(0).unwrap();
+        socket.bind(&address).unwrap();
+        socket.listen(1).unwrap();
         let listener = UnixListener::from(std::os::fd::OwnedFd::from(socket));
-        let queued = UnixStream::connect(&path).unwrap();
+        // Darwin treats backlog 0 as somaxconn; use 1 and fill until
+        // the kernel reports the queue full.
+        let mut queued = Vec::new();
+        for _ in 0..16 {
+            let socket =
+                socket2::Socket::new(socket2::Domain::UNIX, socket2::Type::STREAM, None).unwrap();
+            socket.set_nonblocking(true).unwrap();
+            match socket.connect(&address) {
+                Ok(()) => queued.push(socket),
+                Err(error)
+                    if matches!(
+                        error.kind(),
+                        io::ErrorKind::WouldBlock | io::ErrorKind::ConnectionRefused
+                    ) =>
+                {
+                    break;
+                }
+                Err(error) => panic!(
+                    "cannot fill backlog after {} connections: {error}",
+                    queued.len()
+                ),
+            }
+        }
+        assert!(
+            queued.len() < 16,
+            "backlog never filled after {} connections",
+            queued.len()
+        );
         let (sender, receiver) = std::sync::mpsc::channel();
         let attempt = thread::spawn(move || {
             sender
