@@ -839,22 +839,22 @@ fn quote(text: &str) -> String {
 }
 
 #[derive(Clone, Debug)]
-struct Process {
-    pid: u32,
+pub struct Process {
+    pub pid: u32,
     parent: u32,
-    command: String,
+    pub command: String,
 }
 
 impl Process {
     /// The executable's file name.
-    fn name(&self) -> &str {
+    pub fn name(&self) -> &str {
         let program = self.command.split_whitespace().next().unwrap_or("");
         program.rsplit('/').next().unwrap_or(program)
     }
 }
 
 /// This user's processes.
-fn listing(log: &mut Log, deadline: Instant) -> Result<Vec<Process>, Failure> {
+pub fn listing(log: &mut Log, deadline: Instant) -> Result<Vec<Process>, Failure> {
     let user = succeed(log, Command::new("id").arg("-u"), deadline, true)?;
     let user = String::from_utf8_lossy(&user).trim().to_owned();
     // Every process, with no column cut short; BSD ps -U would leave out

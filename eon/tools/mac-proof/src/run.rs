@@ -575,20 +575,9 @@ fn private_dirs() -> BTreeSet<String> {
 
 /// This user's Eon processes, as (pid, command).
 fn eon_processes(log: &mut Log, deadline: Instant) -> Result<BTreeSet<(String, String)>, Failure> {
-    let user = text(succeed(log, Command::new("id").arg("-u"), deadline, true)?);
-    let listing = text(succeed(
-        log,
-        Command::new("ps").args(["-U", &user, "-o", "pid=,comm="]),
-        deadline,
-        true,
-    )?);
-    Ok(listing
-        .lines()
-        .filter_map(|line| line.trim().split_once(' '))
-        .map(|(pid, command)| (pid.to_owned(), command.trim().to_owned()))
-        .filter(|(_, command)| {
-            let name = command.rsplit('/').next().unwrap_or(command);
-            EON_PROCESSES.contains(&name)
-        })
+    Ok(scenario::listing(log, deadline)?
+        .into_iter()
+        .filter(|process| EON_PROCESSES.contains(&process.name()))
+        .map(|process| (process.pid.to_string(), process.command))
         .collect())
 }
