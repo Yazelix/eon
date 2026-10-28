@@ -8,8 +8,14 @@ pub use elsewhere::{displays, grants, press, switch, windows};
 #[cfg(target_os = "macos")]
 pub use native::{displays, grants, press, switch, windows};
 
+pub struct Window {
+    pub id: u32,
+    pub bounds: [f64; 4],
+}
+
 #[cfg(target_os = "macos")]
 mod native {
+    use super::Window;
     use crate::retina::{Display, Mode};
     use objc2_app_kit::{NSApplicationActivationOptions, NSRunningApplication};
     use objc2_core_foundation::{
@@ -23,7 +29,7 @@ mod native {
         CGMainDisplayID, CGPreflightPostEventAccess, CGPreflightScreenCaptureAccess,
         CGRectMakeWithDictionaryRepresentation, CGWindowListCopyWindowInfo, CGWindowListOption,
         kCGDisplayShowDuplicateLowResolutionModes, kCGNullWindowID, kCGWindowBounds,
-        kCGWindowLayer, kCGWindowOwnerPID,
+        kCGWindowLayer, kCGWindowNumber, kCGWindowOwnerPID,
     };
     use std::{ptr, thread, time::Duration};
 
@@ -65,21 +71,21 @@ mod native {
         Ok(())
     }
 
-    /// The bounds of each on-screen window of process `pid` in its normal
-    /// layer, and the size of the main display, all in points as x, y,
-    /// width and height.
-    pub fn windows(pid: u32) -> Result<(Vec<[f64; 4]>, [f64; 2]), String> {
+    /// The ID and bounds of each on-screen window of process `pid` in its normal
+    /// layer, and the size of the main display, all dimensions in points.
+    pub fn windows(pid: u32) -> Result<(Vec<Window>, [f64; 2]), String> {
         let list =
             CGWindowListCopyWindowInfo(CGWindowListOption::OptionOnScreenOnly, kCGNullWindowID)
                 .ok_or("the window list is unavailable")?;
         // SAFETY: the window list is an array of dictionaries keyed by
         // strings (CGWindow.h), and the keys are constant strings.
-        let (list, owner, layer, bounds_key) = unsafe {
+        let (list, owner, layer, bounds_key, number_key) = unsafe {
             (
                 CFRetained::cast_unchecked::<CFArray<CFDictionary<CFString, CFType>>>(list),
                 kCGWindowOwnerPID,
                 kCGWindowLayer,
                 kCGWindowBounds,
+                kCGWindowNumber,
             )
         };
         let number = |window: &CFDictionary<CFString, CFType>, key: &CFString| {
@@ -93,6 +99,12 @@ mod native {
             if number(&window, owner) != Some(i64::from(pid)) || number(&window, layer) != Some(0) {
                 continue;
             }
+            let Some(id) = number(&window, number_key)
+                .and_then(|number| u32::try_from(number).ok())
+                .filter(|id| *id != 0)
+            else {
+                continue;
+            };
             let Some(bounds) = window
                 .get(bounds_key)
                 .and_then(|value| value.downcast::<CFDictionary>().ok())
@@ -103,12 +115,15 @@ mod native {
             // SAFETY: `bounds` is an untyped dictionary, as the call takes,
             // and `rect` is a CGRect for the call to fill.
             if unsafe { CGRectMakeWithDictionaryRepresentation(Some(&bounds), &mut rect) } {
-                found.push([
-                    rect.origin.x,
-                    rect.origin.y,
-                    rect.size.width,
-                    rect.size.height,
-                ]);
+                found.push(Window {
+                    id,
+                    bounds: [
+                        rect.origin.x,
+                        rect.origin.y,
+                        rect.size.width,
+                        rect.size.height,
+                    ],
+                });
             }
         }
         let display = CGDisplayBounds(CGMainDisplayID());
@@ -241,6 +256,7 @@ mod native {
 
 #[cfg(not(target_os = "macos"))]
 mod elsewhere {
+    use super::Window;
     use crate::retina::{Display, Mode};
 
     const MACOS: &str = "macOS only";
@@ -253,7 +269,7 @@ mod elsewhere {
         Err(MACOS.to_owned())
     }
 
-    pub fn windows(_pid: u32) -> Result<(Vec<[f64; 4]>, [f64; 2]), String> {
+    pub fn windows(_pid: u32) -> Result<(Vec<Window>, [f64; 2]), String> {
         Err(MACOS.to_owned())
     }
 

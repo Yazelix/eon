@@ -1,6 +1,7 @@
 //! `run`: the native steps on the Mac.
 
 use crate::{
+    retina,
     scenario::{self, Scenario},
     step::{Failure, Log, Outcome, Runner, check, execute, succeed},
 };
@@ -42,6 +43,12 @@ pub struct ScenarioOptions {
     pub dry_run: bool,
 }
 
+pub struct Report {
+    pub passed: bool,
+    pub tree: String,
+    pub package: Result<PathBuf, String>,
+}
+
 #[derive(Default)]
 struct Context {
     source: PathBuf,
@@ -80,7 +87,7 @@ impl Context {
 }
 
 /// Runs every step and returns whether all passed.
-pub fn run(options: Options) -> Result<bool, String> {
+pub fn run(options: Options, source: &Path) -> Result<Report, String> {
     if !options.dry_run && !NATIVE {
         return Err("run is macOS only (Apple Silicon); use --dry-run elsewhere".to_owned());
     }
@@ -90,7 +97,7 @@ pub fn run(options: Options) -> Result<bool, String> {
             options.evidence.display()
         ));
     }
-    let source = fs::canonicalize(".").map_err(|error| format!("current directory: {error}"))?;
+    let source = fs::canonicalize(source).map_err(|error| format!("source: {error}"))?;
     // Evidence inside the source would change the tree that it records.
     let parent = match options.evidence.parent() {
         Some(parent) if !parent.as_os_str().is_empty() => parent,
@@ -114,9 +121,31 @@ pub fn run(options: Options) -> Result<bool, String> {
         ..Context::default()
     };
     steps(&mut runner, &mut context).map_err(|error| format!("evidence: {error}"))?;
-    runner
+    let passed = runner
         .write(true)
-        .map_err(|error| format!("evidence: {error}"))
+        .map_err(|error| format!("evidence: {error}"))?;
+    Ok(Report {
+        passed,
+        tree: context.tree,
+        package: match runner.status("package") {
+            Some("pass") => Ok(context.package),
+            status => Err(format!("package step {}", status.unwrap_or("not run"))),
+        },
+    })
+}
+
+/// Uses the source step's owner to name a copied archive before choosing its bundle path.
+pub fn source_tree(
+    source_path: &Path,
+    log: &mut Log,
+    deadline: Instant,
+) -> Result<String, Failure> {
+    let mut context = Context {
+        source: source_path.to_owned(),
+        ..Context::default()
+    };
+    source(&mut context, log, deadline)?;
+    Ok(context.tree)
 }
 
 /// Runs the scenario alone, on a package built before, and returns whether
@@ -144,7 +173,11 @@ pub fn scenario(options: ScenarioOptions) -> Result<bool, String> {
             .identity
             .push(("package", package.display().to_string()));
     }
-    let mut scenario = Scenario::new(package, options.evidence.clone());
+    let mut scenario = Scenario::new(
+        package,
+        options.evidence.clone(),
+        scenario::Environment::Private,
+    );
     scenario::steps(&mut runner, &mut scenario, &[])
         .map_err(|error| format!("evidence: {error}"))?;
     runner
@@ -224,7 +257,11 @@ fn steps(runner: &mut Runner, context: &mut Context) -> std::io::Result<()> {
         )?;
     }
     // Dropped before leftovers, so that it has stopped whatever it started.
-    let mut gui = Scenario::new(context.package.clone(), context.evidence.clone());
+    let mut gui = Scenario::new(
+        context.package.clone(),
+        context.evidence.clone(),
+        scenario::Environment::Private,
+    );
     scenario::steps(runner, &mut gui, &["package"])?;
     drop(gui);
     runner.step(
@@ -251,15 +288,9 @@ fn host(context: &mut Context, log: &mut Log, deadline: Instant) -> Outcome {
         true,
     )?);
     for arguments in [
-        &["uname", "-a"][..],
+        &["uname", "-srm"][..],
         &["sw_vers"],
         &["sysctl", "hw.model", "hw.ncpu", "hw.memsize"],
-        &[
-            "system_profiler",
-            "-json",
-            "SPHardwareDataType",
-            "SPDisplaysDataType",
-        ],
         &["nix", "--version"],
     ] {
         execute(
@@ -270,8 +301,9 @@ fn host(context: &mut Context, log: &mut Log, deadline: Instant) -> Outcome {
             true,
         )?;
     }
-    // Venus's build tests run /bin/ps, which a sandboxed Darwin builder
-    // hides. `nix config show` needs Nix 2.20 or later.
+    retina::system_profiler(log, &["SPHardwareDataType", "SPDisplaysDataType"], deadline)?;
+    // Only unsandboxed Darwin builds are proved so far (eon-zuou).
+    // `nix config show` needs Nix 2.20 or later.
     let (sandbox, _) = execute(
         log,
         &mut context.nix(&["config", "show", "sandbox"]),

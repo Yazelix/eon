@@ -1057,7 +1057,11 @@
             };
             mac-proof = {
               type = "app";
-              program = "${macProof}/bin/mac-proof";
+              program = "${pkgs.writeShellScript "mac-proof" ''
+                export MAC_PROOF_SOURCE=${self}
+                export MAC_PROOF_REV=${self.rev or "dirty"}
+                exec ${macProof}/bin/mac-proof "$@"
+              ''}";
             };
           } // lib.optionalAttrs pkgs.stdenv.isLinux {
             record-demo = {

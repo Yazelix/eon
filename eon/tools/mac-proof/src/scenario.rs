@@ -328,7 +328,14 @@ pub fn steps(runner: &mut Runner, scenario: &mut Scenario, after: &[&str]) -> io
     Ok(())
 }
 
+#[derive(Clone, Copy)]
+pub(crate) enum Environment {
+    Private,
+    User,
+}
+
 pub struct Scenario {
+    environment: Environment,
     package: PathBuf,
     /// Where captures, Eon's output and its logs go.
     evidence: PathBuf,
@@ -351,12 +358,16 @@ pub struct Scenario {
 }
 
 impl Scenario {
-    pub fn new(package: PathBuf, evidence: PathBuf) -> Scenario {
+    pub(crate) fn new(package: PathBuf, evidence: PathBuf, environment: Environment) -> Scenario {
         let id = std::process::id();
         let unprobed = || Err("not probed".to_owned());
         Scenario {
+            environment,
             package,
-            evidence: evidence.join("scenario"),
+            evidence: match environment {
+                Environment::Private => evidence.join("scenario"),
+                Environment::User => evidence,
+            },
             root: std::env::temp_dir().join(format!("mac-proof-scenario-{id}")),
             runtime: PathBuf::from(format!("/tmp/es-{id}")),
             gui: unprobed(),
@@ -427,7 +438,7 @@ impl Scenario {
         self.root.join("home")
     }
 
-    fn work(&self) -> PathBuf {
+    pub(crate) fn work(&self) -> PathBuf {
         self.root.join("work")
     }
 
@@ -439,33 +450,63 @@ impl Scenario {
         self.package.join("bin/eon")
     }
 
-    /// `eon` with the private environment, from the launch directory.
-    fn eon(&self, arguments: &[&str]) -> Command {
+    /// `eon` from the launch directory, with private Eon roots in either mode.
+    pub(crate) fn eon(&self, arguments: &[&str]) -> Command {
         let home = self.home();
         let mut command = Command::new(self.eon_path());
-        command
-            .args(arguments)
-            .current_dir(self.work())
-            .env_clear()
-            .env("PATH", "/usr/bin:/bin:/usr/sbin:/sbin")
-            .env("LANG", "en_US.UTF-8")
-            .env("HOME", &home)
-            .env("XDG_CONFIG_HOME", home.join(".config"))
-            .env("XDG_STATE_HOME", home.join(".local/state"))
-            .env("XDG_DATA_HOME", home.join(".local/share"))
-            .env("XDG_CACHE_HOME", home.join(".cache"))
-            .env("EON_RUNTIME_DIR", &self.runtime)
-            .env("TMPDIR", &self.runtime);
-        for name in ["USER", "LOGNAME"] {
-            if let Some(value) = std::env::var_os(name) {
-                command.env(name, value);
+        command.args(arguments).current_dir(self.work());
+        if matches!(self.environment, Environment::Private) {
+            command
+                .env_clear()
+                .env("PATH", "/usr/bin:/bin:/usr/sbin:/sbin")
+                .env("LANG", "en_US.UTF-8")
+                .env("HOME", &home)
+                .env("XDG_CONFIG_HOME", home.join(".config"))
+                .env("XDG_STATE_HOME", home.join(".local/state"))
+                .env("XDG_DATA_HOME", home.join(".local/share"))
+                .env("XDG_CACHE_HOME", home.join(".cache"))
+                .env("TMPDIR", &self.runtime);
+            for name in ["USER", "LOGNAME"] {
+                if let Some(value) = std::env::var_os(name) {
+                    command.env(name, value);
+                }
             }
         }
         command
+            // A terminal's targeting variables must not escape into the private workspace.
+            .env_remove("EON_WINDOW_RUNTIME_DIR")
+            .env_remove("EON_TERMINAL")
+            .env_remove("EON_TAB")
+            .env("EON_CONFIG_HOME", home.join(".config/eon"))
+            .env("XDG_STATE_HOME", home.join(".local/state"))
+            .env("EON_RUNTIME_DIR", &self.runtime);
+        command
+    }
+
+    pub(crate) fn prepare(&mut self) -> Outcome {
+        let failed = |error: io::Error| Failure::Check(format!("preparing the scenario: {error}"));
+        if self.root.exists() {
+            fs::remove_dir_all(&self.root).map_err(failed)?;
+        }
+        std::os::unix::fs::DirBuilderExt::mode(&mut fs::DirBuilder::new(), 0o700)
+            .create(&self.root)
+            .map_err(failed)?;
+        for directory in [
+            self.home().join(".config/eon"),
+            self.work(),
+            self.exchange(),
+            self.evidence.join("captures"),
+        ] {
+            fs::create_dir_all(directory).map_err(failed)?;
+        }
+        // A runtime root that exists may belong to another run.
+        std::os::unix::fs::DirBuilderExt::mode(&mut fs::DirBuilder::new(), 0o700)
+            .create(&self.runtime)
+            .map_err(failed)
     }
 
     /// Starts a supervisor in its own process group, its output in eon.log.
-    fn start(&mut self, arguments: &[&str], log: &mut Log) -> Outcome {
+    pub(crate) fn start(&mut self, arguments: &[&str], log: &mut Log) -> Outcome {
         let output = File::options()
             .create(true)
             .append(true)
@@ -533,7 +574,11 @@ impl Scenario {
     }
 
     /// Venus under the current supervisor.
-    fn venus(&mut self, log: &mut Log, deadline: Instant) -> Result<Option<u32>, Failure> {
+    pub(crate) fn venus(
+        &mut self,
+        log: &mut Log,
+        deadline: Instant,
+    ) -> Result<Option<u32>, Failure> {
         let supervisor = self.supervisor.as_ref().map_or(0, Child::id);
         let processes = self.processes(log, deadline)?;
         let under = ours(&processes, &[supervisor], &[]);
@@ -545,15 +590,25 @@ impl Scenario {
 
     /// Venus under the supervisor once its window is on the screen, which
     /// may be a while after its process starts.
-    fn wait_for_venus(&mut self, log: &mut Log, deadline: Instant) -> Result<u32, Failure> {
+    pub(crate) fn wait_for_venus(
+        &mut self,
+        log: &mut Log,
+        deadline: Instant,
+    ) -> Result<u32, Failure> {
         log.line("mac-proof: waiting for Venus's window under the supervisor");
         until(deadline, || match self.venus(log, deadline)? {
-            Some(venus) if window(venus).is_ok() => Ok(Some(venus)),
+            Some(venus) if mac::windows(venus).is_ok_and(|(windows, _)| !windows.is_empty()) => {
+                Ok(Some(venus))
+            }
             _ => Ok(None),
         })
     }
 
-    fn wait_for_workspace(&mut self, log: &mut Log, deadline: Instant) -> Result<Value, Failure> {
+    pub(crate) fn wait_for_workspace(
+        &mut self,
+        log: &mut Log,
+        deadline: Instant,
+    ) -> Result<Value, Failure> {
         log.line("mac-proof: waiting for eon workspace --json to answer");
         until(deadline, || {
             self.supervisor_alive()?;
@@ -676,7 +731,7 @@ impl Scenario {
     /// that `eon attach` shows them again. Venus's end may add one: it
     /// cancels the pending picker of the tab that `panes` created, which
     /// starts that tab's terminal (EON-C18).
-    fn reattach(
+    fn restart_venus(
         &mut self,
         venus: u32,
         end: impl FnOnce(&mut Scenario, &mut Log) -> Outcome,
@@ -695,13 +750,17 @@ impl Scenario {
         check(before.is_subset(&after), || {
             format!("terminals {before:?} became {after:?} without Venus")
         })?;
-        succeed(log, &mut self.eon(&["attach"]), deadline, false)?;
-        let again = self.wait_for_venus(log, deadline)?;
+        let again = self.reattach(log, deadline)?;
         check(again != venus, || "Venus did not restart".to_owned())?;
         let shown = self.terminals(log, deadline)?;
         check(shown == after, || {
             format!("terminals {after:?} came back as {shown:?}")
         })
+    }
+
+    pub(crate) fn reattach(&mut self, log: &mut Log, deadline: Instant) -> Result<u32, Failure> {
+        succeed(log, &mut self.eon(&["attach"]), deadline, false)?;
+        self.wait_for_venus(log, deadline)
     }
 
     /// The scenario's processes still alive: those it finds now, and those
@@ -717,7 +776,17 @@ impl Scenario {
 
     /// Kills what is left of the scenario by exact pid and removes its
     /// directories; returns what was still alive, or why it could not tell.
-    fn clean(&mut self, log: &mut Log) -> Vec<String> {
+    pub(crate) fn clean(&mut self, log: &mut Log) -> Vec<String> {
+        let logs = self.home().join(".local/state/eon/logs");
+        let copied = Command::new("cp")
+            .arg("-R")
+            .arg(&logs)
+            .arg(self.evidence.join("logs"))
+            .status();
+        log.line(&format!(
+            "mac-proof: copying {} into the evidence: {copied:?}",
+            logs.display()
+        ));
         let mut left = Vec::new();
         match self.survivors(log, Instant::now() + MINUTE) {
             Ok(processes) => {
@@ -811,7 +880,8 @@ const PASTE: Key = Key {
 /// display.
 fn window(venus: u32) -> Result<Region, String> {
     let (windows, display) = mac::windows(venus)?;
-    region(&windows, display)
+    let bounds: Vec<_> = windows.into_iter().map(|window| window.bounds).collect();
+    region(&bounds, display)
 }
 
 /// Runs each command the harness drops into the exchange directory ($1), in
@@ -1088,23 +1158,8 @@ fn session(scenario: &mut Scenario, log: &mut Log, deadline: Instant) -> Outcome
 
 fn launch(scenario: &mut Scenario, log: &mut Log, deadline: Instant) -> Outcome {
     let failed = |error: io::Error| Failure::Check(format!("preparing the scenario: {error}"));
-    if scenario.root.exists() {
-        fs::remove_dir_all(&scenario.root).map_err(failed)?;
-    }
+    scenario.prepare()?;
     let config = scenario.home().join(".config/eon");
-    for directory in [
-        config.clone(),
-        scenario.work(),
-        scenario.exchange(),
-        scenario.evidence.join("captures"),
-    ] {
-        fs::create_dir_all(directory).map_err(failed)?;
-    }
-    // A runtime root that exists may belong to another run, and Eon
-    // accepts only a private one.
-    std::os::unix::fs::DirBuilderExt::mode(&mut fs::DirBuilder::new(), 0o700)
-        .create(&scenario.runtime)
-        .map_err(failed)?;
     // Anima would delay the picker by three seconds.
     fs::write(config.join("config.toml"), "[anima]\nenabled = false\n").map_err(failed)?;
     let driver = scenario.root.join("driver.sh");
@@ -1164,22 +1219,13 @@ fn retina(scenario: &mut Scenario, log: &mut Log, deadline: Instant) -> Outcome 
         retina::report(&displays).to_string(),
     )
     .map_err(failed)?;
-    // A second witness, recorded whole; only the log reads it.
-    let profile = succeed(
-        log,
-        Command::new("system_profiler").args(["-json", "SPDisplaysDataType"]),
-        deadline,
-        true,
-    )?;
+    let profile = retina::system_profiler(log, &["SPDisplaysDataType"], deadline)?;
     fs::write(
         scenario.evidence.join("system-profiler-displays.json"),
-        &profile,
+        profile.to_string(),
     )
     .map_err(failed)?;
-    match serde_json::from_slice(&profile)
-        .map_err(|error| error.to_string())
-        .and_then(|report| retina::profiled(&report))
-    {
+    match retina::profiled(&profile) {
         Ok(profiled) => {
             for display in profiled {
                 log.line(&format!(
@@ -1513,7 +1559,7 @@ fn views(scenario: &mut Scenario, log: &mut Log, deadline: Instant) -> Outcome {
 
 fn detach(scenario: &mut Scenario, log: &mut Log, deadline: Instant) -> Outcome {
     let venus = scenario.wait_for_venus(log, deadline)?;
-    scenario.reattach(
+    scenario.restart_venus(
         venus,
         |scenario, log| scenario.press(&[DETACH], log, deadline),
         log,
@@ -1523,7 +1569,7 @@ fn detach(scenario: &mut Scenario, log: &mut Log, deadline: Instant) -> Outcome 
 
 fn crash(scenario: &mut Scenario, log: &mut Log, deadline: Instant) -> Outcome {
     let venus = scenario.wait_for_venus(log, deadline)?;
-    scenario.reattach(
+    scenario.restart_venus(
         venus,
         |_, log| {
             succeed(
@@ -1580,7 +1626,7 @@ fn adoption(scenario: &mut Scenario, log: &mut Log, deadline: Instant) -> Outcom
     })
 }
 
-fn stop(scenario: &mut Scenario, log: &mut Log, deadline: Instant) -> Outcome {
+pub(crate) fn stop(scenario: &mut Scenario, log: &mut Log, deadline: Instant) -> Outcome {
     check(scenario.supervisor.is_some(), || {
         "no supervisor is running".to_owned()
     })?;
@@ -1593,16 +1639,6 @@ fn stop(scenario: &mut Scenario, log: &mut Log, deadline: Instant) -> Outcome {
             .as_mut()
             .and_then(|child| child.try_wait().ok().flatten()))
     });
-    let logs = scenario.home().join(".local/state/eon/logs");
-    let copied = Command::new("cp")
-        .arg("-R")
-        .arg(&logs)
-        .arg(scenario.evidence.join("logs"))
-        .status();
-    log.line(&format!(
-        "mac-proof: copying {} into the evidence: {copied:?}",
-        logs.display()
-    ));
     // Orbit hosts and their children may still be ending.
     let settled = deadline.min(Instant::now() + Duration::from_secs(15));
     let _ = until(settled, || {
@@ -1626,6 +1662,40 @@ mod tests {
     use super::*;
     use serde_json::json;
 
+    #[test]
+    fn user_environment_keeps_home_and_tmpdir_but_isolates_eon_targeting() {
+        let scenario = Scenario::new(
+            PathBuf::from("/package"),
+            PathBuf::from("/evidence"),
+            Environment::User,
+        );
+        let command = scenario.eon(&["run"]);
+        let environment: BTreeMap<_, _> = command.get_envs().collect();
+        for name in ["EON_WINDOW_RUNTIME_DIR", "EON_TERMINAL", "EON_TAB"] {
+            assert_eq!(environment.get(std::ffi::OsStr::new(name)), Some(&None));
+        }
+        for name in [
+            "HOME",
+            "TMPDIR",
+            "PATH",
+            "XDG_CONFIG_HOME",
+            "XDG_DATA_HOME",
+            "XDG_CACHE_HOME",
+        ] {
+            assert!(!environment.contains_key(std::ffi::OsStr::new(name)));
+        }
+        for (name, path) in [
+            ("EON_CONFIG_HOME", scenario.home().join(".config/eon")),
+            ("XDG_STATE_HOME", scenario.home().join(".local/state")),
+            ("EON_RUNTIME_DIR", scenario.runtime.clone()),
+        ] {
+            assert_eq!(
+                environment.get(std::ffi::OsStr::new(name)),
+                Some(&Some(path.as_os_str()))
+            );
+        }
+        assert_eq!(command.get_current_dir(), Some(scenario.work().as_path()));
+    }
     #[test]
     fn the_driver_runs_each_command_in_turn_and_reports_it() {
         let directory =

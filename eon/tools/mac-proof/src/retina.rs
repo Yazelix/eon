@@ -3,7 +3,54 @@
 //! without the Mac so Linux tests it.
 
 use serde_json::{Value, json};
-use std::fmt;
+use std::{fmt, process::Command, time::Instant};
+
+use crate::step::{Failure, Log, check, execute_filtered};
+
+/// Removes device identifiers, including display serials, at every depth.
+pub fn redact(mut value: Value) -> Value {
+    match &mut value {
+        Value::Object(object) => {
+            object.retain(|key, _| {
+                let key = key.to_ascii_lowercase();
+                !["serial", "uuid", "udid"]
+                    .iter()
+                    .any(|part| key.contains(part))
+            });
+            for value in object.values_mut() {
+                *value = redact(value.take());
+            }
+        }
+        Value::Array(array) => {
+            for value in array {
+                *value = redact(value.take());
+            }
+        }
+        _ => {}
+    }
+    value
+}
+
+/// Never writes the unredacted profiler output to evidence.
+pub fn system_profiler(log: &mut Log, types: &[&str], deadline: Instant) -> Result<Value, Failure> {
+    let (status, bytes) = execute_filtered(
+        log,
+        Command::new("system_profiler").arg("-json").args(types),
+        deadline,
+        true,
+        true,
+        |bytes| {
+            let value = serde_json::from_slice(&bytes)
+                .map_err(|error| Failure::Check(format!("system_profiler JSON: {error}")))?;
+            Ok(redact(value).to_string().into_bytes())
+        },
+    )?;
+    check(status.success(), || {
+        format!("system_profiler exited with {status}")
+    })?;
+    serde_json::from_slice(&bytes)
+        .map_err(|error| Failure::Check(format!("system_profiler JSON: {error}")))
+}
 
 /// A display mode, in points and pixels.
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -177,6 +224,26 @@ pub fn venus_scales(log: &str) -> Vec<f64> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn profiler_redaction_removes_nested_hardware_and_display_identifiers() {
+        let report = json!({
+            "SPHardwareDataType": [{"machine_model": "Mac14,2", "serial_number": "secret",
+                "platform_UUID": "secret", "provisioning_UDID": "secret"}],
+            "SPDisplaysDataType": [{"spdisplays_ndrvs": [{"_name": "Color LCD",
+                "_spdisplays_display-serial-number": "secret", "_spdisplays_display-serial-number2": "secret",
+                "nested": [{"Hardware UUID": "secret", "DisplaySerialNumber": "secret", "width": 1920}]}]}]
+        });
+        let redacted = redact(report);
+        assert_eq!(
+            redacted,
+            json!({
+                "SPHardwareDataType": [{"machine_model": "Mac14,2"}],
+                "SPDisplaysDataType": [{"spdisplays_ndrvs": [{"_name": "Color LCD", "nested": [{"width": 1920}]}]}]
+            })
+        );
+        assert_eq!(redact(redacted.clone()), redacted);
+    }
 
     fn mode(width: u32, height: u32, pixel_width: u32, pixel_height: u32) -> Mode {
         Mode {

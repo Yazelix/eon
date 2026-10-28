@@ -2,6 +2,7 @@
 //! Eon's macOS proof: the package build, the Darwin checks and the test
 //! suites, each with its own deadline, log and status.
 
+mod final_check;
 mod mac;
 mod picture;
 mod remote;
@@ -16,7 +17,8 @@ const USAGE: &str = "\
 usage: mac-proof remote (--host USER@HOST | --local DIR) --out DIR [--rev REV] [--timeout 12h] [--dry-run]
        mac-proof run --out DIR [--expect-tree TREE] [--timeout 12h] [--dry-run]
        mac-proof scenario (--package PATH | --dry-run) --out DIR [--timeout 1h]
-       mac-proof (remote | run | scenario) --help";
+       mac-proof final [--out DIR] [--timeout 12h] [--dry-run]
+       mac-proof (remote | run | scenario | final) --help";
 
 const REMOTE_HELP: &str = "\
 mac-proof remote: prove a tree on a Mac over SSH (run it on Linux, inside the Eon checkout)
@@ -85,10 +87,17 @@ fn main() -> ExitCode {
             .and_then(remote::remote),
         Some("run") => parse(&arguments[1..], RUN_HELP)
             .and_then(run_options)
-            .and_then(run::run),
+            .and_then(|options| {
+                let source = std::env::current_dir()
+                    .map_err(|error| format!("current directory: {error}"))?;
+                run::run(options, &source).map(|report| report.passed)
+            }),
         Some("scenario") => parse(&arguments[1..], &scenario::help())
             .and_then(scenario_options)
             .and_then(run::scenario),
+        Some("final") => parse(&arguments[1..], &final_check::help())
+            .and_then(final_options)
+            .and_then(final_check::final_check),
         Some("--help" | "-h") => {
             println!("{USAGE}");
             return ExitCode::SUCCESS;
@@ -191,6 +200,16 @@ fn scenario_options(mut flags: Vec<(String, String)>) -> Result<run::ScenarioOpt
         evidence: PathBuf::from(out),
         limit: timeout(&mut flags, 3600)?,
         dry_run,
+    };
+    finish(flags)?;
+    Ok(options)
+}
+
+fn final_options(mut flags: Vec<(String, String)>) -> Result<final_check::Options, String> {
+    let options = final_check::Options {
+        out: take(&mut flags, "--out").map(PathBuf::from),
+        limit: timeout(&mut flags, 12 * 3600)?,
+        dry_run: take(&mut flags, "--dry-run").is_some(),
     };
     finish(flags)?;
     Ok(options)

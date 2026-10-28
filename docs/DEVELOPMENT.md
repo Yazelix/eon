@@ -101,6 +101,36 @@ at scale 2 or offers a HiDPI mode that the `retina` step can switch to for the
 step. `mac-proof scenario --help` lists the steps and what each needs. No Mac
 has run the scenario yet.
 
+### Yu's final check
+
+Run `nix run github:Yazelix/eon/<rev>#mac-proof -- final` on the Apple Silicon
+Mac. Grant the terminal app Screen Recording (window captures) and
+Accessibility (automatic keys) in System Settings > Privacy & Security;
+the command opens missing grants' panes and asks you to quit and reopen the
+terminal app before rerunning.
+
+The automatic part captures whole screens, every connected display included,
+and the desktop before launch: close or hide windows you would not send before
+starting, and look inside the archive before sending it.
+
+The automatic part runs first and takes hours. Leave the Mac awake and
+untouched until it rings: the GUI scenario types into Eon. The eight manual
+items are Look, Second display (answer s to skip if you have only one), Typing
+and input methods, Fonts, Keyboard, Yazi images, Agent, and Copy out.
+`mac-proof final --help` prints each action and expected result. Eon uses the
+default configuration with private state, while keeping your HOME and shell
+environment so your logged-in Claude Code works.
+
+Each item waits for Enter, captures only Eon's largest window without changing
+focus, then asks for pass, fail or skip and an optional note. Other windows may
+cover Eon. The evidence folder defaults to
+`~/eon-mac-final-<rev12>-<UTC date>` (with a numeric suffix if taken);
+`--out DIR` chooses a fresh folder. The archive is `<out>.tar.gz` beside it.
+Look inside before sending it to Lucca. `--dry-run` walks the items without
+launching or capturing on any system; it proves no Mac behavior. Ctrl-C
+stops the check; a rerun starts over, and leftovers may need `eon stop all`
+with the private runtime environment recorded in `manual/final.log`.
+
 ## Sources of truth
 
 - [`docs/ARCHITECTURE.md`](ARCHITECTURE.md) — naming, ownership, and sequencing;

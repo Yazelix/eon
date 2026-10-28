@@ -88,6 +88,18 @@ pub fn execute(
     capture: bool,
     group: bool,
 ) -> Result<(ExitStatus, Vec<u8>), Failure> {
+    execute_filtered(log, command, deadline, capture, group, Ok)
+}
+
+/// Filters captured stdout before either returning or logging it.
+pub fn execute_filtered(
+    log: &mut Log,
+    command: &mut Command,
+    deadline: Instant,
+    capture: bool,
+    group: bool,
+    filter: impl FnOnce(Vec<u8>) -> Result<Vec<u8>, Failure>,
+) -> Result<(ExitStatus, Vec<u8>), Failure> {
     log.line(&format!("$ {command:?}"));
     let started = (|| {
         command.stdin(Stdio::null()).stderr(log.stdio()?);
@@ -127,7 +139,7 @@ pub fn execute(
             }
             thread::sleep(POLL);
         }
-        stdout = reader.join().unwrap_or_default();
+        stdout = filter(reader.join().unwrap_or_default())?;
         log.line(&String::from_utf8_lossy(&stdout));
     }
     Ok((status, stdout))
@@ -220,6 +232,13 @@ impl Runner {
         self.records
             .iter()
             .any(|record| record.name == name && record.status == Status::Pass)
+    }
+
+    pub fn status(&self, name: &str) -> Option<&str> {
+        self.records
+            .iter()
+            .find(|record| record.name == name)
+            .map(|record| record.status.as_str())
     }
 
     fn for_yu(&self, name: &str) -> bool {
