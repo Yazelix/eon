@@ -2373,8 +2373,11 @@ socket names, JSON fields and protocol identifiers retain their spellings.
 
 ## EON-C30 — CPU and memory use in the Eon Bar
 
-- **Status:** Proven on x86_64 Linux Wayland.
-- **Consumer:** Full-Eon workspace users on x86_64 Linux.
+- **Status:** Proven on x86_64 Linux Wayland. Amended on 2026-10-27
+  (approved by Lucca, relayed by eon-overseer) by `eon-mac-launch-kz4p.3`:
+  Apple Silicon macOS readings, awaiting EON-C7's native proof.
+- **Consumer:** Full-Eon workspace users on x86_64 Linux, and on Apple
+  Silicon macOS once EON-C7 is proven.
 - **Trigger:** A workspace window is open.
 - **Result:** The Eon Bar shows Venus's VEN-C28 whole-machine CPU label when
   `[bar] widgets` lists `cpu` and its RAM label when the list has `ram`, as

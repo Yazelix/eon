@@ -1847,22 +1847,29 @@ re-proved when that platform or feature is next touched.
 
 ## VEN-C28 — CPU and memory use in the Eon Bar
 
-- **Status:** Proven on native x86_64 Linux Wayland.
+- **Status:** Proven on native x86_64 Linux Wayland. Amended on 2026-10-27
+  (approved by Lucca, relayed by eon-overseer) by `eon-mac-launch-kz4p.3`:
+  readings on Apple Silicon macOS, implemented and awaiting native proof.
 - **Consumer:** One person using a Venus surface controlled by a full Eon
-  workspace on Linux.
+  workspace on Linux or Apple Silicon macOS.
 - **Trigger:** A workspace surface is presented, and every 2 seconds after.
 - **Result:** Two read-only labels in terminal monospace, `CPU 12%` then
   `RAM 43%`, sit in the existing top row, by default (VEN-C29) after the
   quota chips and before the clock, each in the quota chips' rounded outline.
   Each chip keeps the width of `CPU 100%` whatever the value, with its text
   centered, so neighbouring items never shift. The CPU label shows
-  whole-machine CPU use over the last 2 seconds as a whole percentage from `/proc/stat`; it
-  first appears one interval after the surface opens. The RAM label shows
-  whole-machine memory use, MemTotal minus MemAvailable over MemTotal from
-  `/proc/meminfo`, as a whole percentage read on the same wake; it appears with
-  the first reading. Hover and static AccessKit labels say `CPU use 12% across
-  16 logical CPUs, over the last 2 seconds`, counting the later sample's
-  per-CPU `/proc/stat` lines, and `RAM use 43% of 31.3 GiB`. The labels
+  whole-machine CPU use over the last 2 seconds as a whole percentage, from
+  `/proc/stat` on Linux and from the Mach host CPU load ticks on macOS, where
+  user, system and nice time count as busy; it first appears one interval
+  after the surface opens. The RAM label shows whole-machine memory use as a
+  whole percentage read on the same wake; it appears with the first reading.
+  On Linux it is MemTotal minus MemAvailable over MemTotal from
+  `/proc/meminfo`; on macOS it is Activity Monitor's Memory Used, app memory
+  (internal pages less purgeable ones) plus wired and compressed pages, over
+  `hw.memsize`. Hover and static AccessKit labels say `CPU use 12% across 16
+  logical CPUs, over the last 2 seconds`, counting the later sample's per-CPU
+  `/proc/stat` lines on Linux and the logical CPUs online on macOS, and
+  `RAM use 43% of 31.3 GiB`. The labels
   use only spare drag-region space and keep that region's minimum; they appear
   only while every quota chip is at full width, so width fitting hides the
   clock first, then the RAM label, then the CPU label, before the version
@@ -1870,16 +1877,22 @@ re-proved when that platform or feature is next touched.
 - **Important failures:** An unreadable, malformed or non-advancing CPU
   sample, one without per-CPU lines, or an unreadable or malformed memory
   reading, one without MemTotal or MemAvailable, with a zero MemTotal or with
-  MemAvailable above MemTotal, shows no label for that reading, never 0%; a
-  hidden label returns with the next valid reading. A change to either reading
+  MemAvailable above MemTotal, shows no label for that reading, never 0%. On
+  macOS a failed host call, a CPU counter that went backwards (the 32-bit tick
+  counters wrap about every 50 days on a 10-core Mac), purgeable pages above
+  internal ones, or use above `hw.memsize` likewise shows no label. A hidden
+  label returns with the next valid reading. A change to either reading
   does not replace attachments, recenter navigation, cancel scrolling or send
   an Orbit resize. Neither label has an action, focus target or drag behavior.
-  Other platforms show neither label.
+  Platforms other than Linux and macOS show neither label.
 - **Owner:** Venus Scene owns the text and geometry, the application owns the
   2-second wake, and a Venus module reads and parses `/proc/stat` and
-  `/proc/meminfo` on Linux.
+  `/proc/meminfo` on Linux and calls the Mach host statistics and
+  `hw.memsize` on macOS.
 - **Boundary:** No EONW or runtime change, configuration, per-core view, swap,
-  per-process or GPU memory, history, graph, dependency or platform expansion.
+  per-process or GPU memory, history, graph or platform beyond Linux and Apple
+  Silicon macOS. Its one dependency is target-only libc on macOS
+  (`docs/CRATES.md`).
 - **Proof:** `eon-cpu-widget-eon-bar-acxs`, `eon-igae.3`, `eon-igae.14.4`,
   `eon-icoh`
   - **Environment:** Automated and installed.
@@ -1892,6 +1905,11 @@ re-proved when that platform or feature is next touched.
     `eon-cpu-widget-eon-bar-acxs`, `eon-igae.3`, `eon-igae.14.4`, for the
     one-space label centered in its fixed-width chip, and `eon-icoh`, for the
     hover text naming the logical CPU count.
+- **Open proof:** macOS: the chips with plausible values in the native capture
+  and Venus log of the macOS harness (`eon-mac-launch-kz4p.12`).
+  `host_cpu_use_counts_user_system_and_nice_as_busy` and
+  `host_ram_use_is_app_wired_and_compressed_over_physical_memory` cover the
+  macOS arithmetic on Linux.
 
 ## VEN-C29 — Eon Bar item order
 

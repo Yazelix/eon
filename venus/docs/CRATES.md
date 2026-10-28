@@ -199,11 +199,32 @@ dependency decision does not establish public-distribution proof.
   `/etc/localtime` (by symlink name through the zoneinfo database, else its
   TZif bytes), and rechecks it after five minutes. Venus asks for the zone
   without a fallback, so an unknown zone shows no clock rather than UTC.
-- **Rejected:** libc `localtime_r`, because Venus forbids unsafe code; chrono's
-  `Local`, which adds iana-time-zone and its own parser for the same job; and
-  the time crate, which refuses local offsets in multithreaded Unix processes.
-  Remove jiff if Venus drops the clock or the native host gains a safe local
-  time source.
+- **Rejected:** libc `localtime_r`, because Venus keeps unsafe code to its
+  macOS CPU and memory readings; chrono's `Local`, which adds iana-time-zone
+  and its own parser for the same job; and the time crate, which refuses local
+  offsets in multithreaded Unix processes. Remove jiff if Venus drops the
+  clock or the native host gains a safe local time source.
+
+### macOS CPU and memory readings
+
+- **Selected shape:** target-only libc 0.2.189 on macOS, the workspace's exact
+  pin, already in Venus's macOS build through core-foundation, so the lock
+  gains one edge and no package (`eon-mac-launch-kz4p.3`, VEN-C28).
+- **Owner consequence:** Venus's library root denies unsafe code instead of
+  forbidding it, and one macOS-only module in `src/system.rs` allows it: the
+  host port taken once per process, `host_statistics`, a zeroed
+  `vm_statistics64` for `host_statistics64`, `sysctlbyname("hw.memsize")` and
+  `sysconf`, each with a safety note. Its results feed the same pure,
+  Linux-tested arithmetic. The binary root keeps forbidding unsafe code. libc
+  marks `mach_host_self` deprecated in favour of mach2; Venus allows that one
+  call.
+- **Rejected:** mach2, a new package whose calls are just as unsafe;
+  spawning `vm_stat`, `sysctl` or `top` every 2 seconds, since macOS has no
+  cheap command for cumulative CPU ticks; and sysinfo, a second owner for
+  readings Venus already parses.
+- **Exit:** `eon-b4vh` tracks removing the unsafe code. Remove it when a safe
+  standard-library or existing-dependency API covers these readings; if libc
+  drops `mach_host_self`, move to mach2 through the dependency gate.
 
 ## Measured comparison
 

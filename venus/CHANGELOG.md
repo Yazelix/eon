@@ -2,6 +2,11 @@
 
 ## Unreleased
 
+- VEN-C28: on Apple Silicon macOS the CPU and RAM chips read the Mach host
+  statistics instead of staying hidden. RAM is Activity Monitor's Memory
+  Used, app memory plus wired and compressed pages, over `hw.memsize`
+  (`eon-mac-launch-kz4p.3`).
+
 - VEN-C21/VEN-C30: consume EONW v23, whose attention state adds background,
   waiting on background work, ranked between working and idle
   (`eon-agent-background-work-yte0.2`). VEN-C21/VEN-C30: its tab badge and

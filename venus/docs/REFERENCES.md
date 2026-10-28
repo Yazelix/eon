@@ -164,6 +164,27 @@ without MemAvailable (every kernel since 3.14 has it), and btop's MemFree
 substitution and Waybar's unchecked wrap when MemAvailable exceeds MemTotal:
 such readings show nothing. Waybar's ZFS ARC adjustment is out of scope.
 
+On macOS (`eon-mac-launch-kz4p.3`), Venus compares btop v1.4.7's
+`src/osx/btop_collect.cpp` at the revision above, htop 3.5.3
+(`20882b8ef8271fb49ea0eb74bbfd484e9b0a11d8`, `darwin/Platform.c`), exelban/stats
+v3.0.23 (`5cf09a8cb0561ff24c28be4e5374d579d0601818`, `Modules/RAM/readers.swift`
+and `Modules/CPU/readers.swift`) and sysinfo v0.39.6
+(`1bc6ed4f7d0dd03606de572a1531a165438b63ec`, `src/unix/apple/`) against XNU
+xnu-12377.121.6 (`ac9718fb1af618d5ce8678d0dc6e8a58f252216f`,
+`osfmk/mach/vm_statistics.h`, `osfmk/kern/host.c` and `osfmk/kern/processor.c`).
+Memory keeps Activity Monitor's Memory Used as htop 3.5.3 (whose 3.5.2 change
+log says it matches Activity Monitor) and sysinfo compute it: internal pages
+less purgeable ones, plus wired and compressed pages, over `hw.memsize`. It
+rejects the older active, inactive and speculative form of stats and htop
+3.4.1, which drifts because XNU counts speculative pages as free and throttled
+ones as wired, and btop's active plus wired. CPU reads stats' one
+`HOST_CPU_LOAD_INFO` call per sample, whose 32-bit ticks XNU sums over every
+processor, and counts user, system and nice as busy, as btop, htop and sysinfo
+do; XNU never advances nice. The CPU count is the logical CPUs online, as
+btop's `_SC_NPROCESSORS_ONLN`. Venus rejects each project's since-boot or 0%
+first value, and sysinfo's and btop's clamping of a counter that went
+backwards: a wrapped counter shows nothing for that interval, as on Linux.
+
 ### Local clock
 
 VEN-C27 (`eon-igae.4`) compares Waybar's clock module at tag 0.14.0

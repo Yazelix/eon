@@ -699,7 +699,7 @@ struct Application {
     marker_wake: Option<Instant>,
     clock: Option<LocalClock>,
     next_clock: Option<Instant>,
-    /// The previous `/proc/stat` reading and when it was taken.
+    /// The previous CPU reading and when it was taken.
     cpu_times: Option<(Instant, CpuTimes)>,
     cpu: Option<CpuUse>,
     ram: Option<RamUse>,
