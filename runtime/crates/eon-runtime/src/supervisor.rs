@@ -9,7 +9,7 @@ use super::{
     diagnostics::DiagnosticLog,
     generation::{current_generation, generation_directory, record_launcher, remove_launcher},
     managed_environment::{self, nonempty_environment_path},
-    notification, quota,
+    notification, platform, quota,
     sessions::{
         RunningSession, TAB_VARIABLE, TERMINAL_VARIABLE, acquire_generation_sessions,
         recover_sessions, session_finished, start_orbit, stop_managed_sessions,
@@ -683,12 +683,7 @@ pub(super) fn base_runtime_directory(product: &str) -> PathBuf {
         .or_else(|| {
             xdg_path(nonempty_environment_path("XDG_RUNTIME_DIR")).map(|path| path.join(product))
         })
-        .unwrap_or_else(|| {
-            eprintln!(
-                "{product}: warning: XDG_RUNTIME_DIR is unset; using a private temporary runtime root"
-            );
-            env::temp_dir().join(format!("{product}-{}", effective_uid()))
-        })
+        .unwrap_or_else(|| platform::fallback_runtime_directory(product, effective_uid()))
 }
 
 fn prepare_generation_runtime(root: &Path, generation: &str) -> Result<PathBuf, String> {

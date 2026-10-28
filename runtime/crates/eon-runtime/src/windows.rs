@@ -5,6 +5,7 @@ use super::{
         current_generation, generation_directory, private_directory_exists, window_generation,
         window_inventory,
     },
+    platform::socket_path_fits,
     supervisor::{
         LaunchMode, SESSION_START_TIMEOUT, base_runtime_directory, prepare_runtime,
         probe_supervisor, request_id, runtime_directory, validate_private_directory,
@@ -18,7 +19,6 @@ use std::{
     fs::{self, DirBuilder, OpenOptions},
     hash::BuildHasher,
     os::unix::{
-        ffi::OsStrExt,
         fs::{DirBuilderExt, OpenOptionsExt},
         process::CommandExt,
     },
@@ -111,13 +111,9 @@ pub(super) fn new_window(inputs: &Inputs) -> Result<i32, String> {
     let (id, root) = loop {
         let id = format!("{:08x}", RandomState::new().hash_one(request_id()) as u32);
         let root = parent.join(&id);
-        if generation_directory(&root, &generation)
-            .join("session-9999.sock.management")
-            .as_os_str()
-            .as_bytes()
-            .len()
-            >= 108
-        {
+        if !socket_path_fits(
+            &generation_directory(&root, &generation).join("session-9999.sock.management"),
+        ) {
             return Err(format!(
                 "Eon runtime root {} is too long for independent terminal sockets",
                 base.display()

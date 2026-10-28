@@ -987,6 +987,13 @@ pub(super) fn start_orbit(
     log: &DiagnosticLog,
     deadline: Instant,
 ) -> Result<RunningSession, String> {
+    let management = artifact_path(socket, ".management");
+    if !platform::socket_path_fits(&management) {
+        return Err(format!(
+            "terminal socket {} is too long; set EON_RUNTIME_DIR to a shorter runtime root",
+            management.display()
+        ));
+    }
     let run_id = request_id();
     let record_path = artifact_path(socket, ".record");
     let mut orbit_command = orbit_command(

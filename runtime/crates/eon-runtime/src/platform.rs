@@ -1,10 +1,39 @@
-//! Platform mechanisms behind Runtime's terminal identity checks. The policy
-//! that uses them stays in `sessions`.
+//! Platform mechanisms behind Runtime's terminal identity checks and runtime
+//! paths. The policy that uses them stays in `sessions` and `supervisor`.
 
 use std::{
     io,
     os::{fd::AsRawFd, unix::net::UnixStream},
+    path::{Path, PathBuf},
 };
+
+/// The longest Unix socket path this platform binds: `sun_path` less its NUL.
+const SOCKET_PATH_BYTES: usize = std::mem::size_of::<libc::sockaddr_un>()
+    - std::mem::offset_of!(libc::sockaddr_un, sun_path)
+    - 1;
+
+/// Whether a Unix socket can bind at `path`.
+pub(crate) fn socket_path_fits(path: &Path) -> bool {
+    path.as_os_str().len() <= SOCKET_PATH_BYTES
+}
+
+/// `product`'s runtime root without `XDG_RUNTIME_DIR`, which a Linux session
+/// should set, so Eon warns and uses a private temporary directory.
+#[cfg(target_os = "linux")]
+pub(crate) fn fallback_runtime_directory(product: &str, uid: u32) -> PathBuf {
+    eprintln!(
+        "{product}: warning: XDG_RUNTIME_DIR is unset; using a private temporary runtime root"
+    );
+    std::env::temp_dir().join(format!("{product}-{uid}"))
+}
+
+/// `product`'s runtime root without `XDG_RUNTIME_DIR`, which macOS lacks. Its
+/// per-user `$TMPDIR` is too long for a window's terminal sockets, so Eon uses
+/// a private directory in `/tmp`, as tmux does.
+#[cfg(target_os = "macos")]
+pub(crate) fn fallback_runtime_directory(product: &str, uid: u32) -> PathBuf {
+    PathBuf::from(format!("/tmp/{product}-{uid}"))
+}
 
 /// What the kernel reports about a process that still has its pid.
 pub(crate) struct Process {
@@ -132,4 +161,22 @@ pub(crate) fn process(pid: u32) -> Result<Option<Process>, String> {
         start,
         ended: info.pbi_status == libc::SZOMB,
     }))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{SOCKET_PATH_BYTES, socket_path_fits};
+    use crate::supervisor::temporary_directory;
+    use std::{fs, os::unix::net::UnixListener};
+
+    #[test]
+    fn socket_path_bound_is_the_longest_path_that_binds() {
+        let root = temporary_directory();
+        let path = |length: usize| root.join("s".repeat(length - root.as_os_str().len() - 1));
+        let (longest, too_long) = (path(SOCKET_PATH_BYTES), path(SOCKET_PATH_BYTES + 1));
+        assert!(socket_path_fits(&longest) && !socket_path_fits(&too_long));
+        drop(UnixListener::bind(&longest).unwrap());
+        assert!(UnixListener::bind(&too_long).is_err());
+        fs::remove_dir_all(root).unwrap();
+    }
 }
