@@ -79,6 +79,26 @@ list --workflow mac-proof.yml` finds the run, and `gh run download <run-id>
 for 14 days. A run is candidate evidence, and suite proof for ORB-C14, but
 never GUI proof.
 
+`run` ends with a GUI scenario on the package it built, and `mac-proof
+scenario --package PATH --out DIR` runs that scenario alone. It needs the
+tool's user logged in to the Mac's screen; without a person at the Mac, turn on
+automatic login with `sysadminctl -autologin` (FileVault off) and restart. It
+launches full Eon with a private HOME, configuration and runtime root, then
+checks version identity and Stop. With Accessibility, which lets it post key
+events, it also dismisses the first tab's picker, which takes a key, and drives
+Eon through the `eon` CLI, a driver in its first pane and keys sent to Venus.
+That covers panes, tabs, focus, `eon edit`, a pane's environment and size, the
+Files popup, Command+V, detach, a Venus crash and supervisor adoption. With both
+Accessibility and Screen Recording, captures of Venus's window also check a
+Kitty image, zoom and the Shortcuts dialog. Granting either permission takes a
+click in System Settings. A step that lacks what it needs is listed for Yu in
+`summary.txt`, never passed, so a hosted runner without these grants reports a
+failed run even when every suite passed; read the suites' steps there.
+Command+C on a pointer selection, the Eon Bar's chips (until
+`eon-agent-parity-a9g0.12` lets the CLI read them), VoiceOver, Kotoeri, blur
+and Retina are always left to Yu. `mac-proof scenario --help` lists the steps
+and what each needs. No Mac has run the scenario yet.
+
 ## Sources of truth
 
 - [`docs/ARCHITECTURE.md`](ARCHITECTURE.md) — naming, ownership, and sequencing;

@@ -2,8 +2,11 @@
 //! Eon's macOS proof: the package build, the Darwin checks and the test
 //! suites, each with its own deadline, log and status.
 
+mod mac;
+mod picture;
 mod remote;
 mod run;
+mod scenario;
 mod step;
 
 use std::{path::PathBuf, process::ExitCode, time::Duration};
@@ -11,7 +14,8 @@ use std::{path::PathBuf, process::ExitCode, time::Duration};
 const USAGE: &str = "\
 usage: mac-proof remote (--host USER@HOST | --local DIR) --out DIR [--rev REV] [--timeout 12h] [--dry-run]
        mac-proof run --out DIR [--expect-tree TREE] [--timeout 12h] [--dry-run]
-       mac-proof (remote | run) --help";
+       mac-proof scenario (--package PATH | --dry-run) --out DIR [--timeout 1h]
+       mac-proof (remote | run | scenario) --help";
 
 const REMOTE_HELP: &str = "\
 mac-proof remote: prove a tree on a Mac over SSH (run it on Linux, inside the Eon checkout)
@@ -55,13 +59,18 @@ Steps, in order; each has a deadline, and a step whose prerequisite did not pass
   terminfo    macOS's own infocmp and tput find `eon` only through the package (ORB-C10)
   check-list  the flake's aarch64-darwin checks, then check:<name> builds each but default
   workspace   the Cargo workspace's packages, then test:<package> runs eon-test on each
+  session ... stop
+              the GUI scenario on the built package; `mac-proof scenario --help` lists
+              its steps and what each needs
   leftovers   fails on Eon processes or /tmp/e<c> directories the run left behind
 
 Evidence folder:
   summary.txt          one line per step: status, duration, first failing line
   summary.json         {schema, result, dry_run, system, tree, head?, steps: [{name,
-                       status, seconds, log, first_failure}]}; status is pass, fail,
-                       timeout, skipped or planned; head only for a Git checkout
+                       status, seconds, log, first_failure, for_yu}]}; status is pass,
+                       fail, timeout, skipped or planned; head only for a Git checkout;
+                       for_yu marks a step skipped because it, or a step it requires,
+                       could not run on this Mac, which summary.txt then lists for Yu
   steps/NN-<step>.log  each step's commands and their output, with : in the step as -
 Both summaries are rewritten after every step, with result incomplete until the last step
 has run; then it is pass or fail. Exits 0 when every step passed (or, in a
@@ -76,6 +85,9 @@ fn main() -> ExitCode {
         Some("run") => parse(&arguments[1..], RUN_HELP)
             .and_then(run_options)
             .and_then(run::run),
+        Some("scenario") => parse(&arguments[1..], &scenario::help())
+            .and_then(scenario_options)
+            .and_then(run::scenario),
         Some("--help" | "-h") => {
             println!("{USAGE}");
             return ExitCode::SUCCESS;
@@ -105,7 +117,8 @@ fn parse(arguments: &[String], help: &str) -> Result<Vec<(String, String)>, Stri
                 return Err(String::new());
             }
             "--dry-run" => flags.push((flag.clone(), "true".to_owned())),
-            "--host" | "--local" | "--out" | "--rev" | "--timeout" | "--expect-tree" => {
+            "--host" | "--local" | "--out" | "--rev" | "--timeout" | "--expect-tree"
+            | "--package" => {
                 let value = arguments
                     .next()
                     .ok_or(format!("{flag} needs a value\n{USAGE}"))?;
@@ -140,7 +153,7 @@ fn remote_options(mut flags: Vec<(String, String)>) -> Result<remote::Options, S
         _ => return Err(format!("give one of --host and --local\n{USAGE}")),
     };
     let out = take(&mut flags, "--out").ok_or(format!("--out is required\n{USAGE}"))?;
-    let timeout = timeout(&mut flags)?;
+    let timeout = timeout(&mut flags, 12 * 3600)?;
     let options = remote::Options {
         host,
         out: PathBuf::from(out),
@@ -155,7 +168,7 @@ fn remote_options(mut flags: Vec<(String, String)>) -> Result<remote::Options, S
 fn run_options(mut flags: Vec<(String, String)>) -> Result<run::Options, String> {
     let out = take(&mut flags, "--out").ok_or(format!("--out is required\n{USAGE}"))?;
     let options = run::Options {
-        limit: timeout(&mut flags)?,
+        limit: timeout(&mut flags, 12 * 3600)?,
         evidence: PathBuf::from(out),
         expect_tree: take(&mut flags, "--expect-tree"),
         dry_run: take(&mut flags, "--dry-run").is_some(),
@@ -164,11 +177,29 @@ fn run_options(mut flags: Vec<(String, String)>) -> Result<run::Options, String>
     Ok(options)
 }
 
-fn timeout(flags: &mut Vec<(String, String)>) -> Result<Duration, String> {
+fn scenario_options(mut flags: Vec<(String, String)>) -> Result<run::ScenarioOptions, String> {
+    let out = take(&mut flags, "--out").ok_or(format!("--out is required\n{USAGE}"))?;
+    let dry_run = take(&mut flags, "--dry-run").is_some();
+    let package = match take(&mut flags, "--package") {
+        Some(package) => PathBuf::from(package),
+        None if dry_run => PathBuf::new(),
+        None => return Err(format!("--package is required\n{USAGE}")),
+    };
+    let options = run::ScenarioOptions {
+        package,
+        evidence: PathBuf::from(out),
+        limit: timeout(&mut flags, 3600)?,
+        dry_run,
+    };
+    finish(flags)?;
+    Ok(options)
+}
+
+fn timeout(flags: &mut Vec<(String, String)>, default: u64) -> Result<Duration, String> {
     match take(flags, "--timeout") {
         Some(text) => {
             step::parse_duration(&text).ok_or(format!("--timeout {text}: give 30s, 90m or 12h"))
         }
-        None => Ok(Duration::from_secs(12 * 3600)),
+        None => Ok(Duration::from_secs(default)),
     }
 }

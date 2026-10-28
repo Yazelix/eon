@@ -82,6 +82,21 @@ fn a_local_dry_run_round_trips_the_candidate_tree() {
             "terminfo=planned",
             "check-list=planned",
             "workspace=planned",
+            "session=planned",
+            "launch=planned",
+            "identity=planned",
+            "picker=planned",
+            "output=planned",
+            "panes=planned",
+            "focus=planned",
+            "edit=planned",
+            "kitty=planned",
+            "keys=planned",
+            "views=planned",
+            "detach=planned",
+            "crash=planned",
+            "adoption=planned",
+            "stop=planned",
             "leftovers=planned"
         ]
     );

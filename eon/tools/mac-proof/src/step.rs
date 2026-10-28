@@ -20,7 +20,8 @@ enum Status {
     Pass,
     Fail,
     Timeout,
-    /// A step it requires did not pass, or the run's time limit had passed.
+    /// A step it requires did not pass, the run's time limit had passed, or
+    /// the step cannot run on this machine.
     Skipped,
     /// A dry run records the step without running it.
     Planned,
@@ -45,6 +46,8 @@ pub enum Failure {
     Command(String),
     /// A check of the tool's own failed; this message is the cause.
     Check(String),
+    /// The step cannot run on this machine, so a person must check it.
+    Unavailable(String),
 }
 
 pub type Outcome = Result<(), Failure>;
@@ -186,6 +189,8 @@ struct Record {
     duration: Duration,
     log: String,
     first_failure: Option<String>,
+    /// Skipped because it, or a step it requires, could not run here.
+    for_yu: bool,
 }
 
 /// Runs steps in order into `evidence/steps/NN-name.log` and keeps their records.
@@ -217,6 +222,12 @@ impl Runner {
             .any(|record| record.name == name && record.status == Status::Pass)
     }
 
+    fn for_yu(&self, name: &str) -> bool {
+        self.records
+            .iter()
+            .any(|record| record.name == name && record.for_yu)
+    }
+
     /// Runs `body` unless a step in `requires` did not pass or the run's
     /// time limit has passed, then rewrites the summary. A dry run runs only
     /// bodies marked `always`.
@@ -243,12 +254,16 @@ impl Runner {
             .copied()
             .filter(|required| !self.passed(required))
             .collect();
+        let mut for_yu = false;
         let (status, message) = if self.dry_run && !always {
             file.line("mac-proof: dry run; not run");
             (Status::Planned, None)
         } else if !missing.is_empty() || started >= self.end {
             let message = if missing.is_empty() {
                 "the run's time limit passed".to_owned()
+            } else if missing.iter().all(|required| self.for_yu(required)) {
+                for_yu = true;
+                format!("needs {}, which could not run here", missing.join(", "))
             } else {
                 format!("needs {}, which did not pass", missing.join(", "))
             };
@@ -279,6 +294,11 @@ impl Runner {
                     file.line(&format!("mac-proof: {message}"));
                     (Status::Fail, Some(message))
                 }
+                Err(Failure::Unavailable(message)) => {
+                    file.line(&format!("mac-proof: skipped: {message}"));
+                    for_yu = true;
+                    (Status::Skipped, Some(message))
+                }
             }
         };
         let record = Record {
@@ -287,6 +307,7 @@ impl Runner {
             duration: started.elapsed(),
             log,
             first_failure: message,
+            for_yu,
         };
         progress(&format!(
             "{:<32} {:<8} {}",
@@ -383,6 +404,7 @@ fn summary_json(
                 "seconds": record.duration.as_secs(),
                 "log": record.log,
                 "first_failure": record.first_failure,
+                "for_yu": record.for_yu,
             })
         })
         .collect();
@@ -431,6 +453,17 @@ fn summary_text(
         )
         .trim_end();
         text += "\n";
+    }
+    let for_yu: Vec<&Record> = records.iter().filter(|record| record.for_yu).collect();
+    if !for_yu.is_empty() {
+        text += "\nfor Yu, since they could not run here:\n";
+        for record in for_yu {
+            text += &format!(
+                "  {:<30} {}\n",
+                record.name,
+                record.first_failure.as_deref().unwrap_or("")
+            );
+        }
     }
     text
 }
@@ -521,6 +554,79 @@ mod tests {
         let log = String::from_utf8_lossy(&log);
         assert!(
             log.contains("compiling \u{fffd}\n") && log.contains("sh exited with exit status: 3")
+        );
+        fs::remove_dir_all(evidence).unwrap();
+    }
+
+    #[test]
+    fn a_step_that_cannot_run_here_is_listed_for_yu_with_the_steps_that_need_it() {
+        let evidence = scratch("for-yu");
+        let mut runner = Runner::new(&evidence, false, Duration::from_secs(3600)).unwrap();
+        let minute = Duration::from_secs(60);
+        runner
+            .step(&mut (), "launch", minute, &[], false, |_, _, _| Ok(()))
+            .unwrap();
+        runner
+            .step(&mut (), "picker", minute, &["launch"], false, |_, _, _| {
+                Err(Failure::Unavailable(
+                    "needs Accessibility: not granted".to_owned(),
+                ))
+            })
+            .unwrap();
+        runner
+            .step(&mut (), "broken", minute, &[], false, |_, _, _| {
+                check(false, || "no window".to_owned())
+            })
+            .unwrap();
+        for (name, requires) in [
+            ("output", &["picker"][..]),
+            ("focus", &["picker", "broken"]),
+        ] {
+            runner
+                .step(
+                    &mut (),
+                    name,
+                    minute,
+                    requires,
+                    false,
+                    |_, _, _| unreachable!(),
+                )
+                .unwrap();
+        }
+        assert!(!runner.write(true).unwrap());
+        let text = fs::read_to_string(evidence.join("summary.txt")).unwrap();
+        let (_, for_yu) = text
+            .split_once("\nfor Yu, since they could not run here:\n")
+            .unwrap();
+        let listed: Vec<(&str, &str)> = for_yu
+            .lines()
+            .filter_map(|line| line.trim().split_once(' '))
+            .map(|(name, reason)| (name, reason.trim()))
+            .collect();
+        assert_eq!(
+            listed,
+            [
+                ("picker", "needs Accessibility: not granted"),
+                ("output", "needs picker, which could not run here"),
+            ]
+        );
+        let summary: serde_json::Value =
+            serde_json::from_slice(&fs::read(evidence.join("summary.json")).unwrap()).unwrap();
+        let marks: Vec<_> = summary["steps"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|step| (step["status"].as_str().unwrap(), step["for_yu"] == true))
+            .collect();
+        assert_eq!(
+            marks,
+            [
+                ("pass", false),
+                ("skipped", true),
+                ("fail", false),
+                ("skipped", true),
+                ("skipped", false)
+            ]
         );
         fs::remove_dir_all(evidence).unwrap();
     }

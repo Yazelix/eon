@@ -1,6 +1,9 @@
 //! `run`: the native steps on the Mac.
 
-use crate::step::{Failure, Log, Outcome, Runner, check, execute, succeed};
+use crate::{
+    scenario::{self, Scenario},
+    step::{Failure, Log, Outcome, Runner, check, execute, succeed},
+};
 use std::{
     collections::BTreeSet,
     fs,
@@ -32,9 +35,17 @@ pub struct Options {
     pub dry_run: bool,
 }
 
+pub struct ScenarioOptions {
+    pub package: PathBuf,
+    pub evidence: PathBuf,
+    pub limit: Duration,
+    pub dry_run: bool,
+}
+
 #[derive(Default)]
 struct Context {
     source: PathBuf,
+    evidence: PathBuf,
     expect_tree: Option<String>,
     tree: String,
     head: String,
@@ -98,10 +109,44 @@ pub fn run(options: Options) -> Result<bool, String> {
     ));
     let mut context = Context {
         source,
+        evidence: options.evidence,
         expect_tree: options.expect_tree,
         ..Context::default()
     };
     steps(&mut runner, &mut context).map_err(|error| format!("evidence: {error}"))?;
+    runner
+        .write(true)
+        .map_err(|error| format!("evidence: {error}"))
+}
+
+/// Runs the scenario alone, on a package built before, and returns whether
+/// every step passed.
+pub fn scenario(options: ScenarioOptions) -> Result<bool, String> {
+    if !options.dry_run && !NATIVE {
+        return Err("scenario is macOS only (Apple Silicon); use --dry-run elsewhere".to_owned());
+    }
+    if options.evidence.exists() {
+        return Err(format!(
+            "{} exists; give a fresh --out",
+            options.evidence.display()
+        ));
+    }
+    // Its commands run from the scenario's own directory.
+    let package = match options.dry_run {
+        true => options.package,
+        false => fs::canonicalize(&options.package)
+            .map_err(|error| format!("--package {}: {error}", options.package.display()))?,
+    };
+    let mut runner = Runner::new(&options.evidence, options.dry_run, options.limit)
+        .map_err(|error| format!("{}: {error}", options.evidence.display()))?;
+    if !options.dry_run {
+        runner
+            .identity
+            .push(("package", package.display().to_string()));
+    }
+    let mut scenario = Scenario::new(package, options.evidence.clone());
+    scenario::steps(&mut runner, &mut scenario, &[])
+        .map_err(|error| format!("evidence: {error}"))?;
     runner
         .write(true)
         .map_err(|error| format!("evidence: {error}"))
@@ -178,6 +223,10 @@ fn steps(runner: &mut Runner, context: &mut Context) -> std::io::Result<()> {
             },
         )?;
     }
+    // Dropped before leftovers, so that it has stopped whatever it started.
+    let mut gui = Scenario::new(context.package.clone(), context.evidence.clone());
+    scenario::steps(runner, &mut gui, &["package"])?;
+    drop(gui);
     runner.step(
         context,
         "leftovers",
