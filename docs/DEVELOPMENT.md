@@ -40,11 +40,11 @@ also hides `/run/current-system` and `/run/wrappers`.
 
 ## Checks
 
-[`components/eon-v4.json`](../components/eon-v4.json) is the canonical
+[`components/eon-v5.json`](../components/eon-v5.json) is the canonical
 distribution-neutral component graph. Validate it with:
 
 ```sh
-cargo run --locked -p eon-manifest -- components/eon-v4.json
+cargo run --locked -p eon-manifest -- components/eon-v5.json
 ```
 
 Nix builds Orbit, Venus, Eon and eonbase from the in-tree crates with the root

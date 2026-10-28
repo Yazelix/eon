@@ -72,7 +72,7 @@ struct Demo {
 /// Builds the isolated home, demo project and Zoxide history every recipe starts from.
 fn prepare(r: &mut Recorder) -> Result<Demo> {
     let root = env::current_dir()?;
-    if !root.join("components/eon-v4.json").is_file() {
+    if !root.join("components/eon-v5.json").is_file() {
         return Err(Error::Invalid(
             "run the recorder from the Eon repository root".into(),
         ));

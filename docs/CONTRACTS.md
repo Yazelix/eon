@@ -18,7 +18,7 @@ Proofs cite revisions of this repository. "Pending re-proof in this repository"
 marks an earlier proof that was not repeated after consolidation; it is
 re-proved when that platform or feature is next touched.
 
-The [component manifest](../components/eon-v4.json) owns selected source
+The [component manifest](../components/eon-v5.json) owns selected source
 and compatibility identities. Every proof below applies only to its named
 revision, artifact, environment and surface; it does not promote a later pin or
 another platform. Profile refresh preserves live supervisors and terminals;

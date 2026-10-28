@@ -1,8 +1,8 @@
 {
-  "schema": 4,
+  "schema": 5,
   "product": {
     "id": "eon",
-    "target": "x86_64-linux"
+    "targets": ["x86_64-linux", "aarch64-darwin"]
   },
   "composition": {
     "services": ["orbit"],
@@ -57,7 +57,7 @@
       "project": "Yazelix Anima",
       "version": "0.2.0",
       "revision": "aa93bf16474f2e6692fdf96a82f6664fa03a18e6",
-      "target": "x86_64-linux",
+      "targets": ["x86_64-linux", "aarch64-darwin"],
       "source": {
         "kind": "git",
         "url": "https://github.com/Yazelix/anima.git"
@@ -73,7 +73,7 @@
       "id": "orbit",
       "project": "Orbit",
       "version": "0.1.0",
-      "target": "x86_64-linux",
+      "targets": ["x86_64-linux", "aarch64-darwin"],
       "source": {
         "kind": "workspace",
         "path": "orbit"
@@ -107,7 +107,7 @@
       "id": "venus",
       "project": "Venus",
       "version": "0.1.0",
-      "target": "x86_64-linux",
+      "targets": ["x86_64-linux", "aarch64-darwin"],
       "source": {
         "kind": "workspace",
         "path": "venus"
@@ -162,7 +162,7 @@
       "project": "Nushell",
       "version": "0.113.1",
       "revision": "7b7df4aa68e957cf38b9d8157c35fa7523f44a6d",
-      "target": "x86_64-linux",
+      "targets": ["x86_64-linux", "aarch64-darwin"],
       "source": {
         "kind": "git",
         "url": "https://github.com/nushell/nushell.git"
@@ -179,7 +179,7 @@
       "project": "GNU Bash",
       "version": "5.3p9",
       "revision": "b8c60bc9ca365f8261fa97900b6fa939f6ebc303",
-      "target": "x86_64-linux",
+      "targets": ["x86_64-linux", "aarch64-darwin"],
       "source": {
         "kind": "git",
         "url": "https://git.savannah.gnu.org/git/bash.git"
@@ -196,7 +196,7 @@
       "project": "Starship",
       "version": "1.25.1",
       "revision": "8758daa7767d4e73874330b1e262fca66a7ffd30",
-      "target": "x86_64-linux",
+      "targets": ["x86_64-linux", "aarch64-darwin"],
       "source": {
         "kind": "git",
         "url": "https://github.com/starship/starship.git"
@@ -213,7 +213,7 @@
       "project": "Zoxide",
       "version": "0.9.9",
       "revision": "9cdc6aa3740b4d8a9d62406c99e84c5de49645e9",
-      "target": "x86_64-linux",
+      "targets": ["x86_64-linux", "aarch64-darwin"],
       "source": {
         "kind": "git",
         "url": "https://github.com/ajeetdsouza/zoxide.git"
@@ -230,7 +230,7 @@
       "project": "fzf",
       "version": "0.73.1",
       "revision": "ce4bef75954bebd87e0886435bcf8c6904328ab0",
-      "target": "x86_64-linux",
+      "targets": ["x86_64-linux", "aarch64-darwin"],
       "source": {
         "kind": "git",
         "url": "https://github.com/junegunn/fzf.git"
@@ -247,7 +247,7 @@
       "project": "Atuin",
       "version": "18.16.1",
       "revision": "671f96b60dac49d1d2de73cc0812986a5e22ce7b",
-      "target": "x86_64-linux",
+      "targets": ["x86_64-linux", "aarch64-darwin"],
       "source": {
         "kind": "git",
         "url": "https://github.com/atuinsh/atuin.git"
@@ -264,7 +264,7 @@
       "project": "Carapace",
       "version": "1.6.3",
       "revision": "e4ed2a5ae661848b228224ad7edb20ea678d33d4",
-      "target": "x86_64-linux",
+      "targets": ["x86_64-linux", "aarch64-darwin"],
       "source": {
         "kind": "git",
         "url": "https://github.com/carapace-sh/carapace-bin.git"
@@ -281,7 +281,7 @@
       "project": "Helix",
       "version": "25.7.1",
       "revision": "817dcbca8b99c3db35ea66ded7492673d1a397ad",
-      "target": "x86_64-linux",
+      "targets": ["x86_64-linux", "aarch64-darwin"],
       "source": {
         "kind": "git",
         "url": "https://github.com/Yazelix/nova-helix.git"
@@ -298,7 +298,7 @@
       "project": "Yazi",
       "version": "26.5.6",
       "revision": "aa526434f00bb44e2e902d9a4ac5f810da1018b9",
-      "target": "x86_64-linux",
+      "targets": ["x86_64-linux", "aarch64-darwin"],
       "source": {
         "kind": "git",
         "url": "https://github.com/sxyazi/yazi.git"
@@ -316,7 +316,7 @@
       "project": "LazyGit",
       "version": "0.62.2",
       "revision": "009c8975beb322f9374789476ac65dfa02321fce",
-      "target": "x86_64-linux",
+      "targets": ["x86_64-linux", "aarch64-darwin"],
       "source": {
         "kind": "git",
         "url": "https://github.com/jesseduffield/lazygit.git"
@@ -333,7 +333,7 @@
       "project": "Ratconfig",
       "version": "6.0.0",
       "revision": "e6ec2ebfe84b2358186410680cbcaf0564eb59a2",
-      "target": "x86_64-linux",
+      "targets": ["x86_64-linux", "aarch64-darwin"],
       "source": {
         "kind": "git",
         "url": "https://github.com/luccahuguet/ratconfig.git"
@@ -350,7 +350,7 @@
       "project": "CodexBar",
       "version": "0.74.1",
       "revision": "7c08c0ae783b72040b728757eb85a6cfe4fc2443",
-      "target": "x86_64-linux",
+      "targets": ["x86_64-linux", "aarch64-darwin"],
       "source": { "kind": "git", "url": "https://github.com/steipete/CodexBar.git" },
       "artifacts": [{ "id": "executable", "kind": "file" }],
       "contracts": [],
@@ -361,7 +361,7 @@
       "id": "eon-runtime",
       "project": "Eon Runtime",
       "version": "0.1.0",
-      "target": "x86_64-linux",
+      "targets": ["x86_64-linux", "aarch64-darwin"],
       "source": {
         "kind": "workspace",
         "path": "runtime/crates/eon-runtime"
@@ -390,7 +390,7 @@
       "id": "eon-workspace-protocol",
       "project": "Eon Runtime",
       "version": "0.1.0",
-      "target": "x86_64-linux",
+      "targets": ["x86_64-linux", "aarch64-darwin"],
       "source": {
         "kind": "workspace",
         "path": "runtime/crates/eon-workspace-protocol"

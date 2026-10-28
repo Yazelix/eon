@@ -7,7 +7,7 @@ Eon as the full managed product and eonbase as the reusable terminal product
 while preserving the boundaries of the projects it composes.
 
 This repository holds Orbit, Venus, Eon Runtime with EONW, and Eon as one Cargo
-workspace. The [component manifest](../components/eon-v4.json) names each
+workspace. The [component manifest](../components/eon-v5.json) names each
 in-tree component's workspace path and each external source's exact revision;
 the [runtime library boundary](#runtime-library-boundary) records the runtime
 seam.
@@ -286,9 +286,10 @@ Paths below are relative to the repository root.
 
 ### Component graph
 
-- **Owning surfaces:** `components/eon-v4.json` and `eon/crates/eon-manifest`
-- **Owns:** Stable component identity, compatibility requirements, abstract artifact
-  declarations, graph validation, and version reporting
+- **Owning surfaces:** `components/eon-v5.json` and `eon/crates/eon-manifest`
+- **Owns:** Stable component identity, the targets each component supports,
+  compatibility requirements, abstract artifact declarations, graph validation, and
+  version reporting
 - **Does not own:** Resolved package paths, launch policy, or package construction
 
 ### Managed environment

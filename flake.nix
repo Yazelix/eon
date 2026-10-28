@@ -63,7 +63,7 @@
       pkgs = import nixpkgs { inherit system; };
       zig = nixpkgs-zig.legacyPackages.${system}.zig_0_17;
       inherit (pkgs) lib;
-      manifest = builtins.fromJSON (builtins.readFile ./components/eon-v4.json);
+      manifest = builtins.fromJSON (builtins.readFile ./components/eon-v5.json);
       eonCargo = builtins.fromTOML (builtins.readFile ./eon/crates/eon/Cargo.toml);
       helixCargo = builtins.fromTOML (builtins.readFile "${helix}/Cargo.toml");
       component =
@@ -71,10 +71,10 @@
         let
           matches = builtins.filter (candidate: candidate.id == id) manifest.components;
         in
-        if builtins.length matches == 1 then
+        if builtins.length matches == 1 && builtins.elem system (builtins.head matches).targets then
           builtins.head matches
         else
-          throw "Eon manifest must contain exactly one ${id} component";
+          throw "Eon manifest must contain exactly one ${id} component for ${system}";
       orbitIdentity = component "orbit";
       venusIdentity = component "venus";
       # eon-manifest validates the graph. Each in-tree component's path must
@@ -649,7 +649,7 @@
         assert workspaceVersions;
         assert nixpkgs.rev == "567a49d1913ce81ac6e9582e3553dd90a955875f";
         assert ratconfig.rev == ratconfigIdentity.revision;
-        assert manifest.product.target == system;
+        assert builtins.elem system manifest.product.targets;
         assert anima.rev == animaIdentity.revision;
         assert lib.assertMsg ((builtins.fromTOML (builtins.readFile "${anima}/Cargo.toml")).package.version == animaIdentity.version)
           "Anima manifest version does not match the selected Cargo package";
@@ -940,7 +940,7 @@
         manual-bundle = import ./nix/linux-bundle.nix {
           inherit pkgs eonPackage;
           relink = bundleRelink;
-          manifestFile = ./components/eon-v4.json;
+          manifestFile = ./components/eon-v5.json;
           lockFile = ./flake.lock;
         };
       };
