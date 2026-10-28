@@ -8,6 +8,7 @@ members = [
     "runtime/crates/eon-workspace-protocol",
     "eon/crates/eon",
     "eon/crates/eon-manifest",
+    "eon/tools/mac-proof",
 ]
 resolver = "3"
 

@@ -30,6 +30,44 @@ shell has an unproven macOS branch without namespaces: it refuses while an Eon
 supervisor of the same user runs, gives the suites a private HOME, TMPDIR and
 runtime root, and skips the Linux-only installer suite.
 
+## macOS proof harness
+
+`nix run .#mac-proof -- remote --host USER@HOST --out DIR`, run on Linux inside
+the checkout, proves a tree on an Apple Silicon Mac over SSH. It sends `git
+archive` of HEAD, or of the candidate tree when the checkout has uncommitted
+or untracked files, into a fresh `~/eon-proof/<run>/src` on the Mac. There it
+runs `mac-proof run` from that tree and copies the evidence folder back into
+`DIR`. `run` checks that the Mac holds exactly the sent tree. It builds the
+aarch64-darwin package, checks Orbit's terminfo with macOS's own ncurses
+(ORB-C10), builds each Darwin flake check and runs `eon-test` once per
+workspace package. Each step has its own deadline, log and status. `--rev`
+picks another commit, `--timeout` is the run's time limit on the Mac (12
+hours by default; `remote` waits 30 minutes more) and `--dry-run` runs only
+the source step. `remote --local DIR` stands this machine in for the Mac, with
+`DIR` as its HOME.
+
+The evidence folder holds `summary.txt` (one line per step: status, duration,
+first failing line), `summary.json` (the same, with the system and tree),
+`steps/NN-<step>.log` and the Linux side's `remote.log`; `mac-proof run --help`
+lists the steps and fields. The tool exits 0 when every step passed, 1 when
+one did not and 2 when the round trip itself failed or the run's outcome is
+unknown. Until the last step has run, the summaries' result reads `incomplete`.
+
+The Mac needs SSH key login with its host key already in `known_hosts` (the
+tool runs ssh in batch mode), macOS 14 or later and Nix 2.20 or later,
+installed once with sudo by the
+[official installer](https://nixos.org/download/#nix-install-macos)
+or Determinate Systems' installer; the tool enables flakes itself. Keep Nix's
+macOS default `sandbox = false`, since Venus's build tests run `/bin/ps`
+(`eon-zuou`). Nix uses the flake's Cachix substituter only for a user named in
+`trusted-users`; otherwise the Mac builds everything. The run keeps going if
+SSH drops, and the tool then prints the command that fetches its evidence
+again. Otherwise its last line names the cleanup command:
+`ssh USER@HOST rm -rf eon-proof/<run>`, then `nix-collect-garbage` on the Mac
+to free the store paths it built; `eon-test` also fills the Mac's `~/.cargo`
+with the locked crates. A Darwin build that fails mid-test can leave a
+`/tmp/e<c>` directory; the `leftovers` step names any it finds.
+
 ## Sources of truth
 
 - [`docs/ARCHITECTURE.md`](ARCHITECTURE.md) — naming, ownership, and sequencing;

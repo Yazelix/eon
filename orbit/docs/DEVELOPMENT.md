@@ -127,8 +127,9 @@ protocol crates' manifests inherit no workspace settings. It reads
 semantics or crates reached through third-party packages. Every workspace
 member needs a rule. Beyond `AGENTS.md`, the test lets `eon` depend on
 `eon-manifest`, limits Orbit to `orbit-protocol` and this tool to no workspace
-crate (chosen in `eon-monorepo-2oko.8`), and fails a new member until the test
-gives it one. Orbit must keep its direct `libghostty-vt` dependency, so
+crate (chosen in `eon-monorepo-2oko.8`), keeps Eon's `mac-proof` harness off
+every workspace crate (`eon-mac-launch-kz4p.8`), and fails a new member until
+the test gives it one. Orbit must keep its direct `libghostty-vt` dependency, so
 renaming the engine crate fails the test instead of disabling the rule.
 
 ## Documentation map

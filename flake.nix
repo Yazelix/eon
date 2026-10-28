@@ -951,6 +951,23 @@
               EON_DEMO_PATH = lib.makeBinPath [ pkgs.coreutils pkgs.bash pkgs.git ];
             };
           };
+          # The macOS proof harness (docs/DEVELOPMENT.md), a development tool
+          # outside Eon's closure. eon-test runs its tests.
+          macProof = pkgs.rustPlatform.buildRustPackage {
+            pname = "mac-proof";
+            inherit ((builtins.fromTOML (builtins.readFile ./eon/tools/mac-proof/Cargo.toml)).package) version;
+            src = crateSource;
+            cargoLock = workspaceCargoLock;
+            cargoBuildFlags = [
+              "--package"
+              "mac-proof"
+            ];
+            doCheck = false;
+            nativeBuildInputs = [ pkgs.makeWrapper ];
+            postFixup = ''
+              wrapProgram "$out/bin/mac-proof" --prefix PATH : ${lib.makeBinPath [ pkgs.git pkgs.gnutar ]}
+            '';
+          };
           bundleRelink = import ./nix/bundle-relink.nix {
             inherit pkgs eonPackage wrapperArgs;
             wrappers = [
@@ -1035,6 +1052,10 @@
             eonbase = {
               type = "app";
               program = "${eonbasePackage}/bin/eonbase";
+            };
+            mac-proof = {
+              type = "app";
+              program = "${macProof}/bin/mac-proof";
             };
           } // lib.optionalAttrs pkgs.stdenv.isLinux {
             record-demo = {

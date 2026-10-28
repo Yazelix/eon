@@ -2173,7 +2173,9 @@ fn closed_stdout_pipe_is_not_a_panic() {
 #[test]
 fn relative_configuration_root_is_resolved_once() {
     let root = temporary_directory();
-    let config = root.join("config");
+    // Eon resolves the root from its working directory, which macOS reports
+    // through /private for a root under /tmp.
+    let config = fs::canonicalize(&root).unwrap().join("config");
     let output = eon_command(Path::new(env!("CARGO_BIN_EXE_eon")))
         .arg("config-path")
         .current_dir(&root)
