@@ -90,6 +90,7 @@ pub fn run() {
     foreground_returns_drop_once();
     detached_turns_end_at_a_return();
     background_processes_count();
+    zombies_neither_count_nor_hide();
     answer_time_under_load();
 }
 
@@ -185,6 +186,11 @@ fn is_stopped(pid: i32) -> bool {
     stat_fields(pid)[0] == "T"
 }
 
+#[cfg(target_os = "linux")]
+fn is_zombie(pid: i32) -> bool {
+    stat_fields(pid)[0] == "Z"
+}
+
 /// How long ago a process started, on the boot clock `/proc` counts in.
 #[cfg(target_os = "linux")]
 fn age(pid: i32) -> Duration {
@@ -201,14 +207,15 @@ fn age(pid: i32) -> Duration {
     Duration::from_secs_f64((now - started / ticks).max(0.0))
 }
 
-/// A process's libproc BSD record.
+/// A process's libproc BSD record. The nonzero argument makes libproc return
+/// a zombie's record too.
 #[cfg(target_os = "macos")]
 fn bsd_info(pid: i32) -> libc::proc_bsdinfo {
     // SAFETY: proc_pidinfo fills the zeroed record for `pid`.
     let mut info: libc::proc_bsdinfo = unsafe { std::mem::zeroed() };
     let size = std::mem::size_of_val(&info) as libc::c_int;
     let read =
-        unsafe { libc::proc_pidinfo(pid, libc::PROC_PIDTBSDINFO, 0, (&raw mut info).cast(), size) };
+        unsafe { libc::proc_pidinfo(pid, libc::PROC_PIDTBSDINFO, 1, (&raw mut info).cast(), size) };
     assert_eq!(read, size, "proc_pidinfo {pid}: {}", std::io::Error::last_os_error());
     info
 }
@@ -221,6 +228,11 @@ fn foreground_group(pid: i32) -> i32 {
 #[cfg(target_os = "macos")]
 fn is_stopped(pid: i32) -> bool {
     bsd_info(pid).pbi_status == libc::SSTOP
+}
+
+#[cfg(target_os = "macos")]
+fn is_zombie(pid: i32) -> bool {
+    bsd_info(pid).pbi_status == libc::SZOMB
 }
 
 /// How long ago a process started, on the wall clock libproc counts in.
@@ -350,6 +362,72 @@ fn background_processes_count() {
     until_background(&mut lease, 2);
     sleep(0.2);
     assert_eq!(status(&mut lease).background, 2, "the others never count");
+
+    apart.release();
+    until_background(&mut lease, 0);
+    stop(server, lease);
+}
+
+/// A zombie below a foreground job neither counts nor hides a live sibling
+/// or the sibling's child from the count. The job starts, with job control,
+/// two processes in their own groups, the second with a child in its group,
+/// reports `done` and becomes a `cat` that never waits on them. `cat` opens
+/// the gate only after the exec, so once the gate opens, the line it passes
+/// on ends the first process, which stays a zombie; the gate's second open
+/// keeps `cat` there. macOS lists a zombie after its live siblings, so the
+/// walk meets the zombie while the sibling's child is still to be walked.
+fn zombies_neither_count_nor_hide() {
+    let directory = TempDir::new();
+    let gate = Gate::new(&directory, "gate");
+    let exit = Gate::new(&directory, "exit");
+    let apart = Gate::new(&directory, "apart");
+    let agent = executable(
+        &directory,
+        "agent.sh",
+        &format!(
+            "#!{}\n\
+             set -m\n\
+             \"$BASH\" -c 'echo $$ > \"$ORBIT_DIR/zombie\"; read -r _ < \"$ORBIT_EXIT\"' &\n\
+             {{ echo $BASHPID > \"$ORBIT_DIR/sibling\"\n\
+               \"$BASH\" -c 'echo $$ > \"$ORBIT_DIR/below\"; read -r _ < \"$ORBIT_APART\"' &\n\
+               read -r _ < \"$ORBIT_APART\"; }} &\n\
+             printf '\\033]7501;state=done\\007'\n\
+             exec cat \"$ORBIT_GATE\" \"$ORBIT_GATE\" > \"$ORBIT_EXIT\"\n",
+            bash().display()
+        ),
+    );
+    let (server, mut lease) = managed(
+        &directory,
+        "set -m\n\"$ORBIT_AGENT\"\n",
+        &[
+            ("ORBIT_GATE", gate.path()),
+            ("ORBIT_EXIT", exit.path()),
+            ("ORBIT_APART", apart.path()),
+            ("ORBIT_DIR", &directory),
+            ("ORBIT_AGENT", &agent),
+        ],
+    );
+    let leftovers = Leftovers(vec![
+        grandchild(&directory, "zombie"),
+        grandchild(&directory, "sibling"),
+        grandchild(&directory, "below"),
+    ]);
+    let [zombie, sibling, below] = leftovers.0[..] else {
+        unreachable!()
+    };
+    until_reported(&mut lease, "");
+    gate.release();
+    let deadline = Instant::now() + Duration::from_secs(10);
+    while !is_zombie(zombie)
+        || age(sibling) < Duration::from_millis(1100)
+        || age(below) < Duration::from_millis(1100)
+    {
+        assert!(Instant::now() < deadline, "the processes never settled");
+        sleep(0.02);
+    }
+    let counted = status(&mut lease);
+    assert_eq!(counted.background, 2, "{counted:?}");
+    assert!(is_zombie(zombie), "the zombie was reaped");
 
     apart.release();
     until_background(&mut lease, 0);

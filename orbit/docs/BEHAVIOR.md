@@ -950,6 +950,22 @@ The real-PTY program-status check reads the records through a
   the reply came that soon; otherwise the check says so), then 2, and still
   2 a moment later, so the shell's own job, the in-group process and the
   stopped one never count. Once both exit it counts 0.
+- A foreground job starts, with job control, two processes in their own
+  groups, the second with a child in its group, reports `done` and execs
+  `cat`, which never waits on them. Once `cat` runs, the first exits and
+  stays a zombie; after the second and its child have run for 1.1 s the
+  reply counts 2, so the zombie neither counts nor hides its live sibling or
+  the sibling's child, and once those exit too it counts 0. The check is
+  built for Linux and macOS and has run only on Linux. On macOS, XNU's source
+  (xnu-12377.1.9, read on `eon-mac-launch-kz4p.2`) has `proc_pidinfo` with a
+  zero argument, as the walk calls it, return no record for a zombie, so the
+  walk skips it, and has `proc_listchildpids` list a zombie after its live
+  siblings, so the walk meets it with the sibling's child still to walk. On
+  Linux, counting state `Z` as running made the check fail with 3. With
+  zombies skipped the way the macOS walk does, it passed; ending the walk's
+  loop over a parent's children at the skipped zombie made it fail with 0;
+  and with each list reversed so the zombie comes last, ending the whole walk
+  there made it fail with 1.
 - In a Bash with job control and no prompt marks, a request while a job leads
   keeps a `working` record; the request after the job returns drops it and
   advances the update sequence by one; a report after the return survives the
