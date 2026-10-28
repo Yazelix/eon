@@ -252,6 +252,22 @@
         BEND_CLANG = "${pkgs.clang}/bin/clang";
         BEND_NO_TELEMETRY = "1";
       };
+      # macOS's system ncurses reads only the legacy terminfo format, whose
+      # numbers stop at 0x7fff, under hex directory names, so Darwin's entry
+      # caps xterm-256color's pairs#0x10000 and adds 65 -> e, as kitty's does
+      # (ORB-C10). orbit-terminfo-darwin inspects it on Linux.
+      darwinTerminfo =
+        let
+          source = builtins.readFile ./orbit/terminfo/eon.terminfo;
+          parent = "use=xterm-256color,";
+          capped = builtins.replaceStrings [ parent ] [ "pairs#0x7fff, ${parent}" ] source;
+        in
+        assert lib.hasInfix parent source;
+        pkgs.runCommand "eon-terminfo-darwin" { } ''
+          ${pkgs.ncurses}/bin/tic -x -o terminfo ${builtins.toFile "eon.terminfo" capped}
+          install -Dm444 terminfo/*/eon "$out/share/terminfo/e/eon"
+          ln -s e "$out/share/terminfo/65"
+        '';
       # Orbit's host and its Bend worker (orbit/docs/HOST.md), which
       # orbit/build.rs compiles. The unit tests run here; the real-PTY test
       # binary, whose checks are ignored here, goes to the tests output for the
@@ -298,7 +314,12 @@
             install -Dm755 "''${workers[0]}" "$out/libexec/yazelix-orbit/yazelix-orbit-worker"
             install -Dm755 "''${realPty[0]}" "$tests/libexec/real-pty"
             mkdir -p "$out/share/terminfo"
-            ${pkgs.ncurses}/bin/tic -x -o "$out/share/terminfo" ${./orbit/terminfo/eon.terminfo}
+            ${
+              if pkgs.stdenv.hostPlatform.isDarwin then
+                ''cp -R ${darwinTerminfo}/share/terminfo/. "$out/share/terminfo"''
+              else
+                ''${pkgs.ncurses}/bin/tic -x -o "$out/share/terminfo" ${./orbit/terminfo/eon.terminfo}''
+            }
             install -Dm444 ${./orbit/LICENSE} "$out/share/licenses/orbit/LICENSE"
             install -Dm444 ${ghostty}/LICENSE "$out/share/licenses/orbit/ghostty/LICENSE"
             install -Dm444 ${./licenses/libghostty-rs-MIT} "$out/share/licenses/orbit/libghostty-rs/LICENSE"
@@ -306,7 +327,7 @@
           '';
         };
       orbitChecks = import ./nix/orbit-checks.nix {
-        inherit pkgs bend orbitPackage;
+        inherit pkgs bend orbitPackage darwinTerminfo;
       };
 
       venusRuntimeLibraries = [

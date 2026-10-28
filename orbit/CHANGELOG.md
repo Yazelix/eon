@@ -182,6 +182,11 @@ remain canonical in `docs/CONTRACTS.md`, dependency decisions in
   `PTRACE_SEIZE`, so a Stop whose child cannot be reaped is checked on Linux
   only. Orbit's tests compile for `aarch64-apple-darwin`
   (`eon-mac-launch-kz4p.18`).
+- ORB-C10 adds a macOS clause. A macOS package's `eon` entry is written in
+  the legacy terminfo format, with `pairs` capped at 32767, and found under
+  both `e/` and `65/`, so the system's ncurses reads it too. Linux's entry is
+  unchanged. ORB-C10 is Partially proved until a native macOS run reads the
+  entry (`eon-mac-launch-kz4p.20`).
 
 ## Before this repository
 

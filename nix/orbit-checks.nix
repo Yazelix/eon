@@ -6,6 +6,7 @@
   pkgs,
   bend,
   orbitPackage,
+  darwinTerminfo,
 }:
 let
   inherit (pkgs) lib;
@@ -252,6 +253,21 @@ realPtyChecks
     env -u TERMINFO_DIRS TERM=xterm-256color tput clear > expected.out
     test -s clear.out
     cmp clear.out expected.out
+    touch "$out"
+  '';
+  # Darwin's entry is in the legacy format (magic 0432) within the legacy
+  # reader's 4096 bytes, is the same file as 65/eon, and differs from the
+  # Linux entry only in pairs (ORB-C10).
+  orbit-terminfo-darwin = pkgs.runCommand "orbit-terminfo-darwin" { nativeBuildInputs = [ pkgs.ncurses ]; } ''
+    export HOME="$TMPDIR"
+    unset TERMINFO TERMINFO_DIRS
+    darwin=${darwinTerminfo}/share/terminfo
+    test "$(od -An -tx1 -N2 "$darwin/e/eon")" = " 1a 01"
+    test "$(stat -c %s "$darwin/e/eon")" -le 4096
+    cmp "$darwin/e/eon" "$darwin/65/eon"
+    tic -x -o linux ${../orbit/terminfo/eon.terminfo}
+    infocmp -x -A linux -B "$darwin" eon eon | tee compare.log
+    test "$(grep -v '^ *comparing' compare.log)" = "$(printf '\tpairs: 65536, 32767.')"
     touch "$out"
   '';
   # The committed boundary is what its schema generates, so a schema edit

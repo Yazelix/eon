@@ -556,12 +556,16 @@ PTY pixel size rule needs no wire change.
 
 ## ORB-C10 — Eon terminal identity
 
-- **Status:** Proved
+- **Status:** Partially proved
 - **Consumer:** Every Orbit-owned PTY child and its launch environment.
 - **Trigger:** Orbit launches a PTY child.
 - **Result:** The child receives `TERM=eon` and `COLORTERM=truecolor`; the launch
   environment supplies the repository-owned compiled `eon` terminfo entry
-  inheriting `xterm-256color`, so lookup and `clear` succeed.
+  inheriting `xterm-256color`, so lookup and `clear` succeed. On macOS the
+  entry is also readable by the system's ncurses, so programs such as
+  `/bin/zsh` and `less` resolve `eon` too: it is written in the legacy
+  terminfo format, which caps `pairs` at 32767 where `xterm-256color` has
+  65536, and found under both the `e/` and `65/` directory names.
 - **Important failures:** Missing or invalid terminfo is exposed by lookup and
   real-PTY behavior checks rather than hidden by a fallback identity.
 - **Owner:** Orbit's Rust host, which spawns the PTY child, and
@@ -582,6 +586,13 @@ PTY pixel size rule needs no wire change.
       `COLORTERM=truecolor` and only the package's terminfo, and that `clear`
       exits 0 and blanks the next frame. The host sets `TERM` and `COLORTERM`
       when it spawns the child in [`src/pty.rs`](../src/pty.rs).
+- **Open proof:** The macOS clause has no native run. From Linux,
+  `orbit-terminfo-darwin` (`eon-mac-launch-kz4p.20`) builds the macOS entry and
+  checks that it starts with the legacy magic 0432, fits the legacy reader's
+  4096 bytes, is reachable as `e/eon` and `65/eon`, and differs from the Linux
+  entry only in `pairs`. The macOS harness (`eon-mac-launch-kz4p.8`) is to run
+  the system's `/usr/bin/infocmp eon` and `TERM=eon /usr/bin/tput clear` with
+  an empty `HOME` and only the package's `share/terminfo` on `TERMINFO_DIRS`.
 
 ## ORB-C11 — Ordered terminal-authored clipboard writes
 

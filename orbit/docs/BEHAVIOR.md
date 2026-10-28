@@ -92,6 +92,12 @@ falls back to another identity, so the launch environment must put that
 directory on `TERMINFO_DIRS`, as Eon's wrappers do; without it, lookup and
 `clear` fail visibly.
 
+For a macOS package, the flake compiles the same source with `pairs#0x7fff`
+added before `use=xterm-256color`. This lets the system's ncurses read the
+entry too, since it reads only the legacy terminfo format and looks under hex
+directory names. With every number within the legacy format's 0x7fff, `tic`
+writes that format. The package installs `e/eon` with a `65 -> e` link.
+
 The terminfo check resolves `eon` with only the package's directory on
 `TERMINFO_DIRS`, gets `xterm-256color`'s clear sequence from
 `TERM=eon tput clear`, and finds no `eon` without that directory. The
@@ -99,6 +105,11 @@ real-PTY terminal-identity check gives the child only the package's
 directory: the child reports its `TERM`, `COLORTERM` and `TERMINFO_DIRS`,
 `clear` exits 0, and the next frame is blank but for what the child prints
 after it. With the entry removed, the check failed.
+
+The Darwin terminfo check builds the macOS entry on Linux and finds the legacy
+magic 0432, at most 4096 bytes, the same file at `65/eon`, and, from
+`infocmp`, no difference from the Linux entry but `pairs`. Without the cap,
+the check failed. No native macOS run has read it yet.
 
 ## Management record
 
@@ -1659,7 +1670,8 @@ ORB_BASELINE_CPUS=6-11 ORB_BASELINE_GRID="54 90" \
   [src/boundary.schema](../src/boundary.schema) and fails while the committed
   [src/boundary.rs](../src/boundary.rs) or
   [src/boundary.bend](../src/boundary.bend) is stale.
-- `orbit-terminfo` checks the package's `eon` entry
+- `orbit-terminfo` checks the package's `eon` entry, and
+  `orbit-terminfo-darwin` the macOS entry
   ([Terminal identity](#terminal-identity)).
 - `orbit-NAME` runs the real-PTY check NAME against the package, for each
   real-PTY check this document names: lifecycle, guardian-containment,
