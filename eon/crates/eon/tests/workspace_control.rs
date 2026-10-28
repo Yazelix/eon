@@ -31,6 +31,8 @@ use std::{
     time::{Duration, Instant},
 };
 
+mod process;
+
 static NEXT_TEST: AtomicU64 = AtomicU64::new(0);
 static CODEX_STUB: OnceLock<PathBuf> = OnceLock::new();
 
@@ -653,18 +655,6 @@ fn managed_orbit_executable(path: &Path) {
     );
 }
 
-fn process_start_identity() -> u64 {
-    let stat = fs::read_to_string("/proc/self/stat").unwrap();
-    stat.rsplit_once(')')
-        .unwrap()
-        .1
-        .split_whitespace()
-        .nth(19)
-        .unwrap()
-        .parse()
-        .unwrap()
-}
-
 fn endpoint_identity(path: &Path) -> EndpointIdentity {
     EndpointIdentity {
         path: path.as_os_str().as_bytes().to_vec(),
@@ -759,7 +749,7 @@ fn managed_orbit_helper() {
         record_generation: management::RECORD_GENERATION,
         management_generation: management::VERSION,
         process_id: std::process::id(),
-        process_start: process_start_identity(),
+        process_start: process::own_start_identity(),
         uid: unsafe { libc::geteuid() },
         presentation: endpoint_identity(&presentation),
         management: endpoint_identity(&management_path),
@@ -1010,9 +1000,8 @@ fn wait_for_connection(path: &Path) {
 }
 
 fn wait_for_process_removal(process_id: u32, failure: &str) {
-    let process = Path::new("/proc").join(process_id.to_string());
     let deadline = Instant::now() + Duration::from_secs(5);
-    while process.exists() {
+    while process::exists(process_id) {
         assert!(Instant::now() < deadline, "{failure}");
         thread::sleep(Duration::from_millis(10));
     }
@@ -1755,12 +1744,11 @@ cat >/dev/null
     assert_eq!(unsafe { libc::kill(pid, libc::SIGTERM) }, 0);
     wait_for_picker_close(&control, &selected);
     assert!(!lost_client_picker.exists());
-    let process = Path::new("/proc").join(picker_child.to_string());
     let deadline = Instant::now() + Duration::from_secs(5);
-    while process.exists() && Instant::now() < deadline {
+    while process::exists(picker_child) && Instant::now() < deadline {
         thread::sleep(Duration::from_millis(10));
     }
-    if process.exists() {
+    if process::exists(picker_child) {
         // Release the leaked probe before reporting the regression.
         fs::write(&release, "").unwrap();
         wait_for_process_removal(picker_child, "released picker child did not exit");
@@ -1949,11 +1937,7 @@ fn failed_directory_picker_stop_on_detach_keeps_the_supervisor_and_picker() {
             if project_popup(&snapshot).is_some() && snapshot.tabs[0].pending
     ));
     assert!(supervisor.child.try_wait().unwrap().is_none());
-    assert!(
-        Path::new("/proc")
-            .join(picker.process_id.to_string())
-            .exists()
-    );
+    assert!(process::exists(picker.process_id));
 
     // Stopping the generation still stops the kept picker.
     let generation_id = generation.file_name().unwrap().to_str().unwrap();
@@ -2857,7 +2841,7 @@ cat >/dev/null
     fs::write(&child_exit, "").unwrap();
     wait_for_successful_exit(&mut supervisor.child);
     for pid in venus_pids {
-        assert!(!Path::new("/proc").join(pid).exists());
+        assert!(!process::exists(pid.parse().unwrap()));
     }
     assert!(!generation.exists());
     fs::remove_dir_all(root).unwrap();
@@ -3022,11 +3006,9 @@ fn pane_rename_cli_sets_clears_and_reports_the_runtime_label() {
     fs::create_dir(&tools).unwrap();
     let commands = root.join("eon-commands");
     symlink(&binary, &commands).unwrap();
-    let environment = fs::read(format!(
-        "/proc/{}/environ",
-        live_identity(&generation_runtime(&runtime).join("orbit.sock")).process_id
-    ))
-    .unwrap();
+    let environment = process::environ(
+        live_identity(&generation_runtime(&runtime).join("orbit.sock")).process_id,
+    );
     let caller = environment
         .split(|byte| *byte == 0)
         .find_map(|entry| entry.strip_prefix(b"EON_TERMINAL="))
@@ -3109,11 +3091,7 @@ fn workspace_requests_project_callers_and_close_only_the_target_workspace() {
     let control = generation.join("eon.sock");
     wait_for(&control);
     let caller = |endpoint: &Path| {
-        let environment = fs::read(format!(
-            "/proc/{}/environ",
-            live_identity(endpoint).process_id
-        ))
-        .unwrap();
+        let environment = process::environ(live_identity(endpoint).process_id);
         environment
             .split(|byte| *byte == 0)
             .find_map(|entry| entry.strip_prefix(b"EON_TERMINAL="))
@@ -3387,11 +3365,7 @@ fn workspace_cli_lists_creates_switches_renames_and_closes() {
         read(&["workspace", "switch", "w3", "--json"])["workspace"],
         "w3"
     );
-    let environment = fs::read(format!(
-        "/proc/{}/environ",
-        live_identity(&generation.join("orbit.sock")).process_id
-    ))
-    .unwrap();
+    let environment = process::environ(live_identity(&generation.join("orbit.sock")).process_id);
     let first = environment
         .split(|byte| *byte == 0)
         .find_map(|entry| entry.strip_prefix(b"EON_TERMINAL="))
@@ -3526,11 +3500,7 @@ fn workspace_picker_switches_creates_and_cancels() {
         |id: &str, name: Option<&str>, shown: bool| (id.to_owned(), name.map(str::to_owned), shown);
     // Each workspace's first terminal: w1 is the initial one, then one per `workspace new`.
     let caller = |endpoint: &str| {
-        let environment = fs::read(format!(
-            "/proc/{}/environ",
-            live_identity(&generation.join(endpoint)).process_id
-        ))
-        .unwrap();
+        let environment = process::environ(live_identity(&generation.join(endpoint)).process_id);
         environment
             .split(|byte| *byte == 0)
             .find_map(|entry| entry.strip_prefix(b"EON_TERMINAL="))
@@ -3829,11 +3799,7 @@ fn workspace_control_follows_the_exact_caller_across_generations() {
     wait_for(&previous_control);
     let endpoint = previous_runtime.join("orbit.sock");
     wait_for(&endpoint);
-    let environment = fs::read(format!(
-        "/proc/{}/environ",
-        live_identity(&endpoint).process_id
-    ))
-    .unwrap();
+    let environment = process::environ(live_identity(&endpoint).process_id);
     let caller = environment
         .split(|byte| *byte == 0)
         .find_map(|entry| entry.strip_prefix(b"EON_TERMINAL="))
@@ -4077,11 +4043,7 @@ fn commands_from_a_terminal_target_its_column_and_stale_callers_change_nothing()
     // The first terminal names itself to commands run inside it.
     let first = generation.join("orbit.sock");
     wait_for(&first);
-    let environment = fs::read(format!(
-        "/proc/{}/environ",
-        live_identity(&first).process_id
-    ))
-    .unwrap();
+    let environment = process::environ(live_identity(&first).process_id);
     let caller = environment
         .split(|byte| *byte == 0)
         .find_map(|entry| entry.strip_prefix(b"EON_TERMINAL="))
@@ -4156,11 +4118,7 @@ fn commands_from_a_terminal_target_its_column_and_stale_callers_change_nothing()
     let pane = &snapshot.tabs[0].columns[0].panes[1];
     assert_eq!(pane.id, "p4");
     let endpoint = Path::new(OsStr::from_bytes(&pane.endpoint));
-    let orbit_arguments = fs::read(format!(
-        "/proc/{}/cmdline",
-        live_identity(endpoint).process_id
-    ))
-    .unwrap();
+    let orbit_arguments = process::cmdline(live_identity(endpoint).process_id);
     let file = root.join("notes.txt");
     assert!(
         orbit_arguments.ends_with(&[b"hx\0", file.as_os_str().as_bytes(), b"\0"].concat()),
@@ -4195,11 +4153,7 @@ fn commands_from_a_terminal_target_its_column_and_stale_callers_change_nothing()
     let pane = &snapshot.tabs[0].columns[0].panes[2];
     assert_eq!(pane.id, "p5");
     let endpoint = Path::new(OsStr::from_bytes(&pane.endpoint));
-    let orbit_arguments = fs::read(format!(
-        "/proc/{}/cmdline",
-        live_identity(endpoint).process_id
-    ))
-    .unwrap();
+    let orbit_arguments = process::cmdline(live_identity(endpoint).process_id);
     assert!(
         orbit_arguments.ends_with(b"hx\0two words\0"),
         "{}",
@@ -4901,7 +4855,7 @@ fn a_workspace_final_close_shows_the_recent_one_and_attach_keeps_it() {
     );
     assert_eq!(ids(&closed), ["w2", "w3"]);
     assert!(supervisor.child.try_wait().unwrap().is_none());
-    assert!(Path::new("/proc").join(first_venus.to_string()).exists());
+    assert!(process::exists(first_venus));
 
     // Detaching keeps every workspace, and attach presents the one last shown.
     fs::write(root.join(format!("venus-input.{first_venus}.detach")), "").unwrap();
@@ -5290,11 +5244,7 @@ fn replacement_with_only_a_stale_initial_picker_falls_back_without_reopening_it(
                 && snapshot.tabs[0].selected_pane.as_deref() == Some("p1")
                 && snapshot.tabs[0].panes().count() == 1
     ));
-    assert!(
-        !Path::new("/proc")
-            .join(picker.process_id.to_string())
-            .exists()
-    );
+    assert!(!process::exists(picker.process_id));
 
     let generation_id = generation.file_name().unwrap().to_str().unwrap();
     let stopped = invoke(
@@ -5483,12 +5433,12 @@ fn desktop_launch_failure_stops_the_ready_session_through_management() {
 
     assert_eq!(output.status.code(), Some(1));
     assert!(String::from_utf8_lossy(&output.stderr).contains("cannot launch Eon Desktop"));
-    let orbit_pid: i32 = fs::read_to_string(&orbit_log)
+    let orbit_pid: u32 = fs::read_to_string(&orbit_log)
         .unwrap()
         .trim()
         .parse()
         .unwrap();
-    assert!(!Path::new("/proc").join(orbit_pid.to_string()).exists());
+    assert!(!process::exists(orbit_pid));
     assert_eq!(
         fs::read_dir(runtime.join("generations")).unwrap().count(),
         0
@@ -5532,12 +5482,12 @@ fn rejected_ready_identity_stops_the_spawned_session_through_management() {
         let stderr = String::from_utf8_lossy(&output.stderr);
         assert_eq!(output.status.code(), Some(1), "{stderr}");
         assert!(stderr.contains(expected_error), "{stderr}");
-        let orbit_pid: i32 = fs::read_to_string(&orbit_log)
+        let orbit_pid: u32 = fs::read_to_string(&orbit_log)
             .unwrap()
             .trim()
             .parse()
             .unwrap();
-        assert!(!Path::new("/proc").join(orbit_pid.to_string()).exists());
+        assert!(!process::exists(orbit_pid));
         let generation = fs::read_dir(runtime.join("generations"))
             .unwrap()
             .map(|entry| entry.unwrap().path())
@@ -5598,20 +5548,22 @@ fn marked_ready_claim_never_falls_back_to_child_stop() {
     assert_eq!(output.status.code(), Some(1), "{stderr}");
     assert!(stderr.contains("invalid terminal record"), "{stderr}");
     wait_for(&orbit_log);
-    let orbit_pid: i32 = fs::read_to_string(&orbit_log)
+    let orbit_pid: u32 = fs::read_to_string(&orbit_log)
         .unwrap()
         .trim()
         .parse()
         .unwrap();
-    let process = Path::new("/proc").join(orbit_pid.to_string());
-    assert!(process.exists(), "marked Ready helper was killed");
+    assert!(process::exists(orbit_pid), "marked Ready helper was killed");
 
     fs::write(&fallback_stop, "").unwrap();
     let deadline = Instant::now() + Duration::from_secs(5);
-    while process.exists() && Instant::now() < deadline {
+    while process::exists(orbit_pid) && Instant::now() < deadline {
         thread::sleep(Duration::from_millis(10));
     }
-    assert!(!process.exists(), "marked Ready helper did not exit");
+    assert!(
+        !process::exists(orbit_pid),
+        "marked Ready helper did not exit"
+    );
     fs::remove_dir_all(root).unwrap();
 }
 
@@ -5662,7 +5614,7 @@ fn lost_stop_response_still_finishes_the_supervisor() {
 
     wait_for_successful_exit(&mut supervisor.child);
     assert!(!generation.exists());
-    assert!(!Path::new("/proc").join(orbit_pid.to_string()).exists());
+    assert!(!process::exists(orbit_pid));
     fs::remove_dir_all(root).unwrap();
 }
 
@@ -5868,12 +5820,16 @@ fn concurrent_launches_converge_and_generation_stop_is_owner_routed() {
 
 #[test]
 fn new_windows_keep_independent_supervisors_and_stop_by_window_id() {
-    let root = std::env::temp_dir().join(format!(
-        "ew{:x}{:x}",
-        std::process::id(),
-        NEXT_TEST.fetch_add(1, Ordering::Relaxed)
-    ));
-    fs::create_dir(&root).unwrap();
+    // A window's terminal sockets leave this root only about ten bytes within macOS's
+    // 104-byte socket paths, so it takes the first free short name, not a pid and counter.
+    let root = (0_u32..)
+        .map(|n| std::env::temp_dir().join(format!("ew{n:x}")))
+        .find(|path| match fs::create_dir(path) {
+            Ok(()) => true,
+            Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => false,
+            Err(error) => panic!("{}: {error}", path.display()),
+        })
+        .unwrap();
     let runtime = root.join("r");
     let config = root.join("config");
     configure_mock_desktop(&config);
@@ -5927,11 +5883,7 @@ fn new_windows_keep_independent_supervisors_and_stop_by_window_id() {
     wait_for_connection(&first_control);
     wait_for_connection(&second_control);
     let endpoint = second_control.parent().unwrap().join("orbit.sock");
-    let environment = fs::read(format!(
-        "/proc/{}/environ",
-        live_identity(&endpoint).process_id
-    ))
-    .unwrap();
+    let environment = process::environ(live_identity(&endpoint).process_id);
     let caller = environment
         .split(|byte| *byte == 0)
         .find_map(|entry| entry.strip_prefix(b"EON_TERMINAL="))

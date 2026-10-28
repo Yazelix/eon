@@ -2148,20 +2148,53 @@ mod tests {
     }
 
     fn kill_orbit_worker(orbit: i32) {
-        let worker = fs::read_to_string(format!("/proc/{orbit}/task/{orbit}/children"))
-            .unwrap()
-            .split_whitespace()
-            .map(|pid| pid.parse::<i32>().unwrap())
-            .find(|pid| {
-                fs::read(format!("/proc/{pid}/cmdline"))
-                    .unwrap_or_default()
-                    .split(|byte| *byte == 0)
-                    .next()
-                    .is_some_and(|program| program.ends_with(b"yazelix-orbit-worker"))
-            })
+        let worker = children(orbit)
+            .into_iter()
+            .find(|pid| program(*pid).ends_with(b"yazelix-orbit-worker"))
             .expect("Orbit runs its worker");
         // SAFETY: signals the test-owned Orbit's worker process.
         assert_eq!(unsafe { libc::kill(worker, libc::SIGKILL) }, 0);
+    }
+
+    #[cfg(target_os = "linux")]
+    fn children(pid: i32) -> Vec<i32> {
+        fs::read_to_string(format!("/proc/{pid}/task/{pid}/children"))
+            .unwrap()
+            .split_whitespace()
+            .map(|pid| pid.parse().unwrap())
+            .collect()
+    }
+
+    #[cfg(target_os = "macos")]
+    fn children(pid: i32) -> Vec<i32> {
+        let mut children = [0; 64];
+        // SAFETY: proc_listchildpids writes at most the buffer's byte size of pids.
+        let count = unsafe {
+            libc::proc_listchildpids(
+                pid,
+                children.as_mut_ptr().cast(),
+                std::mem::size_of_val(&children) as libc::c_int,
+            )
+        };
+        children[..usize::try_from(count).unwrap()].to_vec()
+    }
+
+    /// The program `pid` runs: its first argument on Linux, its executable
+    /// path on macOS. Empty once the process is gone.
+    #[cfg(target_os = "linux")]
+    fn program(pid: i32) -> Vec<u8> {
+        let arguments = fs::read(format!("/proc/{pid}/cmdline")).unwrap_or_default();
+        arguments.split(|byte| *byte == 0).next().unwrap().to_vec()
+    }
+
+    #[cfg(target_os = "macos")]
+    fn program(pid: i32) -> Vec<u8> {
+        let mut path = vec![0; libc::PROC_PIDPATHINFO_MAXSIZE as usize];
+        // SAFETY: proc_pidpath writes at most the buffer's length.
+        let length =
+            unsafe { libc::proc_pidpath(pid, path.as_mut_ptr().cast(), path.len() as u32) };
+        path.truncate(usize::try_from(length).unwrap_or(0));
+        path
     }
 
     #[test]
@@ -2282,9 +2315,10 @@ mod tests {
         let orbit = orbit_pid(&sessions[0]);
         fs::write(&go, "").unwrap();
         let deadline = std::time::Instant::now() + std::time::Duration::from_secs(5);
-        while !fs::read_to_string(format!("/proc/{orbit}/stat"))
+        while !crate::platform::process(orbit.cast_unsigned())
             .unwrap()
-            .contains(") Z ")
+            .expect("Orbit was reaped")
+            .ended
         {
             assert!(std::time::Instant::now() < deadline, "Orbit never exited");
             std::thread::sleep(std::time::Duration::from_millis(10));

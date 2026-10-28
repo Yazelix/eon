@@ -1644,17 +1644,10 @@ pub(crate) mod tests {
     fn lost_owner_cleanup_requires_death_and_original_owned_objects() {
         let root = temporary_directory();
         let mut child = Command::new("sleep").arg("30").spawn().unwrap();
-        let process = PathBuf::from(format!("/proc/{}", child.id()));
-        let start = fs::read_to_string(process.join("stat"))
+        let start = crate::platform::process(child.id())
             .unwrap()
-            .rsplit_once(')')
-            .unwrap()
-            .1
-            .split_whitespace()
-            .nth(19)
-            .unwrap()
-            .parse()
-            .unwrap();
+            .expect("live child has no process")
+            .start;
         let endpoint = root.join("orbit.sock");
         let management_path = root.join("orbit.sock.management");
         let _presentation = UnixListener::bind(&endpoint).unwrap();
@@ -1765,7 +1758,10 @@ pub(crate) mod tests {
         );
         assert_eq!(super::session_finished(&mut session).unwrap(), Some(1));
         assert!(session.is_finished());
-        assert!(!process.exists(), "lost direct child was not reaped");
+        assert!(
+            crate::platform::process(child.id()).unwrap().is_none(),
+            "lost direct child was not reaped"
+        );
         assert!(!record.exists() && !endpoint.exists() && !management_path.exists());
         assert!(
             stop_managed_sessions(&mut [session], Duration::from_secs(1))
@@ -1834,17 +1830,10 @@ pub(crate) mod tests {
         ] {
             let mut child = Command::new("true").spawn().unwrap();
             let pid = child.id();
-            let process_path = PathBuf::from(format!("/proc/{pid}"));
-            let start = fs::read_to_string(process_path.join("stat"))
+            let start = crate::platform::process(pid)
                 .unwrap()
-                .rsplit_once(')')
-                .unwrap()
-                .1
-                .split_whitespace()
-                .nth(19)
-                .unwrap()
-                .parse()
-                .unwrap();
+                .expect("live child has no process")
+                .start;
             let endpoint = root.join("k1.sock");
             let record = root.join("k1.sock.record");
             let identity = LiveIdentity {
@@ -1917,7 +1906,7 @@ pub(crate) mod tests {
                 .expect("wrong process start was accepted");
                 assert!(error.contains("process start differs"), "{error}");
                 assert!(
-                    process_path.exists(),
+                    crate::platform::process(pid).unwrap().is_some(),
                     "wrong identity authorized child reaping"
                 );
                 assert!(record.exists(), "wrong identity retired its record");
@@ -1932,7 +1921,7 @@ pub(crate) mod tests {
                 deadline,
             )
             .unwrap();
-            let reaped = !process_path.exists();
+            let reaped = crate::platform::process(pid).unwrap().is_none();
             let _ = child.wait();
             assert!(sessions.is_empty());
             assert!(!record.exists());
@@ -1953,7 +1942,6 @@ pub(crate) mod tests {
             let claim = super::ReadyClaim::create(&record).unwrap();
             let mut orbit = Command::new("true").spawn().unwrap();
             let pid = orbit.id();
-            let process_path = PathBuf::from(format!("/proc/{pid}"));
             // Orbit's endpoints, left behind as if it ended before removing them.
             let endpoint = |name: &str| {
                 let path = root.join(name);
@@ -2020,7 +2008,10 @@ pub(crate) mod tests {
                 !record.exists() && !presentation.exists() && !management_path.exists(),
                 "rollback left residue (tombstone: {tombstone})"
             );
-            assert!(!process_path.exists(), "rollback did not reap the terminal");
+            assert!(
+                crate::platform::process(pid).unwrap().is_none(),
+                "rollback did not reap the terminal"
+            );
             drop(super::ReadyClaim::create(&record).unwrap());
         }
         fs::remove_dir_all(root).unwrap();
