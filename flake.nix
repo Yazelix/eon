@@ -310,7 +310,9 @@
                 pkgs.bun
                 pkgs.ncurses
                 zig.hook
-              ];
+              ]
+              # Ghostty runs Apple's libtool and xcrun nmedit, absent from Darwin stdenv.
+              ++ lib.optionals pkgs.stdenv.hostPlatform.isDarwin [ pkgs.cctools ];
               inherit (bendBuildEnv) BEND_SOURCE_DIR BEND_CLANG BEND_NO_TELEMETRY;
               inherit (ghosttyBuildEnv) LIBGHOSTTY_VT_SYS_CPU GHOSTTY_SOURCE_DIR GHOSTTY_ZIG_SYSTEM_DIR;
               dontUseZigBuild = true;
