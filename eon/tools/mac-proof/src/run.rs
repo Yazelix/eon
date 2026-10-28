@@ -6,7 +6,7 @@ use crate::{
     step::{Failure, Log, Outcome, Runner, check, execute, succeed},
 };
 use std::{
-    collections::BTreeSet,
+    collections::{BTreeMap, BTreeSet},
     fs,
     path::{Path, PathBuf},
     process::Command,
@@ -57,10 +57,13 @@ struct Context {
     tree: String,
     head: String,
     package: PathBuf,
-    checks: Vec<String>,
+    checks: BTreeMap<String, Option<String>>,
+    ready_checks: BTreeSet<String>,
     packages: Vec<String>,
     private_dirs: BTreeSet<String>,
     processes: BTreeSet<(String, String)>,
+    nix_program: Option<String>,
+    nix_store_program: Option<String>,
 }
 
 impl Context {
@@ -71,11 +74,17 @@ impl Context {
     }
 
     fn nix(&self, arguments: &[&str]) -> Command {
-        let mut command = self.command("nix");
+        let mut command = self.command(self.nix_program.as_deref().unwrap_or("nix"));
         command
             .args(["--extra-experimental-features", "nix-command flakes"])
             .arg("--accept-flake-config")
             .args(arguments);
+        command
+    }
+
+    fn nix_store(&self, arguments: &[&str]) -> Command {
+        let mut command = self.command(self.nix_store_program.as_deref().unwrap_or("nix-store"));
+        command.args(arguments);
         command
     }
 
@@ -203,33 +212,7 @@ fn steps(runner: &mut Runner, context: &mut Context) -> std::io::Result<()> {
         false,
         terminfo,
     )?;
-    runner.step(
-        context,
-        "check-list",
-        10 * MINUTE,
-        &["source"],
-        false,
-        check_list,
-    )?;
-    for name in context.checks.clone() {
-        runner.step(
-            context,
-            &format!("check:{name}"),
-            HOUR,
-            &["check-list"],
-            false,
-            |context, log, deadline| {
-                let attribute = format!(".#checks.{SYSTEM}.{name}");
-                succeed(
-                    log,
-                    &mut context.nix(&["build", "--no-link", "--print-build-logs", &attribute]),
-                    deadline,
-                    false,
-                )
-                .map(drop)
-            },
-        )?;
-    }
+    checks(runner, context)?;
     runner.step(
         context,
         "workspace",
@@ -272,6 +255,53 @@ fn steps(runner: &mut Runner, context: &mut Context) -> std::io::Result<()> {
         false,
         leftovers,
     )?;
+    Ok(())
+}
+
+fn checks(runner: &mut Runner, context: &mut Context) -> std::io::Result<()> {
+    runner.step(
+        context,
+        "check-list",
+        10 * MINUTE,
+        &["source"],
+        false,
+        check_list,
+    )?;
+    runner.step(
+        context,
+        "check-inputs",
+        2 * HOUR,
+        &["check-list"],
+        false,
+        check_inputs,
+    )?;
+    for name in context.checks.keys().cloned().collect::<Vec<_>>() {
+        let requires = if runner.status("check-inputs") == Some("pass")
+            || context.ready_checks.contains(&name)
+            || context.checks[&name].is_none()
+        {
+            "check-list"
+        } else {
+            "check-inputs"
+        };
+        runner.step(
+            context,
+            &format!("check:{name}"),
+            HOUR,
+            &[requires],
+            false,
+            |context, log, deadline| {
+                let attribute = format!(".#checks.{SYSTEM}.{name}");
+                succeed(
+                    log,
+                    &mut context.nix(&["build", "--no-link", "--print-build-logs", &attribute]),
+                    deadline,
+                    false,
+                )
+                .map(drop)
+            },
+        )?;
+    }
     Ok(())
 }
 
@@ -521,7 +551,7 @@ fn terminfo(context: &mut Context, log: &mut Log, deadline: Instant) -> Outcome 
     })
 }
 
-/// The flake's Darwin checks, but `default`, the package already built.
+/// Names the flake's Darwin checks without evaluating them, excluding `default`.
 fn check_list(context: &mut Context, log: &mut Log, deadline: Instant) -> Outcome {
     let attribute = format!(".#checks.{SYSTEM}");
     let names = succeed(
@@ -538,10 +568,144 @@ fn check_list(context: &mut Context, log: &mut Log, deadline: Instant) -> Outcom
     )?;
     let names: Vec<String> = serde_json::from_slice(&names)
         .map_err(|error| Failure::Check(format!("nix eval printed no list of names: {error}")))?;
-    context.checks = names.into_iter().filter(|name| name != "default").collect();
+    context.checks = names
+        .into_iter()
+        .filter(|name| name != "default")
+        .map(|name| (name, None))
+        .collect();
     check(!context.checks.is_empty(), || {
         "the flake has no Darwin checks".to_owned()
     })
+}
+
+/// Evaluates derivations separately from discovery, then builds their inputs once.
+fn check_inputs(context: &mut Context, log: &mut Log, deadline: Instant) -> Outcome {
+    context.ready_checks.clear();
+    let attribute = format!(".#checks.{SYSTEM}");
+    let drvs = succeed(
+        log,
+        &mut context.nix(&[
+            "eval",
+            "--json",
+            &attribute,
+            "--apply",
+            "checks: builtins.mapAttrs (_: check: let result = builtins.tryEval check.drvPath; in if result.success then result.value else null) (builtins.removeAttrs checks [\"default\"])",
+        ]),
+        deadline,
+        true,
+    );
+    let drvs: BTreeMap<String, Option<String>> = match drvs {
+        Ok(drvs) => serde_json::from_slice(&drvs).map_err(|error| {
+            Failure::Check(format!("nix eval printed no check derivations: {error}"))
+        })?,
+        Err(Failure::Timeout) => return Err(Failure::Timeout),
+        Err(_) => {
+            log.line(
+                "mac-proof: combined derivation evaluation failed; evaluating checks individually",
+            );
+            let mut drvs = BTreeMap::new();
+            for name in context.checks.keys() {
+                let attribute = format!(".#checks.{SYSTEM}.{name}.drvPath");
+                match execute(
+                    log,
+                    &mut context.nix(&["eval", "--raw", &attribute]),
+                    deadline,
+                    true,
+                    true,
+                ) {
+                    Ok((status, drv)) if status.success() => {
+                        drvs.insert(name.clone(), Some(text(drv)));
+                    }
+                    Err(Failure::Timeout) => return Err(Failure::Timeout),
+                    _ => {}
+                }
+            }
+            drvs
+        }
+    };
+    for drv in drvs.values().flatten() {
+        check(Path::new(drv).is_absolute(), || {
+            format!("nix eval printed a non-absolute derivation path: {drv}")
+        })?;
+    }
+    for (name, drv) in drvs {
+        if let Some(path) = context.checks.get_mut(&name) {
+            *path = drv;
+        }
+    }
+    let mut inputs = BTreeMap::new();
+    let mut all = BTreeSet::new();
+    for (name, drv) in &context.checks {
+        let Some(drv) = drv else { continue };
+        let references = store_paths(succeed(
+            log,
+            &mut context.nix_store(&["--query", "--references", drv]),
+            deadline,
+            true,
+        )?)?;
+        let references: BTreeSet<_> = references
+            .into_iter()
+            .filter(|path| path.ends_with(".drv"))
+            .collect();
+        all.extend(references.iter().cloned());
+        inputs.insert(name.clone(), references);
+    }
+    let built = if all.is_empty() {
+        Ok(())
+    } else {
+        let mut command =
+            context.nix(&["build", "--keep-going", "--no-link", "--print-build-logs"]);
+        command.args(all.iter().map(|drv| format!("{drv}^*")));
+        succeed(log, &mut command, deadline, false).map(drop)
+    };
+    if matches!(&built, Err(Failure::Timeout)) {
+        return built;
+    }
+    let mut outputs = BTreeMap::new();
+    let mut paths = BTreeSet::new();
+    for drv in &all {
+        let drv_outputs = store_paths(succeed(
+            log,
+            &mut context.nix_store(&["--query", "--outputs", drv]),
+            deadline,
+            true,
+        )?)?;
+        paths.extend(drv_outputs.iter().cloned());
+        outputs.insert(drv, drv_outputs);
+    }
+    let invalid = if paths.is_empty() {
+        BTreeSet::new()
+    } else {
+        let mut command = context.nix_store(&["--check-validity", "--print-invalid"]);
+        command.args(&paths);
+        store_paths(succeed(log, &mut command, deadline, true)?)?
+    };
+    let failed: BTreeSet<_> = outputs
+        .into_iter()
+        .filter(|(_, paths)| !paths.is_disjoint(&invalid))
+        .map(|(drv, _)| drv.clone())
+        .collect();
+    // Publish only a complete result; a failed query leaves every check blocked.
+    context.ready_checks = inputs
+        .into_iter()
+        .filter(|(_, inputs)| inputs.is_disjoint(&failed))
+        .map(|(name, _)| name)
+        .collect();
+    built
+}
+
+fn store_paths(bytes: Vec<u8>) -> Result<BTreeSet<String>, Failure> {
+    String::from_utf8_lossy(&bytes)
+        .lines()
+        .map(str::trim)
+        .filter(|line| !line.is_empty())
+        .map(|line| {
+            check(Path::new(line).is_absolute(), || {
+                format!("nix-store printed a non-absolute path: {line}")
+            })?;
+            Ok(line.to_owned())
+        })
+        .collect()
 }
 
 /// The workspace's packages, which eon-test then tests one at a time.
@@ -612,4 +776,178 @@ fn eon_processes(log: &mut Log, deadline: Instant) -> Result<BTreeSet<(String, S
         .filter(|process| EON_PROCESSES.contains(&process.name()))
         .map(|process| (process.pid.to_string(), process.command))
         .collect())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::os::unix::fs::PermissionsExt;
+
+    fn stub(evidence: &Path) -> Context {
+        let program = evidence.join("nix-stub");
+        fs::write(
+            &program,
+            r#"#!/bin/sh
+printf '%s\n' "$*" >> "$(dirname "$0")/calls"
+if [ "$1" = --extra-experimental-features ]; then shift 3; fi
+case "$1 $2" in
+  'eval --json')
+    case "$5" in
+      builtins.attrNames) echo '["a","b","c","d","default"]' ;;
+      *)
+        if [ -f "$(dirname "$0")/fail-eval" ]; then
+          echo 'error: missing attribute' >&2; exit 1
+        fi
+        echo '{"a":"/nix/store/a.drv","b":"/nix/store/b.drv","c":"/nix/store/c.drv","d":null}' ;;
+    esac ;;
+  'eval --raw')
+    case "$3" in
+      '.#checks.aarch64-darwin.a.drvPath') echo /nix/store/a.drv ;;
+      '.#checks.aarch64-darwin.b.drvPath') echo /nix/store/b.drv ;;
+      '.#checks.aarch64-darwin.c.drvPath') echo /nix/store/c.drv ;;
+      *) echo 'error: check d does not evaluate' >&2; exit 1 ;;
+    esac ;;
+  '--query --references')
+    case "$3" in
+      /nix/store/a.drv|/nix/store/b.drv)
+        printf ' /nix/store/shared.drv \n/nix/store/shared.drv\n/nix/store/source\n\n' ;;
+      /nix/store/c.drv)
+        if [ -f "$(dirname "$0")/fail-eval" ]; then
+          echo /nix/store/shared.drv
+        else
+          echo /nix/store/good.drv
+        fi ;;
+      *) exit 2 ;;
+    esac ;;
+  'build --keep-going') echo 'error: shared input failed' >&2; exit 1 ;;
+  '--query --outputs')
+    case "$3" in
+      /nix/store/shared.drv) printf '/nix/store/shared-out\n/nix/store/shared-dev\n' ;;
+      /nix/store/good.drv) echo /nix/store/good-out ;;
+      *) exit 2 ;;
+    esac ;;
+  '--check-validity --print-invalid') echo /nix/store/shared-dev ;;
+  'build --no-link')
+    case "$4" in
+      '.#checks.aarch64-darwin.c') exit 0 ;;
+      '.#checks.aarch64-darwin.d') echo 'error: check d does not evaluate' >&2; exit 1 ;;
+      *) echo 'error: rebuilt a known failure' >&2; exit 1 ;;
+    esac ;;
+  *) echo 'error: unexpected invocation' >&2; exit 2 ;;
+esac
+"#,
+        )
+        .unwrap();
+        fs::set_permissions(&program, fs::Permissions::from_mode(0o700)).unwrap();
+        Context {
+            source: evidence.to_owned(),
+            nix_program: Some(program.to_str().unwrap().to_owned()),
+            nix_store_program: Some(program.to_str().unwrap().to_owned()),
+            ..Context::default()
+        }
+    }
+
+    #[test]
+    fn failed_shared_inputs_skip_only_the_checks_that_need_them() {
+        let evidence =
+            std::env::temp_dir().join(format!("mac-proof-check-inputs-{}", std::process::id()));
+        let _ = fs::remove_dir_all(&evidence);
+        let mut runner = Runner::new(&evidence, false, MINUTE).unwrap();
+        let mut context = stub(&evidence);
+        runner
+            .step(&mut context, "source", MINUTE, &[], false, |_, _, _| Ok(()))
+            .unwrap();
+        checks(&mut runner, &mut context).unwrap();
+        assert!(!runner.write(true).unwrap());
+        let summary: serde_json::Value =
+            serde_json::from_slice(&fs::read(evidence.join("summary.json")).unwrap()).unwrap();
+        let steps = summary["steps"].as_array().unwrap();
+        let step = |name: &str| steps.iter().find(|step| step["name"] == name).unwrap();
+        let calls = fs::read_to_string(evidence.join("calls")).unwrap();
+        for name in ["check:a", "check:b"] {
+            assert_eq!(step(name)["status"], "skipped", "{calls}");
+            assert_eq!(
+                step(name)["first_failure"],
+                "needs check-inputs, which did not pass"
+            );
+        }
+        assert_eq!(step("check:c")["status"], "pass");
+        assert_eq!(step("check:d")["status"], "fail");
+        assert_eq!(
+            step("check:d")["first_failure"],
+            "error: check d does not evaluate"
+        );
+        assert_eq!(step("check-inputs")["status"], "fail");
+        assert_eq!(
+            step("check-inputs")["first_failure"],
+            "error: shared input failed"
+        );
+        assert_eq!(summary["result"], "fail");
+        assert_eq!(
+            calls
+                .lines()
+                .filter(|line| line.contains("build --keep-going"))
+                .collect::<Vec<_>>(),
+            [
+                "--extra-experimental-features nix-command flakes --accept-flake-config build --keep-going --no-link --print-build-logs /nix/store/good.drv^* /nix/store/shared.drv^*"
+            ]
+        );
+        let check_builds: Vec<_> = calls
+            .lines()
+            .filter(|line| line.contains("build --no-link"))
+            .collect();
+        assert_eq!(check_builds.len(), 2);
+        assert!(check_builds[0].ends_with(".#checks.aarch64-darwin.c"));
+        assert!(check_builds[1].ends_with(".#checks.aarch64-darwin.d"));
+        assert!(
+            calls
+                .lines()
+                .filter(|line| line.starts_with("--query") || line.starts_with("--check-validity"))
+                .all(|line| !line.contains("/nix/store/d.drv"))
+        );
+        assert!(!calls.contains("/nix/store/default.drv"));
+        fs::remove_dir_all(evidence).unwrap();
+    }
+
+    #[test]
+    fn failed_combined_evaluation_keeps_the_shared_build() {
+        let evidence =
+            std::env::temp_dir().join(format!("mac-proof-check-eval-{}", std::process::id()));
+        let _ = fs::remove_dir_all(&evidence);
+        let mut runner = Runner::new(&evidence, false, MINUTE).unwrap();
+        let mut context = stub(&evidence);
+        fs::write(evidence.join("fail-eval"), "").unwrap();
+        runner
+            .step(&mut context, "source", MINUTE, &[], false, |_, _, _| Ok(()))
+            .unwrap();
+        checks(&mut runner, &mut context).unwrap();
+        assert!(!runner.write(true).unwrap());
+        assert_eq!(runner.status("check-list"), Some("pass"));
+        assert_eq!(runner.status("check-inputs"), Some("fail"));
+        for name in ["a", "b", "c"] {
+            assert_eq!(runner.status(&format!("check:{name}")), Some("skipped"));
+        }
+        assert_eq!(runner.status("check:d"), Some("fail"));
+        let calls = fs::read_to_string(evidence.join("calls")).unwrap();
+        let shared_builds: Vec<_> = calls
+            .lines()
+            .filter(|line| line.contains("build --keep-going"))
+            .collect();
+        assert_eq!(shared_builds.len(), 1);
+        assert!(shared_builds[0].ends_with(" --print-build-logs /nix/store/shared.drv^*"));
+        let check_builds: Vec<_> = calls
+            .lines()
+            .filter(|line| line.contains("build --no-link"))
+            .collect();
+        assert_eq!(check_builds.len(), 1);
+        assert!(check_builds[0].ends_with(".#checks.aarch64-darwin.d"));
+        assert_eq!(
+            calls
+                .lines()
+                .filter(|line| line.contains("eval --raw"))
+                .count(),
+            4
+        );
+        fs::remove_dir_all(evidence).unwrap();
+    }
 }

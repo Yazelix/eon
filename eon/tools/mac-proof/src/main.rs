@@ -60,7 +60,12 @@ Steps, in order; each has a deadline, and a step whose prerequisite did not pass
   source      the Git tree, checked against --expect-tree
   package     nix build .#packages.aarch64-darwin.default
   terminfo    macOS's own infocmp and tput find `eon` only through the package (ORB-C10)
-  check-list  the flake's aarch64-darwin checks, then check:<name> builds each but default
+  check-list  the flake's aarch64-darwin check names, except default
+  check-inputs
+              builds their shared inputs once; check:<name> then builds each check,
+              skipping checks whose inputs failed (or whose input status is unknown).
+              If combined evaluation fails, paths are evaluated individually; checks
+              that still fail evaluation run their own build.
   workspace   the Cargo workspace's packages, then test:<package> runs eon-test on each
   session ... stop
               the GUI scenario on the built package; `mac-proof scenario --help` lists

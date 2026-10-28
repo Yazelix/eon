@@ -87,6 +87,7 @@ fn a_local_dry_run_round_trips_the_candidate_tree() {
             "package=planned",
             "terminfo=planned",
             "check-list=planned",
+            "check-inputs=planned",
             "workspace=planned",
             "session=planned",
             "launch=planned",

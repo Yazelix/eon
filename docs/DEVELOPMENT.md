@@ -39,12 +39,16 @@ or untracked files, into a fresh `~/eon-proof/<run>/src` on the Mac. There it
 runs `mac-proof run` from that tree and copies the evidence folder back into
 `DIR`. `run` checks that the Mac holds exactly the sent tree. It builds the
 aarch64-darwin package, checks Orbit's terminfo with macOS's own ncurses
-(ORB-C10), builds each Darwin flake check and runs `eon-test` once per
+(ORB-C10), lists the Darwin flake checks in `check-list` and builds their
+shared inputs once in `check-inputs`. It then builds each check, skipping
+checks whose inputs failed (or whose input status is unknown). If combined
+derivation evaluation fails, paths are evaluated individually; checks that
+still fail evaluation run their own build. It runs `eon-test` once per
 workspace package. Each step has its own deadline, log and status. `--rev`
 picks another commit, `--timeout` is the run's time limit on the Mac (12
 hours by default; `remote` waits 30 minutes more) and `--dry-run` runs only
-the source step. `remote --local DIR` stands this machine in for the Mac, with
-`DIR` as its HOME.
+the source step. `remote --local DIR` stands this machine in for the Mac,
+with `DIR` as its HOME.
 
 The evidence folder holds `summary.txt` (one line per step: status, duration,
 first failing line), `summary.json` (the same, with the system and tree),
