@@ -1590,14 +1590,13 @@ cat >/dev/null
     assert_eq!(two_pending.tabs.len(), 2);
     assert_eq!(
         two_pending.tabs[0].directory,
-        initial.as_os_str().as_bytes()
+        fs::canonicalize(&initial).unwrap().as_os_str().as_bytes()
     );
     assert_eq!(two_pending.tabs[1].directory, home.as_os_str().as_bytes());
-    assert!(
-        fs::read_to_string(&orbit_log)
-            .unwrap()
-            .contains(&format!("directory-picker-2 {}", home.display()))
-    );
+    assert!(fs::read_to_string(&orbit_log).unwrap().contains(&format!(
+        "directory-picker-2 {}",
+        fs::canonicalize(&home).unwrap().display()
+    )));
     assert!(two_pending.tabs.iter().all(|tab| tab.pending));
     let second_picker = two_pending.tabs[1].popups[0].endpoint.clone();
     assert_ne!(two_pending.tabs[0].popups[0].endpoint, second_picker);
@@ -1634,7 +1633,10 @@ cat >/dev/null
     );
     wait_for(&orbit_log);
     let launches = fs::read_to_string(&orbit_log).unwrap();
-    assert!(launches.contains(&format!("session-2 {}", selected.display())));
+    assert!(launches.contains(&format!(
+        "session-2 {}",
+        fs::canonicalize(&selected).unwrap().display()
+    )));
 
     fs::remove_file(&release).unwrap();
     fs::write(&selection, "cancel").unwrap();
@@ -1803,11 +1805,10 @@ cat >/dev/null
     );
     assert!(!cancelled.tabs[1].pending);
     assert_eq!(cancelled.tabs[1].panes().count(), 1);
-    assert!(
-        fs::read_to_string(&orbit_log)
-            .unwrap()
-            .contains(&format!("session-4 {}", home.display()))
-    );
+    assert!(fs::read_to_string(&orbit_log).unwrap().contains(&format!(
+        "session-4 {}",
+        fs::canonicalize(&home).unwrap().display()
+    )));
     assert!(
         matches!(workspace_action(&control, "close-home-tab", Action::CloseTab { tab: "t5".into() }), Response::Snapshot(snapshot) if snapshot.tabs.len() == 1)
     );
@@ -4121,7 +4122,7 @@ fn commands_from_a_terminal_target_its_column_and_stale_callers_change_nothing()
     assert_eq!(pane.id, "p4");
     let endpoint = Path::new(OsStr::from_bytes(&pane.endpoint));
     let orbit_arguments = process::cmdline(live_identity(endpoint).process_id);
-    let file = root.join("notes.txt");
+    let file = fs::canonicalize(&root).unwrap().join("notes.txt");
     assert!(
         orbit_arguments.ends_with(&[b"hx\0", file.as_os_str().as_bytes(), b"\0"].concat()),
         "{}",
@@ -4374,6 +4375,7 @@ fn launch_directory_can_disappear_after_the_initial_session_starts() {
     let orbit = root.join("orbit");
     let venus = root.join("venus");
     fs::create_dir(&launch).unwrap();
+    let launch_directory = fs::canonicalize(&launch).unwrap();
     managed_orbit_executable(&orbit);
     executable(&venus, "#!/bin/sh\ncat >/dev/null\n");
 
@@ -4400,7 +4402,10 @@ fn launch_directory_can_disappear_after_the_initial_session_starts() {
 
     let snapshot = invoke(&binary, &runtime, &config, &["workspace", "--json"]);
     assert!(snapshot.status.success());
-    assert!(stdout(&snapshot).contains(&format!("\"directory\":\"{}\"", launch.to_str().unwrap())));
+    assert!(stdout(&snapshot).contains(&format!(
+        "\"directory\":\"{}\"",
+        launch_directory.to_str().unwrap()
+    )));
 
     fs::write(&stop, "").unwrap();
     wait_for_successful_exit(&mut supervisor.child);
@@ -4566,11 +4571,13 @@ fn tab_directory_retargets_future_sessions_without_crossing_tabs() {
         thread::sleep(Duration::from_millis(10));
     }
     let orbit_directories = fs::read_to_string(&orbit_log).unwrap();
+    let first_directory = fs::canonicalize(&first).unwrap();
+    let second_directory = fs::canonicalize(&second).unwrap();
     for expected in [
-        format!("session-1 {}", first.display()),
-        format!("session-2 {}", first.display()),
-        format!("session-3 {}", second.display()),
-        format!("session-4 {}", first.display()),
+        format!("session-1 {}", first_directory.display()),
+        format!("session-2 {}", first_directory.display()),
+        format!("session-3 {}", second_directory.display()),
+        format!("session-4 {}", first_directory.display()),
     ] {
         assert!(orbit_directories.lines().any(|line| line == expected));
     }
@@ -4578,14 +4585,14 @@ fn tab_directory_retargets_future_sessions_without_crossing_tabs() {
     assert_eq!(
         child_directories
             .lines()
-            .filter(|line| *line == first.to_string_lossy())
+            .filter(|line| *line == first_directory.to_string_lossy())
             .count(),
         3
     );
     assert_eq!(
         child_directories
             .lines()
-            .filter(|line| *line == second.to_string_lossy())
+            .filter(|line| *line == second_directory.to_string_lossy())
             .count(),
         1
     );

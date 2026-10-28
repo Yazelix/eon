@@ -18,8 +18,8 @@ use std::{
     collections::HashSet,
     ffi::{OsStr, OsString},
     fs,
-    io::{Read, Write},
-    os::fd::OwnedFd,
+    io::{self, Read, Write},
+    os::fd::{AsRawFd, OwnedFd},
     os::unix::{
         ffi::OsStrExt,
         fs::{FileTypeExt, MetadataExt, OpenOptionsExt, PermissionsExt},
@@ -387,6 +387,34 @@ pub(super) fn unix_connect_with_timeout(
     Ok(UnixStream::from(OwnedFd::from(socket)))
 }
 
+pub(super) fn bound_io(stream: &UnixStream, set: io::Result<()>) -> io::Result<()> {
+    let error = match set {
+        Err(error) if error.raw_os_error() == Some(libc::EINVAL) => error,
+        result => return result,
+    };
+    // Darwin rejects socket options after peer close; I/O then returns
+    // buffered data, EOF or EPIPE without blocking.
+    let mut readiness = libc::pollfd {
+        fd: stream.as_raw_fd(),
+        events: libc::POLLIN,
+        revents: 0,
+    };
+    loop {
+        // SAFETY: readiness is one valid pollfd for this borrowed live stream.
+        let result = unsafe { libc::poll(&mut readiness, 1, 0) };
+        if result >= 0 {
+            if readiness.revents & libc::POLLHUP != 0 {
+                return Ok(());
+            }
+            break;
+        }
+        if io::Error::last_os_error().kind() != io::ErrorKind::Interrupted {
+            break;
+        }
+    }
+    Err(error)
+}
+
 fn read_management_response(
     stream: &mut UnixStream,
     deadline: Instant,
@@ -395,8 +423,7 @@ fn read_management_response(
     let mut read_exact = |mut bytes: &mut [u8], context: &str| -> Result<(), String> {
         while !bytes.is_empty() {
             let timeout = operation_timeout(deadline, operation)?;
-            stream
-                .set_read_timeout(Some(timeout))
+            bound_io(stream, stream.set_read_timeout(Some(timeout)))
                 .map_err(|error| format!("cannot bound {operation}: {error}"))?;
             match stream.read(bytes) {
                 Ok(0) => return Err(format!("{context}: unexpected end of file")),
@@ -466,8 +493,7 @@ fn acquire_management(
     })?;
     validate_management_peer(&stream, &candidate.identity)?;
     let timeout = operation_timeout(deadline, "terminal lease acquisition")?;
-    stream
-        .set_write_timeout(Some(timeout))
+    bound_io(&stream, stream.set_write_timeout(Some(timeout)))
         .map_err(|error| format!("cannot bound terminal lease acquisition: {error}"))?;
     let request = management::encode_client_message(&ManagementClientMessage::Acquire {
         expected: candidate.identity.clone(),
@@ -1484,7 +1510,12 @@ pub(super) fn stop_managed_sessions(
         session
             .lease
             .set_nonblocking(false)
-            .and_then(|()| session.lease.set_write_timeout(Some(remaining)))
+            .and_then(|()| {
+                bound_io(
+                    &session.lease,
+                    session.lease.set_write_timeout(Some(remaining)),
+                )
+            })
             .map_err(|error| format!("cannot bound terminal stop: {error}"))?;
         session.stop_sent = true;
         session
@@ -1616,7 +1647,7 @@ pub(super) fn stop_managed_sessions(
 pub(crate) mod tests {
     use super::{
         EndpointIdentity, LiveIdentity, ManagementRecord, ObjectIdentity, ProcessOutcome,
-        ProgramStatusRead, RunningSession, TerminationReason, Tombstone,
+        ProgramStatusRead, RunningSession, TerminationReason, Tombstone, bound_io,
         is_directory_picker_endpoint, managed_session_number, management, orbit_command,
         read_management_response, session_number, stop_managed_sessions, unix_connect_with_timeout,
     };
@@ -1625,7 +1656,7 @@ pub(crate) mod tests {
     use std::{
         ffi::{OsStr, OsString},
         fs,
-        io::{Read, Write},
+        io::{self, Read, Write},
         os::{
             fd::AsRawFd,
             unix::{
@@ -2517,6 +2548,33 @@ pub(crate) mod tests {
         ] {
             assert!(!is_directory_picker_endpoint(invalid), "accepted {invalid}");
         }
+    }
+
+    #[test]
+    fn bound_io_accepts_einval_only_after_peer_hangup() {
+        let (mut stream, mut peer) = UnixStream::pair().unwrap();
+        peer.write_all(b"reply").unwrap();
+        drop(peer);
+        bound_io(&stream, Err(io::Error::from_raw_os_error(libc::EINVAL))).unwrap();
+        let error = bound_io(&stream, Err(io::ErrorKind::TimedOut.into())).unwrap_err();
+        assert_eq!(error.kind(), io::ErrorKind::TimedOut);
+        assert_eq!(error.raw_os_error(), None);
+        let mut bytes = [0; 5];
+        stream.read_exact(&mut bytes).unwrap();
+        assert_eq!(&bytes, b"reply");
+        assert_eq!(stream.read(&mut bytes).unwrap(), 0);
+
+        let (stream, mut peer) = UnixStream::pair().unwrap();
+        let error = bound_io(&stream, Err(io::Error::from_raw_os_error(libc::EINVAL))).unwrap_err();
+        assert_eq!(error.raw_os_error(), Some(libc::EINVAL));
+
+        peer.write_all(b"reply").unwrap();
+        let error = bound_io(&stream, Err(io::Error::from_raw_os_error(libc::EINVAL))).unwrap_err();
+        assert_eq!(error.raw_os_error(), Some(libc::EINVAL));
+
+        let error = bound_io(&stream, Err(io::ErrorKind::TimedOut.into())).unwrap_err();
+        assert_eq!(error.kind(), io::ErrorKind::TimedOut);
+        assert_eq!(error.raw_os_error(), None);
     }
 
     #[test]

@@ -1,4 +1,5 @@
 use super::{
+    sessions::bound_io,
     supervisor::{
         LaunchMode, PRESENTATION_ADMISSION_TIMEOUT, SESSION_START_TIMEOUT, effective_uid,
         request_id,
@@ -212,9 +213,11 @@ fn send_prepared_action(
     let deadline = deadline.unwrap_or_else(|| Instant::now() + timeout);
     let mut bytes = request.as_slice();
     while !bytes.is_empty() {
-        stream
-            .set_write_timeout(Some(time_left(deadline)?))
-            .map_err(|error| io_endpoint_failure(error, "cannot bound Eon action"))?;
+        bound_io(
+            &stream,
+            stream.set_write_timeout(Some(time_left(deadline)?)),
+        )
+        .map_err(|error| io_endpoint_failure(error, "cannot bound Eon action"))?;
         match stream.write(bytes) {
             Ok(0) => {
                 return Err(io_endpoint_failure(
@@ -230,8 +233,7 @@ fn send_prepared_action(
 
     let mut read_exact = |mut bytes: &mut [u8]| -> Result<(), EndpointFailure> {
         while !bytes.is_empty() {
-            stream
-                .set_read_timeout(Some(time_left(deadline)?))
+            bound_io(&stream, stream.set_read_timeout(Some(time_left(deadline)?)))
                 .map_err(|error| io_endpoint_failure(error, "cannot bound Eon action result"))?;
             match stream.read(bytes) {
                 Ok(0) => {

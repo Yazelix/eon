@@ -11,7 +11,7 @@ use super::{
     managed_environment::{self, nonempty_environment_path},
     notification, platform, quota,
     sessions::{
-        RunningSession, TAB_VARIABLE, TERMINAL_VARIABLE, acquire_generation_sessions,
+        RunningSession, TAB_VARIABLE, TERMINAL_VARIABLE, acquire_generation_sessions, bound_io,
         recover_sessions, session_finished, start_orbit, stop_managed_sessions,
     },
     workspace::{self, LaunchCommand, SessionEnd, SessionOperation, WorkspaceSet},
@@ -546,10 +546,11 @@ impl PresentationProcess {
                             .map_err(|error| format!("cannot encode startup workspace: {error}"))?;
                     let mut remaining = bytes.as_slice();
                     while !remaining.is_empty() {
-                        process
-                            .control
-                            .set_write_timeout(Some(time_left()?))
-                            .map_err(|error| error.to_string())?;
+                        bound_io(
+                            &process.control,
+                            process.control.set_write_timeout(Some(time_left()?)),
+                        )
+                        .map_err(|error| error.to_string())?;
                         match process.control.write(remaining) {
                             Ok(0) => {
                                 return Err("Venus closed while receiving startup workspace".into());
@@ -573,10 +574,11 @@ impl PresentationProcess {
                 let mut ready = [0; 8];
                 let mut remaining = &mut ready[..];
                 while !remaining.is_empty() {
-                    process
-                        .control
-                        .set_read_timeout(Some(time_left()?))
-                        .map_err(|error| error.to_string())?;
+                    bound_io(
+                        &process.control,
+                        process.control.set_read_timeout(Some(time_left()?)),
+                    )
+                    .map_err(|error| error.to_string())?;
                     match process.control.read(remaining) {
                         Ok(0) => return Err("Venus closed before native startup admission; see its diagnostic in the supervisor output".into()),
                         Ok(count) => remaining = &mut remaining[count..],
@@ -602,10 +604,13 @@ impl PresentationProcess {
                 return Err(format!("cannot admit Eon Desktop presentation: {error}"));
             }
         }
-        process
-            .control
-            .set_write_timeout(Some(Duration::from_millis(250)))
-            .map_err(|error| format!("cannot bound Eon Desktop presentation control: {error}"))?;
+        bound_io(
+            &process.control,
+            process
+                .control
+                .set_write_timeout(Some(Duration::from_millis(250))),
+        )
+        .map_err(|error| format!("cannot bound Eon Desktop presentation control: {error}"))?;
         Ok(process)
     }
 
