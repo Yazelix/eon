@@ -25,7 +25,10 @@ Without arguments it runs the workspace suites, then the installer's, stopping
 at the first failing suite; with arguments it passes them to `cargo test`, for
 example `eon-test -p yazelix-venus`. It needs unprivileged user namespaces and supports
 x86_64 Linux only. It is proved on a non-NixOS host; on NixOS the hidden `/run`
-also hides `/run/current-system` and `/run/wrappers`.
+also hides `/run/current-system` and `/run/wrappers`. The Apple Silicon dev
+shell has an unproven macOS branch without namespaces: it refuses while an Eon
+supervisor of the same user runs, gives the suites a private HOME, TMPDIR and
+runtime root, and skips the Linux-only installer suite.
 
 ## Sources of truth
 

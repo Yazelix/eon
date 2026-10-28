@@ -1051,7 +1051,6 @@
             bundle-relink = bundleRelink.tree;
             bundle-launch = bundleRelink.launch;
           } // orbitChecks;
-          # eon-test needs bubblewrap, which is Linux's (macOS branch: kz4p.16).
           devShells.${system}.default = pkgs.mkShell ({
             packages = [
               pkgs.cargo
@@ -1063,9 +1062,7 @@
               pkgs.pkg-config
               zig
               pkgs.bun
-            ]
-            ++ lib.optional pkgs.stdenv.isLinux (import ./nix/test-sandbox.nix { inherit pkgs; })
-            ++ [
+              (import ./nix/test-sandbox.nix { inherit pkgs; })
               br
               bv
             ];
