@@ -68,6 +68,17 @@ to free the store paths it built; `eon-test` also fills the Mac's `~/.cargo`
 with the locked crates. A Darwin build that fails mid-test can leave a
 `/tmp/e<c>` directory; the `leftovers` step names any it finds.
 
+Without a Mac, the hand-dispatched
+[macOS proof workflow](../.github/workflows/mac-proof.yml) runs `mac-proof run`
+on a GitHub-hosted Apple Silicon runner, with a 320-minute limit. The revision
+must already be on GitHub, and pushing stays on the maintainer's request.
+`gh workflow run mac-proof.yml --ref edge -f rev=<full commit SHA>` starts it
+(checkout takes a short SHA for a ref name and fails), `gh run
+list --workflow mac-proof.yml` finds the run, and `gh run download <run-id>
+--name mac-proof --dir <dir>` fetches the evidence folder, which GitHub keeps
+for 14 days. A run is candidate evidence, and suite proof for ORB-C14, but
+never GUI proof.
+
 ## Sources of truth
 
 - [`docs/ARCHITECTURE.md`](ARCHITECTURE.md) — naming, ownership, and sequencing;
