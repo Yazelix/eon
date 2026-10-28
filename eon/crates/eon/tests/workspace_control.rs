@@ -41,6 +41,33 @@ struct TestProcess {
     stop: PathBuf,
 }
 
+impl TestProcess {
+    fn wait_with_output(mut self) -> std::io::Result<Output> {
+        drop(self.child.stdin.take());
+        thread::scope(move |scope| {
+            let stdout = self.child.stdout.take().map(|mut pipe| {
+                scope.spawn(move || {
+                    let mut bytes = Vec::new();
+                    pipe.read_to_end(&mut bytes).map(|_| bytes)
+                })
+            });
+            let mut stderr = Vec::new();
+            if let Some(mut pipe) = self.child.stderr.take() {
+                pipe.read_to_end(&mut stderr)?;
+            }
+            let status = self.child.wait()?;
+            let stdout = stdout.map_or_else(|| Ok(Vec::new()), |reader| reader.join().unwrap())?;
+            // A completed CLI must not stop its supervisor when the guard drops.
+            self.stop.clear();
+            Ok(Output {
+                status,
+                stdout,
+                stderr,
+            })
+        })
+    }
+}
+
 impl Drop for TestProcess {
     fn drop(&mut self) {
         let _ = fs::write(&self.stop, "");
@@ -419,7 +446,7 @@ fn anima_waits_for_native_readiness_then_hands_off_picker_and_popup_stops_on_dis
     managed_orbit_executable(&orbit);
     executable(
         &venus,
-        "#!/bin/sh\nprintf started > \"$EON_TEST_VENUS_STARTED\"\nwhile [ ! -e \"$EON_TEST_VENUS_READY\" ]; do sleep 0.01; done\nprintf ready-v1\ncat >/dev/null\n",
+        "#!/bin/sh\nprintf started > \"$EON_TEST_VENUS_STARTED\"\nwhile [ ! -e \"$EON_TEST_VENUS_READY\" ] && [ ! -e \"$EON_TEST_STOP\" ]; do sleep 0.01; done\n[ ! -e \"$EON_TEST_STOP\" ] || exit 0\nprintf ready-v1\ncat >/dev/null\n",
     );
     executable(
         &anima,
@@ -1241,7 +1268,10 @@ printf '/parent-\377\n'
 printf '/selected-\377\n' > "$4"
 "#,
     );
-    let mut child = command.spawn().unwrap();
+    let mut child = TestProcess {
+        child: command.spawn().unwrap(),
+        stop: root.join("stop"),
+    };
     let deadline = Instant::now() + Duration::from_secs(5);
     let mut stream = loop {
         if let Ok((stream, _)) = listener.accept() {
@@ -1311,11 +1341,14 @@ printf '/selected-\377\n' > "$4"
     }))
     .unwrap();
     stream.write_all(&response).unwrap();
-    wait_for_successful_exit(&mut child);
+    wait_for_successful_exit(&mut child.child);
     for program in ["fzf", "yazi"] {
         executable(&root.join(program), "#!/bin/sh\nexit 130\n");
-        let mut child = command.spawn().unwrap();
-        wait_for_successful_exit(&mut child);
+        let mut child = TestProcess {
+            child: command.spawn().unwrap(),
+            stop: root.join("stop"),
+        };
+        wait_for_successful_exit(&mut child.child);
         assert!(
             listener.accept().is_err(),
             "cancellation sent a directory action"
@@ -1352,7 +1385,10 @@ printf '/selected-\377\n' > "$4"
                 "#!/bin/sh\nwhile [ ! -s \"$EON_TEST_HISTORY_PID\" ]; do sleep 0.01; done\n{finish}\n"
             ),
         );
-        let mut child = command.stderr(Stdio::piped()).spawn().unwrap();
+        let mut child = TestProcess {
+            child: command.stderr(Stdio::piped()).spawn().unwrap(),
+            stop: root.join("stop"),
+        };
         // Picker errors remain visible for two seconds before the process exits.
         let deadline = Instant::now() + Duration::from_secs(4);
         let mut submitted = false;
@@ -1379,7 +1415,7 @@ printf '/selected-\377\n' > "$4"
                 submitted = true;
                 stream.write_all(&response).unwrap();
             }
-            if let Some(status) = child.try_wait().unwrap() {
+            if let Some(status) = child.child.try_wait().unwrap() {
                 break Some(status.success());
             }
             if Instant::now() >= deadline {
@@ -1398,11 +1434,12 @@ printf '/selected-\377\n' > "$4"
             unsafe { libc::kill(pid, libc::SIGKILL) };
         }
         if finished.is_none() {
-            let _ = child.kill();
+            let _ = child.child.kill();
         }
-        wait_for_exit(&mut child);
+        wait_for_exit(&mut child.child);
         let mut error = String::new();
         child
+            .child
             .stderr
             .take()
             .unwrap()
@@ -1449,10 +1486,14 @@ printf '/selected-\377\n' > "$4"
             "#!/bin/sh\nprintf '/untracked-\\377\n'\n",
         );
         executable(&root.join(program), script);
-        let mut child = command.stderr(Stdio::piped()).spawn().unwrap();
-        assert!(!wait_for_exit(&mut child).success());
+        let mut child = TestProcess {
+            child: command.stderr(Stdio::piped()).spawn().unwrap(),
+            stop: root.join("stop"),
+        };
+        assert!(!wait_for_exit(&mut child.child).success());
         let mut error = String::new();
         child
+            .child
             .stderr
             .take()
             .unwrap()
@@ -2105,19 +2146,23 @@ fn stop_result_covers_queued_operation_and_managed_cleanup() {
     let generation = generation_runtime(&runtime);
     wait_for_connection(&generation.join("eon.sock"));
     let id = generation.file_name().unwrap().to_str().unwrap();
-    let mut stopping = eon_command(binary)
-        .args(["stop", id])
-        .env("EON_RUNTIME_DIR", &runtime)
-        .env("EON_CONFIG_HOME", &config)
-        .stdin(Stdio::piped())
-        .stdout(Stdio::piped())
-        .stderr(Stdio::piped())
-        .spawn()
-        .unwrap();
+    let mut stopping = TestProcess {
+        child: eon_command(binary)
+            .args(["stop", id])
+            .env("EON_RUNTIME_DIR", &runtime)
+            .env("EON_CONFIG_HOME", &config)
+            .stdin(Stdio::piped())
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped())
+            .spawn()
+            .unwrap(),
+        stop: supervisor.stop.clone(),
+    };
     let mut prompt = Vec::new();
     while !prompt.ends_with(b"[y/N] ") {
         let mut byte = [0];
         stopping
+            .child
             .stderr
             .as_mut()
             .unwrap()
@@ -2125,20 +2170,29 @@ fn stop_result_covers_queued_operation_and_managed_cleanup() {
             .unwrap();
         prompt.push(byte[0]);
     }
-    let mut creating = eon_command(binary)
-        .args(["pane", "create", "--json"])
-        .env("EON_RUNTIME_DIR", &runtime)
-        .env("EON_CONFIG_HOME", &config)
-        .stdout(Stdio::null())
-        .spawn()
-        .unwrap();
+    let mut creating = TestProcess {
+        child: eon_command(binary)
+            .args(["pane", "create", "--json"])
+            .env("EON_RUNTIME_DIR", &runtime)
+            .env("EON_CONFIG_HOME", &config)
+            .stdout(Stdio::null())
+            .spawn()
+            .unwrap(),
+        stop: supervisor.stop.clone(),
+    };
     let deadline = Instant::now() + Duration::from_secs(5);
     while !generation.join("session-2.sock.record").exists() {
         assert!(Instant::now() < deadline, "queued pane did not start");
         thread::sleep(Duration::from_millis(10));
     }
-    stopping.stdin.take().unwrap().write_all(b"y\n").unwrap();
-    assert!(creating.wait().unwrap().success());
+    stopping
+        .child
+        .stdin
+        .take()
+        .unwrap()
+        .write_all(b"y\n")
+        .unwrap();
+    assert!(creating.child.wait().unwrap().success());
     let result = stopping.wait_with_output().unwrap();
     assert!(
         result.status.success(),
@@ -2664,13 +2718,16 @@ cat >/dev/null
         "[terminal]\nbackground_opacity = 0.0\ncursor_trail_duration = 3.0\nfont_size = 24\nline_height = 1.5\nrows = 24\n",
     )
     .unwrap();
-    let mut repeated = eonbase(&command)
-        .args(["--", "/bin/false"])
-        .stdout(Stdio::null())
-        .stderr(Stdio::null())
-        .spawn()
-        .unwrap();
-    wait_for_successful_exit(&mut repeated);
+    let mut repeated = TestProcess {
+        child: eonbase(&command)
+            .args(["--", "/bin/false"])
+            .stdout(Stdio::null())
+            .stderr(Stdio::null())
+            .spawn()
+            .unwrap(),
+        stop: child_exit.clone(),
+    };
+    wait_for_successful_exit(&mut repeated.child);
     wait_for(&presentation_log);
     assert_eq!(fs::read_to_string(&presentation_log).unwrap(), "present\n");
     assert_eq!(fs::read_to_string(&venus_log).unwrap().lines().count(), 1);
@@ -2882,7 +2939,10 @@ fn eonbase_replaces_exact_residue_after_its_supervisor_and_session_die() {
             .unwrap()
     };
 
-    let mut first = launch(&first_stop);
+    let mut first = TestProcess {
+        child: launch(&first_stop),
+        stop: first_stop.clone(),
+    };
     let generation = generation_runtime(&runtime);
     let control = generation.join("eon.sock");
     let orbit_socket = generation.join("orbit.sock");
@@ -2890,22 +2950,25 @@ fn eonbase_replaces_exact_residue_after_its_supervisor_and_session_die() {
     wait_for(&orbit_log);
     assert_eq!(fs::read_to_string(&orbit_log).unwrap().lines().count(), 1);
     let orbit_pid = live_identity(&orbit_socket).process_id;
-    first.kill().unwrap();
-    first.wait().unwrap();
+    first.child.kill().unwrap();
+    first.child.wait().unwrap();
     // SAFETY: the test owns this exact process identity.
     assert_eq!(unsafe { libc::kill(orbit_pid as i32, libc::SIGKILL) }, 0);
     wait_for_process_removal(orbit_pid, "dead Session was not reaped");
     assert!(artifact_path(&orbit_socket, ".record").exists());
     fs::remove_file(&orbit_log).unwrap();
 
-    let mut second = launch(&second_stop);
+    let mut second = TestProcess {
+        child: launch(&second_stop),
+        stop: second_stop.clone(),
+    };
     wait_for_connection(&control);
     wait_for(&orbit_log);
     assert_eq!(fs::read_to_string(&orbit_log).unwrap().lines().count(), 1);
     let generation_id = generation.file_name().unwrap().to_str().unwrap();
     let stopped = invoke(&eon, &runtime, &config, &["stop", generation_id, "--json"]);
     assert!(stopped.status.success(), "{}", stdout(&stopped));
-    wait_for_successful_exit(&mut second);
+    wait_for_successful_exit(&mut second.child);
     assert!(!generation.exists());
     fs::remove_dir_all(root).unwrap();
 }
@@ -3415,16 +3478,25 @@ fn workspace_cli_lists_creates_switches_renames_and_closes() {
     assert_eq!(unknown.status.code(), Some(3));
     assert!(!String::from_utf8_lossy(&unknown.stderr).contains("Close workspace"));
     assert_eq!(list(), shown_main);
-    let mut confirmed = eon_command(&binary)
-        .args(["workspace", "close", "alpha"])
-        .env("EON_RUNTIME_DIR", &runtime)
-        .env("EON_CONFIG_HOME", &config)
-        .stdin(Stdio::piped())
-        .stdout(Stdio::piped())
-        .stderr(Stdio::piped())
-        .spawn()
+    let mut confirmed = TestProcess {
+        child: eon_command(&binary)
+            .args(["workspace", "close", "alpha"])
+            .env("EON_RUNTIME_DIR", &runtime)
+            .env("EON_CONFIG_HOME", &config)
+            .stdin(Stdio::piped())
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped())
+            .spawn()
+            .unwrap(),
+        stop: supervisor.stop.clone(),
+    };
+    confirmed
+        .child
+        .stdin
+        .take()
+        .unwrap()
+        .write_all(b"yes\n")
         .unwrap();
-    confirmed.stdin.take().unwrap().write_all(b"yes\n").unwrap();
     assert!(confirmed.wait_with_output().unwrap().status.success());
     assert_eq!(
         list(),
@@ -3560,18 +3632,21 @@ esac
             .unwrap()
             .to_owned();
         let path = std::iter::once(tools.clone()).chain(std::env::split_paths(&original));
-        let mut child = command
-            .env("PATH", std::env::join_paths(path).unwrap())
-            .env("EON_RUNTIME_DIR", &runtime)
-            .env("EON_CONFIG_HOME", &config)
-            .env("EON_TAB", "t1")
-            .env("EON_TERMINAL", caller)
-            .stdin(Stdio::piped())
-            .stdout(Stdio::piped())
-            .stderr(Stdio::piped())
-            .spawn()
-            .unwrap();
-        child.stdin.take().unwrap().write_all(input).unwrap();
+        let mut child = TestProcess {
+            child: command
+                .env("PATH", std::env::join_paths(path).unwrap())
+                .env("EON_RUNTIME_DIR", &runtime)
+                .env("EON_CONFIG_HOME", &config)
+                .env("EON_TAB", "t1")
+                .env("EON_TERMINAL", caller)
+                .stdin(Stdio::piped())
+                .stdout(Stdio::piped())
+                .stderr(Stdio::piped())
+                .spawn()
+                .unwrap(),
+            stop: supervisor.stop.clone(),
+        };
+        child.child.stdin.take().unwrap().write_all(input).unwrap();
         child.wait_with_output().unwrap()
     };
     let popup = |name: &str, caller: &str, input: &[u8]| {
@@ -5006,13 +5081,14 @@ fn launch_overlapping_last_session_exit_starts_a_fresh_session() {
         .env("EON_ORBIT", &orbit)
         .env("EON_VENUS", &venus)
         .env("EON_TEST_ORBIT_LOG", &orbit_log)
+        .env("EON_TEST_STOP", root.join("second-stop"))
         .stdout(Stdio::null())
         .stderr(Stdio::null())
         .spawn()
         .unwrap();
     let mut second = TestProcess {
         child: second,
-        stop: root.join("unused-stop"),
+        stop: root.join("second-stop"),
     };
     thread::sleep(Duration::from_secs(5));
     assert_eq!(
@@ -5112,7 +5188,10 @@ fn replacement_reconciles_exact_tombstone_endpoints_without_deleting_replacement
     let retained_record = object_identity(&record);
     fs::remove_file(&control).unwrap();
 
-    let refused = replacement().spawn().unwrap();
+    let refused = TestProcess {
+        child: replacement().spawn().unwrap(),
+        stop: stop.clone(),
+    };
     fs::remove_file(&presentation).unwrap();
     let mut presentation_listener = UnixListener::bind(&presentation).unwrap();
     if object_identity(&presentation) == identity.presentation.object {
@@ -5142,7 +5221,10 @@ fn replacement_reconciles_exact_tombstone_endpoints_without_deleting_replacement
     write_management_record(&record, &tombstone(&reconciled));
     let tombstone_record = object_identity(&record);
 
-    let waiting = replacement().spawn().unwrap();
+    let waiting = TestProcess {
+        child: replacement().spawn().unwrap(),
+        stop: stop.clone(),
+    };
     fs::remove_file(&presentation).unwrap();
     drop(presentation_listener);
     let waiting = waiting.wait_with_output().unwrap();
@@ -5224,7 +5306,10 @@ fn replacement_with_only_a_stale_initial_picker_falls_back_without_reopening_it(
             .unwrap()
     };
 
-    let mut first = launch();
+    let mut first = TestProcess {
+        child: launch(),
+        stop: stop.clone(),
+    };
     let generation = generation_runtime(&runtime);
     let control = generation.join("eon.sock");
     wait_for_connection(&control);
@@ -5235,13 +5320,12 @@ fn replacement_with_only_a_stale_initial_picker_falls_back_without_reopening_it(
             if project_popup(&snapshot).is_some() && snapshot.tabs[0].columns.is_empty()
     ));
     let picker = live_identity(&picker_endpoint(&control));
-    first.kill().unwrap();
-    assert!(!first.wait().unwrap().success());
+    first.child.kill().unwrap();
+    assert!(!first.child.wait().unwrap().success());
     wait_for(&lease_released);
 
-    let child = launch();
     let mut replacement = TestProcess {
-        child,
+        child: launch(),
         stop: stop.clone(),
     };
     wait_for_connection(&control);
@@ -5300,7 +5384,10 @@ fn replacement_eon_adopts_exact_runs_and_projects_numeric_workspace() {
             .spawn()
             .unwrap()
     };
-    let mut first = launch();
+    let mut first = TestProcess {
+        child: launch(),
+        stop: fallback_stop.clone(),
+    };
     let generation = generation_runtime(&runtime);
     let control = generation.join("eon.sock");
     wait_for(&control);
@@ -5315,8 +5402,8 @@ fn replacement_eon_adopts_exact_runs_and_projects_numeric_workspace() {
     let first_venus: u32 = first_venus_log.split('|').next().unwrap().parse().unwrap();
     assert!(first_venus_log.contains("|--no-decorations "));
 
-    first.kill().unwrap();
-    assert!(!first.wait().unwrap().success());
+    first.child.kill().unwrap();
+    assert!(!first.child.wait().unwrap().success());
     wait_for_process_removal(first_venus, "owner-loss Venus did not exit");
     for identity in &initial {
         // SAFETY: signal 0 performs existence/permission checking without sending a signal.
@@ -5380,7 +5467,10 @@ fn replacement_eon_adopts_exact_runs_and_projects_numeric_workspace() {
         assert_eq!(unsafe { libc::kill(identity.process_id as i32, 0) }, 0);
     }
 
-    let mut replacement = launch();
+    let mut replacement = TestProcess {
+        child: launch(),
+        stop: fallback_stop.clone(),
+    };
     wait_for_connection(&control);
     let recovered = invoke(&binary, &runtime, &config, &["workspace", "--json"]);
     assert!(recovered.status.success(), "{}", stdout(&recovered));
@@ -5415,7 +5505,7 @@ fn replacement_eon_adopts_exact_runs_and_projects_numeric_workspace() {
     );
     assert!(stopped.status.success(), "{}", stdout(&stopped));
     assert!(stdout(&stopped).contains("\"sessions\":[\"session-1\",\"session-2\",\"session-3\"]"));
-    wait_for_successful_exit(&mut replacement);
+    wait_for_successful_exit(&mut replacement.child);
     assert!(!generation.exists());
     fs::remove_dir_all(root).unwrap();
 }
@@ -5665,15 +5755,18 @@ fn stop_confirmation_refuses_a_replacement_supervisor() {
     wait_for(&control);
     let generation_id = generation.file_name().unwrap().to_str().unwrap();
 
-    let mut confirmation = eon_command(&binary)
-        .args(["stop", generation_id])
-        .env("EON_RUNTIME_DIR", &runtime)
-        .env("EON_CONFIG_HOME", &config)
-        .stdin(Stdio::piped())
-        .stdout(Stdio::piped())
-        .stderr(Stdio::from(fs::File::create(&prompt).unwrap()))
-        .spawn()
-        .unwrap();
+    let mut confirmation = TestProcess {
+        child: eon_command(&binary)
+            .args(["stop", generation_id])
+            .env("EON_RUNTIME_DIR", &runtime)
+            .env("EON_CONFIG_HOME", &config)
+            .stdin(Stdio::piped())
+            .stdout(Stdio::piped())
+            .stderr(Stdio::from(fs::File::create(&prompt).unwrap()))
+            .spawn()
+            .unwrap(),
+        stop: first_stop.clone(),
+    };
     wait_for(&prompt);
 
     let stopped_first = invoke(
@@ -5694,6 +5787,7 @@ fn stop_confirmation_refuses_a_replacement_supervisor() {
     wait_for(&orbit_socket);
 
     confirmation
+        .child
         .stdin
         .as_mut()
         .unwrap()
@@ -5986,15 +6080,24 @@ fn new_windows_keep_independent_supervisors_and_stop_by_window_id() {
     } else {
         (&third, &second)
     };
-    let mut batch = command()
-        .env("EON_WINDOW_RUNTIME_DIR", runtime.join("w").join(caller))
-        .args(["window", "stop", "all"])
-        .stdin(Stdio::piped())
-        .stdout(Stdio::piped())
-        .stderr(Stdio::piped())
-        .spawn()
+    let mut batch = TestProcess {
+        child: command()
+            .env("EON_WINDOW_RUNTIME_DIR", runtime.join("w").join(caller))
+            .args(["window", "stop", "all"])
+            .stdin(Stdio::piped())
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped())
+            .spawn()
+            .unwrap(),
+        stop: stop.clone(),
+    };
+    batch
+        .child
+        .stdin
+        .as_mut()
+        .unwrap()
+        .write_all(b"y\ny\n")
         .unwrap();
-    batch.stdin.as_mut().unwrap().write_all(b"y\ny\n").unwrap();
     let batch = batch.wait_with_output().unwrap();
     assert!(batch.status.success(), "{}", stdout(&batch));
     assert_eq!(stdout(&batch).matches("stopped generation").count(), 2);
@@ -6465,16 +6568,25 @@ fn batch_stop_preserves_current_until_all_and_reports_unavailable_generations() 
 
     let third_id = format!("g1-{:032x}", 4);
     let third = previous_supervisor(&runtime, &third_id);
-    let mut human = eon_command(&binary)
-        .args(["stop", "all"])
-        .env("EON_RUNTIME_DIR", &runtime)
-        .env("EON_CONFIG_HOME", &config)
-        .stdin(Stdio::piped())
-        .stdout(Stdio::piped())
-        .stderr(Stdio::piped())
-        .spawn()
+    let mut human = TestProcess {
+        child: eon_command(&binary)
+            .args(["stop", "all"])
+            .env("EON_RUNTIME_DIR", &runtime)
+            .env("EON_CONFIG_HOME", &config)
+            .stdin(Stdio::piped())
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped())
+            .spawn()
+            .unwrap(),
+        stop: stop.clone(),
+    };
+    human
+        .child
+        .stdin
+        .as_mut()
+        .unwrap()
+        .write_all(b"y\nn\n")
         .unwrap();
-    human.stdin.as_mut().unwrap().write_all(b"y\nn\n").unwrap();
     let human = human.wait_with_output().unwrap();
     assert!(human.status.success(), "{}", stdout(&human));
     assert!(stdout(&human).contains(&format!("stopped generation {third_id}:")));
