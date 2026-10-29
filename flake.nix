@@ -361,7 +361,7 @@
             pkgs.dejavu_fonts
             pkgs.nerd-fonts.symbols-only
             anima.packages.${system}.accelerando-font
-          ];
+          ] ++ lib.optionals pkgs.stdenv.isLinux [ pkgs.noto-fonts-color-emoji ];
           # Font directories are relative to this file, so the relocated bundle finds them too.
           venusFontsConf = pkgs.runCommand "fonts.conf" { } ''
             sed 's|<dir>${builtins.storeDir}/|<dir prefix="relative">|' ${

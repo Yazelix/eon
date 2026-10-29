@@ -230,8 +230,9 @@ rows pair must fit 100,000 cells. `font_fallbacks` accepts an ordered array of a
 most eight installed family names. The built-in order is listed above, so alien
 glyphs avoid searching all installed fonts.
 An explicit list replaces that order. The terminal package includes fonts for
-ordinary text, Nerd Font icons and Accelerando; it does not install them
-system-wide. Compositors may ignore blur or initial window sizing.
+ordinary text, Nerd Font icons, Accelerando and, on Linux, Noto Color Emoji; it
+does not install them system-wide. Compositors may ignore blur or initial window
+sizing.
 
 The terminal settings apply when a surface opens or reopens. Shell settings are
 read for each terminal. Invalid startup configuration creates no fresh terminal;

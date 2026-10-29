@@ -44,7 +44,7 @@ mod palette;
 use cells::{
     BRAILLE_FAMILY, CellFont, CellTextKind, block_span, build_scene_rectangles, cell_ink_right,
     cell_text_attrs, cell_text_segments, cursor_bounds, cursor_outline, fitted_cell_font,
-    set_cell_layer,
+    set_cell_layer, shape_cell_text,
 };
 use chrome::{HeaderInteraction, Spinners, fit_header_text, rasterize_quota_icon, spinners_turn};
 use cursor_trail::{CursorAnimation, build_tail_cursor};
@@ -2017,7 +2017,7 @@ impl Renderer {
                 ink_width,
                 self.metrics.height,
                 run.style.foreground,
-                DrawStyleKind::Cell(run.style),
+                DrawStyleKind::Cell(run.style, run.columns == 2),
                 clip,
             );
         }
@@ -2061,7 +2061,7 @@ impl Renderer {
                     ink_width,
                     self.metrics.height,
                     run.style.foreground,
-                    DrawStyleKind::Cell(run.style),
+                    DrawStyleKind::Cell(run.style, run.columns == 2),
                     clip,
                 );
             }
@@ -2164,7 +2164,7 @@ impl Renderer {
             return 0.0;
         }
         let (font_size, line_height, attrs, monospace_width, wrap, alpha) = match kind {
-            DrawStyleKind::Cell(style) => {
+            DrawStyleKind::Cell(style, wide) => {
                 self.push_cell_text(
                     text,
                     left,
@@ -2173,6 +2173,7 @@ impl Renderer {
                     layout_height,
                     foreground,
                     style,
+                    wide,
                 );
                 return 0.0;
             }
@@ -2258,9 +2259,10 @@ impl Renderer {
         layout_height: f32,
         foreground: SceneColor,
         style: DrawStyle,
+        wide: bool,
     ) {
         let segments = cell_text_segments(text);
-        let attrs = cell_text_attrs(self.cell_font, text, style);
+        let attrs = cell_text_attrs(self.cell_font, text, wide, style);
         let box_attrs = attrs
             .clone()
             .metrics(Metrics::new(self.cell_font.box_size, self.metrics.height))
@@ -2293,7 +2295,18 @@ impl Renderer {
                 &box_attrs,
                 box_drawing,
             );
-            buffer.shape_until_scroll(&mut self.fonts.font_system, false);
+            if box_drawing {
+                buffer.shape_until_scroll(&mut self.fonts.font_system, false);
+            } else {
+                shape_cell_text(
+                    &mut buffer,
+                    &mut self.fonts.font_system,
+                    self.cell_font,
+                    text,
+                    style,
+                    &attrs,
+                );
+            }
             self.text.push(PlacedText {
                 buffer,
                 custom_glyph: None,
@@ -2374,7 +2387,7 @@ fn upload_vertices(
 
 #[derive(Clone, Copy)]
 enum DrawStyleKind {
-    Cell(DrawStyle),
+    Cell(DrawStyle, bool),
     Heading,
     Preedit,
     Monospace,

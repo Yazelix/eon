@@ -12,6 +12,10 @@ use orbit_protocol::{CellWidth, CursorShape, Underline};
 pub(super) const BRAILLE_FAMILY: &str = "DejaVu Sans";
 pub(super) const NERD_FONT_FAMILY: &str = "Symbols Nerd Font Mono";
 const ACCELERANDO_FAMILY: &str = "Accelerando Terminal";
+#[cfg(target_os = "macos")]
+const EMOJI_FAMILY: &str = "Apple Color Emoji";
+#[cfg(not(target_os = "macos"))]
+const EMOJI_FAMILY: &str = "Noto Color Emoji";
 
 #[derive(Clone, Copy)]
 pub(super) struct CellFont {
@@ -145,7 +149,12 @@ pub(super) fn cell_ink_right(run: &GlyphRun, next: Option<&GlyphRun>, columns: u
     }
 }
 
-pub(super) fn cell_text_attrs(cell_font: CellFont, text: &str, style: DrawStyle) -> Attrs<'static> {
+pub(super) fn cell_text_attrs(
+    cell_font: CellFont,
+    text: &str,
+    wide: bool,
+    style: DrawStyle,
+) -> Attrs<'static> {
     let mut attrs = cell_font.attrs();
     if cell_font.family.is_none()
         && text
@@ -160,6 +169,25 @@ pub(super) fn cell_text_attrs(cell_font: CellFont, text: &str, style: DrawStyle)
             attrs = attrs.family(Family::Name(NERD_FONT_FAMILY));
         }
         return attrs;
+    }
+    if wide
+        && !text.contains('\u{fe0e}')
+        && (text.chars().any(|character| {
+            matches!(
+                character,
+                '\u{fe0f}'
+                    | '\u{1f1e6}'..='\u{1f1ff}'
+                    | '\u{1f3fb}'..='\u{1f3ff}'
+                    | '\u{200d}'
+                    | '\u{20e3}'
+                    | '\u{e0020}'..='\u{e007f}'
+            )
+        }) || text.chars().next().is_some_and(
+            |character| matches!(character, '\u{1f000}'..='\u{1faff}' | '\u{2300}'..='\u{2bff}'),
+        ))
+    {
+        // Colour emoji faces are Regular-only, even in bold or italic cells.
+        return attrs.family(Family::Name(EMOJI_FAMILY));
     }
     if style.bold {
         attrs = attrs.weight(Weight::BOLD);
@@ -196,6 +224,48 @@ pub(super) fn set_cell_layer(
         shaping(text),
         None,
     );
+}
+
+pub(super) fn shape_cell_text(
+    buffer: &mut Buffer,
+    font_system: &mut FontSystem,
+    cell_font: CellFont,
+    text: &str,
+    style: DrawStyle,
+    attrs: &Attrs<'static>,
+) {
+    buffer.shape_until_scroll(font_system, false);
+    if attrs.family == Family::Name(EMOJI_FAMILY)
+        && buffer
+            .layout_runs()
+            .flat_map(|run| run.glyphs)
+            .any(|glyph| {
+                glyph.glyph_id == 0
+                    || !font_system.db().face(glyph.font_id).is_some_and(|face| {
+                        face.families
+                            .iter()
+                            .any(|(family, _)| family == EMOJI_FAMILY)
+                    })
+            })
+    {
+        // Restore the primary family and style for the whole cluster, not just missing glyphs.
+        let attrs = cell_text_attrs(cell_font, text, false, style);
+        let braille_attrs = if cell_font.family.is_some() {
+            attrs.clone()
+        } else {
+            attrs.clone().family(Family::Name(BRAILLE_FAMILY))
+        };
+        set_cell_layer(
+            buffer,
+            text,
+            &cell_text_segments(text),
+            &attrs,
+            &braille_attrs,
+            &attrs,
+            false,
+        );
+        buffer.shape_until_scroll(font_system, false);
+    }
 }
 
 /// Draws one terminal's cell rectangles in its layers: every background of the live and preview
@@ -586,7 +656,7 @@ pub(super) mod tests {
         };
         for codepoint in 0x100000..=0x101fff {
             let text = char::from_u32(codepoint).unwrap().to_string();
-            let attrs = cell_text_attrs(cell_font, &text, style);
+            let attrs = cell_text_attrs(cell_font, &text, false, style);
             assert_eq!(attrs.family, Family::Name("Accelerando Terminal"));
             assert_eq!(attrs.weight, Weight::BOLD);
             assert_eq!(attrs.style, Style::Italic);
@@ -595,13 +665,13 @@ pub(super) mod tests {
                 ..cell_font
             };
             assert_eq!(
-                cell_text_attrs(configured, &text, style).family,
+                cell_text_attrs(configured, &text, false, style).family,
                 Family::Name("DejaVu Sans Mono")
             );
         }
         for text in ["A", "\u{fffff}", "\u{102000}"] {
             assert_eq!(
-                cell_text_attrs(cell_font, text, style).family,
+                cell_text_attrs(cell_font, text, false, style).family,
                 Family::Monospace
             );
         }
@@ -662,6 +732,7 @@ pub(super) mod tests {
                     &cell_text_attrs(
                         cell_font,
                         "\u{f015}",
+                        false,
                         DrawStyle {
                             bold: true,
                             ..plain_style()
@@ -1586,6 +1657,7 @@ pub(super) mod tests {
                 let attrs = cell_text_attrs(
                     cell_font,
                     symbol,
+                    false,
                     DrawStyle {
                         bold,
                         ..plain_style()

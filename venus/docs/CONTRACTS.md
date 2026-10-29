@@ -35,11 +35,18 @@ in-tree version. VEN-C31 entered with ORBF v3 in ORBS v14.
   are nonempty trimmed UTF-8 without controls, at most 128 bytes; at most eight
   fallbacks are accepted. Nominal font size is 6–96 logical px (default 16);
   line height is 1–3 times that size (default 1.125). Named overrides precede
-  specialty/platform fallback. No font override preserves existing font choice
-  and specialty handling; no overrides preserve 10 by 18 logical cells and the
-  960 by 600 logical initial window.
+  specialty/platform fallback, except for colour emoji below. No font override
+  preserves existing font choice and specialty handling; no overrides preserve
+  10 by 18 logical cells and the 960 by 600 logical initial window.
 - **Accelerando specialty font:** U+100000–U+101FFF route through the existing
   specialty path only when no font override is supplied.
+- **Colour emoji:** A two-cell cluster with emoji presentation (U+FE0F, a
+  regional-indicator flag, an emoji modifier, a ZWJ, keycap or tag sequence, or a
+  two-cell pictograph) and no U+FE0E shapes first from the platform colour emoji
+  family, Noto Color Emoji on Linux and Apple Color Emoji on macOS, at regular
+  upright style, ahead of the primary and named fallbacks. Code points that
+  family lacks, and every cluster when it is not installed, follow the ordinary
+  order.
 - **Initial geometry:** Optional positive `u16` columns/rows request terminal
   dimensions, with workspace headers, stack bottom margin and popup margins
   supplied by the existing Scene owner. Omitted dimensions retain the existing

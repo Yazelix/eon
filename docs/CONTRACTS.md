@@ -1865,8 +1865,9 @@ socket names, JSON fields and protocol identifiers retain their spellings.
   resolution, native readiness and geometry.
 - **Consumes:** Exact accepted Venus VEN-C19 startup admission.
 - **Packaged fonts:** The Venus font configuration includes DejaVu, Symbols
-  Nerd Font Mono and Anima's font-only Accelerando Terminal artifact. Eon and
-  eonbase share that configuration; eonbase does not consume the Anima executable.
+  Nerd Font Mono, Anima's font-only Accelerando Terminal artifact and, on Linux,
+  Noto Color Emoji. Eon and eonbase share that configuration; eonbase does not
+  consume the Anima executable.
   The exact Anima component pin owns the font revision. Its U+100000–U+101FFF
   mapping preserves Venus's Nerd Font ranges and the primary text family.
 - **Boundary:** Native Linux Wayland; no system-wide font installation, live

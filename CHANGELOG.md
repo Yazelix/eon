@@ -5,6 +5,10 @@ installation, and proven contract changes.
 
 ## Unreleased
 
+- Two-cell emoji, including flags, joined families and VS16 hearts, prefer the
+  platform colour emoji font even with configured terminal fonts or bold text.
+  Eon includes Noto Color Emoji on Linux; macOS uses Apple Color Emoji.
+
 - Alt+Q opens an attention inbox across every workspace, with All, Needs input,
   Error and Finished filters and keyboard, pointer and accessibility navigation.
   Selecting a row jumps to its agent and shows its workspace. `FocusAttention`

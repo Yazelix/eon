@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+- VEN-C19: two-cell emoji clusters without text presentation prefer the
+  platform colour emoji family at regular upright style, ahead of primary and
+  named fallback fonts (`eon-wy1r`).
+
 - VEN-C32: Alt+Q shows EONW v25's attention queue in one native inbox across
   workspaces, with four counted filters, keyboard and pointer jumps, and
   AccessKit rows. Rows share the agent sidebar's presentation and retain their
