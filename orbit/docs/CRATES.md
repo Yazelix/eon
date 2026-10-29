@@ -18,7 +18,17 @@ defines the dependency gate, and Beads retain the full candidate evidence.
   pinned Ghostty `521cf2c5d30bd48028ca61546c64e7913764073d` with Zig 0.17
 - **Status:** Selected for the experiment
 - **Credible alternatives:** Formatter reconstruction with the same crate; waiting for a
-  crates.io release that builds Ghostty `8c425a7bd`; replacement by `rio-vt`
+  crates.io release that builds Ghostty `8c425a7bd`; replacement by `rio-vt`.
+  Lucca chose to stay on `libghostty-vt` (2026-10-29, `eon-j0md`); report:
+  `~/pjs/refs/vt-core-research-2026-10/report.md`. Revisit if (1) Zig or libghostty fails
+  to build on x86_64 Linux, aarch64-darwin when EON-C7 resumes, or the Nix-free build, and
+  no Nix-level fix resolves it within one session; (2) a Rust engine shows near-parity: a
+  published esctest2 tally at or above libghostty-vt's on a comparable harness, headless
+  Kitty placements, key/mouse encoders, and OSC 7501 or a hook for Orbit to own it; (3)
+  libghostty has no upstream commits to `src/terminal` for 6 months, changes license, or
+  the binding is abandoned with no successor; (4) upstream offers Zig-free consumption,
+  such as prebuilt archives in a tagged release, favoring staying through the binding's
+  `pkg-config` feature.
 - **Why:** The binding supplies the chosen sole terminal authority and state-aware
   input. Its Formatter cannot provide exact client reconstruction, so Orbit keeps authority
   server-side and uses its public presentation surface.
