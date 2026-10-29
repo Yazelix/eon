@@ -381,6 +381,7 @@ on terminals; redirected output is plain text. A nonempty `NO_COLOR` or
 | `eon workspace rename [WS] NAME [--json]` | Name workspace WS, or the caller's workspace; an empty NAME clears the name |
 | `eon workspace close WS [--json]` | Stop every terminal of WS and remove it, asking first without `--json`; closing the last workspace quits the window |
 | `eon tab create [--json]` | Create a distinct pending tab with its directory picker, even while another picker is open |
+| `eon tab create [--json] [--no-focus] --directory DIRECTORY [-- COMMAND [ARGS...]]` | Create a tab at DIRECTORY without a picker, optionally running an exact command from a calling terminal; `--no-focus` preserves the active tab, selection and popup |
 | `eon tab close TAB [--json]` | Close the expected active tab; the final tab quits the window, or closes the workspace while others remain, asking first from a terminal |
 | `eon tab directory TAB [--json] -- DIRECTORY` | Set a tab's directory for future terminals |
 | `eon tab move left\|right [--json]` | Move the active tab, or the calling terminal's tab, one position |

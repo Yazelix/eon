@@ -1,5 +1,5 @@
 use super::managed_environment::{PopupCatalog, PopupCommand, PopupDefinition};
-use eon_workspace_protocol::v23::{
+use eon_workspace_protocol::v24::{
     Action, Attention, AttentionState, Column as SnapshotColumn, Direction, Failure, InvokeIntent,
     MAX_COLUMNS, MAX_DIRECTORY_BYTES, MAX_SESSIONS, MAX_TABS, Pane as SnapshotPane,
     Popup as SnapshotPopup, PopupEntry as SnapshotEntry, PopupKey, PopupTarget, Side, Sidebar,
@@ -302,7 +302,7 @@ impl WorkspaceSet {
         snapshot.workspaces = self
             .workspaces
             .iter()
-            .map(|workspace| eon_workspace_protocol::v23::WorkspaceInfo {
+            .map(|workspace| eon_workspace_protocol::v24::WorkspaceInfo {
                 id: workspace.id.clone(),
                 name: workspace.name.clone(),
                 tab_count: workspace.tabs.len(),
@@ -356,7 +356,7 @@ impl WorkspaceSet {
     }
 
     fn resolve_workspace(&self, target: &str) -> Result<usize, Failure> {
-        eon_workspace_protocol::v23::validate_workspace_name(target)
+        eon_workspace_protocol::v24::validate_workspace_name(target)
             .map_err(|error| action_error("malformed-action", error.to_string()))?;
         resolve_selector(
             self.workspaces
@@ -470,7 +470,7 @@ impl WorkspaceSet {
                     .map(str::trim)
                     .filter(|name| !name.is_empty());
                 if let Some(name) = name {
-                    eon_workspace_protocol::v23::validate_pane_name(name)
+                    eon_workspace_protocol::v24::validate_pane_name(name)
                         .map_err(|error| action_error("malformed-action", error.to_string()))?;
                 }
                 let target = self.workspaces[index]
@@ -486,10 +486,10 @@ impl WorkspaceSet {
             }
             Action::Workspace(WorkspaceAction::NewWorkspace { name, focus }) => {
                 if let Some(name) = &name {
-                    eon_workspace_protocol::v23::validate_workspace_name(name)
+                    eon_workspace_protocol::v24::validate_workspace_name(name)
                         .map_err(|error| action_error("malformed-action", error.to_string()))?;
                 }
-                if self.workspaces.len() >= eon_workspace_protocol::v23::MAX_WORKSPACES {
+                if self.workspaces.len() >= eon_workspace_protocol::v24::MAX_WORKSPACES {
                     return Err(action_error(
                         "workspace-limit",
                         "a window holds at most 32 workspaces",
@@ -522,7 +522,7 @@ impl WorkspaceSet {
             }
             Action::Workspace(WorkspaceAction::RenameWorkspace { workspace, name }) => {
                 if !name.is_empty() {
-                    eon_workspace_protocol::v23::validate_workspace_name(&name)
+                    eon_workspace_protocol::v24::validate_workspace_name(&name)
                         .map_err(|error| action_error("malformed-action", error.to_string()))?;
                 }
                 let target = workspace
@@ -758,7 +758,7 @@ impl Workspace {
         Snapshot {
             workspace: self.id.clone(),
             active_workspace: self.id.clone(),
-            workspaces: vec![eon_workspace_protocol::v23::WorkspaceInfo {
+            workspaces: vec![eon_workspace_protocol::v24::WorkspaceInfo {
                 id: self.id.clone(),
                 name: self.name.clone(),
                 tab_count: self.tabs.len(),
@@ -868,6 +868,7 @@ impl Workspace {
             action,
             Action::Workspace(WorkspaceAction::CreatePane { focus: false })
                 | Action::CreateCommandPane { focus: false, .. }
+                | Action::LaunchTab { focus: false, .. }
         );
         let result = self.apply(
             ids,
@@ -1006,6 +1007,20 @@ impl Workspace {
                     &mut operate,
                 )?;
             }
+            Action::LaunchTab {
+                directory,
+                argv,
+                focus,
+            } => self.launch_tab(
+                ids,
+                allowance,
+                directory,
+                argv,
+                focus,
+                called,
+                &mut prepare,
+                &mut operate,
+            )?,
         }
         Ok(())
     }
@@ -1135,6 +1150,65 @@ impl Workspace {
         }
         ids.next_tab += 1;
         self.active = index;
+        Ok(())
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    fn launch_tab(
+        &mut self,
+        ids: &mut IdAllocator,
+        allowance: usize,
+        directory: Vec<u8>,
+        argv: Vec<Vec<u8>>,
+        focus: bool,
+        called: bool,
+        prepare: &mut impl FnMut(&PopupCommand, &Path) -> Result<Vec<OsString>, String>,
+        operate: &mut impl FnMut(SessionOperation) -> Result<(), String>,
+    ) -> Result<(), Failure> {
+        if !argv.is_empty() && !called {
+            return Err(action_error(
+                "caller-required",
+                "a command tab must be requested from an Eon terminal",
+            ));
+        }
+        let directory = validated_directory(directory)?;
+        if self.tabs.len() >= MAX_TABS || ids.next_tab == usize::MAX {
+            return Err(action_error(
+                "capacity",
+                format!("workspace is limited to {MAX_TABS} tabs"),
+            ));
+        }
+        let command = if argv.is_empty() {
+            LaunchCommand::Pane
+        } else {
+            LaunchCommand::Tool(
+                prepare(
+                    &PopupCommand::Argv(argv.into_iter().map(OsString::from_vec).collect()),
+                    &directory,
+                )
+                .map_err(|detail| action_error("pane-command", detail))?,
+            )
+        };
+        self.tabs.push(Tab {
+            id: format!("t{}", ids.next_tab),
+            directory: directory.clone(),
+            pending: false,
+            columns: Vec::new(),
+            selected_column: None,
+            popups: Vec::new(),
+            selected_popup: None,
+        });
+        let index = self.tabs.len() - 1;
+        if let Err(detail) =
+            self.start_pane_in(ids, allowance, index, &directory, false, command, operate)
+        {
+            self.tabs.pop();
+            return Err(action_error("session-start", detail));
+        }
+        ids.next_tab += 1;
+        if focus {
+            self.active = index;
+        }
         Ok(())
     }
 
@@ -2536,13 +2610,13 @@ fn action_error(code: &'static str, detail: impl Into<String>) -> Failure {
     }
 }
 
-fn shortcut_text(shortcut: &eon_workspace_protocol::v23::Shortcut) -> String {
+fn shortcut_text(shortcut: &eon_workspace_protocol::v24::Shortcut) -> String {
     let mut parts = Vec::new();
     for (bit, name) in [
-        (eon_workspace_protocol::v23::CTRL, "Ctrl"),
-        (eon_workspace_protocol::v23::ALT, "Alt"),
-        (eon_workspace_protocol::v23::SHIFT, "Shift"),
-        (eon_workspace_protocol::v23::SUPER, "Super"),
+        (eon_workspace_protocol::v24::CTRL, "Ctrl"),
+        (eon_workspace_protocol::v24::ALT, "Alt"),
+        (eon_workspace_protocol::v24::SHIFT, "Shift"),
+        (eon_workspace_protocol::v24::SUPER, "Super"),
     ] {
         if shortcut.modifiers & bit != 0 {
             parts.push(name.to_string());
@@ -2602,7 +2676,7 @@ pub(crate) fn json_escape(value: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use eon_workspace_protocol::v23::{ALT, PopupGeometry, Shortcut};
+    use eon_workspace_protocol::v24::{ALT, PopupGeometry, Shortcut};
 
     fn two_workspace_set(
         mut operate: impl FnMut(SessionOperation) -> Result<(), String>,
@@ -2858,8 +2932,8 @@ mod tests {
             ("w1", "w3")
         );
         assert_eq!(caller_view.tabs, original);
-        eon_workspace_protocol::v23::encode_response(
-            &eon_workspace_protocol::v23::Response::Snapshot(caller_view),
+        eon_workspace_protocol::v24::encode_response(
+            &eon_workspace_protocol::v24::Response::Snapshot(caller_view),
         )
         .unwrap();
 
@@ -2950,7 +3024,7 @@ mod tests {
             .code,
             "malformed-action"
         );
-        while set.workspaces.len() < eon_workspace_protocol::v23::MAX_WORKSPACES {
+        while set.workspaces.len() < eon_workspace_protocol::v24::MAX_WORKSPACES {
             set.dispatch(
                 &format!("new-{}", set.workspaces.len()),
                 None,
@@ -3006,8 +3080,8 @@ mod tests {
         )
         .unwrap();
         let snapshot = set.snapshot();
-        eon_workspace_protocol::v23::encode_response(
-            &eon_workspace_protocol::v23::Response::Snapshot(snapshot.clone()),
+        eon_workspace_protocol::v24::encode_response(
+            &eon_workspace_protocol::v24::Response::Snapshot(snapshot.clone()),
         )
         .unwrap();
         assert_eq!(snapshot.workspaces.len(), 1);
@@ -3079,8 +3153,8 @@ mod tests {
         assert_eq!(error.code, "session-start");
         assert_eq!(error.detail, "start failed");
         let snapshot = set.snapshot();
-        eon_workspace_protocol::v23::encode_response(
-            &eon_workspace_protocol::v23::Response::Snapshot(snapshot.clone()),
+        eon_workspace_protocol::v24::encode_response(
+            &eon_workspace_protocol::v24::Response::Snapshot(snapshot.clone()),
         )
         .unwrap();
         assert_eq!(snapshot.workspace, "w1");
@@ -3733,7 +3807,7 @@ mod tests {
         let mut snapshot = workspace.snapshot();
         snapshot.tabs[0].columns[0].panes[0].attention = Some(Attention {
             state: AttentionState::NeedsInput,
-            record: Some(eon_workspace_protocol::v23::AttentionRecord {
+            record: Some(eon_workspace_protocol::v24::AttentionRecord {
                 kind: None,
                 progress: Some(40),
                 app: "codex".into(),
@@ -3886,8 +3960,8 @@ mod tests {
         let after = workspace.snapshot();
         assert_eq!(after.tabs.len(), 1);
         assert_eq!(after.tabs[0].columns.len(), MAX_COLUMNS);
-        eon_workspace_protocol::v23::encode_response(
-            &eon_workspace_protocol::v23::Response::Snapshot(after),
+        eon_workspace_protocol::v24::encode_response(
+            &eon_workspace_protocol::v24::Response::Snapshot(after),
         )
         .unwrap();
         fs::remove_dir_all(root).unwrap();
@@ -4064,6 +4138,190 @@ mod tests {
             .remove(0);
         assert_eq!(tab.selected_pane.as_deref(), Some("p6"));
         assert_eq!(tab.selected_popup, None);
+    }
+
+    #[test]
+    fn launched_tabs_skip_the_picker_preserve_focus_and_roll_back_failures() {
+        let root = std::env::temp_dir().join(format!("eon-tab-launch-{}", std::process::id()));
+        let directory = root.join("project");
+        fs::create_dir_all(&directory).unwrap();
+        let mut workspace = WorkspaceSet::with_recovered_sessions(
+            root.clone(),
+            root.clone(),
+            Some(root.clone()),
+            vec![(
+                1,
+                Session {
+                    id: "session-1".into(),
+                    endpoint: root.join("orbit.sock"),
+                },
+            )],
+            catalog(),
+        )
+        .unwrap();
+        workspace
+            .dispatch(
+                "popup",
+                None,
+                Action::InvokePopup {
+                    tab: "t1".into(),
+                    entry: "agent".into(),
+                    expected_instance: None,
+                    intent: InvokeIntent::Toggle,
+                },
+                prepared,
+                |_| Ok(()),
+            )
+            .unwrap();
+        let before = workspace.clone();
+        let snapshot = workspace.snapshot();
+        let caller = snapshot.tabs[0].popups[0].session.clone();
+        let argv = vec![b"hx".to_vec(), b"notes \xff".to_vec()];
+        let launch = |directory: &Path, command: bool, focus| Action::LaunchTab {
+            directory: directory.as_os_str().as_bytes().to_vec(),
+            argv: if command { argv.clone() } else { vec![] },
+            focus,
+        };
+        let missing = root.join("missing");
+        for (id, caller, directory, code) in [
+            ("uncalled", None, &missing, "caller-required"),
+            (
+                "missing",
+                Some(caller.as_str()),
+                &missing,
+                "invalid-directory",
+            ),
+        ] {
+            let error = workspace
+                .dispatch(
+                    id,
+                    caller,
+                    launch(directory, true, false),
+                    |_, _| panic!("rejected before preparation"),
+                    |_| panic!("nothing starts"),
+                )
+                .unwrap_err();
+            assert_eq!(error.code, code);
+            assert_eq!(workspace, before);
+        }
+        let error = workspace
+            .dispatch(
+                "prepare",
+                Some(&caller),
+                launch(&directory, true, false),
+                |_, at| {
+                    assert_eq!(at, directory);
+                    Err("no command".into())
+                },
+                |_| panic!("nothing starts"),
+            )
+            .unwrap_err();
+        assert_eq!(error.code, "pane-command");
+        assert_eq!(workspace, before);
+        let error = workspace
+            .dispatch(
+                "start",
+                Some(&caller),
+                launch(&directory, true, false),
+                prepared,
+                |_| Err("start failed".into()),
+            )
+            .unwrap_err();
+        assert_eq!(error.code, "session-start");
+        assert_eq!(workspace, before);
+
+        let mut full = workspace.clone();
+        full.ids.next_tab = usize::MAX;
+        let full_before = full.clone();
+        for (directory, code) in [(&missing, "invalid-directory"), (&directory, "capacity")] {
+            let error = full
+                .dispatch(
+                    "full",
+                    Some(&caller),
+                    launch(directory, true, false),
+                    |_, _| panic!("rejected before preparation"),
+                    |_| panic!("nothing starts"),
+                )
+                .unwrap_err();
+            assert_eq!(error.code, code);
+            assert_eq!(full, full_before);
+        }
+
+        let mut started = Vec::new();
+        workspace
+            .dispatch(
+                "t2",
+                Some(&caller),
+                launch(&directory, true, false),
+                |command, at| {
+                    assert_eq!(at, directory);
+                    prepared(command, at)
+                },
+                |operation| {
+                    started.push(operation);
+                    Ok(())
+                },
+            )
+            .unwrap();
+        let [
+            SessionOperation::Start {
+                directory: at,
+                command: LaunchCommand::Tool(command),
+                tab: None,
+                ..
+            },
+        ] = started.as_slice()
+        else {
+            panic!("one command pane starts: {started:?}")
+        };
+        assert_eq!(at, &directory);
+        assert_eq!(
+            command,
+            &argv
+                .iter()
+                .cloned()
+                .map(OsString::from_vec)
+                .collect::<Vec<_>>()
+        );
+        let after = workspace.snapshot();
+        assert_eq!(after.active_tab, "t1");
+        assert_eq!(after.tabs[0], snapshot.tabs[0]);
+        let tab = &after.tabs[1];
+        assert_eq!(tab.id, "t2");
+        assert_eq!(tab.directory, directory.as_os_str().as_bytes());
+        assert!(!tab.pending);
+        assert_eq!(tab.panes().count(), 1);
+        assert_eq!(tab.selected_pane.as_deref(), Some("p2"));
+        assert!(tab.popups.is_empty());
+
+        workspace
+            .dispatch(
+                "t3",
+                Some(&caller),
+                launch(&directory, true, true),
+                prepared,
+                |_| Ok(()),
+            )
+            .unwrap();
+        let after = workspace.snapshot();
+        assert_eq!(after.active_tab, "t3");
+        assert_eq!(after.tabs[0], snapshot.tabs[0]);
+        workspace
+            .dispatch(
+                "t4",
+                None,
+                launch(&directory, false, true),
+                |_, _| panic!("default panes need no command preparation"),
+                |operation| {
+                    assert!(matches!(operation, SessionOperation::Start {
+                    directory: at, command: LaunchCommand::Pane, ..
+                } if at == directory));
+                    Ok(())
+                },
+            )
+            .unwrap();
+        assert_eq!(workspace.snapshot().active_tab, "t4");
+        fs::remove_dir_all(root).unwrap();
     }
 
     #[test]
@@ -5692,8 +5950,8 @@ mod tests {
             .unwrap_err();
         assert_eq!(error.code, "session-start");
         assert_eq!(workspace.snapshot(), initial);
-        eon_workspace_protocol::v23::encode_response(
-            &eon_workspace_protocol::v23::Response::Snapshot(workspace.snapshot()),
+        eon_workspace_protocol::v24::encode_response(
+            &eon_workspace_protocol::v24::Response::Snapshot(workspace.snapshot()),
         )
         .unwrap();
 
@@ -5758,8 +6016,8 @@ mod tests {
             assert!(json(&state).contains(
                 r#"{"id":"agent","label":"Agent","keybinding":"Alt+A","overridden_by":null,"default_keybinding":null}"#
             ));
-            eon_workspace_protocol::v23::encode_response(
-                &eon_workspace_protocol::v23::Response::Snapshot(state),
+            eon_workspace_protocol::v24::encode_response(
+                &eon_workspace_protocol::v24::Response::Snapshot(state),
             )
             .unwrap();
         }

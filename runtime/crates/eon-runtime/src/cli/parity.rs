@@ -4,7 +4,7 @@
 //! in the test too.
 
 use super::*;
-use eon_workspace_protocol::v23::InvokeIntent;
+use eon_workspace_protocol::v24::InvokeIntent;
 
 enum CliPath {
     /// These arguments parse to exactly this action.
@@ -117,6 +117,19 @@ fn cli_path(action: &Action) -> CliPath {
             argv.iter().map(bytes).collect(),
         ]
         .concat(),
+        Action::LaunchTab {
+            directory,
+            argv,
+            focus,
+        } => [
+            words(&["tab", "create"]),
+            flag(!focus, "--no-focus"),
+            words(&["--directory"]),
+            vec![bytes(directory)],
+            flag(!argv.is_empty(), "--"),
+            argv.iter().map(bytes).collect(),
+        ]
+        .concat(),
     })
 }
 
@@ -210,6 +223,16 @@ fn every_eonw_action_has_a_cli_path_or_a_named_exception() {
         Action::CreateCommandPane {
             argv: vec![b"echo".to_vec(), b"--window".to_vec(), b"\xff".to_vec()],
             focus: false,
+        },
+        Action::LaunchTab {
+            directory: b"/tmp/project-\xff".to_vec(),
+            argv: vec![b"echo".to_vec(), b"--window".to_vec(), b"\xff".to_vec()],
+            focus: false,
+        },
+        Action::LaunchTab {
+            directory: b"/tmp/project".to_vec(),
+            argv: vec![],
+            focus: true,
         },
         Action::ToggleSidebar,
         Action::FocusAttention {

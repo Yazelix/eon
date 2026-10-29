@@ -2,6 +2,9 @@
 
 ## Unreleased
 
+- Consume EONW v24, which adds EON-C10's directory-based tab launch request.
+  Venus's new-tab action keeps the directory picker (`eon-tab-create-launch-8tl4`).
+
 - VEN-C28: on Apple Silicon macOS the CPU and RAM chips read the Mach host
   statistics instead of staying hidden. RAM is Activity Monitor's Memory
   Used, app memory plus wired and compressed pages, over `hw.memsize`

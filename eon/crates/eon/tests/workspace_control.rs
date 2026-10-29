@@ -1,4 +1,4 @@
-use eon_workspace_protocol::v23::{
+use eon_workspace_protocol::v24::{
     Action as ProtocolAction, Availability, Column, Direction, Failure as ProtocolFailure,
     HEADER_BYTES, InvokeIntent, LifecycleResponse, MAX_SESSIONS, Pane, Popup, PopupGeometry,
     PopupTarget, Request, Response, Runtime, Snapshot, Stopped, Tab, VERSION,
@@ -1314,7 +1314,7 @@ printf '/selected-\377\n' > "$4"
     let response = encode_response(&Response::Snapshot(Snapshot {
         workspace: "w1".into(),
         active_workspace: "w1".into(),
-        workspaces: vec![eon_workspace_protocol::v23::WorkspaceInfo {
+        workspaces: vec![eon_workspace_protocol::v24::WorkspaceInfo {
             id: "w1".into(),
             name: None,
             tab_count: 1,
@@ -1350,7 +1350,7 @@ printf '/selected-\377\n' > "$4"
         }],
         codex_quota: None,
         claude_quota: None,
-        sidebar: eon_workspace_protocol::v23::Sidebar::Open,
+        sidebar: eon_workspace_protocol::v24::Sidebar::Open,
     }))
     .unwrap();
     stream.write_all(&response).unwrap();
@@ -4097,6 +4097,7 @@ fn commands_from_a_terminal_target_its_column_and_stale_callers_change_nothing()
     let config = root.join("config");
     configure_mock_desktop(&config);
     let stop = root.join("stop");
+    let orbit_log = root.join("orbit-cwd.log");
     let orbit = root.join("orbit");
     let venus = root.join("venus");
     managed_orbit_executable(&orbit);
@@ -4123,6 +4124,7 @@ fn commands_from_a_terminal_target_its_column_and_stale_callers_change_nothing()
         .env("EON_ORBIT", &orbit)
         .env("EON_VENUS", &venus)
         .env("EON_TEST_STOP", &stop)
+        .env("EON_TEST_ORBIT_CWD_LOG", &orbit_log)
         .stdout(Stdio::null())
         .stderr(Stdio::null())
         .spawn()
@@ -4265,6 +4267,70 @@ fn commands_from_a_terminal_target_its_column_and_stale_callers_change_nothing()
     let snapshot = inspect("after-unfocused");
     assert_eq!(snapshot.tabs[0].selected_pane.as_deref(), Some("p5"));
     assert_eq!(snapshot.tabs[0].columns[0].panes[3].id, "p6");
+
+    // A command tab needs a caller, then starts at its own directory without
+    // changing the existing tab's selection.
+    let directory = root.join("project");
+    fs::create_dir(&directory).unwrap();
+    let command = [
+        "tab",
+        "create",
+        "--no-focus",
+        "--json",
+        "--directory",
+        directory.to_str().unwrap(),
+        "--",
+        "hx",
+    ];
+    let uncalled = eon_command(&binary)
+        .args(command)
+        .env_remove("EON_TERMINAL")
+        .env("EON_RUNTIME_DIR", &runtime)
+        .env("EON_CONFIG_HOME", &config)
+        .output()
+        .unwrap();
+    assert_eq!(uncalled.status.code(), Some(1), "{}", stdout(&uncalled));
+    assert!(stdout(&uncalled).contains("caller-required"));
+    assert_eq!(inspect("after-uncalled-tab"), snapshot);
+    let launched = from(&caller, &command);
+    assert!(launched.status.success(), "{}", stdout(&launched));
+    let reply: serde_json::Value = serde_json::from_slice(&launched.stdout).unwrap();
+    let after = inspect("after-launched-tab");
+    let tab = after.tabs.last().unwrap();
+    assert_eq!(
+        reply["tabs"].as_array().unwrap().last().unwrap()["id"],
+        tab.id
+    );
+    assert_eq!(after.tabs.len(), snapshot.tabs.len() + 1);
+    assert!(!tab.pending);
+    assert_eq!(tab.directory, directory.as_os_str().as_bytes());
+    assert_eq!(tab.panes().count(), 1);
+    let pane = tab.panes().next().unwrap();
+    assert_eq!(tab.selected_pane.as_deref(), Some(pane.id.as_str()));
+    let endpoint = Path::new(OsStr::from_bytes(&pane.endpoint));
+    assert!(process::cmdline(live_identity(endpoint).process_id).ends_with(b"hx\0"));
+    assert!(fs::read_to_string(&orbit_log).unwrap().contains(&format!(
+        "{} {}\n",
+        pane.session,
+        fs::canonicalize(&directory).unwrap().display()
+    )));
+    assert_eq!(after.active_tab, snapshot.active_tab);
+    assert_eq!(after.tabs[0], snapshot.tabs[0]);
+    let invalid = from(
+        &caller,
+        &[
+            "tab",
+            "create",
+            "--json",
+            "--directory",
+            "/nonexistent",
+            "--",
+            "hx",
+        ],
+    );
+    assert_eq!(invalid.status.code(), Some(1), "{}", stdout(&invalid));
+    assert!(stdout(&invalid).contains("invalid-directory"));
+    assert_eq!(inspect("after-invalid-tab"), after);
 
     fs::write(&stop, "").unwrap();
     wait_for_successful_exit(&mut supervisor.child);

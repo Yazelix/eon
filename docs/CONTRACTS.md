@@ -567,7 +567,7 @@ socket names, JSON fields and protocol identifiers retain their spellings.
 - **Owner:** Eon Runtime workspace topology, identity, focus, pruning and action
   enforcement; Eon supplies product defaults/policy. Orbit owns terminals and
   Venus owns native materialization.
-- **Consumes:** Current EONW v23 workspace/popup values, Orbit terminal
+- **Consumes:** Current EONW v24 workspace/popup values, Orbit terminal
   identities/endpoints and Venus `VEN-C8`.
 - **Boundary:** No arbitrary split tree, vertical splits, column resizing,
   arbitrary reorder target, cross-tab pane movement, picker relocation, durable layout
@@ -872,11 +872,11 @@ socket names, JSON fields and protocol identifiers retain their spellings.
     32 KiB each, within the shared frame ceiling. A bare COMMAND resolves
     through the terminal PATH and a relative one against the tab directory, as
     popup executables do. When COMMAND exits, the pane ends like any ended
-    terminal. This is the one request that carries a command
-    over EONW, and the runtime accepts it only from a caller naming a live
-    terminal of the addressed supervisor. That check states intent, not
-    security: the socket is private to the user, whose processes can already
-    run any command and read terminal identities.
+    terminal. This and `tab create --directory DIRECTORY -- COMMAND` are the
+    only requests that carry a command over EONW, and the runtime accepts them
+    only from a caller naming a live terminal of the addressed supervisor.
+    That check states intent, not security: the socket is private to the user,
+    whose processes can already run any command and read terminal identities.
   - `eon pane create --no-focus [--json]`, with or without `-- COMMAND`, adds
     the same pane in the same place but takes no focus: the tab's selected
     column and pane stay as they were, a shown popup stays shown, and the new
@@ -884,6 +884,19 @@ socket names, JSON fields and protocol identifiers retain their spellings.
     becomes the tab's only, selected pane, and a shown popup still stays shown.
     Without `--no-focus`, `pane create` selects the new pane and dismisses the
     tab's popup, as above.
+  - `eon tab create [--json] [--no-focus] --directory DIRECTORY [-- COMMAND [ARGS...]]`
+    adds a new tab to the addressed workspace with DIRECTORY as its directory
+    and no picker, and starts its one pane there. That pane is the default pane
+    a picker's accepted choice would start or, with `-- COMMAND`, COMMAND run as
+    `pane create -- COMMAND` runs it: exact argv, no shell, the same bounds, a
+    relative COMMAND resolved against DIRECTORY, and accepted only from a
+    calling terminal. A relative DIRECTORY resolves against the caller's working
+    directory. Without `--no-focus` the new tab becomes the active tab, as a
+    bare `tab create` does. With `--no-focus`, the active tab, every tab's
+    selected pane, any shown popup and desktop focus stay as they are. The
+    reply's tab list ends with the new tab. An unavailable DIRECTORY, the tab
+    limit, or a command that cannot start refuses the command with exit 1 and
+    changes nothing. `--no-focus` and `-- COMMAND` require `--directory`.
   - `eon tab close TAB` and `eon pane close PANE` may name the final tab or
     its last pane, which ends the window (EON-C8), or, while other workspaces
     remain, removes that workspace (EON-C33). Before either final close, when
@@ -990,7 +1003,7 @@ socket names, JSON fields and protocol identifiers retain their spellings.
 - **Owner:** Eon Runtime supervisor workspace/action state and CLI projection;
   its canonical EONW package owns types, codec and result ordering. Eon supplies
   validated component facts and product defaults.
-- **Consumes:** Current EONW v23 and accepted Orbit management operations.
+- **Consumes:** Current EONW v24 and accepted Orbit management operations.
 - **Boundary:** Additive lifecycle tags do not widen the pinned Venus workspace
   consumer. There is no event stream, subscription policy, remote transport,
   plugin/MCP API, authorization framework, durable restoration, terminal
@@ -999,7 +1012,7 @@ socket names, JSON fields and protocol identifiers retain their spellings.
   child-protocol escape hatch.
 - **Package owner:** The canonical EONW crate lives in
   `runtime/crates/eon-workspace-protocol` with its accepted package/API and
-  v23 bytes. Venus, Eon Runtime and Eon consume it by path.
+  v24 bytes. Venus, Eon Runtime and Eon consume it by path.
   See [package selection](ARCHITECTURE.md#in-tree-package-selection).
 - **Runtime policy:** Project is required, defaults to Alt+Z, and uses Eon's
   existing transient chooser command. Git defaults to `eon-lazygit` on Alt+Shift+J;
@@ -1061,8 +1074,8 @@ socket names, JSON fields and protocol identifiers retain their spellings.
   fzf list of the popup's window's workspaces (EON-C33's picker); Commands >
   Switch workspace runs the same list in the Commands popup. Each row shows
   the workspace's name, or its `wN` when unnamed, its tab count, and
-  ` · needs input` when its EONW v23 `attention` is needs input. Rows run by
-  EONW v23 `recency`, most recently shown first, with the shown workspace last
+  ` · needs input` when its EONW v24 `attention` is needs input. Rows run by
+  EONW v24 `recency`, most recently shown first, with the shown workspace last
   and marked ` · shown`, and the query matches only that name or `wN`. Enter on the highlighted row,
   including on an empty query, runs `eon workspace switch wN` once the CLI
   has checked again that the `wN` is live; otherwise it changes nothing and
@@ -1089,8 +1102,10 @@ socket names, JSON fields and protocol identifiers retain their spellings.
   shortcut, unbounded values and unavailable executables before mutating
   workspace state. It does
   not install providers, cache selection, interpret shell strings, or expose
-  commands over EONW beyond a calling terminal's `pane create -- COMMAND`. Bare executables resolve through the terminal PATH;
-  relative executable paths resolve against the owning tab's launch directory.
+  commands over EONW beyond a calling terminal's `pane create -- COMMAND` and
+  `tab create --directory DIRECTORY -- COMMAND`. Bare executables resolve
+  through the terminal PATH; relative executable paths resolve against the
+  owning tab's launch directory.
 - **Target safety:** Invocation names the tab, entry and expected instance
   (absence means no instance exists). Focus-only and toggle intents are
   distinct. Dismissal and chooser completion require the exact live instance;
@@ -1650,7 +1665,8 @@ socket names, JSON fields and protocol identifiers retain their spellings.
     Any key other than Anima's style-browsing keys dismisses playback without
     becoming picker input. This step does not run for later tabs, attachment,
     reconnection, same-boot recovery, or eonbase.
-  - A fresh workspace and every later new tab begin as one active pending tab
+  - A fresh workspace and every later new tab not created with a directory
+    (EON-C10's `tab create --directory`) begin as one active pending tab
     with no durable pane. Eon starts one transient Orbit terminal running the
     exact packaged ranked-directory picker at that tab's starting directory
     (the initial launch directory for t1, the user's home for later tabs).
@@ -1699,6 +1715,9 @@ socket names, JSON fields and protocol identifiers retain their spellings.
     EON-C8's final-tab close.
   - Alt+Z keeps the existing explicit retarget behavior after a tab has panes;
     it never changes or restarts a running pane.
+  - `eon tab create --directory DIRECTORY` skips the picker: its tab is never
+    pending and its first pane starts at DIRECTORY (EON-C10). A bare
+    `eon tab create` and Venus's new-tab action keep the picker.
   - Current EONW v7 exposes Project as a popup endpoint bound to one live
     tab, never as a normal `pN` pane. The picker tab may remain live while
     another durable tab is active. A picker-owned pending tab remains pane-free,
@@ -1890,7 +1909,7 @@ socket names, JSON fields and protocol identifiers retain their spellings.
   tutorial, telemetry, momentary mode, dependency, or platform expansion.
   Venus derives overrides from the popup catalog it already receives over
   EONW. Exceptions: the viewer reads `sidebar` and each popup entry's override
-  from EONW v23.
+  from EONW v24.
 - **Proof:** `795d735a8f61ef439c56d68e1cc4d3929af0dfcf`, `eon-monorepo-2oko.6`.
   - **Environment:** Automated tier; installed tier.
   - **Evidence:** `popup_configuration_owns_defaults_overrides_and_collisions`;
@@ -1956,13 +1975,13 @@ socket names, JSON fields and protocol identifiers retain their spellings.
 - **Owner:** Eon owns the exact graph, product policy, profile delivery and
   installed acceptance; Eon Runtime owns workspace identity/actions. Venus
   owns header geometry, rendering, input, native drag, tooltips, and accessibility.
-- **Consumes:** Venus VEN-C21, EONW v7 (v23 for the EON-C31 tab attention
+- **Consumes:** Venus VEN-C21, EONW v7 (v24 for the EON-C31 tab attention
   marker) and Orbit terminals.
 - **Boundary:** EON-C27 separately owns the optional quota projection. The core
   header adds no Eon-rendered chrome, second row, widget framework, agent status,
   polling, configuration, protocol change, inactive-tab close, native window
   controls, macOS claim or distribution expansion. The one exception is the
-  EON-C31 tab attention marker, which Venus reads from the EONW v23 snapshot it
+  EON-C31 tab attention marker, which Venus reads from the EONW v24 snapshot it
   already polls.
 - **Proof:** `795d735a8f61ef439c56d68e1cc4d3929af0dfcf`, `eon-monorepo-2oko.6`.
   - **Environment:** Automated tier; installed tier.
@@ -2118,7 +2137,7 @@ socket names, JSON fields and protocol identifiers retain their spellings.
 - **Boundary:** No minor-mode framework, child-application key discovery,
   interactive hints, durable preference, configuration option, dependency,
   wire change or platform expansion, except that the hints read `sidebar` from
-  EONW v23. Future real modes replace contents from
+  EONW v24. Future real modes replace contents from
   their actual bindings at the same footer height.
 - **Proof:** `795d735a8f61ef439c56d68e1cc4d3929af0dfcf`, `eon-monorepo-2oko.6`.
   - **Environment:** Automated tier; installed tier.
@@ -2550,7 +2569,7 @@ socket names, JSON fields and protocol identifiers retain their spellings.
       - `sidebar` on the snapshot.
 
       It leaves out `kind`, `progress`, `title`, `msg`, `changed_at`, the stale flag and the
-      record count. v23 ships in 1.0, because `eon-agent-sidebar-yx8.9` gates
+      record count. v24 ships in 1.0, because `eon-agent-sidebar-yx8.9` gates
       eon-igae.7, .8 and .11, so EON-C28 freezes exactly these fields.
       - A program inside an Eon terminal can run `eon workspace`, so it can read every
         terminal's attention `state`, `app` and `name`. `title` and `msg` never appear through `eon
@@ -2660,7 +2679,7 @@ socket names, JSON fields and protocol identifiers retain their spellings.
     sidebar visibility and `[sidebar]` configuration.
   - **Orbit** owns the records, their neutral facts and the terminal title.
   - **Venus** owns presentation and hiding for width (VEN-C30).
-- **Consumes:** ORB-C15, ORB-C13 generation 3, EON-C8 topology, and EON-C10 (EONW v23, still
+- **Consumes:** ORB-C15, ORB-C13 generation 3, EON-C8 topology, and EON-C10 (EONW v24, still
   request and response, with no event stream).
 - **Boundary:**
   - no hooks and no edits to agent configuration;

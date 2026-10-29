@@ -16,7 +16,7 @@ use super::{
         resolve_selector,
     },
 };
-use eon_workspace_protocol::v23::{
+use eon_workspace_protocol::v24::{
     Action, AttentionState, Direction, Failure, PopupTarget, Response, Side, Snapshot, VERSION,
     WorkspaceAction, WorkspaceInfo, valid_caller,
 };
@@ -836,6 +836,8 @@ fn help_text(version: &str, color: bool) -> String {
 
 {heading}Tabs & panes{reset}
   {command}tab create [--json]{reset}                         Choose a directory for a new tab
+  {command}tab create --directory DIRECTORY{reset}            Start a tab without the picker
+    {command}[--json] [--no-focus] [-- COMMAND...]{reset}     COMMAND needs an Eon terminal
   {command}tab close TAB [--json]{reset}                      Close the active tab
   {command}tab directory TAB [--json] -- DIRECTORY{reset}     Set the tab's launch directory
   {command}tab move left|right [--json]{reset}                Move the active tab
@@ -1035,7 +1037,7 @@ fn control(
     // by Runtime's rule; a WS that resolves to none or several fails unasked.
     // After a yes it checks again that the wN is live before closing it, since
     // Runtime would read a departed wN as another workspace's name; the check
-    // and the close are not atomic. v23 lists only
+    // and the close are not atomic. v24 lists only
     // the caller's or shown workspace's terminals, so the prompt names none.
     if let Action::Workspace(WorkspaceAction::CloseWorkspace { workspace }) = &mut action
         && !json
@@ -1316,8 +1318,8 @@ fn parse_workspace_target_arguments(
             values.extend(arguments.cloned());
             break;
         }
-        // `workspace new --name NAME` keeps its operand, even `--window`.
-        if argument == "--name" {
+        // Named operands stay literal, even `--window`.
+        if argument == "--name" || argument == "--directory" {
             values.push(argument.clone());
             values.extend(arguments.next().cloned());
             continue;
@@ -1365,6 +1367,9 @@ fn parse_control_arguments(arguments: &[OsString]) -> Result<(Action, bool), Err
         return Ok(action);
     }
     if let Some(action) = parse_command_pane_arguments(arguments)? {
+        return Ok(action);
+    }
+    if let Some(action) = parse_tab_create_arguments(arguments)? {
         return Ok(action);
     }
     let (mut json, mut focus) = (false, true);
@@ -1437,7 +1442,7 @@ fn parse_pane_rename_arguments(arguments: &[OsString]) -> Result<(Action, bool),
         _ => return Err(Error::usage(EON_USAGE)),
     };
     if let Some(name) = name {
-        eon_workspace_protocol::v23::validate_pane_name(name)
+        eon_workspace_protocol::v24::validate_pane_name(name)
             .map_err(|error| Error::usage(error.to_string()))?;
     }
     Ok((
@@ -1598,6 +1603,63 @@ fn parse_command_pane_arguments(arguments: &[OsString]) -> Result<Option<(Action
                 .iter()
                 .map(|argument| argument.as_bytes().to_vec())
                 .collect(),
+            focus,
+        },
+        json,
+    )))
+}
+
+/// Directory-based tab creation leaves bare `tab create` on the picker path.
+fn parse_tab_create_arguments(arguments: &[OsString]) -> Result<Option<(Action, bool)>, Error> {
+    let [command, operation, rest @ ..] = arguments else {
+        return Ok(None);
+    };
+    if command != "tab" || operation != "create" {
+        return Ok(None);
+    }
+    let (mut json, mut focus) = (false, true);
+    let mut directory = None;
+    let mut argv = Vec::new();
+    let mut flags = rest.iter();
+    while let Some(flag) = flags.next() {
+        match flag.to_str() {
+            Some("--json") if !json => json = true,
+            Some("--no-focus") if focus => focus = false,
+            Some("--directory") if directory.is_none() => {
+                directory = Some(
+                    flags
+                        .next()
+                        .filter(|value| !value.is_empty() && *value != "--")
+                        .ok_or_else(|| Error::usage(EON_USAGE))?,
+                );
+            }
+            Some("--") => {
+                let command = flags.as_slice();
+                if command.first().is_none_or(|program| program.is_empty()) {
+                    return Err(Error::usage("eon tab create -- needs a command"));
+                }
+                argv = command
+                    .iter()
+                    .map(|argument| argument.as_bytes().to_vec())
+                    .collect();
+                break;
+            }
+            _ => return Err(Error::usage(EON_USAGE)),
+        }
+    }
+    let Some(directory) = directory else {
+        return if focus && argv.is_empty() {
+            Ok(None)
+        } else {
+            Err(Error::usage(EON_USAGE))
+        };
+    };
+    let directory = std::path::absolute(directory)
+        .map_err(|error| Error::from(format!("cannot resolve {directory:?}: {error}")))?;
+    Ok(Some((
+        Action::LaunchTab {
+            directory: directory.into_os_string().into_vec(),
+            argv,
             focus,
         },
         json,
@@ -1835,6 +1897,145 @@ mod tests {
             ])
             .is_err()
         );
+    }
+
+    #[test]
+    fn tab_create_directory_parser_resolves_paths_and_preserves_commands() {
+        let parse = |arguments: &[&str]| {
+            parse_control_arguments(&arguments.iter().map(OsString::from).collect::<Vec<_>>())
+        };
+        for (flags, focus, json) in [
+            (vec!["--directory", "project"], true, false),
+            (
+                vec!["--json", "--directory", "project", "--no-focus"],
+                false,
+                true,
+            ),
+            (
+                vec!["--no-focus", "--json", "--directory", "project"],
+                false,
+                true,
+            ),
+            (
+                vec!["--directory", "project", "--no-focus", "--json"],
+                false,
+                true,
+            ),
+        ] {
+            let mut args = vec!["tab", "create"];
+            args.extend(flags);
+            assert_eq!(
+                parse(&args).unwrap(),
+                (
+                    Action::LaunchTab {
+                        directory: env::current_dir()
+                            .unwrap()
+                            .join("project")
+                            .into_os_string()
+                            .into_vec(),
+                        argv: vec![],
+                        focus,
+                    },
+                    json,
+                )
+            );
+        }
+        assert_eq!(
+            parse_control_arguments(&[
+                "tab".into(),
+                "create".into(),
+                "--directory".into(),
+                OsString::from_vec(b"/tmp/\xff".to_vec()),
+                "--".into(),
+                "hx".into(),
+                OsString::from_vec(b"notes \xff".to_vec()),
+                "--json".into(),
+            ])
+            .unwrap(),
+            (
+                Action::LaunchTab {
+                    directory: b"/tmp/\xff".to_vec(),
+                    argv: vec![b"hx".to_vec(), b"notes \xff".to_vec(), b"--json".to_vec()],
+                    focus: true,
+                },
+                false
+            ),
+        );
+        let generation = "g1-0123456789abcdef0123456789abcdef";
+        let (args, target) = parse_workspace_target_arguments(
+            &[
+                "tab",
+                "create",
+                "--window",
+                "0000abcd",
+                "--directory",
+                "/",
+                "--generation",
+                generation,
+                "--",
+                "hx",
+                "--window",
+            ]
+            .map(OsString::from),
+        )
+        .unwrap();
+        assert_eq!(target.window.as_deref(), Some("0000abcd"));
+        assert_eq!(target.generation.as_deref(), Some(generation));
+        assert_eq!(
+            parse_control_arguments(&args).unwrap(),
+            (
+                Action::LaunchTab {
+                    directory: b"/".to_vec(),
+                    argv: vec![b"hx".to_vec(), b"--window".to_vec()],
+                    focus: true,
+                },
+                false
+            )
+        );
+        let (args, target) = parse_workspace_target_arguments(
+            &["tab", "create", "--directory", "--window"].map(OsString::from),
+        )
+        .unwrap();
+        assert_eq!(target.window, None);
+        assert!(parse_control_arguments(&args).is_ok());
+        for args in [vec!["tab", "create"], vec!["tab", "create", "--json"]] {
+            assert_eq!(
+                parse(&args).unwrap(),
+                (
+                    Action::Workspace(WorkspaceAction::CreateTab),
+                    args.contains(&"--json"),
+                )
+            );
+        }
+        for args in [
+            vec!["--no-focus"],
+            vec!["--", "hx"],
+            vec!["--directory"],
+            vec!["--directory", ""],
+            vec!["--directory", "--", "hx"],
+            vec!["--directory", "/", "--directory", "/"],
+            vec!["--json", "--json", "--directory", "/"],
+            vec!["--no-focus", "--no-focus", "--directory", "/"],
+            vec!["--unknown"],
+            vec!["--workspace", "w1", "--directory", "/"],
+        ] {
+            let mut command = vec!["tab", "create"];
+            command.extend(args);
+            assert_eq!(parse(&command).unwrap_err().status, 2, "{command:?}");
+        }
+        for args in [
+            vec!["tab", "create", "--"],
+            vec!["tab", "create", "--", ""],
+            vec!["tab", "create", "--directory", "/", "--"],
+            vec!["tab", "create", "--directory", "/", "--", ""],
+        ] {
+            let error = parse(&args).unwrap_err();
+            assert_eq!(error.status, 2, "{args:?}");
+            assert_eq!(
+                error.message, "eon tab create -- needs a command",
+                "{args:?}"
+            );
+        }
     }
 
     #[test]

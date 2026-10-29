@@ -5,6 +5,13 @@ installation, and proven contract changes.
 
 ## Unreleased
 
+- `eon tab create [--json] [--no-focus] --directory DIRECTORY [-- COMMAND [ARGS...]]`
+  starts a tab at DIRECTORY without the picker, with the default pane or an
+  exact command requested from an Eon terminal. `--no-focus` preserves the
+  active tab, selected panes, shown popup and desktop focus. EONW moves to v24
+  and Eon to 0.1.7, so after a profile refresh a window started from an older
+  build needs one restart before the new `eon` can control it.
+
 - CLI confirmations without a terminal now exit 1 with `not-confirmed` when
   no yes is read, including end of input. A piped yes still confirms; declining
   at a terminal still prints the cancel note and exits 0.
