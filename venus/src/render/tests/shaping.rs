@@ -62,6 +62,7 @@ fn wide_emoji_clusters_use_the_platform_colour_face() {
     } else {
         "Noto Color Emoji"
     };
+    let mut cache = glyphon::SwashCache::new();
     let mut observations = Vec::new();
     let mut all_match = true;
     for settings in [
@@ -124,15 +125,40 @@ fn wide_emoji_clusters_use_the_platform_colour_face() {
                 .layout_runs()
                 .flat_map(|run| run.glyphs)
                 .map(|glyph| {
+                    // harfrust hides unmapped ignorables as blank spaces; Venus's letter spacing can still add trailing advance.
+                    let hidden = glyph.glyph_id != 0
+                        && fonts
+                            .font_system
+                            .get_font(glyph.font_id, Weight::NORMAL)
+                            .is_some_and(|font| {
+                                glyph.glyph_id == font.as_swash().charmap().map(' ')
+                            })
+                        && cache
+                            .get_image(
+                                &mut fonts.font_system,
+                                glyph.physical((0.0, 0.0), 1.0).cache_key,
+                            )
+                            .as_ref()
+                            .is_none_or(|image| {
+                                image.placement.width == 0 || image.placement.height == 0
+                            });
                     (
                         glyph.glyph_id,
-                        &fonts.font_system.db().face(glyph.font_id).unwrap().families,
+                        glyph.w,
+                        hidden,
+                        fonts
+                            .font_system
+                            .db()
+                            .face(glyph.font_id)
+                            .unwrap()
+                            .families
+                            .clone(),
                     )
                 })
                 .collect();
             let matches = if emoji {
-                glyphs.len() == 1
-                    && glyphs.iter().all(|(id, families)| {
+                glyphs.iter().filter(|(_, _, hidden, _)| !hidden).count() == 1
+                    && glyphs.iter().all(|(id, _, _, families)| {
                         *id != 0 && families.iter().any(|(family, _)| family == emoji_family)
                     })
             } else {
@@ -140,14 +166,14 @@ fn wide_emoji_clusters_use_the_platform_colour_face() {
             };
             all_match &= matches;
             observations.push(format!(
-                "configured={configured} {text:?} wide={wide} bold={bold}: {} glyphs {glyphs:?}, matches={matches}",
+                "configured={configured} {text:?} wide={wide} bold={bold}: {} glyphs (id, width, hidden, families) {glyphs:?}, matches={matches}",
                 glyphs.len()
             ));
         }
     }
     assert!(
         all_match,
-        "expected one nonzero glyph from {emoji_family} for each wide emoji and ordinary routing for controls:\n{}",
+        "expected one visible nonzero glyph from {emoji_family} for each wide emoji and ordinary routing for controls:\n{}",
         observations.join("\n")
     );
 }
