@@ -965,7 +965,8 @@ impl Renderer {
             })
             .await
             .map_err(display_error("no compatible Venus GPU adapter"))?;
-        let spinners_turn = spinners_turn(adapter.get_info().device_type, animate_working_badge);
+        let adapter_info = adapter.get_info();
+        let spinners_turn = spinners_turn(adapter_info.device_type, animate_working_badge);
         let (device, queue) = adapter
             .request_device(&DeviceDescriptor::default())
             .await
@@ -996,7 +997,11 @@ impl Renderer {
         }
         let srgb_target = config.format.is_srgb();
         config.present_mode = PresentMode::Fifo;
-        config.alpha_mode = surface_alpha_mode(background_opacity, &capabilities.alpha_modes)?;
+        config.alpha_mode = surface_alpha_mode(
+            background_opacity,
+            adapter_info.backend,
+            &capabilities.alpha_modes,
+        )?;
         ensure_device_available(&device_lost)?;
         surface.configure(&device, &config);
         ensure_device_available(&device_lost)?;
@@ -2975,17 +2980,23 @@ fn nonzero(size: PhysicalSize<u32>) -> PhysicalSize<u32> {
 
 fn surface_alpha_mode(
     background_opacity: f32,
+    backend: wgpu::Backend,
     supported: &[CompositeAlphaMode],
 ) -> Result<CompositeAlphaMode, RenderError> {
     if background_opacity == 1.0 {
-        return Ok(CompositeAlphaMode::Auto);
+        Ok(CompositeAlphaMode::Auto)
+    } else if supported.contains(&CompositeAlphaMode::PreMultiplied) {
+        Ok(CompositeAlphaMode::PreMultiplied)
+    } else if backend == wgpu::Backend::Metal
+        && supported.contains(&CompositeAlphaMode::PostMultiplied)
+    {
+        // Core Animation composites non-opaque CAMetalLayer contents as premultiplied, as Venus renders.
+        Ok(CompositeAlphaMode::PostMultiplied)
+    } else {
+        Err(RenderError(
+            "the GPU surface does not support premultiplied transparency".into(),
+        ))
     }
-    supported
-        .contains(&CompositeAlphaMode::PreMultiplied)
-        .then_some(CompositeAlphaMode::PreMultiplied)
-        .ok_or_else(|| {
-            RenderError("the GPU surface does not support premultiplied transparency".into())
-        })
 }
 
 fn clear_color(color: SceneColor, background_opacity: f32, srgb_target: bool) -> wgpu::Color {
@@ -5799,12 +5810,13 @@ mod tests {
     #[test]
     fn background_opacity_selects_only_proved_surface_modes() {
         assert_eq!(
-            surface_alpha_mode(1.0, &[CompositeAlphaMode::Inherit]).unwrap(),
+            surface_alpha_mode(1.0, wgpu::Backend::Vulkan, &[CompositeAlphaMode::Inherit]).unwrap(),
             CompositeAlphaMode::Auto
         );
         assert_eq!(
             surface_alpha_mode(
                 0.88,
+                wgpu::Backend::Vulkan,
                 &[
                     CompositeAlphaMode::Opaque,
                     CompositeAlphaMode::PreMultiplied,
@@ -5813,8 +5825,53 @@ mod tests {
             .unwrap(),
             CompositeAlphaMode::PreMultiplied
         );
-        assert!(surface_alpha_mode(0.0, &[CompositeAlphaMode::Opaque]).is_err());
-        assert!(surface_alpha_mode(0.5, &[CompositeAlphaMode::PostMultiplied]).is_err());
+        assert_eq!(
+            surface_alpha_mode(
+                0.80,
+                wgpu::Backend::Metal,
+                &[
+                    CompositeAlphaMode::Opaque,
+                    CompositeAlphaMode::PostMultiplied,
+                ],
+            )
+            .unwrap(),
+            CompositeAlphaMode::PostMultiplied
+        );
+        assert_eq!(
+            surface_alpha_mode(
+                0.80,
+                wgpu::Backend::Metal,
+                &[
+                    CompositeAlphaMode::Opaque,
+                    CompositeAlphaMode::PreMultiplied,
+                    CompositeAlphaMode::PostMultiplied,
+                ],
+            )
+            .unwrap(),
+            CompositeAlphaMode::PreMultiplied
+        );
+        for backend in [wgpu::Backend::Metal, wgpu::Backend::Vulkan] {
+            assert!(surface_alpha_mode(0.0, backend, &[CompositeAlphaMode::Opaque]).is_err());
+        }
+        assert!(
+            surface_alpha_mode(
+                0.5,
+                wgpu::Backend::Vulkan,
+                &[CompositeAlphaMode::PostMultiplied],
+            )
+            .is_err()
+        );
+        assert!(
+            surface_alpha_mode(
+                0.5,
+                wgpu::Backend::Vulkan,
+                &[
+                    CompositeAlphaMode::Opaque,
+                    CompositeAlphaMode::PostMultiplied,
+                ],
+            )
+            .is_err()
+        );
     }
 
     fn clipping_test_fonts() -> FontSetup {
