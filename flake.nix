@@ -739,17 +739,27 @@
                     # roots need a TMPDIR of at most 7 bytes. Each build takes
                     # its own, since /tmp is shared by every build user.
                     eonTestBuildTmpdir="$TMPDIR"
+                    eonTestTmpdir=
                     for name in {0..9} {a..z}; do
                       if mkdir -m 700 "/tmp/e$name" 2>/dev/null; then
-                        export TMPDIR="/tmp/e$name"
+                        eonTestTmpdir="/tmp/e$name"
+                        export TMPDIR="$eonTestTmpdir"
                         break
                       fi
                     done
                     test "$TMPDIR" != "$eonTestBuildTmpdir"
+                    eonTestCleanup() {
+                      if [ -n "''${eonTestTmpdir:-}" ]; then
+                        rm -rf "$eonTestTmpdir"
+                      fi
+                    }
+                    # A failed check skips postCheck.
+                    failureHooks+=(eonTestCleanup)
                   '';
               postCheck =
                 lib.optionalString (!pkgs.stdenv.isLinux) ''
-                  rm -rf "$TMPDIR"
+                  eonTestCleanup
+                  eonTestTmpdir=
                 ''
                 + ''
                   export TMPDIR="$eonTestBuildTmpdir"
