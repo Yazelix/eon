@@ -538,8 +538,8 @@ fn features(r: &mut Recorder) -> Result<()> {
         Some(stop),
     )?;
     // The first quota read lands during the tab setup. Codex reads again a minute after its last
-    // read and Claude five minutes after. Workspace JSON omits quota, so check the stills and
-    // re-record.
+    // read and Claude five minutes after. The recorder does not wait for a quota reading, so check
+    // the stills and re-record.
     r.sleep(Duration::from_secs(4))?;
 
     let out = work.join("features");

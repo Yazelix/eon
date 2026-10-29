@@ -1,9 +1,10 @@
 use super::managed_environment::{PopupCatalog, PopupCommand, PopupDefinition};
 use eon_workspace_protocol::v24::{
-    Action, Attention, AttentionState, Column as SnapshotColumn, Direction, Failure, InvokeIntent,
-    MAX_COLUMNS, MAX_DIRECTORY_BYTES, MAX_SESSIONS, MAX_TABS, Pane as SnapshotPane,
-    Popup as SnapshotPopup, PopupEntry as SnapshotEntry, PopupKey, PopupTarget, Side, Sidebar,
-    Snapshot, Tab as SnapshotTab, WorkspaceAction, check_popup_action,
+    Action, Attention, AttentionKind, AttentionState, ClaudeQuotaState, CodexQuotaState,
+    Column as SnapshotColumn, Direction, Failure, InvokeIntent, MAX_COLUMNS, MAX_DIRECTORY_BYTES,
+    MAX_SESSIONS, MAX_TABS, Pane as SnapshotPane, Popup as SnapshotPopup,
+    PopupEntry as SnapshotEntry, PopupKey, PopupTarget, QuotaWindow, Side, Sidebar, Snapshot,
+    Tab as SnapshotTab, WorkspaceAction, check_popup_action,
 };
 use std::{
     collections::VecDeque,
@@ -2256,9 +2257,17 @@ fn attention_name(state: AttentionState) -> &'static str {
     }
 }
 
-/// A terminal's attention state, app and name, the only attention values the
-/// CLI projects (EON-C31); the program's report text never leaves EONW. An
-/// empty app or name is none.
+/// The CLI's name for a needs-input kind.
+fn attention_kind_name(kind: AttentionKind) -> &'static str {
+    match kind {
+        AttentionKind::Permission => "permission",
+        AttentionKind::Question => "question",
+        AttentionKind::Auth => "auth",
+    }
+}
+
+/// A terminal's attention state, app and name, the human projection's subset;
+/// JSON carries the full record (EON-C31). An empty app or name is none.
 fn attention_fields(
     attention: Option<&Attention>,
 ) -> (Option<&'static str>, Option<&str>, Option<&str>) {
@@ -2428,13 +2437,37 @@ pub(crate) fn json(snapshot: &Snapshot) -> String {
         output.push_str("]}");
     }
     output.push_str(&format!(
-        "],\"sidebar\":\"{}\"}}\n",
+        "],\"sidebar\":\"{}\",\"codex_quota\":",
         sidebar_name(snapshot.sidebar)
     ));
+    json_quota(
+        &mut output,
+        snapshot.codex_quota.as_ref().map(|quota| {
+            let state = match quota.state {
+                CodexQuotaState::Fresh => "fresh",
+                CodexQuotaState::Stale => "stale",
+                CodexQuotaState::Blocked => "blocked",
+                CodexQuotaState::Unknown => "unknown",
+            };
+            (state, quota.observed_at, quota.windows.as_slice())
+        }),
+    );
+    output.push_str(",\"claude_quota\":");
+    json_quota(
+        &mut output,
+        snapshot.claude_quota.as_ref().map(|quota| {
+            let state = match quota.state {
+                ClaudeQuotaState::Fresh => "fresh",
+                ClaudeQuotaState::Stale => "stale",
+            };
+            (state, quota.observed_at, quota.windows.as_slice())
+        }),
+    );
+    output.push_str("}\n");
     output
 }
 
-/// `{"state":...,"app":...,"name":...}`, or `null` without attention.
+/// The full attention record, or `null` without attention.
 fn json_attention(output: &mut String, attention: Option<&Attention>) {
     let (Some(state), app, name) = attention_fields(attention) else {
         output.push_str("null");
@@ -2444,7 +2477,62 @@ fn json_attention(output: &mut String, attention: Option<&Attention>) {
     json_option(output, app);
     output.push_str(",\"name\":");
     json_option(output, name);
+    if let Some(record) = attention.and_then(|attention| attention.record.as_ref()) {
+        output.push_str(",\"kind\":");
+        json_option(output, record.kind.map(attention_kind_name));
+        output.push_str(&format!(
+            ",\"progress\":{},\"title\":",
+            record
+                .progress
+                .map_or_else(|| "null".into(), |progress| progress.to_string())
+        ));
+        json_option(
+            output,
+            Some(record.title.as_str()).filter(|text| !text.is_empty()),
+        );
+        output.push_str(",\"message\":");
+        json_option(
+            output,
+            Some(record.message.as_str()).filter(|text| !text.is_empty()),
+        );
+        output.push_str(&format!(
+            ",\"changed_at\":{},\"stale\":{},\"others\":{}",
+            record.changed_at, record.stale, record.others
+        ));
+    } else {
+        output.push_str(",\"kind\":null,\"progress\":null,\"title\":null,\"message\":null,\"changed_at\":null,\"stale\":null,\"others\":null");
+    }
     output.push('}');
+}
+
+fn quota_milliseconds(seconds: u64) -> u128 {
+    u128::from(seconds) * 1000
+}
+
+fn json_quota(output: &mut String, quota: Option<(&str, u64, &[QuotaWindow])>) {
+    let Some((state, observed_at, windows)) = quota else {
+        output.push_str("null");
+        return;
+    };
+    output.push_str(&format!(
+        "{{\"state\":\"{state}\",\"observed_at\":{},\"windows\":[",
+        quota_milliseconds(observed_at)
+    ));
+    for (index, window) in windows.iter().enumerate() {
+        if index != 0 {
+            output.push(',');
+        }
+        output.push_str(&format!(
+            "{{\"duration_minutes\":{},\"remaining_percent\":{},\"resets_at\":{}}}",
+            window.duration_minutes,
+            window.remaining_percent,
+            window.resets_at.map_or_else(
+                || "null".into(),
+                |time| quota_milliseconds(time).to_string()
+            )
+        ));
+    }
+    output.push_str("]}");
 }
 
 /// The window's workspaces in order, one line each (`eon workspaces`).
@@ -3780,63 +3868,131 @@ mod tests {
     }
 
     #[test]
-    fn cli_output_carries_attention_state_and_app_but_never_report_text() {
+    fn cli_json_carries_the_full_attention_record_and_quotas_but_human_output_does_not() {
+        use eon_workspace_protocol::v24::{
+            AttentionKind, AttentionRecord, ClaudeQuota, ClaudeQuotaState, CodexQuota,
+            CodexQuotaState, QuotaWindow,
+        };
+
         let workspace = WorkspaceSet::with_recovered_sessions(
             "/runtime".into(),
             "/".into(),
             None,
-            vec![
-                (
-                    1,
-                    Session {
-                        id: "session-1".into(),
-                        endpoint: "/runtime/orbit.sock".into(),
-                    },
-                ),
-                (
-                    2,
-                    Session {
-                        id: "session-2".into(),
-                        endpoint: "/runtime/session-2.sock".into(),
-                    },
-                ),
-            ],
+            (1..=3)
+                .map(|number| {
+                    (
+                        number,
+                        Session {
+                            id: format!("session-{number}"),
+                            endpoint: format!("/runtime/session-{number}.sock").into(),
+                        },
+                    )
+                })
+                .collect(),
             catalog(),
         )
         .unwrap();
         let mut snapshot = workspace.snapshot();
         snapshot.tabs[0].columns[0].panes[0].attention = Some(Attention {
             state: AttentionState::NeedsInput,
-            record: Some(eon_workspace_protocol::v24::AttentionRecord {
-                kind: None,
+            record: Some(AttentionRecord {
+                kind: Some(AttentionKind::Permission),
                 progress: Some(40),
                 app: "codex".into(),
                 name: "eon \"9a\"".into(),
-                title: "secret title".into(),
-                message: "secret message".into(),
-                changed_at: 1,
+                title: "secret \"title\"".into(),
+                message: r#"secret "message"\path"#.into(),
+                changed_at: 1_720_000_000_123,
                 stale: true,
                 others: 3,
             }),
         });
+        snapshot.tabs[0].columns[0].panes[2].attention = Some(Attention {
+            state: AttentionState::Working,
+            record: Some(AttentionRecord {
+                kind: None,
+                progress: None,
+                app: String::new(),
+                name: String::new(),
+                title: String::new(),
+                message: String::new(),
+                changed_at: 1_720_000_000_456,
+                stale: false,
+                others: 0,
+            }),
+        });
+        snapshot.tabs[0].popups.push(SnapshotPopup {
+            id: "popup-1".into(),
+            entry: "agent".into(),
+            session: "session-4".into(),
+            endpoint: b"/runtime/session-4.sock".to_vec(),
+            attention: Some(Attention {
+                state: AttentionState::Unavailable,
+                record: None,
+            }),
+        });
         snapshot.tabs[0].attention_rollup = Some(AttentionState::NeedsInput);
         snapshot.sidebar = Sidebar::Closed;
-        let json = json(&snapshot);
-        assert!(json.contains(r#""attention_rollup":"needs-input","panes":[{"id":"p1","#));
+        snapshot.codex_quota = Some(CodexQuota {
+            state: CodexQuotaState::Stale,
+            observed_at: 1_720_000_000,
+            windows: vec![
+                QuotaWindow {
+                    duration_minutes: 300,
+                    remaining_percent: 80,
+                    resets_at: Some(1_720_000_300),
+                },
+                QuotaWindow {
+                    duration_minutes: 10080,
+                    remaining_percent: 60,
+                    resets_at: None,
+                },
+            ],
+        });
+        snapshot.claude_quota = Some(ClaudeQuota {
+            state: ClaudeQuotaState::Fresh,
+            observed_at: 1_720_000_001,
+            windows: vec![QuotaWindow {
+                duration_minutes: 300,
+                remaining_percent: 25,
+                resets_at: Some(1_720_000_600),
+            }],
+        });
+        let output = json(&snapshot);
+        assert!(output.contains(r#""attention_rollup":"needs-input","panes":[{"id":"p1","#));
         assert!(
-            json.contains(
-                r#""attention":{"state":"needs-input","app":"codex","name":"eon \"9a\""}}"#
-            )
+            output.contains(
+                r#""attention":{"state":"needs-input","app":"codex","name":"eon \"9a\"","kind":"permission","progress":40,"title":"secret \"title\"","message":"secret \"message\"\\path","changed_at":1720000000123,"stale":true,"others":3}}"#
+            ),
+            "{output}"
         );
-        assert!(json.contains(r#""label":"p2  unavailable","pinned_name":null,"attention":null}"#));
-        assert!(json.ends_with("],\"sidebar\":\"closed\"}\n"));
+        assert!(
+            output.contains(r#""label":"p2  unavailable","pinned_name":null,"attention":null}"#)
+        );
+        assert!(output.contains(
+            r#""attention":{"state":"working","app":null,"name":null,"kind":null,"progress":null,"title":null,"message":null,"changed_at":1720000000456,"stale":false,"others":0}}"#
+        ));
+        assert!(output.contains(
+            r#""attention":{"state":"unavailable","app":null,"name":null,"kind":null,"progress":null,"title":null,"message":null,"changed_at":null,"stale":null,"others":null}}"#
+        ));
+        assert!(output.ends_with(concat!(
+            r#"],"sidebar":"closed","codex_quota":{"state":"stale","observed_at":1720000000000,"windows":[{"duration_minutes":300,"remaining_percent":80,"resets_at":1720000300000},{"duration_minutes":10080,"remaining_percent":60,"resets_at":null}]}"#,
+            r#","claude_quota":{"state":"fresh","observed_at":1720000001000,"windows":[{"duration_minutes":300,"remaining_percent":25,"resets_at":1720000600000}]}}"#,
+            "\n"
+        )));
+        assert!(
+            json(&workspace.snapshot())
+                .ends_with("\"sidebar\":\"off\",\"codex_quota\":null,\"claude_quota\":null}\n")
+        );
+        snapshot.codex_quota.as_mut().unwrap().windows[0].resets_at = Some(18_446_744_073_709_552);
+        assert!(json(&snapshot).contains(r#""resets_at":18446744073709552000"#));
         let human = human(&snapshot);
         assert!(human.starts_with("active t1\nsidebar closed\ntab t1 "));
         assert!(human.contains(" attention=needs-input\n"));
         assert!(human.contains(" attention=needs-input app=codex name=eon \\\"9a\\\"\n"));
         assert!(human.contains(" attention=none app=none name=none\n"));
-        for output in [json, human] {
-            assert!(!output.contains("secret") && !output.contains("progress"));
+        for omitted in ["secret", "progress", "quota", "observed"] {
+            assert!(!human.contains(omitted), "{human}");
         }
     }
 

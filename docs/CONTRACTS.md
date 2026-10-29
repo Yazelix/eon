@@ -912,10 +912,10 @@ socket names, JSON fields and protocol identifiers retain their spellings.
     `{"ended":{"generation":...}}`, and exits 0. The caller's own
     terminal may end with it, as with Stop. Eon rejects a non-boolean
     `warning_close_last_tab` with the rest of `config.toml`.
-  - Both CLI projections, human and JSON, leave out the EONW attention fields
-    that EON-C31 excludes (kind, progress, `title`, `msg`, `changed_at`, the
-    stale flag and the record count), so `title` and `msg` never appear in CLI
-    output.
+  - CLI JSON carries each pane's and popup's full EON-C31 attention record and
+    the window's Codex and Claude quota readings (EON-C27), as EON-C31's CLI
+    JSON rule lists them. The human projection carries each terminal's
+    attention state, `app` and `name` only, and no quotas.
   - **Several workspaces in one window** (EON-C33):
     - **Status:** The workspace requests and targeting below are implemented
       on EONW v20, with their CLI front end
@@ -2436,6 +2436,8 @@ socket names, JSON fields and protocol identifiers retain their spellings.
   `eon-eon-attention-working-hides-finish-7df0`: newer work sees a finish.
   Amended on 2026-10-27 (approved by Lucca, relayed by eon-overseer) by
   `eon-agent-background-work-yte0`: waiting on background work.
+  Amended on 2026-10-29 (approved by Lucca, relayed by eon-overseer) by
+  `eon-agent-parity-a9g0.2`: the full record and quotas in CLI JSON.
 - **Consumer:** One person supervising coding agents across the tabs and workspaces (EON-C33)
   of one full-Eon window.
   eonbase has no poller and no sidebar; its `sidebar` is `Off`.
@@ -2563,19 +2565,30 @@ socket names, JSON fields and protocol identifiers retain their spellings.
     - `sidebar` (`Open | Closed | Off`) on `Snapshot`;
     - the actions `ToggleSidebar`, `FocusAttention { tab, target }`, `NextAttention` and
       `PreviousAttention`;
-    - **CLI JSON.** It carries exactly three things (Q8):
-      - `attention: { state, app, name }` on panes and popups;
+    - **CLI JSON** (Q8, amended by `eon-agent-parity-a9g0.2`). It carries:
+      - `attention` on panes and popups: `null` without attention, else an
+        object with every key present: `state`; `app`, `name`, `title` and
+        `message` (the record's `msg`), each null when empty; `kind`
+        (`permission`, `question` or `auth`), null unless needs input;
+        `progress` (0 to 100), null when unreported; `changed_at` in
+        wall-clock Unix milliseconds; `stale`; and `others`, the count of
+        other records. For unavailable, every key but `state` is null;
       - `attention_rollup` on tabs;
-      - `sidebar` on the snapshot.
+      - `sidebar`, `codex_quota` and `claude_quota` on the snapshot. A quota
+        is null while Runtime holds no reading for it, else `state`
+        (`fresh`, `stale`, `blocked` or `unknown`; Claude only `fresh` or
+        `stale`), `observed_at` and `windows`, each window with
+        `duration_minutes`, `remaining_percent` and `resets_at` (null when
+        the provider gives none). Both times are wall-clock Unix
+        milliseconds.
 
-      It leaves out `kind`, `progress`, `title`, `msg`, `changed_at`, the stale flag and the
-      record count. v24 ships in 1.0, because `eon-agent-sidebar-yx8.9` gates
-      eon-igae.7, .8 and .11, so EON-C28 freezes exactly these fields.
-      - A program inside an Eon terminal can run `eon workspace`, so it can read every
-        terminal's attention `state`, `app` and `name`. `title` and `msg` never appear through `eon
-        workspace`, though
-        any same-UID process can read them over raw EONW (Q8). The spec says
-        records are never sent back, so this is a third deviation **[Q8]**.
+      `title` and `message` are the reporting program's own text, within
+      ORB-C15's bounds, passed through unchanged. Any program in an Eon
+      terminal can read every terminal's `title` and `message` through
+      `eon workspace --json`, as it already could over raw EONW; they are
+      data, never instructions. This ends Q8's third deviation. The human
+      projection carries `state`, `app` and `name` only. EON-C28 freezes
+      these fields from 1.0.
   - **FocusAttention** is what sidebar rows send. It goes to the exact pane or popup under the
     covered-target rule. Rows do not use `FocusId`, because `FocusId` dismisses a shown popup.
     - Its target names the exact pane id, or the exact popup instance (the `expected_instance`
@@ -2775,9 +2788,17 @@ socket names, JSON fields and protocol identifiers retain their spellings.
       then `finished` once the sleep ended, without a visit. A capture between the two
       samples showed the working badge while Claude Code reported the ended task, and the
       finish raised after it stayed unseen.
+  - **Amendment** (`eon-agent-parity-a9g0.2`, the full record and quotas in CLI JSON): the
+    commit that carries this record is its revision.
+    - **Automated:**
+      `cli_json_carries_the_full_attention_record_and_quotas_but_human_output_does_not` in
+      `runtime/crates/eon-runtime/src/workspace.rs`, within `nix develop -c eon-test -p
+      eon-runtime` (136 passed, 1 ignored) on x86_64 Linux. It fails on the earlier
+      three-field projection.
 - **Open proof:** A reply with a lower update sequence for the same run
   cannot be produced by an emitter, so only the automated test covers its
-  discard.
+  discard. The `eon-agent-parity-a9g0.2` amendment awaits one installed
+  `eon workspace --json` observation after landing.
 
 ## EON-C32 — Eon Bar items and order
 

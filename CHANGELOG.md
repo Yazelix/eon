@@ -5,6 +5,10 @@ installation, and proven contract changes.
 
 ## Unreleased
 
+- `eon workspace --json` and workspace action replies include each terminal's
+  full agent attention record and the Codex and Claude quota readings. All
+  JSON times are Unix milliseconds. Human output is unchanged.
+
 - `eon tab create [--json] [--no-focus] --directory DIRECTORY [-- COMMAND [ARGS...]]`
   starts a tab at DIRECTORY without the picker, with the default pane or an
   exact command requested from an Eon terminal. `--no-focus` preserves the
