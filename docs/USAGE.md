@@ -81,6 +81,9 @@ confirmation. Closing a window is therefore detach; stopping a generation ends
 its terminals. To end every terminal in the window you are in, open Commands
 (Alt+Shift+M) and choose Quit this window: it runs `eon stop` for that window's
 generation, with the same confirmation, and stops only that window.
+At a terminal, any answer but `y`, `Y`, `yes` or `YES` cancels
+and exits 0. Without a terminal, a piped yes still confirms; any other answer,
+including end of input, exits 1 with `not-confirmed` and sends no Stop.
 Previous generations that use the current EONW can be stopped
 through their own supervisor even when the current desktop cannot attach to them.
 A generation from a build with another EONW version is listed as incompatible;
@@ -460,8 +463,8 @@ exit 2, and ambiguous window selection exits 1.
 
 | Status | Meaning |
 |---:|---|
-| 0 | Success, including a declined Stop or close confirmation |
-| 1 | The command was understood but refused or failed |
+| 0 | Success, including a Stop or close confirmation declined at a terminal |
+| 1 | The command was understood but refused or failed, including a confirmation that got no yes when stdin is not a terminal |
 | 2 | Invalid command or arguments, such as a malformed tab or generation ID |
 | 3 | The named tab, pane, terminal, popup, generation or window was not found |
 | 4 | The supervisor is not running or did not answer; outside Eon, run `eon` first |

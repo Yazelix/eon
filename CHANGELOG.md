@@ -5,6 +5,10 @@ installation, and proven contract changes.
 
 ## Unreleased
 
+- CLI confirmations without a terminal now exit 1 with `not-confirmed` when
+  no yes is read, including end of input. A piped yes still confirms; declining
+  at a terminal still prints the cancel note and exits 0.
+
 - Agent attention: an agent that reports done, or idle, while processes it
   started in its terminal still run shows as waiting on background work
   instead of finished or idle, until that work ends. Its tab badge and

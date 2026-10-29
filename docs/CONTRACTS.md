@@ -824,6 +824,13 @@ socket names, JSON fields and protocol identifiers retain their spellings.
     `--json`. The CLI projection derives the status from the failure code.
     Multi-target Stop exits with its largest status; commands that run another
     program pass on its status.
+  - A CLI confirmation (`eon stop`, `eon window stop`, `eon workspace close`,
+    and the final close of `eon tab close` and `eon pane close`) proceeds only
+    on a yes answer (`y`, `Y`, `yes` or `YES`). Any other answer changes
+    nothing. At a terminal it prints the cancel note and exits 0. When stdin
+    is not a terminal, it exits 1 with `not-confirmed`, end of input included,
+    and a piped yes still confirms. `--json` never asks. The final close asks
+    only at a terminal and otherwise closes.
   - Every Eon terminal's environment carries `EON_TERMINAL`, an opaque value
     naming that terminal's exact Orbit run; the supervisor's other children
     never inherit one. For workspace control, `EON_TERMINAL` selects the live supervisor and workspace that own that
@@ -1246,7 +1253,9 @@ socket names, JSON fields and protocol identifiers retain their spellings.
     current. Each selected generation uses the existing validated
     Stop; human mode confirms each target, while `--json` returns a result array
     without confirmation. Declining one target reports that no Stop was sent for
-    that generation; earlier outcomes remain and later targets continue.
+    that generation; without a terminal that target is `not-confirmed` (exit 1),
+    and the command exits with the largest status. Earlier outcomes remain and
+    later targets continue.
     Failed or unavailable targets do not suppress later targets while the CLI
     remains running.
     A Stop of the caller's own terminal can terminate the CLI before it receives

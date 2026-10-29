@@ -17,6 +17,7 @@ use std::{
     env,
     ffi::OsString,
     fs,
+    io::IsTerminal,
     os::unix::{
         ffi::OsStrExt,
         fs::{FileTypeExt, MetadataExt, symlink},
@@ -883,18 +884,18 @@ pub(super) fn stop_generation(
             );
         }
     };
-    if !json {
-        eprint!(
-            "Stop generation {target} and {} live terminal{} [{}]? [y/N] ",
-            record.sessions.len(),
-            if record.sessions.len() == 1 { "" } else { "s" },
-            record.sessions.join(", ")
-        );
-        let answer = read_stop_confirmation()?;
-        if !matches!(answer.trim(), "y" | "Y" | "yes" | "YES") {
-            write_stdout(format!("cancelled; no Stop sent for generation {target}\n"))?;
-            return Ok(0);
-        }
+    if !json
+        && let Some(status) = confirm(
+            &format!(
+                "Stop generation {target} and {} live terminal{} [{}]? [y/N] ",
+                record.sessions.len(),
+                if record.sessions.len() == 1 { "" } else { "s" },
+                record.sessions.join(", ")
+            ),
+            &format!("cancelled; no Stop sent for generation {target}\n"),
+        )?
+    {
+        return Ok(status);
     }
 
     let stream = match connect_control(&control) {
@@ -949,7 +950,8 @@ pub(super) fn stop_generation(
     }
 }
 
-pub(super) fn read_stop_confirmation() -> Result<String, String> {
+pub(super) fn confirm(question: &str, cancelled: &str) -> Result<Option<i32>, String> {
+    eprint!("{question}");
     let mut answer = Vec::new();
     loop {
         let mut byte = 0u8;
@@ -967,8 +969,39 @@ pub(super) fn read_stop_confirmation() -> Result<String, String> {
             }
         }
     }
-    String::from_utf8(answer)
-        .map_err(|_| "cannot read stop confirmation: stream did not contain valid UTF-8".into())
+    match confirmation_status(&answer, std::io::stdin().is_terminal()) {
+        Confirmation::Confirmed => Ok(None),
+        Confirmation::Cancelled => {
+            write_stdout(cancelled)?;
+            Ok(Some(0))
+        }
+        Confirmation::Refused => report_failure(
+            &failure(
+                "not-confirmed",
+                format!(
+                    "{}; no yes was read and stdin is not a terminal",
+                    cancelled.trim_end().trim_start_matches("cancelled; ")
+                ),
+            ),
+            false,
+        )
+        .map(Some),
+    }
+}
+
+#[derive(Debug, PartialEq, Eq)]
+enum Confirmation {
+    Confirmed,
+    Cancelled,
+    Refused,
+}
+
+fn confirmation_status(answer: &[u8], terminal: bool) -> Confirmation {
+    match answer.trim_ascii() {
+        b"y" | b"Y" | b"yes" | b"YES" => Confirmation::Confirmed,
+        _ if terminal => Confirmation::Cancelled,
+        _ => Confirmation::Refused,
+    }
 }
 
 pub(super) fn stop_generations(
@@ -1030,8 +1063,8 @@ fn stopped_json(stopped: &Stopped) -> String {
 #[cfg(test)]
 mod tests {
     use super::{
-        current_generation, discover_generations, generation_directory, generation_id,
-        valid_generation,
+        Confirmation, confirmation_status, current_generation, discover_generations,
+        generation_directory, generation_id, valid_generation,
     };
     use crate::supervisor::{lock_supervisor_lifecycle, supervisor_lock_path, temporary_directory};
     use std::{
@@ -1045,6 +1078,36 @@ mod tests {
         thread,
         time::{Duration, Instant},
     };
+
+    #[test]
+    fn confirmation_requires_yes_and_only_terminal_declines_succeed() {
+        for terminal in [false, true] {
+            for answer in [b"y".as_slice(), b"Y", b"yes", b"YES", b" \tyes\r\n"] {
+                assert_eq!(
+                    confirmation_status(answer, terminal),
+                    Confirmation::Confirmed
+                );
+            }
+            for answer in [
+                b"".as_slice(),
+                b"n",
+                b"no",
+                b"Yes",
+                b" yes please ",
+                b"\xff",
+                b"y\xff",
+            ] {
+                assert_eq!(
+                    confirmation_status(answer, terminal),
+                    if terminal {
+                        Confirmation::Cancelled
+                    } else {
+                        Confirmation::Refused
+                    }
+                );
+            }
+        }
+    }
 
     #[test]
     fn generation_identity_is_stable_bounded_and_namespaced() {

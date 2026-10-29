@@ -4,9 +4,8 @@ use super::{
         send_action, send_action_from, validate_action, write_stdout,
     },
     generation::{
-        WorkspaceTarget, attach_generation, current_generation, generations_command,
-        read_stop_confirmation, resolve_workspace, stop_generation, stop_generations,
-        valid_generation,
+        WorkspaceTarget, attach_generation, confirm, current_generation, generations_command,
+        resolve_workspace, stop_generation, stop_generations, valid_generation,
     },
     managed_environment,
     sessions::{TAB_VARIABLE, TERMINAL_VARIABLE},
@@ -872,6 +871,7 @@ workspace new --name NAME names the new workspace; created gives its ID.
 With --no-focus, workspace new keeps the shown workspace, and either
 pane create keeps the selected pane and any popup.
 Where shown, {command}--json{reset} prints JSON and skips confirmation.
+Without a terminal, a confirmation needs yes or exits 1 (not-confirmed).
 Exit status: 0 success, 1 failed, 2 invalid command, 3 target not found,
 4 Eon unreachable, 130 interrupted.
 "
@@ -1027,11 +1027,8 @@ fn control(
         )?
     {
         let (question, cancelled) = final_close_prompt(&terminals, workspace.as_deref());
-        eprint!("{question}");
-        let answer = read_stop_confirmation()?;
-        if !matches!(answer.trim(), "y" | "Y" | "yes" | "YES") {
-            write_stdout(cancelled)?;
-            return Ok(0);
+        if let Some(status) = confirm(&question, &cancelled)? {
+            return Ok(status);
         }
     }
     // Closing a workspace asks as Stop does, about the wN that WS resolves to
@@ -1057,22 +1054,22 @@ fn control(
             Err(error) => return report_failure(&error, json),
         };
         let id = &target.id;
-        eprint!(
-            "Close workspace {id}{}? This {}stops every terminal in it. [y/N] ",
-            target
-                .name
-                .as_ref()
-                .map_or_else(String::new, |name| format!(" ({})", name.escape_debug())),
-            if listed.len() == 1 {
-                "quits the window and "
-            } else {
-                ""
-            }
-        );
-        let answer = read_stop_confirmation()?;
-        if !matches!(answer.trim(), "y" | "Y" | "yes" | "YES") {
-            write_stdout(format!("cancelled; workspace {id} stays open\n"))?;
-            return Ok(0);
+        if let Some(status) = confirm(
+            &format!(
+                "Close workspace {id}{}? This {}stops every terminal in it. [y/N] ",
+                target
+                    .name
+                    .as_ref()
+                    .map_or_else(String::new, |name| format!(" ({})", name.escape_debug())),
+                if listed.len() == 1 {
+                    "quits the window and "
+                } else {
+                    ""
+                }
+            ),
+            &format!("cancelled; workspace {id} stays open\n"),
+        )? {
+            return Ok(status);
         }
         match inspect(socket, caller.as_deref(), generation) {
             Ok(snapshot) if snapshot.workspaces.iter().any(|item| item.id == *id) => {}

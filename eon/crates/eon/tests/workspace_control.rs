@@ -3481,12 +3481,16 @@ fn workspace_cli_lists_creates_switches_renames_and_closes() {
 
     // Without --json, close asks about the one workspace WS names; anything but yes keeps it.
     let cancelled = invoke(&binary, &runtime, &config, &["workspace", "close", "alpha"]);
-    assert!(cancelled.status.success());
+    assert_eq!(cancelled.status.code(), Some(1));
     assert!(
         String::from_utf8_lossy(&cancelled.stderr)
             .contains("Close workspace w2 (alpha)? This stops every terminal in it.")
     );
-    assert_eq!(stdout(&cancelled), "cancelled; workspace w2 stays open\n");
+    assert_eq!(stdout(&cancelled), "");
+    assert!(String::from_utf8_lossy(&cancelled.stderr).contains(
+        "error not-confirmed: workspace w2 stays open; no yes was read and stdin is not a terminal"
+    ));
+    assert_eq!(list(), shown_main);
     let unknown = invoke(&binary, &runtime, &config, &["workspace", "close", "w9"]);
     assert_eq!(unknown.status.code(), Some(3));
     assert!(!String::from_utf8_lossy(&unknown.stderr).contains("Close workspace"));
@@ -6102,11 +6106,28 @@ fn new_windows_keep_independent_supervisors_and_stop_by_window_id() {
     fs::remove_file(runtime.join("w").join("aaaaaaaa")).unwrap();
 
     let third = open();
+    let declined = invoke(&binary, &runtime, &config, &["window", "stop", &second]);
+    assert_eq!(declined.status.code(), Some(1));
+    assert_eq!(stdout(&declined), "");
+    assert!(String::from_utf8_lossy(&declined.stderr).contains("error not-confirmed:"));
     let (caller, other) = if second < third {
         (&second, &third)
     } else {
         (&third, &second)
     };
+    let declined = command()
+        .env("EON_WINDOW_RUNTIME_DIR", runtime.join("w").join(caller))
+        .args(["window", "stop", "all"])
+        .output()
+        .unwrap();
+    assert_eq!(declined.status.code(), Some(1));
+    assert_eq!(stdout(&declined), "");
+    assert_eq!(
+        String::from_utf8_lossy(&declined.stderr)
+            .matches("error not-confirmed:")
+            .count(),
+        2
+    );
     let mut batch = TestProcess {
         child: command()
             .env("EON_WINDOW_RUNTIME_DIR", runtime.join("w").join(caller))
@@ -6505,6 +6526,56 @@ fn window_attach_runs_the_build_that_started_its_generation() {
 }
 
 #[test]
+fn stop_without_terminal_requires_yes() {
+    let root = temporary_directory();
+    let runtime = root.join("runtime");
+    let config = root.join("config");
+    configure_mock_desktop(&config);
+    let stop = root.join("stop");
+    let orbit = root.join("orbit");
+    let venus = root.join("venus");
+    managed_orbit_executable(&orbit);
+    executable(&venus, "#!/bin/sh\nexit 0\n");
+
+    let binary = PathBuf::from(env!("CARGO_BIN_EXE_eon"));
+    let mut supervisor = TestProcess {
+        child: eon_command(&binary)
+            .arg("run")
+            .env("EON_RUNTIME_DIR", &runtime)
+            .env("EON_CONFIG_HOME", &config)
+            .env("EON_ORBIT", &orbit)
+            .env("EON_VENUS", &venus)
+            .env("EON_TEST_STOP", &stop)
+            .stdout(Stdio::null())
+            .stderr(Stdio::null())
+            .spawn()
+            .unwrap(),
+        stop,
+    };
+    let generation = generation_runtime(&runtime);
+    wait_for_connection(&generation.join("eon.sock"));
+    let id = generation.file_name().unwrap().to_str().unwrap();
+
+    let declined = invoke(&binary, &runtime, &config, &["stop", id]);
+    assert_eq!(declined.status.code(), Some(1), "{declined:?}");
+    assert_eq!(stdout(&declined), "");
+    assert!(String::from_utf8_lossy(&declined.stderr).contains(&format!(
+        "error not-confirmed: no Stop sent for generation {id}; no yes was read and stdin is not a terminal"
+    )));
+    assert!(supervisor.child.try_wait().unwrap().is_none());
+    assert!(
+        invoke(&binary, &runtime, &config, &["workspace", "--json"])
+            .status
+            .success()
+    );
+
+    let stopped = invoke(&binary, &runtime, &config, &["stop", id, "--json"]);
+    assert!(stopped.status.success(), "{}", stdout(&stopped));
+    wait_for_successful_exit(&mut supervisor.child);
+    fs::remove_dir_all(root).unwrap();
+}
+
+#[test]
 fn previous_and_all_stop_older_generations_when_current_is_unstarted() {
     let root = temporary_directory();
     let runtime = root.join("runtime");
@@ -6615,10 +6686,11 @@ fn batch_stop_preserves_current_until_all_and_reports_unavailable_generations() 
         .write_all(b"y\nn\n")
         .unwrap();
     let human = human.wait_with_output().unwrap();
-    assert!(human.status.success(), "{}", stdout(&human));
+    assert_eq!(human.status.code(), Some(1), "{}", stdout(&human));
     assert!(stdout(&human).contains(&format!("stopped generation {third_id}:")));
-    assert!(stdout(&human).contains(&format!(
-        "cancelled; no Stop sent for generation {current_id}"
+    assert!(!stdout(&human).contains("cancelled;"));
+    assert!(String::from_utf8_lossy(&human.stderr).contains(&format!(
+        "error not-confirmed: no Stop sent for generation {current_id}; no yes was read and stdin is not a terminal"
     )));
     assert!(current.child.try_wait().unwrap().is_none());
     third.join().unwrap();
