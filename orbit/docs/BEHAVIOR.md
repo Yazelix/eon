@@ -1234,8 +1234,9 @@ left-button mouse event, and a finish names the current revision. `Cancel`
 ends either route and clears the presentation but keeps the copy; a resize or
 viewport move clears the selection, and losing the client also forgets the
 copy. The child's exit ends either route and clears a presented selection;
-when the host reaps the child while the PTY is open, the
-last frame before `Exited` shows it cleared. Bend's session holds the route
+the last frame before `Exited` shows it cleared whether the host reaps the
+child first or the PTY reports end of file first. Bend publishes the clear on
+`PtyClosed` as on `ChildExited`. Bend's session holds the route
 and whether a selection is presented or a copy exists, and Bend decides each
 of these clears; Rust keeps libghostty's gesture and the frozen text.
 
@@ -1283,19 +1284,24 @@ when the child enables mouse tracking, sends a sequence to a child that tracks
 the mouse as SGR press and release reports, selects `WORLD` on the host with
 Shift while the child tracks the mouse, and finds the copy gone for a new
 client, which selects `WORLD` again before the child exits: the last frame
-before `Exited` presents no selection, and a `step` that kept the selection at
-the exit made it fail. The real-PTY selection-tick check refuses a tick
-without a gesture and one away from the top row, defers one during a
-synchronized update and refuses a second, then ticks through all 37 history
-rows and four more at the oldest row, and copies exactly `line 01` to
-`line 42`. It then commits 35 rows toward live and finds the presented selection
-cleared though rows of it stay in view, selects again two rows above live and
-returns to live with that selection cleared (ORB-C8); dropping the clear from
-either move made it fail. A unit test replays a click-ladder stimulus on a
-wrapped line with output between each press and release, and checks that
-exactly the copied text's cells are highlighted; giving the third press
-libghostty's native events instead of span events made it fail, and so did
-presenting no cell as selected.
+before `Exited` presents no selection, and a `step` that kept the selection
+when the child is reaped made it fail. It takes whichever order the platform
+gives; no real-PTY check forces the end-of-file order, since Linux reports
+EIO, which Orbit treats as closed only after the reap. The host's worker unit
+test `a_closed_pty_publishes_the_clear_of_a_presented_selection` sends
+`PtyClosed` with a presented selection and requires the published clear; the
+base `ended`, which cleared without publishing, made it fail. The real-PTY
+selection-tick check refuses a tick without a gesture and one away from the
+top row, defers one during a synchronized update and refuses a second, then
+ticks through all 37 history rows and four more at the oldest row, and copies
+exactly `line 01` to `line 42`. It then commits 35 rows toward live and finds
+the presented selection cleared though rows of it stay in view, selects
+again two rows above live and returns to live with that selection cleared
+(ORB-C8); dropping the clear from either move made it fail. A unit test
+replays a click-ladder stimulus on a wrapped line with output between each
+press and release, and checks that exactly the copied text's cells are
+highlighted; giving the third press libghostty's native events instead of
+span events made it fail, and so did presenting no cell as selected.
 
 Unit tests in [src/pointer.rs](../src/pointer.rs) cover the rest of the
 gesture mechanism (ORB-C9). `spans_end_only_at_ascii_space_tab_and_unwritten_cells`

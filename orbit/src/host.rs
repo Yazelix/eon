@@ -1777,7 +1777,7 @@ pub(crate) fn built_worker_output_bound() -> usize {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::boundary::Foreground;
+    use crate::boundary::{FirstMessage, Foreground, Selected, SelectionKind};
 
     /// The deadline judges only an incomplete answer: one the worker already
     /// wrote, or whose lines were already read, is accepted after it, as when
@@ -1884,6 +1884,81 @@ mod tests {
         );
         bend.worker.kill().unwrap();
         bend.worker.wait().unwrap();
+    }
+
+    /// ORB-C9: PTY end of file publishes a presented selection's clear before exit.
+    #[test]
+    fn a_closed_pty_publishes_the_clear_of_a_presented_selection() {
+        let _guard = crate::test_support::FORK_AND_SOCKET_TEST.lock().unwrap();
+        let mut bend = Bend::spawn(
+            Path::new(env!("ORBIT_BUILT_WORKER")),
+            &["--threads".into(), "1".into()],
+        )
+        .unwrap();
+        bend.bounds().unwrap();
+        assert!(
+            bend.ask(Fact::Started { pid: 1 }, Flags::default())
+                .unwrap()
+                .is_empty()
+        );
+        assert_eq!(
+            bend.ask(Fact::Peer(FirstMessage::Hello), Flags::default())
+                .unwrap(),
+            [
+                Decision::Attach,
+                Decision::Capture { on: true },
+                Decision::Frame { revision: 0 },
+            ]
+        );
+        assert_eq!(
+            bend.ask(
+                Fact::Selection {
+                    kind: SelectionKind::Begin,
+                    revision: 0,
+                },
+                Flags {
+                    frame_room: true,
+                    host_room: true,
+                    ..Flags::default()
+                },
+            )
+            .unwrap(),
+            [Decision::SelectHost]
+        );
+        assert_eq!(
+            bend.ask(
+                Fact::Selected {
+                    outcome: Selected::Began,
+                    presented: true,
+                },
+                Flags::default(),
+            )
+            .unwrap(),
+            [Decision::Accepted, Decision::Frame { revision: 1 }]
+        );
+        let cleared = bend.ask(Fact::PtyClosed, Flags::default()).unwrap();
+        let empty = bend.ask(Fact::PtyClosed, Flags::default()).unwrap();
+        let exited = bend
+            .ask(Fact::ChildExited { drained: false }, Flags::default())
+            .unwrap();
+        bend.worker.kill().unwrap();
+        bend.worker.wait().unwrap();
+        assert_eq!(
+            cleared,
+            [
+                Decision::Unselect { advance: true },
+                Decision::Frame { revision: 2 },
+            ]
+        );
+        assert_eq!(empty, [Decision::Unselect { advance: false }]);
+        assert_eq!(
+            exited,
+            [
+                Decision::Unselect { advance: false },
+                Decision::Release,
+                Decision::Reap,
+            ]
+        );
     }
 
     #[test]

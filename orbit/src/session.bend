@@ -333,9 +333,8 @@ def on_route(route: Selection.Route, session: Session) -> Session:
     case Session{life, written, observer, explicit, waiting, pointer, manage}:
       Session{life, written, observer, explicit, waiting, with_route(route, pointer), manage}
 
-# A closed PTY ends a sequence on either route and clears the host selection,
-# keeping the copy.
-def ended(session: Session) -> Next():
+# Ends a sequence on either route and clears the host selection, keeping the copy.
+def end_sequence(session: Session) -> Next():
   match session:
     case Session{life, written, observer, explicit, waiting, +pointer, manage}:
       (
@@ -752,6 +751,31 @@ def republished(+flags: Boundary.Flags, session: Session) -> Next():
         publish(Boundary.held(flags), is_attached(life), observer, waiting, flags)
       )
 
+# A closed PTY ends either route and publishes the clear of a presented
+# selection, keeping the copy.
+def ended(flags: Boundary.Flags, session: Session) -> Next():
+  match session:
+    case Session{life, written, observer, explicit, waiting, pointer, manage}:
+      match pointer:
+        case Pointer{route, presented, copied}:
+          match presented:
+            case True{}:
+              prefixed(
+                [Boundary.Unselect{True{}}],
+                republished(flags, Session{
+                  life, written, observer, explicit, waiting,
+                  Pointer{Selection.Idle{}, False{}, copied}, manage
+                })
+              )
+            case False{}:
+              (
+                Session{
+                  life, written, observer, explicit, waiting,
+                  Pointer{Selection.Idle{}, False{}, copied}, manage
+                },
+                [Boundary.Unselect{False{}}]
+              )
+
 # A press on the terminal's route resets the gesture and clears the host
 # selection and its copy; clearing a presented selection advances authority
 # and publishes a frame.
@@ -964,7 +988,7 @@ def tick_held(
         case Boundary.TickStateNotTopRow{}:
           (session, reject(Boundary.ReasonTickNotTopRow{}))
         case Boundary.TickStateAnchorLost{}:
-          followed(ended(session), reject(Boundary.ReasonAnchorLost{}))
+          followed(end_sequence(session), reject(Boundary.ReasonAnchorLost{}))
 
 def ticked(
   state: Boundary.TickState, x: U32, y: U32, +flags: Boundary.Flags, session: Session
@@ -1141,7 +1165,7 @@ def decide(
     # written, a pointer sequence ends, and the run waits for the child's
     # exit (ORB-C1).
     case Boundary.PtyClosed{}:
-      ended(session)
+      ended(flags, session)
     case Boundary.Peer{message}:
       admit(peer_signal(message), flags, session)
     case Boundary.Applied{effect}:

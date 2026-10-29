@@ -195,9 +195,13 @@ pub fn run() {
     assert!(selected(&last));
     copied(&mut client, Selection, "WORLD");
     gate.release();
+    let mut frames = Vec::new();
     loop {
         match client.receive() {
-            ServerMessage::Frame(frame) => last = *frame,
+            ServerMessage::Frame(frame) => {
+                frames.push((frame.revision, selected(&frame)));
+                last = *frame;
+            }
             ServerMessage::Exited { code } => {
                 assert_eq!(code, 3, "exit code");
                 break;
@@ -205,7 +209,11 @@ pub fn run() {
             other => panic!("expected a frame or Exited, received {}", brief(&other)),
         }
     }
-    assert!(!selected(&last));
+    assert!(
+        !selected(&last),
+        "last frame {} still selected; frames after gate (revision, selected): {frames:?}",
+        last.revision
+    );
     drop(client);
 
     server.passed(3, 10.0);
