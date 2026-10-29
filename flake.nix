@@ -800,6 +800,7 @@
                 ln -s ${carapacePackage}/bin/carapace "$out/libexec/eon/bin/carapace"
                 cp -r ${shellEnvironment} "$out/libexec/eon/shell"
                 install -Dm444 ${./LICENSE} "$out/share/licenses/eon/LICENSE"
+                install -Dm444 ${./eon/skills/eon/SKILL.md} "$out/share/eon/skills/eon/SKILL.md"
                 install -Dm444 ${./runtime/LICENSE} "$out/share/licenses/eon/eon-runtime/LICENSE"
                 install -Dm444 ${./runtime/NOTICE} "$out/share/licenses/eon/eon-runtime/NOTICE"
                 install -Dm444 ${anima}/LICENSE "$out/share/licenses/eon/anima/LICENSE"

@@ -5,6 +5,10 @@ installation, and proven contract changes.
 
 ## Unreleased
 
+- `eon workspace` names its calling terminal, tab and pane or popup in JSON
+  `caller` and a human caller line. Eon packages an agent skill with documented
+  manual install and optional session-start hooks for Claude Code and Codex.
+
 - `eon workspace --json` and workspace action replies include each terminal's
   full agent attention record and the Codex and Claude quota readings. All
   JSON times are Unix milliseconds. Human output is unchanged.

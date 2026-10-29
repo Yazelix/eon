@@ -8,12 +8,12 @@ use super::{
         resolve_workspace, stop_generation, stop_generations, valid_generation,
     },
     managed_environment,
-    sessions::{TAB_VARIABLE, TERMINAL_VARIABLE},
+    sessions::{TAB_VARIABLE, TERMINAL_VARIABLE, terminal_session},
     supervisor::{LaunchMode, configuration_directory, launch_current, prepare_configuration},
     windows,
     workspace::{
-        human as human_output, json as json_output, json_escape, list_human, list_json,
-        resolve_selector,
+        caller_output, human as human_output, json as json_output, json_escape, list_human,
+        list_json, resolve_selector,
     },
 };
 use eon_workspace_protocol::v24::{
@@ -1089,7 +1089,8 @@ fn control(
         action,
         Action::Workspace(WorkspaceAction::NewWorkspace { .. })
     );
-    let response = match send_action_from(Ok(socket), caller, action) {
+    let inspecting = !list && matches!(action, Action::Workspace(WorkspaceAction::Inspect));
+    let response = match send_action_from(Ok(socket), caller.clone(), action) {
         Ok(response) => response,
         Err(error) if error.kind == EndpointFailureKind::InvalidAction => {
             return report_failure(&failure("malformed-action", error.detail), json);
@@ -1100,6 +1101,15 @@ fn control(
     };
     match response {
         ControlResponse::Workspace(Response::Snapshot(snapshot)) => {
+            let caller = if inspecting {
+                caller_output(
+                    &snapshot,
+                    caller.as_deref().and_then(terminal_session),
+                    json,
+                )
+            } else {
+                String::new()
+            };
             let window = resolved
                 .window
                 .as_deref()
@@ -1119,7 +1129,7 @@ fn control(
                 .map(|item| item.id.as_str());
             write_stdout(if json {
                 format!(
-                    "{{\"generation\":\"{}\",\"window\":{window},\"workspace\":\"{}\",{}{}",
+                    "{{\"generation\":\"{}\",\"window\":{window},\"workspace\":\"{}\",{caller}{}{}",
                     json_escape(generation),
                     json_escape(&snapshot.workspace),
                     created.map_or_else(String::new, |id| format!(
@@ -1134,7 +1144,7 @@ fn control(
                 )
             } else {
                 format!(
-                    "generation {generation}\nwindow {}\nworkspace {}\n{}{}",
+                    "generation {generation}\nwindow {}\nworkspace {}\n{caller}{}{}",
                     resolved.window.as_deref().unwrap_or("default"),
                     snapshot.workspace,
                     created.map_or_else(String::new, |id| format!("created {id}\n")),

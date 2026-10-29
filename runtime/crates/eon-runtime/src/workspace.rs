@@ -2298,6 +2298,49 @@ fn human_attention(attention: Option<&Attention>) -> String {
     )
 }
 
+/// The calling terminal's JSON envelope field or human header line.
+pub(crate) fn caller_output(snapshot: &Snapshot, session: Option<&str>, json: bool) -> String {
+    let caller = session.and_then(|session| {
+        snapshot.tabs.iter().find_map(|tab| {
+            if let Some((_, _, pane)) =
+                column_panes(tab).find(|(_, _, pane)| pane.session == session)
+            {
+                Some((session, tab.id.as_str(), Some(pane.id.as_str()), None))
+            } else {
+                tab.popups
+                    .iter()
+                    .find(|popup| popup.session == session)
+                    .map(|popup| (session, tab.id.as_str(), None, Some(popup.id.as_str())))
+            }
+        })
+    });
+    let Some((terminal, tab, pane, popup)) = caller else {
+        return if json {
+            "\"caller\":null,".into()
+        } else {
+            String::new()
+        };
+    };
+    if json {
+        let mut output = format!(
+            "\"caller\":{{\"terminal\":\"{}\",\"tab\":\"{}\",\"pane\":",
+            json_escape(terminal),
+            json_escape(tab)
+        );
+        json_option(&mut output, pane);
+        output.push_str(",\"popup\":");
+        json_option(&mut output, popup);
+        output.push_str("},");
+        output
+    } else {
+        format!(
+            "caller terminal={terminal} tab={tab} pane={} popup={}\n",
+            pane.unwrap_or("none"),
+            popup.unwrap_or("none")
+        )
+    }
+}
+
 pub(crate) fn human(snapshot: &Snapshot) -> String {
     let mut output = format!(
         "active {}\nsidebar {}\n",
@@ -3859,6 +3902,33 @@ mod tests {
             .code,
             "duplicate-request"
         );
+    }
+
+    #[test]
+    fn caller_output_finds_a_popup_and_omits_an_absent_terminal() {
+        let mut snapshot = two_workspace_set(|_| Ok(())).snapshot();
+        snapshot.tabs[0].popups.push(super::SnapshotPopup {
+            id: "u9".into(),
+            entry: "project".into(),
+            session: "session-9".into(),
+            endpoint: b"/runtime/session-9.sock".to_vec(),
+            attention: None,
+        });
+        assert_eq!(
+            super::caller_output(&snapshot, Some("session-9"), true),
+            "\"caller\":{\"terminal\":\"session-9\",\"tab\":\"t1\",\"pane\":null,\"popup\":\"u9\"},"
+        );
+        assert_eq!(
+            super::caller_output(&snapshot, Some("session-9"), false),
+            "caller terminal=session-9 tab=t1 pane=none popup=u9\n"
+        );
+        for session in [None, Some("session-999")] {
+            assert_eq!(
+                super::caller_output(&snapshot, session, true),
+                "\"caller\":null,"
+            );
+            assert_eq!(super::caller_output(&snapshot, session, false), "");
+        }
     }
 
     #[test]

@@ -375,7 +375,7 @@ on terminals; redirected output is plain text. A nonempty `NO_COLOR` or
 | `eon stop previous [--json]` | Attempt every other non-dead generation |
 | `eon stop all [--json]` | Attempt every non-dead generation, including current |
 | `eon workspaces [--json]` | List the window's workspaces in order, with each one's ID, name, whether it is shown, its tab count, its most urgent agent attention state, and its recency (0 for the shown one, then 1 for the one shown before it, and so on, the Workspaces picker's order) |
-| `eon workspace [--json]` | Inspect the live tab, pane, popup, and terminal mapping, with each terminal's agent attention state, app and name; JSON includes each terminal's full agent attention record and the Codex and Claude quota readings |
+| `eon workspace [--json]` | Inspect the live tab, pane, popup, and terminal mapping, with each terminal's agent attention state, app and name; JSON includes each terminal's full agent attention record and the Codex and Claude quota readings, and the calling terminal in `caller` (null without `EON_TERMINAL`; a `caller` line in human output only when present) |
 | `eon workspace new [--name NAME] [--no-focus] [--json]` | Add a workspace after the shown one, with one tab and its directory picker, and show it; with `--no-focus` the shown workspace stays. The reply names the new workspace's ID in `created` (`created wN` in human output) |
 | `eon workspace switch WS [--json]` | Show workspace WS, with its tabs, panes and popups as it left them |
 | `eon workspace rename [WS] NAME [--json]` | Name workspace WS, or the caller's workspace; an empty NAME clears the name |
@@ -490,6 +490,83 @@ has ended. An `eon attach` that runs the `eon` of another build exits with that
 `eon`'s status. Commands that run another program instead exit with its status:
 `eon anima` with Anima's, and `eon run -- COMMAND` or `eonbase -- COMMAND` with
 the initial command's once it has ended.
+
+### Agents in Eon
+
+Eon packages an `eon` skill that teaches agents the CLI, how to find their own
+pane or popup through `eon workspace --json`'s `caller`, and how to leave your
+focus alone. Install it for the agents you use. For a `nix profile` install in
+`~/.nix-profile`, run the relevant commands below; substitute your profile path
+if you installed with `--profile`. The links follow profile upgrades.
+
+Claude Code:
+
+```sh
+mkdir -p ~/.claude/skills
+ln -s ~/.nix-profile/share/eon/skills/eon ~/.claude/skills/eon
+```
+
+Codex:
+
+```sh
+mkdir -p ~/.agents/skills
+ln -s ~/.nix-profile/share/eon/skills/eon ~/.agents/skills/eon
+```
+
+Remove a skill by deleting its link: `rm ~/.claude/skills/eon` or
+`rm ~/.agents/skills/eon`.
+
+Optionally add a session-start hook. Merge the following `SessionStart` entry
+into `~/.claude/settings.json`, preserving your other settings and hooks:
+
+```json
+{
+  "hooks": {
+    "SessionStart": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "sh -c '[ -n \"$EON_TERMINAL\" ] || exit 0; printf \"This session runs in an Eon terminal; the eon skill explains the eon CLI; leave focus where the person put it\\n\"; eon workspace 2>/dev/null || true'",
+            "timeout": 10
+          }
+        ]
+      }
+    ]
+  }
+}
+```
+
+For Codex, merge the same entry into `~/.codex/hooks.json`:
+
+```json
+{
+  "hooks": {
+    "SessionStart": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "sh -c '[ -n \"$EON_TERMINAL\" ] || exit 0; printf \"This session runs in an Eon terminal; the eon skill explains the eon CLI; leave focus where the person put it\\n\"; eon workspace 2>/dev/null || true'",
+            "timeout": 10
+          }
+        ]
+      }
+    ]
+  }
+}
+```
+
+If you already keep hooks in the `[hooks]` table of `~/.codex/config.toml`, add
+the entry there instead; Codex warns when both that table and
+`~/.codex/hooks.json` contain hooks.
+
+Codex runs a user hook only after you trust it in `/hooks`. Both examples run
+the same command through `sh -c`, including when Codex invokes hooks through
+`$SHELL -lc` with nushell as your login shell. The hook stays silent outside
+Eon. Inside Eon it prints one sentence and the human `eon workspace` output,
+including the caller line; a failed workspace query does not fail the session.
+Remove the entry to remove the hook.
 
 ### Accelerando glyphs
 

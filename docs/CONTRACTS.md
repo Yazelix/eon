@@ -856,6 +856,11 @@ socket names, JSON fields and protocol identifiers retain their spellings.
     validation. Workspace CLI results name the described `generation` and `window`, with `window` null
     for the default namespace, and identify the projected workspace through shn4.3's workspace
     discriminator.
+  - `eon workspace` run from an Eon terminal also names that calling terminal. In JSON, `caller`
+    holds its `terminal` (`session-N`), its `tab`, and its `pane`, or its `popup` with `pane` null.
+    The human output prints a matching `caller` line. Without `EON_TERMINAL`, JSON `caller` is null
+    and the line is absent. `EON_TERMINAL` stays opaque; `caller` is the supported way to find the
+    calling pane.
   - Every Eon terminal's PATH names that terminal's own Eon build as `eon`,
     ahead of any installed one, so `eon` run by name there acts on that
     terminal's own window and generation after the installed profile changes.
@@ -1144,7 +1149,8 @@ socket names, JSON fields and protocol identifiers retain their spellings.
   `eon-readable-windows-and-child-notices-jf6f` (automated and installed
   tiers); final-tab `tab close` and `pane close`
   `eon-prove-close-and-detach-batch-bf8t` (installed tier); EONW v19 attention
-  fields `eon-agent-sidebar-yx8.9` (installed tier).
+  fields `eon-agent-sidebar-yx8.9` (installed tier); `eon workspace` `caller`
+  `eon-ed9d.1` (automated and installed tiers).
   - **Environment:** Automated tier; installed tier.
   - **Evidence:** EONW codecs (`request_actions_have_stable_v2_wire_bytes`,
     `round_trips_v2_bounds_and_rejects_invalid_inputs`,
@@ -1174,7 +1180,9 @@ socket names, JSON fields and protocol identifiers retain their spellings.
     `edit_parser_sends_one_absolute_opaque_file`,
     `command_pane_parser_passes_the_argv_through`,
     `command_panes_bound_their_argv`,
-    `unfocused_panes_keep_the_selection_and_the_shown_popup`); CLI JSON paths
+    `unfocused_panes_keep_the_selection_and_the_shown_popup`,
+    `terminal_session_inverts_the_terminal_identity`,
+    `caller_output_finds_a_popup_and_omits_an_absent_terminal`); CLI JSON paths
     (`json_paths_are_strings_unless_their_bytes_are_not_utf8`,
     `launch_directory_can_disappear_after_the_initial_session_starts`).
     Installed checklist items 3 and 4 (`eon workspace` against the window;
@@ -1237,6 +1245,19 @@ socket names, JSON fields and protocol identifiers retain their spellings.
     - It gave each tab an `attention_rollup` and the snapshot `sidebar`.
     - Human `eon workspace` printed `attention=`, `app=` and `name=` per
       terminal, `attention=` per tab and a `sidebar` line.
+    Installed `eon-ed9d.1` observation (this change on edge
+    `f02f2214c8b8c543f00c65102781d99d9adf1e92`, tested tree
+    `0f9daedcf28c67edbff54106922f3f5c4700535b`, package
+    `/nix/store/cbm43x2541v809cgibah2qqapi3vbs11-eon-0.1.7`, EONW 24) on
+    x86_64 Linux native Wayland, isolated headless Sway:
+    - From pane p1, `eon workspace --json` gave
+      `"caller":{"terminal":"session-1","tab":"t1","pane":"p1","popup":null}`.
+    - A fresh `claude -p` (Claude Code 2.1.303) and a fresh `codex exec` (Codex
+      0.165), each with only the packaged skill installed project-locally,
+      were asked to start `top` beside them without disturbing the person. Each
+      ran `eon pane create --no-focus --json`.
+    - p2 and p3 joined column 1, and the active tab t1 and the selected pane p1
+      stayed.
 
 ## EON-C11 — Runtime generations and presentation
 

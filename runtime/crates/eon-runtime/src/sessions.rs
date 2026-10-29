@@ -999,6 +999,14 @@ fn terminal_identity(session_id: &str, run_id: &str) -> String {
     format!("{session_id}.{run_id}")
 }
 
+/// Inverts `terminal_identity` to recover the session ID from a caller token.
+pub(crate) fn terminal_session(identity: &str) -> Option<&str> {
+    identity
+        .split_once('.')
+        .map(|(session, _)| session)
+        .filter(|session| !session.is_empty())
+}
+
 #[allow(clippy::too_many_arguments)]
 pub(super) fn start_orbit(
     inputs: &Inputs,
@@ -2513,6 +2521,17 @@ pub(crate) mod tests {
             ["session-1"]
         );
         fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn terminal_session_inverts_the_terminal_identity() {
+        for run_id in ["run", "run.with.dots", ""] {
+            let identity = super::terminal_identity("session-1", run_id);
+            assert_eq!(super::terminal_session(&identity), Some("session-1"));
+        }
+        assert_eq!(super::terminal_session("session-1"), None);
+        assert_eq!(super::terminal_session(".run"), None);
+        assert_eq!(super::terminal_session(""), None);
     }
 
     #[test]

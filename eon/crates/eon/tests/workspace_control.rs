@@ -2027,6 +2027,8 @@ fn stable_tabs(tabs: &[Tab]) -> Vec<Tab> {
 
 fn stable_workspace_json(output: &Output) -> serde_json::Value {
     let mut value: serde_json::Value = serde_json::from_str(stdout(output)).unwrap();
+    // Inspect-only caller metadata does not change the workspace state.
+    value.as_object_mut().unwrap().remove("caller");
     for tab in value["tabs"].as_array_mut().unwrap() {
         for pane in tab["panes"].as_array_mut().unwrap() {
             pane.as_object_mut().unwrap().remove("label");
@@ -4155,6 +4157,53 @@ fn commands_from_a_terminal_target_its_column_and_stale_callers_change_nothing()
             .output()
             .unwrap()
     };
+    let expected_caller = serde_json::json!({
+        "terminal": "session-1", "tab": "t1", "pane": "p1", "popup": null
+    });
+    for arguments in [
+        vec!["workspace", "--json"],
+        vec![
+            "workspace",
+            "--generation",
+            generation.file_name().unwrap().to_str().unwrap(),
+            "--json",
+        ],
+    ] {
+        let output = from(&caller, &arguments);
+        assert!(output.status.success(), "{}", stdout(&output));
+        let value: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
+        assert_eq!(value["caller"], expected_caller);
+    }
+    let human = from(&caller, &["workspace"]);
+    assert!(human.status.success(), "{}", stdout(&human));
+    assert!(
+        stdout(&human)
+            .contains("workspace w1\ncaller terminal=session-1 tab=t1 pane=p1 popup=none\n")
+    );
+    for json in [false, true] {
+        let output = eon_command(&binary)
+            .args(if json {
+                vec!["workspace", "--json"]
+            } else {
+                vec!["workspace"]
+            })
+            .env_remove("EON_TERMINAL")
+            .env("EON_RUNTIME_DIR", &runtime)
+            .env("EON_CONFIG_HOME", &config)
+            .output()
+            .unwrap();
+        assert!(output.status.success(), "{}", stdout(&output));
+        if json {
+            let value: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
+            assert_eq!(value.get("caller"), Some(&serde_json::Value::Null));
+        } else {
+            assert!(!stdout(&output).contains("\ncaller "));
+        }
+    }
+    let listed = from(&caller, &["workspaces", "--json"]);
+    assert!(listed.status.success(), "{}", stdout(&listed));
+    let listed: serde_json::Value = serde_json::from_slice(&listed.stdout).unwrap();
+    assert!(listed.get("caller").is_none());
     let inspect = |id: &str| match workspace_action(&control, id, Action::Inspect) {
         Response::Snapshot(mut snapshot) => {
             snapshot.tabs = stable_tabs(&snapshot.tabs);
@@ -4175,6 +4224,8 @@ fn commands_from_a_terminal_target_its_column_and_stale_callers_change_nothing()
         stdout(&created),
         String::from_utf8_lossy(&created.stderr)
     );
+    let created: serde_json::Value = serde_json::from_slice(&created.stdout).unwrap();
+    assert!(created.get("caller").is_none());
     let snapshot = inspect("after-create");
     let ids = |column: usize| {
         snapshot.tabs[0].columns[column]
