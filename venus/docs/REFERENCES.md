@@ -440,8 +440,9 @@ cadence prove the route; a second cache or resolver is outside Venus ownership.
   (PR #819) ships in accesskit_unix 0.24.1.
   [AT-SPI 2.58.1's cache handlers](https://gitlab.gnome.org/GNOME/at-spi2-core/-/blob/1c403959184b36a2d146840254b7a69dd080ec40/atspi/atspi-misc.c)
   require each AddAccessible/RemoveAccessible structure as one signal argument.
-  A disposable encoded-wire reproducer and real Orca return-to-live selection
-  oracle check this boundary; `docs/CRATES.md` owns the exact release selection.
+  A disposable encoded-wire reproducer and an installed real Orca
+  return-to-live selection observation passed on accesskit_unix 0.24.1
+  (`eon-9rtt.1`); `docs/CRATES.md` owns the exact release selection.
 - [softbuffer 0.4.8](https://docs.rs/softbuffer/0.4.8/softbuffer/) remains the
   software comparison. Its CPU buffer supports damage on selected platforms,
   while AppKit presentation requires a blocking copy.
@@ -470,9 +471,10 @@ not add a protocol mirror, history cache, terminal selection, or compatibility
 adapter.
 
 Exact winit 0.30.13 line and pixel wheel events support cell-normalized bounded
-native accumulation. Exact AccessKit 0.24.1 text runs and text positions support
-selection derived from the accepted scene. Exact wl-clipboard-rs 0.9.3 supplies
-the isolated native Wayland text effect selected in `docs/CRATES.md`.
+native accumulation. AccessKit text runs and text positions, at the exact
+release in `docs/CRATES.md`, support selection derived from the accepted
+scene. Exact wl-clipboard-rs 0.9.3 supplies the isolated native Wayland text
+effect selected in `docs/CRATES.md`.
 
 ## Required for exact ORBS v4 consumption
 
