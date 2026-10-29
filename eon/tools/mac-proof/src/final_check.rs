@@ -3,7 +3,7 @@
 use crate::{
     mac, retina, run,
     scenario::{self, Environment, Scenario},
-    step::{Failure, Log, progress, succeed},
+    step::{Failure, Log, execute, progress, succeed},
 };
 use serde_json::{Value, json};
 use std::{
@@ -52,7 +52,7 @@ const ITEMS: &[Item] = &[
     },
     Item {
         title: "Keyboard",
-        action: "Open Shortcuts with Option+/. Then use the keys it lists to open a tab, split a pane, move between panes and open the Helix popup.",
+        action: "Open Shortcuts with Option+/. Then use the keys it lists to open a tab, split a pane, move between panes and open Project with Option+Z.",
         expected: "each key does what Shortcuts says.",
         slug: "keyboard",
     },
@@ -94,6 +94,10 @@ mac-proof final: Yu's automatic run and guided final check, in one evidence arch
 Requires Apple Silicon macOS, Screen Recording (window captures) and Accessibility (automatic
 keys), granted to your terminal app in System Settings > Privacy & Security. Missing grants
 open their settings panes; grant them, quit and reopen the terminal app, then rerun.
+On macOS 27 or later, macOS asks once whether your terminal app may \"bypass the system private
+window picker and directly access your screen and audio\". The check takes one throwaway screen
+capture at the start so the dialog comes then; choose Allow. Screen Recording does not answer
+it; left open, it covers Eon in every capture and the translucency check is skipped.
 The automatic part captures whole screens, every connected display included, and the desktop
 before launch; close or hide windows you would not send before starting, and look inside the
 archive before sending it.
@@ -337,6 +341,13 @@ fn archive_path(out: &Path) -> PathBuf {
     let mut name = out.as_os_str().to_owned();
     name.push(".tar.gz");
     PathBuf::from(name)
+}
+
+fn discard_screen_capture(path: &Path) -> io::Result<()> {
+    match fs::remove_file(path) {
+        Err(error) if error.kind() == io::ErrorKind::NotFound => Ok(()),
+        result => result,
+    }
 }
 
 fn taken(path: &Path) -> bool {
@@ -823,6 +834,27 @@ pub fn final_check(options: Options) -> Result<bool, String> {
         let before = home_snapshot(&home, &out);
         Some((home, before))
     };
+    let screen_access = out.join("screen-access.png");
+    if !options.dry_run {
+        progress(
+            "If macOS asks whether your terminal app may bypass the system private window picker and access your screen, choose Allow: left open, that dialog covers Eon in every capture.",
+        );
+        let result = match execute(
+            &mut log,
+            Command::new("screencapture").arg("-x").arg(&screen_access),
+            Instant::now() + MINUTE,
+            false,
+            true,
+        ) {
+            Ok((status, _)) => status.to_string(),
+            Err(error) => failure(error),
+        };
+        let present = screen_access.is_file();
+        let cleanup = discard_screen_capture(&screen_access);
+        log.line(&format!(
+            "screen-access capture: {result}; file present: {present}; cleanup: {cleanup:?}"
+        ));
+    }
     progress(
         "The automatic run takes hours. Keep the Mac awake and untouched until it rings. The GUI scenario types into Eon.",
     );
@@ -895,6 +927,9 @@ pub fn final_check(options: Options) -> Result<bool, String> {
         serde_json::to_string_pretty(&bundle.json()).expect("a JSON value serializes") + "\n",
     )
     .map_err(|error| error.to_string())?;
+    // A timed-out screencapture may write its file late.
+    discard_screen_capture(&screen_access)
+        .map_err(|error| format!("remove throwaway screen capture: {error}"))?;
     let archive = archive_path(&out);
     succeed(
         &mut log,
@@ -921,6 +956,24 @@ pub fn final_check(options: Options) -> Result<bool, String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn throwaway_screen_capture_cleanup_handles_missing_and_late_files() {
+        let out =
+            std::env::temp_dir().join(format!("mac-proof-screen-access-{}", std::process::id()));
+        fs::create_dir(&out).unwrap();
+        let path = out.join("screen-access.png");
+        discard_screen_capture(&path).unwrap();
+        for content in ["capture", "late capture"] {
+            fs::write(&path, content).unwrap();
+            discard_screen_capture(&path).unwrap();
+            assert!(!path.exists());
+        }
+        fs::create_dir(&path).unwrap();
+        let error = discard_screen_capture(&path);
+        fs::remove_dir_all(out).unwrap();
+        assert!(error.is_err());
+    }
 
     #[test]
     fn home_cleanup_needs_consent_and_never_reports_entry_names() {

@@ -119,6 +119,12 @@ Accessibility (automatic keys) in System Settings > Privacy & Security;
 the command opens missing grants' panes and asks you to quit and reopen the
 terminal app before rerunning.
 
+On macOS 27 or later, macOS asks once whether your terminal app may "bypass the
+system private window picker and directly access your screen and audio". The
+check takes one throwaway screen capture at the start so the dialog comes
+then; choose Allow. Screen Recording does not answer it; left open, it covers
+Eon in every capture and the translucency check is skipped.
+
 The automatic part captures whole screens, every connected display included,
 and the desktop before launch: close or hide windows you would not send before
 starting, and look inside the archive before sending it.

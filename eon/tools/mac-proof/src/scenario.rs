@@ -1522,7 +1522,7 @@ fn translucency(scenario: &mut Scenario, log: &mut Log, deadline: Instant) -> Ou
     );
     if !light.blank() || !dark.blank() || !black.blank() {
         return Err(Failure::Unavailable(
-            "something besides the backdrop lies behind Venus's window; left for Yu".to_owned(),
+            "something besides the backdrop lies behind Venus's window; left for Yu; on macOS 27+, likely an unanswered screen-access dialog".to_owned(),
         ));
     }
     let (b_light, b_dark, c) = (light.dominant().0, dark.dominant().0, black.dominant().0);
