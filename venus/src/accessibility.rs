@@ -8,7 +8,7 @@ use crate::{
 };
 use accesskit::{
     Action, ActivationHandler, Node, NodeId, Orientation, Rect, Role, TextDirection, TextPosition,
-    TextSelection, Tree, TreeId, TreeUpdate,
+    TextSelection, TreeId, TreeInfo, TreeUpdate,
 };
 use accesskit_winit::Adapter;
 use std::{
@@ -349,7 +349,7 @@ impl Snapshot {
             nodes.push((DIALOG, dialog));
             return TreeUpdate {
                 nodes,
-                tree: Some(Tree::new(WINDOW)),
+                tree: Some(TreeInfo::new(WINDOW)),
                 tree_id: TreeId::ROOT,
                 focus,
             };
@@ -707,7 +707,7 @@ impl Snapshot {
 
         TreeUpdate {
             nodes,
-            tree: Some(Tree::new(WINDOW)),
+            tree: Some(TreeInfo::new(WINDOW)),
             tree_id: TreeId::ROOT,
             focus: self.workspace.as_ref().map_or(CONTENT, |workspace| {
                 let selected_tab = workspace
@@ -1161,15 +1161,20 @@ mod tests {
     struct IgnoreChanges;
 
     impl accesskit_consumer::TreeChangeHandler for IgnoreChanges {
-        fn node_added(&mut self, _: &accesskit_consumer::Node) {}
-        fn node_updated(&mut self, _: &accesskit_consumer::Node, _: &accesskit_consumer::Node) {}
-        fn focus_moved(
+        fn node_added(&mut self, _: &accesskit_consumer::NodeRef) {}
+        fn node_updated(
             &mut self,
-            _: Option<&accesskit_consumer::Node>,
-            _: Option<&accesskit_consumer::Node>,
+            _: &accesskit_consumer::NodeRef,
+            _: &accesskit_consumer::NodeRef,
         ) {
         }
-        fn node_removed(&mut self, _: &accesskit_consumer::Node) {}
+        fn focus_moved(
+            &mut self,
+            _: Option<&accesskit_consumer::NodeRef>,
+            _: Option<&accesskit_consumer::NodeRef>,
+        ) {
+        }
+        fn node_removed(&mut self, _: &accesskit_consumer::NodeRef) {}
     }
 
     fn node(update: &TreeUpdate, id: NodeId) -> &Node {

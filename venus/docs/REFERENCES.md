@@ -287,7 +287,7 @@ replaces a regex dependency, and only targets the opener accepts are
 detected.
 
 AccessKit models custom actions, but the locked Linux adapter's exact
-[`accesskit_atspi_common` source](https://github.com/AccessKit/accesskit/blob/c88605b96d04431f9c3c792464a0f2f253480e94/platforms/atspi-common/src/node.rs)
+[`accesskit_atspi_common` 0.21.1 source](https://github.com/AccessKit/accesskit/blob/accesskit_atspi_common-v0.21.1/adapters/atspi-common/src/node.rs)
 maps actionable nodes only to the standard Click action. Venus therefore
 publishes one Click-backed Open link and one Click-backed Copy button per
 visible target instead of an inert Linux custom action.
@@ -428,20 +428,20 @@ cadence prove the route; a second cache or resolver is outside Venus ownership.
   keeps no duplicate Monstar pin.
 - [Sugarloaf](https://github.com/raphamorim/rio/tree/main/sugarloaf) is
   conditional on a demonstrated need for its renderer shape.
-- [AccessKit 0.24.1](https://docs.rs/accesskit/0.24.1/accesskit/) and
-  [accesskit_winit 0.33.2](https://docs.rs/accesskit_winit/0.33.2/accesskit_winit/)
+- [AccessKit 0.25.2](https://docs.rs/accesskit/0.25.2/accesskit/) and
+  [accesskit_winit 0.34.2](https://docs.rs/accesskit_winit/0.34.2/accesskit_winit/)
   own native accessibility adaptation. The
-  [`ActivationHandler`](https://docs.rs/accesskit/0.24.1/accesskit/trait.ActivationHandler.html)
+  [`ActivationHandler`](https://docs.rs/accesskit/0.25.2/accesskit/trait.ActivationHandler.html)
   requires a real tree by the next display refresh even when the application
   would skip rendering. Venus derives that tree from the accepted scene;
   pointer hit testing follows the last-presented scene.
-  The Linux cache correction is pinned to
-  [AccessKit `0f9d186`](https://github.com/Yazelix/accesskit/commit/0f9d186ec6f5e66fe4ccc131ca318dc2725c12f5),
-  based on upstream `c88605b96d04431f9c3c792464a0f2f253480e94`.
+  The Linux cache correction
+  [AccessKit `bffadac`](https://github.com/AccessKit/accesskit/commit/bffadacde348b0b73d3d7201bfb0b7f69a54b0bf)
+  (PR #819) ships in accesskit_unix 0.24.1.
   [AT-SPI 2.58.1's cache handlers](https://gitlab.gnome.org/GNOME/at-spi2-core/-/blob/1c403959184b36a2d146840254b7a69dd080ec40/atspi/atspi-misc.c)
   require each AddAccessible/RemoveAccessible structure as one signal argument.
-  The dependency's encoded-wire check and real Orca return-to-live selection
-  oracle prove this boundary; `docs/CRATES.md` owns the pin and exit decision.
+  A disposable encoded-wire reproducer and real Orca return-to-live selection
+  oracle check this boundary; `docs/CRATES.md` owns the exact release selection.
 - [softbuffer 0.4.8](https://docs.rs/softbuffer/0.4.8/softbuffer/) remains the
   software comparison. Its CPU buffer supports damage on selected platforms,
   while AppKit presentation requires a blocking copy.

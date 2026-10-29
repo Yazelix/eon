@@ -251,7 +251,7 @@ defines the dependency gate, and Beads retain the full candidate evidence.
 ### Native Venus window, font, and renderer
 
 - **Selected shape:** Venus pins `winit` 0.30.13, `wgpu` 30.0.0, `glyphon` 0.12.0 with
-  `cosmic-text` 0.19.0, `AccessKit` 0.24.1, `accesskit_winit` 0.33.2, and `pollster` 1.0.1
+  `cosmic-text` 0.19.0, `AccessKit` 0.25.2, `accesskit_winit` 0.34.2, and `pollster` 1.0.1
 - **Status:** Selected and proved in Venus; none are Orbit dependencies
 - **Credible alternatives:** An owned `cosmic-text` atlas; `softbuffer` plus `tiny-skia`;
   Vello plus Parley; Sugarloaf after a proved glyphon failure; no unnecessary `librio`,

@@ -5,8 +5,8 @@ edition = "2024"
 publish = false
 
 [dependencies]
-accesskit = "=0.24.1"
-accesskit_winit = { version = "=0.33.2", default-features = false, features = ["rwh_06"] }
+accesskit = "=0.25.2"
+accesskit_winit = { version = "=0.34.2", default-features = false, features = ["rwh_06"] }
 eon-workspace-protocol = { path = "../runtime/crates/eon-workspace-protocol" }
 glyphon = "=0.12.0"
 jiff = { version = "=0.2.38", default-features = false, features = ["std", "tz-system", "tzdb-zoneinfo"] }
@@ -17,7 +17,7 @@ wgpu = { version = "=30.0.0", default-features = false, features = ["std", "wgsl
 winit = { version = "=0.30.13", default-features = false, features = ["rwh_06"] }
 
 [target.'cfg(target_os = "linux")'.dependencies]
-accesskit_winit = { version = "=0.33.2", default-features = false, features = ["accesskit_unix", "async-io"] }
+accesskit_winit = { version = "=0.34.2", default-features = false, features = ["accesskit_unix", "async-io"] }
 wgpu = { version = "=30.0.0", default-features = false, features = ["vulkan"] }
 winit = { version = "=0.30.13", default-features = false, features = ["wayland", "wayland-dlopen"] }
 wl-clipboard-rs = { version = "=0.9.3", default-features = false }
@@ -28,5 +28,5 @@ libc = "=0.2.189"
 wgpu = { version = "=30.0.0", default-features = false, features = ["metal"] }
 
 [dev-dependencies]
-accesskit_consumer = "=0.38.0"
+accesskit_consumer = "=0.39.2"
 wgpu = { version = "=30.0.0", default-features = false, features = ["noop"] }
