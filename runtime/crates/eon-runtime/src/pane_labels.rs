@@ -1,5 +1,6 @@
 //! Runtime's semantic pane labels and read-only Orbit metadata observations.
 
+use super::sessions::bound_io;
 use eon_workspace_protocol::v23::{MAX_PANE_NAME_CHARS, pane_label_character};
 use orbit_protocol::session::{self, ClientMessage, ServerMessage};
 use std::{
@@ -141,8 +142,8 @@ impl Drop for Observation {
 
 fn observe(endpoint: &Path, control: &Control, metadata: &Mutex<Metadata>) -> io::Result<()> {
     let mut stream = super::sessions::unix_connect_with_timeout(endpoint, NEGOTIATION)?;
-    stream.set_read_timeout(Some(NEGOTIATION))?;
-    stream.set_write_timeout(Some(NEGOTIATION))?;
+    bound_io(&stream, stream.set_read_timeout(Some(NEGOTIATION)))?;
+    bound_io(&stream, stream.set_write_timeout(Some(NEGOTIATION)))?;
     {
         let mut active = control
             .stream
@@ -175,7 +176,7 @@ fn observe(endpoint: &Path, control: &Control, metadata: &Mutex<Metadata>) -> io
             title: next.title,
             directory: next.working_directory,
         };
-        stream.set_read_timeout(None)?;
+        bound_io(&stream, stream.set_read_timeout(None))?;
     }
 }
 

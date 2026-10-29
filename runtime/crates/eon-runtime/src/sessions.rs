@@ -519,9 +519,8 @@ fn acquire_management(
         }
         _ => return Err("terminal returned the wrong lease result".into()),
     }
-    stream
-        .set_read_timeout(None)
-        .and_then(|()| stream.set_write_timeout(None))
+    bound_io(&stream, stream.set_read_timeout(None))
+        .and_then(|()| bound_io(&stream, stream.set_write_timeout(None)))
         .and_then(|()| stream.set_nonblocking(true))
         .map_err(|error| format!("cannot configure terminal management lease: {error}"))?;
     let orbit_log = orbit_logs.map(|directory| {
@@ -1627,10 +1626,8 @@ pub(super) fn stop_managed_sessions(
             .collect())
     } else {
         for session in sessions {
-            if let Err(error) = session
-                .lease
-                .set_read_timeout(None)
-                .and_then(|()| session.lease.set_write_timeout(None))
+            if let Err(error) = bound_io(&session.lease, session.lease.set_read_timeout(None))
+                .and_then(|()| bound_io(&session.lease, session.lease.set_write_timeout(None)))
                 .and_then(|()| session.lease.set_nonblocking(true))
             {
                 errors.push(format!(

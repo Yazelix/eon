@@ -153,9 +153,8 @@ fn connect_control_with_timeout(
             ),
         )
     })?;
-    stream
-        .set_read_timeout(Some(CONTROL_TIMEOUT))
-        .and_then(|()| stream.set_write_timeout(Some(CONTROL_TIMEOUT)))
+    bound_io(&stream, stream.set_read_timeout(Some(CONTROL_TIMEOUT)))
+        .and_then(|()| bound_io(&stream, stream.set_write_timeout(Some(CONTROL_TIMEOUT))))
         .map_err(|error| {
             EndpointFailure::new(
                 EndpointFailureKind::Corrupt,
@@ -507,8 +506,14 @@ fn handle_client(
     mut stream: UnixStream,
     dispatch: impl FnOnce(Request) -> (ControlResponse, bool),
 ) -> bool {
+    // Accepted sockets inherit the listener's nonblocking mode on macOS.
+    if stream.set_nonblocking(false).is_err() {
+        return false;
+    }
     let timeout = Some(Duration::from_millis(250));
-    if stream.set_read_timeout(timeout).is_err() || stream.set_write_timeout(timeout).is_err() {
+    if bound_io(&stream, stream.set_read_timeout(timeout)).is_err()
+        || bound_io(&stream, stream.set_write_timeout(timeout)).is_err()
+    {
         return false;
     }
     let (response, shutdown) = match read_request(&mut stream) {
@@ -675,12 +680,66 @@ mod tests {
     use crate::supervisor::temporary_directory;
     use std::{
         fs,
-        io::Write,
+        io::{Read, Write},
         os::unix::fs::PermissionsExt,
         os::unix::net::{UnixListener, UnixStream},
         thread,
         time::{Duration, Instant},
     };
+
+    #[test]
+    fn handle_client_dispatches_buffered_request_after_peer_closes() {
+        let (stream, mut peer) = UnixStream::pair().unwrap();
+        let request = super::Request {
+            id: "r1".into(),
+            caller: None,
+            action: super::Action::Workspace(super::WorkspaceAction::Stop {
+                generation: "g1".into(),
+            }),
+        };
+        peer.write_all(&super::encode_request(&request).unwrap())
+            .unwrap();
+        drop(peer);
+
+        assert!(super::handle_client(stream, |received| {
+            assert_eq!(received, request);
+            (
+                super::ControlResponse::Workspace(super::Response::Failure(super::failure(
+                    "stopped", "done",
+                ))),
+                true,
+            )
+        }));
+    }
+
+    #[test]
+    fn handle_client_waits_for_request_on_a_nonblocking_stream() {
+        let (stream, mut peer) = UnixStream::pair().unwrap();
+        stream.set_nonblocking(true).unwrap();
+        let request = super::Request {
+            id: "r1".into(),
+            caller: None,
+            action: super::Action::Workspace(super::WorkspaceAction::Inspect),
+        };
+        let encoded = super::encode_request(&request).unwrap();
+        let response = super::Response::Failure(super::failure("test-response", "done"));
+        let expected = super::encode_response(&response).unwrap();
+        let peer = thread::spawn(move || {
+            thread::sleep(Duration::from_millis(50));
+            peer.write_all(&encoded).unwrap();
+            let mut received = vec![0; expected.len()];
+            peer.read_exact(&mut received).unwrap();
+            assert_eq!(received, expected);
+        });
+
+        let shutdown = super::handle_client(stream, |received| {
+            assert_eq!(received, request);
+            (super::ControlResponse::Workspace(response), true)
+        });
+        let peer_result = peer.join();
+        assert!(shutdown, "delayed request was not dispatched");
+        peer_result.unwrap();
+    }
 
     #[test]
     fn discovery_deadline_covers_a_dribbling_response() {

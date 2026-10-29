@@ -1162,17 +1162,30 @@ fn wait_for_picker_close(socket: &Path, directory: &Path) -> Snapshot {
             &format!("picker-inspect-{sequence}"),
             Action::Inspect,
         );
-        if let Response::Snapshot(snapshot) = response
-            && project_popup(&snapshot).is_none()
-            && snapshot
-                .tabs
-                .iter()
-                .find(|tab| tab.id == snapshot.active_tab)
-                .is_some_and(|tab| tab.directory == directory.as_os_str().as_bytes())
-        {
-            return snapshot;
-        }
-        assert!(Instant::now() < deadline, "directory picker did not close");
+        let last_response = match response {
+            Response::Snapshot(snapshot) => {
+                let active_directory = snapshot
+                    .tabs
+                    .iter()
+                    .find(|tab| tab.id == snapshot.active_tab)
+                    .map(|tab| tab.directory.as_slice());
+                if project_popup(&snapshot).is_none()
+                    && active_directory == Some(directory.as_os_str().as_bytes())
+                {
+                    return snapshot;
+                }
+                format!(
+                    "active tab directory {:?}, expected {:?}",
+                    active_directory.map(String::from_utf8_lossy),
+                    directory.to_string_lossy()
+                )
+            }
+            response => format!("{response:?}"),
+        };
+        assert!(
+            Instant::now() < deadline,
+            "directory picker did not close: {last_response}"
+        );
         sequence += 1;
         thread::sleep(Duration::from_millis(10));
     }
@@ -4498,6 +4511,7 @@ fn tab_directory_retargets_future_sessions_without_crossing_tabs() {
     let stop = root.join("stop");
     let orbit_log = root.join("orbit-cwd.log");
     let child_log = root.join("child-cwd.log");
+    let supervisor_log = root.join("supervisor.log");
     let orbit = root.join("orbit");
     let venus = root.join("venus");
     let reporter = root.join("report-cwd");
@@ -4529,6 +4543,17 @@ fn tab_directory_retargets_future_sessions_without_crossing_tabs() {
     let binary = PathBuf::from(env!("CARGO_BIN_EXE_eon"));
     symlink(&binary, session_bin.join("eon-directory-picker")).unwrap();
     quick_picker_executable(&session_bin.join("fzf"));
+    struct SupervisorLog(PathBuf);
+    impl Drop for SupervisorLog {
+        fn drop(&mut self) {
+            if thread::panicking()
+                && let Ok(log) = fs::read_to_string(&self.0)
+            {
+                eprintln!("supervisor stderr ({}):\n{log}", self.0.display());
+            }
+        }
+    }
+    let _supervisor_log = SupervisorLog(supervisor_log.clone());
     let child = eon_command(&binary)
         .arg("run")
         .current_dir(&first)
@@ -4544,7 +4569,7 @@ fn tab_directory_retargets_future_sessions_without_crossing_tabs() {
         .env("EON_TEST_CHILD_CWD_LOG", &child_log)
         .env("EON_TEST_RUN_CHILD", "1")
         .stdout(Stdio::null())
-        .stderr(Stdio::null())
+        .stderr(fs::File::create(&supervisor_log).unwrap())
         .spawn()
         .unwrap();
     let mut supervisor = TestProcess {
