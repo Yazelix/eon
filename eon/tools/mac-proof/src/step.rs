@@ -100,6 +100,37 @@ pub fn execute_filtered(
     group: bool,
     filter: impl FnOnce(Vec<u8>) -> Result<Vec<u8>, Failure>,
 ) -> Result<(ExitStatus, Vec<u8>), Failure> {
+    execute_output(log, command, deadline, capture, group, |log, stdout| {
+        let stdout = filter(stdout)?;
+        log.line(&String::from_utf8_lossy(&stdout));
+        Ok(stdout)
+    })
+}
+
+/// Like `succeed` with capture, but stdout stays out of the log.
+pub fn capture_stdout(
+    log: &mut Log,
+    command: &mut Command,
+    deadline: Instant,
+) -> Result<Vec<u8>, Failure> {
+    let program = command.get_program().to_string_lossy().into_owned();
+    let (status, stdout) =
+        execute_output(log, command, deadline, true, true, |_, stdout| Ok(stdout))?;
+    if status.success() {
+        Ok(stdout)
+    } else {
+        Err(Failure::Command(format!("{program} exited with {status}")))
+    }
+}
+
+fn execute_output(
+    log: &mut Log,
+    command: &mut Command,
+    deadline: Instant,
+    capture: bool,
+    group: bool,
+    filter: impl FnOnce(&mut Log, Vec<u8>) -> Result<Vec<u8>, Failure>,
+) -> Result<(ExitStatus, Vec<u8>), Failure> {
     log.line(&format!("$ {command:?}"));
     let started = (|| {
         command.stdin(Stdio::null()).stderr(log.stdio()?);
@@ -139,8 +170,7 @@ pub fn execute_filtered(
             }
             thread::sleep(POLL);
         }
-        stdout = filter(reader.join().unwrap_or_default())?;
-        log.line(&String::from_utf8_lossy(&stdout));
+        stdout = filter(log, reader.join().unwrap_or_default())?;
     }
     Ok((status, stdout))
 }

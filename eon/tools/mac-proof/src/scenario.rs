@@ -5,7 +5,7 @@ use crate::{
     mac,
     picture::{Picture, Region, backdrop_shares, blend, check_blend, check_shares},
     retina,
-    step::{Failure, Log, Outcome, Runner, check, execute, succeed},
+    step::{Failure, Log, Outcome, Runner, capture_stdout, check, execute, succeed},
 };
 use serde_json::Value;
 use std::{
@@ -771,6 +771,7 @@ impl Scenario {
             .env_remove("EON_TERMINAL")
             .env_remove("EON_TAB")
             .env("EON_CONFIG_HOME", home.join(".config/eon"))
+            .env("STARSHIP_CONFIG", self.root.join("starship.toml"))
             .env("XDG_STATE_HOME", home.join(".local/state"))
             .env("EON_RUNTIME_DIR", &self.runtime);
         command
@@ -792,6 +793,11 @@ impl Scenario {
         ] {
             fs::create_dir_all(directory).map_err(failed)?;
         }
+        fs::write(
+            self.root.join("starship.toml"),
+            "[hostname]\ndisabled = true\n[username]\ndisabled = true\n",
+        )
+        .map_err(failed)?;
         // A runtime root that exists may belong to another run.
         std::os::unix::fs::DirBuilderExt::mode(&mut fs::DirBuilder::new(), 0o700)
             .create(&self.runtime)
@@ -861,7 +867,13 @@ impl Scenario {
         let roots: Vec<u32> = self.supervisor.iter().map(Child::id).collect();
         let ours = ours(&listing, &roots, &markers);
         for process in &ours {
-            self.seen.insert(process.pid, process.command.clone());
+            let previous = self.seen.insert(process.pid, process.command.clone());
+            if previous.as_ref() != Some(&process.command) {
+                log.line(&format!(
+                    "mac-proof: process {} {}",
+                    process.pid, process.command
+                ));
+            }
         }
         Ok(ours)
     }
@@ -1244,13 +1256,17 @@ pub fn listing(log: &mut Log, deadline: Instant) -> Result<Vec<Process>, Failure
     let user = String::from_utf8_lossy(&user).trim().to_owned();
     // Every process, with no column cut short; BSD ps -U would leave out
     // those without a controlling terminal.
-    let listing = succeed(
+    let listing = capture_stdout(
         log,
         Command::new("ps").args(["-A", "-ww", "-o", "uid=,pid=,ppid=,command="]),
         deadline,
-        true,
     )?;
-    Ok(parse_processes(&String::from_utf8_lossy(&listing), &user))
+    let processes = parse_processes(&String::from_utf8_lossy(&listing), &user);
+    log.line(&format!(
+        "mac-proof: {} processes for this user",
+        processes.len()
+    ));
+    Ok(processes)
 }
 
 /// `ps -o uid=,pid=,ppid=,command=` lines of user id `user`.
@@ -2199,6 +2215,7 @@ mod tests {
         }
         for (name, path) in [
             ("EON_CONFIG_HOME", scenario.home().join(".config/eon")),
+            ("STARSHIP_CONFIG", scenario.root.join("starship.toml")),
             ("XDG_STATE_HOME", scenario.home().join(".local/state")),
             ("EON_RUNTIME_DIR", scenario.runtime.clone()),
         ] {
@@ -2208,6 +2225,57 @@ mod tests {
             );
         }
         assert_eq!(command.get_current_dir(), Some(scenario.work().as_path()));
+        let private = Scenario::new(
+            PathBuf::from("/package"),
+            PathBuf::from("/evidence"),
+            Environment::Private,
+            true,
+        );
+        assert_eq!(
+            private
+                .eon(&["run"])
+                .get_envs()
+                .find(|(name, _)| *name == "STARSHIP_CONFIG")
+                .and_then(|(_, value)| value),
+            Some(private.root.join("starship.toml").as_os_str())
+        );
+    }
+
+    #[test]
+    fn preparation_hides_the_prompt_host_and_user() {
+        let root = std::env::temp_dir().join(format!("mac-proof-prompt-{}", std::process::id()));
+        let mut scenario = Scenario::new(
+            PathBuf::from("/package"),
+            root.join("evidence"),
+            Environment::Private,
+            true,
+        );
+        scenario.root = root.clone();
+        scenario.runtime = root.join("runtime");
+        assert!(scenario.prepare().is_ok());
+        let config = fs::read_to_string(root.join("starship.toml"));
+        fs::remove_dir_all(root).unwrap();
+        assert_eq!(
+            config.unwrap(),
+            "[hostname]\ndisabled = true\n[username]\ndisabled = true\n"
+        );
+    }
+
+    #[test]
+    fn process_listing_returns_argv_without_logging_it() {
+        let path = std::env::temp_dir().join(format!("mac-proof-ps-{}.log", std::process::id()));
+        let mut log = Log::new(File::create(&path).unwrap());
+        let processes = listing(&mut log, Instant::now() + MINUTE).ok().unwrap();
+        let command = &processes
+            .iter()
+            .find(|process| process.pid == std::process::id())
+            .expect("ps includes this test process")
+            .command;
+        let text = fs::read_to_string(&path).unwrap();
+        fs::remove_file(path).unwrap();
+        assert!(!text.contains(command));
+        assert!(text.contains("uid=,pid=,ppid=,command="));
+        assert!(text.contains(&format!("{} processes for this user", processes.len())));
     }
     #[test]
     fn the_driver_runs_each_command_in_turn_and_reports_it() {

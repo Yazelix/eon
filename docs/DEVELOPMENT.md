@@ -130,6 +130,14 @@ and input methods, Fonts, Keyboard, Yazi images, Agent, and Copy out.
 `mac-proof final --help` prints each action and expected result. Eon uses the
 default configuration with private state, while keeping your HOME and shell
 environment so your logged-in Claude Code works.
+During the check, Eon's Starship prompt hides the host and user names. A prompt
+your own shell configuration sets replaces Eon's Starship prompt and shows as
+usual; check the captures for host or user names before sending. At the end,
+the check lists entries Eon's shell tools created in HOME and asks before
+removing them; other new entries are counted in the archive and listed by path
+only on the terminal. If you already use Nushell, Atuin or Zoxide, the check's
+commands join their existing history; the check removes only whole entries it
+created.
 
 Each item waits for Enter, captures only Eon's largest window without changing
 focus, then asks for pass, fail or skip and an optional note. Other windows may

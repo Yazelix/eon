@@ -7,6 +7,7 @@ use crate::{
 };
 use serde_json::{Value, json};
 use std::{
+    collections::{BTreeMap, BTreeSet},
     fs::{self, File},
     io::{self, BufRead, Write},
     os::unix::fs::{DirBuilderExt, PermissionsExt},
@@ -100,6 +101,12 @@ The automatic part takes hours. Leave the Mac awake and untouched until it rings
 scenario types into Eon. The manual part uses your HOME and environment, with private Eon
 configuration and state and the default configuration. Only Eon's largest window is captured,
 even when other windows cover it, without changing focus.
+During the check, Eon's Starship prompt hides the host and user names. A prompt your own shell
+configuration sets replaces Eon's Starship prompt and shows as usual; check the captures for
+host or user names before sending. At the end, the check lists entries Eon's shell tools created
+in HOME and asks before removing them; other new entries are counted in the archive and listed
+by path only on the terminal. If you already use Nushell, Atuin or Zoxide, the check's commands
+join their existing history; the check removes only whole entries it created.
 For each item, do the action, press Enter, answer p/f/s (or pass/fail/skip), then add an optional
 one-line note. EOF leaves the remaining items unanswered. Ctrl-C stops the tool; a rerun starts
 over, and leftovers may need `eon stop all` with the private environment in manual/final.log.
@@ -345,6 +352,120 @@ fn default_out(home: &Path, rev: &str, date: &str) -> PathBuf {
         suffix += 1;
     }
     path
+}
+
+type HomeSnapshot = BTreeMap<&'static str, io::Result<BTreeSet<PathBuf>>>;
+
+fn home_snapshot(home: &Path, out: &Path) -> HomeSnapshot {
+    let archive = archive_path(out);
+    [
+        "",
+        ".config",
+        ".local/share",
+        ".local/state",
+        ".cache",
+        "Library/Application Support",
+        "Library/Caches",
+        "Library/Preferences",
+        "Library/Saved Application State",
+    ]
+    .into_iter()
+    .map(|directory| {
+        let entries = match fs::canonicalize(home.join(directory)).and_then(fs::read_dir) {
+            Ok(entries) => entries
+                .map(|entry| entry.map(|entry| entry.path()))
+                .collect::<io::Result<BTreeSet<_>>>()
+                .map(|entries| {
+                    entries
+                        .into_iter()
+                        .filter(|path| path != out && *path != archive)
+                        .collect()
+                }),
+            Err(error) if error.kind() == io::ErrorKind::NotFound => Ok(BTreeSet::new()),
+            Err(error) => Err(error),
+        };
+        (directory, entries)
+    })
+    .collect()
+}
+
+fn check_home(
+    home: &Path,
+    out: &Path,
+    before: &HomeSnapshot,
+    input: &mut impl BufRead,
+    errors: &mut Vec<String>,
+) -> String {
+    let after = home_snapshot(home, out);
+    let mut new = BTreeSet::new();
+    for (&directory, before) in before {
+        match (before, &after[directory]) {
+            (Ok(before), Ok(after)) => new.extend(after.difference(before)),
+            (Err(error), _) | (_, Err(error)) => errors.push(format!(
+                "HOME: cannot list {}: {error}",
+                if directory.is_empty() { "." } else { directory }
+            )),
+        }
+    }
+    let (tools, other): (Vec<_>, Vec<_>) = new.into_iter().partition(|path| {
+        let name = path
+            .file_name()
+            .unwrap_or_default()
+            .to_string_lossy()
+            .to_ascii_lowercase();
+        [
+            "nushell", "atuin", "zoxide", "carapace", "helix", "yazi", "lazygit", "starship", "eon",
+        ]
+        .contains(&name.as_str())
+            || name.contains("yazelix")
+    });
+    for path in &other {
+        progress(&format!("HOME: other new entry: {}", path.display()));
+    }
+    let mut report = format!(
+        "HOME: {} other new entries, listed on the terminal only\n",
+        other.len()
+    );
+    if tools.is_empty() {
+        return report;
+    }
+    for path in &tools {
+        progress(&format!("HOME: entry from Eon's tools: {}", path.display()));
+    }
+    let yes = line(
+        input,
+        &format!(
+            "Remove these {} entries the check created in your HOME? [y/N]",
+            tools.len()
+        ),
+    )
+    .is_some_and(|answer| matches!(answer.trim().to_ascii_lowercase().as_str(), "y" | "yes"));
+    if !yes {
+        report += &format!(
+            "HOME: {} entries from Eon's tools, kept (answer: no)\n",
+            tools.len()
+        );
+        return report;
+    }
+    let mut removed = 0;
+    for path in &tools {
+        let result = fs::symlink_metadata(path).and_then(|metadata| {
+            if metadata.is_dir() {
+                fs::remove_dir_all(path)
+            } else {
+                fs::remove_file(path)
+            }
+        });
+        match result {
+            Ok(()) => removed += 1,
+            Err(error) => errors.push(format!("HOME: remove entry: {error}")),
+        }
+    }
+    report += &format!(
+        "HOME: {} entries from Eon's tools, {removed} removed (answer: yes)\n",
+        tools.len()
+    );
+    report
 }
 
 /// Gregorian civil date in UTC, counting whole days since the Unix epoch.
@@ -694,6 +815,14 @@ pub fn final_check(options: Options) -> Result<bool, String> {
     );
     fs::write(out.join("versions.txt"), "not run\n").map_err(|error| error.to_string())?;
     fs::write(out.join("displays.json"), "null\n").map_err(|error| error.to_string())?;
+    let home = if options.dry_run {
+        None
+    } else {
+        let home = PathBuf::from(std::env::var_os("HOME").ok_or("HOME is unset")?);
+        let home = fs::canonicalize(&home).unwrap_or(home);
+        let before = home_snapshot(&home, &out);
+        Some((home, before))
+    };
     progress(
         "The automatic run takes hours. Keep the Mac awake and untouched until it rings. The GUI scenario types into Eon.",
     );
@@ -747,7 +876,20 @@ pub fn final_check(options: Options) -> Result<bool, String> {
             Err(reason) => bundle.items = records("not-run", &reason),
         }
     }
-    fs::write(out.join("summary.txt"), bundle.summary()).map_err(|error| error.to_string())?;
+    let home_report = home.map_or_else(String::new, |(home, before)| {
+        check_home(
+            &home,
+            &out,
+            &before,
+            &mut io::stdin().lock(),
+            &mut bundle.errors,
+        )
+    });
+    for line in home_report.lines() {
+        log.line(line);
+    }
+    fs::write(out.join("summary.txt"), bundle.summary() + &home_report)
+        .map_err(|error| error.to_string())?;
     fs::write(
         out.join("final.json"),
         serde_json::to_string_pretty(&bundle.json()).expect("a JSON value serializes") + "\n",
@@ -779,6 +921,158 @@ pub fn final_check(options: Options) -> Result<bool, String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn home_cleanup_needs_consent_and_never_reports_entry_names() {
+        for (index, (answer, remove)) in [
+            (" yEs \n", true),
+            ("y\n", true),
+            ("no\n", false),
+            ("\n", false),
+            ("", false),
+            ("a private answer\n", false),
+        ]
+        .into_iter()
+        .enumerate()
+        {
+            let root =
+                std::env::temp_dir().join(format!("mac-proof-home-{}-{index}", std::process::id()));
+            let home = root.join("home");
+            let existing = home.join(".config/NuShell");
+            fs::create_dir_all(&existing).unwrap();
+            fs::write(existing.join("history.txt"), "keep history").unwrap();
+            let cache = root.join("cache");
+            fs::create_dir(&cache).unwrap();
+            std::os::unix::fs::symlink(&cache, home.join(".cache")).unwrap();
+            let out = home.join(".cache/yazelix-evidence");
+            fs::create_dir(&out).unwrap();
+            let out = fs::canonicalize(out).unwrap();
+            let before = home_snapshot(&home, &out);
+            assert!(
+                before
+                    .values()
+                    .all(|entries| !entries.as_ref().unwrap().contains(&out))
+            );
+            let tool = home.join(".config/AtUiN");
+            fs::create_dir(&tool).unwrap();
+            fs::write(tool.join("history"), "new history").unwrap();
+            let target = root.join("keep-target");
+            fs::create_dir(&target).unwrap();
+            fs::write(target.join("kept"), "keep target").unwrap();
+            let link = home.join(".cache/my-YaZeLiX-link");
+            std::os::unix::fs::symlink(&target, &link).unwrap();
+            let other = home.join("other-private-name");
+            fs::write(&other, "keep other").unwrap();
+            fs::write(archive_path(&out), "keep archive").unwrap();
+            let mut errors = Vec::new();
+            let report = check_home(&home, &out, &before, &mut answer.as_bytes(), &mut errors);
+            let log_path = root.join("final.log");
+            let mut log = Log::new(File::create(&log_path).unwrap());
+            log.line(&report);
+            assert!(errors.is_empty());
+            assert_eq!(tool.exists(), !remove);
+            assert_eq!(link.symlink_metadata().is_ok(), !remove);
+            assert!(target.join("kept").exists());
+            assert_eq!(
+                fs::read_to_string(existing.join("history.txt")).unwrap(),
+                "keep history"
+            );
+            assert!(other.exists() && out.exists() && archive_path(&out).exists());
+            assert_eq!(
+                report,
+                format!(
+                    "HOME: 1 other new entries, listed on the terminal only\nHOME: 2 entries from Eon's tools, {}\n",
+                    if remove {
+                        "2 removed (answer: yes)"
+                    } else {
+                        "kept (answer: no)"
+                    }
+                )
+            );
+            assert_eq!(fs::read_to_string(log_path).unwrap(), format!("{report}\n"));
+            assert!(
+                !report.contains("private")
+                    && !report.contains("AtUiN")
+                    && !report.contains("YaZeLiX")
+            );
+            let before = home_snapshot(&home, &out);
+            let mut untouched = &b"yes\n"[..];
+            check_home(&home, &out, &before, &mut untouched, &mut errors);
+            assert_eq!(untouched, b"yes\n");
+            fs::remove_dir_all(root).unwrap();
+        }
+    }
+
+    #[test]
+    fn closed_input_keeps_home_entries_and_removal_errors_omit_paths() {
+        let home =
+            std::env::temp_dir().join(format!("mac-proof-home-error-{}", std::process::id()));
+        fs::create_dir_all(home.join(".cache")).unwrap();
+        let out = home.join("evidence");
+        let before = home_snapshot(&home, &out);
+        let tool = home.join(".cache/eon");
+        fs::create_dir(&tool).unwrap();
+        fs::write(tool.join("private-history"), "history").unwrap();
+        let mut errors = Vec::new();
+        let mut closed = io::BufReader::new(File::open(&home).unwrap());
+        let report = check_home(&home, &out, &before, &mut closed, &mut errors);
+        assert!(report.contains("kept (answer: no)") && tool.exists());
+        assert!(errors.is_empty());
+        fs::set_permissions(&tool, fs::Permissions::from_mode(0o500)).unwrap();
+        let report = check_home(&home, &out, &before, &mut &b"yes\n"[..], &mut errors);
+        fs::set_permissions(&tool, fs::Permissions::from_mode(0o700)).unwrap();
+        fs::remove_dir_all(&home).unwrap();
+        assert!(report.contains("0 removed (answer: yes)"));
+        assert_eq!(errors.len(), 1);
+        assert!(errors[0].starts_with("HOME: remove entry: "));
+        assert!(!errors[0].contains(&home.display().to_string()));
+        assert!(!errors[0].contains("private-history"));
+    }
+
+    #[test]
+    fn an_unlisted_home_directory_is_never_offered_for_removal() {
+        for unreadable_before in [true, false] {
+            let home = std::env::temp_dir().join(format!(
+                "mac-proof-home-unlisted-{}-{unreadable_before}",
+                std::process::id()
+            ));
+            let directory = home.join(".config");
+            let existing = directory.join("nushell");
+            fs::create_dir_all(&existing).unwrap();
+            fs::write(existing.join("history.txt"), "keep history").unwrap();
+            let out = home.join("evidence");
+            if unreadable_before {
+                fs::set_permissions(&directory, fs::Permissions::from_mode(0o000)).unwrap();
+            }
+            let before = home_snapshot(&home, &out);
+            fs::set_permissions(&directory, fs::Permissions::from_mode(0o700)).unwrap();
+            let new = directory.join("atuin");
+            fs::create_dir(&new).unwrap();
+            if !unreadable_before {
+                fs::set_permissions(&directory, fs::Permissions::from_mode(0o000)).unwrap();
+            }
+            let mut input = &b"yes\n"[..];
+            let mut errors = Vec::new();
+            let report = check_home(&home, &out, &before, &mut input, &mut errors);
+            fs::set_permissions(&directory, fs::Permissions::from_mode(0o700)).unwrap();
+            let kept = new.exists()
+                && fs::read_to_string(existing.join("history.txt"))
+                    .ok()
+                    .as_deref()
+                    == Some("keep history");
+            fs::remove_dir_all(&home).unwrap();
+            assert!(kept);
+            assert_eq!(input, b"yes\n");
+            assert_eq!(
+                report,
+                "HOME: 0 other new entries, listed on the terminal only\n"
+            );
+            assert_eq!(errors.len(), 1);
+            assert!(errors[0].starts_with("HOME: cannot list .config: "));
+            assert!(!errors[0].contains(&home.display().to_string()));
+            assert!(!errors[0].contains("nushell") && !errors[0].contains("atuin"));
+        }
+    }
 
     #[test]
     fn the_approved_items_have_actions_and_one_sentence_expectations() {
