@@ -281,6 +281,11 @@ mod tests {
 
     #[test]
     fn blend_check_rejects_wrong_colours_and_compositing() {
+        // CI run 40828543315: OSC 11 left the background black.
+        for (picture, backdrop) in [([39; 3], [224; 3]), ([6; 3], [32; 3])] {
+            assert!(check_blend(picture, blend([0; 3], backdrop, 0.8)).is_ok());
+            assert!(check_blend(picture, blend([128; 3], backdrop, 0.8)).is_err());
+        }
         let expected = [[224; 3], [32; 3]].map(|backdrop| blend([128; 3], backdrop, 0.8));
         for (picture, expected) in [[147; 3], [109; 3]].into_iter().zip(expected) {
             assert!(check_blend(picture, expected).is_ok());

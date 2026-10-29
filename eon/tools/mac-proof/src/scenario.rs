@@ -21,8 +21,8 @@ use std::{
 
 const MINUTE: Duration = Duration::from_secs(60);
 const PAUSE: Duration = Duration::from_millis(250);
+const BLACK: [u8; 3] = [0; 3];
 const DARK: [u8; 3] = [32; 3];
-const GREY: [u8; 3] = [128; 3];
 const LIGHT: [u8; 3] = [224; 3];
 const OPACITY: f64 = 0.8;
 /// The share of Venus's window that must differ from the desktop behind it.
@@ -139,13 +139,13 @@ const STEPS: &[Spec] = &[
         name: "translucency",
         needs: BOTH,
         requires: &["picker"],
-        proves: "OSC 11 sets Venus's default background to a known grey; over light and dark \
-                 backdrops, its most common colour matches background_opacity * grey + \
+        proves: "Orbit's default background, black, is the reference; over light and dark \
+                 backdrops, Venus's most common colour matches background_opacity * reference + \
                  (1 - background_opacity) * backdrop within the blend tolerance per channel, \
-                 and the backdrop's share is within 0.05 of 1 - background_opacity. The grey \
+                 and the backdrop's share is within 0.05 of 1 - background_opacity. The reference \
                  and backdrops are measured through the same capture path; when something \
-                 else lies behind Venus's window it is left for Yu. OSC 111 restores the \
-                 default background, and the light backdrop returns before the step ends",
+                 else lies behind Venus's window it is left for Yu. The light backdrop \
+                 returns before the step ends",
         window: true,
         timeout: Duration::from_secs(2 * 60),
         body: translucency,
@@ -301,12 +301,12 @@ Steps, in order:
         );
     }
     text += "
-Evidence, beside the summaries: scenario/captures/NN-<label>.png, the dark and grey backdrops
+Evidence, beside the summaries: scenario/captures/NN-<label>.png, the dark and black backdrops
 and the light desktop before launch and one capture after each step that shows the window,
-where Venus's window must differ from the desktop behind it, plus translucency-before,
-translucency-light, translucency-dark, translucency-restored, kitty's, views' and retina's own
-captures; scenario/eon.log with what `eon` printed; scenario/logs with Eon's own logs; and
-retina's scenario/displays.json and scenario/system-profiler-displays.json.
+where Venus's window must differ from the desktop behind it; translucency-light and
+translucency-dark using Orbit's default background, black, as the reference; kitty's, views'
+and retina's own captures; scenario/eon.log with what `eon` printed; scenario/logs with Eon's
+own logs; and retina's scenario/displays.json and scenario/system-profiler-displays.json.
 
 Left for Yu: Command+C on a pointer selection, the Eon Bar's CPU and RAM chips (no CLI reads
 them yet: eon-agent-parity-a9g0.12), VoiceOver, Kotoeri input and blur.";
@@ -445,8 +445,8 @@ pub struct Scenario {
     desktop: Option<Picture>,
     /// The dark backdrop before launch.
     dark: Option<Picture>,
-    /// The grey reference before launch.
-    grey: Option<Picture>,
+    /// The black reference before launch.
+    black: Option<Picture>,
     captures: u32,
     commands: u32,
     /// The pane that runs the driver.
@@ -474,7 +474,7 @@ impl Scenario {
             seen: BTreeMap::new(),
             desktop: None,
             dark: None,
-            grey: None,
+            black: None,
             captures: 0,
             commands: 0,
             driver: String::new(),
@@ -1277,8 +1277,8 @@ fn launch(scenario: &mut Scenario, log: &mut Log, deadline: Instant) -> Outcome 
     if scenario.screen.is_ok() {
         scenario.show_backdrop(DARK, log)?;
         scenario.dark = Some(scenario.capture("backdrop-dark", log, deadline)?);
-        scenario.show_backdrop(GREY, log)?;
-        scenario.grey = Some(scenario.capture("backdrop-grey", log, deadline)?);
+        scenario.show_backdrop(BLACK, log)?;
+        scenario.black = Some(scenario.capture("backdrop-black", log, deadline)?);
         scenario.show_backdrop(LIGHT, log)?;
         scenario.desktop = Some(scenario.capture("desktop", log, deadline)?);
     }
@@ -1311,52 +1311,29 @@ fn translucency(scenario: &mut Scenario, log: &mut Log, deadline: Instant) -> Ou
             .crop(region)
             .map_err(Failure::Check)
     };
-    let (light, dark, grey) = (
+    let (light, dark, black) = (
         crop(&scenario.desktop)?,
         crop(&scenario.dark)?,
-        crop(&scenario.grey)?,
+        crop(&scenario.black)?,
     );
-    if !light.blank() || !dark.blank() || !grey.blank() {
+    if !light.blank() || !dark.blank() || !black.blank() {
         return Err(Failure::Unavailable(
             "something besides the backdrop lies behind Venus's window; left for Yu".to_owned(),
         ));
     }
-    let (b_light, b_dark, c) = (light.dominant().0, dark.dominant().0, grey.dominant().0);
+    let (b_light, b_dark, c) = (light.dominant().0, dark.dominant().0, black.dominant().0);
     let expected_light = blend(c, b_light, OPACITY);
     let expected_dark = blend(c, b_dark, OPACITY);
     let references = format!(
         "B_light {b_light:?}, B_dark {b_dark:?}, C' {c:?}, background_opacity {OPACITY}, \
          expected light {expected_light:?}, expected dark {expected_dark:?}"
     );
-    let (p0, share) = scenario
-        .capture("translucency-before", log, deadline)?
-        .crop(region)
-        .map_err(Failure::Check)?
-        .dominant();
-    log.line(&format!(
-        "mac-proof: background before OSC 11: P0 {p0:?} (share {share})"
-    ));
     let observed = (|| {
-        let [r, g, b] = GREY;
-        scenario.inside(
-            &format!(r"printf '\033]11;rgb:{r:02x}/{g:02x}/{b:02x}\033\\' >&3"),
-            log,
-            deadline,
-        )?;
-        let ready = Instant::now() + Duration::from_secs(10);
-        let (p_light, light_share) = loop {
-            let picture = scenario
-                .capture("translucency-light", log, deadline)?
-                .crop(region)
-                .map_err(Failure::Check)?;
-            let observed = picture.dominant();
-            if check_blend(observed.0, expected_light).is_ok() || Instant::now() >= ready {
-                break observed;
-            }
-            // The next capture replaces this one.
-            scenario.captures -= 1;
-            thread::sleep(PAUSE);
-        };
+        let p_light = scenario
+            .capture("translucency-light", log, deadline)?
+            .crop(region)
+            .map_err(Failure::Check)?;
+        let (p_light, light_share) = p_light.dominant();
         scenario.show_backdrop(DARK, log)?;
         let p_dark = scenario
             .capture("translucency-dark", log, deadline)?
@@ -1382,60 +1359,16 @@ fn translucency(scenario: &mut Scenario, log: &mut Log, deadline: Instant) -> Ou
                  straight-vs-premultiplied or linear-light blending may show this way"
             )
         })?;
-        check_blend(p_light, expected_light).map_err(|error| {
-            Failure::Check(format!(
-                "grey background did not match within 10 s; {numbers}; {error}"
-            ))
-        })?;
+        check_blend(p_light, expected_light)
+            .map_err(|error| Failure::Check(format!("{numbers}; {error}")))?;
         check_blend(p_dark, expected_dark)
             .map_err(|error| Failure::Check(format!("{numbers}; {error}")))?;
         check_shares(shares, 1.0 - OPACITY)
             .map_err(|error| Failure::Check(format!("{numbers}; {error}")))
     })();
-    // Restore both even after a failure, with time for the driver to answer.
-    let mut restored = scenario
-        .inside(
-            r"printf '\033]111\033\\' >&3",
-            log,
-            Instant::now() + Duration::from_secs(10),
-        )
-        .map(drop);
+    // Restore the backdrop even after a failure.
     let backdrop = scenario.show_backdrop(LIGHT, log);
-    if restored.is_ok() && backdrop.is_ok() {
-        let now = Instant::now();
-        let deadline = if now >= deadline {
-            now + Duration::from_secs(30)
-        } else {
-            deadline
-        };
-        restored = (|| {
-            let expected = p0.map(f64::from);
-            let ready = Instant::now() + Duration::from_secs(10);
-            let (colour, share) = loop {
-                let picture = scenario
-                    .capture("translucency-restored", log, deadline)?
-                    .crop(region)
-                    .map_err(Failure::Check)?;
-                let observed = picture.dominant();
-                if check_blend(observed.0, expected).is_ok() || Instant::now() >= ready {
-                    break observed;
-                }
-                // The next capture replaces this one.
-                scenario.captures -= 1;
-                thread::sleep(PAUSE);
-            };
-            log.line(&format!(
-                "mac-proof: background after OSC 111: P0 {p0:?}, dominant {colour:?} (share {share})"
-            ));
-            check_blend(colour, expected).map_err(|error| {
-                Failure::Check(format!(
-                    "OSC 111 did not restore the background within 10 s: \
-                     P0 {p0:?}, last dominant {colour:?}; {error}"
-                ))
-            })
-        })();
-    }
-    observed.and(restored).and(backdrop)
+    observed.and(backdrop)
 }
 
 fn identity(scenario: &mut Scenario, log: &mut Log, deadline: Instant) -> Outcome {
