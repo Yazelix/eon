@@ -3875,6 +3875,20 @@ fn workspace_control_follows_the_exact_caller_across_generations() {
         bytes[offset] = if bytes[offset] == b'0' { b'1' } else { b'0' };
     }
     executable(&previous_binary, bytes);
+    #[cfg(target_os = "macos")]
+    {
+        // Patching invalidates the ad-hoc signature, so macOS kills the copy at first page-in.
+        let output = Command::new("/usr/bin/codesign")
+            .args(["--force", "--sign", "-"])
+            .arg(&previous_binary)
+            .output()
+            .unwrap();
+        assert!(
+            output.status.success(),
+            "codesign failed: {}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+    }
     let launch = |binary: &Path, name: &str, namespace: &Path| {
         let stop = root.join(name);
         let child = eon_command(binary)
