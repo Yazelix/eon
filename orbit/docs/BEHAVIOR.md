@@ -1473,6 +1473,13 @@ Broken pipe (os error 32); session S, run R`. The worker exits when its fact
 pipe closes, and on Linux it also dies with the host (`PR_SET_PDEATHSIG`), so
 it never outlives its pipes.
 
+While the host waits for the direct child after the hang-up, it reads and
+discards the PTY's output, because a macOS session leader's exit waits until
+its terminal's output is read. The `orbit-program-status` real-PTY check's
+[`answer_time_under_load`](../tests/real_pty/program_status.rs) stops a run
+whose child floods the PTY with `yes`, covering this wait on macOS; Linux
+does not wait this way, so there the check covers only a non-regression.
+
 A worker that stops answering, such as one stopped by SIGSTOP or wedged by a
 runtime defect, is treated as dead. The host waits at most two seconds for the
 worker's whole answer to one fact, and for its schema line and bounds at

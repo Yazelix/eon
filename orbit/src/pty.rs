@@ -49,6 +49,10 @@ const MAX_PTY_WRITE_BYTES: usize = session::MAX_PASTE_BYTES + 16;
 /// The pause before reading a hung-up PTY again.
 const PTY_EIO_RETRY_DELAY: Duration = Duration::from_millis(10);
 
+/// Bounds shutdown reads so a surviving writing descendant cannot pin the
+/// host past ORB-C12's deadlines.
+const MAX_SHUTDOWN_PTY_READS: usize = 64;
+
 /// Bytes waiting for the PTY: client input and libghostty's replies to the
 /// child's queries, in one order.
 #[derive(Clone, Default)]
@@ -357,6 +361,19 @@ impl Orbit {
                     return Ok(PtyRead::Blocked(self.master.as_raw_fd()));
                 }
                 Err(error) => return Err(error),
+            }
+        }
+    }
+
+    /// Reads and discards pending PTY output during shutdown, ignoring errors.
+    pub(crate) fn discard_shutdown_output(&mut self) {
+        let mut data = [0; 8192];
+        for _ in 0..MAX_SHUTDOWN_PTY_READS {
+            match self.master.read(&mut data) {
+                Ok(0) => break,
+                Ok(_) => {}
+                Err(error) if error.kind() == io::ErrorKind::Interrupted => {}
+                Err(_) => break,
             }
         }
     }

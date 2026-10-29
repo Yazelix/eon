@@ -1504,7 +1504,9 @@ impl Host {
     }
 
     /// Waits up to two seconds for the child. Bend asks again while a stopped
-    /// child stays unreaped, so a termination signal ends the wait.
+    /// child stays unreaped, so a termination signal ends the wait. Reads and
+    /// discards PTY output while waiting so a shell whose exit waits for its
+    /// terminal output to drain (macOS) can finish exiting.
     fn reap(&mut self) -> io::Result<Fact> {
         let deadline = Instant::now() + REAP_DEADLINE;
         loop {
@@ -1515,6 +1517,7 @@ impl Host {
             if Instant::now() >= deadline {
                 return Ok(Fact::NotReaped);
             }
+            self.orbit.discard_shutdown_output();
             thread::sleep(Duration::from_millis(10));
         }
     }
@@ -1598,7 +1601,8 @@ impl Host {
     /// SIGKILL with the foreground group read again, and the child must be
     /// reaped within two seconds. Reports whether it was reaped; an unreaped
     /// child that the SIGKILL could not reach fails, so only a killed child is
-    /// waited on again.
+    /// waited on again. Reads and discards PTY output while waiting so a shell
+    /// whose exit waits for its terminal output to drain (macOS) can finish exiting.
     fn contain(&mut self) -> io::Result<bool> {
         if self.orbit.child.is_none() || !matches!(self.orbit.try_reap(), Ok(None)) {
             return Ok(true);
@@ -1609,6 +1613,7 @@ impl Host {
                 if !matches!(orbit.try_reap(), Ok(None)) {
                     return true;
                 }
+                orbit.discard_shutdown_output();
                 thread::sleep(Duration::from_millis(10));
             }
             false
