@@ -6,10 +6,11 @@
   platform colour emoji family at regular upright style, ahead of primary and
   named fallback fonts (`eon-wy1r`).
 
-- VEN-C32: Alt+Q shows EONW v25's attention queue in one native inbox across
-  workspaces, with four counted filters, keyboard and pointer jumps, and
-  AccessKit rows. Rows share the agent sidebar's presentation and retain their
-  highlight across updates. Popup overrides take Alt+Q. No wire change.
+- VEN-C32 (Partially proved): Alt+Q shows EONW v25's attention queue in one
+  native inbox across workspaces, with four counted filters, keyboard and
+  pointer jumps, and AccessKit rows. Rows share the agent sidebar's
+  presentation and retain their highlight across updates. Popup overrides
+  take Alt+Q. No wire change.
 
 - Consume EONW v24, which adds EON-C10's directory-based tab launch request.
   Venus's new-tab action keeps the directory picker (`eon-tab-create-launch-8tl4`).

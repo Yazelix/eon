@@ -2460,8 +2460,9 @@ re-proved when that platform or feature is next touched.
 
 ## VEN-C32 — Attention inbox
 
-- **Status:** Approved by Lucca on 2026-10-29 (relayed by eon-overseer) on `eon-ngwf.2`, which
-  implements it.
+- **Status:** Partially proved: on x86_64 Linux Wayland every clause is proved
+  except those listed under Open proof. Approved by Lucca on 2026-10-29
+  (relayed by eon-overseer) on `eon-ngwf.2`, which implements it.
 - **Consumer:** One person using a Venus window attached to a full Eon workspace, under every
   `sidebar` value.
 - **Trigger:**
@@ -2519,4 +2520,68 @@ re-proved when that platform or feature is next touched.
   presentation (VEN-C30).
 - **Boundary:** no sorting, text search, multi-select, previews, notifications, kept filter, or
   Runtime state for opening; the key stays fixed until `[keys]` (`eon-configurability-qkq8.12`).
-- **Proof:** recorded on `eon-ngwf.2` once proven.
+- **Proof:** The checks and observations below; Open proof lists what they
+  leave out.
+  - **Automated (`eon-ngwf.2`, commit `1dabfde`):**
+    `attention_inbox_binding_opens_under_every_sidebar`,
+    `attention_inbox_keeps_the_queue_filter_and_entry_across_refreshes` and
+    `attention_inbox_names_filters_rows_and_highlight` (red without the inbox), the Runtime's
+    `attention_focus_crosses_workspaces_atomically_and_keeps_local_callers_local` and
+    `cross_workspace_focus_sees_the_finish_and_resets_the_queue_cursor` (red: `stale-target`), and
+    `direct_workspace_shortcuts_use_stable_eon_actions`,
+    `shortcut_hints_follow_bindings_catalog_and_native_focus` and
+    `configured_popups_take_fixed_bindings_except_reserved_keys` extended to Alt+Q. These alone prove the
+    AccessKit dialog, its filter and row names, its Click actions and its
+    accessibility focus on the highlight; dimmed stale rows and a row of
+    another workspace named by its name; the attention-only refresh, which
+    keeps the filter and keeps the highlight on an entry that stays in place,
+    else moves it to the row at its place, else the last row; the empty-queue
+    text; a popup configured on Alt+Q taking the key; and a clipped, scrollable
+    dialog for a 256-entry queue at scales 1, 1.3 and 2 on surfaces
+    down to 1x1.
+  - **Installed (`eon-ngwf.2`):** isolated installed dogfood on 2026-10-29 (edge `c300fdb`, tree
+    `4fc4eeff1745b502f37326f8fc5eb6277cdbb4a1`, the active profile
+    `/nix/store/b610ncr3w3vx81hvgrrjpxsl5f88fss6-eon-0.1.8` with Venus
+    `/nix/store/bmzqc99bs1l4sr727sakrxin2j2yawv0-yazelix-venus-0.1.0`; x86_64 Linux, private headless Sway 1.12 at
+    1600x900, keys through wdotool). Workspace w1 held a finished and an error fixture in two tabs, w2 a needs-input
+    fixture with a `msg` and a later finished fixture in one tab; w1's first tab was shown.
+    - The footer showed `Q inbox`. Alt+Q opened "Attention inbox" listing needs input (w2), error, finished (w1),
+      finished (w2), the order of `eon workspace --json`'s `attention_queue`; w1 rows named tab and pane
+      (`3 t · p3`), w2 rows the workspace, and the needs-input row its `msg` line.
+    - The filters read All 4, Needs input 1, Error 1 and Finished 2. Right and Left stepped them, each listing
+      only its state in queue order with the first row highlighted, and Right wrapped to All. With no error left,
+      Error 0 read "No agent in error".
+    - Opening, filtering and closing left the shown workspace, active tab, selected pane and queue unchanged.
+      Escape and Alt+Q each closed the inbox, and a typed command then ran in the original terminal. Reopening
+      after closing on Finished selected All.
+    - Enter on the w2 row from w1 showed w2 with its tab and pane focused; Down and Enter on the error row from w2
+      showed w1 with the error's tab and pane; Space on a w1 finished row selected its tab and pane; Enter on the
+      w2 finished row from w1 showed w2 with that pane focused. The inbox closed on each jump, and each error or
+      finish left the queue once its terminal was focused.
+    - The private seat kept one toplevel, Venus, focused throughout.
+    - The observation and its captures are recorded on `eon-ngwf.2`.
+- **Open proof:**
+  - Row contents: the state glyph and app icon; the "status stale" label;
+    truncation of a long `msg` line; and record text staying plain (inferred
+    only: inbox rows use the sidebar's `push_attention_row`, which VEN-C30
+    proved plain, but no inbox check used markup).
+  - Keyboard: Up moving the highlight; moving the highlight sending no
+    workspace action; the inbox capturing keyboard and other shortcut input
+    while open; and opening, filtering, moving the highlight and closing
+    sending no terminal bytes (a test covers only the generic capture
+    mechanism).
+  - Pointer and scrolling: clicks on filters and rows; wheel and paging-key
+    scroll on the installed product
+    (`attention_inbox_names_filters_rows_and_highlight` covers the scroll
+    offset); pointer, IME, clipboard and link input while the inbox is open.
+  - Updates and jumps: rows and counts updating in place while the inbox is
+    open; the highlight following its entry when that entry changes position;
+    keyboard focus following a jump, since nothing was typed after one; a
+    rejected jump's VEN-C8 notice.
+  - Shortcuts and state: the footer showing the inbox's own keys while it is
+    open; Orbit state staying unchanged; the inbox opening under every
+    `sidebar` value (only the binding catalog is tested); the inbox not
+    opening in eonbase.
+  - Failures: local dismissal under workspace loss, an empty or full queue,
+    long labels, resize, scale and tiny surfaces; a clipped, scrollable dialog
+    under workspace loss, an empty queue, long labels and resize.
