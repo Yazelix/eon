@@ -796,7 +796,7 @@ PTY pixel size rule needs no wire change.
 
 ## ORB-C14 — Apple Silicon macOS platform
 
-- **Status:** Partially proved
+- **Status:** Proved
 - **Consumer:** A native Orbit user on `aarch64-darwin`.
 - **Trigger:** The Orbit server launches one ordinary or managed PTY Session
   with local Unix endpoints on Apple Silicon macOS.
@@ -817,10 +817,23 @@ PTY pixel size rule needs no wire change.
   including bounded direct-child shutdown. Venus and Eon integration, Nix
   packaging, `x86_64-darwin`, signing, notarization, direct distribution,
   remote transport, and restart persistence remain unsupported.
-- **Proof:** Not proved for this tree. The previous Rust server proved it at
-  `4910b81e9d68942a65ad96ad21e03385de7144f5`, and bend-orbit, which this tree
-  imports, ran natively at `b017e4f02f2e85f2566957c6d503e330491aabd4`.
-  - **Environment:** Apple M2 (16 GiB), macOS 26.7.1 (25G241),
+- **Proof:** `0e47d26df690c7ff4b2f1a000e174b307a17e656` (Apple Silicon,
+  native), `eon-mac-launch-kz4p.12`. Earlier native runs: the previous Rust
+  server at `4910b81e9d68942a65ad96ad21e03385de7144f5`, and bend-orbit, which
+  this tree imports, at `b017e4f02f2e85f2566957c6d503e330491aabd4`.
+  - **Environment:** `0e47d26`: Apple M2 Mac mini (Mac14,3, 16 GiB) rented
+    from Scaleway, macOS 27.2 (26B123), `aarch64-apple-darwin`, one 1920x1080
+    scale-1 display. Nix 2.35.4; the dev shell's Rust 1.95.0, clang 21.1.8,
+    zig 0.17.0 and bun 1.3.13; Bend
+    `234cb9b950800f20b15feafcb4ce2f43e76e7fae`; Ghostty
+    `521cf2c5d30bd48028ca61546c64e7913764073d` through ghostty-rs
+    `9ede35b8ea94a55ed3608408d67e102883129f1e`. `mac-proof final` ran from
+    `github:Yazelix/eon/0e47d26df690c7ff4b2f1a000e174b307a17e656` in a
+    logged-in GUI session, driven over SSH. Every `checks.aarch64-darwin`
+    output at this revision was built on that Mac, none substituted. Archive
+    `eon-mac-final-0e47d26df690-2026-10-29.tar.gz`, sha256
+    `1b9512a7e1330868dc94748cd3248626f01345e690cdc3032c0af703bdb3c652`.
+    Earlier runs: Apple M2 (16 GiB), macOS 26.7.1 (25G241),
     `aarch64-apple-darwin`. The previous server: native
     `cargo test --locked -p yazelix-orbit -p orbit-protocol` with Rust 1.96.0,
     recorded in `eon-orb-c14-mac-reproof-l8rz`. bend-orbit: native build with
@@ -830,29 +843,40 @@ PTY pixel size rule needs no wire change.
     macOS 15.4 Command Line Tools SDK and Ghostty
     `a887df42c56f6de86c0fe6da9c4eeca37931e083`.
   - **Evidence:**
-    - The previous server passed all 74 protocol, management, unit and
-      lifecycle tests natively, including the `conformance_` corpus.
-    - bend-orbit printed `ALL PROOFS CHECK` for `PROOF.bend` and passed its 24
-      Rust unit tests, all 36 real-PTY checks, and 15 of
-      [`tests/lifecycle.rs`](../tests/lifecycle.rs)'s 18 tests; the other
-      three are Linux-only.
+    - At `0e47d26`:
+      - `orbit-laws` passed. Its derivation is unchanged from the one the same
+        Mac built natively in an earlier run that day, whose build log printed
+        `ALL PROOFS CHECK` for `PROOF.bend`.
+      - All 49 real-PTY checks that the macOS build compiles passed as
+        `checks.aarch64-darwin.orbit-*`: every check except
+        [`orbit-unreaped-stop`](../tests/real_pty/unreaped_stop.rs), including
+        [`orbit-management-lease`](../tests/real_pty/management_lease.rs) and
+        [`orbit-program-status`](../tests/real_pty/program_status.rs).
+      - `orbit-boundary`, `orbit-terminfo` and `orbit-terminfo-darwin` passed.
+      - `cargo test` passed natively for `yazelix-orbit`, with 55 unit tests
+        and 15 of [`tests/lifecycle.rs`](../tests/lifecycle.rs)'s tests,
+        including
+        `managed_run_survives_launcher_loss_and_has_one_replacement_owner`;
+        for `orbit-protocol` (29); and for `orbit-governance` (4). None
+        failed.
+    - Earlier runs:
+      - The previous server passed all 74 protocol, management, unit and
+        lifecycle tests natively, including the `conformance_` corpus.
+      - bend-orbit printed `ALL PROOFS CHECK` for `PROOF.bend` and passed its
+        24 Rust unit tests, all 36 real-PTY checks, and 15 of
+        [`tests/lifecycle.rs`](../tests/lifecycle.rs)'s 18 tests; the other
+        three are Linux-only.
     - [`managed_run_survives_launcher_loss_and_has_one_replacement_owner`](../tests/lifecycle.rs)
       checks a managed run's Darwin `proc_pidinfo` process-start identity
       against an independent read, and
       [`orbit-management-lease`](../tests/real_pty/management_lease.rs)
       exercises the Darwin `getpeereid` peer identity; on macOS the real-PTY
       checks use `lsof` where Linux reads `/proc`.
-- **Open proof:** This tree differs from bend-orbit `b017e4f0` in its names,
-  boundary schema digest, worker lookup and `orbit-protocol` path dependency
-  (`eon-awmq.3`), so the bend-orbit run is evidence about the design, not a
-  proof of this revision. Native re-proof runs `orbit-laws`, the unit tests,
-  every real-PTY check except
-  [`orbit-unreaped-stop`](../tests/real_pty/unreaped_stop.rs), and
-  `tests/lifecycle.rs` on Apple Silicon. That check holds the child unreaped
-  with Linux's `PTRACE_SEIZE`, which macOS lacks, so a Stop whose child cannot
-  be reaped is checked on Linux only. Tests and assertions that read Linux-only
-  process state do not run on macOS. Eon records
-  the same macOS gap under `EON-C7` in
+- **Open proof:** [`orbit-unreaped-stop`](../tests/real_pty/unreaped_stop.rs)
+  holds the child unreaped with Linux's `PTRACE_SEIZE`, which macOS lacks, so
+  a Stop whose child cannot be reaped is checked on Linux only. Tests and
+  assertions that read Linux-only process state do not run on macOS. Eon
+  records its own macOS proof under `EON-C7` in
   [`docs/CONTRACTS.md`](../../docs/CONTRACTS.md).
 
 ## ORB-C15 — Program status records

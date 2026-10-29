@@ -187,6 +187,10 @@ remain canonical in `docs/CONTRACTS.md`, dependency decisions in
   both `e/` and `65/`, so the system's ncurses reads it too. Linux's entry is
   unchanged. ORB-C10 is Partially proved until a native macOS run reads the
   entry (`eon-mac-launch-kz4p.20`).
+- ORB-C14 becomes Proved for this Orbit. On a rented Apple M2 Mac mini with
+  macOS 27.2, `mac-proof final` at `0e47d26df690c7ff4b2f1a000e174b307a17e656`
+  passed `orbit-laws`, every real-PTY check except `orbit-unreaped-stop`,
+  and the unit and lifecycle tests natively (`eon-mac-launch-kz4p.12`).
 
 ## Before this repository
 

@@ -1084,17 +1084,65 @@ re-proved when that platform or feature is next touched.
     - Wheel scrolling through history works.
     - Command+Q exits Venus while Orbit and its shell survive, and a relaunched
       Venus reattaches.
+- **Proof:** `0e47d26df690c7ff4b2f1a000e174b307a17e656` (Apple Silicon,
+  partial, installed through Eon)
+  - **Environment:** Apple M2 Mac mini (Mac14,3, 16 GiB) rented from
+    Scaleway, macOS 27.2 (26B123), `aarch64-apple-darwin`, one 1920x1080
+    scale-1 display offering HiDPI modes, stock macOS fonts. Nix 2.35.4; the
+    dev shell's Rust 1.95.0. `mac-proof final` ran from
+    `github:Yazelix/eon/0e47d26df690c7ff4b2f1a000e174b307a17e656` in a
+    logged-in GUI session, driven over SSH, with Screen Recording and
+    Accessibility granted. Venus ran as packaged by this revision's flake and
+    launched by `eon run`. Keys were posted by a CGEvent helper; no physical
+    keyboard or pointer was used. Archive
+    `eon-mac-final-0e47d26df690-2026-10-29.tar.gz`, sha256
+    `1b9512a7e1330868dc94748cd3248626f01345e690cdc3032c0af703bdb3c652`;
+    recorded in `eon-mac-launch-kz4p.12`.
+  - **Evidence:**
+    - `cargo test` passed natively for `yazelix-venus`: 247 tests, including
+      `wide_emoji_clusters_use_the_platform_colour_face`, none failed.
+    - The packaged Venus window shows in a capture.
+    - With the main display switched to its HiDPI mode (960x540 points at
+      1920x1080 pixels), Venus logs a window scale factor of 2 and the window
+      shows in a capture.
+    - With `background_opacity` 0.8, Venus's most common colour over light
+      and dark backdrops matches, within tolerance, 0.8 of Orbit's black
+      background, as a black backdrop captured before launch shows it, plus
+      0.2 of the backdrop.
+    - A Kitty graphics image shows in the window, and in the manual item
+      Yazi's image preview shows a PNG.
+    - Posted Option chords reach Eon: Option+Shift+Y shows and hides Yazi,
+      Option+Shift+Z and Option+/ change the window and a second press
+      restores it, and Option+Shift+D detaches. In the manual item,
+      Option+Shift+T, Option+M, Option+K/J and Option+Z open a tab, open a
+      pane, move the selection and open Project.
+    - Command+V pastes `pbcopy` text into a pane.
+    - In the manual fonts item, Han ideographs, kana and accented letters
+      render, and 👍🏽 and 🇯🇵 each show as one colour glyph. At `e0aa47e`, on
+      macOS 26.7.1, Han ideographs rendered blank and these sequences did not
+      compose. Since then `eon-cts4` turned on Orbit's grapheme clustering
+      (mode 2027) and `eon-wy1r` routed two-cell emoji to the platform colour
+      emoji font; why Han now renders is not diagnosed.
+    - Killing Venus leaves the terminals live, and `eon attach` shows them
+      again.
+    - Outside the harness, an AXUIElement dump of an isolated `eon run` of
+      this revision's package reads Venus's AccessKit tree: the window; the
+      workspace tab group with its tab; the New tab, Keyboard shortcuts and
+      Close tab buttons; the CPU, RAM, clock and version chips; the pane's
+      text area in its tab panel; and the hints line. A second dump, taken
+      during the final's manual items with a live shell pane, shows the window
+      and tab titles and the tab panel following the workspace.
 - **Open proof:** Pending re-proof in this repository: the no-Wayland failure
-  observation. Not observed natively at the revision above: Kotoeri
-  composition, Retina-scale redraw, renderer recovery, the PNG-only and
-  oversize-pasteboard notices, Option/Control modifier mapping, held-key
-  repeat, physical trackpad gestures, focus loss, and AccessKit beyond window
-  creation. With stock macOS fonts at that revision, Han ideographs render
-  blank, stacked combining marks are dropped, emoji modifier and flag sequences
-  don't compose, and a long notice truncates at the window edge. Emoji
-  sequences split because Orbit's terminal had grapheme clustering (mode
-  2027) off; eon-cts4 turns it on, and no macOS run has observed the result
-  yet. The other causes are not diagnosed.
+  observation. Not observed natively at either Apple Silicon revision above:
+  Kotoeri composition, redraw on a physical Retina panel (the `0e47d26`
+  scale-2 window ran in a HiDPI mode of the rental's display), renderer
+  recovery, the PNG-only and oversize-pasteboard notices, Option and Control
+  modifier mapping to terminal input (Option chords reach Eon's shortcuts),
+  held-key repeat, physical trackpad gestures, focus loss, and
+  AccessKit beyond a tree read (VoiceOver use, actions and focus events).
+  With stock macOS fonts at `e0aa47e`, stacked combining marks are dropped
+  and a long notice truncates at the window edge; the `0e47d26` run exercised
+  neither, and their causes are not diagnosed.
   `ven-prove-venus-apple-silicon-macos-nm7` owns these and the
   rest of the macOS proof: accessibility acceptance, lifecycle identity,
   transparency/blur, exact Orbit dogfood, and the support claim.

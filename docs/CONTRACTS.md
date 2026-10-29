@@ -329,21 +329,63 @@ socket names, JSON fields and protocol identifiers retain their spellings.
 - **Owner:** Eon platform and distribution policy; child-owned kernel
   capabilities remain explicit child contracts.
 - **Boundary:** Current accepted support remains x86_64 Linux native Wayland.
-  Orbit `ORB-C14` was proved natively on Apple Silicon for the previous Rust
-  Orbit, but the Bend Orbit imported by `eon-awmq.3` has no native proof yet;
-  Venus `VEN-C16` has a partial native proof in this repository. Apple Silicon
-  macOS remains unsupported until Orbit, Venus and full-Eon native proofs pass.
+  Orbit `ORB-C14` is proved natively on Apple Silicon at
+  `0e47d26df690c7ff4b2f1a000e174b307a17e656`; Venus `VEN-C16` and full Eon have
+  partial native proofs in this repository. Apple Silicon macOS remains
+  unsupported until the Venus and full-Eon native proofs pass.
   X11, Xwayland, Intel macOS, signing, notarization, direct bundles, and public
   macOS distribution remain outside this contract.
 - **Proof:** `795d735a8f61ef439c56d68e1cc4d3929af0dfcf`, `eon-monorepo-2oko.6`;
-  the combined Linux/macOS contract is not proved.
-  - **Environment:** Automated tier; installed tier.
-  - **Evidence:** Installed checklist items 1 through 5 and 10 through 12 cover
-    native launch, picker, tabs and panes, popups, shortcuts and hints, detach
-    and attach, generations, independent windows, eonbase and exact-generation
-    Stop on headless Sway; items 6 through 8 pass for the Eon Bar and version
-    label, terminal text and opacity. Lucca opened the build from the desktop
-    entry on COSMIC and reported a general visual pass.
+  Apple Silicon, partial, full Eon:
+  `0e47d26df690c7ff4b2f1a000e174b307a17e656`, `eon-mac-launch-kz4p.12`; the
+  combined Linux/macOS contract is not proved.
+  - **Environment:** Automated tier; installed tier. Apple Silicon: Apple M2
+    Mac mini (Mac14,3, 16 GiB) rented from Scaleway, macOS 27.2 (26B123),
+    `aarch64-apple-darwin`, one 1920x1080 scale-1 display offering HiDPI
+    modes. Nix 2.35.4; the dev shell's Rust 1.95.0. `mac-proof final` ran from
+    `github:Yazelix/eon/0e47d26df690c7ff4b2f1a000e174b307a17e656` in a
+    logged-in GUI session, driven over SSH, with Screen Recording and
+    Accessibility granted. Keys were posted by a CGEvent helper; no physical
+    keyboard or pointer was used. Archive
+    `eon-mac-final-0e47d26df690-2026-10-29.tar.gz`, sha256
+    `1b9512a7e1330868dc94748cd3248626f01345e690cdc3032c0af703bdb3c652`.
+  - **Evidence:**
+    - x86_64 Linux: installed checklist items 1 through 5 and 10 through 12
+      cover native launch, picker, tabs and panes, popups, shortcuts and
+      hints, detach and attach, generations, independent windows, eonbase and
+      exact-generation Stop on headless Sway; items 6 through 8 pass for the
+      Eon Bar and version label, terminal text and opacity. Lucca opened the
+      build from the desktop entry on COSMIC and reported a general visual
+      pass.
+    - Apple Silicon at `0e47d26`:
+      - The automatic part ran 90 steps with none failed or skipped, and
+        `eon versions` names `aarch64-darwin` for Eon 0.1.8 and every
+        component.
+      - The package and every `checks.aarch64-darwin` output at this revision
+        built natively. `cargo test` passed for `eon` (50), `eon-runtime`
+        (140, 1 ignored), `eon-workspace-protocol` (14) and `eon-manifest`
+        (4).
+      - In the GUI scenario, `eon run` started with a private HOME,
+        configuration and runtime root, though codexbar still wrote its files
+        into the real HOME (`eon-mac-launch-kz4p.45`); after Escape at the
+        directory picker, its command ran as the only pane, in the launch
+        directory.
+      - A pane sees `TERM=eon`, which macOS's `/usr/bin/tput` resolves.
+      - `eon pane create` worked from outside and inside Eon, `eon tab
+        create` from outside, and `eon focus` moved the selection.
+      - `eon edit` opened a pane running Helix that stayed live.
+      - Option+Shift+Y showed and hid Yazi, and Option+Shift+Z and Option+/
+        changed the window and a second press restored it.
+      - Option+Shift+D detached and `eon attach` reattached. After Venus was
+        killed, `eon attach` showed the same terminals again. After the
+        supervisor was killed, the Orbit hosts outlived it and a new `eon`
+        adopted every terminal (`EON-C15`).
+      - `eon stop all` left no process behind.
+      - Manual items, judged from captures, passed for fonts (Han, kana and
+        accents render, and 👍🏽 and 🇯🇵 each show as one glyph), the keys the
+        Shortcuts viewer lists (a tab, a pane, moving between panes and the
+        Project popup, each also checked in `eon workspace --json`), and
+        Yazi's image preview.
 - **Open proof:** Pending re-proof in this repository: installed quota chip
   detail, Accelerando playback, blur, pointer interaction (item 9), a full
   COSMIC checklist, install from this repository's first tag, clean-account public-source qualification,
@@ -351,8 +393,11 @@ socket names, JSON fields and protocol identifiers retain their spellings.
   EON-C8 records reader qualification as pending. Wider compositors,
   fractional/HiDPI coverage, proprietary NVIDIA and installed non-systemd
   behavior remain unproved. Machine-restart recovery is not supported.
-  Native Apple Silicon proof follows Orbit ORB-C14's re-proof, Venus VEN-C16, then
-  `eon-prove-full-eon-apple-silicon-macos-t8o`; compile/evaluation is insufficient.
+  On Apple Silicon, a physical Retina panel, a second display, input methods,
+  the agent sidebar with Claude Code and Command+C to another app are
+  unobserved, as are VEN-C16's open items;
+  `eon-prove-full-eon-apple-silicon-macos-t8o` owns the full-Eon proof, and
+  compile/evaluation is insufficient.
 
 ## EON-C8 — Durable tab and pane workspace
 
