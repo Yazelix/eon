@@ -53,9 +53,11 @@ with `DIR` as its HOME.
 The evidence folder holds `summary.txt` (one line per step: status, duration,
 first failing line), `summary.json` (the same, with the system and tree),
 `steps/NN-<step>.log` and the Linux side's `remote.log`; `mac-proof run --help`
-lists the steps and fields. The tool exits 0 when every step passed, 1 when
-one did not and 2 when the round trip itself failed or the run's outcome is
-unknown. Until the last step has run, the summaries' result reads `incomplete`.
+lists the steps and fields. The tool exits 0 when every step passed, was planned
+in a dry run, or was skipped for Yu; 1 when any step failed, timed out or was
+skipped for another reason; and 2 when the round trip itself failed or the run's
+outcome is unknown. Until the last step has run, the summaries' result reads
+`incomplete`.
 
 The Mac needs SSH key login with its host key already in `known_hosts` (the
 tool runs ssh in batch mode), macOS 14 or later and Nix 2.20 or later,
@@ -98,17 +100,16 @@ Venus crash and supervisor adoption. With both Accessibility and Screen
 Recording, captures of Venus's window also check its background translucency
 over the backdrop, a Kitty image, zoom and the Shortcuts dialog. Granting
 either permission takes a click in System Settings. A step that lacks what it
-needs is listed for Yu in `summary.txt`, never passed, so a hosted runner
-without these grants reports a failed run even when every suite passed; read
-the suites' steps there. Command+C on a pointer selection, the Eon Bar's chips
+needs is skipped and listed for Yu in `summary.txt`. A run whose only non-passing
+steps are these skips passes and reports how many steps were left for Yu; each
+step's status stays skipped. Command+C on a pointer selection, the Eon Bar's chips
 (until `eon-agent-parity-a9g0.12` lets the CLI read them), VoiceOver, Kotoeri
 and blur are always left to Yu. Retina is too, unless the main display runs at
 scale 2, offers a HiDPI mode the step can switch to, or `mac-proof run` (CI and
 the rented Mac) can use a temporary HiDPI virtual display. `mac-proof final`
 never creates one on a person's own Mac; macOS keeps one ColorSync profile for
 the virtual display's fixed identity, which `leftovers` logs.
-`mac-proof scenario --help` lists the steps and what each needs. No
-Mac has run the scenario yet.
+`mac-proof scenario --help` lists the steps and what each needs.
 
 ### Yu's final check
 

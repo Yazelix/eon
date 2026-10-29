@@ -342,9 +342,8 @@ pub fn remote(options: Options) -> Result<bool, String> {
     Ok(passed)
 }
 
-/// Whether every step passed, from the run's exit code: 0 when all did and 1
-/// when one did not. Its 2, a failure of the tool itself, and no code at all
-/// are errors.
+/// The host run's verdict, including steps left for Yu: 0 for pass and 1 for
+/// fail. Its 2, a failure of the tool itself, and no code at all are errors.
 fn outcome(code: Option<i32>) -> Result<bool, String> {
     match code {
         Some(0) => Ok(true),

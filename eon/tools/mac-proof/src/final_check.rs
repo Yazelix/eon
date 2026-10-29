@@ -111,9 +111,9 @@ Items:
         text += &item_text(index, item);
     }
     text += "\nThe archive is <out>.tar.gz beside the folder. Look inside before sending it to Lucca.\n\
-Exits 0 when the automatic run passed, every item passed or was skipped, and no capture,\n\
-reporting or cleanup errors occurred; 1 otherwise, and 2 when it could not start or could not\n\
-write the bundle. A dry run proves no Mac behavior.";
+Exits 0 when every step of the automatic run passed, every item passed or was skipped, and no\n\
+capture, reporting or cleanup errors occurred; 1 otherwise, and 2 when it could not start or\n\
+could not write the bundle. A dry run proves no Mac behavior.";
     text
 }
 
@@ -722,7 +722,13 @@ pub fn final_check(options: Options) -> Result<bool, String> {
         },
         date,
         dry_run: options.dry_run,
-        run_result: if report.passed { "pass" } else { "fail" },
+        run_result: if !report.passed {
+            "fail"
+        } else if report.left_for_yu > 0 {
+            "left for Yu"
+        } else {
+            "pass"
+        },
         items: Vec::new(),
         errors: Vec::new(),
     };

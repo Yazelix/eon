@@ -38,9 +38,9 @@ It sends `git archive` of the tree into ~/eon-proof/<tree>-<time>/src on the hos
 `nix run path:.#mac-proof -- run` there with stdin closed, and copies the evidence back into
 --out, beside remote.log. The run keeps going on the Mac if the connection drops; the last
 lines printed then name the command that fetches its evidence again, and otherwise the
-cleanup command to run on the host. Exits 0 when every step passed (or, in a dry run, was
-planned), 1 when one did not, and 2 when the round trip itself failed or the run's outcome
-is unknown.";
+cleanup command to run on the host. Exits 0 when every step passed, was planned in a dry run,
+or was skipped for Yu; 1 when any step failed, timed out or was skipped for another reason;
+and 2 when the round trip itself failed or the run's outcome is unknown.";
 
 const RUN_HELP: &str = "\
 mac-proof run: the native steps, on Apple Silicon macOS only, in the current directory: a
@@ -82,8 +82,8 @@ Evidence folder:
                        could not run on this Mac, which summary.txt then lists for Yu
   steps/NN-<step>.log  each step's commands and their output, with : in the step as -
 Both summaries are rewritten after every step, with result incomplete until the last step
-has run; then it is pass or fail. Exits 0 when every step passed (or, in a
-dry run, was planned), 1 when one did not, and 2 when the run could not start.";
+has run; then result is pass when every step passed, was planned, or was skipped with for_yu;
+otherwise it is fail. Exits 0 for pass, 1 for fail, and 2 when the run could not start.";
 
 fn main() -> ExitCode {
     let arguments: Vec<String> = std::env::args().skip(1).collect();

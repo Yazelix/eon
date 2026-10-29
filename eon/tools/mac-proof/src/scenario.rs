@@ -279,8 +279,9 @@ the program that runs the tool (for SSH, the SSH server); nothing grants them si
 Accessibility only launch, identity, retina and stop run, since the first tab's picker takes a
 key. The key steps bring Eon's window to the front, then post US-layout key codes to Venus's
 process: posting alone would leave the desktop's focus alone, but whether Venus takes Option and
-Command chords while inactive is unproven on a Mac. A step whose need is missing, or that
-requires such a step, is skipped and listed for Yu in summary.txt, never passed.
+Command chords while inactive is unproven on a Mac. A step whose need is missing is skipped
+and listed for Yu in summary.txt, as are steps whose missing prerequisites are all left for
+Yu. These skips do not fail the run.
 
 Steps, in order:
 "
@@ -1727,8 +1728,7 @@ fn retina(scenario: &mut Scenario, log: &mut Log, deadline: Instant) -> Outcome 
         (_, result) => result,
     };
     let cleanup = if let Some(mut display) = virtual_display {
-        // Each cleanup runs even if an earlier one failed; the step's original
-        // failure takes precedence over failures while cleaning up.
+        // Each cleanup runs even if an earlier one failed.
         let seen = scales().len().saturating_sub(1);
         let unmirrored = if let Some(mut mirrored) = mirrored {
             log.line("mac-proof: unmirroring the main display");
@@ -1774,8 +1774,7 @@ fn retina(scenario: &mut Scenario, log: &mut Log, deadline: Instant) -> Outcome 
     } else {
         Ok(())
     };
-    result?;
-    cleanup?;
+    settle(result, cleanup)?;
     if let Some(mut switched) = switched {
         let seen = scales().len();
         log.line(&format!(
@@ -1793,6 +1792,15 @@ fn retina(scenario: &mut Scenario, log: &mut Log, deadline: Instant) -> Outcome 
         )?;
     }
     Ok(())
+}
+
+fn settle(result: Outcome, cleanup: Outcome) -> Outcome {
+    match (result, cleanup) {
+        (Err(Failure::Unavailable(reason)), Err(Failure::Check(cleanup))) => {
+            Err(Failure::Check(format!("{cleanup} (after: {reason})")))
+        }
+        (result, cleanup) => result.and(cleanup),
+    }
 }
 
 fn picker(scenario: &mut Scenario, log: &mut Log, deadline: Instant) -> Outcome {
@@ -2131,6 +2139,19 @@ pub(crate) fn stop(scenario: &mut Scenario, log: &mut Log, deadline: Instant) ->
 mod tests {
     use super::*;
     use serde_json::json;
+
+    #[test]
+    fn unavailable_retina_setup_still_fails_if_cleanup_fails() {
+        let unavailable = || Err(Failure::Unavailable("no HiDPI mode".to_owned()));
+        assert!(matches!(
+            settle(unavailable(), Err(Failure::Check("unmirror failed".to_owned()))),
+            Err(Failure::Check(reason)) if reason == "unmirror failed (after: no HiDPI mode)"
+        ));
+        assert!(matches!(
+            settle(unavailable(), Ok(())),
+            Err(Failure::Unavailable(reason)) if reason == "no HiDPI mode"
+        ));
+    }
 
     #[test]
     fn only_private_runs_off_a_personal_mac_may_create_a_virtual_display() {

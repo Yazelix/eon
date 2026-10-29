@@ -47,6 +47,7 @@ pub struct ScenarioOptions {
 
 pub struct Report {
     pub passed: bool,
+    pub left_for_yu: usize,
     pub tree: String,
     pub package: Result<PathBuf, String>,
 }
@@ -97,7 +98,7 @@ impl Context {
     }
 }
 
-/// Runs every step and returns whether all passed.
+/// Runs every step and reports the run's verdict and how many steps were left for Yu.
 pub fn run(options: Options, source: &Path) -> Result<Report, String> {
     if !options.dry_run && !NATIVE {
         return Err("run is macOS only (Apple Silicon); use --dry-run elsewhere".to_owned());
@@ -138,6 +139,7 @@ pub fn run(options: Options, source: &Path) -> Result<Report, String> {
         .map_err(|error| format!("evidence: {error}"))?;
     Ok(Report {
         passed,
+        left_for_yu: runner.left_for_yu(),
         tree: context.tree,
         package: match runner.status("package") {
             Some("pass") => Ok(context.package),
@@ -161,7 +163,7 @@ pub fn source_tree(
 }
 
 /// Runs the scenario alone, on a package built before, and returns whether
-/// every step passed.
+/// it passed, allowing steps skipped for Yu.
 pub fn scenario(options: ScenarioOptions) -> Result<bool, String> {
     if !options.dry_run && !NATIVE {
         return Err("scenario is macOS only (Apple Silicon); use --dry-run elsewhere".to_owned());

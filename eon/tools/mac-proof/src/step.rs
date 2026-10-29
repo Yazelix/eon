@@ -339,15 +339,23 @@ impl Runner {
         Ok(())
     }
 
+    pub fn left_for_yu(&self) -> usize {
+        self.records
+            .iter()
+            .filter(|record| record.status == Status::Skipped && record.for_yu)
+            .count()
+    }
+
     /// Writes summary.json and summary.txt and returns whether every step
-    /// passed or was planned. Until the last step has run (`complete`), their
-    /// result is `incomplete`, so a run that dies midway reads as such.
+    /// passed, was planned, or was skipped for Yu. Until the last step has
+    /// run (`complete`), their result is `incomplete`, so a run that dies
+    /// midway reads as such.
     pub fn write(&self, complete: bool) -> io::Result<bool> {
         let identity = &self.identity;
-        let passed = self
-            .records
-            .iter()
-            .all(|record| matches!(record.status, Status::Pass | Status::Planned));
+        let passed = self.records.iter().all(|record| {
+            matches!(record.status, Status::Pass | Status::Planned)
+                || (record.status == Status::Skipped && record.for_yu)
+        });
         let result = match (complete, passed) {
             (false, _) => "incomplete",
             (true, true) => "pass",
@@ -449,8 +457,13 @@ fn summary_text(
         .iter()
         .filter(|record| !matches!(record.status, Status::Pass | Status::Planned))
         .count();
+    let remaining = if result == "pass" && failed > 0 {
+        format!("{failed} left for Yu")
+    } else {
+        format!("{failed} not passed")
+    };
     let mut text = format!(
-        "mac-proof {}{}: {} steps, {failed} not passed\n",
+        "mac-proof {}{}: {} steps, {remaining}\n",
         if dry_run { "dry run " } else { "" },
         result,
         records.len()
@@ -631,6 +644,7 @@ mod tests {
         );
         let summary: serde_json::Value =
             serde_json::from_slice(&fs::read(evidence.join("summary.json")).unwrap()).unwrap();
+        assert_eq!(summary["result"], "fail");
         let marks: Vec<_> = summary["steps"]
             .as_array()
             .unwrap()
@@ -647,6 +661,72 @@ mod tests {
                 ("skipped", false)
             ]
         );
+        fs::remove_dir_all(evidence).unwrap();
+    }
+
+    #[test]
+    fn a_run_passes_with_only_for_yu_skips_but_not_other_dependency_skips() {
+        let evidence = scratch("for-yu-verdict");
+        let mut runner = Runner::new(&evidence, false, Duration::from_secs(3600)).unwrap();
+        let minute = Duration::from_secs(60);
+        runner
+            .step(&mut (), "launch", minute, &[], false, |_, _, _| Ok(()))
+            .unwrap();
+        runner
+            .step(&mut (), "picker", minute, &["launch"], false, |_, _, _| {
+                Err(Failure::Unavailable(
+                    "needs Accessibility: not granted".to_owned(),
+                ))
+            })
+            .unwrap();
+        runner
+            .step(
+                &mut (),
+                "output",
+                minute,
+                &["picker"],
+                false,
+                |_, _, _| unreachable!(),
+            )
+            .unwrap();
+        assert!(runner.write(true).unwrap());
+        assert_eq!(runner.left_for_yu(), 2);
+        let summary: serde_json::Value =
+            serde_json::from_slice(&fs::read(evidence.join("summary.json")).unwrap()).unwrap();
+        assert_eq!(summary["result"], "pass");
+        for index in [1, 2] {
+            assert_eq!(summary["steps"][index]["status"], "skipped");
+            assert_eq!(summary["steps"][index]["for_yu"], true);
+        }
+        let text = fs::read_to_string(evidence.join("summary.txt")).unwrap();
+        assert!(text.starts_with("mac-proof pass: 3 steps, 2 left for Yu\n"));
+        let (_, for_yu) = text
+            .split_once("\nfor Yu, since they could not run here:\n")
+            .unwrap();
+        assert!(for_yu.contains("picker") && for_yu.contains("output"));
+
+        runner
+            .step(
+                &mut (),
+                "focus",
+                minute,
+                &["package"],
+                false,
+                |_, _, _| unreachable!(),
+            )
+            .unwrap();
+        assert!(!runner.write(true).unwrap());
+        let summary: serde_json::Value =
+            serde_json::from_slice(&fs::read(evidence.join("summary.json")).unwrap()).unwrap();
+        assert_eq!(summary["result"], "fail");
+        assert_eq!(summary["steps"][3]["status"], "skipped");
+        assert_eq!(summary["steps"][3]["for_yu"], false);
+        assert_eq!(
+            summary["steps"][3]["first_failure"],
+            "needs package, which did not pass"
+        );
+        let text = fs::read_to_string(evidence.join("summary.txt")).unwrap();
+        assert!(text.starts_with("mac-proof fail: 4 steps, 3 not passed\n"));
         fs::remove_dir_all(evidence).unwrap();
     }
 
