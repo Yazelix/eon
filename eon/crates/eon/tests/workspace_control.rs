@@ -4520,6 +4520,8 @@ fn tab_directory_retargets_future_sessions_without_crossing_tabs() {
     for directory in [&first, &second, &disappearing, &config] {
         fs::create_dir(directory).unwrap();
     }
+    let first_directory = fs::canonicalize(&first).unwrap();
+    let second_directory = fs::canonicalize(&second).unwrap();
     fs::create_dir(&session_bin).unwrap();
     managed_orbit_executable(&orbit);
     executable(&venus, "#!/bin/sh\nexit 0\n");
@@ -4579,8 +4581,10 @@ fn tab_directory_retargets_future_sessions_without_crossing_tabs() {
     let generation = generation_runtime(&runtime);
     let control = generation.join("eon.sock");
     wait_for_connection(&control);
+    // Let the exiting Venus stub cancel the picker before release so the tab keeps
+    // its launch directory.
+    wait_for_picker_close(&control, &first_directory);
     fs::write(&picker_release, "").unwrap();
-    wait_for_picker_close(&control, &first);
 
     assert!(
         invoke(&binary, &runtime, &config, &["tab", "create"])
@@ -4671,8 +4675,6 @@ fn tab_directory_retargets_future_sessions_without_crossing_tabs() {
         thread::sleep(Duration::from_millis(10));
     }
     let orbit_directories = fs::read_to_string(&orbit_log).unwrap();
-    let first_directory = fs::canonicalize(&first).unwrap();
-    let second_directory = fs::canonicalize(&second).unwrap();
     for expected in [
         format!("session-1 {}", first_directory.display()),
         format!("session-2 {}", first_directory.display()),
