@@ -1,6 +1,8 @@
 //! Screen captures as pixels: `sips` turns `screencapture`'s PNG into a small
 //! uncompressed BMP, which these checks read without an image library.
 
+use std::collections::BTreeMap;
+
 /// A capture's pixels as RGB, row by row from the top.
 #[derive(Debug)]
 pub struct Picture {
@@ -20,9 +22,71 @@ pub struct Region {
 
 /// How far apart two channel values may be and still read as the same color.
 const TOLERANCE: u8 = 24;
+/// How far a captured blend may lie from the expected one in a channel:
+/// the references pass through the same screencapture and sips path, so
+/// this covers rounding and downscaling, not colour management.
+const BLEND: f64 = 12.0;
 
 fn near(a: [u8; 3], b: [u8; 3]) -> bool {
     a.iter().zip(b).all(|(a, b)| a.abs_diff(b) <= TOLERANCE)
+}
+
+/// The backdrop's share through a window, from its colours over two backdrops.
+pub fn backdrop_shares(
+    p_light: [u8; 3],
+    p_dark: [u8; 3],
+    b_light: [u8; 3],
+    b_dark: [u8; 3],
+) -> Result<[f64; 3], String> {
+    if b_light
+        .iter()
+        .zip(b_dark)
+        .any(|(light, dark)| light.abs_diff(dark) < 64)
+    {
+        return Err(format!(
+            "P_light {p_light:?}, P_dark {p_dark:?}, B_light {b_light:?}, B_dark {b_dark:?}; \
+             backdrops must differ by at least 64 in every channel"
+        ));
+    }
+    Ok(std::array::from_fn(|channel| {
+        (f64::from(p_light[channel]) - f64::from(p_dark[channel]))
+            / (f64::from(b_light[channel]) - f64::from(b_dark[channel]))
+    }))
+}
+
+/// Whether every channel's backdrop share is within 0.05 of `expected`.
+pub fn check_shares(shares: [f64; 3], expected: f64) -> Result<(), String> {
+    if shares.iter().all(|share| (share - expected).abs() <= 0.05) {
+        Ok(())
+    } else {
+        Err(format!(
+            "backdrop shares {shares:?} must each be within 0.05 of {expected}; \
+             straight-vs-premultiplied or linear-light blending may show this way"
+        ))
+    }
+}
+
+/// The expected colour over a backdrop at the configured background opacity.
+pub fn blend(background: [u8; 3], backdrop: [u8; 3], opacity: f64) -> [f64; 3] {
+    std::array::from_fn(|channel| {
+        opacity * f64::from(background[channel]) + (1.0 - opacity) * f64::from(backdrop[channel])
+    })
+}
+
+/// Whether a captured colour matches the expected blend in every channel.
+pub fn check_blend(picture: [u8; 3], expected: [f64; 3]) -> Result<(), String> {
+    if picture
+        .iter()
+        .zip(expected)
+        .all(|(value, expected)| (f64::from(*value) - expected).abs() <= BLEND)
+    {
+        Ok(())
+    } else {
+        Err(format!(
+            "P {picture:?} must be within {BLEND} of expected {expected:?} in every channel; \
+             straight-vs-premultiplied or linear-light blending may show this way"
+        ))
+    }
 }
 
 fn u16_at(bytes: &[u8], at: usize) -> Option<u16> {
@@ -105,6 +169,19 @@ impl Picture {
         self.pixels.iter().all(|pixel| near(*pixel, self.pixels[0]))
     }
 
+    /// The most common exact colour and its share; ties take the greater RGB.
+    pub fn dominant(&self) -> ([u8; 3], f64) {
+        let mut counts = BTreeMap::new();
+        for pixel in &self.pixels {
+            *counts.entry(*pixel).or_insert(0usize) += 1;
+        }
+        let (colour, count) = counts
+            .into_iter()
+            .max_by_key(|(_, count)| *count)
+            .expect("pixels");
+        (colour, count as f64 / self.pixels.len() as f64)
+    }
+
     /// The share of pixels that differ from `other`'s, or 1 when the sizes do.
     pub fn changed(&self, other: &Picture) -> f64 {
         if (self.width, self.height) != (other.width, other.height) {
@@ -168,6 +245,58 @@ mod tests {
         bytes.extend([0u8; 24]);
         bytes.extend(data);
         bytes
+    }
+
+    #[test]
+    fn dominant_colour_counts_exact_pixels_and_breaks_ties_consistently() {
+        let picture = Picture::from_bmp(&bmp(
+            &[vec![[9, 8, 7], [1, 2, 3], [9, 8, 7], [9, 8, 6]]],
+            24,
+        ))
+        .unwrap();
+        assert_eq!(picture.dominant(), ([9, 8, 7], 0.5));
+        for pixels in [vec![[1, 2, 3], [9, 8, 7]], vec![[9, 8, 7], [1, 2, 3]]] {
+            let picture = Picture::from_bmp(&bmp(&[pixels], 32)).unwrap();
+            assert_eq!(picture.dominant(), ([9, 8, 7], 0.5));
+        }
+    }
+
+    #[test]
+    fn backdrop_shares_accept_translucency_and_reject_wrong_blending() {
+        let (light, dark) = ([224; 3], [32; 3]);
+        let shares = backdrop_shares([53, 61, 69], [14, 22, 30], light, dark).unwrap();
+        assert!(shares.iter().all(|share| (share - 0.2).abs() < 0.005));
+        assert!(check_shares(shares, 0.2).is_ok());
+        for (lit, unlit) in [([10; 3], [10; 3]), ([108; 3], [16; 3])] {
+            let shares = backdrop_shares(lit, unlit, light, dark).unwrap();
+            assert!(check_shares(shares, 0.2).is_err(), "{shares:?}");
+        }
+        assert!(check_shares([0.2, 0.251, 0.2], 0.2).is_err());
+        assert!(check_shares([0.2, 0.149, 0.2], 0.2).is_err());
+        assert!(check_shares([0.151, 0.249, 0.2], 0.2).is_ok());
+        assert!(check_shares([f64::NAN, 0.2, 0.2], 0.2).is_err());
+        assert!(backdrop_shares([50; 3], [12; 3], [224, 95, 224], dark).is_err());
+        assert!(backdrop_shares([50; 3], [12; 3], [96; 3], dark).is_ok());
+    }
+
+    #[test]
+    fn blend_check_rejects_wrong_colours_and_compositing() {
+        let expected = [[224; 3], [32; 3]].map(|backdrop| blend([128; 3], backdrop, 0.8));
+        for (picture, expected) in [[147; 3], [109; 3]].into_iter().zip(expected) {
+            assert!(check_blend(picture, expected).is_ok());
+        }
+        for pictures in [
+            [[173; 3], [134; 3]],            // Straight RGB supplied as premultiplied.
+            [[128; 3], [128; 3]],            // Opaque background.
+            [[249, 45, 249], [210, 6, 210]], // Magenta instead of grey.
+        ] {
+            for (picture, expected) in pictures.into_iter().zip(expected) {
+                assert!(
+                    check_blend(picture, expected).is_err(),
+                    "{picture:?} over {expected:?}"
+                );
+            }
+        }
     }
 
     #[test]

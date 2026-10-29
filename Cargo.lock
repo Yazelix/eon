@@ -1368,6 +1368,7 @@ checksum = "7f66e8d5d03f609abc3a39e6f08e4164ebf1447a732906d39eb9b99b7919ef39"
 name = "mac-proof"
 version = "0.1.0"
 dependencies = [
+ "objc2 0.6.4",
  "objc2-app-kit 0.3.2",
  "objc2-core-foundation",
  "objc2-core-graphics",
@@ -1563,6 +1564,7 @@ dependencies = [
  "bitflags 2.13.1",
  "libc",
  "objc2 0.6.4",
+ "objc2-core-foundation",
  "objc2-core-graphics",
  "objc2-foundation 0.3.2",
 ]

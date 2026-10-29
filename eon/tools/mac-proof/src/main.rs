@@ -103,6 +103,9 @@ fn main() -> ExitCode {
         Some("final") => parse(&arguments[1..], &final_check::help())
             .and_then(final_options)
             .and_then(final_check::final_check),
+        Some("backdrop") => backdrop_rgb(&arguments[1..])
+            .and_then(mac::backdrop)
+            .map(|()| true),
         Some("--help" | "-h") => {
             println!("{USAGE}");
             return ExitCode::SUCCESS;
@@ -118,6 +121,18 @@ fn main() -> ExitCode {
             ExitCode::from(2)
         }
     }
+}
+
+fn backdrop_rgb(arguments: &[String]) -> Result<[u8; 3], String> {
+    let [r, g, b] = arguments else {
+        return Err("backdrop needs R G B, each from 0 to 255".to_owned());
+    };
+    let channel = |value: &str| {
+        value
+            .parse::<u8>()
+            .map_err(|error| format!("backdrop channel {value}: {error}"))
+    };
+    Ok([channel(r)?, channel(g)?, channel(b)?])
 }
 
 /// Flags as (name, value), with `true` for the valueless ones. `--help`

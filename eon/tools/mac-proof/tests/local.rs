@@ -94,6 +94,7 @@ fn a_local_dry_run_round_trips_the_candidate_tree() {
             "identity=planned",
             "retina=planned",
             "picker=planned",
+            "translucency=planned",
             "output=planned",
             "panes=planned",
             "focus=planned",

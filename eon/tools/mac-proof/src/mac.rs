@@ -1,12 +1,12 @@
 //! The macOS calls the scenario makes in-process: its grants, keys sent to
-//! Venus, the window list and the displays' modes. Elsewhere each call
-//! fails, and run and scenario refuse to run off Apple Silicon before any
-//! step reaches one.
+//! Venus, the window list, the backdrop and the displays' modes. Elsewhere
+//! each call fails, and run and scenario refuse to run off Apple Silicon
+//! before any step reaches one.
 
 #[cfg(not(target_os = "macos"))]
-pub use elsewhere::{displays, grants, press, switch, windows};
+pub use elsewhere::{backdrop, displays, grants, press, switch, windows};
 #[cfg(target_os = "macos")]
-pub use native::{displays, grants, press, switch, windows};
+pub use native::{backdrop, displays, grants, press, switch, windows};
 
 pub struct Window {
     pub id: u32,
@@ -17,7 +17,12 @@ pub struct Window {
 mod native {
     use super::Window;
     use crate::retina::{Display, Mode};
-    use objc2_app_kit::{NSApplicationActivationOptions, NSRunningApplication};
+    use objc2::MainThreadMarker;
+    use objc2_app_kit::{
+        NSApplication, NSApplicationActivationOptions, NSApplicationActivationPolicy,
+        NSBackingStoreType, NSColor, NSRunningApplication, NSScreen, NSWindow,
+        NSWindowCollectionBehavior, NSWindowStyleMask,
+    };
     use objc2_core_foundation::{
         CFArray, CFBoolean, CFDictionary, CFNumber, CFRetained, CFString, CFType, CGRect,
     };
@@ -27,11 +32,64 @@ mod native {
         CGDisplayCopyAllDisplayModes, CGDisplayCopyDisplayMode, CGDisplayIsBuiltin,
         CGDisplayIsMain, CGDisplayMode, CGError, CGEvent, CGEventFlags, CGGetActiveDisplayList,
         CGMainDisplayID, CGPreflightPostEventAccess, CGPreflightScreenCaptureAccess,
-        CGRectMakeWithDictionaryRepresentation, CGWindowListCopyWindowInfo, CGWindowListOption,
-        kCGDisplayShowDuplicateLowResolutionModes, kCGNullWindowID, kCGWindowBounds,
-        kCGWindowLayer, kCGWindowNumber, kCGWindowOwnerPID,
+        CGRectMakeWithDictionaryRepresentation, CGWindowLevelForKey, CGWindowLevelKey,
+        CGWindowListCopyWindowInfo, CGWindowListOption, kCGDisplayShowDuplicateLowResolutionModes,
+        kCGNullWindowID, kCGWindowBounds, kCGWindowLayer, kCGWindowNumber, kCGWindowOwnerPID,
     };
-    use std::{ptr, thread, time::Duration};
+    use std::{
+        io::{self, Write},
+        ptr, thread,
+        time::Duration,
+    };
+
+    /// Shows a solid backdrop below normal windows until stdin closes.
+    pub fn backdrop(rgb: [u8; 3]) -> Result<(), String> {
+        let mtm = MainThreadMarker::new().ok_or("backdrop needs the main thread")?;
+        let app = NSApplication::sharedApplication(mtm);
+        if !app.setActivationPolicy(NSApplicationActivationPolicy::Accessory) {
+            return Err("backdrop cannot use the Accessory activation policy".to_owned());
+        }
+        let screen = NSScreen::screens(mtm)
+            .firstObject()
+            .ok_or("backdrop has no main display")?;
+        // SAFETY: AppKit runs on the main thread, with a valid screen frame
+        // and the borderless, buffered window styles.
+        let window = unsafe {
+            NSWindow::initWithContentRect_styleMask_backing_defer(
+                mtm.alloc(),
+                screen.frame(),
+                NSWindowStyleMask::Borderless,
+                NSBackingStoreType::Buffered,
+                false,
+            )
+        };
+        // SAFETY: the retained window owns its release, including after close.
+        unsafe { window.setReleasedWhenClosed(false) };
+        window.setOpaque(true);
+        window.setHasShadow(false);
+        let [r, g, b] = rgb.map(|channel| f64::from(channel) / 255.0);
+        let color = NSColor::colorWithSRGBRed_green_blue_alpha(r, g, b, 1.0);
+        window.setBackgroundColor(Some(&color));
+        let level = CGWindowLevelForKey(CGWindowLevelKey::DesktopIconWindowLevelKey);
+        window.setLevel(level as isize + 1);
+        window.setIgnoresMouseEvents(true);
+        window.setCollectionBehavior(
+            NSWindowCollectionBehavior::CanJoinAllSpaces
+                | NSWindowCollectionBehavior::Stationary
+                | NSWindowCollectionBehavior::IgnoresCycle,
+        );
+        window.orderFrontRegardless();
+        println!("shown");
+        io::stdout()
+            .flush()
+            .map_err(|error| format!("backdrop stdout: {error}"))?;
+        thread::spawn(|| {
+            let _ = io::copy(&mut io::stdin().lock(), &mut io::sink());
+            std::process::exit(0);
+        });
+        app.run();
+        Err("backdrop run loop ended".to_owned())
+    }
 
     /// Whether this process may capture other windows (Screen Recording)
     /// and post key events (Accessibility), without asking.
@@ -260,6 +318,10 @@ mod elsewhere {
     use crate::retina::{Display, Mode};
 
     const MACOS: &str = "macOS only";
+
+    pub fn backdrop(_rgb: [u8; 3]) -> Result<(), String> {
+        Err(MACOS.to_owned())
+    }
 
     pub fn grants() -> Result<(bool, bool), String> {
         Err(MACOS.to_owned())
