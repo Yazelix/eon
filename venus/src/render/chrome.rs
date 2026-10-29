@@ -7,9 +7,7 @@ use super::{
 };
 use crate::{
     DialogKind, DialogScene, SceneRect, WorkspaceFocus, WorkspaceHeaderControl, WorkspaceScene,
-    scene::{
-        QuotaPace, QuotaProvider, SIDEBAR_EMPTY, SIDEBAR_TITLE, TabBadge, chrome_title_metrics,
-    },
+    scene::{QuotaProvider, SIDEBAR_EMPTY, SIDEBAR_TITLE, TabBadge, chrome_title_metrics},
 };
 use eon_workspace_protocol::v25::AttentionState;
 use glyphon::{
@@ -118,28 +116,13 @@ fn quota_pace_color(shortfall: f32) -> SceneColor {
         })
 }
 
-/// Recolors each judged window's text in the buffer already shaped from `label`.
-fn color_quota_pace(buffer: &mut Buffer, fonts: &mut FontSystem, label: &str, pace: &[QuotaPace]) {
-    let attrs = Attrs::new().family(Family::SansSerif);
-    let mut spans = Vec::new();
-    let mut end = 0;
-    for window in pace {
-        let (Some(before), Some(text)) = (
-            label.get(end..window.range.start),
-            label.get(window.range.clone()),
-        ) else {
-            return;
-        };
-        let color = quota_pace_color(window.shortfall);
-        spans.push((before, attrs.clone()));
-        spans.push((
-            text,
-            attrs.clone().color(Color::rgb(color.r, color.g, color.b)),
-        ));
-        end = window.range.end;
-    }
-    spans.push((&label[end..], attrs.clone()));
-    buffer.set_rich_text(spans, &attrs, shaping(label), None);
+/// Recolors the judged chip's whole label without changing its shaped width.
+fn color_quota_pace(buffer: &mut Buffer, fonts: &mut FontSystem, label: &str, shortfall: f32) {
+    let color = quota_pace_color(shortfall);
+    let attrs = Attrs::new()
+        .family(Family::SansSerif)
+        .color(Color::rgb(color.r, color.g, color.b));
+    buffer.set_text(label, &attrs, shaping(label), None);
     buffer.shape_until_scroll(fonts, false);
 }
 
@@ -1282,14 +1265,14 @@ impl Renderer {
                 DrawStyleKind::Status(Wrap::None),
                 quota.rect,
             );
-            if !quota.pace.is_empty()
+            if let Some(shortfall) = quota.pace
                 && let Some(text) = self.text.get_mut(first_text)
             {
                 color_quota_pace(
                     &mut text.buffer,
                     &mut self.fonts.font_system,
                     &quota.label,
-                    &quota.pace,
+                    shortfall,
                 );
             }
         }
@@ -1636,28 +1619,26 @@ mod tests {
             previous = color;
         }
 
-        let label = "2h30m/5h 50% · 2d15h/7d 50%";
-        let pace = [QuotaPace {
-            range: label.find('2').unwrap()..label.find(" ·").unwrap(),
-            shortfall: 0.5,
-        }];
-        let mut fonts = FontSystem::new();
-        let mut buffer = Buffer::new(&mut fonts, Metrics::new(16.0, 18.0));
-        buffer.set_size(Some(600.0), Some(40.0));
-        let attrs = Attrs::new().family(Family::SansSerif);
-        buffer.set_text(label, &attrs, shaping(label), None);
-        buffer.shape_until_scroll(&mut fonts, false);
-        let before = buffer.layout_runs().next().unwrap().line_w;
-        color_quota_pace(&mut buffer, &mut fonts, label, &pace);
-        let run = buffer.layout_runs().next().unwrap();
-        assert_eq!(run.line_w, before);
-        let red = palette::QUOTA_PACE[4].1;
-        for glyph in run.glyphs {
-            let expected = pace[0]
-                .range
-                .contains(&glyph.start)
-                .then(|| Color::rgb(red.r, red.g, red.b));
-            assert_eq!(glyph.color_opt, expected, "glyph at {}", glyph.start);
+        for label in ["2h30m/5h 50%", "2d15h/7d 50%"] {
+            let mut fonts = FontSystem::new();
+            let mut buffer = Buffer::new(&mut fonts, Metrics::new(16.0, 18.0));
+            buffer.set_size(Some(600.0), Some(40.0));
+            let attrs = Attrs::new().family(Family::SansSerif);
+            buffer.set_text(label, &attrs, shaping(label), None);
+            buffer.shape_until_scroll(&mut fonts, false);
+            let before = buffer.layout_runs().next().unwrap().line_w;
+            color_quota_pace(&mut buffer, &mut fonts, label, 0.5);
+            let run = buffer.layout_runs().next().unwrap();
+            assert_eq!(run.line_w, before);
+            let red = palette::QUOTA_PACE[4].1;
+            for glyph in run.glyphs {
+                let expected = Some(Color::rgb(red.r, red.g, red.b));
+                assert_eq!(
+                    glyph.color_opt, expected,
+                    "{label}: glyph at {}",
+                    glyph.start
+                );
+            }
         }
     }
 

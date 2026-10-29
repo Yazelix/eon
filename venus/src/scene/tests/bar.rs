@@ -78,15 +78,14 @@ fn quota_without_reset_retains_percent_and_accessible_freshness() {
             remaining_percent: 100,
             resets_at: None,
         };
-        let text = quota_text(QuotaProvider::Claude, state, 100, &[window]);
+        let text = quota_text(QuotaProvider::Claude, state, 100, Some(&window));
         let suffix = if state == CodexQuotaState::Stale {
             " old"
         } else {
             ""
         };
-        assert_eq!(text.wide, format!("5h 100%{suffix}"));
-        assert_eq!(text.compact, format!("5h 100%{suffix}"));
-        assert!(text.wide_pace.is_empty() && text.compact_pace.is_empty());
+        assert_eq!(text.label, format!("5h 100%{suffix}"));
+        assert!(text.pace.is_none());
         assert!(text.description.contains("reset time unavailable"));
         assert!(!text.description.contains("pace"));
         assert!(
@@ -168,34 +167,34 @@ fn quota_pace_colors_fresh_windows_and_says_so_in_words() {
             resets_at: Some(observed_at + 378_000),
         },
     ];
-    let text = quota_text(
-        QuotaProvider::Codex,
-        CodexQuotaState::Fresh,
-        observed_at,
-        &windows,
-    );
-    assert_eq!(text.wide, "2h30m/5h 50% · 2d15h/7d 50%");
-    let segments = text
-        .wide_pace
-        .iter()
-        .map(|pace| &text.wide[pace.range.clone()])
-        .collect::<Vec<_>>();
-    assert_eq!(segments, ["2h30m/5h 50%", "2d15h/7d 50%"]);
-    assert!(text.wide_pace[0].shortfall.abs() < 1e-3);
-    assert!((text.wide_pace[1].shortfall - 0.25).abs() < 1e-3);
-    assert_eq!(text.compact, "2h30m/5h 50%");
-    assert_eq!(text.compact_pace.len(), 1);
-    assert_eq!(text.compact_pace[0].range, 0..text.compact.len());
-    assert!(
-        text.description.contains(
-            "5h window: 50% remaining; observed 2h30m into 5h. At this pace it lasts until reset."
+    for (window, label, shortfall, detail) in [
+        (
+            &windows[0],
+            "2h30m/5h 50%",
+            0.0,
+            "5h window: 50% remaining; observed 2h30m into 5h. At this pace it lasts until reset.",
         ),
-        "{}",
-        text.description
-    );
-    assert!(text.description.contains(
-        "7d window: 50% remaining; observed 2d15h into 7d. At this pace it runs out about 1d18h before reset."
-    ));
+        (
+            &windows[1],
+            "2d15h/7d 50%",
+            0.25,
+            "7d window: 50% remaining; observed 2d15h into 7d. At this pace it runs out about 1d18h before reset.",
+        ),
+    ] {
+        let text = quota_text(
+            QuotaProvider::Codex,
+            CodexQuotaState::Fresh,
+            observed_at,
+            Some(window),
+        );
+        assert_eq!(text.label, label);
+        let pace = text.pace.expect("each fresh chip judges its one window");
+        assert!((pace - shortfall).abs() < 1e-3);
+        assert_eq!(
+            text.description,
+            format!("Codex quota state: fresh. {detail}")
+        );
+    }
 
     let used_up = QuotaWindow {
         duration_minutes: 300,
@@ -206,9 +205,9 @@ fn quota_pace_colors_fresh_windows_and_says_so_in_words() {
         QuotaProvider::Claude,
         CodexQuotaState::Fresh,
         observed_at,
-        &[used_up],
+        Some(&used_up),
     );
-    assert_eq!(text.wide_pace.len(), 1);
+    assert!(text.pace.is_some());
     assert!(
         text.description
             .ends_with("observed 16m into 5h. Used up until reset.")
@@ -224,7 +223,7 @@ fn quota_pace_colors_fresh_windows_and_says_so_in_words() {
         QuotaProvider::Claude,
         CodexQuotaState::Fresh,
         observed_at,
-        std::slice::from_ref(&barely),
+        Some(&barely),
     );
     assert!(
         text.description
@@ -235,10 +234,10 @@ fn quota_pace_colors_fresh_windows_and_says_so_in_words() {
         QuotaProvider::Claude,
         CodexQuotaState::Fresh,
         observed_at,
-        &[QuotaWindow {
+        Some(&QuotaWindow {
             resets_at: Some(observed_at + 305_700),
             ..barely
-        }],
+        }),
     );
     assert!(
         text.description
@@ -247,14 +246,29 @@ fn quota_pace_colors_fresh_windows_and_says_so_in_words() {
         text.description
     );
 
-    // Stale, blocked and unknown facts are never judged.
-    for state in [
-        CodexQuotaState::Stale,
-        CodexQuotaState::Blocked,
-        CodexQuotaState::Unknown,
+    // Stale, blocked, unknown and young windows keep neutral labels and descriptions.
+    let young = QuotaWindow {
+        resets_at: Some(observed_at + 17_940),
+        ..windows[0].clone()
+    };
+    for (state, window, label) in [
+        (
+            CodexQuotaState::Stale,
+            Some(&windows[0]),
+            "2h30m/5h 50% old",
+        ),
+        (
+            CodexQuotaState::Stale,
+            Some(&windows[1]),
+            "2d15h/7d 50% old",
+        ),
+        (CodexQuotaState::Blocked, None, "blocked"),
+        (CodexQuotaState::Unknown, None, "unknown"),
+        (CodexQuotaState::Fresh, Some(&young), "1m/5h 50%"),
     ] {
-        let text = quota_text(QuotaProvider::Codex, state, observed_at, &windows);
-        assert!(text.wide_pace.is_empty() && text.compact_pace.is_empty());
+        let text = quota_text(QuotaProvider::Codex, state, observed_at, window);
+        assert_eq!(text.label, label);
+        assert!(text.pace.is_none());
         assert!(!text.description.contains("pace") && !text.description.contains("Used up"));
     }
 }

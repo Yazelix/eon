@@ -103,9 +103,9 @@ percentage, explicit stale presentation, and secondary content yielding before
 tabs. Its source text, separators, provider commands, cache, polling, styled
 strings, Zellij integration, configuration, and widget model are rejected. The
 existing GNOME, VS Code, and Ghostty guidance above supports the same restrained
-one-row priority. Exact shaped width selects full text, then a truthful compact
-label, then no chip; no provider worker, timer, action, focus target, dependency,
-module, or copied source is added.
+one-row priority. Exact shaped width selects whole chips; they hide one by one,
+the one closest to the tabs first. No provider worker, timer, action, focus
+target, dependency, module, or copied source is added.
 
 For provider identity, OpenAI's current
 [brand guidelines](https://openai.com/brand/) permit an official mark when it

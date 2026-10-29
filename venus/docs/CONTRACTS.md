@@ -1551,17 +1551,19 @@ re-proved when that platform or feature is next touched.
   workspace.
 - **Trigger:** The current complete EONW v6 snapshot supplies, changes, or
   removes its optional Codex quota observation.
-- **Result:** Venus projects one noninteractive fact chip into the existing
-  single-row Eon Bar. Fresh facts show the exact monochrome OpenAI Blossom
-  followed by every available elapsed/total window position and remaining
-  percentage at ordinary width, such as `[mark] 3h/5h 74% · 6d4h/7d 42%`.
-  Under pressure the chip keeps the mark and complete lowest-remaining window,
-  then disappears before active-tab identity, fixed controls, or the bounded
-  drag region lose their accepted space. Stale labels include `old`; blocked
-  and unknown observations show the mark followed by `blocked` or `unknown`.
-  Hover text and the static AccessKit label continue to name Codex explicitly and expose every
-  window's human-readable position and remaining percentage, reset availability,
-  and source freshness or permission state without raw epoch timestamps.
+- **Result:** Venus projects one noninteractive fact chip per Codex window into
+  the existing single-row Eon Bar, five-hour then seven-day, as VEN-C26 does for
+  Claude. Each fresh chip shows the exact monochrome OpenAI Blossom, that
+  window's elapsed/total position and remaining percentage, such as
+  `[mark] 3h/5h 74%`. Under pressure chips disappear one by one, the one closest
+  to the tabs first, before active-tab identity, fixed controls, or the bounded
+  drag region lose their accepted space. Stale labels include `old` on every
+  chip; a blocked or unknown observation shows one chip with the mark followed
+  by `blocked` or `unknown`.
+  Hover text and the static AccessKit label of each chip name Codex and its
+  window explicitly and expose that window's human-readable position and
+  remaining percentage, reset availability, and source freshness or permission
+  state without raw epoch timestamps.
 - **Important failures:** An absent observation creates no rectangle, gap, hit,
   action, focus target, or accessibility node. Missing resets remain explicit;
   unusual durations use exact minute labels. A stale label that cannot retain
@@ -1593,8 +1595,12 @@ re-proved when that platform or feature is next touched.
   - **Evidence:** `quota_chip_preserves_truth_layout_and_static_accessibility`,
     `quota_icons_preserve_transparency_and_shape_across_scales`, and
     `quota_refresh_and_workspace_failures_preserve_structure` in the workspace
-    suite.
-- **Open proof:** Pending re-proof in this repository: an installed Codex chip
+    suite. One chip per Codex window, the closest-to-the-tabs falling order and
+    the per-chip AccessKit identity (`eon-7iml`) are proved by the updated
+    `quota_chip_preserves_truth_layout_and_static_accessibility` and
+    `two_provider_chips_share_layout_without_losing_identity_or_freshness`;
+    that bead's commit is its revision.
+- **Open proof:** Pending re-proof in this repository: installed Codex chips
   (dogfood item 6 had no provider authentication), native stale, blocked,
   unknown and absent states, and AT-SPI chip labels.
 
@@ -1765,13 +1771,12 @@ re-proved when that platform or feature is next touched.
   reset shows no position. Each chip's hover and static accessible label name
   Claude, that window, freshness and how far into the window the observation
   is, or that its reset time is unavailable. Stale text keeps `old` on every
-  chip, even in compact presentation.
+  chip.
 - **Ownership:** Runtime alone supplies source facts, age and invalidation.
   Venus uses its existing Scene, renderer, hover and AccessKit owners. All
-  provider chips stay in the existing row. Full labels become compact, then
-  chips disappear one by one, the one closest to the tabs first, before
-  required tabs, controls or drag space. Codex's mark, labels and provider
-  policy remain unchanged.
+  provider chips stay in the existing row. Chips disappear one by one, the one
+  closest to the tabs first, before required tabs, controls or drag space.
+  Codex's mark, labels and provider policy remain unchanged.
 - **Failure:** Absent facts, and any window Claude does not report, have no
   chip, gap or accessible node. Workspace
   transport loss removes both observations while keeping the last useful
@@ -1819,19 +1824,18 @@ re-proved when that platform or feature is next touched.
 - **Status:** Proven on x86_64 Linux Wayland by the automated tier and an
   isolated installed observation with fixture quota data; AT-SPI labels are
   pending native observation.
-- **Contract:** Each fresh quota window with a reset, past its first tenth, colors
-  its text (one segment of Codex's chip, the label of a Claude chip) on a
-  continuous green, yellow, orange, red gradient by how early its current pace
-  runs out before the reset, projected linearly from the snapshot's used and
-  elapsed shares at the observation time. Full green is comfortably under pace;
-  exactly on pace is a light green turning toward yellow; full red runs out at
-  least half a window early. A used-up window is always colored. Stale, blocked,
-  unknown, reset-less and younger windows keep the neutral text color. Hover and
-  the static accessible label say, for each colored window, that at this pace it
-  lasts until reset, runs out about a stated time before reset, or is used up, so
-  color is never the only signal. Separators, `old`, the marks, text, compact
-  choice, widths and hiding order are unchanged; every gradient color keeps at
-  least 4.5:1 contrast on the Eon Bar.
+- **Contract:** Each fresh quota window with a reset, past its first tenth,
+  colors its chip's label on a continuous green, yellow, orange, red gradient
+  by how early its current pace runs out before the reset, projected linearly
+  from the snapshot's used and elapsed shares at the observation time. Full
+  green is comfortably under pace; exactly on pace is a light green turning
+  toward yellow; full red runs out at least half a window early. A used-up
+  window is always colored. Stale, blocked, unknown, reset-less and younger
+  windows keep the neutral text color. Hover and the static accessible label
+  say, for each colored window, that at this pace it lasts until reset, runs
+  out about a stated time before reset, or is used up, so color is never the
+  only signal. `old`, the marks, text, widths and hiding order are unchanged;
+  every gradient color keeps at least 4.5:1 contrast on the Eon Bar.
 - **Owner:** Venus Scene projects the color and wording from snapshot facts;
   the existing glyphon renderer, hover and AccessKit owners present them. No
   EONW, Runtime, provider, configuration, timer, dependency or module change.
@@ -1885,8 +1889,8 @@ re-proved when that platform or feature is next touched.
   and UTC offset, such as `Local time 14:05, Wednesday 21 October 2026,
   UTC−03:00`.
   The clock uses only spare drag-region space and keeps that region's minimum;
-  it appears only while every quota chip is at full width, so width fitting
-  hides it before the version label, quota compaction, tabs or controls.
+  it appears only while every quota chip shows, so width fitting hides it
+  before the version label, quota chips, tabs or controls.
 - **Important failures:** An undeterminable local time zone shows no clock,
   never UTC in its place. A clock-only change does not replace attachments,
   recenter navigation, cancel scrolling or send an Orbit resize. The clock has
@@ -1931,9 +1935,9 @@ re-proved when that platform or feature is next touched.
   `/proc/stat` lines on Linux and the logical CPUs online on macOS, and
   `RAM use 43% of 31.3 GiB`. The labels
   use only spare drag-region space and keep that region's minimum; they appear
-  only while every quota chip is at full width, so width fitting hides the
-  clock first, then the RAM label, then the CPU label, before the version
-  label, quota compaction, tabs or controls.
+  only while every quota chip shows, so width fitting hides the clock first,
+  then the RAM label, then the CPU label, before the version label, quota
+  chips, tabs or controls.
 - **Important failures:** An unreadable, malformed or non-advancing CPU
   sample, one without per-CPU lines, or an unreadable or malformed memory
   reading, one without MemTotal or MemAvailable, with a zero MemTotal or with
@@ -1986,7 +1990,7 @@ re-proved when that platform or feature is next touched.
   the order is `codex_quota`, `claude_quota`, `cpu`, `ram`, `clock`, `version`.
   AccessKit order follows the visual order. Width fitting keeps its fixed
   priority whatever the order: the clock hides first, then RAM, then CPU, then
-  the version label, then quota compaction, before tabs or controls.
+  the version label, then quota chips, before tabs or controls.
 - **Important failures:** A missing value, an unknown, repeated or empty name,
   a repeated flag, or the input without `--workspace` fails before window
   creation. A named item without data (no quota from EONW, no `--eon-version`,

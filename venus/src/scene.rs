@@ -539,23 +539,26 @@ impl QuotaProvider {
 #[derive(Clone, Debug, PartialEq)]
 pub(crate) struct WorkspaceQuota {
     pub(crate) provider: QuotaProvider,
-    /// The one window, in minutes, that a per-window Claude chip shows; Codex's chip shows all.
-    pub(crate) window: Option<u32>,
+    /// The chip's one window identity, or none for blocked or unknown observations.
+    pub(crate) window: Option<QuotaWindowIdentity>,
     pub(crate) rect: SceneRect,
     pub(crate) logo: SceneRect,
     pub(crate) label: String,
-    /// The label's judged windows, each a byte range with its pace shortfall.
-    pub(crate) pace: Vec<QuotaPace>,
+    /// How early the fresh window's linear pace runs out before reset, as a share of
+    /// the window; negative means it lasts with that share spare. None means no judgment.
+    pub(crate) pace: Option<f32>,
     pub(crate) accessible_label: String,
     pub(crate) description: String,
 }
 
-/// One fresh window's text within a quota label and how early its linear pace runs out
-/// before the reset, as a share of the window; negative means it lasts with that share spare.
-#[derive(Clone, Debug, PartialEq)]
-pub(crate) struct QuotaPace {
-    pub(crate) range: Range<usize>,
-    pub(crate) shortfall: f32,
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum QuotaWindowIdentity {
+    Codex {
+        duration: u32,
+        /// Zero-based occurrence among equal durations in EONW order, before hiding.
+        occurrence: u8,
+    },
+    Claude(u32),
 }
 
 /// One read-only informational label in the workspace header.
@@ -2152,12 +2155,10 @@ fn quota_window_text(window: &QuotaWindow, observed_at: u64) -> String {
     format!("{label} {}%", window.remaining_percent)
 }
 
-/// One provider chip's wide and compact labels with their pace, and its description.
+/// One provider chip's label with its pace, and its description.
 struct QuotaText {
-    wide: String,
-    wide_pace: Vec<QuotaPace>,
-    compact: String,
-    compact_pace: Vec<QuotaPace>,
+    label: String,
+    pace: Option<f32>,
     description: String,
 }
 
@@ -2165,54 +2166,24 @@ fn quota_text(
     provider: QuotaProvider,
     state: CodexQuotaState,
     observed_at: u64,
-    windows: &[QuotaWindow],
+    window: Option<&QuotaWindow>,
 ) -> QuotaText {
-    let suffix = if state == CodexQuotaState::Stale {
-        " old"
-    } else {
-        ""
+    let mut label = match state {
+        CodexQuotaState::Fresh | CodexQuotaState::Stale => quota_window_text(
+            window.expect("EONW requires a quota window for fresh and stale states"),
+            observed_at,
+        ),
+        CodexQuotaState::Blocked => "blocked".into(),
+        CodexQuotaState::Unknown => "unknown".into(),
     };
+    if state == CodexQuotaState::Stale {
+        label.push_str(" old");
+    }
     // Only fresh facts are judged; stale, blocked and unknown keep the neutral color.
-    let shortfall = |window: &QuotaWindow| {
-        (state == CodexQuotaState::Fresh)
-            .then(|| quota_shortfall(window, observed_at))
-            .flatten()
-    };
-    let label = |windows: &[QuotaWindow]| {
-        let mut text = String::new();
-        let mut pace = Vec::new();
-        for (index, window) in windows.iter().enumerate() {
-            if index > 0 {
-                text.push_str(" · ");
-            }
-            let start = text.len();
-            text.push_str(&quota_window_text(window, observed_at));
-            if let Some(shortfall) = shortfall(window) {
-                pace.push(QuotaPace {
-                    range: start..text.len(),
-                    shortfall,
-                });
-            }
-        }
-        text.push_str(suffix);
-        (text, pace)
-    };
-    let ((wide, wide_pace), (compact, compact_pace)) = match state {
-        CodexQuotaState::Fresh | CodexQuotaState::Stale => {
-            let lowest = windows
-                .iter()
-                .min_by_key(|window| (window.remaining_percent, window.duration_minutes))
-                .expect("EONW requires quota windows for fresh and stale states");
-            (label(windows), label(std::slice::from_ref(lowest)))
-        }
-        CodexQuotaState::Blocked => (
-            ("blocked".into(), Vec::new()),
-            ("blocked".into(), Vec::new()),
-        ),
-        CodexQuotaState::Unknown => (
-            ("unknown".into(), Vec::new()),
-            ("unknown".into(), Vec::new()),
-        ),
+    let pace = if state == CodexQuotaState::Fresh {
+        window.and_then(|window| quota_shortfall(window, observed_at))
+    } else {
+        None
     };
     let name = provider.name();
     let mut description = format!(
@@ -2224,7 +2195,7 @@ fn quota_text(
             CodexQuotaState::Unknown => "permission: unknown.",
         }
     );
-    for window in windows {
+    if let Some(window) = window {
         let duration = quota_duration(window.duration_minutes);
         let _ = write!(
             description,
@@ -2236,36 +2207,34 @@ fn quota_text(
         } else {
             description.push_str("reset time unavailable.");
         }
-        let Some(shortfall) = shortfall(window) else {
-            continue;
-        };
-        if window.remaining_percent == 0 {
-            description.push_str(" Used up until reset.");
-        } else if shortfall <= 0.0 {
-            description.push_str(" At this pace it lasts until reset.");
-        } else {
-            // State the shortfall to the nearest unit the window counts in (hours for
-            // day-long windows), and at least one.
-            let unit = if window.duration_minutes >= 24 * 60 {
-                60
+        if let Some(shortfall) = pace {
+            if window.remaining_percent == 0 {
+                description.push_str(" Used up until reset.");
+            } else if shortfall <= 0.0 {
+                description.push_str(" At this pace it lasts until reset.");
             } else {
-                1
-            };
-            let early = ((shortfall * window.duration_minutes as f32 / unit as f32).round() as u64)
-                .max(1)
-                * unit;
-            let _ = write!(
-                description,
-                " At this pace it runs out about {} before reset.",
-                quota_minutes(early, window.duration_minutes)
-            );
+                // State the shortfall to the nearest unit the window counts in (hours for
+                // day-long windows), and at least one.
+                let unit = if window.duration_minutes >= 24 * 60 {
+                    60
+                } else {
+                    1
+                };
+                let early = ((shortfall * window.duration_minutes as f32 / unit as f32).round()
+                    as u64)
+                    .max(1)
+                    * unit;
+                let _ = write!(
+                    description,
+                    " At this pace it runs out about {} before reset.",
+                    quota_minutes(early, window.duration_minutes)
+                );
+            }
         }
     }
     QuotaText {
-        wide,
-        wide_pace,
-        compact,
-        compact_pace,
+        label,
+        pace,
         description,
     }
 }
@@ -2483,17 +2452,41 @@ impl WorkspaceScene {
                 BarItem::CodexQuota => snapshot
                     .codex_quota
                     .iter()
-                    .map(|quota| {
-                        (
+                    .flat_map(|quota| match quota.state {
+                        CodexQuotaState::Fresh | CodexQuotaState::Stale => {
+                            let mut windows = quota.windows.iter().collect::<Vec<_>>();
+                            windows.sort_by_key(|window| window.duration_minutes);
+                            windows
+                                .iter()
+                                .enumerate()
+                                .map(|(index, window)| {
+                                    // EONW permits at most two windows; stable sorting keeps ties in wire order.
+                                    let occurrence = u8::from(
+                                        index > 0
+                                            && windows[index - 1].duration_minutes
+                                                == window.duration_minutes,
+                                    );
+                                    (
+                                        QuotaProvider::Codex,
+                                        Some(QuotaWindowIdentity::Codex {
+                                            duration: window.duration_minutes,
+                                            occurrence,
+                                        }),
+                                        quota_text(
+                                            QuotaProvider::Codex,
+                                            quota.state,
+                                            quota.observed_at,
+                                            Some(window),
+                                        ),
+                                    )
+                                })
+                                .collect::<Vec<_>>()
+                        }
+                        CodexQuotaState::Blocked | CodexQuotaState::Unknown => vec![(
                             QuotaProvider::Codex,
                             None,
-                            quota_text(
-                                QuotaProvider::Codex,
-                                quota.state,
-                                quota.observed_at,
-                                &quota.windows,
-                            ),
-                        )
+                            quota_text(QuotaProvider::Codex, quota.state, quota.observed_at, None),
+                        )],
                     })
                     .collect::<Vec<_>>(),
                 // Claude gets one chip per window, five-hour then seven-day.
@@ -2510,12 +2503,12 @@ impl WorkspaceScene {
                         windows.into_iter().map(move |window| {
                             (
                                 QuotaProvider::Claude,
-                                Some(window.duration_minutes),
+                                Some(QuotaWindowIdentity::Claude(window.duration_minutes)),
                                 quota_text(
                                     QuotaProvider::Claude,
                                     state,
                                     quota.observed_at,
-                                    std::slice::from_ref(window),
+                                    Some(window),
                                 ),
                             )
                         })
@@ -2525,34 +2518,26 @@ impl WorkspaceScene {
             })
             .collect::<Vec<_>>();
         let quota_padding = metrics.padding * 2.0 + metrics.font_size + metrics.padding / 2.0;
-        let mut measure_quotas = |compact| {
-            quota_texts
-                .iter()
-                .map(|(provider, window, text)| {
-                    let (shown, pace) = if compact {
-                        (&text.compact, &text.compact_pace)
-                    } else {
-                        (&text.wide, &text.wide_pace)
-                    };
-                    let (label, width) = header_text(HeaderText::Fact, shown);
-                    WorkspaceQuota {
-                        provider: *provider,
-                        window: *window,
-                        rect: SceneRect {
-                            width: width + quota_padding,
-                            ..SceneRect::default()
-                        },
-                        logo: SceneRect::default(),
-                        accessible_label: format!("{} {label}", provider.name()),
-                        label,
-                        pace: pace.clone(),
-                        description: text.description.clone(),
-                    }
-                })
-                .collect::<Vec<_>>()
-        };
-        let mut quotas = measure_quotas(false);
-        let mut compact = false;
+        let mut quotas = quota_texts
+            .into_iter()
+            .map(|(provider, window, text)| {
+                let (label, width) = header_text(HeaderText::Fact, &text.label);
+                WorkspaceQuota {
+                    provider,
+                    window,
+                    rect: SceneRect {
+                        width: width + quota_padding,
+                        ..SceneRect::default()
+                    },
+                    logo: SceneRect::default(),
+                    accessible_label: format!("{} {label}", provider.name()),
+                    label,
+                    pace: text.pace,
+                    description: text.description,
+                }
+            })
+            .collect::<Vec<_>>();
+        let quota_count = quotas.len();
         let geometry = loop {
             let requested =
                 (!quotas.is_empty()).then(|| quotas.iter().map(|quota| quota.rect.width).sum());
@@ -2568,13 +2553,8 @@ impl WorkspaceScene {
             if geometry.3.is_some() || quotas.is_empty() {
                 break geometry;
             }
-            if compact {
-                // The chip closest to the tabs yields first.
-                quotas.remove(0);
-            } else {
-                quotas = measure_quotas(true);
-                compact = true;
-            }
+            // The chip closest to the tabs yields first.
+            quotas.remove(0);
         };
         let (header, mut tab_viewport, mut drag_region, quota_rect, mut controls) = geometry;
         // Without room for the tabs' minimum after it, the label is dropped.
@@ -2716,9 +2696,9 @@ impl WorkspaceScene {
             .max(0.0);
         // Read-only labels take spare header space without shortening tabs, in this order, and
         // stop at the first that does not fit: the clock yields first, then RAM, then CPU use,
-        // then the version label. The readings also need every quota chip at full width.
+        // then the version label. The readings also need every quota chip shown.
         let shown = |item| bar.items.contains(&item);
-        let reading = |item| !compact && shown(item);
+        let reading = |item| quotas.len() == quota_count && shown(item);
         // CPU and RAM keep the width of `CPU 100%`, so the header never shifts as they change.
         let readings = "CPU 100%".len();
         let mut labels = [

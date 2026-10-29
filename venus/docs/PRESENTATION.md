@@ -23,18 +23,15 @@ order, selection, and popups; Venus draws the visible scene.
 - New tab sits beside the last tab and pins to the tab-region edge when tabs
   overflow. Shortcut help and Close stay at the right. A small empty area lets
   users drag an undecorated window without taking clicks from tabs or controls.
-- When Eon supplies Codex quota facts, a read-only chip shows the OpenAI Blossom,
-  elapsed/total window positions, and remaining percentages. It condenses to
-  the lowest-remaining window, then disappears before tabs or controls lose
-  space. Stale, blocked, and unknown states remain explicit; hover gives human
-  time.
-- Claude facts show one chip per window, five-hour then seven-day, each with
-  the Claude splat, its elapsed/total window position and remaining
-  percentage, like Codex; a window without a reset shows no position. Hover
-  and accessibility name Claude and that window, and say how far into it the
-  observation is, or that its reset time is unavailable. Chips condense, then
-  disappear one by one, the one closest to the tabs first, before tabs,
-  controls or dragging lose space. `old` stays visible for stale facts. Missing facts and transport loss remove the affected chips.
+- Codex and Claude facts show one read-only chip per window, five-hour then
+  seven-day, each with its provider's mark (the OpenAI Blossom or Claude splat),
+  its elapsed/total window position and remaining percentage. A window without
+  a reset shows no position. Hover and accessibility name the provider and
+  that window, and say how far into it the observation is, or that its reset
+  time is unavailable. Chips disappear one by one, the one closest to the tabs
+  first, before tabs, controls or dragging lose space. `old` stays visible on
+  every stale chip; blocked and unknown Codex observations show one chip with
+  their state. Missing facts and transport loss remove the affected chips.
 
 ### Panes and popups
 

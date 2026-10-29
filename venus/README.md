@@ -36,7 +36,8 @@ The read-only label uses spare header space and yields before tabs and controls.
 Eon can supply Codex and Claude quota facts in the same header. Read-only chips
 show Codex’s white mark and Claude’s original orange splat alongside remaining
 percentages, with reset and freshness details on hover and in
-accessibility. Missing reset times stay explicitly unavailable. Narrow windows condense or hide optional chips before controls.
+accessibility. Missing reset times stay explicitly unavailable. Narrow windows
+hide optional chips before controls.
 
 Workspace windows show a compact shortcut hints bar. **Alt+Shift+B** hides or
 shows it for that window; **Alt+/** opens the complete Shortcuts viewer.

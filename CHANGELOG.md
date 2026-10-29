@@ -5,6 +5,8 @@ installation, and proven contract changes.
 
 ## Unreleased
 
+- Codex quota shows one chip per window, like Claude.
+
 - Two-cell emoji, including flags, joined families and VS16 hearts, prefer the
   platform colour emoji font even with configured terminal fonts or bold text.
   Eon includes Noto Color Emoji on Linux; macOS uses Apple Color Emoji.

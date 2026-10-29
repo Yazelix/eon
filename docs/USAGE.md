@@ -170,12 +170,12 @@ label, and the label hides before the tabs would lose their room.
 Pinned CodexBar CLI supplies read-only Codex and Claude quota from their local
 authentication. Codex also needs a compatible `codex` executable on `PATH`.
 Codex chips show its white mark and Claude chips its orange splat.
-Codex's chip shows its available windows; Claude gets one chip per available
-window, five-hour then seven-day. Each window shows its remaining percentage,
-with reset and freshness details on hover. Missing resets stay unknown.
+Both providers show one chip per available window, five-hour then seven-day.
+Each window shows its remaining percentage, with reset and freshness details
+on hover. Missing resets stay unknown.
 Readings say `old` once they are more than an hour old and disappear after 24
-hours. Chips yield before tabs and controls under width pressure, the one
-closest to the tabs first, and unavailable quota leaves the bar unchanged.
+hours. Chips hide one by one under width pressure, the one closest to the tabs
+first, before tabs and controls, and unavailable quota leaves the bar unchanged.
 See [quota behavior](CONFIGURATION.md#agent-quota).
 After the quota chips, `CPU 12%` shows whole-machine CPU use over the last 2
 seconds and `RAM 43%` shows whole-machine memory in use; hover them for

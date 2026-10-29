@@ -2293,7 +2293,7 @@ socket names, JSON fields and protocol identifiers retain their spellings.
   after a failed read and across a stop and restart; reads run off workspace
   I/O.
   The native chips show every supplied supported window and remaining
-  percentage, Codex's in one chip and Claude's in one chip per window
+  percentage, one chip per window for each provider
   (VEN-C26), with provider periods, optional resets and observation time.
   Claude needs no status-line setup. No reset is invented for an idle window.
 - **Ownership:** Pinned CodexBar owns provider collection and credential access;

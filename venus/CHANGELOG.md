@@ -2,6 +2,9 @@
 
 ## Unreleased
 
+- VEN-C22: Codex quota shows one chip per window, like Claude, hiding chips
+  one by one under width pressure (`eon-7iml`). No wire change.
+
 - VEN-C19: two-cell emoji clusters without text presentation prefer the
   platform colour emoji family at regular upright style, ahead of primary and
   named fallback fonts (`eon-wy1r`).
