@@ -184,6 +184,10 @@ impl Orbit {
         rows: u16,
     ) -> io::Result<Self> {
         let mut terminal = Terminal::new(cols, rows).map_err(|_| errno(libc::EIO))?;
+        // Grapheme clustering (mode 2027) is on, as in Ghostty, and a reset keeps it.
+        terminal
+            .set_default_mode(Mode::GRAPHEME_CLUSTER, true)
+            .map_err(|_| errno(libc::EIO))?;
         terminal
             .set_scrollback_max_bytes(Some(SCROLLBACK_BUDGET_BYTES))
             .map_err(|_| errno(libc::EIO))?;

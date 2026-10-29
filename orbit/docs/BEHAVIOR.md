@@ -111,6 +111,16 @@ magic 0432, at most 4096 bytes, the same file at `65/eon`, and, from
 `infocmp`, no difference from the Linux entry but `pairs`. Without the cap,
 the check failed. No native macOS run has read it yet.
 
+Orbit starts with grapheme clustering (DEC mode 2027) on, and a full reset
+keeps it on. An emoji modifier, flag or ZWJ sequence occupies one wide cell
+and reaches the client as one grapheme. Orbit leaves libghostty's standard
+mode handling in place: programs may set or reset the mode themselves; no
+Orbit check covers that. The `orbit-held-attach` check covers 👍🏽, 🇯🇵 and 👨‍👩‍👧 on
+an alternate screen and after RIS. Without the mode set, its alternate-screen
+column 10 text assertion failed with `👍` instead of `👍🏽`; using `set_mode`
+instead of `set_default_mode` failed the after-reset column 0 assertion the
+same way.
+
 ## Management record
 
 `--management-v3` makes the run managed (ORB-C13).
@@ -745,9 +755,11 @@ frame with the title the update set; it attaches during one that is never
 released, checks that the attachment stays quiet for 0.3 seconds, then
 receives the first frame from the watchdog within two seconds of observing the
 child's mark. It then detaches from a rich alternate screen (styles, a
-hyperlink, wide and combining graphemes, a moved cursor), and a new client's
-first frame equals the last one exactly. Not reporting the held update to Bend
-made it fail, and so did a three-second watchdog.
+hyperlink, wide, combining and emoji graphemes, a moved cursor), and a new
+client's first frame equals the last one exactly. After a full reset, it
+receives the emoji modifier, flag and ZWJ sequences as one wide cell each.
+Not reporting the held update to Bend made it fail, and so did a three-second
+watchdog.
 
 ## Revisions
 

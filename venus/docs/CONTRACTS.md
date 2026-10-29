@@ -1084,8 +1084,11 @@ re-proved when that platform or feature is next touched.
   repeat, physical trackpad gestures, focus loss, and AccessKit beyond window
   creation. With stock macOS fonts at that revision, Han ideographs render
   blank, stacked combining marks are dropped, emoji modifier and flag sequences
-  don't compose, and a long notice truncates at the window edge; the cause is
-  not diagnosed. `ven-prove-venus-apple-silicon-macos-nm7` owns these and the
+  don't compose, and a long notice truncates at the window edge. Emoji
+  sequences split because Orbit's terminal had grapheme clustering (mode
+  2027) off; eon-cts4 turns it on, and no macOS run has observed the result
+  yet. The other causes are not diagnosed.
+  `ven-prove-venus-apple-silicon-macos-nm7` owns these and the
   rest of the macOS proof: accessibility acceptance, lifecycle identity,
   transparency/blur, exact Orbit dogfood, and the support claim.
 

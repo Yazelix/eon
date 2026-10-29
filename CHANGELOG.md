@@ -5,6 +5,10 @@ installation, and proven contract changes.
 
 ## Unreleased
 
+- Emoji flags, skin tones and ZWJ sequences such as 👍🏽, 🇯🇵 and 👨‍👩‍👧 show
+  as one emoji two cells wide, also after `reset`. Terminals already running
+  when Eon is updated keep the old widths until those terminals are restarted.
+
 - `eon workspace --json` and workspace action replies include the window's
   `attention_queue` in Alt+G order, with workspace, tab and target IDs and each
   terminal's full attention record. EONW moves to v25 and Eon to 0.1.8, so

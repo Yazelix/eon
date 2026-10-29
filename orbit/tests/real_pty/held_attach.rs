@@ -51,6 +51,11 @@ pub fn run() {
     assert_eq!(cells[0].hyperlink, "https://example.test");
     assert_eq!(cells[5].width, CellWidth::Wide);
     assert_eq!(cells[8].text, "e\u{301}");
+    for (column, text) in [(10, "👍🏽"), (13, "🇯🇵"), (16, "👨‍👩‍👧")] {
+        assert_eq!(cells[column].width, CellWidth::Wide);
+        assert_eq!(cells[column].text, text, "alternate screen, column {column}");
+        assert_eq!(cells[column + 1].width, CellWidth::SpacerTail);
+    }
     assert_eq!(
         alternate.cursor.viewport.map(|cursor| (cursor.x, cursor.y)),
         Some((4, 2))
@@ -58,6 +63,16 @@ pub fn run() {
     drop(client);
     let mut client = Peer::attach(&server.path, 4.0);
     assert_eq!(client.frame(), alternate);
+
+    gate.release();
+    let reset = client.frame_titled("RESET");
+    assert_eq!(reset.screen, Screen::Primary);
+    let cells = &reset.rows[0].cells;
+    for (column, text) in [(0, "👍🏽"), (3, "🇯🇵"), (6, "👨‍👩‍👧")] {
+        assert_eq!(cells[column].width, CellWidth::Wide);
+        assert_eq!(cells[column].text, text, "after reset, column {column}");
+        assert_eq!(cells[column + 1].width, CellWidth::SpacerTail);
+    }
 
     gate.release();
     client.exited(4);
