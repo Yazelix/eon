@@ -398,3 +398,247 @@ fn structural_shortcuts_do_not_repeat_and_popup_focus_is_explicit() {
         );
     }
 }
+
+#[test]
+fn attention_inbox_binding_opens_under_every_sidebar() {
+    for sidebar in [Sidebar::Open, Sidebar::Closed, Sidebar::Off] {
+        assert!(
+            shortcut_groups_for(NativePlatform::Linux, &[], sidebar)
+                .iter()
+                .flat_map(|group| &group.rows)
+                .any(|row| row.shortcut == "Alt+Q" && row.action == "Show the attention inbox"),
+            "Alt+Q must open the attention inbox under {sidebar:?}"
+        );
+    }
+}
+
+#[test]
+fn attention_inbox_keeps_the_queue_filter_and_entry_across_refreshes() {
+    use eon_workspace_protocol::v25::{
+        Attention, AttentionState, PopupGeometry, QueueEntry, WorkspaceInfo,
+    };
+    use orbit_protocol::session::Modifiers;
+    assert_eq!(
+        attention_inbox_command(false, KeyCode::KeyQ, Modifiers::ALT, false, &[]),
+        Some(AttentionInboxCommand::Toggle)
+    );
+    let mut snapshot = Snapshot {
+        workspace: "w1".into(),
+        active_workspace: "w1".into(),
+        active_tab: "t3".into(),
+        workspaces: vec![
+            WorkspaceInfo {
+                id: "w1".into(),
+                name: None,
+                tab_count: 2,
+                attention: None,
+                recency: 1,
+            },
+            WorkspaceInfo {
+                id: "w2".into(),
+                name: Some("Review".into()),
+                tab_count: 1,
+                attention: None,
+                recency: 0,
+            },
+        ],
+        tabs: ["t3", "t2"]
+            .into_iter()
+            .map(|id| Tab {
+                id: id.into(),
+                directory: b"/work/site".to_vec(),
+                pending: false,
+                selected_pane: Some(id.replace('t', "p")),
+                selected_popup: None,
+                columns: vec![eon_workspace_protocol::v25::Column {
+                    expanded: id.replace('t', "p"),
+                    panes: vec![eon_workspace_protocol::v25::Pane {
+                        id: id.replace('t', "p"),
+                        label: id.replace('t', "p"),
+                        pinned_name: None,
+                        session: format!("session-{id}"),
+                        endpoint: format!("/tmp/{id}.sock").into_bytes(),
+                        live: true,
+                        attention: None,
+                    }],
+                }],
+                popups: Vec::new(),
+                attention_rollup: None,
+            })
+            .collect(),
+        geometry: PopupGeometry {
+            side_margin: 8.0,
+            vertical_margin: 4.0,
+        },
+        entries: Vec::new(),
+        codex_quota: None,
+        claude_quota: None,
+        sidebar: Sidebar::Off,
+        attention_queue: [
+            ("w2", "t4", "p4", AttentionState::NeedsInput),
+            ("w1", "t2", "p2", AttentionState::Error),
+            ("w1", "t3", "p3", AttentionState::Finished),
+        ]
+        .into_iter()
+        .map(|(workspace, tab, target, state)| QueueEntry {
+            workspace: workspace.into(),
+            tab: tab.into(),
+            target: target.into(),
+            attention: Attention {
+                state,
+                record: Some(eon_workspace_protocol::v25::AttentionRecord {
+                    kind: None,
+                    progress: None,
+                    app: "codex".into(),
+                    name: String::new(),
+                    title: target.into(),
+                    message: String::new(),
+                    changed_at: 0,
+                    stale: false,
+                    others: 0,
+                }),
+            },
+        })
+        .collect(),
+    };
+    let mut inbox = AttentionInboxState {
+        open: true,
+        ..AttentionInboxState::default()
+    };
+    inbox.select(&snapshot, 0);
+    let scene = |inbox: &AttentionInboxState, snapshot: &Snapshot| {
+        DialogScene::attention_inbox(
+            snapshot,
+            inbox.filter,
+            inbox.target(),
+            PhysicalSize::new(1000, 700),
+            CellMetrics::for_scale(1.0),
+            inbox.scroll,
+            0,
+        )
+    };
+    let dialog = scene(&inbox, &snapshot);
+    assert_eq!(
+        dialog
+            .attention_rows
+            .iter()
+            .map(|row| row.target.as_str())
+            .collect::<Vec<_>>(),
+        ["p4", "p2", "p3"]
+    );
+    assert_eq!(
+        dialog
+            .filters
+            .iter()
+            .map(|chip| chip.count)
+            .collect::<Vec<_>>(),
+        [3, 1, 1, 1]
+    );
+    for _ in 0..2 {
+        inbox.set_filter(&snapshot, inbox.filter.step(false));
+    }
+    assert_eq!(inbox.filter, AttentionFilter::Error);
+    assert_eq!(scene(&inbox, &snapshot).attention_rows[0].target, "p2");
+    let mut model = WorkspaceModel::default();
+    model.apply(eon_workspace_protocol::v25::Response::Snapshot(
+        snapshot.clone(),
+    ));
+    let index = inbox.index(&snapshot).unwrap();
+    snapshot.attention_queue[1].attention.record =
+        Some(eon_workspace_protocol::v25::AttentionRecord {
+            kind: None,
+            progress: None,
+            app: "codex".into(),
+            name: String::new(),
+            title: "Updated".into(),
+            message: String::new(),
+            changed_at: 1,
+            stale: false,
+            others: 0,
+        });
+    assert_eq!(
+        model.apply(eon_workspace_protocol::v25::Response::Snapshot(
+            snapshot.clone()
+        )),
+        (false, false),
+        "queue-only updates leave workspace geometry alone"
+    );
+    let mut presentation = PresentationState::default();
+    presentation.publish(presentation.candidate(None));
+    assert!(inbox.refresh(model.snapshot().unwrap(), index, &mut presentation));
+    assert!(
+        !presentation.has_presented_geometry(),
+        "queue-only refresh retires dialog hit targets and redraws"
+    );
+    assert_eq!(inbox.filter, AttentionFilter::Error);
+    assert_eq!(inbox.target(), Some(("t2", "p2")));
+    assert_ne!(dialog, scene(&inbox, &snapshot));
+    assert_eq!(
+        inbox.activation(&presentation),
+        None,
+        "Enter must not jump to a replacement before redraw"
+    );
+    presentation.publish(presentation.candidate(None));
+    assert_eq!(
+        inbox.activation(&presentation),
+        Some(WorkspaceAction::FocusAttention {
+            tab: "t2".into(),
+            target: "p2".into()
+        })
+    );
+    for _ in 0..2 {
+        inbox.set_filter(&snapshot, inbox.filter.step(true));
+    }
+    inbox.move_highlight(&snapshot, false);
+    assert_eq!(inbox.target(), Some(("t2", "p2")));
+    assert_eq!(
+        attention_inbox_command(true, KeyCode::Enter, Modifiers::empty(), false, &[]),
+        Some(AttentionInboxCommand::Activate)
+    );
+    let index = inbox.index(&snapshot).unwrap();
+    snapshot.attention_queue.remove(1);
+    inbox.refresh(&snapshot, index, &mut presentation);
+    assert_eq!(
+        inbox.activation(&presentation),
+        None,
+        "the replacement is not presented yet"
+    );
+    presentation.publish(presentation.candidate(None));
+    assert_eq!(
+        inbox.activation(&presentation),
+        Some(WorkspaceAction::FocusAttention {
+            tab: "t3".into(),
+            target: "p3".into()
+        })
+    );
+    assert_eq!(
+        inbox.target(),
+        Some(("t3", "p3")),
+        "the replacement keeps its old index"
+    );
+    snapshot.attention_queue.pop();
+    inbox.reconcile(&snapshot, index);
+    assert_eq!(
+        inbox.target(),
+        Some(("t4", "p4")),
+        "else highlight the last row"
+    );
+    snapshot.attention_queue.clear();
+    inbox.reconcile(&snapshot, 0);
+    assert_eq!(inbox.target(), None);
+    assert_eq!(AttentionFilter::All.step(true), AttentionFilter::Finished);
+    // Every local key, its repeat and matching release are captured; no bytes are produced.
+    let mut input = InputState::default();
+    for code in [
+        KeyCode::KeyQ,
+        KeyCode::Slash,
+        KeyCode::KeyV,
+        KeyCode::ArrowDown,
+        KeyCode::Enter,
+    ] {
+        let key = PhysicalKey::Code(code);
+        assert!(input.consumes_shortcut(key, ElementState::Pressed, false, true));
+        assert!(input.consumes_shortcut(key, ElementState::Pressed, true, false));
+        assert!(input.consumes_shortcut(key, ElementState::Released, false, false));
+    }
+}

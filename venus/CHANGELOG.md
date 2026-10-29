@@ -2,8 +2,10 @@
 
 ## Unreleased
 
-- Consume EONW v25, which adds `Snapshot.attention_queue` in EON-C31 order.
-  Venus does not use it yet (`eon-ngwf.1`).
+- VEN-C32: Alt+Q shows EONW v25's attention queue in one native inbox across
+  workspaces, with four counted filters, keyboard and pointer jumps, and
+  AccessKit rows. Rows share the agent sidebar's presentation and retain their
+  highlight across updates. Popup overrides take Alt+Q. No wire change.
 
 - Consume EONW v24, which adds EON-C10's directory-based tab launch request.
   Venus's new-tab action keeps the directory picker (`eon-tab-create-launch-8tl4`).

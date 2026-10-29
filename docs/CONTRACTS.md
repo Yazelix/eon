@@ -976,7 +976,8 @@ socket names, JSON fields and protocol identifiers retain their spellings.
       nothing (exit 3); a name that matches more than one workspace
       (`ambiguous-workspace`, exit 1, naming the matching IDs); a 33rd workspace
       (`workspace-limit`, exit 1); a malformed name (exit 2); and a tab, pane or
-      popup identity from another workspace (exit 3). A request ID repeated
+      popup identity from another workspace (exit 3), except a `FocusAttention`
+      target (EON-C31). A request ID repeated
       within the last 256 accepted mutations never repeats a switch, creation
       or close. A failed stop while closing a
       workspace keeps the workspace and its remaining terminals, as a partial tab
@@ -2461,6 +2462,8 @@ socket names, JSON fields and protocol identifiers retain their spellings.
   `eon-agent-parity-a9g0.2`: the full record and quotas in CLI JSON.
   Amended on 2026-10-29 (approved by Lucca, relayed by eon-overseer) by
   `eon-ngwf.1`: the queue in order over EONW v25 and in CLI JSON.
+  Amended on 2026-10-29 (approved by Lucca, relayed by eon-overseer) by
+  `eon-ngwf.2`: `FocusAttention` across workspaces.
 - **Consumer:** One person supervising coding agents across the tabs and workspaces (EON-C33)
   of one full-Eon window.
   eonbase has no poller and no sidebar; its `sidebar` is `Off`.
@@ -2638,9 +2641,12 @@ socket names, JSON fields and protocol identifiers retain their spellings.
       4. tab position;
       5. terminal position.
     - **Across workspaces.** A jump to a terminal in a hidden workspace shows that workspace
-      (EON-C33), then focuses its target under the covered-target rule. `FocusAttention` from a
-      sidebar row stays in its caller's workspace: a tab of another workspace is a stale
-      target.
+      (EON-C33), then focuses its target under the covered-target rule. `FocusAttention` names
+      a tab of any workspace of the window. For a tab of the caller's workspace it acts as
+      before. For a tab of another workspace it acts as a queue jump to that target: it shows
+      that workspace, then focuses the target under the covered-target rule, and a stale
+      target changes nothing. Unlike a queue jump, it resets the cursor, as other focus moves
+      do.
     - **The cursor.** The Runtime keeps one cursor per window: the order key of the last jump
       target.
       - `NextAttention` goes to the first entry whose key is greater than the cursor, wrapping
@@ -2893,6 +2899,8 @@ socket names, JSON fields and protocol identifiers retain their spellings.
   `eon-workspace-switching-shn4.8` implements attention across workspaces,
   the picker's order and needs-input marker, and the label's badge on EONW
   v22.
+  Amended on 2026-10-29 (approved by Lucca, relayed by eon-overseer) by
+  `eon-ngwf.2`: `FocusAttention` across workspaces.
 - **Consumer:** One full-Eon user, or an agent working for them, who keeps
   several separate sets of work in one Eon window.
 - **Trigger:** Alt+Shift+S or Commands > Switch workspace; Commands > New
@@ -2909,8 +2917,8 @@ socket names, JSON fields and protocol identifiers retain their spellings.
     characters. Names are display text, not identity, and need not be unique.
     Tab, pane and popup identities are unique across the window's workspaces,
     so a tab or pane action never reaches another workspace; only the Alt+G
-    jump below crosses workspaces. Where a name is shown, an unnamed workspace
-    shows its `wN`.
+    jump below and `FocusAttention` (EON-C31) cross workspaces. Where a name
+    is shown, an unnamed workspace shows its `wN`.
   - **Showing.** Venus renders only the shown workspace's tabs and terminals.
     Terminals in hidden workspaces keep running; only Venus's view of them is
     detached, as for a background tab. Switching never starts, stops or
@@ -3004,7 +3012,8 @@ socket names, JSON fields and protocol identifiers retain their spellings.
   nothing (exit 3); a name that matches more than one workspace
   (`ambiguous-workspace`, exit 1, naming the matching IDs); a 33rd workspace
   (`workspace-limit`, exit 1); a malformed name (exit 2); and a tab, pane or
-  popup identity from another workspace (exit 3). A request ID repeated
+  popup identity from another workspace (exit 3), except a `FocusAttention`
+  target (EON-C31). A request ID repeated
   within the last 256 accepted mutations never repeats a switch, creation
   or close. A failed stop while closing a
   workspace keeps the workspace and its remaining terminals, as a partial tab

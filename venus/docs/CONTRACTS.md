@@ -1221,6 +1221,8 @@ re-proved when that platform or feature is next touched.
   omitted while the EONW snapshot's `sidebar` is `Off`, and Alt+G and
   Alt+Shift+G, listed as "Jump to the next agent needing attention" and "Jump
   to the previous agent needing attention" (VEN-C30) under every `sidebar`.
+  The fixed bindings also include Alt+Q, listed as "Show the attention inbox" (VEN-C32) under
+  every `sidebar`.
 - **Important failures:** Repeated toggle events do not oscillate the viewer.
   Workspace loss, empty or maximum-size catalogs, long labels, resize, scale,
   focus loss, and tiny surfaces retain local dismissal and clipped, scrollable
@@ -2448,3 +2450,66 @@ re-proved when that platform or feature is next touched.
   file, and in the pane when Yazi quit. Tab switch, popup hide and window
   detach reattached the terminal, and its images drew again, after window
   detach at a larger configured font size. No capture showed a marker.
+
+## VEN-C32 — Attention inbox
+
+- **Status:** Approved by Lucca on 2026-10-29 (relayed by eon-overseer) on `eon-ngwf.2`, which
+  implements it.
+- **Consumer:** One person using a Venus window attached to a full Eon workspace, under every
+  `sidebar` value.
+- **Trigger:**
+  - Alt+Q;
+  - a new EONW v25 snapshot while the inbox is open;
+  - the pointer, keyboard or AccessKit acts on the inbox;
+  - the window is resized.
+- **Result:**
+  - **Opening.** Alt+Q opens the inbox as one ephemeral native dialog, as the shortcut viewer
+    (VEN-C20) opens, with keyboard focus inside it. Alt+Q again or Escape closes it and returns
+    keyboard focus where it was. Opening, filtering, moving the highlight and closing send no
+    workspace action and no terminal bytes.
+  - **Contents.**
+    - It lists the snapshot's `attention_queue` (EON-C31) in the order received, across every
+      workspace of the window. Venus never sorts or reclassifies it.
+    - A row shows the state glyph, the app icon and label as agent sidebar rows choose them
+      (VEN-C30), and the age. A needs-input row adds one plain-text, truncated `msg` line. A
+      stale record is dimmed and labelled "status stale".
+    - A row of the shown workspace names its tab as sidebar tab headers do (`3  site`) and its
+      source terminal as sidebar rows do. A row of another workspace names that workspace, by
+      its name, else its ID, instead.
+  - **Filter.** Above the rows sit four filters, All, Needs input, Error and Finished, each with
+    its count of entries. All is selected whenever the inbox opens. Left and Right step through
+    them, and a click selects one. A filter keeps queue order. With no row to list, the inbox
+    says "No agent needs attention", or under a state filter "No agent in <state>".
+  - **Rows.** The first row is highlighted when the inbox opens or the filter changes. Up and
+    Down move the highlight, and the wheel and paging keys scroll. The highlight follows its
+    entry across snapshots; when that entry leaves, it moves to the row now at its place, else
+    the last row.
+  - **Jump.** Enter, Space or a click on a row sends `FocusAttention` with that entry's tab and
+    target and closes the inbox. Keyboard focus then follows the jump as it does for a sidebar
+    row (VEN-C30). A rejection shows its VEN-C8 notice.
+  - **Updates.** A snapshot while the inbox is open updates its rows and counts in place and
+    keeps the filter. An attention-only refresh disturbs nothing else (VEN-C30).
+  - **Input while open.** Keyboard, pointer, IME, clipboard, link and other shortcut input does
+    not reach its normal target, as for the shortcut viewer.
+  - **Shortcuts.** Alt+/ lists Alt+Q (VEN-C20). The footer (VEN-C24) shows `Q inbox` in its Alt
+    group, and while the inbox is open, its own keys. A popup configured on Alt+Q takes the key,
+    as with other fixed bindings.
+  - **Accessibility.** The inbox is one named AccessKit dialog, "Attention inbox". It holds the
+    four filters, each named with its count and marked when selected, and the rows, each named
+    as its sidebar row would be, plus its workspace for a row of another workspace. Accessibility
+    focus follows the highlight.
+- **Important failures:**
+  - The inbox never takes desktop focus, never changes Orbit state, and opening it sees no raise.
+  - Record text renders only as plain text, never as markup or links.
+  - eonbase has no Eon workspace, so the inbox does not open there.
+  - Workspace loss, an empty or full (256-entry) queue, long labels, resize, scale and tiny
+    surfaces keep local dismissal and a clipped, scrollable dialog, as VEN-C20 does.
+- **Owner:**
+  - **Venus** owns the inbox's open state, filter, highlight, scene, rendering, input and
+    accessibility.
+  - **Eon** owns the queue, its order and classes, and the jump (EON-C31).
+- **Consumes:** EONW v25 (`attention_queue`, `workspaces`) and the agent sidebar's row
+  presentation (VEN-C30).
+- **Boundary:** no sorting, text search, multi-select, previews, notifications, kept filter, or
+  Runtime state for opening; the key stays fixed until `[keys]` (`eon-configurability-qkq8.12`).
+- **Proof:** recorded on `eon-ngwf.2` once proven.

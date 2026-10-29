@@ -5,6 +5,12 @@ installation, and proven contract changes.
 
 ## Unreleased
 
+- Alt+Q opens an attention inbox across every workspace, with All, Needs input,
+  Error and Finished filters and keyboard, pointer and accessibility navigation.
+  Selecting a row jumps to its agent and shows its workspace. `FocusAttention`
+  accepts a tab of any workspace of the window; stale targets leave focus and
+  the shown workspace unchanged.
+
 - Emoji flags, skin tones and ZWJ sequences such as 👍🏽, 🇯🇵 and 👨‍👩‍👧 show
   as one emoji two cells wide, also after `reset`. Terminals already running
   when Eon is updated keep the old widths until those terminals are restarted.

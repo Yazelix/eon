@@ -4,8 +4,8 @@ use crate::{
     render::{CellMetrics, FALLBACK_CAP_HEIGHT_EM},
 };
 use eon_workspace_protocol::v25::{
-    ALT, AttentionKind, AttentionState, ClaudeQuotaState, CodexQuotaState, PopupEntry, QuotaWindow,
-    SHIFT, Sidebar, Snapshot, Tab,
+    ALT, Attention, AttentionKind, AttentionState, ClaudeQuotaState, CodexQuotaState, PopupEntry,
+    QuotaWindow, SHIFT, Sidebar, Snapshot, Tab,
 };
 use orbit_protocol::{
     Cell, CellStyle, CellWidth, CursorShape, Frame, PlacementState, Rgb, Row, Screen, SourceRect,
@@ -328,6 +328,16 @@ pub struct SidebarRow {
     /// Milliseconds since the record changed; unavailable rows have no age.
     age: Option<u64>,
     pub(crate) accessible_label: String,
+}
+
+impl SidebarRow {
+    fn shift(&mut self, delta: f32) {
+        self.rect.top += delta;
+        self.glyph.rect.top += delta;
+        if let Some((_, rect)) = &mut self.icon {
+            rect.top += delta;
+        }
+    }
 }
 
 const MINUTE_MS: u64 = 60_000;
@@ -929,10 +939,87 @@ impl ShortcutGroup {
     }
 }
 
+/// The inbox's four views of Runtime's queue; order and classes stay Runtime-owned.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum AttentionFilter {
+    #[default]
+    All,
+    NeedsInput,
+    Error,
+    Finished,
+}
+
+impl AttentionFilter {
+    pub const ALL: [Self; 4] = [Self::All, Self::NeedsInput, Self::Error, Self::Finished];
+
+    #[must_use]
+    pub fn matches(self, state: AttentionState) -> bool {
+        match self {
+            Self::All => true,
+            Self::NeedsInput => state == AttentionState::NeedsInput,
+            Self::Error => state == AttentionState::Error,
+            Self::Finished => state == AttentionState::Finished,
+        }
+    }
+
+    #[must_use]
+    pub fn step(self, backwards: bool) -> Self {
+        let index = Self::ALL.iter().position(|filter| *filter == self).unwrap();
+        Self::ALL[(index + if backwards { 3 } else { 1 }) % 4]
+    }
+
+    #[must_use]
+    pub fn label(self) -> &'static str {
+        match self {
+            Self::All => "All",
+            Self::NeedsInput => "Needs input",
+            Self::Error => "Error",
+            Self::Finished => "Finished",
+        }
+    }
+
+    fn empty(self) -> &'static str {
+        match self {
+            Self::All => "No agent needs attention",
+            Self::NeedsInput => "No agent in needs input",
+            Self::Error => "No agent in error",
+            Self::Finished => "No agent in finished",
+        }
+    }
+}
+
+#[derive(Clone, Debug, PartialEq)]
+pub struct AttentionFilterChip {
+    pub filter: AttentionFilter,
+    pub count: usize,
+    pub selected: bool,
+    pub rect: SceneRect,
+}
+
+#[must_use]
+pub fn attention_inbox_hints() -> Vec<ShortcutHint> {
+    [
+        ("←→", "filter"),
+        ("↑↓", "agents"),
+        ("Enter", "jump"),
+        ("Esc", "close"),
+    ]
+    .into_iter()
+    .map(|(key, label)| ShortcutHint {
+        modifiers: String::new(),
+        key: key.into(),
+        label: label.into(),
+        accessible_label: format!("{key} {label}"),
+        priority: 0,
+    })
+    .collect()
+}
+
 /// What the one native dialog shows.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum DialogKind {
     Shortcuts,
+    AttentionInbox,
     /// The final-close prompt: how many terminals the close stops, the detach chord unless a
     /// popup takes it, and the shown workspace's name or `wN` while other workspaces remain.
     CloseLastTab {
@@ -947,6 +1034,7 @@ impl DialogKind {
     pub(crate) fn title(&self) -> &'static str {
         match self {
             Self::Shortcuts => "Shortcuts",
+            Self::AttentionInbox => "Attention inbox",
             Self::CloseLastTab { .. } => "Close the last tab?",
         }
     }
@@ -955,6 +1043,7 @@ impl DialogKind {
     pub(crate) fn subtitle(&self) -> Cow<'static, str> {
         match self {
             Self::Shortcuts => "Eon surface · physical keys".into(),
+            Self::AttentionInbox => "Agents needing your attention".into(),
             Self::CloseLastTab {
                 terminals,
                 workspace,
@@ -975,6 +1064,13 @@ impl DialogKind {
     pub(crate) fn footer(&self) -> Vec<String> {
         match self {
             Self::Shortcuts => vec!["Wheel or ↑↓ to scroll · Esc or Alt+/ to close".into()],
+            Self::AttentionInbox => vec![
+                attention_inbox_hints()
+                    .iter()
+                    .map(|hint| format!("{} {}", hint.key, hint.label))
+                    .collect::<Vec<_>>()
+                    .join(" · "),
+            ],
             Self::CloseLastTab {
                 detach, workspace, ..
             } => std::iter::once(
@@ -1004,6 +1100,9 @@ pub struct DialogScene {
     pub(crate) subtitle: SceneRect,
     pub content: SceneRect,
     pub groups: Vec<ShortcutGroup>,
+    pub filters: Vec<AttentionFilterChip>,
+    pub attention_rows: Vec<SidebarRow>,
+    pub(crate) empty: Option<&'static str>,
     pub scroll: f32,
     pub max_scroll: f32,
 }
@@ -1038,7 +1137,7 @@ impl DialogScene {
         let footer_lines = kind.footer().len() as f32;
         let padding_for = |width: f32| metrics.padding.min(width / 8.0);
         let dialog_height = match kind {
-            DialogKind::Shortcuts => available,
+            DialogKind::Shortcuts | DialogKind::AttentionInbox => available,
             DialogKind::CloseLastTab { .. } => (padding_for(dialog_width)
                 + metrics.height * 3.0
                 + content_height
@@ -1105,9 +1204,197 @@ impl DialogScene {
             subtitle,
             content,
             groups,
+            filters: Vec::new(),
+            attention_rows: Vec::new(),
+            empty: None,
             scroll,
             max_scroll,
         }
+    }
+
+    /// Project the queue in received order using exactly the sidebar's row presentation.
+    #[must_use]
+    pub fn attention_inbox(
+        snapshot: &Snapshot,
+        filter: AttentionFilter,
+        highlighted: Option<(&str, &str)>,
+        size: PhysicalSize<u32>,
+        metrics: CellMetrics,
+        scroll: f32,
+        now: u64,
+    ) -> Self {
+        let mut dialog = Self::new(
+            DialogKind::AttentionInbox,
+            Vec::new(),
+            size,
+            metrics,
+            scroll,
+        );
+        let filter_height = (metrics.height * 2.0).min(dialog.content.height);
+        dialog.filters = AttentionFilter::ALL
+            .into_iter()
+            .enumerate()
+            .map(|(index, item)| AttentionFilterChip {
+                filter: item,
+                count: snapshot
+                    .attention_queue
+                    .iter()
+                    .filter(|entry| item.matches(entry.attention.state))
+                    .count(),
+                selected: item == filter,
+                rect: SceneRect {
+                    left: dialog.content.left + dialog.content.width * index as f32 / 4.0,
+                    top: dialog.content.top,
+                    width: dialog.content.width / 4.0,
+                    height: filter_height,
+                },
+            })
+            .collect();
+        dialog.content.top += filter_height;
+        dialog.content.height -= filter_height;
+        let mut top = dialog.content.top;
+        for entry in snapshot
+            .attention_queue
+            .iter()
+            .filter(|entry| filter.matches(entry.attention.state))
+        {
+            let local = entry.workspace == snapshot.workspace;
+            let tab = local
+                .then(|| {
+                    snapshot
+                        .tabs
+                        .iter()
+                        .enumerate()
+                        .find(|(_, tab)| tab.id == entry.tab)
+                })
+                .flatten();
+            let (source, popup, location, heading) = if let Some((index, tab)) = tab {
+                let popup = tab.popups.iter().find(|popup| popup.id == entry.target);
+                let source = popup
+                    .and_then(|popup| snapshot.entries.iter().find(|item| item.id == popup.entry))
+                    .map_or(entry.target.as_str(), |item| item.label.as_str());
+                (
+                    source,
+                    popup.is_some(),
+                    Some(format!(
+                        "tab {}, {}",
+                        index + 1,
+                        directory_leaf(&tab.directory)
+                    )),
+                    Some(tab_labels(index, snapshot.tabs.len(), &tab.directory).0),
+                )
+            } else {
+                let name = snapshot
+                    .workspaces
+                    .iter()
+                    .find(|item| item.id == entry.workspace)
+                    .and_then(|item| item.name.as_deref())
+                    .unwrap_or(&entry.workspace);
+                (name, false, None, None)
+            };
+            let current = local && focused_terminal(snapshot) == Some(entry.target.as_str());
+            let mut row = attention_row(
+                &entry.attention,
+                &entry.tab,
+                &entry.target,
+                source,
+                popup,
+                location.as_deref(),
+                heading.as_deref(),
+                current,
+                highlighted == Some((entry.tab.as_str(), entry.target.as_str())),
+                now,
+                metrics,
+                SceneRect {
+                    top,
+                    ..dialog.content
+                },
+            );
+            if !local {
+                let _ = write!(row.accessible_label, ", in workspace {source}");
+            }
+            top = row.rect.bottom();
+            dialog.attention_rows.push(row);
+        }
+        dialog.empty = dialog.attention_rows.is_empty().then_some(filter.empty());
+        dialog.max_scroll = (top - dialog.content.bottom()).max(0.0);
+        dialog.scroll = scroll.clamp(0.0, dialog.max_scroll);
+        for row in &mut dialog.attention_rows {
+            row.shift(-dialog.scroll);
+        }
+        dialog
+    }
+
+    #[must_use]
+    pub fn attention_filter_at(&self, x: f32, y: f32) -> Option<AttentionFilter> {
+        self.filters
+            .iter()
+            .find(|chip| chip.rect.contains(x, y))
+            .map(|chip| chip.filter)
+    }
+
+    #[must_use]
+    pub fn attention_target_at(&self, x: f32, y: f32) -> Option<(&str, &str)> {
+        self.content
+            .contains(x, y)
+            .then(|| {
+                self.attention_rows
+                    .iter()
+                    .find(|row| row.rect.contains(x, y))
+            })
+            .flatten()
+            .map(|row| (row.tab.as_str(), row.target.as_str()))
+    }
+
+    /// Scroll just far enough to reveal the highlighted row, keeping its top on tiny surfaces.
+    #[must_use]
+    pub fn attention_highlight_scroll(&self) -> f32 {
+        let Some(row) = self.attention_rows.iter().find(|row| row.focused) else {
+            return self.scroll;
+        };
+        // An oversized row is already as visible as possible; keep its scrolled message visible.
+        if row.rect.height > self.content.height && row.rect.intersection(self.content).is_some() {
+            return self.scroll;
+        }
+        let delta = if row.rect.top < self.content.top {
+            row.rect.top - self.content.top
+        } else {
+            (row.rect.bottom() - self.content.bottom())
+                .min(row.rect.top - self.content.top)
+                .max(0.0)
+        };
+        (self.scroll + delta).clamp(0.0, self.max_scroll)
+    }
+
+    /// Scrolling keeps the highlight on the nearest visible entry.
+    #[must_use]
+    pub fn attention_scrolled_target(&self) -> Option<(&str, &str)> {
+        let current = self.attention_rows.iter().find(|row| row.focused)?;
+        let visible = |row: &&SidebarRow| {
+            row.rect.top >= self.content.top && row.rect.bottom() <= self.content.bottom()
+        };
+        let row = if current.rect.top < self.content.top {
+            self.attention_rows.iter().find(visible)
+        } else if current.rect.bottom() > self.content.bottom() {
+            self.attention_rows.iter().rev().find(visible)
+        } else {
+            Some(current)
+        }
+        .or_else(|| {
+            self.attention_rows
+                .iter()
+                .find(|row| row.rect.intersection(self.content).is_some())
+        })?;
+        Some((&row.tab, &row.target))
+    }
+
+    #[must_use]
+    pub fn attention_age_wait(&self) -> Option<u64> {
+        self.attention_rows
+            .iter()
+            .filter_map(|row| row.age)
+            .map(age_wait)
+            .min()
     }
 
     /// The final-close prompt for `tab`: its panes by header label, then its popups by
@@ -1374,6 +1661,164 @@ fn sidebar_rect(
         })
 }
 
+/// The shared sidebar and inbox presentation of one Runtime attention record.
+#[allow(clippy::too_many_arguments)]
+fn attention_row(
+    attention: &Attention,
+    tab: &str,
+    target: &str,
+    source: &str,
+    popup: bool,
+    location: Option<&str>,
+    heading: Option<&str>,
+    current: bool,
+    focused: bool,
+    now: u64,
+    metrics: CellMetrics,
+    rect: SceneRect,
+) -> SidebarRow {
+    let line = metrics.height;
+    let row_gap = (metrics.padding / 2.0).round();
+    let glyph_size = (metrics.font_size * 0.75).round().max(1.0);
+    let icon_size = metrics.font_size.round().max(1.0);
+    let spacing = (metrics.width / 2.0).round();
+    let content_left = rect.left + metrics.padding / 2.0;
+    let top = rect.top;
+    let record = attention.record.as_ref();
+    let (icon, app) = match record.map(|record| record.app.as_str()) {
+        Some("claude-code") => (Some(QuotaProvider::Claude), "Claude"),
+        Some("codex") => (Some(QuotaProvider::Codex), "Codex"),
+        Some(app) => (None, app),
+        None => (None, ""),
+    };
+    let reported_title = record
+        .map(|record| record.title.as_str())
+        .filter(|title| !title.is_empty());
+    // Only Claude Code's terminal title names its session; other programs'
+    // titles are status lines, such as Codex's spinner, or shell command lines.
+    let name = record
+        .filter(|record| record.app == "claude-code")
+        .map_or("", |record| record.name.as_str());
+    // The first of the name, the reported title and the app label, never the
+    // directory leaf that the tab's heading already shows.
+    let title = match record {
+        None => "status unavailable",
+        Some(_) => [name, reported_title.unwrap_or_default(), app]
+            .into_iter()
+            .find(|text| !text.is_empty())
+            .unwrap_or("agent"),
+    }
+    .to_owned();
+    let age = record.map(|record| now.saturating_sub(record.changed_at));
+    let ages = age.map(age_labels);
+    let others = record.map_or(0, |record| record.others);
+    let stale = record.is_some_and(|record| record.stale);
+    let mut detail = ages
+        .as_ref()
+        .map_or_else(String::new, |(age, _)| format!("{age} · "));
+    if let Some(heading) = heading {
+        let _ = write!(detail, "{heading} · ");
+    }
+    detail.push_str(source);
+    let popup_marker = popup.then_some(detail.len());
+    if others > 0 {
+        let _ = write!(detail, " · +{others}");
+    }
+    if stale {
+        detail.push_str(" · status stale");
+    }
+    let message = record
+        .filter(|_| attention.state == AttentionState::NeedsInput)
+        .map(|record| record.message.clone())
+        .filter(|message| !message.is_empty());
+    let word = match (attention.state, record.and_then(|record| record.kind)) {
+        (AttentionState::NeedsInput, Some(AttentionKind::Permission)) => "Needs input (permission)",
+        (AttentionState::NeedsInput, Some(AttentionKind::Question)) => "Needs input (question)",
+        (AttentionState::NeedsInput, Some(AttentionKind::Auth)) => "Needs input (sign-in)",
+        (AttentionState::NeedsInput, None) => "Needs input",
+        (AttentionState::Error, _) => "Error",
+        (AttentionState::Finished, _) => "Finished",
+        (AttentionState::Working, _) => "Working",
+        (AttentionState::Background, _) => "Waiting on background work",
+        (AttentionState::Idle, _) => "Idle",
+        (AttentionState::Unavailable, _) => "Status unavailable",
+    };
+    let mut accessible_label = format!(
+        "{word}: {}{}{name}",
+        if app.is_empty() { "agent" } else { app },
+        if name.is_empty() { "" } else { " " },
+    );
+    if let Some(location) = location {
+        let _ = write!(accessible_label, " in {location}, {source}");
+    }
+    if popup {
+        accessible_label.push_str(", popup");
+    }
+    if current {
+        accessible_label.push_str(", current");
+    }
+    if let Some(title) = reported_title {
+        let _ = write!(accessible_label, ", {title}");
+    }
+    if let Some((_, spoken)) = &ages {
+        let _ = write!(accessible_label, ", changed {spoken}");
+    }
+    if others > 0 {
+        let plural = if others == 1 { "" } else { "s" };
+        let _ = write!(accessible_label, ", {others} more record{plural}");
+    }
+    if stale {
+        accessible_label.push_str(", status stale");
+    }
+    if let Some(message) = &message {
+        let _ = write!(accessible_label, ": {message}");
+    }
+    let lines = if message.is_some() { 3.0 } else { 2.0 };
+    let text_top = top + row_gap / 2.0;
+    let glyph = SceneRect {
+        left: content_left,
+        top: text_top + (line - glyph_size) / 2.0,
+        width: glyph_size,
+        height: glyph_size,
+    };
+    let icon = icon.map(|provider| {
+        (
+            provider,
+            SceneRect {
+                left: glyph.right() + spacing,
+                top: text_top + (line - icon_size) / 2.0,
+                width: icon_size,
+                height: icon_size,
+            },
+        )
+    });
+    SidebarRow {
+        tab: tab.to_owned(),
+        target: target.to_owned(),
+        rect: SceneRect {
+            left: rect.left,
+            top,
+            width: rect.width,
+            height: line * lines + row_gap,
+        },
+        glyph: TabBadge {
+            state: attention.state,
+            dimmed: stale,
+            rect: glyph,
+        },
+        text_left: icon.map_or(glyph.right(), |(_, rect)| rect.right()) + spacing,
+        icon,
+        title,
+        detail,
+        popup_marker,
+        message,
+        focused,
+        current,
+        age,
+        accessible_label,
+    }
+}
+
 /// The agent sidebar's tab headings and rows inside its `card`, in tab and terminal order, and
 /// the list area that clips them. Only tabs with an attention rollup are listed, and only their
 /// terminals with attention; the keyboard-focused row scrolls into view.
@@ -1395,10 +1840,6 @@ fn sidebar_contents(
     };
     let content_left = card.left + padding;
     let content_width = (card.right() - padding - content_left).max(0.0);
-    let row_gap = (padding / 2.0).round();
-    let glyph_size = (metrics.font_size * 0.75).round().max(1.0);
-    let icon_size = metrics.font_size.round().max(1.0);
-    let spacing = (metrics.width / 2.0).round();
     let mut headings = Vec::new();
     let mut rows = Vec::new();
     let mut top = list.top;
@@ -1446,140 +1887,22 @@ fn sidebar_contents(
             let Some(attention) = attention else {
                 continue;
             };
-            let record = attention.record.as_ref();
-            let (icon, app) = match record.map(|record| record.app.as_str()) {
-                Some("claude-code") => (Some(QuotaProvider::Claude), "Claude"),
-                Some("codex") => (Some(QuotaProvider::Codex), "Codex"),
-                Some(app) => (None, app),
-                None => (None, ""),
-            };
-            let reported_title = record
-                .map(|record| record.title.as_str())
-                .filter(|title| !title.is_empty());
-            // Only Claude Code's terminal title names its session; other programs'
-            // titles are status lines, such as Codex's spinner, or shell command lines.
-            let name = record
-                .filter(|record| record.app == "claude-code")
-                .map_or("", |record| record.name.as_str());
-            // The first of the name, the reported title and the app label, never the
-            // directory leaf that the tab's heading already shows.
-            let title = match record {
-                None => "status unavailable",
-                Some(_) => [name, reported_title.unwrap_or_default(), app]
-                    .into_iter()
-                    .find(|text| !text.is_empty())
-                    .unwrap_or("agent"),
-            }
-            .to_owned();
-            let age = record.map(|record| view.now.saturating_sub(record.changed_at));
-            let ages = age.map(age_labels);
-            let others = record.map_or(0, |record| record.others);
-            let stale = record.is_some_and(|record| record.stale);
-            let mut detail = ages
-                .as_ref()
-                .map_or_else(String::new, |(age, _)| format!("{age} · "));
-            detail.push_str(source);
-            let popup_marker = popup.then_some(detail.len());
-            if others > 0 {
-                let _ = write!(detail, " · +{others}");
-            }
-            if stale {
-                detail.push_str(" · status stale");
-            }
-            let message = record
-                .filter(|_| attention.state == AttentionState::NeedsInput)
-                .map(|record| record.message.clone())
-                .filter(|message| !message.is_empty());
-            let word = match (attention.state, record.and_then(|record| record.kind)) {
-                (AttentionState::NeedsInput, Some(AttentionKind::Permission)) => {
-                    "Needs input (permission)"
-                }
-                (AttentionState::NeedsInput, Some(AttentionKind::Question)) => {
-                    "Needs input (question)"
-                }
-                (AttentionState::NeedsInput, Some(AttentionKind::Auth)) => "Needs input (sign-in)",
-                (AttentionState::NeedsInput, None) => "Needs input",
-                (AttentionState::Error, _) => "Error",
-                (AttentionState::Finished, _) => "Finished",
-                (AttentionState::Working, _) => "Working",
-                (AttentionState::Background, _) => "Waiting on background work",
-                (AttentionState::Idle, _) => "Idle",
-                (AttentionState::Unavailable, _) => "Status unavailable",
-            };
-            let mut accessible_label = format!(
-                "{word}: {}{}{name} in tab {}, {leaf}, {source}",
-                if app.is_empty() { "agent" } else { app },
-                if name.is_empty() { "" } else { " " },
-                index + 1,
+            let row = attention_row(
+                attention,
+                &tab.id,
+                target,
+                source,
+                popup,
+                Some(&format!("tab {}, {leaf}", index + 1)),
+                None,
+                focused_terminal == Some(target.as_str()),
+                view.focused == Some(target.as_str()),
+                view.now,
+                metrics,
+                SceneRect { top, ..list },
             );
-            if popup {
-                accessible_label.push_str(", popup");
-            }
-            let current = focused_terminal == Some(target.as_str());
-            if current {
-                accessible_label.push_str(", current");
-            }
-            if let Some(title) = reported_title {
-                let _ = write!(accessible_label, ", {title}");
-            }
-            if let Some((_, spoken)) = &ages {
-                let _ = write!(accessible_label, ", changed {spoken}");
-            }
-            if others > 0 {
-                let plural = if others == 1 { "" } else { "s" };
-                let _ = write!(accessible_label, ", {others} more record{plural}");
-            }
-            if stale {
-                accessible_label.push_str(", status stale");
-            }
-            if let Some(message) = &message {
-                let _ = write!(accessible_label, ": {message}");
-            }
-            let lines = if message.is_some() { 3.0 } else { 2.0 };
-            let text_top = top + row_gap / 2.0;
-            let glyph = SceneRect {
-                left: content_left,
-                top: text_top + (line - glyph_size) / 2.0,
-                width: glyph_size,
-                height: glyph_size,
-            };
-            let icon = icon.map(|provider| {
-                (
-                    provider,
-                    SceneRect {
-                        left: glyph.right() + spacing,
-                        top: text_top + (line - icon_size) / 2.0,
-                        width: icon_size,
-                        height: icon_size,
-                    },
-                )
-            });
-            rows.push(SidebarRow {
-                tab: tab.id.clone(),
-                target: target.clone(),
-                rect: SceneRect {
-                    left: list.left,
-                    top,
-                    width: list.width,
-                    height: line * lines + row_gap,
-                },
-                glyph: TabBadge {
-                    state: attention.state,
-                    dimmed: stale,
-                    rect: glyph,
-                },
-                text_left: icon.map_or(glyph.right(), |(_, rect)| rect.right()) + spacing,
-                icon,
-                title,
-                detail,
-                popup_marker,
-                message,
-                focused: view.focused == Some(target.as_str()),
-                current,
-                age,
-                accessible_label,
-            });
-            top += line * lines + row_gap;
+            top = row.rect.bottom();
+            rows.push(row);
         }
     }
     // Reveal the focused row: scroll just far enough to show its bottom, never past its top.
@@ -1592,11 +1915,7 @@ fn sidebar_contents(
         heading.rect.top -= scroll;
     }
     for row in &mut rows {
-        row.rect.top -= scroll;
-        row.glyph.rect.top -= scroll;
-        if let Some((_, rect)) = &mut row.icon {
-            rect.top -= scroll;
-        }
+        row.shift(-scroll);
     }
     (headings, rows, list)
 }

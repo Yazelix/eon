@@ -76,7 +76,16 @@ the workspace, by name or `wN`, and its footer reads `Enter Close`.
 | Alt+/ | Open or close Shortcuts |
 | Alt+Shift+B | Show or hide the bottom shortcut hints |
 | Alt+Shift+H | Show or hide the agent sidebar, unless Eon turned it off |
+| Alt+Q | Open or close the attention inbox under every sidebar setting |
 | Alt+G / Alt+Shift+G | Send `NextAttention` or `PreviousAttention`, even with the sidebar off |
+
+In the attention inbox, Left/Right cycle All, Needs input, Error and Finished;
+Up/Down highlight a row. Enter, Space or a row click sends that row's
+`FocusAttention` and closes the dialog; the jump can show another workspace.
+Escape or Alt+Q closes without a jump. Wheel, PageUp/PageDown, Home and End
+scroll. The filters keep Eon's queue order and show whole-queue counts. The
+inbox captures other input while open and restores prior keyboard focus on
+dismissal. A popup configured on Alt+Q takes the fixed binding.
 
 A zoomed tab's name is followed by a zoom-in magnifier (Nerd Font U+F00E),
 with ` · zoom` as the missing-font fallback. Its accessible name keeps `, zoomed`.

@@ -33,14 +33,14 @@ use winit::{
     window::{CursorIcon, UserAttentionType, Window, WindowAttributes, WindowId},
 };
 use yazelix_venus::{
-    Accessibility, AccessibilityTarget, BarItem, CellMetrics, ClipboardEffect, Color,
-    ConnectionState, CpuTimes, CpuUse, DialogKind, DialogScene, EonBar, FontSettings, FontSetup,
-    HeaderText, Hyperlink, ImageKey, ImageResync, InputState, LocalClock, LocalNoticeSource,
-    MAX_LINK_BYTES, ModelEffect, ModelError, PaddingColor, PresentOutcome, RamUse, Renderer, Scene,
-    SceneRect, SessionModel, ShortcutHintsScene, SidebarView, Transport, TransportEvent,
-    WorkspaceEvent, WorkspaceFocus, WorkspaceHeaderControl, WorkspaceHit, WorkspaceModel,
-    WorkspaceScene, WorkspaceTransport, active_popup, attention_only_change, focused_terminal,
-    labels_only_change, shown_workspace, validate_copy_uri, validate_open_uri,
+    Accessibility, AccessibilityTarget, AttentionFilter, BarItem, CellMetrics, ClipboardEffect,
+    Color, ConnectionState, CpuTimes, CpuUse, DialogKind, DialogScene, EonBar, FontSettings,
+    FontSetup, HeaderText, Hyperlink, ImageKey, ImageResync, InputState, LocalClock,
+    LocalNoticeSource, MAX_LINK_BYTES, ModelEffect, ModelError, PaddingColor, PresentOutcome,
+    RamUse, Renderer, Scene, SceneRect, SessionModel, ShortcutHintsScene, SidebarView, Transport,
+    TransportEvent, WorkspaceEvent, WorkspaceFocus, WorkspaceHeaderControl, WorkspaceHit,
+    WorkspaceModel, WorkspaceScene, WorkspaceTransport, active_popup, attention_only_change,
+    focused_terminal, labels_only_change, shown_workspace, validate_copy_uri, validate_open_uri,
 };
 
 mod geometry;
@@ -451,7 +451,105 @@ struct ShortcutViewerState {
     scroll: f32,
 }
 
-/// A `FocusAttention` sent from a sidebar row. Keyboard focus stays on the row until a snapshot
+#[derive(Debug, Default)]
+struct AttentionInboxState {
+    open: bool,
+    filter: AttentionFilter,
+    highlighted: Option<(String, String)>,
+    scroll: f32,
+}
+
+impl AttentionInboxState {
+    fn entries<'a>(
+        &self,
+        snapshot: &'a eon_workspace_protocol::v25::Snapshot,
+    ) -> impl Iterator<Item = &'a eon_workspace_protocol::v25::QueueEntry> {
+        let filter = self.filter;
+        snapshot
+            .attention_queue
+            .iter()
+            .filter(move |entry| filter.matches(entry.attention.state))
+    }
+
+    fn index(&self, snapshot: &eon_workspace_protocol::v25::Snapshot) -> Option<usize> {
+        let (tab, target) = self.highlighted.as_ref()?;
+        self.entries(snapshot)
+            .position(|entry| entry.tab == *tab && entry.target == *target)
+    }
+
+    fn select(&mut self, snapshot: &eon_workspace_protocol::v25::Snapshot, index: usize) {
+        let entries: Vec<_> = self.entries(snapshot).collect();
+        self.highlighted = entries
+            .get(index.min(entries.len().saturating_sub(1)))
+            .map(|entry| (entry.tab.clone(), entry.target.clone()));
+    }
+
+    fn set_filter(
+        &mut self,
+        snapshot: &eon_workspace_protocol::v25::Snapshot,
+        filter: AttentionFilter,
+    ) {
+        self.filter = filter;
+        self.scroll = 0.0;
+        self.select(snapshot, 0);
+    }
+
+    fn move_highlight(
+        &mut self,
+        snapshot: &eon_workspace_protocol::v25::Snapshot,
+        backwards: bool,
+    ) {
+        let index = self.index(snapshot).unwrap_or(0);
+        self.select(
+            snapshot,
+            if backwards {
+                index.saturating_sub(1)
+            } else {
+                index + 1
+            },
+        );
+    }
+
+    fn reconcile(
+        &mut self,
+        snapshot: &eon_workspace_protocol::v25::Snapshot,
+        previous_index: usize,
+    ) {
+        if self.index(snapshot).is_none() {
+            self.select(snapshot, previous_index);
+        }
+    }
+
+    fn refresh(
+        &mut self,
+        snapshot: &eon_workspace_protocol::v25::Snapshot,
+        previous_index: usize,
+        presentation: &mut PresentationState,
+    ) -> bool {
+        if !self.open {
+            return false;
+        }
+        self.reconcile(snapshot, previous_index);
+        presentation.invalidate();
+        true
+    }
+
+    fn activation(&self, presentation: &PresentationState) -> Option<WorkspaceAction> {
+        if !self.open || !presentation.has_presented_geometry() {
+            return None;
+        }
+        let (tab, target) = self.highlighted.clone()?;
+        Some(WorkspaceAction::FocusAttention { tab, target })
+    }
+
+    fn target(&self) -> Option<(&str, &str)> {
+        self.highlighted
+            .as_ref()
+            .map(|(tab, target)| (tab.as_str(), target.as_str()))
+    }
+}
+
+/// A `FocusAttention` sent from a sidebar or inbox row. Keyboard focus stays where it was until a snapshot
 /// shows its target focused, then moves to the terminal; if the jump's own accepted answer only
 /// selected the target's tab, it moves to the tab strip instead.
 struct AttentionJump {
@@ -491,6 +589,16 @@ enum ShortcutViewerCommand {
     ScrollPages(f32),
     Start,
     End,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq)]
+enum AttentionInboxCommand {
+    Toggle,
+    Close,
+    Filter(bool),
+    Move(bool),
+    Activate,
+    Scroll(ShortcutViewerCommand),
 }
 
 /// One Orbit terminal this window presents: its attachment, model and viewport state.
@@ -715,6 +823,7 @@ struct Application {
     next_age: Option<Instant>,
     header_press: Option<HeaderPress>,
     shortcut_viewer: ShortcutViewerState,
+    attention_inbox: AttentionInboxState,
     warning_close_last_tab: bool,
     close_prompt: Option<ClosePrompt>,
     hints_visible: bool,
@@ -814,6 +923,7 @@ impl Application {
             next_age: None,
             header_press: None,
             shortcut_viewer: ShortcutViewerState::default(),
+            attention_inbox: AttentionInboxState::default(),
             warning_close_last_tab,
             close_prompt: None,
             hints_visible: true,
@@ -1100,11 +1210,23 @@ impl Application {
 
     /// Whether a dialog takes input from the workspace and terminal.
     fn dialog_open(&self) -> bool {
-        self.shortcut_viewer.open || self.close_prompt.is_some()
+        self.shortcut_viewer.open || self.close_prompt.is_some() || self.attention_inbox.open
     }
 
     /// The open dialog: the close prompt, else the shortcut viewer.
     fn dialog_scene(&self) -> Option<DialogScene> {
+        if self.attention_inbox.open {
+            let state = self.window.as_ref()?;
+            return Some(DialogScene::attention_inbox(
+                self.workspace_model.snapshot()?,
+                self.attention_inbox.filter,
+                self.attention_inbox.target(),
+                state.renderer.size(),
+                state.renderer.metrics(),
+                self.attention_inbox.scroll,
+                sidebar_view(self.workspace_focus, None).now,
+            ));
+        }
         let Some(prompt) = &self.close_prompt else {
             return self.shortcut_viewer_scene();
         };
@@ -1151,6 +1273,103 @@ impl Application {
         });
     }
 
+    fn set_attention_inbox(&mut self, open: bool) {
+        if self.attention_inbox.open == open || open && self.workspace_model.snapshot().is_none() {
+            return;
+        }
+        self.change_dialog(|app| {
+            app.attention_inbox = AttentionInboxState {
+                open,
+                ..AttentionInboxState::default()
+            };
+            if open && let Some(snapshot) = app.workspace_model.snapshot() {
+                app.attention_inbox.select(snapshot, 0);
+            }
+            app.presentation.invalidate();
+        });
+    }
+
+    fn reveal_inbox_highlight(&mut self) {
+        if !self.attention_inbox.open {
+            return;
+        }
+        if let Some(dialog) = self.dialog_scene() {
+            let scroll = dialog.attention_highlight_scroll();
+            if self.attention_inbox.scroll != scroll {
+                self.attention_inbox.scroll = scroll;
+                self.presentation.invalidate();
+            }
+        }
+    }
+
+    fn filter_attention_inbox(&mut self, filter: AttentionFilter) {
+        if let Some(snapshot) = self.workspace_model.snapshot() {
+            self.attention_inbox.set_filter(snapshot, filter);
+            self.presentation.invalidate();
+            self.refresh_client_view();
+        }
+    }
+
+    fn activate_inbox_row(&mut self, tab: String, target: String) {
+        if !self.presentation.has_presented_geometry() {
+            return;
+        }
+        self.set_attention_inbox(false);
+        self.focus_attention(tab, target);
+    }
+
+    fn handle_attention_inbox_key(&mut self, event: &winit::event::KeyEvent) -> bool {
+        if !self.attention_inbox.open && self.dialog_open() {
+            return false;
+        }
+        let command = match event.physical_key {
+            PhysicalKey::Code(code) => attention_inbox_command(
+                self.attention_inbox.open,
+                code,
+                self.input.modifiers(),
+                event.repeat,
+                self.popup_entries(),
+            ),
+            PhysicalKey::Unidentified(_) => None,
+        };
+        let captures = self.attention_inbox.open
+            || command.is_some() && self.workspace_model.snapshot().is_some();
+        if !self
+            .input
+            .consumes_shortcut(event.physical_key, event.state, event.repeat, captures)
+        {
+            return false;
+        }
+        if event.state == ElementState::Pressed {
+            match command {
+                Some(AttentionInboxCommand::Toggle) => {
+                    self.set_attention_inbox(!self.attention_inbox.open)
+                }
+                Some(AttentionInboxCommand::Close) => self.set_attention_inbox(false),
+                Some(AttentionInboxCommand::Filter(backwards)) => {
+                    self.filter_attention_inbox(self.attention_inbox.filter.step(backwards))
+                }
+                Some(AttentionInboxCommand::Move(backwards)) => {
+                    if let Some(snapshot) = self.workspace_model.snapshot() {
+                        self.attention_inbox.move_highlight(snapshot, backwards);
+                        self.reveal_inbox_highlight();
+                        self.refresh_client_view();
+                    }
+                }
+                Some(AttentionInboxCommand::Activate) => {
+                    if let Some(WorkspaceAction::FocusAttention { tab, target }) =
+                        self.attention_inbox.activation(&self.presentation)
+                    {
+                        self.activate_inbox_row(tab, target);
+                    }
+                }
+                Some(AttentionInboxCommand::Scroll(command)) => self.scroll_dialog_by(command),
+                None => {}
+            }
+        }
+        true
+    }
+
     /// Opens or closes a dialog, reporting the terminal's focus change with it.
     fn change_dialog(&mut self, change: impl FnOnce(&mut Self)) {
         let was_terminal_focused =
@@ -1158,6 +1377,7 @@ impl Application {
         self.cancel_terminal_scroll();
         self.cancel_pointer_sequence();
         change(self);
+        self.rebuild_workspace_measurements(self.tab_scroll, self.pane_scroll);
         let is_terminal_focused =
             terminal_focused(self.window_focused, self.workspace_focus) && !self.dialog_open();
         let message = self.input.terminal_focus(is_terminal_focused);
@@ -1290,6 +1510,9 @@ impl Application {
 
     /// The open dialog's scroll: the close prompt's, else the shortcut viewer's.
     fn dialog_scroll(&mut self) -> &mut f32 {
+        if self.attention_inbox.open {
+            return &mut self.attention_inbox.scroll;
+        }
         match &mut self.close_prompt {
             Some(prompt) => &mut prompt.scroll,
             None => &mut self.shortcut_viewer.scroll,
@@ -1312,14 +1535,10 @@ impl Application {
                 self.scroll_dialog(pages * height)
             }
             ShortcutViewerCommand::Start => {
-                *self.dialog_scroll() = 0.0;
-                self.refresh_client_view();
+                self.scroll_dialog(-f32::MAX);
             }
             ShortcutViewerCommand::End => {
-                if let Some(dialog) = self.dialog_scene() {
-                    *self.dialog_scroll() = dialog.max_scroll;
-                    self.refresh_client_view();
-                }
+                self.scroll_dialog(f32::MAX);
             }
             ShortcutViewerCommand::Toggle | ShortcutViewerCommand::Close => {}
         }
@@ -1335,6 +1554,16 @@ impl Application {
         let scroll = (dialog.scroll + pixels).clamp(0.0, dialog.max_scroll);
         if *self.dialog_scroll() != scroll {
             *self.dialog_scroll() = scroll;
+            if self.attention_inbox.open {
+                if let Some(target) = self.dialog_scene().and_then(|dialog| {
+                    dialog
+                        .attention_scrolled_target()
+                        .map(|(tab, target)| (tab.to_owned(), target.to_owned()))
+                }) {
+                    self.attention_inbox.highlighted = Some(target);
+                }
+                self.presentation.invalidate();
+            }
             self.refresh_client_view();
         }
     }
@@ -1416,12 +1645,16 @@ impl Application {
         let zoom = WorkspaceScene::zoom_visible(snapshot, zoom);
         self.hints = self.hints_visible.then(|| {
             ShortcutHintsScene::new(
-                shortcut_hints_for(
-                    NATIVE_PLATFORM,
-                    self.workspace_focus,
-                    &snapshot.entries,
-                    snapshot.sidebar,
-                ),
+                if self.attention_inbox.open {
+                    yazelix_venus::attention_inbox_hints()
+                } else {
+                    shortcut_hints_for(
+                        NATIVE_PLATFORM,
+                        self.workspace_focus,
+                        &snapshot.entries,
+                        snapshot.sidebar,
+                    )
+                },
                 state.renderer.size(),
                 state.renderer.metrics(),
                 self.workspace_focus,
@@ -1500,22 +1733,26 @@ impl Application {
 
     /// Sends `FocusAttention` for a sidebar row; focus follows the result (`AttentionJump`).
     fn activate_sidebar_row(&mut self, target: &str) {
+        if !self.presentation.has_presented_geometry() {
+            return;
+        }
         let Some(tab) = self
             .workspace_scene()
             .and_then(|scene| scene.sidebar_row(target).map(|row| row.tab.clone()))
         else {
             return;
         };
-        if !self.presentation.has_presented_geometry() {
-            return;
-        }
+        self.focus_attention(tab, target.to_owned());
+    }
+
+    fn focus_attention(&mut self, tab: String, target: String) {
         if let Some(ticket) = self.queue_workspace_ticket(WorkspaceAction::FocusAttention {
             tab: tab.clone(),
-            target: target.to_owned(),
+            target: target.clone(),
         }) {
             self.attention_jump = Some(AttentionJump {
                 tab,
-                target: target.to_owned(),
+                target,
                 ticket,
             });
         }
@@ -2119,6 +2356,11 @@ impl Application {
             }
             return;
         }
+        let inbox_index = self
+            .workspace_model
+            .snapshot()
+            .and_then(|snapshot| self.attention_inbox.index(snapshot))
+            .unwrap_or(0);
         let (
             received_snapshot,
             snapshot_changed,
@@ -2148,13 +2390,22 @@ impl Application {
             && self.workspace_model.snapshot().is_some_and(|snapshot| {
                 snapshot.codex_quota.is_some() || snapshot.claude_quota.is_some()
             });
-        let (view_changed, workspace_changed) = match event {
+        let (mut view_changed, workspace_changed) = match event {
             WorkspaceEvent::Response(response) => self.workspace_model.apply(response),
             WorkspaceEvent::Unavailable(detail) => {
                 (self.workspace_model.mark_unavailable(detail, false), false)
             }
             WorkspaceEvent::Answered { .. } => unreachable!("answers return above"),
         };
+        if received_snapshot
+            && snapshot_changed
+            && let Some(snapshot) = self.workspace_model.snapshot()
+        {
+            view_changed |=
+                self.attention_inbox
+                    .refresh(snapshot, inbox_index, &mut self.presentation);
+            self.reveal_inbox_highlight();
+        }
         // Accepted selection or layout changes end zoom; covering popups leave its target intact.
         if self.zoom.is_some() && !self.zoomed() {
             self.zoom = None;
@@ -3128,11 +3379,14 @@ impl Application {
         if self.next_age.is_some_and(|due| now >= due) {
             self.presentation.content_changed();
         }
+        let dialog = self.dialog_scene();
         self.next_age = workspace
             .as_ref()
             .and_then(WorkspaceScene::sidebar_age_wait)
+            .into_iter()
+            .chain(dialog.as_ref().and_then(DialogScene::attention_age_wait))
+            .min()
             .map(|wait| now + Duration::from_millis(wait));
-        let dialog = self.dialog_scene();
         let scrollback_label = self.scrollback_label(workspace.as_ref());
         let scrollback_rect = self.scrollback_rect(workspace.as_ref());
         let workspace_focus = self.workspace_focus;
@@ -3752,6 +4006,9 @@ impl ApplicationHandler<UserEvent> for Application {
                 state.renderer.resize(size, state.scale_factor);
                 self.cancel_pointer_sequence();
                 self.reveal_workspace_selection();
+                if self.attention_inbox.open {
+                    self.reveal_inbox_highlight();
+                }
                 self.presentation.invalidate();
                 self.send_resize();
                 // A sidebar or workspace label hidden for width gives up its focus.
@@ -3826,6 +4083,7 @@ impl ApplicationHandler<UserEvent> for Application {
                 if self
                     .input
                     .suppresses_retired_key(event.physical_key, event.state, event.repeat)
+                    || self.handle_attention_inbox_key(&event)
                     || self.handle_detach_key(event_loop, &event)
                     || self.handle_close_prompt_key(&event)
                     || self.handle_shortcut_viewer_key(&event)
@@ -4014,6 +4272,20 @@ impl ApplicationHandler<UserEvent> for Application {
                     self.terminal.selection_scroll.cancel();
                 }
                 if dialog_open {
+                    if self.attention_inbox.open
+                        && presentation_current
+                        && button == MouseButton::Left
+                        && button_state == ElementState::Pressed
+                        && let Some(dialog) = self.dialog_scene()
+                    {
+                        let x = self.cursor.x as f32;
+                        let y = self.cursor.y as f32;
+                        if let Some(filter) = dialog.attention_filter_at(x, y) {
+                            self.filter_attention_inbox(filter);
+                        } else if let Some((tab, target)) = dialog.attention_target_at(x, y) {
+                            self.activate_inbox_row(tab.to_owned(), target.to_owned());
+                        }
+                    }
                     return;
                 }
                 if button_state == ElementState::Pressed {
@@ -4350,6 +4622,22 @@ impl ApplicationHandler<UserEvent> for Application {
                             .accessibility
                             .action_target(request.target_node, request.action);
                         match target {
+                            Some(AccessibilityTarget::InboxFilter(filter)) => {
+                                self.filter_attention_inbox(filter)
+                            }
+                            Some(AccessibilityTarget::InboxRow {
+                                tab,
+                                target,
+                                activate,
+                            }) => {
+                                if activate {
+                                    self.activate_inbox_row(tab, target);
+                                } else {
+                                    self.attention_inbox.highlighted = Some((tab, target));
+                                    self.reveal_inbox_highlight();
+                                    self.refresh_client_view();
+                                }
+                            }
                             Some(AccessibilityTarget::Link { row, column, copy }) => {
                                 self.activate_accessible_link(row, column, copy);
                             }
@@ -4949,6 +5237,8 @@ fn accessibility_workspace_focus(
         AccessibilityTarget::Tab(id) => (WorkspaceFocus::Tabs, id),
         AccessibilityTarget::Pane(id) => (WorkspaceFocus::Panes, id),
         AccessibilityTarget::HeaderControl { .. }
+        | AccessibilityTarget::InboxFilter(_)
+        | AccessibilityTarget::InboxRow { .. }
         | AccessibilityTarget::SidebarRow { .. }
         | AccessibilityTarget::Link { .. }
         | AccessibilityTarget::ReturnToLive => {
@@ -4997,6 +5287,33 @@ fn close_prompt_answer(code: KeyCode, modifiers: session::Modifiers) -> Option<b
         KeyCode::Escape => Some(false),
         _ => None,
     }
+}
+
+fn attention_inbox_command(
+    open: bool,
+    code: KeyCode,
+    modifiers: session::Modifiers,
+    repeat: bool,
+    entries: &[PopupEntry],
+) -> Option<AttentionInboxCommand> {
+    if !repeat
+        && native_key_shortcut(PhysicalKey::Code(code), modifiers, entries)
+            .is_some_and(|shortcut| shortcut.action == NativeShortcutAction::ToggleInbox)
+    {
+        return Some(AttentionInboxCommand::Toggle);
+    }
+    if !open || modifiers != session::Modifiers::empty() {
+        return None;
+    }
+    Some(match code {
+        KeyCode::Escape if !repeat => AttentionInboxCommand::Close,
+        KeyCode::ArrowLeft => AttentionInboxCommand::Filter(true),
+        KeyCode::ArrowRight => AttentionInboxCommand::Filter(false),
+        KeyCode::ArrowUp => AttentionInboxCommand::Move(true),
+        KeyCode::ArrowDown => AttentionInboxCommand::Move(false),
+        KeyCode::Enter | KeyCode::Space if !repeat => AttentionInboxCommand::Activate,
+        _ => AttentionInboxCommand::Scroll(shortcut_viewer_command(true, code, modifiers, repeat)?),
+    })
 }
 
 fn shortcut_viewer_command(

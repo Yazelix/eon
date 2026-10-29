@@ -23,6 +23,7 @@ pub(super) fn paste_shortcut(
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(super) enum NativeShortcutAction {
     ToggleViewer,
+    ToggleInbox,
     ToggleHints,
     ToggleSidebar,
     NextAttention,
@@ -153,6 +154,13 @@ pub(super) static FIXED_SHORTCUTS: &[NativeShortcut] = &[
         KeyCode::KeyG,
         ALT_SHIFT,
         NativeShortcutAction::PreviousAttention,
+    ),
+    NativeShortcut::key(
+        "Navigate",
+        "Show the attention inbox",
+        KeyCode::KeyQ,
+        session::Modifiers::ALT,
+        NativeShortcutAction::ToggleInbox,
     ),
     NativeShortcut::key(
         "Navigate",
@@ -568,6 +576,7 @@ pub(super) fn shortcut_hints_for(
         use WorkspaceDirection::{Down, Left, Right, Up};
         let (label, priority) = match shortcut.action {
             Action::ToggleViewer => ("keys", 0),
+            Action::ToggleInbox => ("inbox", 2),
             Action::ToggleHints => ("hints", 0),
             Action::ToggleSidebar => ("sidebar", 2),
             Action::NextAttention => ("next agent", 2),
@@ -1025,6 +1034,18 @@ mod tests {
                 ),
                 action
             );
+            assert_eq!(
+                native_key_shortcut(PhysicalKey::Code(KeyCode::KeyQ), Modifiers::ALT, &[])
+                    .map(|shortcut| shortcut.action),
+                Some(NativeShortcutAction::ToggleInbox)
+            );
+            assert!(
+                FIXED_SHORTCUTS
+                    .iter()
+                    .find(|shortcut| shortcut.action == NativeShortcutAction::ToggleInbox)
+                    .unwrap()
+                    .bound(sidebar)
+            );
             // Alt+G and Alt+Shift+G walk the attention queue under every `sidebar`, `Off` too.
             for (modifiers, action) in [
                 (Modifiers::ALT, WorkspaceAction::NextAttention),
@@ -1127,6 +1148,7 @@ mod tests {
                     bound
                 );
                 for (label, short) in [
+                    ("Show the attention inbox", "inbox"),
                     ("Jump to the next agent needing attention", "next agent"),
                     (
                         "Jump to the previous agent needing attention",
@@ -1314,6 +1336,7 @@ mod tests {
                 popup("hints", ALT | SHIFT, "KeyB"),
                 popup("closer", ALT, "KeyW"),
                 popup("git", ALT, "KeyG"),
+                popup("inbox", ALT, "KeyQ"),
                 // Runtime rejects these; Venus still keeps the reserved bindings.
                 popup("viewer", ALT, "Slash"),
                 popup("third", ALT, "Digit3"),
@@ -1328,6 +1351,7 @@ mod tests {
                 (PhysicalKey::Code(KeyCode::KeyC), copy),
                 (PhysicalKey::Code(KeyCode::KeyB), ALT_SHIFT),
                 (PhysicalKey::Code(KeyCode::KeyG), session::Modifiers::ALT),
+                (PhysicalKey::Code(KeyCode::KeyQ), session::Modifiers::ALT),
             ] {
                 assert!(native_key_shortcut_for(platform, key, modifiers, &entries).is_none());
             }
@@ -1363,6 +1387,7 @@ mod tests {
                 "Focus tab by position",
                 "Paste",
                 "Jump to the next agent needing attention (overridden by Files)",
+                "Show the attention inbox (overridden by Files)",
                 "Jump to the previous agent needing attention",
             ] {
                 assert!(rows.iter().any(|row| row == action), "missing {action}");
@@ -1370,6 +1395,7 @@ mod tests {
             let hints =
                 shortcut_hints_for(platform, WorkspaceFocus::Terminal, &entries, Sidebar::Open);
             for taken in [
+                "Show the attention inbox",
                 "Open new Eon window",
                 "Show or hide shortcut hints",
                 "Jump to the next agent needing attention",

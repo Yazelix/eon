@@ -453,6 +453,18 @@ impl WorkspaceSet {
                 .sum::<usize>()
     }
 
+    /// A direct attention focus crosses the caller's boundary only for another live tab.
+    pub(crate) fn attention_destination(&self, caller: Option<&str>, tab: &str) -> Option<&str> {
+        let caller = self.caller_workspace(caller).ok()?;
+        self.workspaces
+            .iter()
+            .enumerate()
+            .find(|(index, workspace)| {
+                *index != caller && workspace.tabs.iter().any(|item| item.id == tab)
+            })
+            .map(|(_, workspace)| workspace.id.as_str())
+    }
+
     pub(crate) fn dispatch(
         &mut self,
         request_id: &str,
@@ -463,6 +475,11 @@ impl WorkspaceSet {
     ) -> Result<(), Failure> {
         self.reject_duplicate(request_id)?;
         let index = self.caller_workspace(caller)?;
+        if let Action::FocusAttention { tab, target } = &action
+            && let Some(workspace) = self.attention_destination(caller, tab).map(str::to_owned)
+        {
+            return self.jump(request_id, caller, &workspace, tab, target);
+        }
         let mutating = !matches!(action, Action::Workspace(WorkspaceAction::Inspect));
         match action {
             Action::RenamePane { pane, name } => {
@@ -554,8 +571,8 @@ impl WorkspaceSet {
     }
 
     /// A queue jump: the `FocusAttention` of `tab` and `target` in
-    /// `workspace`, which then becomes the shown workspace (EON-C33). Only
-    /// this crosses workspaces.
+    /// `workspace`, which then becomes the shown workspace (EON-C33). Also used by
+    /// `FocusAttention` when its tab belongs to another workspace (EON-C31).
     pub(crate) fn jump(
         &mut self,
         request_id: &str,
@@ -3411,7 +3428,7 @@ mod tests {
     }
 
     #[test]
-    fn only_a_queue_jump_crosses_workspaces_and_it_shows_its_target() {
+    fn attention_focus_crosses_workspaces_atomically_and_keeps_local_callers_local() {
         let mut set = two_workspace_set(|_| Ok(()));
         let hidden = set.snapshot_in(Some("w2")).unwrap();
         let tab = hidden.tabs[0].id.clone();
@@ -3420,14 +3437,53 @@ mod tests {
             tab: tab.clone(),
             target: pane.clone(),
         };
-        let error = set
-            .dispatch("row", None, focus, prepared, |_| Ok(()))
-            .unwrap_err();
+        let before = set.snapshots();
         assert_eq!(
-            error.code, "stale-target",
-            "a sidebar row stays in its workspace"
+            set.dispatch(
+                "stale",
+                None,
+                Action::FocusAttention {
+                    tab: tab.clone(),
+                    target: "missing-pane".into(),
+                },
+                prepared,
+                |_| Ok(())
+            )
+            .unwrap_err()
+            .code,
+            "stale-target"
         );
+        assert_eq!(set.snapshots(), before);
+        let caller = hidden.tabs[0].panes().next().unwrap().session.clone();
+        set.dispatch("local", Some(&caller), focus.clone(), prepared, |_| Ok(()))
+            .unwrap();
+        assert_eq!(
+            set.snapshot().workspace,
+            "w1",
+            "a hidden caller stays hidden"
+        );
+        let shown = set.snapshot();
+        set.dispatch(
+            "shown",
+            Some(&caller),
+            Action::FocusAttention {
+                tab: shown.tabs[0].id.clone(),
+                target: shown.tabs[0].panes().next().unwrap().id.clone(),
+            },
+            prepared,
+            |_| Ok(()),
+        )
+        .unwrap();
         assert_eq!(set.snapshot().workspace, "w1");
+        set.dispatch("row", None, focus.clone(), prepared, |_| Ok(()))
+            .unwrap();
+        assert_eq!(set.snapshot().workspace, "w2");
+        assert_eq!(
+            set.dispatch("row", None, focus, prepared, |_| Ok(()))
+                .unwrap_err()
+                .code,
+            "duplicate-request"
+        );
 
         set.jump("jump", None, "w2", &tab, &pane).unwrap();
         assert_eq!(set.snapshot().workspace, "w2");

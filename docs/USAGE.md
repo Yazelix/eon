@@ -326,6 +326,21 @@ A jump to an agent under a
 transient popup or a pending directory picker only selects its tab. With no
 agent waiting, the keys show "No agent needs attention" and move nothing.
 
+### Attention inbox
+
+Alt+Q opens the attention inbox under every sidebar setting. It lists agents
+needing input, in error or finished, in the same order as Alt+G. The All,
+Needs input, Error and Finished filters show counts over the whole queue.
+Left/Right cycle the filters; Up/Down highlight an agent. Enter, Space or a
+click jumps to that agent and closes the inbox. Escape or Alt+Q closes it
+without a jump. The wheel, PageUp/PageDown, Home and End scroll the list.
+
+Rows in the shown workspace name the tab and pane or popup. Rows in another
+workspace show its name, or its ID when unnamed; jumping to one shows that
+workspace. Opening the inbox does not mark any agent's attention as seen.
+Agents read the same queue as `attention_queue` in `eon workspace --json`.
+A popup configured on Alt+Q takes the shortcut.
+
 ### Scrolling and directory picker
 
 When you scroll above live output, `↓ N rows` shows how many display rows back

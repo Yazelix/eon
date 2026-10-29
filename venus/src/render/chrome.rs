@@ -648,6 +648,64 @@ impl Renderer {
         )
     }
 
+    fn push_attention_row(
+        &mut self,
+        row: &crate::SidebarRow,
+        list: SceneRect,
+        hovered: bool,
+        rectangles: &mut RectangleBatch,
+    ) {
+        let padding = self.metrics.padding;
+        let line = self.metrics.height;
+        if row.rect.intersection(list).is_none() {
+            return;
+        }
+        if row.focused || hovered {
+            rectangles.push_rounded(row.rect, padding / 2.0, palette::CHROME_HIGHLIGHT);
+        }
+        // The "you are here" outline, in the pane cards' outline color, over any
+        // highlight and under a focused row's outline.
+        if row.current {
+            rectangles.push_rounded_outline(row.rect, padding / 2.0, palette::CARD_OUTLINE);
+        }
+        if row.focused {
+            rectangles.push_rounded_outline(row.rect, padding / 2.0, palette::ACCENT);
+        }
+        // A glyph on the translucent card needs no disc; on a highlight it matches it.
+        let ring = (row.focused || hovered).then_some(palette::CHROME_HIGHLIGHT);
+        self.spinners.push_badge(row.glyph, ring, rectangles);
+        if let Some((provider, rect)) = row.icon {
+            self.push_quota_icon(provider, rect, Some(list));
+        }
+        let (title, detail) = if row.glyph.dimmed {
+            (palette::SECONDARY_TEXT, palette::TERTIARY_TEXT)
+        } else {
+            (palette::PRIMARY_TEXT, palette::SECONDARY_TEXT)
+        };
+        let text_width = (row.rect.right() - padding / 2.0 - row.text_left).max(0.0);
+        let text_top = row.glyph.rect.top - (line - row.glyph.rect.height) / 2.0;
+        for (index, (text, marker, color)) in [
+            (Some(row.title.as_str()), None, title),
+            (Some(row.detail.as_str()), row.popup_marker, detail),
+            (row.message.as_deref(), None, title),
+        ]
+        .into_iter()
+        .enumerate()
+        {
+            let Some(text) = text else { continue };
+            self.push_sidebar_line(
+                text,
+                marker,
+                row.text_left,
+                text_top + line * index as f32,
+                text_width,
+                color,
+                list,
+                rectangles,
+            );
+        }
+    }
+
     /// One line of agent sidebar text. With `marker`, the popup marker follows the text before
     /// that byte offset, at the end of the line if that text overflows, and the rest of the text
     /// follows the marker.
@@ -867,9 +925,47 @@ impl Renderer {
             viewer.bounds,
         );
 
+        rectangles.clip = Some(viewer.bounds);
+        for chip in &viewer.filters {
+            if chip.selected {
+                rectangles.push_rounded(chip.rect, padding / 2.0, palette::CHROME_HIGHLIGHT);
+                rectangles.push_rounded_outline(chip.rect, padding / 2.0, palette::ACCENT);
+            }
+            self.push_text_clipped(
+                &format!("{} {}", chip.filter.label(), chip.count),
+                chip.rect.left + padding / 3.0,
+                chip.rect.top + (chip.rect.height - self.metrics.height) / 2.0,
+                (chip.rect.width - padding * 2.0 / 3.0).max(0.0),
+                chip.rect.width,
+                chrome_title_metrics(self.metrics).text_height,
+                if chip.selected {
+                    palette::PRIMARY_TEXT
+                } else {
+                    palette::SECONDARY_TEXT
+                },
+                DrawStyleKind::Status(Wrap::None),
+                chip.rect,
+            );
+        }
         rectangles.clip = Some(viewer.content);
+        if let Some(empty) = viewer.empty {
+            self.push_text_clipped(
+                empty,
+                viewer.content.left,
+                viewer.content.top,
+                viewer.content.width,
+                viewer.content.width,
+                viewer.content.height,
+                palette::SECONDARY_TEXT,
+                DrawStyleKind::Status(Wrap::WordOrGlyph),
+                viewer.content,
+            );
+        }
+        for row in &viewer.attention_rows {
+            self.push_attention_row(row, viewer.content, false, rectangles);
+        }
         let key_cells = match viewer.kind {
-            DialogKind::Shortcuts => 15.0,
+            DialogKind::Shortcuts | DialogKind::AttentionInbox => 15.0,
             DialogKind::CloseLastTab { .. } => 6.0,
         };
         let key_width = (self.metrics.font_size * key_cells).min(viewer.content.width * 0.4);
@@ -973,7 +1069,6 @@ impl Renderer {
         if let Some(sidebar) = workspace.sidebar() {
             // The card's translucent background and outline are drawn with the pane cards'.
             let padding = self.metrics.padding;
-            let line = self.metrics.height;
             let text_height = chrome_title_metrics(self.metrics).text_height;
             let width = (sidebar.width - padding * 2.0).max(0.0);
             let area = workspace.sidebar_area().unwrap();
@@ -1026,54 +1121,8 @@ impl Renderer {
                 );
             }
             for row in workspace.sidebar_rows() {
-                if row.rect.intersection(list).is_none() {
-                    continue;
-                }
                 let hovered = self.header.hovers(WorkspaceFocus::Sidebar, &row.target);
-                if row.focused || hovered {
-                    rectangles.push_rounded(row.rect, padding / 2.0, palette::CHROME_HIGHLIGHT);
-                }
-                // The "you are here" outline, in the pane cards' outline color, over any
-                // highlight and under a focused row's outline.
-                if row.current {
-                    rectangles.push_rounded_outline(row.rect, padding / 2.0, palette::CARD_OUTLINE);
-                }
-                if row.focused {
-                    rectangles.push_rounded_outline(row.rect, padding / 2.0, palette::ACCENT);
-                }
-                // A glyph on the translucent card needs no disc; on a highlight it matches it.
-                let ring = (row.focused || hovered).then_some(palette::CHROME_HIGHLIGHT);
-                self.spinners.push_badge(row.glyph, ring, rectangles);
-                if let Some((provider, rect)) = row.icon {
-                    self.push_quota_icon(provider, rect, Some(list));
-                }
-                let (title, detail) = if row.glyph.dimmed {
-                    (palette::SECONDARY_TEXT, palette::TERTIARY_TEXT)
-                } else {
-                    (palette::PRIMARY_TEXT, palette::SECONDARY_TEXT)
-                };
-                let text_width = (row.rect.right() - padding / 2.0 - row.text_left).max(0.0);
-                let text_top = row.glyph.rect.top - (line - row.glyph.rect.height) / 2.0;
-                for (index, (text, marker, color)) in [
-                    (Some(row.title.as_str()), None, title),
-                    (Some(row.detail.as_str()), row.popup_marker, detail),
-                    (row.message.as_deref(), None, title),
-                ]
-                .into_iter()
-                .enumerate()
-                {
-                    let Some(text) = text else { continue };
-                    self.push_sidebar_line(
-                        text,
-                        marker,
-                        row.text_left,
-                        text_top + line * index as f32,
-                        text_width,
-                        color,
-                        list,
-                        rectangles,
-                    );
-                }
+                self.push_attention_row(row, list, hovered, rectangles);
             }
             rectangles.clip = None;
         }

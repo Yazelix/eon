@@ -71,6 +71,7 @@ struct Snapshot {
     pane_ids: HashMap<String, NodeId>,
     /// Agent sidebar headings by tab id and rows by target; EONW identities never collide.
     sidebar_ids: HashMap<String, NodeId>,
+    inbox_ids: HashMap<(String, String), NodeId>,
     next_workspace_id: u64,
     links: Vec<AccessibleLink>,
     link_identity: Option<(u64, u64)>,
@@ -94,11 +95,37 @@ impl Snapshot {
             tab_ids: HashMap::new(),
             pane_ids: HashMap::new(),
             sidebar_ids: HashMap::new(),
+            inbox_ids: HashMap::new(),
             next_workspace_id: WORKSPACE_NODE_START,
             links: Vec::new(),
             link_identity: None,
             next_link_id: LINK_NODE_START,
         }
+    }
+
+    fn set_dialog(&mut self, dialog: Option<&DialogScene>) {
+        self.inbox_ids.retain(|key, _| {
+            dialog.is_some_and(|dialog| {
+                dialog
+                    .attention_rows
+                    .iter()
+                    .any(|row| row.tab == key.0 && row.target == key.1)
+            })
+        });
+        if let Some(dialog) = dialog {
+            for row in &dialog.attention_rows {
+                let key = (row.tab.clone(), row.target.clone());
+                self.inbox_ids.entry(key).or_insert_with(|| {
+                    let id = NodeId(self.next_workspace_id);
+                    self.next_workspace_id = self
+                        .next_workspace_id
+                        .checked_add(1)
+                        .expect("AccessKit workspace node IDs exhausted");
+                    id
+                });
+            }
+        }
+        self.dialog = dialog.cloned();
     }
 
     fn set_workspace(&mut self, workspace: Option<&WorkspaceScene>) {
@@ -207,6 +234,12 @@ impl Snapshot {
         if let Some(viewer) = &self.dialog {
             root.set_children(vec![DIALOG]);
             let mut dialog = match &viewer.kind {
+                DialogKind::AttentionInbox => {
+                    let mut dialog = Node::new(Role::Dialog);
+                    dialog.set_label("Attention inbox");
+                    dialog.set_description(viewer.kind.footer().join(" · "));
+                    dialog
+                }
                 DialogKind::Shortcuts => {
                     let mut dialog = Node::new(Role::Dialog);
                     dialog.set_label("Eon shortcuts");
@@ -240,6 +273,44 @@ impl Snapshot {
             dialog.set_clips_children();
             let mut nodes = vec![(WINDOW, root)];
             let mut group_ids = Vec::with_capacity(viewer.groups.len());
+            let mut focus = DIALOG;
+            for (index, chip) in viewer.filters.iter().enumerate() {
+                let id = NodeId(DIALOG_NODE_START + index as u64);
+                let mut node = Node::new(Role::Button);
+                node.set_label(format!("{}, {}", chip.filter.label(), chip.count));
+                node.set_selected(chip.selected);
+                node.set_bounds(rect(chip.rect));
+                node.add_action(Action::Click);
+                node.add_action(Action::Focus);
+                if chip.selected {
+                    focus = id;
+                }
+                group_ids.push(id);
+                nodes.push((id, node));
+            }
+            for row in &viewer.attention_rows {
+                let id = self.inbox_ids[&(row.tab.clone(), row.target.clone())];
+                let mut node = Node::new(Role::Button);
+                node.set_label(row.accessible_label.as_str());
+                node.add_action(Action::Click);
+                node.add_action(Action::Focus);
+                if let Some(bounds) = row.rect.intersection(viewer.content) {
+                    node.set_bounds(rect(bounds));
+                }
+                if row.focused {
+                    focus = id;
+                }
+                group_ids.push(id);
+                nodes.push((id, node));
+            }
+            if let Some(empty) = viewer.empty {
+                let id = NodeId(DIALOG_NODE_START + 4);
+                let mut node = Node::new(Role::Label);
+                node.set_value(empty);
+                node.set_bounds(rect(viewer.content));
+                group_ids.push(id);
+                nodes.push((id, node));
+            }
             for (group_index, group) in viewer.groups.iter().enumerate() {
                 let group_id = NodeId(DIALOG_NODE_START + group_index as u64 * DIALOG_GROUP_STRIDE);
                 let row_ids = (0..group.rows.len())
@@ -261,7 +332,9 @@ impl Snapshot {
                 for (row, id) in group.rows.iter().zip(row_ids) {
                     let mut node = Node::new(Role::Label);
                     node.set_value(match viewer.kind {
-                        DialogKind::Shortcuts => format!("{} — {}", row.shortcut, row.action),
+                        DialogKind::Shortcuts | DialogKind::AttentionInbox => {
+                            format!("{} — {}", row.shortcut, row.action)
+                        }
                         DialogKind::CloseLastTab { .. } => {
                             format!("{} {}", row.shortcut, row.action)
                         }
@@ -278,7 +351,7 @@ impl Snapshot {
                 nodes,
                 tree: Some(Tree::new(WINDOW)),
                 tree_id: TreeId::ROOT,
-                focus: DIALOG,
+                focus,
             };
         }
         let status_alert = terminal && !self.status.is_empty();
@@ -666,7 +739,26 @@ impl Snapshot {
     }
 
     fn action_target(&self, target: NodeId, action: Action) -> Option<AccessibilityTarget> {
-        if self.dialog.is_some() {
+        if let Some(dialog) = &self.dialog {
+            if dialog.kind == DialogKind::AttentionInbox
+                && matches!(action, Action::Click | Action::Focus)
+            {
+                if let Some(chip) = target
+                    .0
+                    .checked_sub(DIALOG_NODE_START)
+                    .and_then(|index| usize::try_from(index).ok())
+                    .and_then(|index| dialog.filters.get(index))
+                {
+                    return Some(AccessibilityTarget::InboxFilter(chip.filter));
+                }
+                if let Some((key, _)) = self.inbox_ids.iter().find(|(_, id)| **id == target) {
+                    return Some(AccessibilityTarget::InboxRow {
+                        tab: key.0.clone(),
+                        target: key.1.clone(),
+                        activate: action == Action::Click,
+                    });
+                }
+            }
             return None;
         }
         if target == SCROLLBACK && action == Action::Click {
@@ -782,7 +874,7 @@ impl Accessibility {
             snapshot.scrollback_label = scrollback_label.map(str::to_owned);
             snapshot.scrollback_rect = scrollback_rect;
             snapshot.set_workspace(workspace);
-            snapshot.dialog = dialog.cloned();
+            snapshot.set_dialog(dialog);
             snapshot.workspace_focus = workspace_focus;
             if let Some(scene) = scene {
                 snapshot.title = if scene.title.is_empty() {
@@ -841,6 +933,12 @@ fn accessible_link_label(uri: &str) -> String {
 /// Accessible action routed back through Venus and Eon semantics.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum AccessibilityTarget {
+    InboxFilter(crate::AttentionFilter),
+    InboxRow {
+        tab: String,
+        target: String,
+        activate: bool,
+    },
     Terminal,
     ReturnToLive,
     Tab(String),
@@ -2271,6 +2369,276 @@ mod tests {
                     },
                 }],
             }],
+        }
+    }
+
+    #[test]
+    fn attention_inbox_names_filters_rows_and_highlight() {
+        use crate::AttentionFilter;
+        use eon_workspace_protocol::v25::{
+            Attention, AttentionRecord, AttentionState, QueueEntry, Sidebar, WorkspaceInfo,
+        };
+        let size = PhysicalSize::new(1400, 700);
+        let mut workspace = WorkspaceSnapshot {
+            workspace: "w1".into(),
+            active_workspace: "w1".into(),
+            active_tab: "t3".into(),
+            tabs: vec![
+                workspace_tab("t3", &["p3"], "p3"),
+                workspace_tab("t1", &["p1"], "p1"),
+            ],
+            workspaces: vec![
+                WorkspaceInfo {
+                    id: "w1".into(),
+                    name: None,
+                    tab_count: 2,
+                    attention: None,
+                    recency: 1,
+                },
+                WorkspaceInfo {
+                    id: "w2".into(),
+                    name: Some("Review".into()),
+                    tab_count: 1,
+                    attention: None,
+                    recency: 0,
+                },
+            ],
+            geometry: PopupGeometry {
+                side_margin: 8.0,
+                vertical_margin: 4.0,
+            },
+            entries: Vec::new(),
+            codex_quota: None,
+            claude_quota: None,
+            sidebar: Sidebar::Open,
+            attention_queue: vec![QueueEntry {
+                workspace: "w2".into(),
+                tab: "t2".into(),
+                target: "p2".into(),
+                attention: Attention {
+                    state: AttentionState::NeedsInput,
+                    record: Some(AttentionRecord {
+                        kind: None,
+                        progress: None,
+                        app: "codex".into(),
+                        name: String::new(),
+                        title: "Check API".into(),
+                        message: "Approve?".into(),
+                        changed_at: 0,
+                        stale: false,
+                        others: 0,
+                    }),
+                },
+            }],
+        };
+        for (tab, target, state) in [
+            ("t1", "p1", AttentionState::Error),
+            ("t3", "p3", AttentionState::Finished),
+        ] {
+            let mut entry = workspace.attention_queue[0].clone();
+            entry.workspace = "w1".into();
+            entry.tab = tab.into();
+            entry.target = target.into();
+            entry.attention.state = state;
+            entry.attention.record.as_mut().unwrap().stale = true;
+            let source = workspace
+                .tabs
+                .iter_mut()
+                .find(|item| item.id == tab)
+                .unwrap();
+            source.columns[0].panes[0].attention = Some(entry.attention.clone());
+            source.attention_rollup = Some(state);
+            workspace.attention_queue.push(entry);
+        }
+        let viewer = DialogScene::attention_inbox(
+            &workspace,
+            AttentionFilter::All,
+            Some(("t2", "p2")),
+            size,
+            CellMetrics::for_scale(1.0),
+            0.0,
+            0,
+        );
+        let mut snapshot = Snapshot::new(size);
+        snapshot.set_dialog(Some(&viewer));
+        let update = snapshot.tree();
+        assert_eq!(node(&update, DIALOG).label(), Some("Attention inbox"));
+        assert_eq!(node(&update, DIALOG).role(), Role::Dialog);
+        for (index, name) in ["All, 3", "Needs input, 1", "Error, 1", "Finished, 1"]
+            .iter()
+            .enumerate()
+        {
+            let id = tree_node_id(&update, name);
+            assert_eq!(node(&update, id).role(), Role::Button);
+            assert_eq!(node(&update, id).is_selected(), Some(index == 0));
+        }
+        let row = &viewer.attention_rows[0];
+        let id = tree_node_id(&update, &row.accessible_label);
+        assert!(row.accessible_label.contains(", in workspace Review"));
+        assert_eq!(update.focus, id);
+        assert_eq!(snapshot.action_target(CONTENT, Action::Focus), None);
+        assert_eq!(
+            viewer
+                .attention_rows
+                .iter()
+                .map(|row| row.target.as_str())
+                .collect::<Vec<_>>(),
+            ["p2", "p1", "p3"]
+        );
+        assert_eq!(row.detail, "now · Review");
+        assert_eq!(row.message.as_deref(), Some("Approve?"));
+        assert_eq!(row.accessible_label.matches("workspace Review").count(), 1);
+        let sidebar = WorkspaceScene::from_snapshot(
+            &workspace,
+            size,
+            CellMetrics::for_scale(1.0),
+            0.0,
+            0.0,
+            |_, text| (text.to_owned(), text.len() as f32 * 10.0),
+        );
+        let local = &viewer.attention_rows[1];
+        assert!(local.detail.contains("2  t1 · p1"));
+        assert!(local.glyph.dimmed);
+        assert_eq!(local.message, None);
+        assert_eq!(
+            local.accessible_label,
+            sidebar.sidebar_row("p1").unwrap().accessible_label
+        );
+        assert_eq!(
+            snapshot.action_target(id, Action::Click),
+            Some(AccessibilityTarget::InboxRow {
+                tab: "t2".into(),
+                target: "p2".into(),
+                activate: true
+            })
+        );
+        let filter = tree_node_id(&update, "Error, 1");
+        assert_eq!(
+            snapshot.action_target(filter, Action::Click),
+            Some(AccessibilityTarget::InboxFilter(AttentionFilter::Error))
+        );
+        let empty = DialogScene::attention_inbox(
+            &workspace,
+            AttentionFilter::All,
+            None,
+            size,
+            CellMetrics::for_scale(1.0),
+            0.0,
+            0,
+        );
+        snapshot.set_dialog(Some(&empty));
+        assert_eq!(
+            snapshot.tree().focus,
+            tree_node_id(&snapshot.tree(), "All, 3")
+        );
+        let original = workspace.attention_queue[0].clone();
+        workspace.attention_queue = (0..256)
+            .map(|index| {
+                let mut entry = original.clone();
+                entry.target = format!("p{}", index + 4);
+                entry
+            })
+            .collect();
+        let short = PhysicalSize::new(1000, 200);
+        let first = DialogScene::attention_inbox(
+            &workspace,
+            AttentionFilter::All,
+            Some(("t2", "p4")),
+            short,
+            CellMetrics::for_scale(1.0),
+            0.0,
+            0,
+        );
+        assert!(first.attention_rows[0].rect.height > first.content.height);
+        for scroll in [
+            first.content.height,
+            CellMetrics::for_scale(1.0).height * 3.0,
+        ] {
+            let paged = DialogScene::attention_inbox(
+                &workspace,
+                AttentionFilter::All,
+                Some(("t2", "p4")),
+                short,
+                CellMetrics::for_scale(1.0),
+                scroll,
+                0,
+            );
+            assert_eq!(
+                paged.attention_highlight_scroll(),
+                scroll,
+                "a partly visible oversized row must not reset wheel or page scrolling"
+            );
+        }
+        for scale in [1.0, 1.3, 2.0] {
+            for size in [PhysicalSize::new(1, 1), PhysicalSize::new(240, 160), size] {
+                let metrics = CellMetrics::for_scale(scale);
+                let dialog = DialogScene::attention_inbox(
+                    &workspace,
+                    AttentionFilter::All,
+                    Some(("t2", "p259")),
+                    size,
+                    metrics,
+                    0.0,
+                    0,
+                );
+                if dialog.content.height > dialog.attention_rows[0].rect.height {
+                    let target = dialog.attention_scrolled_target().unwrap();
+                    assert_ne!(
+                        target.1, "p259",
+                        "paging keeps the highlight on visible rows"
+                    );
+                }
+                let scroll = dialog.attention_highlight_scroll();
+                let dialog = DialogScene::attention_inbox(
+                    &workspace,
+                    AttentionFilter::All,
+                    Some(("t2", "p259")),
+                    size,
+                    metrics,
+                    scroll,
+                    0,
+                );
+                assert!(dialog.max_scroll.is_finite());
+                assert!(
+                    dialog.bounds.right() <= size.width as f32
+                        && dialog.bounds.bottom() <= size.height as f32
+                );
+                assert!(
+                    dialog.attention_rows.last().unwrap().rect.top >= dialog.content.top - 0.01
+                );
+                assert!(
+                    dialog.attention_rows.last().unwrap().rect.bottom()
+                        <= dialog.content.bottom() + 0.01
+                        || dialog.content.height
+                            < dialog.attention_rows.last().unwrap().rect.height
+                );
+            }
+        }
+        workspace.attention_queue.clear();
+        for filter in AttentionFilter::ALL {
+            let dialog = DialogScene::attention_inbox(
+                &workspace,
+                filter,
+                None,
+                size,
+                CellMetrics::for_scale(1.0),
+                0.0,
+                0,
+            );
+            snapshot.set_dialog(Some(&dialog));
+            let tree = snapshot.tree();
+            let selected = tree_node_id(&tree, &format!("{}, 0", filter.label()));
+            assert_eq!(tree.focus, selected);
+            assert_eq!(node(&tree, selected).is_selected(), Some(true));
+            assert_eq!(
+                dialog.empty,
+                Some(match filter {
+                    AttentionFilter::All => "No agent needs attention",
+                    AttentionFilter::NeedsInput => "No agent in needs input",
+                    AttentionFilter::Error => "No agent in error",
+                    AttentionFilter::Finished => "No agent in finished",
+                })
+            );
         }
     }
 

@@ -1998,6 +1998,11 @@ fn dispatch_control_request(
                 Action::ToggleSidebar | Action::FocusAttention { .. }
             )
             .then(|| action.clone());
+            let direct_cross_workspace = jump.is_none()
+                && accepted.as_ref().is_some_and(|action| {
+                    matches!(action, Action::FocusAttention { tab, .. }
+                    if workspace.attention_destination(caller.as_deref(), tab).is_some())
+                });
             let component_generation = &state.component_generation;
             let sessions = &mut state.sessions;
             let initial_child = &mut state.initial_child;
@@ -2038,8 +2043,8 @@ fn dispatch_control_request(
                     },
                 ),
             };
-            // Only the shown workspace's focus sees, so a hidden caller's
-            // FocusAttention sees nothing.
+            // Only shown focus sees. A direct cross-workspace focus resets the cursor even
+            // when a hidden caller named the terminal already focused in the shown workspace.
             if result.is_ok()
                 && let (Some(action), Some(attention)) = (&accepted, &mut state.attention)
             {
@@ -2048,6 +2053,7 @@ fn dispatch_control_request(
                     jump.map(|(_, key)| key),
                     &workspace.snapshots(),
                     state.venus.is_some(),
+                    direct_cross_workspace,
                 );
             }
             match result {

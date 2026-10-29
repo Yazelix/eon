@@ -409,10 +409,14 @@ impl Attention {
         jump: Option<Key>,
         workspaces: &[Snapshot],
         attached: bool,
+        direct_cross_workspace: bool,
     ) {
         match action {
             Action::ToggleSidebar => self.toggle_sidebar(),
             Action::FocusAttention { target, .. } => {
+                if direct_cross_workspace {
+                    self.cursor = None;
+                }
                 let (targets, focus) = targets(workspaces);
                 self.observe(focus.clone(), attached);
                 if jump.is_some() {
@@ -1594,8 +1598,190 @@ mod tests {
                     tab.columns[0].expanded = target.into();
                 }
             }
-            attention.handled(&action, Some(key), &window, true);
+            attention.handled(&action, Some(key), &window, true, false);
         }
+    }
+
+    #[test]
+    fn cross_workspace_focus_sees_the_finish_and_resets_the_queue_cursor() {
+        use crate::{
+            managed_environment::{PopupCatalog, PopupCommand, PopupDefinition},
+            workspace::{Session, SessionEnd, WorkspaceSet},
+        };
+        use eon_workspace_protocol::v25::{PopupKey, WorkspaceAction};
+        let mut window = WorkspaceSet::with_recovered_sessions(
+            "/runtime".into(),
+            "/".into(),
+            Some("/".into()),
+            (1..=3)
+                .map(|n| {
+                    (
+                        n,
+                        Session {
+                            id: format!("session-{n}"),
+                            endpoint: format!("/runtime/{n}.sock").into(),
+                        },
+                    )
+                })
+                .collect(),
+            PopupCatalog {
+                geometry: PopupGeometry {
+                    side_margin: 8.0,
+                    vertical_margin: 4.0,
+                },
+                entries: vec![PopupDefinition {
+                    id: "project".into(),
+                    label: "Project".into(),
+                    shortcut: PopupKey::Unbound,
+                    command: PopupCommand::Project,
+                    keep_alive: false,
+                }],
+            },
+        )
+        .unwrap();
+        window
+            .dispatch(
+                "new",
+                None,
+                Action::Workspace(WorkspaceAction::NewWorkspace {
+                    name: None,
+                    focus: false,
+                }),
+                |_, _| Ok(Vec::new()),
+                |_| Ok(()),
+            )
+            .unwrap();
+        let picker = window.transient_sessions()[0].clone();
+        window
+            .session_ended(&picker, SessionEnd::Exited, |_| Ok(()))
+            .unwrap();
+        let before = window.snapshots();
+        let hidden = before[1].tabs[0].panes().next().unwrap();
+        let (targets, focus) = targets(&before);
+        let mut attention = Attention::new(true);
+        attention.observe(focus, true);
+        let now = Instant::now();
+        for (session, state) in [
+            ("session-2", Blocked),
+            ("session-3", Blocked),
+            (&hidden.session, Done),
+        ] {
+            attention.apply(
+                &targets,
+                session,
+                "run",
+                status(1, vec![record("a", state, None, 1)]),
+                now,
+            );
+        }
+        assert_eq!(
+            step(&mut attention, &targets, true).unwrap().session,
+            "session-2"
+        );
+        // A hidden caller can focus the already-focused shown terminal too.
+        let shown = before[0].tabs[0].panes().next().unwrap();
+        let already_shown = Action::FocusAttention {
+            tab: before[0].tabs[0].id.clone(),
+            target: shown.id.clone(),
+        };
+        let cursor_before_local = attention.cursor;
+        assert!(
+            window
+                .attention_destination(None, &before[0].tabs[0].id)
+                .is_none()
+        );
+        window
+            .dispatch(
+                "local-same-focus",
+                None,
+                already_shown.clone(),
+                |_, _| Ok(Vec::new()),
+                |_| Ok(()),
+            )
+            .unwrap();
+        attention.handled(&already_shown, None, &window.snapshots(), true, false);
+        assert_eq!(
+            attention.cursor, cursor_before_local,
+            "same-workspace focus behavior stays unchanged"
+        );
+        let direct_cross_workspace = window
+            .attention_destination(Some(&hidden.session), &before[0].tabs[0].id)
+            .is_some();
+        assert!(direct_cross_workspace);
+        window
+            .dispatch(
+                "shown-from-hidden",
+                Some(&hidden.session),
+                already_shown.clone(),
+                |_, _| Ok(Vec::new()),
+                |_| Ok(()),
+            )
+            .unwrap();
+        attention.handled(
+            &already_shown,
+            None,
+            &window.snapshots(),
+            true,
+            direct_cross_workspace,
+        );
+        assert_eq!(
+            attention.cursor, None,
+            "a direct cross-workspace focus resets the cursor even when shown focus is unchanged"
+        );
+        step(&mut attention, &targets, true).unwrap();
+        let cursor = attention.cursor;
+        let tab = before[1].tabs[0].id.clone();
+        let stale = window
+            .dispatch(
+                "stale",
+                None,
+                Action::FocusAttention {
+                    tab: tab.clone(),
+                    target: "missing-pane".into(),
+                },
+                |_, _| Ok(Vec::new()),
+                |_| Ok(()),
+            )
+            .unwrap_err();
+        assert_eq!(stale.code, "stale-target");
+        assert_eq!(window.snapshots(), before);
+        assert_eq!(attention.cursor, cursor);
+        let action = Action::FocusAttention {
+            tab,
+            target: hidden.id.clone(),
+        };
+        window
+            .dispatch(
+                "focus",
+                None,
+                action.clone(),
+                |_, _| Ok(Vec::new()),
+                |_| Ok(()),
+            )
+            .unwrap();
+        attention.handled(&action, None, &window.snapshots(), true, false);
+        let mut reply = window.snapshot();
+        attention.present(&mut reply, &window.snapshots(), true, now);
+        assert_eq!(reply.workspace, before[1].workspace);
+        assert_eq!(
+            reply.tabs[0].selected_pane.as_deref(),
+            Some(hidden.id.as_str())
+        );
+        assert!(
+            !reply
+                .attention_queue
+                .iter()
+                .any(|entry| entry.target == hidden.id)
+        );
+        assert_eq!(attention.cursor, None);
+        let (_, next, _) = attention.jump(&window.snapshots(), true).unwrap();
+        assert_eq!(
+            next,
+            Action::FocusAttention {
+                tab: before[0].tabs[0].id.clone(),
+                target: "p2".into()
+            }
+        );
     }
 
     #[test]
@@ -1662,7 +1848,7 @@ mod tests {
                 target: "pane-s2".into(),
             }
         );
-        attention.handled(&action, Some(key), &window("w2", "s2"), true);
+        attention.handled(&action, Some(key), &window("w2", "s2"), true, false);
         assert_eq!(state(&attention, &targets, "s2", now), Some(State::Idle));
         assert_eq!(
             state(&attention, &targets, "s3", now),
@@ -1775,7 +1961,7 @@ mod tests {
                 target: "popup-s4".into(),
             }
         );
-        attention.handled(&action, Some(key), slice::from_ref(&jumped), true);
+        attention.handled(&action, Some(key), slice::from_ref(&jumped), true, false);
         assert_eq!(state(&attention, &targets, "s4", base), Some(State::Idle));
         assert_eq!(walk(&mut attention, true), "s1");
 
@@ -1807,7 +1993,13 @@ mod tests {
         );
 
         assert_eq!(attention.sidebar, Sidebar::Open);
-        attention.handled(&Action::ToggleSidebar, None, slice::from_ref(&jumped), true);
+        attention.handled(
+            &Action::ToggleSidebar,
+            None,
+            slice::from_ref(&jumped),
+            true,
+            false,
+        );
         assert_eq!(attention.sidebar, Sidebar::Closed);
         attention.toggle_sidebar();
         assert_eq!(attention.sidebar, Sidebar::Open);
