@@ -77,6 +77,10 @@ pub fn run() {
     }
     drop(client);
 
+    // Closing the client proves one read overflowed, not that the PTY drained.
+    gate.release();
+    while observer.metadata().title != "OVERFLOW DRAINED" {}
+
     // The child kept running; a new client hears no replayed write.
     let mut client = Peer::attach(&server.path, 4.0);
     client.frame();

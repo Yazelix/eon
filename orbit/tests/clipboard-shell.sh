@@ -18,6 +18,9 @@ writes=''
 for ((i = 0; i < 300; i++)); do writes+='\033]52;c;eA==\007'; done
 printf "$writes"
 gate
+# A second burst makes an attachment before all output is drained overflow too.
+printf "$writes\033]0;OVERFLOW DRAINED\007"
+gate
 printf '\033]0;AFTER OVERFLOW\007'
 gate
 exit 5
