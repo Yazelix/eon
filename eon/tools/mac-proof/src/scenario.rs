@@ -116,13 +116,16 @@ const STEPS: &[Spec] = &[
         requires: &["launch"],
         proves: "Venus logs a window scale factor of 2 or more and its window shows in a capture \
                  at that scale, on the main display as it is or switched for the step to a HiDPI \
-                 mode it offers. It first records each display's scale and modes in \
+                 mode it offers, else on a temporary HiDPI virtual display in a private \
+                 environment (CI or the rented Mac). It never creates one on a person's own \
+                 Mac. It first records each display's scale and modes in \
                  scenario/displays.json and system_profiler's report in \
                  scenario/system-profiler-displays.json; without Screen Recording, or a HiDPI \
-                 mode it can switch to, it is then skipped for Yu. It switches back before it ends, having asked \
-                 macOS to undo the switch too when the tool exits",
+                 display it can use, it is then skipped for Yu with the reason. It restores \
+                 the main display and removes the virtual one before it ends, having asked \
+                 macOS to undo its display changes too when the tool exits",
         window: true,
-        timeout: Duration::from_secs(2 * 60),
+        timeout: Duration::from_secs(3 * 60),
         body: retina,
     },
     Spec {
@@ -307,6 +310,9 @@ where Venus's window must differ from the desktop behind it; translucency-light 
 translucency-dark using Orbit's default background, black, as the reference; kitty's, views'
 and retina's own captures; scenario/eon.log with what `eon` printed; scenario/logs with Eon's
 own logs; and retina's scenario/displays.json and scenario/system-profiler-displays.json.
+Retina uses a temporary HiDPI virtual display only in a private environment (CI or the rented
+Mac), never on a person's own Mac (`final`). It restores the displays afterwards; macOS keeps
+one ColorSync profile for its fixed identity, which leftovers logs as expected residue.
 
 Left for Yu: Command+C on a pointer selection, the Eon Bar's CPU and RAM chips (no CLI reads
 them yet: eon-agent-parity-a9g0.12), VoiceOver, Kotoeri input and blur.";
@@ -425,8 +431,179 @@ impl Drop for Backdrop {
     }
 }
 
+/// The virtual display's process, ended before waiting for its display to disappear.
+struct VirtualDisplay {
+    child: Child,
+    id: u32,
+}
+
+impl VirtualDisplay {
+    fn new(log: &mut Log) -> Result<Self, String> {
+        let failed = |error: io::Error| format!("virtual display: {error}");
+        let mut command = Command::new(std::env::current_exe().map_err(failed)?);
+        command
+            .arg("virtual-display")
+            .stdin(Stdio::piped())
+            .stdout(Stdio::piped())
+            .stderr(log.stdio().map_err(failed)?);
+        log.line(&format!("$ {command:?} &"));
+        Ok(Self {
+            child: command.spawn().map_err(failed)?,
+            id: 0,
+        })
+    }
+
+    fn ready(&mut self, log: &mut Log, deadline: Instant) -> Result<(), String> {
+        let stdout = self.child.stdout.take().expect("piped stdout");
+        let (sender, ready) = mpsc::channel();
+        thread::spawn(move || {
+            let mut line = String::new();
+            let result = BufReader::new(stdout).read_line(&mut line).map(|_| line);
+            let _ = sender.send(result);
+        });
+        let ready_by = deadline.min(Instant::now() + Duration::from_secs(10));
+        loop {
+            self.running()?;
+            match ready.try_recv() {
+                Ok(Ok(line)) if line.is_empty() => (),
+                Ok(Ok(line)) => {
+                    self.id = line
+                        .trim_end()
+                        .strip_prefix("display ")
+                        .and_then(|id| id.parse().ok())
+                        .filter(|id| *id != 0)
+                        .ok_or_else(|| {
+                            format!("virtual display reported {line:?}, want display <id>")
+                        })?;
+                    log.line(&format!("mac-proof: virtual display {} created", self.id));
+                    return Ok(());
+                }
+                Ok(Err(error)) => return Err(format!("virtual display: {error}")),
+                Err(_) => (),
+            }
+            if Instant::now() >= ready_by {
+                return Err("virtual display did not report display <id> within 10 s".to_owned());
+            }
+            thread::sleep(PAUSE.min(ready_by.saturating_duration_since(Instant::now())));
+        }
+    }
+
+    fn running(&mut self) -> Result<(), String> {
+        if let Some(status) = self
+            .child
+            .try_wait()
+            .map_err(|error| format!("virtual display: {error}"))?
+        {
+            return Err(format!(
+                "virtual display exited: {status}; its stderr is in this step's log"
+            ));
+        }
+        Ok(())
+    }
+
+    fn mode(&mut self, log: &mut Log, deadline: Instant) -> Result<retina::Mode, String> {
+        let ready_by = deadline.min(Instant::now() + Duration::from_secs(10));
+        loop {
+            self.running()?;
+            let reason = match mac::displays() {
+                Ok(displays) => {
+                    log_displays(log, &displays);
+                    if let Some(display) = displays.iter().find(|display| display.id == self.id) {
+                        let modes: Vec<_> = display.modes.iter().map(ToString::to_string).collect();
+                        log.line(&format!(
+                            "mac-proof: virtual display {} offers {modes:?}",
+                            self.id
+                        ));
+                        if let Some(mode) = retina::hidpi(&display.current, &display.modes) {
+                            return Ok(mode);
+                        }
+                        format!(
+                            "virtual display {} has no HiDPI desktop mode; it offers {modes:?}",
+                            self.id
+                        )
+                    } else {
+                        format!(
+                            "virtual display {} never appeared among the active displays",
+                            self.id
+                        )
+                    }
+                }
+                Err(error) => format!("reading the virtual display's modes: {error}"),
+            };
+            if Instant::now() >= ready_by {
+                return Err(format!("{reason} after waiting up to 10 s"));
+            }
+            thread::sleep(PAUSE.min(ready_by.saturating_duration_since(Instant::now())));
+        }
+    }
+
+    fn main(&mut self, log: &mut Log, deadline: Instant) -> Result<(), String> {
+        let ready_by = deadline.min(Instant::now() + Duration::from_secs(10));
+        loop {
+            self.running()?;
+            let reason = match mac::displays() {
+                Ok(displays) => {
+                    log_displays(log, &displays);
+                    if displays.iter().any(|display| {
+                        display.id == self.id && display.main && display.current.scale() >= 2.0
+                    }) {
+                        return Ok(());
+                    }
+                    format!(
+                        "virtual display {} did not become the main display at scale 2 or more",
+                        self.id
+                    )
+                }
+                Err(error) => format!("reading the main display after mirroring: {error}"),
+            };
+            if Instant::now() >= ready_by {
+                return Err(format!("{reason} after waiting up to 10 s"));
+            }
+            thread::sleep(PAUSE.min(ready_by.saturating_duration_since(Instant::now())));
+        }
+    }
+
+    fn stop(&mut self) -> Outcome {
+        self.child.stdin.take();
+        let end = Instant::now() + Duration::from_secs(3);
+        until(end, || {
+            self.child
+                .try_wait()
+                .map_err(|error| Failure::Check(format!("ending the virtual display: {error}")))
+        })
+        .or_else(|error| {
+            let killed = self
+                .child
+                .kill()
+                .map_err(|error| Failure::Check(format!("killing the virtual display: {error}")));
+            let reaped = self
+                .child
+                .wait()
+                .map_err(|error| Failure::Check(format!("reaping the virtual display: {error}")));
+            if matches!(error, Failure::Timeout) {
+                killed.and(reaped)
+            } else {
+                Err(error)
+            }
+        })
+        .and_then(|status| {
+            check(status.success(), || {
+                format!("virtual display exited with {status}")
+            })
+        })
+    }
+}
+
+impl Drop for VirtualDisplay {
+    fn drop(&mut self) {
+        let _ = self.child.kill();
+        let _ = self.child.wait();
+    }
+}
+
 pub struct Scenario {
     environment: Environment,
+    personal_mac: bool,
     package: PathBuf,
     /// Where captures, Eon's output and its logs go.
     evidence: PathBuf,
@@ -454,11 +631,17 @@ pub struct Scenario {
 }
 
 impl Scenario {
-    pub(crate) fn new(package: PathBuf, evidence: PathBuf, environment: Environment) -> Scenario {
+    pub(crate) fn new(
+        package: PathBuf,
+        evidence: PathBuf,
+        environment: Environment,
+        personal_mac: bool,
+    ) -> Scenario {
         let id = std::process::id();
         let unprobed = || Err("not probed".to_owned());
         Scenario {
             environment,
+            personal_mac: personal_mac || matches!(environment, Environment::User),
             package,
             evidence: match environment {
                 Environment::Private => evidence.join("scenario"),
@@ -479,6 +662,10 @@ impl Scenario {
             commands: 0,
             driver: String::new(),
         }
+    }
+
+    fn virtual_display_allowed(&self) -> bool {
+        matches!(self.environment, Environment::Private) && !self.personal_mac
     }
 
     fn available(&self, need: Need) -> &Availability {
@@ -1384,10 +1571,8 @@ fn identity(scenario: &mut Scenario, log: &mut Log, deadline: Instant) -> Outcom
     )
 }
 
-fn retina(scenario: &mut Scenario, log: &mut Log, deadline: Instant) -> Outcome {
-    let failed = |error: io::Error| Failure::Check(format!("recording the displays: {error}"));
-    let displays = mac::displays().map_err(Failure::Check)?;
-    for display in &displays {
+fn log_displays(log: &mut Log, displays: &[retina::Display]) {
+    for display in displays {
         log.line(&format!(
             "mac-proof: display {}{}{} runs {}; {} modes, HiDPI ones among them: {:?}",
             display.id,
@@ -1403,6 +1588,13 @@ fn retina(scenario: &mut Scenario, log: &mut Log, deadline: Instant) -> Outcome 
                 .collect::<Vec<_>>()
         ));
     }
+}
+
+fn retina(scenario: &mut Scenario, log: &mut Log, deadline: Instant) -> Outcome {
+    let failed = |error: io::Error| Failure::Check(format!("recording the displays: {error}"));
+    let displays = mac::displays().map_err(Failure::Check)?;
+    let original_ids: BTreeSet<_> = displays.iter().map(|display| display.id).collect();
+    log_displays(log, &displays);
     fs::write(
         scenario.evidence.join("displays.json"),
         retina::report(&displays).to_string(),
@@ -1454,9 +1646,12 @@ fn retina(scenario: &mut Scenario, log: &mut Log, deadline: Instant) -> Outcome 
     };
     // Venus's scale once the last it logged after the first `seen` is
     // `wanted`, as `fits` tells.
-    let logged = |seen: usize, wanted: &str, fits: &dyn Fn(f64) -> bool, log: &mut Log| {
-        let settled = deadline.min(Instant::now() + Duration::from_secs(30));
-        until(settled, || {
+    let logged = |seen: usize,
+                  wanted: &str,
+                  fits: &dyn Fn(f64) -> bool,
+                  log: &mut Log,
+                  end: Instant| {
+        until(end, || {
             Ok(scales()
                 .get(seen..)
                 .and_then(|new| new.last().copied())
@@ -1475,27 +1670,112 @@ fn retina(scenario: &mut Scenario, log: &mut Log, deadline: Instant) -> Outcome 
         })
     };
     let mut switched = None;
-    let seen = if main.current.scale() >= 2.0 {
-        0
-    } else {
-        let mode = retina::hidpi(&main.current, &main.modes).ok_or_else(|| {
-            Failure::Unavailable(format!(
+    let mut virtual_display = None;
+    let mut mirrored = None;
+    let result = (|| {
+        let seen = if main.current.scale() >= 2.0 {
+            0
+        } else if let Some(mode) = retina::hidpi(&main.current, &main.modes) {
+            let seen = scales().len();
+            log.line(&format!("mac-proof: switching the main display to {mode}"));
+            switched = Some(mac::switch(main.id, mode).map_err(|error| {
+                Failure::Unavailable(format!("cannot switch the main display to {mode}: {error}"))
+            })?);
+            seen
+        } else {
+            let missing = format!(
                 "no HiDPI display: the main display runs {} and offers no HiDPI mode",
                 main.current
-            ))
-        })?;
-        let seen = scales().len();
-        log.line(&format!("mac-proof: switching the main display to {mode}"));
-        switched = Some(mac::switch(main.id, mode).map_err(|error| {
-            Failure::Unavailable(format!("cannot switch the main display to {mode}: {error}"))
-        })?);
-        seen
+            );
+            let unavailable = |reason: String| Failure::Unavailable(format!("{missing}; {reason}"));
+            if !scenario.virtual_display_allowed() {
+                return Err(unavailable(
+                    "a virtual display is not used on a person's own Mac".to_owned(),
+                ));
+            }
+            if mac::in_mirror_set(main.id).map_err(unavailable)? {
+                return Err(unavailable("the main display already belongs to a mirror set; the virtual display cannot take over".to_owned()));
+            }
+            virtual_display = Some(VirtualDisplay::new(log).map_err(unavailable)?);
+            let display = virtual_display.as_mut().expect("created virtual display");
+            display.ready(log, deadline).map_err(unavailable)?;
+            let mode = display.mode(log, deadline).map_err(unavailable)?;
+            let seen = scales().len();
+            log.line(&format!("mac-proof: switching virtual display {} to {mode} and mirroring the main display to it", display.id));
+            mirrored = Some(mac::mirror(main.id, display.id, mode).map_err(unavailable)?);
+            display.main(log, deadline).map_err(unavailable)?;
+            seen
+        };
+        let scale = logged(
+            seen,
+            "2 or more",
+            &|scale| scale >= 2.0,
+            log,
+            deadline.min(Instant::now() + Duration::from_secs(30)),
+        )?;
+        scenario.shown("retina", log, deadline)?;
+        log.line(&format!(
+            "mac-proof: Retina proved remotely: Venus's window at scale {scale} on the main display, in a capture"
+        ));
+        Ok(())
+    })();
+    let result = match (virtual_display.is_some(), result) {
+        (true, Err(Failure::Command(reason))) => Err(Failure::Check(reason)),
+        (true, Err(Failure::Timeout)) => Err(Failure::Check(
+            "Retina capture did not finish before the step's deadline".to_owned(),
+        )),
+        (_, result) => result,
     };
-    let scale = logged(seen, "2 or more", &|scale| scale >= 2.0, log)?;
-    scenario.shown("retina", log, deadline)?;
-    log.line(&format!(
-        "mac-proof: Retina proved remotely: Venus's window at scale {scale} on the main display, in a capture"
-    ));
+    let cleanup = if let Some(mut display) = virtual_display {
+        // Each cleanup runs even if an earlier one failed; the step's original
+        // failure takes precedence over failures while cleaning up.
+        let seen = scales().len().saturating_sub(1);
+        let unmirrored = if let Some(mut mirrored) = mirrored {
+            log.line("mac-proof: unmirroring the main display");
+            mirrored.restore().map_err(Failure::Check)
+        } else {
+            Ok(())
+        };
+        log.line(&format!("mac-proof: ending virtual display {}", display.id));
+        let stopped = display.stop();
+        let removed = until(Instant::now() + Duration::from_secs(10), || {
+            // Modes can be temporarily unreadable while macOS removes a display.
+            Ok(mac::displays()
+                .ok()
+                .map(|displays| {
+                    displays
+                        .into_iter()
+                        .map(|display| display.id)
+                        .collect::<BTreeSet<_>>()
+                })
+                .filter(|ids| ids == &original_ids))
+        })
+        .map(drop)
+        .map_err(|_| {
+            Failure::Check(format!(
+                "active display IDs did not return to {original_ids:?} within 10 s"
+            ))
+        });
+        let original = main.current.scale();
+        let returned = logged(
+            seen,
+            &format!("back at {original}"),
+            &|scale| scale == original,
+            log,
+            Instant::now() + Duration::from_secs(30),
+        )
+        .map(drop);
+        for cleanup in [&unmirrored, &stopped, &removed, &returned] {
+            if let Err(Failure::Check(reason)) = cleanup {
+                log.line(&format!("mac-proof: retina cleanup failed: {reason}"));
+            }
+        }
+        unmirrored.and(stopped).and(removed).and(returned)
+    } else {
+        Ok(())
+    };
+    result?;
+    cleanup?;
     if let Some(mut switched) = switched {
         let seen = scales().len();
         log.line(&format!(
@@ -1509,6 +1789,7 @@ fn retina(scenario: &mut Scenario, log: &mut Log, deadline: Instant) -> Outcome 
             &format!("back at {original}"),
             &|scale| scale == original,
             log,
+            Instant::now() + Duration::from_secs(30),
         )?;
     }
     Ok(())
@@ -1852,11 +2133,33 @@ mod tests {
     use serde_json::json;
 
     #[test]
+    fn only_private_runs_off_a_personal_mac_may_create_a_virtual_display() {
+        for (environment, personal_mac, allowed) in [
+            (Environment::Private, false, true),
+            (Environment::Private, true, false),
+            (Environment::User, false, false),
+            (Environment::User, true, false),
+        ] {
+            let scenario = Scenario::new(
+                PathBuf::from("/package"),
+                PathBuf::from("/evidence"),
+                environment,
+                personal_mac,
+            );
+            assert_eq!(scenario.virtual_display_allowed(), allowed);
+            if matches!(environment, Environment::User) {
+                assert!(scenario.personal_mac);
+            }
+        }
+    }
+
+    #[test]
     fn user_environment_keeps_home_and_tmpdir_but_isolates_eon_targeting() {
         let scenario = Scenario::new(
             PathBuf::from("/package"),
             PathBuf::from("/evidence"),
             Environment::User,
+            true,
         );
         let command = scenario.eon(&["run"]);
         let environment: BTreeMap<_, _> = command.get_envs().collect();

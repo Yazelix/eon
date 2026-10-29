@@ -50,7 +50,8 @@ checkout
   --out DIR           a fresh directory for the evidence, outside the source
   --expect-tree TREE  fail the source step unless the source holds this Git tree
   --timeout DUR       the run's time limit, as 30s, 90m or 12h (default 12h): a step ends
-                      at it at the latest, and later steps are skipped
+                      at it at the latest, retina's cleanup up to about 45 s later, and
+                      later steps are skipped
   --dry-run           run only the source step, on any system, and plan the other fixed steps
 
 Steps, in order; each has a deadline, and a step whose prerequisite did not pass is skipped:
@@ -106,6 +107,7 @@ fn main() -> ExitCode {
         Some("backdrop") => backdrop_rgb(&arguments[1..])
             .and_then(mac::backdrop)
             .map(|()| true),
+        Some("virtual-display") if arguments.len() == 1 => mac::virtual_display().map(|()| true),
         Some("--help" | "-h") => {
             println!("{USAGE}");
             return ExitCode::SUCCESS;
@@ -202,6 +204,7 @@ fn run_options(mut flags: Vec<(String, String)>) -> Result<run::Options, String>
         evidence: PathBuf::from(out),
         expect_tree: take(&mut flags, "--expect-tree"),
         dry_run: take(&mut flags, "--dry-run").is_some(),
+        personal_mac: false,
     };
     finish(flags)?;
     Ok(options)

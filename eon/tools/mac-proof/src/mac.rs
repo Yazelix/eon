@@ -4,9 +4,15 @@
 //! before any step reaches one.
 
 #[cfg(not(target_os = "macos"))]
-pub use elsewhere::{backdrop, displays, grants, press, switch, windows};
+pub use elsewhere::{
+    backdrop, displays, grants, in_mirror_set, mirror, press, switch, virtual_display, windows,
+};
 #[cfg(target_os = "macos")]
-pub use native::{backdrop, displays, grants, press, switch, windows};
+pub use native::{
+    backdrop, displays, grants, in_mirror_set, mirror, press, switch, virtual_display, windows,
+};
+
+pub const VIRTUAL_DISPLAY_NAME: &str = "mac-proof HiDPI";
 
 pub struct Window {
     pub id: u32,
@@ -15,32 +21,190 @@ pub struct Window {
 
 #[cfg(target_os = "macos")]
 mod native {
-    use super::Window;
+    use super::{VIRTUAL_DISPLAY_NAME, Window};
     use crate::retina::{Display, Mode};
-    use objc2::MainThreadMarker;
+    use objc2::{
+        MainThreadMarker, msg_send,
+        rc::{Allocated, Retained},
+        runtime::{AnyClass, AnyObject, Sel},
+        sel,
+    };
     use objc2_app_kit::{
         NSApplication, NSApplicationActivationOptions, NSApplicationActivationPolicy,
         NSBackingStoreType, NSColor, NSRunningApplication, NSScreen, NSWindow,
         NSWindowCollectionBehavior, NSWindowStyleMask,
     };
     use objc2_core_foundation::{
-        CFArray, CFBoolean, CFDictionary, CFNumber, CFRetained, CFString, CFType, CGRect,
+        CFArray, CFBoolean, CFDictionary, CFNumber, CFRetained, CFString, CFType, CGPoint, CGRect,
+        CGSize,
     };
     use objc2_core_graphics::{
         CGBeginDisplayConfiguration, CGCancelDisplayConfiguration, CGCompleteDisplayConfiguration,
-        CGConfigureDisplayWithDisplayMode, CGConfigureOption, CGDirectDisplayID, CGDisplayBounds,
-        CGDisplayCopyAllDisplayModes, CGDisplayCopyDisplayMode, CGDisplayIsBuiltin,
-        CGDisplayIsMain, CGDisplayMode, CGError, CGEvent, CGEventFlags, CGGetActiveDisplayList,
-        CGMainDisplayID, CGPreflightPostEventAccess, CGPreflightScreenCaptureAccess,
+        CGConfigureDisplayMirrorOfDisplay, CGConfigureDisplayWithDisplayMode, CGConfigureOption,
+        CGDirectDisplayID, CGDisplayBounds, CGDisplayCopyAllDisplayModes, CGDisplayCopyDisplayMode,
+        CGDisplayIsBuiltin, CGDisplayIsInMirrorSet, CGDisplayIsMain, CGDisplayMirrorsDisplay,
+        CGDisplayMode, CGError, CGEvent, CGEventFlags, CGGetActiveDisplayList, CGMainDisplayID,
+        CGPreflightPostEventAccess, CGPreflightScreenCaptureAccess,
         CGRectMakeWithDictionaryRepresentation, CGWindowLevelForKey, CGWindowLevelKey,
         CGWindowListCopyWindowInfo, CGWindowListOption, kCGDisplayShowDuplicateLowResolutionModes,
-        kCGNullWindowID, kCGWindowBounds, kCGWindowLayer, kCGWindowNumber, kCGWindowOwnerPID,
+        kCGNullDirectDisplay, kCGNullWindowID, kCGWindowBounds, kCGWindowLayer, kCGWindowNumber,
+        kCGWindowOwnerPID,
     };
     use std::{
+        ffi::{CStr, c_char, c_void},
         io::{self, Write},
         ptr, thread,
         time::Duration,
     };
+
+    #[link(name = "System")]
+    unsafe extern "C" {
+        fn dispatch_queue_create(label: *const c_char, attr: *const c_void) -> *mut AnyObject;
+        fn dispatch_release(object: *mut AnyObject);
+    }
+
+    fn virtual_class(name: &CStr, selectors: &[Sel]) -> Result<&'static AnyClass, String> {
+        let class = AnyClass::get(name)
+            .ok_or_else(|| format!("virtual display: no class {}", name.to_string_lossy()))?;
+        if class.class_method(sel!(alloc)).is_none() {
+            return Err(format!(
+                "virtual display: {} has no +alloc",
+                class.name().to_string_lossy()
+            ));
+        }
+        for &selector in selectors.iter().chain(&[sel!(retain), sel!(release)]) {
+            if class.instance_method(selector).is_none() {
+                return Err(format!(
+                    "virtual display: {} has no -{selector}",
+                    class.name().to_string_lossy()
+                ));
+            }
+        }
+        Ok(class)
+    }
+
+    /// Keeps a HiDPI virtual display alive until stdin closes.
+    pub fn virtual_display() -> Result<(), String> {
+        let descriptor_class = virtual_class(
+            c"CGVirtualDisplayDescriptor",
+            &[
+                sel!(init),
+                sel!(setName:),
+                sel!(setVendorID:),
+                sel!(setProductID:),
+                sel!(setSerialNum:),
+                sel!(setMaxPixelsWide:),
+                sel!(setMaxPixelsHigh:),
+                sel!(setSizeInMillimeters:),
+                sel!(setWhitePoint:),
+                sel!(setRedPrimary:),
+                sel!(setGreenPrimary:),
+                sel!(setBluePrimary:),
+                sel!(setQueue:),
+            ],
+        )?;
+        let display_class = virtual_class(
+            c"CGVirtualDisplay",
+            &[
+                sel!(initWithDescriptor:),
+                sel!(applySettings:),
+                sel!(displayID),
+            ],
+        )?;
+        let settings_class = virtual_class(
+            c"CGVirtualDisplaySettings",
+            &[sel!(init), sel!(setHiDPI:), sel!(setModes:)],
+        )?;
+        let mode_class = virtual_class(
+            c"CGVirtualDisplayMode",
+            &[sel!(initWithWidth:height:refreshRate:)],
+        )?;
+        let serial_number = descriptor_class
+            .instance_method(sel!(setSerialNumber:))
+            .is_some();
+        let rotation = settings_class.instance_method(sel!(setRotation:)).is_some();
+        let array_class = AnyClass::get(c"NSArray").ok_or("virtual display: no class NSArray")?;
+        if array_class.class_method(sel!(arrayWithObject:)).is_none() {
+            return Err("virtual display: NSArray has no +arrayWithObject:".to_owned());
+        }
+        for selector in [sel!(retain), sel!(release)] {
+            if array_class.instance_method(selector).is_none() {
+                return Err(format!("virtual display: NSArray has no -{selector}"));
+            }
+        }
+        let allocate = |class: &AnyClass| -> Result<Allocated<AnyObject>, String> {
+            // SAFETY: +alloc was checked before any message was sent.
+            let object: Allocated<AnyObject> = unsafe { msg_send![class, alloc] };
+            if Allocated::as_ptr(&object).is_null() {
+                return Err(format!(
+                    "virtual display: {} alloc returned nil",
+                    class.name().to_string_lossy()
+                ));
+            }
+            Ok(object)
+        };
+        // SAFETY: every selector was checked above. The signatures follow the
+        // CoreGraphics classes: dimensions and hiDPI are unsigned int, geometry
+        // is CGSize/CGPoint by value, and applySettings: returns BOOL.
+        unsafe {
+            let descriptor: Option<Retained<AnyObject>> =
+                msg_send![allocate(descriptor_class)?, init];
+            let descriptor = descriptor
+                .ok_or("virtual display: CGVirtualDisplayDescriptor init returned nil")?;
+            let name = CFString::from_str(VIRTUAL_DISPLAY_NAME);
+            let name: &AnyObject = name.as_ref();
+            let _: () = msg_send![&descriptor, setName: name];
+            let _: () = msg_send![&descriptor, setVendorID: 0x454fu32];
+            let _: () = msg_send![&descriptor, setProductID: 1u32];
+            let _: () = msg_send![&descriptor, setSerialNum: 1u32];
+            if serial_number {
+                let _: () = msg_send![&descriptor, setSerialNumber: 1u32];
+            }
+            let _: () = msg_send![&descriptor, setMaxPixelsWide: 2048u32];
+            let _: () = msg_send![&descriptor, setMaxPixelsHigh: 1536u32];
+            let _: () = msg_send![&descriptor, setSizeInMillimeters: CGSize::new(25.4 * 2048.0 / 220.0, 25.4 * 1536.0 / 220.0)];
+            let _: () = msg_send![&descriptor, setWhitePoint: CGPoint::new(0.3125, 0.3291)];
+            let _: () = msg_send![&descriptor, setRedPrimary: CGPoint::new(0.6797, 0.3203)];
+            let _: () = msg_send![&descriptor, setGreenPrimary: CGPoint::new(0.2559, 0.6983)];
+            let _: () = msg_send![&descriptor, setBluePrimary: CGPoint::new(0.1494, 0.0557)];
+            let queue = dispatch_queue_create(c"mac-proof.virtual-display".as_ptr(), ptr::null());
+            if queue.is_null() {
+                return Err("virtual display: dispatch_queue_create returned nil".to_owned());
+            }
+            let _: () = msg_send![&descriptor, setQueue: queue];
+            dispatch_release(queue);
+            let display: Option<Retained<AnyObject>> =
+                msg_send![allocate(display_class)?, initWithDescriptor: &*descriptor];
+            let display = display
+                .ok_or("virtual display: CGVirtualDisplay initWithDescriptor: returned nil")?;
+            let settings: Option<Retained<AnyObject>> = msg_send![allocate(settings_class)?, init];
+            let settings =
+                settings.ok_or("virtual display: CGVirtualDisplaySettings init returned nil")?;
+            let _: () = msg_send![&settings, setHiDPI: 1u32];
+            if rotation {
+                let _: () = msg_send![&settings, setRotation: 0u32];
+            }
+            let mode: Option<Retained<AnyObject>> = msg_send![allocate(mode_class)?, initWithWidth: 2048u32, height: 1536u32, refreshRate: 60.0f64];
+            let mode = mode.ok_or("virtual display: CGVirtualDisplayMode initWithWidth:height:refreshRate: returned nil")?;
+            let modes: Retained<AnyObject> = msg_send![array_class, arrayWithObject: &*mode];
+            let _: () = msg_send![&settings, setModes: &*modes];
+            let applied: bool = msg_send![&display, applySettings: &*settings];
+            if !applied {
+                return Err(
+                    "virtual display: CGVirtualDisplay applySettings: returned NO".to_owned(),
+                );
+            }
+            let id: u32 = msg_send![&display, displayID];
+            println!("display {id}");
+            io::stdout()
+                .flush()
+                .map_err(|error| format!("virtual display stdout: {error}"))?;
+            io::copy(&mut io::stdin().lock(), &mut io::sink())
+                .map_err(|error| format!("virtual display stdin: {error}"))?;
+            drop(display);
+        }
+        Ok(())
+    }
 
     /// Shows a solid backdrop below normal windows until stdin closes.
     pub fn backdrop(rgb: [u8; 3]) -> Result<(), String> {
@@ -310,6 +474,88 @@ mod native {
             original: Some(original),
         })
     }
+
+    /// Whether `display` already belongs to a mirror set that the step must leave alone.
+    pub fn in_mirror_set(display: CGDirectDisplayID) -> Result<bool, String> {
+        Ok(CGDisplayIsInMirrorSet(display)
+            || CGDisplayMirrorsDisplay(display) != kCGNullDirectDisplay)
+    }
+
+    fn configure_mirror(
+        main: CGDirectDisplayID,
+        master: CGDirectDisplayID,
+        mode: Option<&CGDisplayMode>,
+    ) -> Result<(), String> {
+        let failed = |call: &str, error: CGError| format!("{call}: CGError {}", error.0);
+        let mut config = ptr::null_mut();
+        // SAFETY: config is filled by Begin, then used until completed or
+        // cancelled. Only the main display and the virtual master are changed.
+        unsafe {
+            let error = CGBeginDisplayConfiguration(&mut config);
+            if error != CGError::Success {
+                return Err(failed("CGBeginDisplayConfiguration", error));
+            }
+            if let Some(mode) = mode {
+                let error = CGConfigureDisplayWithDisplayMode(config, master, Some(mode), None);
+                if error != CGError::Success {
+                    CGCancelDisplayConfiguration(config);
+                    return Err(failed("CGConfigureDisplayWithDisplayMode", error));
+                }
+            }
+            let error = CGConfigureDisplayMirrorOfDisplay(config, main, master);
+            if error != CGError::Success {
+                CGCancelDisplayConfiguration(config);
+                return Err(failed("CGConfigureDisplayMirrorOfDisplay", error));
+            }
+            let error = CGCompleteDisplayConfiguration(config, CGConfigureOption::ForAppOnly);
+            if error != CGError::Success {
+                return Err(failed("CGCompleteDisplayConfiguration", error));
+            }
+        }
+        Ok(())
+    }
+
+    /// A main display mirrored to a virtual one, which `restore` or dropping it unmirrors.
+    pub struct Mirrored {
+        main: Option<CGDirectDisplayID>,
+    }
+
+    impl Mirrored {
+        pub fn restore(&mut self) -> Result<(), String> {
+            if let Some(main) = self.main {
+                configure_mirror(main, kCGNullDirectDisplay, None)?;
+            }
+            // Kept after a failure, so that dropping it tries again.
+            self.main = None;
+            Ok(())
+        }
+    }
+
+    impl Drop for Mirrored {
+        fn drop(&mut self) {
+            let _ = self.restore();
+        }
+    }
+
+    /// Switches the virtual display to `to` and makes it the main display's mirror master.
+    pub fn mirror(
+        main: CGDirectDisplayID,
+        display: CGDirectDisplayID,
+        to: Mode,
+    ) -> Result<Mirrored, String> {
+        if in_mirror_set(main)? {
+            return Err(format!(
+                "main display {main} already belongs to a mirror set"
+            ));
+        }
+        let target = modes(display)?
+            .into_iter()
+            .find(|each| mode(each) == to)
+            .ok_or_else(|| format!("display {display} no longer offers {to}"))?;
+        let mirrored = Mirrored { main: Some(main) };
+        configure_mirror(main, display, Some(&target))?;
+        Ok(mirrored)
+    }
 }
 
 #[cfg(not(target_os = "macos"))]
@@ -320,6 +566,10 @@ mod elsewhere {
     const MACOS: &str = "macOS only";
 
     pub fn backdrop(_rgb: [u8; 3]) -> Result<(), String> {
+        Err(MACOS.to_owned())
+    }
+
+    pub fn virtual_display() -> Result<(), String> {
         Err(MACOS.to_owned())
     }
 
@@ -348,6 +598,22 @@ mod elsewhere {
     }
 
     pub fn switch(_display: u32, _to: Mode) -> Result<Switched, String> {
+        Err(MACOS.to_owned())
+    }
+
+    pub fn in_mirror_set(_display: u32) -> Result<bool, String> {
+        Err(MACOS.to_owned())
+    }
+
+    pub struct Mirrored;
+
+    impl Mirrored {
+        pub fn restore(&mut self) -> Result<(), String> {
+            Ok(())
+        }
+    }
+
+    pub fn mirror(_main: u32, _display: u32, _to: Mode) -> Result<Mirrored, String> {
         Err(MACOS.to_owned())
     }
 }

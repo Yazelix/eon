@@ -558,7 +558,7 @@ fn walk(
 }
 
 fn manual(package: PathBuf, source: &Path, out: &Path, bundle: &mut Bundle, log: &mut Log) {
-    let mut scenario = Scenario::new(package, out.join("manual"), Environment::User);
+    let mut scenario = Scenario::new(package, out.join("manual"), Environment::User, true);
     let launched = (|| {
         scenario.prepare()?;
         fs::write(
@@ -708,6 +708,7 @@ pub fn final_check(options: Options) -> Result<bool, String> {
             expect_tree: Some(tree.clone()),
             limit: options.limit,
             dry_run: options.dry_run,
+            personal_mac: true,
         },
         &source.0,
     )?;

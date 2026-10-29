@@ -34,6 +34,8 @@ pub struct Options {
     pub expect_tree: Option<String>,
     pub limit: Duration,
     pub dry_run: bool,
+    /// Whether this run is on a person's own Mac.
+    pub personal_mac: bool,
 }
 
 pub struct ScenarioOptions {
@@ -129,7 +131,8 @@ pub fn run(options: Options, source: &Path) -> Result<Report, String> {
         expect_tree: options.expect_tree,
         ..Context::default()
     };
-    steps(&mut runner, &mut context).map_err(|error| format!("evidence: {error}"))?;
+    steps(&mut runner, &mut context, options.personal_mac)
+        .map_err(|error| format!("evidence: {error}"))?;
     let passed = runner
         .write(true)
         .map_err(|error| format!("evidence: {error}"))?;
@@ -186,6 +189,7 @@ pub fn scenario(options: ScenarioOptions) -> Result<bool, String> {
         package,
         options.evidence.clone(),
         scenario::Environment::Private,
+        false,
     );
     scenario::steps(&mut runner, &mut scenario, &[])
         .map_err(|error| format!("evidence: {error}"))?;
@@ -194,7 +198,7 @@ pub fn scenario(options: ScenarioOptions) -> Result<bool, String> {
         .map_err(|error| format!("evidence: {error}"))
 }
 
-fn steps(runner: &mut Runner, context: &mut Context) -> std::io::Result<()> {
+fn steps(runner: &mut Runner, context: &mut Context, personal_mac: bool) -> std::io::Result<()> {
     runner.step(context, "host", 5 * MINUTE, &[], false, host)?;
     runner.step(context, "source", 10 * MINUTE, &[], true, source)?;
     runner.identity.push(("tree", context.tree.clone()));
@@ -244,6 +248,7 @@ fn steps(runner: &mut Runner, context: &mut Context) -> std::io::Result<()> {
         context.package.clone(),
         context.evidence.clone(),
         scenario::Environment::Private,
+        personal_mac,
     );
     scenario::steps(runner, &mut gui, &["package"])?;
     drop(gui);
@@ -740,6 +745,40 @@ fn workspace(context: &mut Context, log: &mut Log, deadline: Instant) -> Outcome
 
 /// Fails when the run left an Eon process or a /tmp/e<c> directory behind.
 fn leftovers(context: &mut Context, log: &mut Log, deadline: Instant) -> Outcome {
+    let profiles = Path::new("/Library/ColorSync/Profiles/Displays");
+    match fs::read_dir(profiles) {
+        Ok(entries) => {
+            let mut found = false;
+            for entry in entries {
+                match entry {
+                    Ok(entry)
+                        if entry
+                            .file_name()
+                            .to_string_lossy()
+                            .contains(crate::mac::VIRTUAL_DISPLAY_NAME) =>
+                    {
+                        found = true;
+                        log.line(&format!(
+                            "mac-proof: {} is expected, known residue of retina's virtual display",
+                            entry.path().display()
+                        ));
+                    }
+                    Ok(_) => (),
+                    Err(error) => log.line(&format!(
+                        "mac-proof: reading {}: {error}",
+                        profiles.display()
+                    )),
+                }
+            }
+            if !found {
+                log.line("mac-proof: no ColorSync profile for retina's virtual display");
+            }
+        }
+        Err(error) => log.line(&format!(
+            "mac-proof: reading {}: {error}",
+            profiles.display()
+        )),
+    }
     let directories: Vec<_> = private_dirs()
         .difference(&context.private_dirs)
         .cloned()
