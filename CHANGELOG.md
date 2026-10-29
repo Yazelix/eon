@@ -5,6 +5,12 @@ installation, and proven contract changes.
 
 ## Unreleased
 
+- `eon workspace --json` and workspace action replies include the window's
+  `attention_queue` in Alt+G order, with workspace, tab and target IDs and each
+  terminal's full attention record. EONW moves to v25 and Eon to 0.1.8, so
+  after a profile refresh a window started from an older build needs one
+  restart before the new `eon` can control it.
+
 - `eon workspace` names its calling terminal, tab and pane or popup in JSON
   `caller` and a human caller line. Eon packages an agent skill with documented
   manual install and optional session-start hooks for Claude Code and Codex.

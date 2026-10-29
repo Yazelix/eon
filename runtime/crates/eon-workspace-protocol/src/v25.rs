@@ -1,4 +1,4 @@
-//! Eon-owned values and bounded EONW v24 codec for local workspace clients.
+//! Eon-owned values and bounded EONW v25 codec for local workspace clients.
 //!
 //! Every message is a 12-byte header (`EONW`, little-endian version, kind,
 //! zero flags, little-endian payload length) followed by its payload.
@@ -6,7 +6,7 @@
 
 use std::{collections::HashSet, fmt, str};
 
-pub const VERSION: u16 = 24;
+pub const VERSION: u16 = 25;
 pub const HEADER_BYTES: usize = 12;
 const MAGIC: &[u8; 4] = b"EONW";
 const MAX_MESSAGE_BYTES: usize = 2 * 1024 * 1024;
@@ -264,6 +264,16 @@ pub struct Attention {
     pub record: Option<AttentionRecord>,
 }
 
+/// One entry of the EON-C31 queue; `target` is the pane id or popup
+/// instance that `FocusAttention` takes.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct QueueEntry {
+    pub workspace: String,
+    pub tab: String,
+    pub target: String,
+    pub attention: Attention,
+}
+
 /// The window's agent sidebar visibility (EON-C31).
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Sidebar {
@@ -476,8 +486,12 @@ pub struct Snapshot {
     pub codex_quota: Option<CodexQuota>,
     pub claude_quota: Option<ClaudeQuota>,
     pub sidebar: Sidebar,
+    /// The window-wide queue in EON-C31's total order; consumers never sort it.
+    pub attention_queue: Vec<QueueEntry>,
 }
 
+// Snapshot payloads are already heap-owned; keep the direct value API.
+#[allow(clippy::large_enum_variant)]
 #[derive(Clone, Debug, PartialEq)]
 pub enum Response {
     Snapshot(Snapshot),
@@ -1178,7 +1192,8 @@ impl From<&Tab> for WireTab {
 }
 
 /// A snapshot payload is the column layout, the workspace with flattened
-/// panes, then the Codex and Claude quotas, sidebar and workspace summaries.
+/// panes, then the Codex and Claude quotas, sidebar, workspace summaries and
+/// the window-wide attention queue.
 pub fn encode_response(response: &Response) -> Result<Vec<u8>> {
     let mut payload = Encoder::default();
     let kind = match response {
@@ -1207,6 +1222,7 @@ pub fn encode_response(response: &Response) -> Result<Vec<u8>> {
             encode_quota(&mut payload, claude.as_ref());
             encode_sidebar(&mut payload, snapshot.sidebar);
             encode_workspace_set(&mut payload, snapshot);
+            encode_attention_queue(&mut payload, &snapshot.attention_queue);
             SNAPSHOT
         }
         Response::Failure(failure) => {
@@ -1278,6 +1294,17 @@ pub fn decode_response(bytes: &[u8]) -> Result<Response> {
             recency: decoder.byte()?,
         });
     }
+    let count = decoder.count("attention queue", MAX_SESSIONS)?;
+    for _ in 0..count {
+        snapshot.attention_queue.push(QueueEntry {
+            workspace: decoder.string("queue workspace", MAX_ID_BYTES)?,
+            tab: decoder.string("queue tab", MAX_ID_BYTES)?,
+            target: decoder.string("queue target", MAX_ID_BYTES)?,
+            attention: decode_attention(&mut decoder)?.ok_or(Error::InvalidSnapshot {
+                field: "attention queue",
+            })?,
+        });
+    }
     validate_workspace(&snapshot, &wire_tabs)?;
     validate_quota(snapshot.codex_quota.as_ref())?;
     validate_claude(claude.as_ref())?;
@@ -1327,6 +1354,16 @@ pub fn decode_response(bytes: &[u8]) -> Result<Response> {
         snapshot.tabs.push(tab);
     }
     Ok(Response::Snapshot(snapshot))
+}
+
+fn encode_attention_queue(encoder: &mut Encoder, queue: &[QueueEntry]) {
+    encoder.count(queue.len());
+    for entry in queue {
+        encoder.string(&entry.workspace);
+        encoder.string(&entry.tab);
+        encoder.string(&entry.target);
+        encode_attention(encoder, Some(&entry.attention));
+    }
 }
 
 fn encode_workspace_set(encoder: &mut Encoder, snapshot: &Snapshot) {
@@ -1459,6 +1496,7 @@ fn decode_workspace(decoder: &mut Decoder<'_>) -> Result<(Snapshot, Vec<WireTab>
         codex_quota: None,
         claude_quota: None,
         sidebar: Sidebar::Off,
+        attention_queue: Vec::new(),
     };
     Ok((snapshot, tabs))
 }
@@ -1719,6 +1757,28 @@ fn validate_workspace(snapshot: &Snapshot, tabs: &[WireTab]) -> Result<()> {
         return Err(Error::InvalidSnapshot {
             field: "workspace projection",
         });
+    }
+    if snapshot.attention_queue.len() > MAX_SESSIONS {
+        return Err(Error::InvalidSnapshot {
+            field: "attention queue",
+        });
+    }
+    for entry in &snapshot.attention_queue {
+        identity("queue workspace", &entry.workspace)?;
+        identity("queue tab", &entry.tab)?;
+        identity("queue target", &entry.target)?;
+        if !workspace_ids.contains(entry.workspace.as_str())
+            || !matches!(
+                entry.attention.state,
+                AttentionState::NeedsInput | AttentionState::Error | AttentionState::Finished
+            )
+            || entry.attention.record.is_none()
+        {
+            return Err(Error::InvalidSnapshot {
+                field: "attention queue",
+            });
+        }
+        validate_attention(&entry.attention)?;
     }
     Ok(())
 }
@@ -2698,6 +2758,7 @@ mod tests {
                 windows: vec![window(300, Some(200)), window(10080, None)],
             }),
             sidebar: Sidebar::Closed,
+            attention_queue: Vec::new(),
         }
     }
 
@@ -2720,6 +2781,7 @@ mod tests {
         encode_quota(&mut payload, claude.as_ref());
         encode_sidebar(&mut payload, snapshot.sidebar);
         encode_workspace_set(&mut payload, snapshot);
+        encode_attention_queue(&mut payload, &snapshot.attention_queue);
         frame(SNAPSHOT, payload.bytes).unwrap()
     }
 
@@ -2892,14 +2954,14 @@ mod tests {
         for (action, expected) in [
             (
                 Action::Workspace(WorkspaceAction::CloseTab { tab: "t1".into() }),
-                "454f4e57180001000a00000002007231001202007431",
+                "454f4e57190001000a00000002007231001202007431",
             ),
             (
                 Action::Workspace(WorkspaceAction::SetTabDirectory {
                     tab: "t1".into(),
                     directory: b"/tmp".to_vec(),
                 }),
-                "454f4e57180001001000000002007231000c0200743104002f746d70",
+                "454f4e57190001001000000002007231000c0200743104002f746d70",
             ),
             (
                 Action::InvokePopup {
@@ -2908,36 +2970,36 @@ mod tests {
                     expected_instance: Some("u1".into()),
                     intent: InvokeIntent::Focus,
                 },
-                "454f4e571800010015000000020072310013020074310300676974010200753101",
+                "454f4e571900010015000000020072310013020074310300676974010200753101",
             ),
             (
                 Action::CommitDirectory {
                     target,
                     directory: b"/tmp".to_vec(),
                 },
-                "454f4e571800010014000000020072310015020074310200753104002f746d70",
+                "454f4e571900010014000000020072310015020074310200753104002f746d70",
             ),
-            (Action::CreateColumn, "454f4e571800010006000000020072310016"),
+            (Action::CreateColumn, "454f4e571900010006000000020072310016"),
             (
                 Action::ClosePane { pane: "p2".into() },
-                "454f4e57180001000a00000002007231001702007032",
+                "454f4e57190001000a00000002007231001702007032",
             ),
             (
                 Action::MovePaneSideways(Side::Right),
-                "454f4e571800010006000000020072310019",
+                "454f4e571900010006000000020072310019",
             ),
             (
                 Action::Edit {
                     file: b"/tmp/a".to_vec(),
                 },
-                "454f4e57180001000e00000002007231001a06002f746d702f61",
+                "454f4e57190001000e00000002007231001a06002f746d702f61",
             ),
             (
                 Action::CreateCommandPane {
                     argv: vec![b"hx".to_vec(), b"a".to_vec()],
                     focus: false,
                 },
-                "454f4e57180001001000000002007231001b00020002006878010061",
+                "454f4e57190001001000000002007231001b00020002006878010061",
             ),
             (
                 Action::LaunchTab {
@@ -2945,7 +3007,7 @@ mod tests {
                     argv: vec![],
                     focus: true,
                 },
-                "454f4e57180001000f00000002007231002504002f746d70000001",
+                "454f4e57190001000f00000002007231002504002f746d70000001",
             ),
             (
                 Action::LaunchTab {
@@ -2953,26 +3015,26 @@ mod tests {
                     argv: vec![b"hx".to_vec(), b"a".to_vec()],
                     focus: false,
                 },
-                "454f4e57180001001600000002007231002504002f746d7002000200687801006100",
+                "454f4e57190001001600000002007231002504002f746d7002000200687801006100",
             ),
             (
                 Action::ToggleSidebar,
-                "454f4e57180001000600000002007231001c",
+                "454f4e57190001000600000002007231001c",
             ),
             (
                 Action::FocusAttention {
                     tab: "t1".into(),
                     target: "p2".into(),
                 },
-                "454f4e57180001000e00000002007231001d0200743102007032",
+                "454f4e57190001000e00000002007231001d0200743102007032",
             ),
             (
                 Action::NextAttention,
-                "454f4e57180001000600000002007231001e",
+                "454f4e57190001000600000002007231001e",
             ),
             (
                 Action::PreviousAttention,
-                "454f4e57180001000600000002007231001f",
+                "454f4e57190001000600000002007231001f",
             ),
         ] {
             let request = Request {
@@ -2992,7 +3054,7 @@ mod tests {
         let bytes = encode_request(&request).unwrap();
         assert_eq!(
             hex(&bytes),
-            "454f4e57180001001600000002007231010d0073657373696f6e2d322e392d310201",
+            "454f4e57190001001600000002007231010d0073657373696f6e2d322e392d310201",
         );
         assert_eq!(decode_request(&bytes).unwrap(), request);
         for caller in ["", "session 2"] {
@@ -3080,6 +3142,7 @@ mod tests {
                 }],
             }),
             sidebar: Sidebar::Closed,
+            attention_queue: Vec::new(),
         });
         let failure = Response::Failure(Failure {
             code: "busy".into(),
@@ -3089,7 +3152,7 @@ mod tests {
             (
                 snapshot,
                 concat!(
-                    "454f4e5718008100fd0000000100020002000100010000000200743100000041",
+                    "454f4e5719008100ff0000000100020002000100010000000200743100000041",
                     "00008040010003006769740300476974000404004b6579470100020074310400",
                     "2f746d700001020070330102007531030002007031030073703103002f703101",
                     "02007031000002007032030073703203002f7032010200703200000200703303",
@@ -3100,14 +3163,16 @@ mod tests {
                     // w1's tab count, then v22's needs-input rollup and shown rank 0.
                     "02007731000100",
                     "0100",
+                    // v25's empty attention queue.
+                    "0000",
                 ),
             ),
-            (failure, "454f4e57180082000a00000004006275737902006e6f"),
+            (failure, "454f4e57190082000a00000004006275737902006e6f"),
             (
                 Response::Ended(Ended {
                     generation: "g1".into(),
                 }),
-                "454f4e57180085000400000002006731",
+                "454f4e57190085000400000002006731",
             ),
         ] {
             let bytes = encode_response(&response).unwrap();
@@ -3133,7 +3198,7 @@ mod tests {
                     },
                 }),
                 concat!(
-                    "454f4e571800830026000000020067310500302e392e30180002006f6b010002",
+                    "454f4e571900830026000000020067310500302e392e30190002006f6b010002",
                     "007331010500726561647900040062757379",
                 ),
             ),
@@ -3142,13 +3207,86 @@ mod tests {
                     generation: "g1".into(),
                     sessions: vec![],
                 }),
-                "454f4e571800840006000000020067310000",
+                "454f4e571900840006000000020067310000",
             ),
         ] {
             let bytes = encode_lifecycle_response(&response).unwrap();
             assert_eq!(hex(&bytes), expected, "{response:?}");
             assert_eq!(decode_lifecycle_response(&bytes).unwrap(), response);
         }
+    }
+
+    #[test]
+    fn attention_queue_keeps_its_wire_bytes() {
+        let attention = Attention {
+            state: AttentionState::NeedsInput,
+            record: Some(AttentionRecord {
+                kind: Some(AttentionKind::Permission),
+                progress: Some(40),
+                app: String::new(),
+                name: String::new(),
+                title: String::new(),
+                message: String::new(),
+                changed_at: 1,
+                stale: false,
+                others: 0,
+            }),
+        };
+        let snapshot = Response::Snapshot(Snapshot {
+            workspace: "w1".into(),
+            active_workspace: "w1".into(),
+            workspaces: vec![WorkspaceInfo {
+                id: "w1".into(),
+                name: None,
+                tab_count: 1,
+                attention: Some(AttentionState::NeedsInput),
+                recency: 0,
+            }],
+            active_tab: "t".into(),
+            geometry: PopupGeometry {
+                side_margin: 0.0,
+                vertical_margin: 0.0,
+            },
+            entries: Vec::new(),
+            tabs: vec![Tab {
+                id: "t".into(),
+                directory: b"/".to_vec(),
+                pending: false,
+                selected_pane: Some("p".into()),
+                selected_popup: None,
+                columns: vec![Column {
+                    panes: vec![Pane {
+                        attention: Some(attention.clone()),
+                        ..pane("p")
+                    }],
+                    expanded: "p".into(),
+                }],
+                popups: Vec::new(),
+                attention_rollup: Some(AttentionState::NeedsInput),
+            }],
+            codex_quota: None,
+            claude_quota: None,
+            sidebar: Sidebar::Off,
+            attention_queue: vec![QueueEntry {
+                workspace: "w1".into(),
+                tab: "t".into(),
+                target: "p".into(),
+                attention,
+            }],
+        });
+        let bytes = encode_response(&snapshot).unwrap();
+        assert_eq!(
+            hex(&bytes),
+            concat!(
+                "454f4e57190081008600000001000100010000000100740000000000000000",
+                "0000010001007401002f00010100700001000100700200737002002f700101007000",
+                "01012800000000000000000100000000000000000000000001000002",
+                "02007731020077310100020077310001000100",
+                // u16 count, workspace, tab, target, then needs-input permission at 40%.
+                "01000200773101007401007001012800000000000000000100000000000000000000",
+            ),
+        );
+        assert_eq!(decode_response(&bytes).unwrap(), snapshot);
     }
 
     #[test]
@@ -3604,6 +3742,83 @@ mod tests {
     }
 
     #[test]
+    fn attention_queue_round_trips_and_rejects_invalid_entries_on_both_sides() {
+        let mut state = snapshot();
+        state.workspaces.push(WorkspaceInfo {
+            id: "w2".into(),
+            name: None,
+            tab_count: 1,
+            attention: None,
+            recency: 1,
+        });
+        state.attention_queue = [
+            AttentionState::NeedsInput,
+            AttentionState::Error,
+            AttentionState::Finished,
+        ]
+        .into_iter()
+        .enumerate()
+        .map(|(index, class)| QueueEntry {
+            workspace: if index == 0 { "w2" } else { "w1" }.into(),
+            tab: "t1".into(),
+            target: "p2".into(),
+            attention: attention(class).unwrap(),
+        })
+        .collect();
+        let response = Response::Snapshot(state.clone());
+        let bytes = encode_response(&response).unwrap();
+        assert_eq!(decode_response(&bytes).unwrap(), response);
+        assert_eq!(forge(&state), bytes);
+        let invalid: &[fn(&mut QueueEntry)] = &[
+            |entry| entry.attention.state = AttentionState::Working,
+            |entry| entry.attention.state = AttentionState::Idle,
+            |entry| entry.attention.state = AttentionState::Background,
+            |entry| {
+                entry.attention = Attention {
+                    state: AttentionState::Unavailable,
+                    record: None,
+                }
+            },
+            |entry| entry.attention.record = None,
+            |entry| entry.workspace = "w3".into(),
+            |entry| entry.workspace.clear(),
+            |entry| entry.tab = "bad id".into(),
+            |entry| entry.target.clear(),
+            |entry| entry.workspace = "w".repeat(MAX_ID_BYTES + 1),
+            |entry| entry.tab = "t".repeat(MAX_ID_BYTES + 1),
+            |entry| entry.target = "p".repeat(MAX_ID_BYTES + 1),
+            |entry| entry.attention.record.as_mut().unwrap().progress = Some(101),
+        ];
+        for change in invalid {
+            let mut bad = state.clone();
+            change(&mut bad.attention_queue[0]);
+            assert!(
+                encode_response(&Response::Snapshot(bad.clone())).is_err(),
+                "{bad:?}"
+            );
+            assert!(decode_response(&forge(&bad)).is_err(), "{bad:?}");
+        }
+        state.attention_queue = vec![state.attention_queue[0].clone(); MAX_SESSIONS + 1];
+        assert!(encode_response(&Response::Snapshot(state.clone())).is_err());
+        assert!(decode_response(&forge(&state)).is_err());
+
+        // A queue entry is mandatory attention, so its absent wire tag is invalid.
+        let mut empty = snapshot();
+        empty.attention_queue.push(QueueEntry {
+            workspace: "w1".into(),
+            tab: "t1".into(),
+            target: "p2".into(),
+            attention: Attention {
+                state: AttentionState::Unavailable,
+                record: None,
+            },
+        });
+        let mut bytes = forge(&empty);
+        *bytes.last_mut().unwrap() = 0;
+        assert!(decode_response(&bytes).is_err());
+    }
+
+    #[test]
     fn snapshots_reject_broken_ownership_on_both_sides() {
         let state = snapshot();
         let bytes = encode_response(&Response::Snapshot(state.clone())).unwrap();
@@ -3973,7 +4188,9 @@ mod tests {
             + 1
             + 2 * id
             + 2
-            + MAX_WORKSPACES * (id + 1 + 2 + MAX_WORKSPACE_NAME_BYTES + 2 + 1 + 1);
+            + MAX_WORKSPACES * (id + 1 + 2 + MAX_WORKSPACE_NAME_BYTES + 2 + 1 + 1)
+            + 2
+            + MAX_SESSIONS * (3 * id + attention);
         assert!(upper_bound <= MAX_MESSAGE_BYTES, "{upper_bound}");
 
         let name = |prefix: &str, n: usize, length: usize| {
@@ -4076,6 +4293,16 @@ mod tests {
                 tab_count: MAX_TABS,
                 attention: Some(AttentionState::NeedsInput),
                 recency: (index - 1) as u8,
+            })
+            .collect();
+        // The largest valid workspace id is shorter than MAX_ID_BYTES.
+        state.workspaces[MAX_WORKSPACES - 1].id = format!("w{}", u64::MAX);
+        state.attention_queue = (0..MAX_SESSIONS)
+            .map(|index| QueueEntry {
+                workspace: state.workspaces[MAX_WORKSPACES - 1].id.clone(),
+                tab: name("t", index / per_tab, MAX_ID_BYTES),
+                target: name("p", index, MAX_ID_BYTES),
+                attention: attention.clone().unwrap(),
             })
             .collect();
         let response = Response::Snapshot(state.clone());

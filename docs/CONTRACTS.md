@@ -567,7 +567,7 @@ socket names, JSON fields and protocol identifiers retain their spellings.
 - **Owner:** Eon Runtime workspace topology, identity, focus, pruning and action
   enforcement; Eon supplies product defaults/policy. Orbit owns terminals and
   Venus owns native materialization.
-- **Consumes:** Current EONW v24 workspace/popup values, Orbit terminal
+- **Consumes:** Current EONW v25 workspace/popup values, Orbit terminal
   identities/endpoints and Venus `VEN-C8`.
 - **Boundary:** No arbitrary split tree, vertical splits, column resizing,
   arbitrary reorder target, cross-tab pane movement, picker relocation, durable layout
@@ -917,10 +917,10 @@ socket names, JSON fields and protocol identifiers retain their spellings.
     `{"ended":{"generation":...}}`, and exits 0. The caller's own
     terminal may end with it, as with Stop. Eon rejects a non-boolean
     `warning_close_last_tab` with the rest of `config.toml`.
-  - CLI JSON carries each pane's and popup's full EON-C31 attention record and
-    the window's Codex and Claude quota readings (EON-C27), as EON-C31's CLI
-    JSON rule lists them. The human projection carries each terminal's
-    attention state, `app` and `name` only, and no quotas.
+  - CLI JSON carries each pane's and popup's full EON-C31 attention record, the window's
+    EON-C31 attention queue in order, and the window's Codex and Claude quota readings
+    (EON-C27), as EON-C31's CLI JSON rule lists them. The human projection carries each
+    terminal's attention state, `app` and `name` only, and no queue or quotas.
   - **Several workspaces in one window** (EON-C33):
     - **Status:** The workspace requests and targeting below are implemented
       on EONW v20, with their CLI front end
@@ -1008,7 +1008,7 @@ socket names, JSON fields and protocol identifiers retain their spellings.
 - **Owner:** Eon Runtime supervisor workspace/action state and CLI projection;
   its canonical EONW package owns types, codec and result ordering. Eon supplies
   validated component facts and product defaults.
-- **Consumes:** Current EONW v24 and accepted Orbit management operations.
+- **Consumes:** Current EONW v25 and accepted Orbit management operations.
 - **Boundary:** Additive lifecycle tags do not widen the pinned Venus workspace
   consumer. There is no event stream, subscription policy, remote transport,
   plugin/MCP API, authorization framework, durable restoration, terminal
@@ -1017,7 +1017,7 @@ socket names, JSON fields and protocol identifiers retain their spellings.
   child-protocol escape hatch.
 - **Package owner:** The canonical EONW crate lives in
   `runtime/crates/eon-workspace-protocol` with its accepted package/API and
-  v24 bytes. Venus, Eon Runtime and Eon consume it by path.
+  v25 bytes. Venus, Eon Runtime and Eon consume it by path.
   See [package selection](ARCHITECTURE.md#in-tree-package-selection).
 - **Runtime policy:** Project is required, defaults to Alt+Z, and uses Eon's
   existing transient chooser command. Git defaults to `eon-lazygit` on Alt+Shift+J;
@@ -1079,8 +1079,8 @@ socket names, JSON fields and protocol identifiers retain their spellings.
   fzf list of the popup's window's workspaces (EON-C33's picker); Commands >
   Switch workspace runs the same list in the Commands popup. Each row shows
   the workspace's name, or its `wN` when unnamed, its tab count, and
-  ` · needs input` when its EONW v24 `attention` is needs input. Rows run by
-  EONW v24 `recency`, most recently shown first, with the shown workspace last
+  ` · needs input` when its EONW v25 `attention` is needs input. Rows run by
+  EONW v25 `recency`, most recently shown first, with the shown workspace last
   and marked ` · shown`, and the query matches only that name or `wN`. Enter on the highlighted row,
   including on an empty query, runs `eon workspace switch wN` once the CLI
   has checked again that the `wN` is live; otherwise it changes nothing and
@@ -1930,7 +1930,7 @@ socket names, JSON fields and protocol identifiers retain their spellings.
   tutorial, telemetry, momentary mode, dependency, or platform expansion.
   Venus derives overrides from the popup catalog it already receives over
   EONW. Exceptions: the viewer reads `sidebar` and each popup entry's override
-  from EONW v24.
+  from EONW v25.
 - **Proof:** `795d735a8f61ef439c56d68e1cc4d3929af0dfcf`, `eon-monorepo-2oko.6`.
   - **Environment:** Automated tier; installed tier.
   - **Evidence:** `popup_configuration_owns_defaults_overrides_and_collisions`;
@@ -1996,13 +1996,13 @@ socket names, JSON fields and protocol identifiers retain their spellings.
 - **Owner:** Eon owns the exact graph, product policy, profile delivery and
   installed acceptance; Eon Runtime owns workspace identity/actions. Venus
   owns header geometry, rendering, input, native drag, tooltips, and accessibility.
-- **Consumes:** Venus VEN-C21, EONW v7 (v24 for the EON-C31 tab attention
+- **Consumes:** Venus VEN-C21, EONW v7 (v25 for the EON-C31 tab attention
   marker) and Orbit terminals.
 - **Boundary:** EON-C27 separately owns the optional quota projection. The core
   header adds no Eon-rendered chrome, second row, widget framework, agent status,
   polling, configuration, protocol change, inactive-tab close, native window
   controls, macOS claim or distribution expansion. The one exception is the
-  EON-C31 tab attention marker, which Venus reads from the EONW v24 snapshot it
+  EON-C31 tab attention marker, which Venus reads from the EONW v25 snapshot it
   already polls.
 - **Proof:** `795d735a8f61ef439c56d68e1cc4d3929af0dfcf`, `eon-monorepo-2oko.6`.
   - **Environment:** Automated tier; installed tier.
@@ -2158,7 +2158,7 @@ socket names, JSON fields and protocol identifiers retain their spellings.
 - **Boundary:** No minor-mode framework, child-application key discovery,
   interactive hints, durable preference, configuration option, dependency,
   wire change or platform expansion, except that the hints read `sidebar` from
-  EONW v24. Future real modes replace contents from
+  EONW v25. Future real modes replace contents from
   their actual bindings at the same footer height.
 - **Proof:** `795d735a8f61ef439c56d68e1cc4d3929af0dfcf`, `eon-monorepo-2oko.6`.
   - **Environment:** Automated tier; installed tier.
@@ -2459,6 +2459,8 @@ socket names, JSON fields and protocol identifiers retain their spellings.
   `eon-agent-background-work-yte0`: waiting on background work.
   Amended on 2026-10-29 (approved by Lucca, relayed by eon-overseer) by
   `eon-agent-parity-a9g0.2`: the full record and quotas in CLI JSON.
+  Amended on 2026-10-29 (approved by Lucca, relayed by eon-overseer) by
+  `eon-ngwf.1`: the queue in order over EONW v25 and in CLI JSON.
 - **Consumer:** One person supervising coding agents across the tabs and workspaces (EON-C33)
   of one full-Eon window.
   eonbase has no poller and no sidebar; its `sidebar` is `Off`.
@@ -2584,6 +2586,13 @@ socket names, JSON fields and protocol identifiers retain their spellings.
       `msg` ≤ 256 bytes. A whole snapshot still fits the 2 MiB frame.
     - `attention_rollup` on `Tab`;
     - `sidebar` (`Open | Closed | Off`) on `Snapshot`;
+    - `attention_queue` on `Snapshot`, which EONW v25 adds: the queue (see NextAttention and
+      PreviousAttention) in its total order, across every workspace of the window, whichever
+      workspace the snapshot projects. Each entry names the terminal's workspace ID, tab ID and
+      target (the pane ID or popup instance that `FocusAttention` takes) and carries the
+      terminal's attention as its pane or popup does, with state needs input, error or finished.
+      The window's 256-terminal limit bounds it. Venus and the CLI never sort it. It is empty
+      without a poller (eonbase);
     - the actions `ToggleSidebar`, `FocusAttention { tab, target }`, `NextAttention` and
       `PreviousAttention`;
     - **CLI JSON** (Q8, amended by `eon-agent-parity-a9g0.2`). It carries:
@@ -2601,7 +2610,10 @@ socket names, JSON fields and protocol identifiers retain their spellings.
         `stale`), `observed_at` and `windows`, each window with
         `duration_minutes`, `remaining_percent` and `resets_at` (null when
         the provider gives none). Both times are wall-clock Unix
-        milliseconds.
+        milliseconds;
+      - `attention_queue` on the snapshot: the same entries in the same order, each
+        `{"workspace", "tab", "target", "attention"}`, with `attention` the object panes and
+        popups carry;
 
       `title` and `message` are the reporting program's own text, within
       ORB-C15's bounds, passed through unchanged. Any program in an Eon
@@ -2713,7 +2725,7 @@ socket names, JSON fields and protocol identifiers retain their spellings.
     sidebar visibility and `[sidebar]` configuration.
   - **Orbit** owns the records, their neutral facts and the terminal title.
   - **Venus** owns presentation and hiding for width (VEN-C30).
-- **Consumes:** ORB-C15, ORB-C13 generation 3, EON-C8 topology, and EON-C10 (EONW v24, still
+- **Consumes:** ORB-C15, ORB-C13 generation 3, EON-C8 topology, and EON-C10 (EONW v25, still
   request and response, with no event stream).
 - **Boundary:**
   - no hooks and no edits to agent configuration;
@@ -2816,10 +2828,24 @@ socket names, JSON fields and protocol identifiers retain their spellings.
       `runtime/crates/eon-runtime/src/workspace.rs`, within `nix develop -c eon-test -p
       eon-runtime` (136 passed, 1 ignored) on x86_64 Linux. It fails on the earlier
       three-field projection.
+  - **Amendment** (`eon-ngwf.1`, the queue in order over EONW v25 and in CLI JSON): the
+    commit that carries this record is its revision.
+    - **Automated:** `the_snapshot_carries_the_queue_in_its_total_order_across_workspaces` in
+      `runtime/crates/eon-runtime/src/attention.rs` (needs input, error and finished terminals
+      across two workspaces, the same queue from either workspace's snapshot, and Alt+G
+      walking it), the extended
+      `cli_json_carries_the_full_attention_record_and_quotas_but_human_output_does_not` in
+      `runtime/crates/eon-runtime/src/workspace.rs`, and
+      `attention_queue_round_trips_and_rejects_invalid_entries_on_both_sides` and
+      `attention_queue_keeps_its_wire_bytes` in
+      `runtime/crates/eon-workspace-protocol/src/v25.rs`, within `nix develop -c eon-test`
+      (590 passed, 57 ignored) on x86_64 Linux. The first three fail without the queue, and
+      the golden fails when the entry field order changes.
 - **Open proof:** A reply with a lower update sequence for the same run
   cannot be produced by an emitter, so only the automated test covers its
   discard. The `eon-agent-parity-a9g0.2` amendment awaits one installed
-  `eon workspace --json` observation after landing.
+  `eon workspace --json` observation after landing. So does the `eon-ngwf.1`
+  amendment, with agents needing attention in two workspaces.
 
 ## EON-C32 — Eon Bar items and order
 

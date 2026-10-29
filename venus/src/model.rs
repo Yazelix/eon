@@ -1,5 +1,5 @@
 use crate::scene::{DrawRow, Scene, ScenePreview, bar_workspace, hidden_needs_input};
-use eon_workspace_protocol::v24::{
+use eon_workspace_protocol::v25::{
     AttentionState, Pane, Popup, Response as WorkspaceResponse, Snapshot, Tab,
 };
 use orbit_protocol::FrameReducer;
@@ -321,6 +321,7 @@ pub fn attention_only_change(current: &Snapshot, next: &Snapshot) -> bool {
         tabs: without_attention(&snapshot.tabs),
         workspaces: Vec::new(),
         active_workspace: String::new(),
+        attention_queue: Vec::new(),
         ..snapshot.clone()
     };
     (current.tabs != next.tabs || hidden_needs_input(current) != hidden_needs_input(next))
@@ -336,6 +337,7 @@ pub fn labels_only_change(current: &Snapshot, next: &Snapshot) -> bool {
         let mut snapshot = snapshot.clone();
         snapshot.workspaces.clear();
         snapshot.active_workspace.clear();
+        snapshot.attention_queue.clear();
         for pane in snapshot
             .tabs
             .iter_mut()
@@ -950,7 +952,7 @@ fn bounded(mut detail: String) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use eon_workspace_protocol::v24::{
+    use eon_workspace_protocol::v25::{
         self as workspace, CodexQuota, CodexQuotaState, Failure, Pane, PopupEntry, PopupKey,
         Shortcut, Tab,
     };
@@ -997,6 +999,7 @@ mod tests {
             codex_quota: None,
             claude_quota: None,
             sidebar: workspace::Sidebar::Open,
+            attention_queue: Vec::new(),
         };
         let mut model = WorkspaceModel::default();
         model.apply(WorkspaceResponse::Snapshot(snapshot.clone()));
@@ -1066,7 +1069,7 @@ mod tests {
         let snapshot = Snapshot {
             workspace: "w1".into(),
             active_workspace: "w1".into(),
-            workspaces: vec![eon_workspace_protocol::v24::WorkspaceInfo {
+            workspaces: vec![eon_workspace_protocol::v25::WorkspaceInfo {
                 id: "w1".into(),
                 name: None,
                 tab_count: 2,
@@ -1082,7 +1085,7 @@ mod tests {
                     id: "t1".into(),
                     directory: b"/tmp/eon".to_vec(),
                     selected_pane: Some("pane-1".into()),
-                    columns: vec![eon_workspace_protocol::v24::Column {
+                    columns: vec![eon_workspace_protocol::v25::Column {
                         panes: vec![Pane {
                             label: "pane-1".into(),
                             pinned_name: None,
@@ -1103,7 +1106,7 @@ mod tests {
                     id: "t2".into(),
                     directory: b"/tmp/nova".to_vec(),
                     selected_pane: Some("pane-2".into()),
-                    columns: vec![eon_workspace_protocol::v24::Column {
+                    columns: vec![eon_workspace_protocol::v25::Column {
                         panes: vec![Pane {
                             label: "pane-2".into(),
                             pinned_name: None,
@@ -1118,7 +1121,7 @@ mod tests {
                     attention_rollup: None,
                 },
             ],
-            geometry: eon_workspace_protocol::v24::PopupGeometry {
+            geometry: eon_workspace_protocol::v25::PopupGeometry {
                 side_margin: 8.0,
                 vertical_margin: 4.0,
             },
@@ -1138,6 +1141,7 @@ mod tests {
                 }],
             }),
             sidebar: workspace::Sidebar::Open,
+            attention_queue: Vec::new(),
         };
         let mut model = WorkspaceModel::default();
 
@@ -1297,8 +1301,51 @@ mod tests {
                     others: 0,
                 }),
             });
+            if state == workspace::AttentionState::NeedsInput {
+                next.attention_queue.push(workspace::QueueEntry {
+                    workspace: next.workspace.clone(),
+                    tab: next.tabs[1].id.clone(),
+                    target: next.tabs[1].columns[0].panes[0].id.clone(),
+                    attention: next.tabs[1].columns[0].panes[0].attention.clone().unwrap(),
+                });
+            }
             next
         };
+        let mut working = agent(workspace::AttentionState::Working, "Reading");
+        let mut waiting = agent(workspace::AttentionState::NeedsInput, "Allow?");
+        for sidebar in [
+            workspace::Sidebar::Open,
+            workspace::Sidebar::Closed,
+            workspace::Sidebar::Off,
+        ] {
+            working.sidebar = sidebar;
+            waiting.sidebar = sidebar;
+            assert!(
+                attention_only_change(&working, &waiting),
+                "queue updates move no geometry"
+            );
+        }
+        working.workspaces.push(workspace::WorkspaceInfo {
+            id: "w2".into(),
+            name: None,
+            tab_count: 1,
+            attention: None,
+            recency: 1,
+        });
+        let mut hidden = working.clone();
+        hidden.workspaces[1].attention = Some(workspace::AttentionState::NeedsInput);
+        hidden.attention_queue = waiting.attention_queue.clone();
+        hidden.attention_queue[0].workspace = "w2".into();
+        assert!(
+            attention_only_change(&working, &hidden),
+            "a hidden queue entry moves no geometry"
+        );
+        let mut labels = hidden.clone();
+        labels.tabs[0].columns[0].panes[0].label = "pane-1  Review".into();
+        assert!(
+            labels_only_change(&working, &labels),
+            "a hidden queue entry does not change label geometry"
+        );
         model.apply(WorkspaceResponse::Snapshot(agent(
             workspace::AttentionState::Working,
             "Reading",
@@ -1408,7 +1455,7 @@ mod tests {
         let mut snapshot = Snapshot {
             workspace: "w1".into(),
             active_workspace: "w1".into(),
-            workspaces: vec![eon_workspace_protocol::v24::WorkspaceInfo {
+            workspaces: vec![eon_workspace_protocol::v25::WorkspaceInfo {
                 id: "w1".into(),
                 name: None,
                 tab_count: 2,
@@ -1431,7 +1478,8 @@ mod tests {
             tabs: vec![pending(1), pending(2)],
             codex_quota: None,
             claude_quota: None,
-            sidebar: eon_workspace_protocol::v24::Sidebar::Open,
+            sidebar: eon_workspace_protocol::v25::Sidebar::Open,
+            attention_queue: Vec::new(),
         };
         let wire =
             workspace::encode_response(&WorkspaceResponse::Snapshot(snapshot.clone())).unwrap();
@@ -1477,7 +1525,7 @@ mod tests {
         let mut snapshot = Snapshot {
             workspace: "w1".into(),
             active_workspace: "w1".into(),
-            workspaces: vec![eon_workspace_protocol::v24::WorkspaceInfo {
+            workspaces: vec![eon_workspace_protocol::v25::WorkspaceInfo {
                 id: "w1".into(),
                 name: None,
                 tab_count: 1,
@@ -1506,7 +1554,8 @@ mod tests {
             }],
             codex_quota: None,
             claude_quota: None,
-            sidebar: eon_workspace_protocol::v24::Sidebar::Open,
+            sidebar: eon_workspace_protocol::v25::Sidebar::Open,
+            attention_queue: Vec::new(),
         };
         let mut model = WorkspaceModel::default();
         model.apply(WorkspaceResponse::Snapshot(snapshot.clone()));

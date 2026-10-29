@@ -1,6 +1,6 @@
 use crate::{Result, launch::LaunchArguments};
 use accesskit_winit::{Event as AccessKitEvent, WindowEvent as AccessKitWindowEvent};
-use eon_workspace_protocol::v24::{
+use eon_workspace_protocol::v25::{
     Action as WorkspaceAction, Direction as WorkspaceDirection, PopupEntry, Sidebar,
     WorkspaceAction as CommonAction,
 };
@@ -471,7 +471,7 @@ struct ClosePrompt {
 
 impl ClosePrompt {
     /// Whether the snapshot still holds the tab, and the pane, that the close names.
-    fn names_live_target(&self, snapshot: &eon_workspace_protocol::v24::Snapshot) -> bool {
+    fn names_live_target(&self, snapshot: &eon_workspace_protocol::v25::Snapshot) -> bool {
         snapshot
             .tabs
             .iter()
@@ -2127,7 +2127,7 @@ impl Application {
             labels_only,
             sidebar_toggled,
         ) = match &event {
-            WorkspaceEvent::Response(eon_workspace_protocol::v24::Response::Snapshot(snapshot)) => {
+            WorkspaceEvent::Response(eon_workspace_protocol::v25::Response::Snapshot(snapshot)) => {
                 let current = self.workspace_model.snapshot();
                 let attention_only =
                     current.is_some_and(|current| attention_only_change(current, snapshot));
@@ -4320,7 +4320,7 @@ impl ApplicationHandler<UserEvent> for Application {
                     // generation; exit as on control loss.
                     if matches!(
                         event,
-                        WorkspaceEvent::Response(eon_workspace_protocol::v24::Response::Ended(_))
+                        WorkspaceEvent::Response(eon_workspace_protocol::v25::Response::Ended(_))
                     ) {
                         event_loop.exit();
                         return;
@@ -4653,7 +4653,7 @@ struct ZoomTarget {
     columns: Vec<(String, Vec<String>)>,
 }
 
-fn zoom_target(snapshot: &eon_workspace_protocol::v24::Snapshot) -> Option<ZoomTarget> {
+fn zoom_target(snapshot: &eon_workspace_protocol::v25::Snapshot) -> Option<ZoomTarget> {
     let tab = snapshot
         .tabs
         .iter()
@@ -4923,7 +4923,7 @@ fn step_sidebar_row<'a>(
 /// target's tab is selected; otherwise nowhere yet.
 fn jump_focus(
     jump: &AttentionJump,
-    snapshot: &eon_workspace_protocol::v24::Snapshot,
+    snapshot: &eon_workspace_protocol::v25::Snapshot,
     answer: bool,
 ) -> Option<WorkspaceFocus> {
     if focused_terminal(snapshot) == Some(jump.target.as_str()) {
@@ -4962,7 +4962,7 @@ fn accessibility_workspace_focus(
 /// last pane. That close ends the window, or with other workspaces removes just this one
 /// (EON-C33). Runtime refuses a pane close under a popup, so that close is not asked about.
 fn final_close_tab(
-    snapshot: &eon_workspace_protocol::v24::Snapshot,
+    snapshot: &eon_workspace_protocol::v25::Snapshot,
     action: &WorkspaceAction,
 ) -> Option<String> {
     let [tab] = snapshot.tabs.as_slice() else {
@@ -4983,7 +4983,7 @@ fn final_close_tab(
 
 /// The shown workspace's name or `wN`, which a final close removes while other workspaces
 /// remain; `None` while that close ends the window.
-fn close_prompt_workspace(snapshot: &eon_workspace_protocol::v24::Snapshot) -> Option<String> {
+fn close_prompt_workspace(snapshot: &eon_workspace_protocol::v25::Snapshot) -> Option<String> {
     shown_workspace(snapshot)
         .filter(|&(_, _, count)| count >= 2)
         .map(|(name, _, _)| name.to_owned())
@@ -5267,7 +5267,7 @@ pub(super) fn run(arguments: LaunchArguments) -> Result {
     let mut application = Application::new(arguments, event_loop.create_proxy());
     if application.startup_admission && application.workspace_socket.is_some() {
         let response = yazelix_venus::read_workspace_response(&mut io::stdin().lock())?;
-        if !matches!(response, eon_workspace_protocol::v24::Response::Snapshot(_)) {
+        if !matches!(response, eon_workspace_protocol::v25::Response::Snapshot(_)) {
             return Err("Venus startup admission requires an Eon workspace snapshot".into());
         }
         application.workspace_model.apply(response);

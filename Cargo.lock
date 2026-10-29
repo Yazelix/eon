@@ -750,7 +750,7 @@ dependencies = [
 
 [[package]]
 name = "eon"
-version = "0.1.7"
+version = "0.1.8"
 dependencies = [
  "eon-manifest",
  "eon-runtime",

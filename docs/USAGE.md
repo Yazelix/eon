@@ -429,6 +429,10 @@ In workspace JSON and action replies, each pane and popup has `attention`: null
 without attention, otherwise an object with `state`, `app`, `name`, `kind`,
 `progress`, `title`, `message`, `changed_at`, `stale` and `others`. Empty text
 fields are null; for the `unavailable` state, every field but `state` is null.
+The snapshot's `attention_queue` lists every terminal of the window that needs
+input, has an unseen error or has finished, in Alt+G order, each with
+`workspace`, `tab`, `target` and the same `attention` object. Consumers never
+re-sort it.
 The snapshot's `codex_quota` and `claude_quota` are null without a reading,
 otherwise objects with `state`, `observed_at` and `windows`, each window with
 `duration_minutes`, `remaining_percent` and nullable `resets_at`. All times

@@ -109,13 +109,13 @@ fn clipping_test_fonts() -> FontSetup {
 }
 
 fn retained_frame_text_clip(size: PhysicalSize<u32>) -> (WorkspaceScene, SceneRect) {
-    use eon_workspace_protocol::v24::{Column, Pane, PopupGeometry, Sidebar, Snapshot, Tab};
+    use eon_workspace_protocol::v25::{Column, Pane, PopupGeometry, Sidebar, Snapshot, Tab};
 
     let metrics = CellMetrics::for_scale(1.0);
     let snapshot = Snapshot {
         workspace: "w1".into(),
         active_workspace: "w1".into(),
-        workspaces: vec![eon_workspace_protocol::v24::WorkspaceInfo {
+        workspaces: vec![eon_workspace_protocol::v25::WorkspaceInfo {
             id: "w1".into(),
             name: None,
             tab_count: 1,
@@ -152,6 +152,7 @@ fn retained_frame_text_clip(size: PhysicalSize<u32>) -> (WorkspaceScene, SceneRe
         codex_quota: None,
         claude_quota: None,
         sidebar: Sidebar::Closed,
+        attention_queue: Vec::new(),
     };
     let workspace = |size| {
         WorkspaceScene::from_snapshot(&snapshot, size, metrics, 0.0, 0.0, |_, text| {
@@ -196,12 +197,12 @@ fn retained_frame_text_clip(size: PhysicalSize<u32>) -> (WorkspaceScene, SceneRe
 
 fn fractional_card_workspace(scale: f64, scroll: f32) -> WorkspaceScene {
     use crate::scene::{EonBar, ShortcutHintsScene};
-    use eon_workspace_protocol::v24::{Column, Pane, PopupGeometry, Sidebar, Snapshot, Tab};
+    use eon_workspace_protocol::v25::{Column, Pane, PopupGeometry, Sidebar, Snapshot, Tab};
 
     let snapshot = Snapshot {
         workspace: "w1".into(),
         active_workspace: "w1".into(),
-        workspaces: vec![eon_workspace_protocol::v24::WorkspaceInfo {
+        workspaces: vec![eon_workspace_protocol::v25::WorkspaceInfo {
             id: "w1".into(),
             name: None,
             tab_count: 1,
@@ -240,6 +241,7 @@ fn fractional_card_workspace(scale: f64, scroll: f32) -> WorkspaceScene {
         codex_quota: None,
         claude_quota: None,
         sidebar: Sidebar::Closed,
+        attention_queue: Vec::new(),
     };
     let size = PhysicalSize::new(2000, 900);
     let metrics = CellMetrics::for_scale(scale);

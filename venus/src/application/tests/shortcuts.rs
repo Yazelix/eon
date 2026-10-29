@@ -3,7 +3,7 @@ use crate::application::shortcuts::{
     ALT_SHIFT, CTRL_ALT, CTRL_SHIFT, FIXED_SHORTCUTS, native_pointer_shortcut_for,
     shortcut_groups_for,
 };
-use eon_workspace_protocol::v24::{InvokeIntent, Side, Tab};
+use eon_workspace_protocol::v25::{InvokeIntent, Side, Tab};
 
 #[test]
 fn new_window_shortcut_invokes_the_supplied_eon_command() {
@@ -21,7 +21,7 @@ fn new_window_shortcut_invokes_the_supplied_eon_command() {
         shortcut_groups_for(
             NativePlatform::Linux,
             &[],
-            eon_workspace_protocol::v24::Sidebar::Open
+            eon_workspace_protocol::v25::Sidebar::Open
         )
         .iter()
         .flat_map(|group| &group.rows)
@@ -76,14 +76,14 @@ fn shortcut_viewer_uses_live_rows_and_captures_its_local_sequence() {
         id: "project".into(),
         label: "Money ops".into(),
         shortcut: PopupKey::Bound(Shortcut {
-            modifiers: eon_workspace_protocol::v24::ALT,
+            modifiers: eon_workspace_protocol::v25::ALT,
             key: "KeyZ".into(),
         }),
     }];
     let groups = shortcut_groups_for(
         NativePlatform::Linux,
         &entries,
-        eon_workspace_protocol::v24::Sidebar::Open,
+        eon_workspace_protocol::v25::Sidebar::Open,
     );
     let key_shortcut = |key, modifiers| {
         native_key_shortcut_for(NativePlatform::Linux, key, modifiers, &[]).unwrap()
@@ -164,7 +164,7 @@ fn shortcut_viewer_uses_live_rows_and_captures_its_local_sequence() {
         shortcut_groups_for(
             NativePlatform::Linux,
             &[],
-            eon_workspace_protocol::v24::Sidebar::Open
+            eon_workspace_protocol::v25::Sidebar::Open
         )
         .iter()
         .flat_map(|group| &group.rows)
@@ -250,7 +250,7 @@ fn macos_uses_command_for_standard_host_actions_only() {
     let rows = shortcut_groups_for(
         NativePlatform::Macos,
         &[],
-        eon_workspace_protocol::v24::Sidebar::Open,
+        eon_workspace_protocol::v25::Sidebar::Open,
     )
     .into_iter()
     .flat_map(|group| group.rows)
@@ -333,7 +333,7 @@ fn structural_shortcuts_do_not_repeat_and_popup_focus_is_explicit() {
     let mut snapshot = Snapshot {
         workspace: "w1".into(),
         active_workspace: "w1".into(),
-        workspaces: vec![eon_workspace_protocol::v24::WorkspaceInfo {
+        workspaces: vec![eon_workspace_protocol::v25::WorkspaceInfo {
             id: "w1".into(),
             name: None,
             tab_count: 1,
@@ -341,7 +341,7 @@ fn structural_shortcuts_do_not_repeat_and_popup_focus_is_explicit() {
             recency: 0,
         }],
         active_tab: "t1".into(),
-        geometry: eon_workspace_protocol::v24::PopupGeometry {
+        geometry: eon_workspace_protocol::v25::PopupGeometry {
             side_margin: 8.0,
             vertical_margin: 4.0,
         },
@@ -358,7 +358,8 @@ fn structural_shortcuts_do_not_repeat_and_popup_focus_is_explicit() {
         }],
         codex_quota: None,
         claude_quota: None,
-        sidebar: eon_workspace_protocol::v24::Sidebar::Open,
+        sidebar: eon_workspace_protocol::v25::Sidebar::Open,
+        attention_queue: Vec::new(),
     };
     show_test_popup(&mut snapshot);
     for (focused, intent) in [(true, InvokeIntent::Toggle), (false, InvokeIntent::Focus)] {
@@ -378,7 +379,7 @@ fn structural_shortcuts_do_not_repeat_and_popup_focus_is_explicit() {
                 intent
             }
         );
-        eon_workspace_protocol::v24::check_popup_action(&snapshot, &action).unwrap();
+        eon_workspace_protocol::v25::check_popup_action(&snapshot, &action).unwrap();
         assert!(!sends_workspace_shortcut(
             &action,
             ElementState::Pressed,

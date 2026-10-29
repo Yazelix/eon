@@ -4,7 +4,7 @@
 //! in the test too.
 
 use super::*;
-use eon_workspace_protocol::v24::InvokeIntent;
+use eon_workspace_protocol::v25::InvokeIntent;
 
 enum CliPath {
     /// These arguments parse to exactly this action.

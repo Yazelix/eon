@@ -6,7 +6,7 @@ use super::{
     },
     workspace,
 };
-use eon_workspace_protocol::v24::{
+use eon_workspace_protocol::v25::{
     Action, Error as ProtocolError, Failure, HEADER_BYTES, LifecycleResponse, MAX_DETAIL_BYTES,
     Request, Response, Runtime, VERSION, WorkspaceAction, declared_message_len,
     decode_lifecycle_response, decode_request, decode_response, encode_lifecycle_response,

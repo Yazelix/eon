@@ -7,7 +7,7 @@ use super::{
     sessions::{self, ProgramStatusRead, RunningSession},
     workspace::is_directory_picker_session,
 };
-use eon_workspace_protocol::v24::{
+use eon_workspace_protocol::v25::{
     self as eonw, Action, AttentionKind, AttentionRecord, AttentionState as State, Sidebar,
     Snapshot,
 };
@@ -503,16 +503,21 @@ impl Attention {
         ))
     }
 
+    fn queue<'a>(&self, targets: &'a [Target]) -> Vec<(Key, &'a Target)> {
+        let mut queue: Vec<_> = targets
+            .iter()
+            .filter_map(|target| Some((self.entry(targets, &target.session)?, target)))
+            .collect();
+        queue.sort_by_key(|&(key, _)| key);
+        queue
+    }
+
     /// `NextAttention` (`forward`) or `PreviousAttention`: the entry after or
     /// before the cursor, wrapping, or the front of the queue after a reset;
     /// none for an empty queue. Its key becomes the cursor once the jump is
     /// accepted.
     fn next<'a>(&self, targets: &'a [Target], forward: bool) -> Option<(Key, &'a Target)> {
-        let mut queue: Vec<(Key, &Target)> = targets
-            .iter()
-            .filter_map(|target| Some((self.entry(targets, &target.session)?, target)))
-            .collect();
-        queue.sort_by_key(|&(key, _)| key);
+        let queue = self.queue(targets);
         match self.cursor {
             None => queue.first(),
             Some(cursor) if forward => queue
@@ -565,25 +570,7 @@ impl Attention {
             let target = targets
                 .iter()
                 .find(|target| Some(target.workspace) == projected && target.id == id)?;
-            let shown = self.shown(target, now)?;
-            Some(eonw::Attention {
-                state: shown.state,
-                record: shown.record.map(|record| AttentionRecord {
-                    kind: record.kind.map(|kind| match kind {
-                        ProgramKind::Permission => AttentionKind::Permission,
-                        ProgramKind::Question => AttentionKind::Question,
-                        ProgramKind::Auth => AttentionKind::Auth,
-                    }),
-                    progress: record.progress,
-                    app: plain(&record.app),
-                    name: plain(shown.name),
-                    title: plain(&record.title),
-                    message: plain(&record.message),
-                    changed_at: self.wall(shown.changed_at.unwrap_or(now)),
-                    stale: shown.stale,
-                    others: shown.others,
-                }),
-            })
+            self.attention(target, now)
         };
         for (index, tab) in snapshot.tabs.iter_mut().enumerate() {
             for pane in tab.columns.iter_mut().flat_map(|column| &mut column.panes) {
@@ -602,6 +589,43 @@ impl Attention {
                 .and_then(|index| self.rollup(&targets, index, None, now));
         }
         snapshot.sidebar = self.sidebar;
+        snapshot.attention_queue = self
+            .queue(&targets)
+            .into_iter()
+            .map(|(_, target)| {
+                let workspace = &workspaces[target.workspace];
+                eonw::QueueEntry {
+                    workspace: workspace.workspace.clone(),
+                    tab: workspace.tabs[target.tab].id.clone(),
+                    target: target.id.clone(),
+                    attention: self
+                        .attention(target, now)
+                        .expect("queued terminal has attention"),
+                }
+            })
+            .collect();
+    }
+
+    fn attention(&self, target: &Target, now: Instant) -> Option<eonw::Attention> {
+        let shown = self.shown(target, now)?;
+        Some(eonw::Attention {
+            state: shown.state,
+            record: shown.record.map(|record| AttentionRecord {
+                kind: record.kind.map(|kind| match kind {
+                    ProgramKind::Permission => AttentionKind::Permission,
+                    ProgramKind::Question => AttentionKind::Question,
+                    ProgramKind::Auth => AttentionKind::Auth,
+                }),
+                progress: record.progress,
+                app: plain(&record.app),
+                name: plain(shown.name),
+                title: plain(&record.title),
+                message: plain(&record.message),
+                changed_at: self.wall(shown.changed_at.unwrap_or(now)),
+                stale: shown.stale,
+                others: shown.others,
+            }),
+        })
     }
 
     /// The wall-clock Unix milliseconds of `at`.
@@ -627,7 +651,7 @@ impl Attention {
 mod tests {
     use super::*;
     use ProgramState::{Blocked, Done, Error, Idle, Working};
-    use eon_workspace_protocol::v24::{Column, Pane, Popup, PopupGeometry, Tab};
+    use eon_workspace_protocol::v25::{Column, Pane, Popup, PopupGeometry, Tab};
     use std::{fs, slice, thread};
 
     /// A record created at its change `changed`.
@@ -707,7 +731,7 @@ mod tests {
         Snapshot {
             workspace: "w1".into(),
             active_workspace: "w1".into(),
-            workspaces: vec![eon_workspace_protocol::v24::WorkspaceInfo {
+            workspaces: vec![eon_workspace_protocol::v25::WorkspaceInfo {
                 id: "w1".into(),
                 name: None,
                 tab_count: tabs.len(),
@@ -724,6 +748,7 @@ mod tests {
             codex_quota: None,
             claude_quota: None,
             sidebar: Sidebar::Off,
+            attention_queue: Vec::new(),
         }
     }
 
@@ -1403,6 +1428,177 @@ mod tests {
     }
 
     #[test]
+    fn the_snapshot_carries_the_queue_in_its_total_order_across_workspaces() {
+        let mut window = [
+            in_workspace(
+                "w1",
+                "w1",
+                "t1",
+                vec![
+                    tab(
+                        "t1",
+                        &["finished", "working", "idle", "background", "seen"],
+                        &[("agent", "unavailable"), ("project", "directory-picker-1")],
+                        None,
+                    ),
+                    tab("t2", &["error", "equal-a", "equal-b"], &[], None),
+                ],
+            ),
+            in_workspace(
+                "w2",
+                "w1",
+                "t3",
+                vec![tab("t3", &["needs", "other"], &[("agent", "hidden")], None)],
+            ),
+        ];
+        // Target ids are local to a workspace, even when the sessions differ.
+        window[1].tabs[0].columns[0].panes[1].id = "pane-finished".into();
+        window[0].tabs[0].selected_pane = Some("pane-working".into());
+        window[0].tabs[0].columns[0].expanded = "pane-working".into();
+        let infos = window
+            .iter()
+            .enumerate()
+            .map(|(index, workspace)| eonw::WorkspaceInfo {
+                id: workspace.workspace.clone(),
+                name: None,
+                tab_count: workspace.tabs.len(),
+                attention: None,
+                recency: index as u8,
+            })
+            .collect::<Vec<_>>();
+        for workspace in &mut window {
+            workspace.workspaces = infos.clone();
+        }
+        let (targets, _) = targets(&window);
+        let base = Instant::now();
+        let now = base + Duration::from_secs(4);
+        let mut attention = Attention::new(true);
+        for (session, state, seconds) in [
+            ("finished", Done, 0),
+            ("error", Error, 1),
+            ("needs", Blocked, 2),
+            ("hidden", Blocked, 3),
+            ("equal-b", Done, 0),
+            ("equal-a", Done, 0),
+            ("other", Done, 1),
+            ("working", Working, 0),
+            ("idle", Idle, 0),
+            ("background", Done, 0),
+            ("seen", Done, 0),
+        ] {
+            let mut reply = status(1, vec![record("a", state, None, 1)]);
+            if session == "background" {
+                reply.background = 1;
+            }
+            attention.apply(
+                &targets,
+                session,
+                "run",
+                reply,
+                base + Duration::from_secs(seconds),
+            );
+        }
+        attention.see("seen");
+        let expected = [
+            ("w2", "t3", "pane-needs", State::NeedsInput),
+            ("w2", "t3", "popup-hidden", State::NeedsInput),
+            ("w1", "t2", "pane-error", State::Error),
+            ("w1", "t1", "pane-finished", State::Finished),
+            ("w1", "t2", "pane-equal-a", State::Finished),
+            ("w1", "t2", "pane-equal-b", State::Finished),
+            ("w2", "t3", "pane-finished", State::Finished),
+        ];
+        let mut projected = window[0].clone();
+        attention.present(&mut projected, &window, true, now);
+        let entries = projected
+            .attention_queue
+            .iter()
+            .map(|entry| {
+                (
+                    entry.workspace.as_str(),
+                    entry.tab.as_str(),
+                    entry.target.as_str(),
+                    entry.attention.state,
+                )
+            })
+            .collect::<Vec<_>>();
+        assert_eq!(entries, expected);
+        assert!(
+            projected.attention_queue[3]
+                .attention
+                .record
+                .as_ref()
+                .unwrap()
+                .stale
+        );
+        assert_eq!(
+            projected.tabs[0].popups[0]
+                .attention
+                .as_ref()
+                .unwrap()
+                .state,
+            State::Unavailable
+        );
+        for source in &window {
+            let mut reply = source.clone();
+            attention.present(&mut reply, &window, true, now);
+            assert_eq!(reply.attention_queue, projected.attention_queue);
+            for entry in reply
+                .attention_queue
+                .iter()
+                .filter(|entry| entry.workspace == reply.workspace)
+            {
+                let tab = reply.tabs.iter().find(|tab| tab.id == entry.tab).unwrap();
+                let carried = tab
+                    .panes()
+                    .map(|pane| (&pane.id, &pane.attention))
+                    .chain(tab.popups.iter().map(|popup| (&popup.id, &popup.attention)))
+                    .find(|(id, _)| **id == entry.target)
+                    .unwrap()
+                    .1;
+                assert_eq!(carried.as_ref(), Some(&entry.attention));
+            }
+        }
+        let mut absent = projected.clone();
+        absent.workspace = "w9".into();
+        attention.present(&mut absent, &window, true, now);
+        assert_eq!(absent.attention_queue, projected.attention_queue);
+
+        // Apply each jump's focus and returned cursor as the supervisor does.
+        for &(workspace, tab, target, _) in expected.iter().chain(&expected[..1]) {
+            let (destination, action, key) = attention.jump(&window, true).unwrap();
+            assert_eq!(destination, workspace);
+            assert_eq!(
+                action,
+                Action::FocusAttention {
+                    tab: tab.into(),
+                    target: target.into()
+                }
+            );
+            for snapshot in &mut window {
+                snapshot.active_workspace = workspace.into();
+                if snapshot.workspace != workspace {
+                    continue;
+                }
+                snapshot.active_tab = tab.into();
+                let tab = snapshot
+                    .tabs
+                    .iter_mut()
+                    .find(|item| item.id == tab)
+                    .unwrap();
+                if tab.popups.iter().any(|popup| popup.id == target) {
+                    tab.selected_popup = Some(target.into());
+                } else {
+                    tab.selected_popup = None;
+                    tab.selected_pane = Some(target.into());
+                    tab.columns[0].expanded = target.into();
+                }
+            }
+            attention.handled(&action, Some(key), &window, true);
+        }
+    }
+
+    #[test]
     fn hidden_raises_stay_unseen_and_the_queue_crosses_into_their_workspace() {
         let window = |shown: &str, focus: &str| {
             let mut hidden = tab("t2", &["s2", "s3"], &[], None);
@@ -1437,7 +1633,7 @@ mod tests {
         // carries its own rollup.
         let mut reply = before[1].clone();
         reply.workspaces = ["w1", "w2"]
-            .map(|id| eon_workspace_protocol::v24::WorkspaceInfo {
+            .map(|id| eon_workspace_protocol::v25::WorkspaceInfo {
                 id: id.into(),
                 ..reply.workspaces[0].clone()
             })

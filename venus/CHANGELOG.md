@@ -2,6 +2,9 @@
 
 ## Unreleased
 
+- Consume EONW v25, which adds `Snapshot.attention_queue` in EON-C31 order.
+  Venus does not use it yet (`eon-ngwf.1`).
+
 - Consume EONW v24, which adds EON-C10's directory-based tab launch request.
   Venus's new-tab action keeps the directory picker (`eon-tab-create-launch-8tl4`).
 
