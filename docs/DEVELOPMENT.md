@@ -127,7 +127,16 @@ Eon in every capture and the translucency check is skipped.
 
 The automatic part captures whole screens, every connected display included,
 and the desktop before launch: close or hide windows you would not send before
-starting, and look inside the archive before sending it.
+starting. The check asks you to hide desktop widgets (System Settings > Desktop
+& Dock) and turn on Do Not Disturb (Control Center > Focus), then press Enter.
+The end-of-run notification may be silent; the terminal bell still rings.
+The archive replaces the home path with `~` and per-account temporary paths with
+`/var/folders/<id>`. It replaces the account name with `<user>` in logs and text
+files. The check's own `summary.txt` and `final.json` keep their wording, with your
+notes and its errors redacted; other JSON files keep their keys. Names that match
+status words or hashes stay unchanged, with a terminal warning. Captures (pixels)
+can still show names: item 5's tab opens in HOME and its label shows the account
+name. Look inside the archive before sending it.
 
 The automatic part runs first and takes hours. Leave the Mac awake and
 untouched until it rings: the GUI scenario types into Eon. The eight manual
@@ -138,18 +147,19 @@ default configuration with private state, while keeping your HOME and shell
 environment so your logged-in Claude Code works.
 During the check, Eon's Starship prompt hides the host and user names. A prompt
 your own shell configuration sets replaces Eon's Starship prompt and shows as
-usual; check the captures for host or user names before sending. At the end,
-the check lists entries Eon's shell tools created in HOME and asks before
-removing them; other new entries are counted in the archive and listed by path
-only on the terminal. If you already use Nushell, Atuin or Zoxide, the check's
-commands join their existing history; the check removes only whole entries it
-created.
+usual; check the captures for host or user names before sending. The check keeps
+Cargo's downloads out of HOME. At the end, its HOME report offers entries named
+for Eon's components, CodexBar included, for removal with your consent; other
+new entries are counted in the archive and listed by path only on the terminal.
+If you already use Nushell, Atuin or Zoxide, the check's commands join their
+existing history; the check removes only whole entries it created.
 
 Each item waits for Enter, captures only Eon's largest window without changing
 focus, then asks for pass, fail or skip and an optional note. Other windows may
 cover Eon. The evidence folder defaults to
 `~/eon-mac-final-<rev12>-<UTC date>` (with a numeric suffix if taken);
-`--out DIR` chooses a fresh folder. The archive is `<out>.tar.gz` beside it.
+`--out DIR` chooses a fresh folder; its name is the archive's top folder and shows
+in its paths, so choose one without your name. The archive is `<out>.tar.gz` beside it.
 Look inside before sending it to Lucca. `--dry-run` walks the items without
 launching or capturing on any system; it proves no Mac behavior. Ctrl-C
 stops the check; a rerun starts over, and leftovers may need `eon stop all`

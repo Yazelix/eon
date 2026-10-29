@@ -3,14 +3,15 @@
 use crate::{
     retina,
     scenario::{self, Scenario},
-    step::{Failure, Log, Outcome, Runner, check, execute, succeed},
+    step::{Failure, Log, Outcome, Runner, check, execute, progress, succeed},
 };
 use std::{
     collections::{BTreeMap, BTreeSet},
     fs,
+    os::unix::fs::DirBuilderExt,
     path::{Path, PathBuf},
     process::Command,
-    time::{Duration, Instant},
+    time::{Duration, Instant, SystemTime, UNIX_EPOCH},
 };
 
 const MINUTE: Duration = Duration::from_secs(60);
@@ -67,12 +68,45 @@ struct Context {
     processes: BTreeSet<(String, String)>,
     nix_program: Option<String>,
     nix_store_program: Option<String>,
+    cargo_home: Option<PathBuf>,
+}
+
+struct CargoHome(PathBuf);
+
+impl CargoHome {
+    fn new() -> Result<Self, String> {
+        let stamp = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .map_err(|error| error.to_string())?
+            .as_nanos();
+        let path =
+            std::env::temp_dir().join(format!("mac-proof-cargo-{}-{stamp}", std::process::id()));
+        fs::DirBuilder::new()
+            .mode(0o700)
+            .create(&path)
+            .map_err(|error| error.to_string())?;
+        Ok(Self(path))
+    }
+}
+
+impl Drop for CargoHome {
+    fn drop(&mut self) {
+        if let Err(error) = fs::remove_dir_all(&self.0) {
+            progress(&format!(
+                "mac-proof: remove cargo home {}: {error}",
+                self.0.display()
+            ));
+        }
+    }
 }
 
 impl Context {
     fn command(&self, program: &str) -> Command {
         let mut command = Command::new(program);
         command.current_dir(&self.source);
+        if let Some(home) = &self.cargo_home {
+            command.env("CARGO_HOME", home);
+        }
         command
     }
 
@@ -126,10 +160,16 @@ pub fn run(options: Options, source: &Path) -> Result<Report, String> {
         "system",
         format!("{}-{}", std::env::consts::ARCH, std::env::consts::OS),
     ));
+    let cargo_home = if options.personal_mac && !options.dry_run {
+        Some(CargoHome::new()?)
+    } else {
+        None
+    };
     let mut context = Context {
         source,
         evidence: options.evidence,
         expect_tree: options.expect_tree,
+        cargo_home: cargo_home.as_ref().map(|home| home.0.clone()),
         ..Context::default()
     };
     steps(&mut runner, &mut context, options.personal_mac)
@@ -823,6 +863,44 @@ fn eon_processes(log: &mut Log, deadline: Instant) -> Result<BTreeSet<(String, S
 mod tests {
     use super::*;
     use std::os::unix::fs::PermissionsExt;
+
+    #[test]
+    fn personal_commands_use_a_private_cargo_home_that_is_removed_on_drop() {
+        let context = Context::default();
+        assert!(
+            !context
+                .command("git")
+                .get_envs()
+                .any(|(key, _)| key == "CARGO_HOME")
+        );
+        let path;
+        {
+            let cargo_home = CargoHome::new().unwrap();
+            path = cargo_home.0.clone();
+            assert!(path.starts_with(std::env::temp_dir()));
+            assert_eq!(
+                fs::metadata(&path).unwrap().permissions().mode() & 0o777,
+                0o700
+            );
+            let context = Context {
+                cargo_home: Some(path.clone()),
+                ..Context::default()
+            };
+            for command in [
+                context.git(&["status"]),
+                context.nix(&["develop"]),
+                context.nix_store(&["--query"]),
+            ] {
+                assert!(
+                    command
+                        .get_envs()
+                        .any(|(key, value)| key == "CARGO_HOME" && value == Some(path.as_os_str()))
+                );
+            }
+            fs::write(path.join("download"), "cargo cache").unwrap();
+        }
+        assert!(!path.exists());
+    }
 
     fn stub(evidence: &Path) -> Context {
         let program = evidence.join("nix-stub");

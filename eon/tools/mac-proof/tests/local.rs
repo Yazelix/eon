@@ -228,6 +228,18 @@ fn a_final_dry_run_archives_answers_and_preserves_the_source() {
     assert_eq!(manifest["rev"], format!("tree-{}", &tree[..12]));
     assert_eq!(manifest["dry_run"], true);
     assert_eq!(manifest["run_result"], "pass");
+    assert_eq!(
+        manifest["errors"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .filter(|error| error
+                .as_str()
+                .unwrap()
+                .starts_with("HOME component manifest:"))
+            .count(),
+        1
+    );
     let answers: Vec<_> = manifest["items"]
         .as_array()
         .unwrap()

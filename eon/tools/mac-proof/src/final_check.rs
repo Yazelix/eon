@@ -52,7 +52,7 @@ const ITEMS: &[Item] = &[
     },
     Item {
         title: "Keyboard",
-        action: "Open Shortcuts with Option+/. Then use the keys it lists to open a tab, split a pane, move between panes and open Project with Option+Z.",
+        action: "Open Shortcuts with Option+/. Then use the keys it lists to open a tab (it opens in HOME, so its label shows your account name), split a pane, move between panes and open Project with Option+Z.",
         expected: "each key does what Shortcuts says.",
         slug: "keyboard",
     },
@@ -87,7 +87,8 @@ pub fn help() -> String {
 mac-proof final: Yu's automatic run and guided final check, in one evidence archive
 
   --out DIR      a fresh evidence directory (default $HOME/eon-mac-final-<rev12>-<UTC date>,
-                 with -2, -3 and so on when taken)
+                 with -2, -3 and so on when taken); its name is the archive's top folder
+                 and shows in its paths, so choose one without your name
   --timeout DUR  the automatic run's time limit, as 30s, 90m or 12h (default 12h)
   --dry-run      run only the source step and walk the items, on any system, with no captures
 
@@ -99,18 +100,26 @@ window picker and directly access your screen and audio\". The check takes one t
 capture at the start so the dialog comes then; choose Allow. Screen Recording does not answer
 it; left open, it covers Eon in every capture and the translucency check is skipped.
 The automatic part captures whole screens, every connected display included, and the desktop
-before launch; close or hide windows you would not send before starting, and look inside the
-archive before sending it.
+before launch; close or hide windows you would not send before starting. The check asks you to
+hide desktop widgets (System Settings > Desktop & Dock), turn on Do Not Disturb (Control Center
+> Focus), then press Enter. The end-of-run notification may be silent; the terminal bell still rings.
+The archive replaces the home path with ~ and per-account temporary paths with /var/folders/<id>.
+It replaces the account name with <user> in logs and text files. The check's own summary.txt and
+final.json keep their wording, with your notes and its errors redacted; other JSON files keep
+their keys. Names matching status words or hashes stay unchanged, with a terminal warning.
+Captures (pixels) can still show names: item 5's tab opens in HOME and its label shows the account
+name. Look inside the archive before sending it.
 The automatic part takes hours. Leave the Mac awake and untouched until it rings: its GUI
 scenario types into Eon. The manual part uses your HOME and environment, with private Eon
 configuration and state and the default configuration. Only Eon's largest window is captured,
 even when other windows cover it, without changing focus.
 During the check, Eon's Starship prompt hides the host and user names. A prompt your own shell
 configuration sets replaces Eon's Starship prompt and shows as usual; check the captures for
-host or user names before sending. At the end, the check lists entries Eon's shell tools created
-in HOME and asks before removing them; other new entries are counted in the archive and listed
-by path only on the terminal. If you already use Nushell, Atuin or Zoxide, the check's commands
-join their existing history; the check removes only whole entries it created.
+host or user names before sending. The check keeps Cargo's downloads out of HOME. At the end,
+its HOME report offers entries named for Eon's components, CodexBar included, for removal with
+your consent; other new entries are counted in the archive and listed by path only on the
+terminal. If you already use Nushell, Atuin or Zoxide, the check's commands join their existing
+history; the check removes only whole entries it created.
 For each item, do the action, press Enter, answer p/f/s (or pass/fail/skip), then add an optional
 one-line note. EOF leaves the remaining items unanswered. Ctrl-C stops the tool; a rerun starts
 over, and leftovers may need `eon stop all` with the private environment in manual/final.log.
@@ -173,6 +182,15 @@ struct Bundle {
 }
 
 impl Bundle {
+    fn redact(&mut self, redaction: &Redaction) {
+        for item in &mut self.items {
+            item.note = redaction.text(&item.note, false);
+        }
+        for error in &mut self.errors {
+            *error = redaction.text(error, false);
+        }
+    }
+
     fn json(&self) -> Value {
         json!({
             "schema": 1,
@@ -343,6 +361,228 @@ fn archive_path(out: &Path) -> PathBuf {
     PathBuf::from(name)
 }
 
+fn archive(out: &Path) -> Result<PathBuf, String> {
+    // Archiving must not append unredacted command paths to the evidence.
+    let mut log = Log::new(
+        File::options()
+            .append(true)
+            .open("/dev/stderr")
+            .map_err(|error| error.to_string())?,
+    );
+    let archive = archive_path(out);
+    succeed(
+        &mut log,
+        Command::new("tar")
+            .arg("--numeric-owner")
+            .arg("-czf")
+            .arg(&archive)
+            .arg("-C")
+            .arg(out.parent().ok_or("--out has no parent")?)
+            .arg("--")
+            .arg(out.file_name().ok_or("--out has no name")?),
+        Instant::now() + 10 * MINUTE,
+        false,
+    )
+    .map_err(failure)?;
+    fs::set_permissions(&archive, fs::Permissions::from_mode(0o600))
+        .map_err(|error| error.to_string())?;
+    Ok(archive)
+}
+
+struct Redaction {
+    homes: Vec<String>,
+    names: Vec<String>,
+}
+
+impl Redaction {
+    fn current() -> Self {
+        let mut homes = Vec::new();
+        if let Some(home) = std::env::var_os("HOME") {
+            if let Ok(canonical) = fs::canonicalize(&home) {
+                homes.push(canonical.to_string_lossy().into_owned());
+            }
+            homes.push(home.to_string_lossy().into_owned());
+        }
+        let mut names = Vec::new();
+        if let Ok(output) = Command::new("id")
+            .arg("-un")
+            .stdin(Stdio::null())
+            .stderr(Stdio::null())
+            .output()
+            && output.status.success()
+            && let Ok(name) = String::from_utf8(output.stdout)
+        {
+            names.push(name.trim_end_matches(['\r', '\n']).to_owned());
+        }
+        for key in ["USER", "LOGNAME"] {
+            if let Ok(name) = std::env::var(key) {
+                names.push(name);
+            }
+        }
+        Self::new(homes, names)
+    }
+
+    fn new(homes: Vec<String>, names: Vec<String>) -> Self {
+        let sorted = |values: Vec<String>| {
+            let mut values: Vec<_> = values
+                .into_iter()
+                .filter(|value| !value.is_empty())
+                .collect::<BTreeSet<_>>()
+                .into_iter()
+                .collect();
+            values.sort_by_key(|value| std::cmp::Reverse(value.len()));
+            values
+        };
+        let names = sorted(names).into_iter().filter(|name| {
+            let reserved = matches!(name.to_ascii_lowercase().as_str(),
+                "pass" | "fail" | "skip" | "unanswered" | "not-run" | "yes" | "no" | "dirty" | "true" | "false" | "null" | "planned" | "skipped" | "timeout" | "left for yu"
+            ) || (name.len() >= 7 && name.bytes().all(|byte| byte.is_ascii_hexdigit()));
+            if reserved {
+                progress(&format!("mac-proof: account name {name:?} matches a status word or hash; it may appear in the archive"));
+            }
+            !reserved
+        }).collect();
+        Self {
+            homes: sorted(homes),
+            names,
+        }
+    }
+
+    fn text(&self, text: &str, path_only: bool) -> String {
+        let mut result = String::with_capacity(text.len());
+        let mut rest = text;
+        let word_boundary =
+            |byte: u8| !byte.is_ascii_alphanumeric() && !matches!(byte, b'_' | b'-');
+        let path_boundary = |ch: char| {
+            ch == '/'
+                || ch.is_whitespace()
+                || matches!(
+                    ch,
+                    '"' | '\'' | '\\' | '`' | ')' | ']' | '}' | ',' | ';' | ':'
+                )
+        };
+        let temp_character = |ch: char| {
+            ch != '/'
+                && !ch.is_whitespace()
+                && !matches!(ch, '"' | '\'')
+                && (!path_only || ch != '\\')
+        };
+        while !rest.is_empty() {
+            if let Some(home) = self.homes.iter().find(|home| {
+                rest.starts_with(home.as_str())
+                    && rest[home.len()..].chars().next().is_none_or(path_boundary)
+            }) {
+                result.push('~');
+                rest = &rest[home.len()..];
+                continue;
+            }
+            let temporary = ["/private/var/folders/", "/var/folders/"]
+                .into_iter()
+                .find_map(|prefix| {
+                    let tail = rest.strip_prefix(prefix)?;
+                    let first = tail.find('/')?;
+                    if first == 0
+                        || &tail[..first] == "<id>"
+                        || !tail[..first].chars().all(temp_character)
+                    {
+                        return None;
+                    }
+                    let tail = &tail[first + 1..];
+                    let second = tail.find(|ch| !temp_character(ch)).unwrap_or(tail.len());
+                    (second > 0).then_some(prefix.len() + first + 1 + second)
+                });
+            if let Some(length) = temporary {
+                result.push_str("/var/folders/<id>");
+                rest = &rest[length..];
+                continue;
+            }
+            let before = text.as_bytes()[..text.len() - rest.len()].last().copied();
+            if !path_only
+                && let Some(name) = self.names.iter().find(|name| {
+                    rest.starts_with(name.as_str())
+                        && before.is_none_or(word_boundary)
+                        && rest
+                            .as_bytes()
+                            .get(name.len())
+                            .copied()
+                            .is_none_or(word_boundary)
+                })
+            {
+                result.push_str("<user>");
+                rest = &rest[name.len()..];
+                continue;
+            }
+            let ch = rest.chars().next().expect("nonempty text");
+            result.push(ch);
+            rest = &rest[ch.len_utf8()..];
+        }
+        result
+    }
+
+    fn value(&self, value: &mut Value) -> bool {
+        let mut changed = false;
+        match value {
+            Value::String(text) => {
+                let redacted = self.text(text, false);
+                if redacted != *text {
+                    *text = redacted;
+                    changed = true;
+                }
+            }
+            Value::Array(values) => {
+                for value in values {
+                    changed |= self.value(value);
+                }
+            }
+            Value::Object(values) => {
+                for value in values.values_mut() {
+                    changed |= self.value(value);
+                }
+            }
+            _ => {}
+        }
+        changed
+    }
+
+    fn rewrite(&self, out: &Path) -> io::Result<()> {
+        self.rewrite_path(out, out)
+    }
+
+    fn rewrite_path(&self, out: &Path, path: &Path) -> io::Result<()> {
+        let metadata = fs::symlink_metadata(path)?;
+        if metadata.is_symlink() {
+            return Ok(());
+        }
+        if metadata.is_dir() {
+            for entry in fs::read_dir(path)? {
+                self.rewrite_path(out, &entry?.path())?;
+            }
+        } else if metadata.is_file()
+            && let Ok(text) = String::from_utf8(fs::read(path)?)
+        {
+            let redacted = if path == out.join("summary.txt") || path == out.join("final.json") {
+                self.text(&text, true)
+            } else if path
+                .file_name()
+                .is_some_and(|name| name.to_string_lossy().ends_with(".json"))
+                && let Ok(mut value) = serde_json::from_str::<Value>(&text)
+            {
+                if !self.value(&mut value) {
+                    return Ok(());
+                }
+                serde_json::to_string_pretty(&value).expect("a JSON value serializes") + "\n"
+            } else {
+                self.text(&text, false)
+            };
+            if redacted != text {
+                fs::write(path, redacted)?;
+                fs::set_permissions(path, metadata.permissions())?;
+            }
+        }
+        Ok(())
+    }
+}
+
 fn discard_screen_capture(path: &Path) -> io::Result<()> {
     match fs::remove_file(path) {
         Err(error) if error.kind() == io::ErrorKind::NotFound => Ok(()),
@@ -404,6 +644,7 @@ fn check_home(
     home: &Path,
     out: &Path,
     before: &HomeSnapshot,
+    names: &[String],
     input: &mut impl BufRead,
     errors: &mut Vec<String>,
 ) -> String {
@@ -424,10 +665,15 @@ fn check_home(
             .unwrap_or_default()
             .to_string_lossy()
             .to_ascii_lowercase();
-        [
-            "nushell", "atuin", "zoxide", "carapace", "helix", "yazi", "lazygit", "starship", "eon",
-        ]
-        .contains(&name.as_str())
+        let name = name.strip_prefix('.').unwrap_or(&name);
+        std::iter::once("eon")
+            .chain(names.iter().map(String::as_str))
+            .any(|id| {
+                name == id
+                    || name
+                        .strip_prefix(id)
+                        .is_some_and(|suffix| suffix.starts_with(['.', '-', '_']))
+            })
             || name.contains("yazelix")
     });
     for path in &other {
@@ -477,6 +723,27 @@ fn check_home(
         tools.len()
     );
     report
+}
+
+fn component_names(source: &Path) -> Result<Vec<String>, String> {
+    let read = || -> Result<Vec<String>, String> {
+        let bytes =
+            fs::read(source.join("components/eon-v5.json")).map_err(|error| error.to_string())?;
+        let manifest: Value = serde_json::from_slice(&bytes).map_err(|error| error.to_string())?;
+        manifest["components"]
+            .as_array()
+            .ok_or("missing components array")?
+            .iter()
+            .map(|component| {
+                component["id"]
+                    .as_str()
+                    .filter(|name| !name.is_empty())
+                    .map(str::to_ascii_lowercase)
+                    .ok_or_else(|| "missing component id".to_owned())
+            })
+            .collect()
+    };
+    read().map_err(|error| format!("HOME component manifest: {error}"))
 }
 
 /// Gregorian civil date in UTC, counting whole days since the Unix epoch.
@@ -689,7 +956,14 @@ fn walk(
     (items, closed)
 }
 
-fn manual(package: PathBuf, source: &Path, out: &Path, bundle: &mut Bundle, log: &mut Log) {
+fn manual(
+    package: PathBuf,
+    source: &Path,
+    out: &Path,
+    bundle: &mut Bundle,
+    log: &mut Log,
+    input: &mut impl BufRead,
+) {
     let mut scenario = Scenario::new(package, out.join("manual"), Environment::User, true);
     let launched = (|| {
         scenario.prepare()?;
@@ -717,7 +991,7 @@ fn manual(package: PathBuf, source: &Path, out: &Path, bundle: &mut Bundle, log:
                 "Eon is open with its default configuration. Dismiss its directory picker with Escape to use the prepared launch directory.",
             );
             let (items, closed) = walk(
-                &mut io::stdin().lock(),
+                input,
                 |index| capture(&mut scenario, index, out, log).map(Some),
                 &mut bundle.errors,
             );
@@ -779,6 +1053,10 @@ pub fn final_check(options: Options) -> Result<bool, String> {
         .unwrap_or_else(std::env::current_dir)
         .map_err(|error| error.to_string())?;
     let source = Source::copy(&source)?;
+    let names = component_names(&source.0);
+    if let Err(error) = &names {
+        progress(error);
+    }
     // The real source step records this identity in run/; preparation must not add a file to it.
     let mut source_log = Log::new(
         File::options()
@@ -835,6 +1113,9 @@ pub fn final_check(options: Options) -> Result<bool, String> {
         Some((home, before))
     };
     let screen_access = out.join("screen-access.png");
+    let redaction = Redaction::current();
+    let stdin = io::stdin();
+    let mut input = stdin.lock();
     if !options.dry_run {
         progress(
             "If macOS asks whether your terminal app may bypass the system private window picker and access your screen, choose Allow: left open, that dialog covers Eon in every capture.",
@@ -854,6 +1135,10 @@ pub fn final_check(options: Options) -> Result<bool, String> {
         log.line(&format!(
             "screen-access capture: {result}; file present: {present}; cleanup: {cleanup:?}"
         ));
+        line(
+            &mut input,
+            "Hide desktop widgets (System Settings > Desktop & Dock) and turn on Do Not Disturb (Control Center > Focus): whole-screen captures include them. Press Enter to continue.",
+        );
     }
     progress(
         "The automatic run takes hours. Keep the Mac awake and untouched until it rings. The GUI scenario types into Eon.",
@@ -894,7 +1179,7 @@ pub fn final_check(options: Options) -> Result<bool, String> {
         errors: Vec::new(),
     };
     if options.dry_run {
-        let (items, closed) = walk(&mut io::stdin().lock(), |_| Ok(None), &mut bundle.errors);
+        let (items, closed) = walk(&mut input, |_| Ok(None), &mut bundle.errors);
         bundle.items = items;
         if closed {
             bundle.errors.push("stdin closed or at EOF".to_owned());
@@ -903,7 +1188,7 @@ pub fn final_check(options: Options) -> Result<bool, String> {
         match report.package {
             Ok(package) => {
                 ring(&mut log);
-                manual(package, &source.0, &out, &mut bundle, &mut log);
+                manual(package, &source.0, &out, &mut bundle, &mut log, &mut input);
             }
             Err(reason) => bundle.items = records("not-run", &reason),
         }
@@ -913,13 +1198,18 @@ pub fn final_check(options: Options) -> Result<bool, String> {
             &home,
             &out,
             &before,
-            &mut io::stdin().lock(),
+            names.as_deref().unwrap_or(&[]),
+            &mut input,
             &mut bundle.errors,
         )
     });
+    if let Err(error) = names {
+        bundle.errors.push(error);
+    }
     for line in home_report.lines() {
         log.line(line);
     }
+    bundle.redact(&redaction);
     fs::write(out.join("summary.txt"), bundle.summary() + &home_report)
         .map_err(|error| error.to_string())?;
     fs::write(
@@ -930,22 +1220,11 @@ pub fn final_check(options: Options) -> Result<bool, String> {
     // A timed-out screencapture may write its file late.
     discard_screen_capture(&screen_access)
         .map_err(|error| format!("remove throwaway screen capture: {error}"))?;
-    let archive = archive_path(&out);
-    succeed(
-        &mut log,
-        Command::new("tar")
-            .arg("-czf")
-            .arg(&archive)
-            .arg("-C")
-            .arg(out.parent().ok_or("--out has no parent")?)
-            .arg("--")
-            .arg(out.file_name().ok_or("--out has no name")?),
-        Instant::now() + 10 * MINUTE,
-        false,
-    )
-    .map_err(failure)?;
-    fs::set_permissions(&archive, fs::Permissions::from_mode(0o600))
-        .map_err(|error| error.to_string())?;
+    drop(log);
+    redaction
+        .rewrite(&out)
+        .map_err(|error| format!("redact evidence: {error}"))?;
+    let archive = archive(&out)?;
     progress(&format!(
         "Archive: {}\nYu, you may look inside before sending it to Lucca.",
         archive.display()
@@ -956,6 +1235,232 @@ pub fn final_check(options: Options) -> Result<bool, String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn evidence_redaction_preserves_boundaries_binary_files_and_json_facts() {
+        let root = std::env::temp_dir().join(format!("mac-proof-redaction-{}", std::process::id()));
+        let out = root.join("evidence");
+        fs::create_dir_all(out.join("run/nested")).unwrap();
+        let original = "path=/Users/yu/log\nhome=\"/Users/yu\" raw=/raw/yu/file\nUSER=\"yu\" LOGNAME='yu.long'\nyu\n/Users/yux yus rename_yu yu_1\nodd=yu+friend\nnot-run yu-bundle bundle-yu run yu rev\n/var/folders/ab/account-id/T/log /private/var/folders/cd/account…\n";
+        let expected = "path=~/log\nhome=\"~\" raw=~/file\nUSER=\"<user>\" LOGNAME='<user>'\n<user>\n/Users/yux yus rename_yu yu_1\nodd=<user>\nnot-run yu-bundle bundle-yu <user> <user> <user>\n/var/folders/<id>/T/log /var/folders/<id>\n";
+        let text = out.join("run/nested/session.log");
+        fs::write(&text, original).unwrap();
+        fs::set_permissions(&text, fs::Permissions::from_mode(0o640)).unwrap();
+        let binary = b"\xffyu /Users/yu\0";
+        fs::write(out.join("capture.png"), binary).unwrap();
+        let outside = root.join("outside");
+        fs::create_dir(&outside).unwrap();
+        fs::write(outside.join("secret"), original).unwrap();
+        std::os::unix::fs::symlink(&outside, out.join("linked-directory")).unwrap();
+        std::os::unix::fs::symlink(outside.join("secret"), out.join("linked-file")).unwrap();
+        let facts = json!({
+            "statuses": ["pass", "fail", "skip", "unanswered", "not-run", "yes", "no", "dirty", "true", "false", "null", "planned", "skipped", "timeout"],
+            "rev": "abcdef0123456789", "tree": "abcdef0", "dry_run": true, "capture": null, "yu": "yu",
+            "generated": "Automatic run: left for Yu",
+        });
+        for name in ["final.json", "run/summary.json", "run/final.json"] {
+            let mut fixture = facts.clone();
+            fixture["first_failure"] = json!("yu: /Users/yu/failure");
+            fixture["details"] = json!([{"yu": "yu /Users/yu/detail"}, "yu /raw/yu/second"]);
+            fixture["note"] = json!(
+                "yu /Users/yu /raw/yu /private/var/folders/ab/full-id/T /var/folders/ab/ellips… \"/var/folders/ef/quoted\""
+            );
+            fs::write(out.join(name), fixture.to_string()).unwrap();
+            fs::set_permissions(out.join(name), fs::Permissions::from_mode(0o640)).unwrap();
+        }
+        let summary = "Automatic run: left for Yu\nmac-proof pass: 90 steps, 0 not passed\nyu: /Users/yu /private/var/folders/ab/account-id/T\n";
+        let expected_summary = "Automatic run: left for Yu\nmac-proof pass: 90 steps, 0 not passed\nyu: ~ /var/folders/<id>/T\n";
+        for name in ["summary.txt", "run/summary.txt"] {
+            fs::write(out.join(name), summary).unwrap();
+        }
+        fs::write(out.join("run/broken.json"), "broken { yu /Users/yu/file\n").unwrap();
+        let unchanged = r#"{"rev":"abcdef0123456789","status":"pass","ok":true}"#;
+        fs::write(out.join("run/unchanged.json"), unchanged).unwrap();
+        fs::set_permissions(
+            out.join("run/unchanged.json"),
+            fs::Permissions::from_mode(0o400),
+        )
+        .unwrap();
+        let mut names = vec![
+            "yu",
+            "yu.long",
+            "yu+friend",
+            "run",
+            "rev",
+            "for",
+            "steps",
+            "not",
+            "yu",
+            "",
+            "abcdef0",
+            "abcdef0123456789",
+        ];
+        names.extend(
+            facts["statuses"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .map(|v| v.as_str().unwrap()),
+        );
+        let redaction = Redaction::new(
+            vec!["/Users/yu".to_owned(), "/raw/yu".to_owned()],
+            names.into_iter().map(str::to_owned).collect(),
+        );
+        redaction.rewrite(&out).unwrap();
+        assert_eq!(fs::read_to_string(&text).unwrap(), expected);
+        assert_eq!(
+            fs::metadata(&text).unwrap().permissions().mode() & 0o777,
+            0o640
+        );
+        assert_eq!(fs::read(out.join("capture.png")).unwrap(), binary);
+        assert_eq!(
+            fs::read_to_string(outside.join("secret")).unwrap(),
+            original
+        );
+        for name in ["final.json", "run/summary.json", "run/final.json"] {
+            let text = fs::read_to_string(out.join(name)).unwrap();
+            let fixture: Value = serde_json::from_str(&text).unwrap();
+            let mut expected = facts.clone();
+            if name == "final.json" {
+                expected["note"] =
+                    json!("yu ~ ~ /var/folders/<id>/T /var/folders/<id> \"/var/folders/<id>\"");
+                expected["first_failure"] = json!("yu: ~/failure");
+                expected["details"] = json!([{"yu": "yu ~/detail"}, "yu ~/second"]);
+            } else {
+                expected["yu"] = json!("<user>");
+                expected["generated"] = json!("Automatic <user>: left <user> Yu");
+                expected["note"] =
+                    json!("<user> ~ ~ /var/folders/<id>/T /var/folders/<id> \"/var/folders/<id>\"");
+                expected["first_failure"] = json!("<user>: ~/failure");
+                expected["details"] = json!([{"yu": "<user> ~/detail"}, "<user> ~/second"]);
+            }
+            assert_eq!(fixture, expected, "{name}");
+            if name != "final.json" {
+                assert!(text.starts_with("{\n") && text.ends_with('\n'));
+            }
+            assert_eq!(
+                fs::metadata(out.join(name)).unwrap().permissions().mode() & 0o777,
+                0o640
+            );
+        }
+        assert_eq!(
+            fs::read_to_string(out.join("summary.txt")).unwrap(),
+            expected_summary
+        );
+        assert_eq!(
+            fs::read_to_string(out.join("run/summary.txt")).unwrap(),
+            "Automatic <user>: left <user> Yu\nmac-proof pass: 90 <user>, 0 <user> passed\n<user>: ~ /var/folders/<id>/T\n"
+        );
+        assert_eq!(
+            fs::read_to_string(out.join("run/broken.json")).unwrap(),
+            "broken { <user> ~/file\n"
+        );
+        assert_eq!(
+            fs::read_to_string(out.join("run/unchanged.json")).unwrap(),
+            unchanged
+        );
+        assert_eq!(
+            fs::metadata(out.join("run/unchanged.json"))
+                .unwrap()
+                .permissions()
+                .mode()
+                & 0o777,
+            0o400
+        );
+        assert!(redaction.rewrite(&out.join("missing")).is_err());
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn bundle_redaction_changes_notes_and_errors_without_changing_generated_fields() {
+        let out =
+            std::env::temp_dir().join(format!("mac-proof-bundle-redaction-{}", std::process::id()));
+        fs::create_dir(&out).unwrap();
+        let mut bundle = Bundle {
+            rev: "abcdef012345".to_owned(),
+            tree: "abcdef0123456789".to_owned(),
+            date: "2026-10-29".to_owned(),
+            dry_run: false,
+            run_result: "left for Yu",
+            items: records(
+                "not-run",
+                "yu /Users/yu/note /var/folders/ab/account-id/T/note",
+            ),
+            errors: vec![
+                "yu: /Users/yu/error /private/var/folders/cd/account-id/T/error".to_owned(),
+            ],
+        };
+        bundle.items.truncate(1);
+        bundle.items[0].title = "yu for steps not";
+        let redaction = Redaction::new(
+            vec!["/Users/yu".to_owned()],
+            ["yu", "for", "steps", "not"]
+                .into_iter()
+                .map(str::to_owned)
+                .collect(),
+        );
+        bundle.redact(&redaction);
+        fs::write(out.join("final.json"), bundle.json().to_string()).unwrap();
+        fs::write(out.join("summary.txt"), bundle.summary()).unwrap();
+        redaction.rewrite(&out).unwrap();
+        let manifest: Value =
+            serde_json::from_slice(&fs::read(out.join("final.json")).unwrap()).unwrap();
+        assert_eq!(
+            manifest["items"][0]["note"],
+            "<user> ~/note /var/folders/<id>/T/note"
+        );
+        assert_eq!(
+            manifest["errors"],
+            json!(["<user>: ~/error /var/folders/<id>/T/error"])
+        );
+        assert_eq!(manifest["run_result"], "left for Yu");
+        assert_eq!(manifest["items"][0]["answer"], "not-run");
+        assert_eq!(manifest["items"][0]["title"], "yu for steps not");
+        assert_eq!(manifest["rev"], "abcdef012345");
+        assert_eq!(manifest["tree"], "abcdef0123456789");
+        assert_eq!(manifest["date"], "2026-10-29");
+        assert_eq!(
+            fs::read_to_string(out.join("summary.txt")).unwrap(),
+            "Automatic run: left for Yu\n1. yu for steps not: not-run — <user> ~/note /var/folders/<id>/T/note\nManual: <user>: ~/error /var/folders/<id>/T/error\n"
+        );
+        fs::remove_dir_all(out).unwrap();
+    }
+
+    #[test]
+    fn archives_omit_owner_and_group_names() {
+        let root = std::env::temp_dir().join(format!("mac-proof-archive-{}", std::process::id()));
+        let out = root.join("evidence");
+        fs::create_dir_all(out.join("nested")).unwrap();
+        fs::write(out.join("nested/log"), "evidence\n").unwrap();
+        let archive = archive(&out).unwrap();
+        let output = Command::new("gzip")
+            .arg("-dc")
+            .arg(&archive)
+            .output()
+            .unwrap();
+        assert!(output.status.success());
+        let mut offset = 0;
+        let mut headers = 0;
+        while offset + 512 <= output.stdout.len() {
+            let header = &output.stdout[offset..offset + 512];
+            if header.iter().all(|byte| *byte == 0) {
+                break;
+            }
+            assert!(
+                header[265..329].iter().all(|byte| *byte == 0),
+                "owner/group: {:?}",
+                &header[265..329]
+            );
+            let size = std::str::from_utf8(&header[124..136])
+                .unwrap()
+                .trim_matches(['\0', ' ']);
+            let size = usize::from_str_radix(size, 8).unwrap();
+            offset += 512 + size.div_ceil(512) * 512;
+            headers += 1;
+        }
+        assert!(headers >= 3);
+        fs::remove_dir_all(root).unwrap();
+    }
 
     #[test]
     fn throwaway_screen_capture_cleanup_handles_missing_and_late_files() {
@@ -993,6 +1498,14 @@ mod tests {
             let home = root.join("home");
             let existing = home.join(".config/NuShell");
             fs::create_dir_all(&existing).unwrap();
+            fs::create_dir_all(home.join("Library/Application Support")).unwrap();
+            fs::create_dir(root.join("components")).unwrap();
+            fs::write(
+                root.join("components/eon-v5.json"),
+                r#"{"components":[{"id":"atuin"},{"id":"codexbar"},{"id":"bash"},{"id":"helix"}]}"#,
+            )
+            .unwrap();
+            let names = component_names(&root).unwrap();
             fs::write(existing.join("history.txt"), "keep history").unwrap();
             let cache = root.join("cache");
             fs::create_dir(&cache).unwrap();
@@ -1016,27 +1529,56 @@ mod tests {
             std::os::unix::fs::symlink(&target, &link).unwrap();
             let other = home.join("other-private-name");
             fs::write(&other, "keep other").unwrap();
+            let notes = home.join("my-notes");
+            fs::write(&notes, "keep notes").unwrap();
+            let cargo = home.join(".cargo");
+            fs::create_dir(&cargo).unwrap();
+            let components = [
+                ".codexbar",
+                ".config/codexbar",
+                ".bash_history",
+                "Library/Application Support/helix",
+            ];
+            for name in components {
+                fs::write(home.join(name), "created by component").unwrap();
+            }
             fs::write(archive_path(&out), "keep archive").unwrap();
             let mut errors = Vec::new();
-            let report = check_home(&home, &out, &before, &mut answer.as_bytes(), &mut errors);
+            let report = check_home(
+                &home,
+                &out,
+                &before,
+                &names,
+                &mut answer.as_bytes(),
+                &mut errors,
+            );
             let log_path = root.join("final.log");
             let mut log = Log::new(File::create(&log_path).unwrap());
             log.line(&report);
             assert!(errors.is_empty());
             assert_eq!(tool.exists(), !remove);
             assert_eq!(link.symlink_metadata().is_ok(), !remove);
+            for name in components {
+                assert_eq!(home.join(name).exists(), !remove);
+            }
             assert!(target.join("kept").exists());
             assert_eq!(
                 fs::read_to_string(existing.join("history.txt")).unwrap(),
                 "keep history"
             );
-            assert!(other.exists() && out.exists() && archive_path(&out).exists());
+            assert!(
+                other.exists()
+                    && notes.exists()
+                    && cargo.exists()
+                    && out.exists()
+                    && archive_path(&out).exists()
+            );
             assert_eq!(
                 report,
                 format!(
-                    "HOME: 1 other new entries, listed on the terminal only\nHOME: 2 entries from Eon's tools, {}\n",
+                    "HOME: 3 other new entries, listed on the terminal only\nHOME: 6 entries from Eon's tools, {}\n",
                     if remove {
-                        "2 removed (answer: yes)"
+                        "6 removed (answer: yes)"
                     } else {
                         "kept (answer: no)"
                     }
@@ -1050,7 +1592,7 @@ mod tests {
             );
             let before = home_snapshot(&home, &out);
             let mut untouched = &b"yes\n"[..];
-            check_home(&home, &out, &before, &mut untouched, &mut errors);
+            check_home(&home, &out, &before, &names, &mut untouched, &mut errors);
             assert_eq!(untouched, b"yes\n");
             fs::remove_dir_all(root).unwrap();
         }
@@ -1068,11 +1610,11 @@ mod tests {
         fs::write(tool.join("private-history"), "history").unwrap();
         let mut errors = Vec::new();
         let mut closed = io::BufReader::new(File::open(&home).unwrap());
-        let report = check_home(&home, &out, &before, &mut closed, &mut errors);
+        let report = check_home(&home, &out, &before, &[], &mut closed, &mut errors);
         assert!(report.contains("kept (answer: no)") && tool.exists());
         assert!(errors.is_empty());
         fs::set_permissions(&tool, fs::Permissions::from_mode(0o500)).unwrap();
-        let report = check_home(&home, &out, &before, &mut &b"yes\n"[..], &mut errors);
+        let report = check_home(&home, &out, &before, &[], &mut &b"yes\n"[..], &mut errors);
         fs::set_permissions(&tool, fs::Permissions::from_mode(0o700)).unwrap();
         fs::remove_dir_all(&home).unwrap();
         assert!(report.contains("0 removed (answer: yes)"));
@@ -1106,7 +1648,7 @@ mod tests {
             }
             let mut input = &b"yes\n"[..];
             let mut errors = Vec::new();
-            let report = check_home(&home, &out, &before, &mut input, &mut errors);
+            let report = check_home(&home, &out, &before, &[], &mut input, &mut errors);
             fs::set_permissions(&directory, fs::Permissions::from_mode(0o700)).unwrap();
             let kept = new.exists()
                 && fs::read_to_string(existing.join("history.txt"))
