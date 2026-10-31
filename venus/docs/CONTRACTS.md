@@ -675,6 +675,13 @@ re-proved when that platform or feature is next touched.
     snapshot and sends the existing stable `tN` through `FocusId`. A missing
     position is consumed without an action or terminal input. Alt+H/L remains
     the traversal path for tabs after position 10.
+  - Physical Ctrl+Tab and Ctrl+Shift+Tab, with terminal or chrome focus, focus
+    the tab after or before the active one in the accepted snapshot's order,
+    wrapping from the last tab to the first and from the first to the last.
+    Venus sends that tab's stable `tN` through `FocusId`, as Alt+1 through
+    Alt+0 do, so pane, popup and focus behavior is the same. With one tab the
+    key is consumed without an action or terminal input. A configured popup on
+    either key takes it (VEN-C20).
   - Ctrl+Alt+Shift+H/L sends one non-repeating semantic move for the active
     tab; Ctrl+Alt+K/J does the same for its selected pane within its column, and
     Ctrl+Alt+H/L sends one EONW v12 sideways move of that pane into the
@@ -832,7 +839,17 @@ re-proved when that platform or feature is next touched.
   (1280x720) zoomed the second of two columns, showed the `· zoom` pill, sent
   typed input to the zoomed terminal, kept a counter in the hidden column
   printing (8 before, 24 after), restored both columns on Alt+Shift+Z, and
-  ended the zoom on Alt+H. Pending
+  ended the zoom on Alt+H. Tab cycling (`eon-ctrl-tab-next-tab-q6vj`, whose
+  commit is the revision) is covered by
+  `ctrl_tab_selects_adjacent_tabs_in_order_and_wraps` and
+  `configured_popups_take_fixed_bindings_except_reserved_keys`; isolated
+  dogfood of the built package (edge `62c8cb5`, code tree `1c304b4`, whose
+  `nix build` gave `/nix/store/wgrz0ladwg0r4c3addmjiqkijwah8900-eon-0.1.8`,
+  x86_64 Linux, private headless Sway, 1280x720), with tabs t1, t2 and t3 and
+  t3 active, read the active tab from `eon workspace --json` as t1, t2, t1, t3
+  and t1 after Ctrl+Tab, Ctrl+Tab, Ctrl+Shift+Tab, Ctrl+Shift+Tab and
+  Ctrl+Tab, and t1's shell line still read `ech` after the two presses made
+  from t1. Pending
   re-proof in this repository: the ignored native long-label header regression and reader
   announcement of a workspace failure notice.
 
@@ -1277,7 +1294,8 @@ re-proved when that platform or feature is next touched.
   Alt+Shift+G, listed as "Jump to the next agent needing attention" and "Jump
   to the previous agent needing attention" (VEN-C30) under every `sidebar`.
   The fixed bindings also include Alt+Q, listed as "Show the attention inbox" (VEN-C32) under
-  every `sidebar`.
+  every `sidebar`, and Ctrl+Tab and Ctrl+Shift+Tab, listed as "Focus next tab" and "Focus
+  previous tab" (VEN-C8).
 - **Important failures:** Repeated toggle events do not oscillate the viewer.
   Workspace loss, empty or maximum-size catalogs, long labels, resize, scale,
   focus loss, and tiny surfaces retain local dismissal and clipped, scrollable
@@ -1321,6 +1339,9 @@ re-proved when that platform or feature is next touched.
     recorded under VEN-C30: the viewer listed `Alt+G` `Jump to the next agent
     needing attention` and `Alt+Shift+G` `Jump to the previous agent needing
     attention` under Navigate, also with `sidebar` `Off`.
+  - **Tab-cycling rows (`eon-ctrl-tab-next-tab-q6vj`):** the installed
+    dogfood recorded under VEN-C8: the viewer listed `Ctrl+Tab` `Focus next
+    tab` and `Ctrl+Shift+Tab` `Focus previous tab` under Navigate.
 - **Open proof:** Pending re-proof in this repository: AT-SPI dialog traversal
   and tiny-surface clipping.
 
@@ -1666,6 +1687,7 @@ re-proved when that platform or feature is next touched.
   Width pressure drops low-priority hints before help and the visibility
   toggle. Native focus-specific keys appear only in their applicable context.
   F6 stays in full help and keyboard navigation, without a footer hint.
+  Ctrl+Tab and Ctrl+Shift+Tab stay in full help and dispatch, without footer hints.
   Project is omitted from hints; Alt+Z and its full-help entry remain available.
   Alt+Shift+H has the hint "sidebar", omitted while the EONW snapshot's
   `sidebar` is `Off` (VEN-C30). Alt+G and Alt+Shift+G have the hints "next
@@ -1707,6 +1729,9 @@ re-proved when that platform or feature is next touched.
     dogfood recorded under VEN-C30: the footer showed `G next agent` in the
     Alt group and `G previous agent` in the Alt+Shift group, also with
     `sidebar` `Off`.
+  - **Tab-cycling keys (`eon-ctrl-tab-next-tab-q6vj`):** the installed
+    dogfood recorded under VEN-C8: the footer showed no hint for Ctrl+Tab or
+    Ctrl+Shift+Tab.
 - **Open proof:** Pending re-proof in this repository: native raster checks of
   the footer below the cards across widths and fractional scale, and read-only
   AT-SPI footer lifecycle.

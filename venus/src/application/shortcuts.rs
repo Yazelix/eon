@@ -32,6 +32,8 @@ pub(super) enum NativeShortcutAction {
     NewWindow,
     Detach,
     FocusTabPosition,
+    NextTab,
+    PreviousTab,
     Focus(WorkspaceDirection),
     Move(WorkspaceDirection),
     MovePaneSideways(Side),
@@ -113,6 +115,20 @@ pub(super) static FIXED_SHORTCUTS: &[NativeShortcut] = &[
         trigger: NativeShortcutTrigger::AltDigits,
         action: NativeShortcutAction::FocusTabPosition,
     },
+    NativeShortcut::key(
+        "Navigate",
+        "Focus next tab",
+        KeyCode::Tab,
+        session::Modifiers::CTRL,
+        NativeShortcutAction::NextTab,
+    ),
+    NativeShortcut::key(
+        "Navigate",
+        "Focus previous tab",
+        KeyCode::Tab,
+        CTRL_SHIFT,
+        NativeShortcutAction::PreviousTab,
+    ),
     NativeShortcut::key(
         "Navigate",
         "Focus left column or previous tab",
@@ -783,29 +799,51 @@ pub(super) fn sideways_move_opens_column(tab: &Tab, side: Side) -> bool {
     })
 }
 
-pub(super) fn tab_shortcut_index(
+/// The tab a tab-selection key selects, resolved from the accepted snapshot. `Some(None)`
+/// consumes the key without an action: a missing position, or the next tab of a lone tab.
+pub(super) fn tab_shortcut_target(
     code: KeyCode,
     modifiers: orbit_protocol::session::Modifiers,
-) -> Option<usize> {
-    // Eon reserves tab positions, so no popup takes them.
-    if native_key_shortcut(PhysicalKey::Code(code), modifiers, &[])
-        .is_none_or(|shortcut| shortcut.action != NativeShortcutAction::FocusTabPosition)
-    {
-        return None;
-    }
-    match code {
-        KeyCode::Digit1 => Some(0),
-        KeyCode::Digit2 => Some(1),
-        KeyCode::Digit3 => Some(2),
-        KeyCode::Digit4 => Some(3),
-        KeyCode::Digit5 => Some(4),
-        KeyCode::Digit6 => Some(5),
-        KeyCode::Digit7 => Some(6),
-        KeyCode::Digit8 => Some(7),
-        KeyCode::Digit9 => Some(8),
-        KeyCode::Digit0 => Some(9),
-        _ => None,
-    }
+    snapshot: &Snapshot,
+) -> Option<Option<&Tab>> {
+    let shortcut = native_key_shortcut(PhysicalKey::Code(code), modifiers, &snapshot.entries)?;
+    let index = match shortcut.action {
+        NativeShortcutAction::FocusTabPosition => match code {
+            KeyCode::Digit1 => 0,
+            KeyCode::Digit2 => 1,
+            KeyCode::Digit3 => 2,
+            KeyCode::Digit4 => 3,
+            KeyCode::Digit5 => 4,
+            KeyCode::Digit6 => 5,
+            KeyCode::Digit7 => 6,
+            KeyCode::Digit8 => 7,
+            KeyCode::Digit9 => 8,
+            KeyCode::Digit0 => 9,
+            _ => return None,
+        },
+        NativeShortcutAction::NextTab | NativeShortcutAction::PreviousTab => {
+            let count = snapshot.tabs.len();
+            let Some(active) = snapshot
+                .tabs
+                .iter()
+                .position(|tab| tab.id == snapshot.active_tab)
+            else {
+                return Some(None);
+            };
+            let step = if shortcut.action == NativeShortcutAction::NextTab {
+                1
+            } else {
+                count - 1
+            };
+            let index = (active + step) % count;
+            if index == active {
+                return Some(None);
+            }
+            index
+        }
+        _ => return None,
+    };
+    Some(snapshot.tabs.get(index))
 }
 
 pub(super) fn popup_shortcut(
@@ -1297,6 +1335,8 @@ mod tests {
                 !matches!(
                     shortcut.action,
                     NativeShortcutAction::CycleFocus
+                        | NativeShortcutAction::NextTab
+                        | NativeShortcutAction::PreviousTab
                         | NativeShortcutAction::ReturnToTerminal
                         | NativeShortcutAction::TraverseChrome(_)
                         | NativeShortcutAction::Copy
@@ -1317,7 +1357,7 @@ mod tests {
 
     #[test]
     fn configured_popups_take_fixed_bindings_except_reserved_keys() {
-        use eon_workspace_protocol::v25::{ALT, SHIFT, Shortcut};
+        use eon_workspace_protocol::v25::{ALT, CTRL, SHIFT, Shortcut};
 
         let popup = |id: &str, modifiers, key: &str| PopupEntry {
             id: id.into(),
@@ -1337,6 +1377,7 @@ mod tests {
                 popup("closer", ALT, "KeyW"),
                 popup("git", ALT, "KeyG"),
                 popup("inbox", ALT, "KeyQ"),
+                popup("next", CTRL, "Tab"),
                 // Runtime rejects these; Venus still keeps the reserved bindings.
                 popup("viewer", ALT, "Slash"),
                 popup("third", ALT, "Digit3"),
@@ -1352,6 +1393,7 @@ mod tests {
                 (PhysicalKey::Code(KeyCode::KeyB), ALT_SHIFT),
                 (PhysicalKey::Code(KeyCode::KeyG), session::Modifiers::ALT),
                 (PhysicalKey::Code(KeyCode::KeyQ), session::Modifiers::ALT),
+                (PhysicalKey::Code(KeyCode::Tab), session::Modifiers::CTRL),
             ] {
                 assert!(native_key_shortcut_for(platform, key, modifiers, &entries).is_none());
             }
@@ -1389,6 +1431,8 @@ mod tests {
                 "Jump to the next agent needing attention (overridden by Files)",
                 "Show the attention inbox (overridden by Files)",
                 "Jump to the previous agent needing attention",
+                "Focus next tab (overridden by Files)",
+                "Focus previous tab",
             ] {
                 assert!(rows.iter().any(|row| row == action), "missing {action}");
             }
@@ -1528,27 +1572,94 @@ mod tests {
         }
     }
 
+    fn tabs_snapshot(ids: &[&str], active: &str) -> Snapshot {
+        Snapshot {
+            workspace: "w1".into(),
+            active_workspace: "w1".into(),
+            workspaces: Vec::new(),
+            active_tab: active.into(),
+            geometry: eon_workspace_protocol::v25::PopupGeometry {
+                side_margin: 8.0,
+                vertical_margin: 4.0,
+            },
+            entries: Vec::new(),
+            tabs: ids
+                .iter()
+                .map(|id| Tab {
+                    id: (*id).into(),
+                    directory: b"/".to_vec(),
+                    pending: false,
+                    selected_pane: None,
+                    selected_popup: None,
+                    columns: Vec::new(),
+                    popups: Vec::new(),
+                    attention_rollup: None,
+                })
+                .collect(),
+            codex_quota: None,
+            claude_quota: None,
+            sidebar: Sidebar::Open,
+            attention_queue: Vec::new(),
+        }
+    }
+
+    fn target_id(
+        code: KeyCode,
+        modifiers: session::Modifiers,
+        snapshot: &Snapshot,
+    ) -> Option<Option<&str>> {
+        tab_shortcut_target(code, modifiers, snapshot).map(|tab| tab.map(|tab| tab.id.as_str()))
+    }
+
     #[test]
     fn alt_digits_resolve_current_tab_positions_without_leaking_missing_targets() {
-        use orbit_protocol::session::Modifiers;
-
         let tabs = ["t7", "t2", "t3", "t4", "t5", "t6", "t1", "t8", "t9", "t10"];
+        let snapshot = tabs_snapshot(&tabs, "t2");
 
-        for (key, expected_index, id) in [
-            (KeyCode::Digit1, 0, "t7"),
-            (KeyCode::Digit9, 8, "t9"),
-            (KeyCode::Digit0, 9, "t10"),
+        for (key, id) in [
+            (KeyCode::Digit1, "t7"),
+            (KeyCode::Digit9, "t9"),
+            (KeyCode::Digit0, "t10"),
         ] {
-            let index = tab_shortcut_index(key, Modifiers::ALT);
-            assert_eq!(index, Some(expected_index));
-            assert_eq!(index.and_then(|index| tabs.get(index)), Some(&id));
+            assert_eq!(
+                target_id(key, session::Modifiers::ALT, &snapshot),
+                Some(Some(id))
+            );
         }
-        let missing = tab_shortcut_index(KeyCode::Digit9, Modifiers::ALT);
-        assert!(missing.is_some());
-        assert_eq!(missing.and_then(|index| tabs[..2].get(index)), None);
+        // A missing position is consumed without a target.
+        let short = tabs_snapshot(&tabs[..2], "t7");
         assert_eq!(
-            tab_shortcut_index(KeyCode::Digit1, Modifiers::empty()),
+            target_id(KeyCode::Digit9, session::Modifiers::ALT, &short),
+            Some(None)
+        );
+        assert_eq!(
+            target_id(KeyCode::Digit1, session::Modifiers::empty(), &snapshot),
             None
         );
+    }
+
+    #[test]
+    fn ctrl_tab_selects_adjacent_tabs_in_order_and_wraps() {
+        let snapshot = |active| tabs_snapshot(&["t3", "t1", "t2"], active);
+        for (active, next, previous) in [("t3", "t1", "t2"), ("t1", "t2", "t3"), ("t2", "t3", "t1")]
+        {
+            assert_eq!(
+                target_id(KeyCode::Tab, session::Modifiers::CTRL, &snapshot(active)),
+                Some(Some(next))
+            );
+            assert_eq!(
+                target_id(KeyCode::Tab, CTRL_SHIFT, &snapshot(active)),
+                Some(Some(previous))
+            );
+        }
+        // A lone tab consumes both keys, so nothing reaches the terminal, and selects nothing.
+        let lone = tabs_snapshot(&["t1"], "t1");
+        for modifiers in [session::Modifiers::CTRL, CTRL_SHIFT] {
+            assert_eq!(target_id(KeyCode::Tab, modifiers, &lone), Some(None));
+        }
+        // Plain Tab and Shift+Tab stay chrome traversal or terminal input.
+        for modifiers in [session::Modifiers::empty(), session::Modifiers::SHIFT] {
+            assert_eq!(target_id(KeyCode::Tab, modifiers, &snapshot("t1")), None);
+        }
     }
 }

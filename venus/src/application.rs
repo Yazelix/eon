@@ -58,7 +58,7 @@ use shortcuts::{
     NativeShortcutAction, NativeShortcutTrigger, WORKSPACES_ENTRY, copy_paste_modifiers,
     detach_chord, invoke_popup, native_key_shortcut, native_key_shortcut_for,
     native_pointer_shortcut, paste_shortcut, popup_shortcut, shortcut_groups, shortcut_hints_for,
-    sideways_move_opens_column, tab_shortcut_index, workspace_picker_tooltip, workspace_shortcut,
+    sideways_move_opens_column, tab_shortcut_target, workspace_picker_tooltip, workspace_shortcut,
 };
 
 const BLINK_INTERVAL: Duration = Duration::from_millis(500);
@@ -2666,12 +2666,11 @@ impl Application {
             .tabs
             .iter()
             .find(|tab| tab.id == snapshot.active_tab);
-        let tab_index = tab_shortcut_index(code, modifiers);
-        let action = match tab_index {
-            Some(index) => snapshot
-                .tabs
-                .get(index)
-                .map(|tab| WorkspaceAction::Workspace(CommonAction::FocusId(tab.id.clone()))),
+        let tab_target = tab_shortcut_target(code, modifiers, snapshot);
+        let action = match tab_target {
+            Some(tab) => {
+                tab.map(|tab| WorkspaceAction::Workspace(CommonAction::FocusId(tab.id.clone())))
+            }
             None => popup_shortcut(
                 code,
                 modifiers,
@@ -2708,7 +2707,7 @@ impl Application {
                 || toggles_zoom
                 || cycles_focus
                 || returns_to_terminal
-                || tab_index.is_some()
+                || tab_target.is_some()
                 || closes_pane
                 || action.is_some(),
         ) {

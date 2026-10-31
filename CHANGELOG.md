@@ -5,6 +5,10 @@ installation, and proven contract changes.
 
 ## Unreleased
 
+- Ctrl+Tab and Ctrl+Shift+Tab select the next and previous tab, wrapping
+  around. They no longer reach the terminal; a configured popup on either key
+  takes it.
+
 - Only the Venus that Eon starts for a window can attach to that window's
   terminals. Another program that connects to a terminal's socket is refused as
   busy and cannot see its screen or type into it.

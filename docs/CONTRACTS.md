@@ -1987,7 +1987,9 @@ socket names, JSON fields and protocol identifiers retain their spellings.
   Alt+Shift+H, listed as "Show or hide the agent sidebar" (EON-C31,
   VEN-C30) and omitted while `sidebar` is `Off`, and Alt+G and Alt+Shift+G,
   listed as "Jump to the next agent needing attention" and "Jump to the
-  previous agent needing attention" (EON-C31, VEN-C30) under every `sidebar`.
+  previous agent needing attention" (EON-C31, VEN-C30) under every `sidebar`,
+  and Ctrl+Tab and Ctrl+Shift+Tab, listed as "Focus next tab" and "Focus
+  previous tab" (VEN-C8).
 - **Important failures:** Eon rejects configured popup shortcuts on Alt+Slash
   or positional Alt+0 through Alt+9, a reserved set no 1.x release enlarges,
   before workspace mutation.
@@ -2038,6 +2040,12 @@ socket names, JSON fields and protocol identifiers retain their spellings.
     `Jump to the next agent needing attention` and `Alt+Shift+G` `Jump to the
     previous agent needing attention` under Navigate, also with
     `[sidebar] enabled = false`.
+  - **Tab-cycling rows (`eon-ctrl-tab-next-tab-q6vj`):** the installed
+    dogfood recorded under Venus VEN-C8 (edge `62c8cb5`, code tree `1c304b4`, whose `nix build` gave
+    `/nix/store/wgrz0ladwg0r4c3addmjiqkijwah8900-eon-0.1.8`, x86_64 Linux,
+    private headless Sway, 1280x720):
+    Alt+/ listed `Ctrl+Tab` `Focus next tab` and `Ctrl+Shift+Tab` `Focus
+    previous tab` under Navigate.
 - **Open proof:** Pending re-proof in this repository: header spacing at
   compact sizes, rebound and disabled popup rows, and AT-SPI projection on an
   installed surface. No eonbase, fractional-scale, screen-reader workflow,
@@ -2215,6 +2223,7 @@ socket names, JSON fields and protocol identifiers retain their spellings.
   omitted only when all applicable hints fit and the button lacks keyboard
   focus. Alt+/ and the complete modal viewer remain available. F6 stays in full
   help and keyboard navigation, without a footer hint.
+  Ctrl+Tab and Ctrl+Shift+Tab stay in full help and dispatch, without footer hints.
   Project is omitted from hints; Alt+Z and its full-help entry remain available.
   Alt+Shift+D has the hint "detach", derived like the others. Alt+Shift+H has
   the hint "sidebar", omitted while `sidebar` is `Off`. Alt+G and Alt+Shift+G
@@ -2264,6 +2273,11 @@ socket names, JSON fields and protocol identifiers retain their spellings.
     x86_64 Linux, private headless Sway, 1280x720) showed `G next agent` in
     the footer's Alt group and `G previous agent` in its Alt+Shift group, also
     with `[sidebar] enabled = false`.
+  - **Tab-cycling keys (`eon-ctrl-tab-next-tab-q6vj`):** the installed
+    dogfood recorded under Venus VEN-C8 (edge `62c8cb5`, code tree `1c304b4`, whose `nix build` gave
+    `/nix/store/wgrz0ladwg0r4c3addmjiqkijwah8900-eon-0.1.8`, x86_64 Linux,
+    private headless Sway, 1280x720)
+    showed no footer hint for Ctrl+Tab or Ctrl+Shift+Tab.
 - **Open proof:** Pending re-proof in this repository: footer placement below
   the cards across widths, fractional scales and minimum fonts on an installed
   surface. No performance, macOS or screen-reader workflow claim.

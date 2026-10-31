@@ -127,6 +127,7 @@ one, and clicking another column's terminal selects it.
 | Alt+G / Alt+Shift+G | Jump to the next or previous agent needing attention |
 | F6 | Move keyboard focus: terminal, agent sidebar, tabs, panes |
 | Alt+1 … Alt+9, Alt+0 | Select tab positions 1 … 10 |
+| Ctrl+Tab / Ctrl+Shift+Tab | Select the next or previous tab, wrapping around |
 | Alt+H / Alt+L | Select the column to the left or right, continuing into the previous or next tab |
 | Alt+K / Alt+J | Select the previous or next pane in the column |
 | Ctrl+Alt+H / Ctrl+Alt+L | Move the selected pane into the column to the left or right; at the tab's edge a stacked pane opens a new column |

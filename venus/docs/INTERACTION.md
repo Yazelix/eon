@@ -59,6 +59,7 @@ the workspace, by name or `wN`, and its footer reads `Enter Close`.
 | Keys | Action |
 |---|---|
 | Alt+1 … Alt+9, Alt+0 | Select tab positions 1 … 10 |
+| Ctrl+Tab / Ctrl+Shift+Tab | Select the next or previous tab, wrapping around |
 | Alt+H / Alt+L | Walk columns, continuing into the previous or next tab |
 | Alt+K / Alt+J | Walk the selected column's panes |
 | Ctrl+Alt+H / Ctrl+Alt+L | Move the selected pane into the neighbouring column |
