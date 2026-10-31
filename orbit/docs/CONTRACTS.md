@@ -112,7 +112,7 @@ PTY pixel size rule needs no wire change.
 
 ## ORB-C3 — Bounded interactive and metadata attachment
 
-- **Status:** Partially proved
+- **Status:** Proved
 - **Consumer:** One local input-capable client, which in a run with management
   is the process the lease holder names (ORB-C13 `AttachAllow`), and one local
   read-only metadata observer.
@@ -157,11 +157,19 @@ PTY pixel size rule needs no wire change.
   controls the named process or the lease holder is out of scope, since no
   same-UID sandbox is promised (ORB-C13).
 - **Proof:** the `eon-awmq.3` import commit, with the
-  `eon-title-utf8-ends-terminal-atq2` commit for invalid metadata
+  `eon-title-utf8-ends-terminal-atq2` commit for invalid metadata and the
+  `eon-agent-parity-a9g0.15` commit (`9c90032`) for interactive admission,
+  proved installed by the `eon-agent-parity-a9g0.19` commit
   - **Environment:** x86_64 Linux; `nix flake check -L` (`orbit-laws`,
     `orbit-boundary`, `orbit-terminfo`, every `orbit-<name>` real-PTY
     check); sandboxed `nix develop -c eon-test` (workspace and installer,
-    `tests/lifecycle.rs` unmodified)
+    `tests/lifecycle.rs` unmodified). For admission: `nix build --keep-going` of
+    every `orbit-*` check on tree `7b02ce4` and 53 real-PTY checks again on
+    `a75917e`, as `eon-agent-parity-a9g0.15` records, and an isolated
+    installed Eon built from edge `acc29d2`
+    (`/nix/store/n9qkzdwngqvcbxfpla66k57vjsqdwgga-eon-0.1.9`, Orbit
+    `/nix/store/c6xzav8mbqbwp4dm4niyqy4n4s5774pr-yazelix-orbit-0.1.0`) in a
+    private headless Sway 1.12
   - **Evidence:**
     - [`metadata_observer_is_canonical_read_only_and_reports_changes`](../src/socket.rs)
     - [`nonreading_observer_converges_on_the_latest_metadata`](../src/socket.rs)
@@ -169,16 +177,23 @@ PTY pixel size rule needs no wire change.
     - Real-PTY checks [`orbit-slow-observer`](../tests/real_pty/slow_observer.rs),
       [`orbit-late-observer`](../tests/real_pty/late_observer.rs),
       [`orbit-detached-observer`](../tests/real_pty/detached_observer.rs),
-      [`orbit-unsupported`](../tests/real_pty/unsupported.rs) and
-      [`orbit-silent-peer`](../tests/real_pty/silent_peer.rs)
-    - Law [`admission_answers_are_accounted`](../LAWS.bend) (`orbit-laws`)
+      [`orbit-unsupported`](../tests/real_pty/unsupported.rs),
+      [`orbit-silent-peer`](../tests/real_pty/silent_peer.rs) and
+      [`orbit-attach-allow`](../tests/real_pty/attach_allow.rs)
+    - Laws [`admission_answers_are_accounted`](../LAWS.bend) and
+      [`admission_strangers_are_busy`](../LAWS.bend) (`orbit-laws`)
     - Workspace suite
-- **Open proof:** Interactive admission (`eon-agent-parity-a9g0.15`) is a
-  recorded gap until the installed joint proof `eon-agent-parity-a9g0.19`.
-  Candidate evidence: the real-PTY check
-  [`orbit-attach-allow`](../tests/real_pty/attach_allow.rs) and the law
-  [`admission_strangers_are_busy`](../LAWS.bend) (`orbit-laws`). Darwin's
-  peer-credential mechanics only compile (`EON-C7`).
+    - Installed: the `eon-ahzkt` ORBS probe's `Hello` got `Busy`, so its
+      command was never sent, on a hidden tab's terminal, a hidden
+      keep-alive popup's terminal, and the shown tab's terminal while the
+      window was detached (on the eon 0.1.8 build
+      `/nix/store/8s4gif4cdj6l70akszv87z1iyikc6ixc-eon-0.1.8`, before
+      `9c90032`, it attached and the command ran). Venus attached at
+      launch, to a later tab, a hidden workspace's tab and the popup when
+      shown, and to each again after detach and `eon attach`; typing reached
+      the later tab, the hidden workspace's tab and the popup.
+- **Open proof:** Darwin's peer-credential and process-start mechanics for
+  interactive admission only compile; no macOS run has exercised them.
 
 ## ORB-C4 — Coherent ordered presentation
 
@@ -217,7 +232,7 @@ PTY pixel size rule needs no wire change.
 
 ## ORB-C5 — Semantic terminal interaction
 
-- **Status:** Partially proved
+- **Status:** Proved
 - **Consumer:** Attached clients sending key, mouse, focus, paste, or resize
   interaction, and the management lease holder (ORB-C13) sending paste or Enter
   input.
@@ -259,27 +274,34 @@ PTY pixel size rule needs no wire change.
   Lease input carries no other keys, chords, mouse, focus or resize; raw bytes
   are never written.
 - **Proof:** the `eon-awmq.3` import commit, with the `eon-awmq.7.1` commit
-  for the Kitty release
+  for the Kitty release and the `eon-agent-parity-a9g0.15` commit
+  (`9c90032`) for lease input, proved installed by the
+  `eon-agent-parity-a9g0.19` commit
   - **Environment:** x86_64 Linux; `nix flake check -L` (`orbit-laws`,
     `orbit-boundary`, `orbit-terminfo`, every `orbit-<name>` real-PTY
     check); sandboxed `nix develop -c eon-test` (workspace and installer,
-    `tests/lifecycle.rs` unmodified)
+    `tests/lifecycle.rs` unmodified). For lease input: `nix build --keep-going`
+    of every `orbit-*` check on tree `7b02ce4` and 53 real-PTY checks again
+    on `a75917e`, as `eon-agent-parity-a9g0.15` records, and the isolated
+    installed Eon recorded under ORB-C3
   - **Evidence:**
     - [`canonical_input_uses_libghostty_encoding`](../src/input.rs)
     - [`kitty_release_never_falls_back_to_text`](../src/input.rs)
     - [`conformance_c5_authoritative_input_modes_and_resize_survive_detach`](../tests/lifecycle.rs)
     - Real-PTY checks [`orbit-selection`](../tests/real_pty/selection.rs),
       [`orbit-mouse`](../tests/real_pty/mouse.rs),
-      [`orbit-key-live`](../tests/real_pty/key_live.rs) and
-      [`orbit-paste-flood`](../tests/real_pty/paste_flood.rs)
-    - Laws [`selection_answers_are_accounted`](../LAWS.bend) and
-      [`selection_shift_selects_on_the_host`](../LAWS.bend) (`orbit-laws`)
+      [`orbit-key-live`](../tests/real_pty/key_live.rs),
+      [`orbit-paste-flood`](../tests/real_pty/paste_flood.rs) and
+      [`orbit-lease-input`](../tests/real_pty/lease_input.rs)
+    - Laws [`selection_answers_are_accounted`](../LAWS.bend),
+      [`selection_shift_selects_on_the_host`](../LAWS.bend) and
+      [`management_input_needs_a_live_lease`](../LAWS.bend) (`orbit-laws`)
     - Workspace suite
-- **Open proof:** Lease input (`eon-agent-parity-a9g0.15`) is a recorded gap
-  until the installed joint proof `eon-agent-parity-a9g0.19`. Candidate
-  evidence: the real-PTY check
-  [`orbit-lease-input`](../tests/real_pty/lease_input.rs) and the law
-  [`management_input_needs_a_live_lease`](../LAWS.bend) (`orbit-laws`).
+    - Installed, through `eon pane send`: lease pastes reached a hidden
+      tab's nushell, a hidden workspace's nushell and a hidden popup's bash
+      bracketed, and `cat` unbracketed; a line break for `cat` was refused
+      and wrote nothing; the lease Enter ran each shell line and submitted
+      prompts to Claude Code 2.1.303 and Codex 0.166.0, which answered them.
 
 ## ORB-C6 — Rich presentation without silent degradation
 
@@ -755,7 +777,7 @@ PTY pixel size rule needs no wire change.
 
 ## ORB-C13 — Same-boot management ownership
 
-- **Status:** Partially proved
+- **Status:** Proved
 - **Consumer:** One local Eon launcher and one later replacement on the same boot
   and login.
 - **Trigger:** A launcher prepares an owned mode-0600 record, Orbit crosses Ready,
@@ -824,8 +846,10 @@ PTY pixel size rule needs no wire change.
     endpoint, permission, record, and polling mechanics with isolated Linux and
     Darwin peer-credential and process-start identity mechanisms.
 - **Proof:** the `eon-awmq.3` import commit, with the `eon-awmq.7.4` commit
-  for untrusted records and runtime directories and the
-  `eon-agent-sidebar-yx8.5` commit for management v2
+  for untrusted records and runtime directories, the
+  `eon-agent-sidebar-yx8.5` commit for management v2, and the
+  `eon-agent-parity-a9g0.15` commit (`9c90032`) for the management v4
+  requests, proved installed by the `eon-agent-parity-a9g0.19` commit
   - **Environment:** x86_64 Linux; `nix flake check -L` (`orbit-laws`,
     `orbit-boundary`, `orbit-terminfo`, every `orbit-<name>` real-PTY
     check); sandboxed `nix develop -c eon-test` (workspace and installer;
@@ -850,15 +874,21 @@ PTY pixel size rule needs no wire change.
     - Both lifecycle checks passed on macOS for the previous Rust server; the
       managed run's `/proc` check that the PTY child inherits no Orbit
       listener is Linux-only.
-- **Open proof:** The management v4 requests (`eon-agent-parity-a9g0.15`),
-  `AttachAllow` and its name included, are a recorded gap until the installed
-  joint proof `eon-agent-parity-a9g0.19`. Candidate evidence: the real-PTY
-  checks [`orbit-attach-allow`](../tests/real_pty/attach_allow.rs),
-  [`orbit-visible-text`](../tests/real_pty/visible_text.rs) and
-  [`orbit-lease-input`](../tests/real_pty/lease_input.rs), and the laws
-  [`management_allow_needs_the_lease`](../LAWS.bend),
-  [`management_answers_are_accounted`](../LAWS.bend) and
-  [`management_follows_its_contract`](../LAWS.bend) (`orbit-laws`).
+    - Management v4 (`eon-agent-parity-a9g0.15`): real-PTY checks
+      [`orbit-attach-allow`](../tests/real_pty/attach_allow.rs),
+      [`orbit-visible-text`](../tests/real_pty/visible_text.rs) and
+      [`orbit-lease-input`](../tests/real_pty/lease_input.rs), the law
+      [`management_allow_needs_the_lease`](../LAWS.bend), and the changed
+      audits under `management_answers_are_accounted` and
+      `management_follows_its_contract`: all `orbit-*` checks on tree
+      `7b02ce4` and 53 real-PTY checks again on `a75917e`, as that bead
+      records.
+    - Installed (`eon-agent-parity-a9g0.19`, the Eon recorded under ORB-C3):
+      Eon Runtime's lease served `eon pane read` and `eon pane send` for
+      hidden terminals, and its `AttachAllow` let only Venus attach. With one
+      terminal's Orbit stopped (`SIGSTOP`), a read failed after 2 s while
+      other terminals answered; after `SIGCONT` the lease served the
+      next read and send.
 
 ## ORB-C14 — Apple Silicon macOS platform
 
@@ -943,7 +973,10 @@ PTY pixel size rule needs no wire change.
   a Stop whose child cannot be reaped is checked on Linux only. Tests and
   assertions that read Linux-only process state do not run on macOS. Eon
   records its own macOS proof under `EON-C7` in
-  [`docs/CONTRACTS.md`](../../docs/CONTRACTS.md).
+  [`docs/CONTRACTS.md`](../../docs/CONTRACTS.md). This proof predates
+  management v4: ORB-C3's admission of only the named process
+  (`eon-agent-parity-a9g0.15`) reads peer credentials and process start
+  through Darwin calls that only compile.
 
 ## ORB-C15 — Program status records
 
@@ -1406,7 +1439,7 @@ PTY pixel size rule needs no wire change.
 
 ## ORB-C17 — Bounded visible-text reads
 
-- **Status:** Planned
+- **Status:** Proved
 - **Consumer:** The one validated management lease holder (ORB-C13); in Eon,
   Eon Runtime acting for `eon pane read`.
 - **Trigger:** The lease holder sends one management `ReadVisible` request.
@@ -1420,7 +1453,7 @@ PTY pixel size rule needs no wire change.
     - the active screen's live area as plain UTF-8 text.
   - **What the text covers.** The live area is the rows a client at live
     bottom would see, whatever any client's scroll position.
-  - **How the text is laid out:**
+  - **How the text is laid out.**
     - one line per display row, top to bottom, separated by line feeds;
     - trailing blanks are trimmed;
     - a soft-wrapped row ends in a line break like a hard one;
@@ -1460,16 +1493,31 @@ PTY pixel size rule needs no wire change.
   - No reader other than the lease holder, and no secret redaction.
   - The text cannot prove ORB-C6 fidelity.
   - Orbit identifies no agent; Eon owns agent policy.
-- **Proof:** None yet.
-- **Open proof:** The installed joint proof `eon-agent-parity-a9g0.19` proves
-  it. Candidate evidence from `eon-agent-parity-a9g0.15`: the real-PTY checks
-  [`orbit-visible-text`](../tests/real_pty/visible_text.rs) and
-  [`orbit-lease-input`](../tests/real_pty/lease_input.rs), which refuses
-  malformed and pipelined requests under the lease, the unit tests in
-  [`src/visible.rs`](../src/visible.rs), the management protocol tests in
-  [`crates/protocol/tests/management.rs`](../crates/protocol/tests/management.rs),
-  and the law [`management_read_needs_a_live_settled_lease`](../LAWS.bend)
-  (`orbit-laws`).
+- **Proof:** the `eon-agent-parity-a9g0.15` commit (`9c90032`), proved
+  installed by the `eon-agent-parity-a9g0.19` commit
+  - **Environment:** x86_64 Linux; `nix build --keep-going` of every
+    `orbit-*` check on tree `7b02ce4` and 53 real-PTY checks again on
+    `a75917e`, as `eon-agent-parity-a9g0.15` records; sandboxed
+    `nix develop -c eon-test` on that bead's final tree; the isolated
+    installed Eon recorded under ORB-C3
+  - **Evidence:**
+    - Real-PTY checks
+      [`orbit-visible-text`](../tests/real_pty/visible_text.rs) and
+      [`orbit-lease-input`](../tests/real_pty/lease_input.rs), which refuses
+      malformed and pipelined requests under the lease
+    - The unit tests in [`src/visible.rs`](../src/visible.rs) and the
+      management protocol tests in
+      [`crates/protocol/tests/management.rs`](../crates/protocol/tests/management.rs)
+    - Law [`management_read_needs_a_live_settled_lease`](../LAWS.bend)
+      (`orbit-laws`)
+    - Installed, through `eon pane read`: the visible text of a hidden tab,
+      a hidden workspace's tab, a hidden popup, and Claude Code's and
+      Codex's screens, with no change to what Venus showed; the full JSON
+      reply for the hidden tab (title, directory, size, revision, `lossy`).
+      Under a `yes` flood in a shown pane, 20 reads of that pane took 73 to
+      109 ms, each at a later revision; while the flood ran, Venus drew
+      keystrokes in the pane beside it within 82 to 86 ms (bounded by the
+      screen captures that measured it).
 
 ## Focused terminal conformance corpus
 

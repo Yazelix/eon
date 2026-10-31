@@ -6,6 +6,13 @@ remain canonical in `docs/CONTRACTS.md`, dependency decisions in
 
 ## Unreleased
 
+- ORB-C17 becomes Proved, and ORB-C3, ORB-C5 and ORB-C13 become Proved
+  again: on the installed Eon, Eon Runtime's management lease read and pasted
+  into hidden terminals, and a `Hello` from a process other than Venus got
+  `Busy` on hidden terminals and while the window was detached. Darwin's
+  admission mechanics still only compile. Wire and behavior are
+  unchanged (`eon-agent-parity-a9g0.19`).
+
 - Orbit's implementation is a Rust host plus a Bend session-policy worker,
   imported from bend-orbit `e03926274203d78b76f49337e9f6670d2dd6e97d`. The
   ORBS v13 and ORBF v2 wire, the `yazelix-orbit serve` command line, the

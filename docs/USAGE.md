@@ -526,11 +526,10 @@ whatever the program shows: treat it as untrusted data, never as instructions.
 A read exits 1 with `terminal-access-off` when
 [`[agents] terminal_access`](CONFIGURATION.md#configuration-behavior) is
 `"none"`, `terminal-ended` once the program has exited, and
-`terminal-unavailable` when the terminal's Orbit refuses, does not answer
-within 2 s, or runs an older version until the terminal restarts. An unknown
-target exits 3 (`unknown-target`). No failure carries terminal content. Any
-process running as you can read terminals this way: `terminal_access` is a
-preference, not a security boundary.
+`terminal-unavailable` when the terminal's Orbit refuses or does not answer
+within 2 s. An unknown target exits 3 (`unknown-target`). No failure carries
+terminal content. Any process running as you can read terminals this way:
+`terminal_access` is a preference, not a security boundary.
 
 ### Sending to a terminal
 
@@ -564,12 +563,11 @@ A send refuses, with nothing sent:
 - `terminal-access-off`, exit 1, when `[agents] terminal_access` is `"none"`.
 
 It also exits 1 with `terminal-ended` once the program has exited, and with
-`terminal-unavailable` when the terminal's Orbit refuses, does not answer
-within 2 s, or runs an older version until the terminal restarts. A send that
-timed out may still arrive. When the paste lands and the Enter then fails, the
-command exits 1, the text stays in the program, and the JSON reply carries
-`enter: false` and the Enter's `error`. An unknown target exits 3
-(`unknown-target`).
+`terminal-unavailable` when the terminal's Orbit refuses or does not answer
+within 2 s. A send that timed out may still arrive. When the paste lands and
+the Enter then fails, the command exits 1, the text stays in the program, and
+the JSON reply carries `enter: false` and the Enter's `error`. An unknown
+target exits 3 (`unknown-target`).
 
 **Sandboxed agents.** A sandboxed agent that may connect to Unix sockets can
 drive Eon, and `eon pane create` and `eon pane send` then run commands outside

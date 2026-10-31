@@ -1317,7 +1317,7 @@ socket names, JSON fields and protocol identifiers retain their spellings.
 - **Status:** Proven on x86_64 Linux native Wayland. Amended on 2026-10-30
   (approved by Lucca, relayed by eon-overseer) by
   `eon-agent-parity-a9g0.15`: only the Venus a supervisor starts attaches to
-  its window's terminals, awaiting its amendment proof below.
+  its window's terminals, proven by its amendment proof below.
 - **Consumer:** Eon and eonbase users launching or targeting a product generation.
 - **Trigger:** Launch current generation, inspect an older live generation,
   present a compatible existing surface, stop one generation, or stop a selected
@@ -1432,14 +1432,22 @@ socket names, JSON fields and protocol identifiers retain their spellings.
     `eon window attach ID` and by the `eon` its generation recorded; see
     EON-C23.
 - **Amendment proof:** The `eon-agent-parity-a9g0.15` amendment is checked by
-  `attach_allow_shares_the_request_slot_and_names_the_one_peer_orbit_admits`
-  in `runtime/crates/eon-runtime/src/sessions.rs`, against a real Orbit, and
-  by `a_workspace_final_close_shows_the_recent_one_and_attach_keeps_it` and
+  `attach_allow_shares_the_request_slot_and_names_the_one_peer_orbit_admits` in
+  `runtime/crates/eon-runtime/src/sessions.rs`, against a real Orbit, and by
+  `a_workspace_final_close_shows_the_recent_one_and_attach_keeps_it` and
   `replacement_eon_adopts_exact_runs_and_projects_numeric_workspace` in
   `eon/crates/eon/tests/workspace_control.rs` (launch, a terminal created
-  afterwards, `eon attach` after detach, and recovered terminals); it awaits
-  its landing revision and one installed observation of Venus attaching at
-  launch, to a new tab, and after detach and attach.
+  afterwards, `eon attach` after detach, and recovered terminals). It landed in
+  `9c90032`. Installed observation: the `eon-agent-parity-a9g0.19` commit, in
+  the isolated installed Eon recorded under
+  [ORB-C3](../orbit/docs/CONTRACTS.md#orb-c3--bounded-interactive-and-metadata-attachment).
+  Venus attached at launch, to a later tab, a hidden workspace's tab and a
+  keep-alive popup when shown, and to each again after Alt+Shift+D detached the
+  window and `eon attach` presented it; typing reached the later tab, the
+  hidden workspace's tab and the popup, and the first tab's terminal echoed a
+  key. `eon-ahzkt`'s ORBS probe got `Busy`, so its command was never sent, on a
+  hidden tab's and a hidden popup's terminal, and on the shown tab's terminal
+  while the window was detached.
 - **Open proof:** Pending re-proof in this repository: native Present of a live
   surface and launch with `/sys/fs/cgroup` hidden.
 
@@ -3046,10 +3054,12 @@ socket names, JSON fields and protocol identifiers retain their spellings.
 
 ## EON-C35 — Reading a terminal from the CLI
 
-- **Status:** Planned. Approved by Lucca on 2026-10-30 in the merged text of
-  `eon-agent-parity-a9g0.14`. `eon-agent-parity-a9g0.16` implements the
-  Runtime's EONW v26 read and the setting, `eon-agent-parity-a9g0.17` the
-  command.
+- **Status:** Proven on x86_64 Linux Wayland. Approved by Lucca on 2026-10-30
+  in the merged text of `eon-agent-parity-a9g0.14`; its `terminal-unavailable`
+  and exit 4 failures amended by Lucca on 2026-10-31 ("agreed", then "ok" for
+  the narrowed exit 4, relayed by eon-overseer, `eon-agent-parity-a9g0.19`).
+  `eon-agent-parity-a9g0.16` implements the Runtime's EONW v26 read and the
+  setting, `eon-agent-parity-a9g0.17` the command.
 - **Consumer:** An agent or script running as the person's user, in an Eon
   terminal or outside one.
 - **Trigger:** `eon pane read TARGET [--json]`, with:
@@ -3079,10 +3089,10 @@ socket names, JSON fields and protocol identifiers retain their spellings.
     - `terminal-access-off`;
     - `terminal-ended`: the target's terminal has exited; its exit status
       belongs to eon-agent-parity-a9g0.4;
-    - `terminal-unavailable`: Orbit refused, or timed out after 2 s, or runs an
-      older management version, until the terminal restarts.
+    - `terminal-unavailable`: Orbit refused, or timed out after 2 s.
   - Exit 3: a missing or stale target, generation or window.
-  - Exit 4: a missing or unreachable supervisor.
+  - Exit 4: a missing or unreachable supervisor, including one that speaks
+    another EONW version (`supervisor-unavailable`).
   - Exit 2: invalid arguments.
   - No failure carries terminal content.
 - **Owner:**
@@ -3095,29 +3105,67 @@ socket names, JSON fields and protocol identifiers retain their spellings.
   - remote or MCP exposure (eon-ciwn.3);
   - redaction;
   - protection against code running as the same user.
-- **Proof:** None yet.
-- **Open proof:** The installed joint proof `eon-agent-parity-a9g0.19` proves
-  it. Candidate evidence: from `eon-agent-parity-a9g0.17`, the CLI test
-  `pane_read_prints_the_text_or_json_and_exits_by_failure` in
-  [`workspace_control.rs`](../eon/crates/eon/tests/workspace_control.rs), which
-  checks human and JSON output, `caller`, each failure exit (Orbit's
-  `terminal-ended` and `terminal-unavailable` from a fake Orbit) and that a
-  read changes no workspace state; from `eon-agent-parity-a9g0.16`, the EONW v26
-  codec tests in
-  [`v26.rs`](../runtime/crates/eon-workspace-protocol/src/v26.rs), the lease
-  tests in [`sessions.rs`](../runtime/crates/eon-runtime/src/sessions.rs) (one
-  against a real Orbit), and the supervisor tests
-  `terminal_reads_and_sends_reach_a_hidden_workspace_and_change_nothing` and
-  `terminal_access_none_refuses_every_read_and_send` in
-  [`workspace_control.rs`](../eon/crates/eon/tests/workspace_control.rs).
+- **Proof:** the `eon-agent-parity-a9g0.19` commit, for the code at edge
+  `acc29d2` (`eon-agent-parity-a9g0.16` landed as `ef82672`,
+  `eon-agent-parity-a9g0.17` as `a2cb0a9`).
+  - **Environment:** Automated tier: sandboxed `nix develop -c eon-test` on
+    each of those beads' trees. Isolated installed tier: x86_64 Linux,
+    `/nix/store/n9qkzdwngqvcbxfpla66k57vjsqdwgga-eon-0.1.9` built from
+    `acc29d2` (Orbit
+    `/nix/store/c6xzav8mbqbwp4dm4niyqy4n4s5774pr-yazelix-orbit-0.1.0`), in a
+    private headless Sway 1.12 with its own HOME and runtime directory.
+  - **Evidence:**
+    - From `eon-agent-parity-a9g0.17`, the CLI test
+      `pane_read_prints_the_text_or_json_and_exits_by_failure` in
+      [`workspace_control.rs`](../eon/crates/eon/tests/workspace_control.rs),
+      which checks human and JSON output, `caller`, each failure exit
+      (Orbit's `terminal-ended` and `terminal-unavailable` from a fake Orbit)
+      and that a read changes no workspace state.
+    - From `eon-agent-parity-a9g0.16`, the EONW v26 codec tests in
+      [`v26.rs`](../runtime/crates/eon-workspace-protocol/src/v26.rs), the
+      lease tests in
+      [`sessions.rs`](../runtime/crates/eon-runtime/src/sessions.rs) (one
+      against a real Orbit), and the supervisor tests
+      `terminal_reads_and_sends_reach_a_hidden_workspace_and_change_nothing`
+      and `terminal_access_none_refuses_every_read_and_send` in
+      [`workspace_control.rs`](../eon/crates/eon/tests/workspace_control.rs).
+    - Installed: an agent script running in a shown pane read a hidden tab's
+      pane, a hidden workspace's pane, a hidden keep-alive popup, and Claude
+      Code's and Codex's panes in hidden tabs; its JSON reads named its pane as
+      `caller`. The shown workspace (the other stayed hidden), the active tab,
+      the selected pane and shown popup (none, then Files) of each tab in the
+      shown workspace, and the desktop focus, held by another window, were
+      unchanged, and no hidden popup was shown. Reads kept working while the
+      window was detached. Under a `yes` flood in a shown pane, 20 reads of it
+      took 73 to 109 ms and 20 reads of a quiet pane 76 ms at the median, as
+      when idle. A closed pane, an unknown pane and an unknown generation or
+      window exited 3. A terminal whose Orbit was stopped answered
+      `terminal-unavailable` after 2 s, and at once while that request stayed
+      unanswered; a pane whose stop had failed and was still outstanding
+      answered `terminal-ended` (a terminal that exited on its own was checked
+      only through the fake Orbit in the CLI tests). A second window started
+      with `terminal_access = "none"` refused reads with `terminal-access-off`,
+      exit 1, and no terminal content, while the first window allowed them.
+    - Older generation: against an isolated eon 0.1.8 generation (EONW v25)
+      running alone, `eon pane read` and `eon pane send` with its
+      `--generation` each exited 4 with `supervisor-unavailable`, naming the
+      version mismatch and pointing at the terminal's own `eon`. No EONW v26
+      supervisor holds a terminal on an older Orbit: it recovers or adopts a
+      terminal only when the record names its own component and management
+      generation
+      ([`sessions.rs`](../runtime/crates/eon-runtime/src/sessions.rs)), and
+      the generation identity covers Orbit's source.
 
 ## EON-C36 — Sending input to a terminal from the CLI
 
-- **Status:** Planned. Approved by Lucca on 2026-10-30 in the merged text of
-  `eon-agent-parity-a9g0.14`. `eon-agent-parity-a9g0.16` implements the
-  Runtime's EONW v26 send and the settings, and carries the Enter delay in
-  its reply; `eon-agent-parity-a9g0.18` the command, which waits that delay
-  before it sends Enter.
+- **Status:** Proven on x86_64 Linux Wayland. Approved by Lucca on 2026-10-30
+  in the merged text of `eon-agent-parity-a9g0.14`; its `terminal-unavailable`
+  and exit 4 failures amended by Lucca on 2026-10-31 ("agreed", then "ok" for
+  the narrowed exit 4, relayed by eon-overseer, `eon-agent-parity-a9g0.19`).
+  `eon-agent-parity-a9g0.16` implements the Runtime's EONW v26 send and the
+  settings, and carries the Enter delay in its reply;
+  `eon-agent-parity-a9g0.18` the command, which waits that delay before it
+  sends Enter.
 - **Consumer:** An agent or script running as the person's user, in an Eon
   terminal or outside one.
 - **Trigger:** `eon pane send TARGET [--enter] [--stdin] [--json] [-- TEXT]`,
@@ -3165,12 +3213,12 @@ socket names, JSON fields and protocol identifiers retain their spellings.
       program has not enabled bracketed paste. Nothing is sent;
     - `terminal-ended`: the terminal has exited. The input is rejected, never
       queued;
-    - `terminal-unavailable`: Orbit refused, or timed out after 2 s, or runs an
-      older management version, until the terminal restarts.
+    - `terminal-unavailable`: Orbit refused, or timed out after 2 s.
   - Exit 1 also when the paste succeeds and the Enter then fails. The reply
     names the failure with `enter: false`, and the text stays in the program.
   - Exit 3: a missing or stale target, generation or window.
-  - Exit 4: a missing or unreachable supervisor.
+  - Exit 4: a missing or unreachable supervisor, including one that speaks
+    another EONW version (`supervisor-unavailable`).
   - No failure changes focus or workspace state.
 - **Owner:**
   - Eon Runtime: policy, TEXT validation, target resolution, the Enter delay,
@@ -3183,15 +3231,42 @@ socket names, JSON fields and protocol identifiers retain their spellings.
   - per-agent tokens, grants, expiry or audit log;
   - remote or MCP exposure (eon-ciwn.3);
   - protection against code running as the same user.
-- **Proof:** None yet.
-- **Open proof:** The installed joint proof `eon-agent-parity-a9g0.19` proves
-  it. Candidate evidence: from `eon-agent-parity-a9g0.18`, the CLI test
-  `pane_send_pastes_then_waits_for_enter_and_exits_by_failure` in
-  [`workspace_control.rs`](../eon/crates/eon/tests/workspace_control.rs), which
-  checks the JSON reply, the Enter delay, `--stdin`, each failure exit
-  (Orbit's refusals from a fake Orbit), an Enter that fails after its paste,
-  and that refusals send nothing and a send changes no workspace state; from
-  `eon-agent-parity-a9g0.16`, the EONW v26 codec tests, which refuse
-  invalid and oversized text on both sides, the lease tests, which map every
-  Orbit answer to its failure code and show lease input in a real Orbit's
-  text, and the two supervisor tests named under EON-C35.
+- **Proof:** the `eon-agent-parity-a9g0.19` commit, for the code at edge
+  `acc29d2` (`eon-agent-parity-a9g0.16` landed as `ef82672`,
+  `eon-agent-parity-a9g0.18` as `acc29d2`).
+  - **Environment:** as EON-C35, except that the automated tier ran on the
+    `eon-agent-parity-a9g0.16` and `eon-agent-parity-a9g0.18` trees. In the
+    installed tier, Claude Code 2.1.303 and Codex 0.166.0 (`codex
+    --no-daemon -c model_reasoning_effort=low -c features.hooks=false`,
+    since a paste cannot answer its hook-review menu) ran in Eon panes.
+  - **Evidence:**
+    - From `eon-agent-parity-a9g0.18`, the CLI test
+      `pane_send_pastes_then_waits_for_enter_and_exits_by_failure` in
+      [`workspace_control.rs`](../eon/crates/eon/tests/workspace_control.rs),
+      which checks the JSON reply, the Enter delay, `--stdin`, each failure
+      exit (Orbit's refusals from a fake Orbit), an Enter that fails after
+      its paste, and that refusals send nothing and a send changes no
+      workspace state.
+    - From `eon-agent-parity-a9g0.16`, the EONW v26 codec tests, which
+      refuse invalid and oversized text on both sides, the lease tests,
+      which map every Orbit answer to its failure code and show lease input
+      in a real Orbit's text, and the two supervisor tests named under
+      EON-C35.
+    - Installed: the agent script of EON-C35's proof sent a command with
+      `--enter` to a hidden tab's pane, a hidden workspace's pane and a hidden
+      keep-alive popup; each ran it (`bracketed: true`), and the person's view
+      and desktop focus were unchanged, with the hidden popup still hidden.
+      Sends worked while the window was detached. A prompt sent with `--enter`
+      to Claude Code and to Codex in hidden tabs was submitted and answered. To
+      `cat`, which has no bracketed paste, a one-line send arrived with
+      `bracketed: false`; a line break was refused with `unbracketed-newline`
+      (exit 1), ESC with `invalid-text` and 70,000 bytes with `input-too-large`
+      (exit 2), and neither TEXT nor `--enter` was a usage error (exit 2); none
+      of them wrote anything. Sends to a closed pane exited 3; to a stopped
+      Orbit's terminal, `terminal-unavailable`; to a pane whose stop had failed
+      and was still outstanding, `terminal-ended`. A terminal that exited on
+      its own was checked only through the fake Orbit in the CLI tests. The
+      `terminal_access = "none"` window refused a send with
+      `terminal-access-off`, and its picker stayed pending.
+    - Older generation: `eon pane send` exited 4 with
+      `supervisor-unavailable`, as recorded under EON-C35.

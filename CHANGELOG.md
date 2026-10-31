@@ -5,6 +5,18 @@ installation, and proven contract changes.
 
 ## Unreleased
 
+- EON-C35 (`eon pane read`) and EON-C36 (`eon pane send`) become Proven on
+  x86_64 Linux Wayland, and EON-C11's amendment (only the window's own Venus
+  attaches to its terminals) is proven: on an isolated installed Eon, an agent
+  script in one pane read and sent to panes in hidden tabs and workspaces and
+  to a hidden popup without changing what the window showed or the desktop
+  focus, submitted prompts to Claude Code and Codex, and another process could
+  not attach to a hidden terminal. Behavior is unchanged
+  (`eon-agent-parity-a9g0.19`). Both contracts and `docs/USAGE.md` no longer
+  say that a terminal on an older Orbit answers `terminal-unavailable`: a
+  supervisor that speaks another EONW version is answered with
+  `supervisor-unavailable`, exit 4, as before.
+
 - `eon pane send TARGET [--enter] [--stdin] [--json] [-- TEXT]` pastes up to
   64 KiB of text into a pane or popup in any workspace of the window, bracketed
   when the program asked for bracketed paste, and with `--enter` presses Enter
