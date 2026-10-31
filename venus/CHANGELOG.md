@@ -2,6 +2,9 @@
 
 ## Unreleased
 
+- Consume EONW v26, which adds EON-C35's and EON-C36's terminal reads and
+  sends and their replies. Venus sends neither (`eon-agent-parity-a9g0.16`).
+
 - VEN-C9, VEN-C11, VEN-C15, VEN-C22 and VEN-C24 to VEN-C29 are retired,
   demoted to features (`eon-vn0nk`). Their behavior is in
   `docs/PRESENTATION.md`, and the bottom shortcut hints in the root

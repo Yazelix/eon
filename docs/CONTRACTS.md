@@ -616,7 +616,7 @@ socket names, JSON fields and protocol identifiers retain their spellings.
 - **Owner:** Eon Runtime workspace topology, identity, focus, pruning and action
   enforcement; Eon supplies product defaults/policy. Orbit owns terminals and
   Venus owns native materialization.
-- **Consumes:** Current EONW v25 workspace/popup values, Orbit terminal
+- **Consumes:** Current EONW v26 workspace/popup values, Orbit terminal
   identities/endpoints and Venus `VEN-C8`.
 - **Boundary:** No arbitrary split tree, vertical splits, column resizing,
   arbitrary reorder target, cross-tab pane movement, picker relocation, durable layout
@@ -1058,16 +1058,17 @@ socket names, JSON fields and protocol identifiers retain their spellings.
 - **Owner:** Eon Runtime supervisor workspace/action state and CLI projection;
   its canonical EONW package owns types, codec and result ordering. Eon supplies
   validated component facts and product defaults.
-- **Consumes:** Current EONW v25 and accepted Orbit management operations.
+- **Consumes:** Current EONW v26 and accepted Orbit management operations.
 - **Boundary:** Additive lifecycle tags do not widen the pinned Venus workspace
   consumer. There is no event stream, subscription policy, remote transport,
   plugin/MCP API, authorization framework, durable restoration, terminal
   content (except a program's own EON-C31 status report text and terminal
-  title), or direct
+  title, EON-C35's read of visible text, title and working directory, and
+  EON-C36's input), or direct
   child-protocol escape hatch.
 - **Package owner:** The canonical EONW crate lives in
   `runtime/crates/eon-workspace-protocol` with its accepted package/API and
-  v25 bytes. Venus, Eon Runtime and Eon consume it by path.
+  v26 bytes. Venus, Eon Runtime and Eon consume it by path.
   See [package selection](ARCHITECTURE.md#in-tree-package-selection).
 - **Runtime policy:** Project is required, defaults to Alt+Z, and uses Eon's
   existing transient chooser command. Git defaults to `eon-lazygit` on Alt+Shift+J;
@@ -1129,8 +1130,8 @@ socket names, JSON fields and protocol identifiers retain their spellings.
   fzf list of the popup's window's workspaces (EON-C33's picker); Commands >
   Switch workspace runs the same list in the Commands popup. Each row shows
   the workspace's name, or its `wN` when unnamed, its tab count, and
-  ` · needs input` when its EONW v25 `attention` is needs input. Rows run by
-  EONW v25 `recency`, most recently shown first, with the shown workspace last
+  ` · needs input` when its EONW v26 `attention` is needs input. Rows run by
+  EONW v26 `recency`, most recently shown first, with the shown workspace last
   and marked ` · shown`, and the query matches only that name or `wN`. Enter on the highlighted row,
   including on an empty query, runs `eon workspace switch wN` once the CLI
   has checked again that the `wN` is live; otherwise it changes nothing and
@@ -1176,7 +1177,9 @@ socket names, JSON fields and protocol identifiers retain their spellings.
   invalid geometry and stale popup targets. No terminal contents cross EONW,
   except a program's own status report text (`app`, `title`, `msg`) and its
   terminal title (`name`), which are not screen content: Orbit has validated,
-  sanitized and bounded them under ORB-C15.
+  sanitized and bounded them under ORB-C15; and EON-C35's read of visible
+  text, title and working directory and EON-C36's input, which cross only in
+  the replies and requests those contracts define.
 - **Popup snapshot:** The catalog carries enabled entries, each with its
   normalized physical shortcut or, without one, whether the configuration
   unbound it or another entry holds its default shortcut, and logical-pixel
@@ -1963,7 +1966,7 @@ socket names, JSON fields and protocol identifiers retain their spellings.
   tutorial, telemetry, momentary mode, dependency, or platform expansion.
   Venus derives overrides from the popup catalog it already receives over
   EONW. Exceptions: the viewer reads `sidebar` and each popup entry's override
-  from EONW v25.
+  from EONW v26.
 - **Proof:** `795d735a8f61ef439c56d68e1cc4d3929af0dfcf`, `eon-monorepo-2oko.6`.
   - **Environment:** Automated tier; installed tier.
   - **Evidence:** `popup_configuration_owns_defaults_overrides_and_collisions`;
@@ -2036,13 +2039,13 @@ socket names, JSON fields and protocol identifiers retain their spellings.
 - **Owner:** Eon owns the exact graph, product policy, profile delivery and
   installed acceptance; Eon Runtime owns workspace identity/actions. Venus
   owns header geometry, rendering, input, native drag, tooltips, and accessibility.
-- **Consumes:** Venus VEN-C21, EONW v7 (v25 for the EON-C31 tab attention
+- **Consumes:** Venus VEN-C21, EONW v7 (v26 for the EON-C31 tab attention
   marker) and Orbit terminals.
 - **Boundary:** EON-C27 separately owns the optional quota projection. The core
   header adds no Eon-rendered chrome, second row, widget framework, agent status,
   polling, configuration, protocol change, inactive-tab close, native window
   controls, macOS claim or distribution expansion. The one exception is the
-  EON-C31 tab attention marker, which Venus reads from the EONW v25 snapshot it
+  EON-C31 tab attention marker, which Venus reads from the EONW v26 snapshot it
   already polls.
 - **Proof:** `795d735a8f61ef439c56d68e1cc4d3929af0dfcf`, `eon-monorepo-2oko.6`.
   - **Environment:** Automated tier; installed tier.
@@ -2649,7 +2652,7 @@ socket names, JSON fields and protocol identifiers retain their spellings.
     sidebar visibility and `[sidebar]` configuration.
   - **Orbit** owns the records, their neutral facts and the terminal title.
   - **Venus** owns presentation and hiding for width (VEN-C30).
-- **Consumes:** ORB-C15, ORB-C13 generation 4, EON-C8 topology, and EON-C10 (EONW v25, still
+- **Consumes:** ORB-C15, ORB-C13 generation 4, EON-C8 topology, and EON-C10 (EONW v26, still
   request and response, with no event stream).
 - **Boundary:**
   - no hooks and no edits to agent configuration;
@@ -3040,3 +3043,145 @@ socket names, JSON fields and protocol identifiers retain their spellings.
         `eon workspace switch`, `eon workspace new --name gamma`, which shows
         the new workspace, and a needs-input raise in a hidden workspace. No
         window turned urgent.
+
+## EON-C35 — Reading a terminal from the CLI
+
+- **Status:** Planned. Approved by Lucca on 2026-10-30 in the merged text of
+  `eon-agent-parity-a9g0.14`. `eon-agent-parity-a9g0.16` implements the
+  Runtime's EONW v26 read and the setting, `eon-agent-parity-a9g0.17` the
+  command.
+- **Consumer:** An agent or script running as the person's user, in an Eon
+  terminal or outside one.
+- **Trigger:** `eon pane read TARGET [--json]`, with:
+  - TARGET a pane or popup ID as `eon workspace --json` names them;
+  - EON-C10's `--window` and `--generation` selection.
+- **Result:**
+  - The supervisor that EON-C10 selects (validating `EON_TERMINAL` when set)
+    resolves TARGET in any workspace of its window, shown or hidden, and reads
+    the target's terminal through ORB-C17.
+  - JSON carries:
+    - the target: `workspace`, `tab`, `pane` or `popup`, and `terminal`;
+    - `caller`, as `eon workspace` reports it (null outside Eon);
+    - `generation` and `window`;
+    - `revision`, `screen` (`primary` or `alternate`), `rows` and `columns`;
+    - `title`;
+    - `directory`: a string when valid UTF-8, else a byte array, as EON-C10;
+    - `text`, `omitted_rows`, and `lossy: true`.
+  - Human output prints the text alone.
+  - Reading changes no workspace, tab, pane or popup selection, shown
+    workspace or popup, or desktop focus, and never shows a hidden popup. It
+    leaves no visible trace.
+  - `[agents] terminal_access` ([Configuration](CONFIGURATION.md#configuration-behavior))
+    governs it: `"window"` allows it; `"none"` refuses every read with
+    `terminal-access-off` and no terminal content.
+- **Important failures:**
+  - Exit 1:
+    - `terminal-access-off`;
+    - `terminal-ended`: the target's terminal has exited; its exit status
+      belongs to eon-agent-parity-a9g0.4;
+    - `terminal-unavailable`: Orbit refused, or timed out after 2 s, or runs an
+      older management version, until the terminal restarts.
+  - Exit 3: a missing or stale target, generation or window.
+  - Exit 4: a missing or unreachable supervisor.
+  - Exit 2: invalid arguments.
+  - No failure carries terminal content.
+- **Owner:**
+  - Eon Runtime: policy, target resolution, the EONW v26 request and the CLI
+    projection;
+  - Orbit: ORB-C17.
+- **Boundary:** None of the following:
+  - history, styles, streaming or waiting (eon-cli-action-discovery-ogzi);
+  - per-agent tokens, grants, expiry or audit log;
+  - remote or MCP exposure (eon-ciwn.3);
+  - redaction;
+  - protection against code running as the same user.
+- **Proof:** None yet.
+- **Open proof:** The installed joint proof `eon-agent-parity-a9g0.19` proves
+  it, after the command lands (`eon-agent-parity-a9g0.17`). Candidate evidence
+  from `eon-agent-parity-a9g0.16`: the EONW v26 codec tests in
+  [`v26.rs`](../runtime/crates/eon-workspace-protocol/src/v26.rs), the lease
+  tests in [`sessions.rs`](../runtime/crates/eon-runtime/src/sessions.rs) (one
+  against a real Orbit), and the supervisor tests
+  `terminal_reads_and_sends_reach_a_hidden_workspace_and_change_nothing` and
+  `terminal_access_none_refuses_every_read_and_send` in
+  [`workspace_control.rs`](../eon/crates/eon/tests/workspace_control.rs).
+
+## EON-C36 — Sending input to a terminal from the CLI
+
+- **Status:** Planned. Approved by Lucca on 2026-10-30 in the merged text of
+  `eon-agent-parity-a9g0.14`. `eon-agent-parity-a9g0.16` implements the
+  Runtime's EONW v26 send and the settings, and carries the Enter delay in
+  its reply; `eon-agent-parity-a9g0.18` the command, which waits that delay
+  before it sends Enter.
+- **Consumer:** An agent or script running as the person's user, in an Eon
+  terminal or outside one.
+- **Trigger:** `eon pane send TARGET [--enter] [--stdin] [--json] [-- TEXT]`,
+  where:
+  - TARGET is a pane or popup ID as `eon workspace --json` names them;
+  - TEXT is exactly one operand, or standard input with `--stdin`. TEXT is
+    required unless `--enter` is given, and `--enter` alone sends only Enter;
+  - EON-C10's `--window` and `--generation` selection applies.
+- **Result:**
+  - The supervisor that EON-C10 selects (validating `EON_TERMINAL` when set)
+    resolves TARGET in any workspace of its window, shown or hidden, and
+    pastes TEXT into the target's terminal through ORB-C5's lease input.
+    Orbit brackets the paste when the program enabled bracketed paste.
+  - With `--enter`, Eon then sends one Enter key after
+    `[agents] send_enter_delay_ms`
+    ([Configuration](CONFIGURATION.md#configuration-behavior)). A line feed or
+    carriage return in TEXT never submits.
+  - Sending changes no workspace, tab, pane or popup selection, shown
+    workspace or popup, scroll position or desktop focus. A hidden popup
+    receives the input and stays hidden. The send leaves no trace beyond what
+    the program shows.
+  - On success the command exits 0. JSON carries:
+    - the target: `workspace`, `tab`, `pane` or `popup`, and `terminal`;
+    - `caller`, `generation` and `window`, as EON-C35;
+    - `bytes`: TEXT's length, 0 for Enter only;
+    - `bracketed`: a bool, null when only Enter was sent;
+    - `enter`: true when the Enter was sent.
+  - `[agents] terminal_access`
+    ([Configuration](CONFIGURATION.md#configuration-behavior)) governs it:
+    `"window"` allows it; `"none"` refuses every send with
+    `terminal-access-off` and sends nothing.
+  - Documentation advises keeping a send short and pointing at a file for long
+    material. Some agents treat long pastes as outside material: Claude Code
+    marks pastes over 800 characters or 3 lines that way.
+- **Important failures:**
+  - Exit 2, with nothing sent:
+    - `invalid-text`: TEXT is not UTF-8, or contains ESC, another C0 control
+      except tab, line feed and carriage return, DEL, or a C1 control. Eon
+      refuses rather than rewrites it;
+    - `input-too-large`: TEXT exceeds 64 KiB;
+    - no TEXT and no `--enter`, or other invalid arguments.
+  - Exit 1:
+    - `terminal-access-off`, with nothing sent;
+    - `unbracketed-newline`: TEXT has a line feed or carriage return and the
+      program has not enabled bracketed paste. Nothing is sent;
+    - `terminal-ended`: the terminal has exited. The input is rejected, never
+      queued;
+    - `terminal-unavailable`: Orbit refused, or timed out after 2 s, or runs an
+      older management version, until the terminal restarts.
+  - Exit 1 also when the paste succeeds and the Enter then fails. The reply
+    names the failure with `enter: false`, and the text stays in the program.
+  - Exit 3: a missing or stale target, generation or window.
+  - Exit 4: a missing or unreachable supervisor.
+  - No failure changes focus or workspace state.
+- **Owner:**
+  - Eon Runtime: policy, TEXT validation, target resolution, the Enter delay,
+    the EONW v26 request and the CLI projection;
+  - Orbit: ORB-C5 lease input.
+- **Boundary:** None of the following:
+  - other keys, chords or raw bytes, or a typed (keystroke) mode;
+  - waiting for the program to consume or answer the input; reading back is
+    EON-C35;
+  - per-agent tokens, grants, expiry or audit log;
+  - remote or MCP exposure (eon-ciwn.3);
+  - protection against code running as the same user.
+- **Proof:** None yet.
+- **Open proof:** The installed joint proof `eon-agent-parity-a9g0.19` proves
+  it, after the command lands (`eon-agent-parity-a9g0.18`). Candidate evidence
+  from `eon-agent-parity-a9g0.16`: the EONW v26 codec tests, which refuse
+  invalid and oversized text on both sides, the lease tests, which map every
+  Orbit answer to its failure code and show lease input in a real Orbit's
+  text, and the two supervisor tests named under EON-C35.

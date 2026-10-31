@@ -5,7 +5,7 @@ remaining limitations. Beads and Git retain execution history; `CHANGELOG.md`
 retains accepted user-visible chronology.
 
 `VEN-C16` owns platform scope. Venus consumes ORBF v3 / ORBS v14 through the
-in-tree `orbit-protocol` crate and canonical EONW v25 through the in-tree
+in-tree `orbit-protocol` crate and canonical EONW v26 through the in-tree
 `eon-workspace-protocol` crate. A protocol version named in a contract below
 records when that behavior entered the wire; the current consumer is the
 in-tree version. VEN-C31 entered with ORBF v3 in ORBS v14.
@@ -1403,7 +1403,7 @@ re-proved when that platform or feature is next touched.
   configuration, Nova compatibility, inactive-tab close, protocol change,
   dependency, native-decoration policy, or platform-support expansion. The
   exceptions are the EON-C31 tab attention marker and the EON-C33 workspace
-  label, read from the EONW v25 snapshot that Venus already polls, the label
+  label, read from the EONW v26 snapshot that Venus already polls, the label
   and its badge from its `workspace` and `workspaces`, and the
   `--animate-working-badge` launch argument.
 - **Proof:** `795d735a8f61ef439c56d68e1cc4d3929af0dfcf`
@@ -1672,7 +1672,7 @@ re-proved when that platform or feature is next touched.
   Alt+Shift+G work under `Off` too.
 - **Trigger:**
   - Alt+Shift+H;
-  - a new EONW v25 snapshot;
+  - a new EONW v26 snapshot;
   - the pointer, keyboard or AccessKit acts on the sidebar;
   - the window is resized.
 - **Result:**
@@ -1788,7 +1788,7 @@ re-proved when that platform or feature is next touched.
   (`quota_refresh_and_workspace_failures_preserve_structure`); a change in the
   sidebar's visibility resizes the columns as Layout says. VEN-C8 and EON-C8
   carry this clause.
-- **Consumes:** EONW v25 and the Codex and Claude marks of the quota chips
+- **Consumes:** EONW v26 and the Codex and Claude marks of the quota chips
   ([Eon Bar](PRESENTATION.md#eon-bar)), which sidebar rows reuse.
 - **Boundary:**
   - no interpretation of provider events, terminal output or process data,
@@ -2165,7 +2165,7 @@ re-proved when that platform or feature is next touched.
   `sidebar` value.
 - **Trigger:**
   - Alt+Q;
-  - a new EONW v25 snapshot while the inbox is open;
+  - a new EONW v26 snapshot while the inbox is open;
   - the pointer, keyboard or AccessKit acts on the inbox;
   - the window is resized.
 - **Result:**
@@ -2215,7 +2215,7 @@ re-proved when that platform or feature is next touched.
   - **Venus** owns the inbox's open state, filter, highlight, scene, rendering, input and
     accessibility.
   - **Eon** owns the queue, its order and classes, and the jump (EON-C31).
-- **Consumes:** EONW v25 (`attention_queue`, `workspaces`) and the agent sidebar's row
+- **Consumes:** EONW v26 (`attention_queue`, `workspaces`) and the agent sidebar's row
   presentation (VEN-C30).
 - **Boundary:** no sorting, text search, multi-select, previews, notifications, kept filter, or
   Runtime state for opening; the key stays fixed until `[keys]` (`eon-configurability-qkq8.12`).

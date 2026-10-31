@@ -6,7 +6,7 @@ Both crates build and test without the Eon crates.
 | Package | Owns | Version |
 |---|---|---|
 | `eon-runtime` | Invocation, terminal lifecycle, workspace state, configuration parsing and generation identity | `0.1.0` |
-| `eon-workspace-protocol` | EONW v25 types and bounded codec | `0.1.0` |
+| `eon-workspace-protocol` | EONW v26 types and bounded codec | `0.1.0` |
 
 ## Consumer boundary
 
@@ -69,8 +69,11 @@ Successful missing quota clears prior facts.
 Eon's [EON-C27](../docs/CONTRACTS.md#eon-c27--codexbar-quota-collection)
 owns product policy and installed acceptance.
 
-EONW v25 adds the window-wide EON-C31 `attention_queue` in Runtime's total
-order; consumers never sort it. v24 adds a directory-based tab launch request,
+EONW v26 adds terminal reads and sends for EON-C35 and EON-C36: a request that
+reads a pane's or popup's visible text in any workspace of the window, one that
+pastes text or sends Enter to it, and their replies. v25 adds the window-wide
+EON-C31 `attention_queue` in Runtime's total order; consumers never sort it.
+v24 adds a directory-based tab launch request,
 optionally carrying an exact argv from a calling terminal. v23 adds the background attention state, ranked
 between working and idle.
 v22 gives each workspace summary its attention rollup and recency rank. v21
@@ -92,7 +95,7 @@ its calling terminal; v12 adds a request that
 moves the selected pane into the neighbouring column; v11 adds a request that
 closes one pane by its stable identity; v10 arranges each tab's panes into up
 to four columns; v9 permits genuinely absent provider resets, including stale
-observations. Only v25 remains: the CLI
+observations. Only v26 remains: the CLI
 inspects and stops supervisors that use it, lists any other as incompatible,
 and presentation remains bound to the original exact executable.
 
@@ -102,7 +105,7 @@ Runtime and codec have separate package manifests and version owners. Runtime
 depends on the in-tree Orbit protocol crate.
 
 EONW's complete package is its Cargo manifest, `src/lib.rs` and
-`src/v25.rs`. It has no external dependencies, feature declarations,
+`src/v26.rs`. It has no external dependencies, feature declarations,
 build script or workspace-inherited settings.
 
 Runtime evolution has one owner here; Eon owns product composition and

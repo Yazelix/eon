@@ -8,19 +8,20 @@ use super::{
     },
     diagnostics::DiagnosticLog,
     generation::{current_generation, generation_directory, record_launcher, remove_launcher},
-    managed_environment::{self, nonempty_environment_path},
+    managed_environment::{self, TerminalAccess, nonempty_environment_path},
     notification, platform, quota,
     sessions::{
-        AttachName, RunningSession, TAB_VARIABLE, TERMINAL_VARIABLE, acquire_generation_sessions,
-        bound_io, name_presentation, recover_sessions, session_finished, start_orbit,
-        stop_managed_sessions,
+        self, AttachName, RunningSession, TAB_VARIABLE, TERMINAL_VARIABLE,
+        acquire_generation_sessions, bound_io, name_presentation, recover_sessions,
+        session_finished, start_orbit, stop_managed_sessions,
     },
     workspace::{self, LaunchCommand, SessionEnd, SessionOperation, WorkspaceSet},
 };
-use eon_workspace_protocol::v25::{
-    Action, Availability, Ended, Failure, LifecycleResponse, Request, Response, Runtime, Snapshot,
-    Stopped, VERSION, WorkspaceAction,
+use eon_workspace_protocol::v26::{
+    Action, Availability, Ended, Failure, LifecycleResponse, Request, Response, Runtime, Screen,
+    Sent, Snapshot, Stopped, TerminalInput, TerminalText, VERSION, WorkspaceAction,
 };
+use orbit_protocol::management::{LeaseInput, Screen as OrbitScreen};
 use std::{
     env,
     ffi::OsString,
@@ -559,7 +560,7 @@ impl PresentationProcess {
                 };
                 if let Some(snapshot) = snapshot {
                     let bytes =
-                        eon_workspace_protocol::v25::encode_response(&Response::Snapshot(snapshot))
+                        eon_workspace_protocol::v26::encode_response(&Response::Snapshot(snapshot))
                             .map_err(|error| format!("cannot encode startup workspace: {error}"))?;
                     let mut remaining = bytes.as_slice();
                     while !remaining.is_empty() {
@@ -785,6 +786,7 @@ fn supervise(
         managed_environment::warning_close_last_tab(config, &inputs.defaults, Some(log))?;
     let animate_working_badge =
         managed_environment::animate_working_badge(config, &inputs.defaults, Some(log))?;
+    let agents = managed_environment::agents(config, &inputs.defaults, Some(log))?;
     // Full Eon only; eonbase has no poller and no sidebar (EON-C31).
     let mut attention = if mode == LaunchMode::Workspace {
         Some(Attention::new(managed_environment::sidebar_enabled(
@@ -962,6 +964,7 @@ fn supervise(
             .then(|| quota::Quotas::start(&inputs.codexbar, bar_widgets)),
         attention,
         pane_labels: super::pane_labels::Labels::default(),
+        agents,
         log: Arc::clone(log),
     };
     let presentation = match admitted {
@@ -1030,6 +1033,7 @@ fn supervise(
             }
 
             if !state.stopping {
+                sessions::drain_given_up_requests(&mut state.sessions);
                 // The backstop for a naming that failed or came late.
                 state.name_presentation(false);
                 state.follow_attention();
@@ -1078,6 +1082,8 @@ struct SupervisorState {
     /// Full Eon only; eonbase has no poller (EON-C31).
     attention: Option<Attention>,
     pane_labels: super::pane_labels::Labels,
+    /// The window's `[agents]` settings, read when it started.
+    agents: managed_environment::Agents,
     log: Arc<DiagnosticLog>,
 }
 
@@ -1994,6 +2000,15 @@ fn dispatch_control_request(
         } => closed(close_workspace_pane(
             &request, pane, state, inputs, config, runtime, generation,
         )),
+        Request {
+            action: Action::ReadTerminal { .. } | Action::SendTerminal { .. },
+            ..
+        } => (
+            ControlResponse::Workspace(
+                terminal_access(request, state, inputs, config).unwrap_or_else(Response::Failure),
+            ),
+            false,
+        ),
         request => {
             if state.workspaces.is_none() {
                 return (
@@ -2123,6 +2138,83 @@ fn dispatch_control_request(
     }
 }
 
+/// Reads or sends to a pane or popup terminal in any workspace of the
+/// window, shown or hidden, without changing any workspace, selection or
+/// focus (EON-C35, EON-C36). Blocks the supervisor until Orbit answers or
+/// the lease's deadline passes.
+fn terminal_access(
+    request: Request,
+    state: &mut SupervisorState,
+    inputs: &Inputs,
+    config: &Path,
+) -> Result<Response, Failure> {
+    if state.workspaces.is_none() {
+        return Err(failure(
+            "workspace-unavailable",
+            "eonbase has no Eon workspace",
+        ));
+    }
+    if state.agents.terminal_access == TerminalAccess::None {
+        return Err(failure(
+            "terminal-access-off",
+            "[agents] terminal_access is \"none\" for this window",
+        ));
+    }
+    let caller = caller_session(state, inputs, config, &request)?;
+    let Some(workspaces) = &mut state.workspaces else {
+        unreachable!("reconciliation keeps the workspace owner");
+    };
+    let caller = caller.and_then(|caller| workspaces.session_target(&caller));
+    let (id, input) = match request.action {
+        Action::ReadTerminal { target } => (target, None),
+        Action::SendTerminal { target, input } => (target, Some(input)),
+        _ => unreachable!("dispatch routes only terminal reads and sends here"),
+    };
+    let target = workspaces.terminal_target(&request.id, input.is_some(), &id)?;
+    let Some(session) = state
+        .sessions
+        .iter_mut()
+        .find(|session| session.id == target.terminal)
+    else {
+        return Err(failure(
+            "terminal-ended",
+            format!("terminal {} has ended", target.terminal),
+        ));
+    };
+    Ok(match input {
+        None => {
+            let visible = sessions::read_visible(session, &state.log)?;
+            Response::Text(TerminalText {
+                target,
+                caller,
+                revision: visible.revision,
+                screen: match visible.screen {
+                    OrbitScreen::Primary => Screen::Primary,
+                    OrbitScreen::Alternate => Screen::Alternate,
+                },
+                rows: visible.rows,
+                columns: visible.columns,
+                title: visible.title,
+                directory: visible.directory,
+                omitted_rows: visible.omitted_rows,
+                text: visible.text,
+            })
+        }
+        Some(input) => {
+            let input = match input {
+                TerminalInput::Paste(text) => LeaseInput::Paste(text),
+                TerminalInput::Enter => LeaseInput::Enter,
+            };
+            Response::Sent(Sent {
+                target,
+                caller,
+                bracketed: sessions::send_input(session, input, &state.log)?,
+                enter_delay_ms: state.agents.send_enter_delay_ms,
+            })
+        }
+    })
+}
+
 /// A close reply; one that ended the generation shuts the supervisor down.
 fn closed(result: Result<Response, Failure>) -> (ControlResponse, bool) {
     let response = result.unwrap_or_else(Response::Failure);
@@ -2196,6 +2288,13 @@ mod tests {
         path::{Path, PathBuf},
         process::Command,
     };
+
+    fn window_agents() -> crate::managed_environment::Agents {
+        crate::managed_environment::Agents {
+            terminal_access: crate::managed_environment::TerminalAccess::Window,
+            send_enter_delay_ms: 300,
+        }
+    }
 
     /// Kills a test-owned Orbit's worker, which sends Orbit down its failure
     /// path: it removes its Live record and exits without a result.
@@ -2313,6 +2412,7 @@ mod tests {
             quotas: None,
             attention: None,
             pane_labels: super::super::pane_labels::Labels::default(),
+            agents: window_agents(),
             log,
         };
         let inputs = crate::fixtures::inputs();
@@ -2394,6 +2494,7 @@ mod tests {
             quotas: None,
             attention: None,
             pane_labels: super::super::pane_labels::Labels::default(),
+            agents: window_agents(),
             log: DiagnosticLog::open_in(Ok(roots[0].join("logs")), "g1-test", "workspace"),
         };
         let inputs = crate::fixtures::inputs();
@@ -2510,6 +2611,7 @@ mod tests {
             quotas: None,
             attention: None,
             pane_labels: super::super::pane_labels::Labels::default(),
+            agents: window_agents(),
             log: DiagnosticLog::open_in(Ok(root.join("logs")), "g1-test", "workspace"),
         };
         let inputs = crate::fixtures::inputs();
@@ -2560,6 +2662,7 @@ mod tests {
             quotas: None,
             attention: None,
             pane_labels: super::super::pane_labels::Labels::default(),
+            agents: window_agents(),
             log: DiagnosticLog::open_in(Ok(root.join("logs")), "g1-test", "workspace"),
         };
 
@@ -2647,6 +2750,7 @@ mod tests {
             quotas: None,
             attention: None,
             pane_labels: super::super::pane_labels::Labels::default(),
+            agents: window_agents(),
             log: DiagnosticLog::open_in(Ok(roots[0].join("logs")), "g1-test", "workspace"),
         };
         let ids = |state: &SupervisorState| {
@@ -2710,7 +2814,7 @@ mod tests {
 
     #[test]
     fn startup_snapshot_transfer_uses_the_admission_deadline() {
-        use eon_workspace_protocol::v25::{
+        use eon_workspace_protocol::v26::{
             Column, Pane, PopupGeometry, Response, Snapshot, Tab, encode_response,
         };
         use std::time::{Duration, Instant};
@@ -2719,7 +2823,7 @@ mod tests {
         let snapshot = Snapshot {
             workspace: "w1".into(),
             active_workspace: "w1".into(),
-            workspaces: vec![eon_workspace_protocol::v25::WorkspaceInfo {
+            workspaces: vec![eon_workspace_protocol::v26::WorkspaceInfo {
                 id: "w1".into(),
                 name: None,
                 tab_count: 64,
@@ -2757,7 +2861,7 @@ mod tests {
                 .collect(),
             codex_quota: None,
             claude_quota: None,
-            sidebar: eon_workspace_protocol::v25::Sidebar::Open,
+            sidebar: eon_workspace_protocol::v26::Sidebar::Open,
             attention_queue: Vec::new(),
         };
         let expected = encode_response(&Response::Snapshot(snapshot.clone())).unwrap();

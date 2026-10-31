@@ -42,7 +42,7 @@
     "required_interfaces": [
       { "component": "orbit", "interface": "ORBF", "version": 3 },
       { "component": "orbit", "interface": "ORBS", "version": 14 },
-      { "component": "eon-workspace-protocol", "interface": "EONW", "version": 25 }
+      { "component": "eon-workspace-protocol", "interface": "EONW", "version": 26 }
     ]
   },
   "components": [
@@ -139,7 +139,7 @@
         {
           "component": "eon-workspace-protocol",
           "interfaces": [
-            { "id": "EONW", "version": 25, "proof": "2e7e9660b1a9d4b3215ab9e160d3cb6e6cecfbe9" }
+            { "id": "EONW", "version": 26, "proof": "cf4df4795bb8496f3dd28f9bceb76a4038e55abf" }
           ]
         }
       ]
@@ -362,7 +362,7 @@
         {
           "component": "eon-workspace-protocol",
           "interfaces": [
-            { "id": "EONW", "version": 25, "proof": "2e7e9660b1a9d4b3215ab9e160d3cb6e6cecfbe9" }
+            { "id": "EONW", "version": 26, "proof": "cf4df4795bb8496f3dd28f9bceb76a4038e55abf" }
           ]
         },
         {
@@ -386,7 +386,7 @@
         { "id": "eon-workspace-protocol", "kind": "cargo-package" }
       ],
       "contracts": [],
-      "interfaces": [{ "id": "EONW", "version": 25, "proof": "2e7e9660b1a9d4b3215ab9e160d3cb6e6cecfbe9" }],
+      "interfaces": [{ "id": "EONW", "version": 26, "proof": "cf4df4795bb8496f3dd28f9bceb76a4038e55abf" }],
       "requires": []
     }
   ]

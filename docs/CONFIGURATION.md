@@ -43,6 +43,10 @@ animate_working_badge = true
 
 [sidebar]
 enabled = true
+
+[agents]
+terminal_access = "window"
+send_enter_delay_ms = 300
 ```
 
 ## Built-in defaults
@@ -97,6 +101,10 @@ warning_close_last_tab = true # Ask before stopping the final tab's terminals.
 
 [sidebar]
 enabled = true # Enable this feature or popup.
+
+[agents]
+send_enter_delay_ms = 300 # Wait between `eon pane send` text and its --enter.
+terminal_access = "window" # Let `eon pane read` and `eon pane send` reach this window's terminals; "none" refuses both.
 
 [popups.agent]
 command = "auto" # Direct argv, or auto for Agent's command selection.
@@ -281,6 +289,22 @@ it off; Alt+G and Alt+Shift+G still jump between agents. The window reads the
 setting when it starts. Alt+Shift+H shows or hides the sidebar; it also steps
 aside while the window leaves fewer than 80 cells for the terminals beside it.
 See [Agent sidebar](USAGE.md#agent-sidebar).
+
+`[agents] terminal_access` decides whether `eon pane read` and `eon pane send`
+may reach this window's terminals.
+
+- `"window"`, the default, lets any process running as you read or send to any
+  pane or popup of the window, in any workspace, shown or hidden.
+- `"none"` refuses both with `terminal-access-off` and reveals no terminal
+  content.
+
+The window reads the setting when it starts. It is a preference and a kill
+switch, not a security boundary: Eon's socket is private to your user, whose
+processes can already read and drive terminals.
+
+`[agents] send_enter_delay_ms`, 300 by default, is how long
+`eon pane send --enter` waits after the text before sending Enter, so agent
+prompts take the whole paste first. It must be 0 to 5000.
 
 Pane labels use a fixed policy: a pin, then sanitized terminal title, then compact
 working directory, with differing-directory context. Commands and `eon pane rename`

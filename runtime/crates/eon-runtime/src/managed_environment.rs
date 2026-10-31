@@ -11,9 +11,9 @@ use std::{
     process::Command,
 };
 
-use eon_workspace_protocol::v25::{
-    ALT, CTRL, MAX_ENTRIES, MAX_ENTRY_ID_BYTES, MAX_LABEL_BYTES, PopupGeometry, PopupKey, SHIFT,
-    SUPER, Shortcut,
+use eon_workspace_protocol::v26::{
+    ALT, CTRL, MAX_ENTER_DELAY_MS, MAX_ENTRIES, MAX_ENTRY_ID_BYTES, MAX_LABEL_BYTES, PopupGeometry,
+    PopupKey, SHIFT, SUPER, Shortcut,
 };
 
 pub(super) fn nonempty_environment_path(name: &str) -> Option<PathBuf> {
@@ -31,6 +31,7 @@ struct EonConfig {
     anima: AnimationSettings,
     workspace: WorkspaceSettings,
     sidebar: SidebarSettings,
+    agents: AgentSettings,
     popups: BTreeMap<String, PopupEntrySettings>,
     #[serde(flatten)]
     unknown: BTreeMap<String, toml::Value>,
@@ -47,6 +48,7 @@ impl EonConfig {
             ("anima.", &self.anima.unknown),
             ("workspace.", &self.workspace.unknown),
             ("sidebar.", &self.sidebar.unknown),
+            ("agents.", &self.agents.unknown),
         ] {
             keys.extend(unknown.keys().map(|key| format!("{prefix}{key}")));
         }
@@ -70,6 +72,11 @@ pub struct Defaults {
     pub animate_working_badge: bool,
     /// Whether full Eon offers the agent sidebar (EON-C31).
     pub sidebar_enabled: bool,
+    /// Whether `eon pane read` and `eon pane send` reach the window's
+    /// terminals (EON-C35, EON-C36).
+    pub terminal_access: TerminalAccess,
+    /// How long `eon pane send --enter` waits after the text (EON-C36).
+    pub send_enter_delay_ms: u16,
     pub popups: PopupCatalog,
     pub custom_popup_keep_alive: bool,
     pub ansi_palette: &'static str,
@@ -148,6 +155,34 @@ struct SidebarSettings {
     enabled: Option<bool>,
     #[serde(flatten)]
     unknown: BTreeMap<String, toml::Value>,
+}
+
+/// `[agents] terminal_access`: a preference and a kill switch, not a security
+/// boundary (EON-C35, EON-C36).
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Deserialize, Serialize)]
+#[serde(rename_all = "lowercase")]
+pub enum TerminalAccess {
+    /// Any process of the user may read or send to any pane or popup of the
+    /// window.
+    Window,
+    /// Every read and send is refused.
+    None,
+}
+
+#[derive(Debug, Default, Deserialize)]
+#[serde(default)]
+struct AgentSettings {
+    terminal_access: Option<TerminalAccess>,
+    send_enter_delay_ms: Option<u64>,
+    #[serde(flatten)]
+    unknown: BTreeMap<String, toml::Value>,
+}
+
+/// The window's `[agents]` settings, read when it starts.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) struct Agents {
+    pub(crate) terminal_access: TerminalAccess,
+    pub(crate) send_enter_delay_ms: u16,
 }
 
 #[derive(Debug, Default, Deserialize)]
@@ -336,6 +371,10 @@ pub(crate) fn print_defaults(defaults: &Defaults, json: bool) -> Result<String, 
             "animate_working_badge": defaults.animate_working_badge,
         },
         "sidebar": { "enabled": defaults.sidebar_enabled },
+        "agents": {
+            "send_enter_delay_ms": defaults.send_enter_delay_ms,
+            "terminal_access": defaults.terminal_access,
+        },
         "popups": popups,
     });
     if json {
@@ -349,7 +388,15 @@ pub(crate) fn print_defaults(defaults: &Defaults, json: bool) -> Result<String, 
     }
     let mut output =
         String::from("# Built-in defaults. Unset and Eon-owned settings remain omitted.\n");
-    for section in ["bar", "terminal", "shell", "anima", "workspace", "sidebar"] {
+    for section in [
+        "bar",
+        "terminal",
+        "shell",
+        "anima",
+        "workspace",
+        "sidebar",
+        "agents",
+    ] {
         defaults_table(&mut output, section, &config[section])?;
     }
     for (id, settings) in config["popups"].as_object().unwrap() {
@@ -401,6 +448,10 @@ fn defaults_table(
             "duration_seconds" => "Startup animation duration in seconds.",
             "warning_close_last_tab" => "Ask before stopping the final tab's terminals.",
             "animate_working_badge" => "Animate the working badge; false keeps it still.",
+            "send_enter_delay_ms" => "Wait between `eon pane send` text and its --enter.",
+            "terminal_access" => {
+                "Let `eon pane read` and `eon pane send` reach this window's terminals; \"none\" refuses both."
+            }
             "label" => "Popup display name.",
             "keybinding" => "Popup shortcut using physical keys.",
             "keep_alive" => "Keep this popup running when hidden.",
@@ -534,6 +585,26 @@ pub(crate) fn sidebar_enabled(
         .sidebar
         .enabled
         .unwrap_or(defaults.sidebar_enabled))
+}
+
+pub(crate) fn agents(
+    root: &Path,
+    defaults: &Defaults,
+    log: Option<&DiagnosticLog>,
+) -> Result<Agents, String> {
+    let settings = read_config(root, log)?.agents;
+    let delay = settings
+        .send_enter_delay_ms
+        .unwrap_or(defaults.send_enter_delay_ms.into());
+    Ok(Agents {
+        terminal_access: settings.terminal_access.unwrap_or(defaults.terminal_access),
+        send_enter_delay_ms: u16::try_from(delay)
+            .ok()
+            .filter(|delay| *delay <= MAX_ENTER_DELAY_MS)
+            .ok_or_else(|| {
+                format!("agents.send_enter_delay_ms must be from 0 through {MAX_ENTER_DELAY_MS}")
+            })?,
+    })
 }
 
 pub(crate) fn terminal_presentation(
@@ -1190,6 +1261,8 @@ mod tests {
                 defaults.terminal.rows = Some(30);
                 defaults.anima.enabled = false;
                 defaults.animate_working_badge = false;
+                defaults.terminal_access = super::TerminalAccess::None;
+                defaults.send_enter_delay_ms = 0;
                 defaults.popups.entries[1].command = PopupCommand::Argv(vec![
                     "fixture-git".into(),
                     "quote\"and\\slash".into(),
@@ -1222,12 +1295,46 @@ mod tests {
                     warning_close_last_tab(root, &defaults, None).unwrap(),
                     animate_working_badge(root, &defaults, None).unwrap(),
                     sidebar_enabled(root, &defaults, None).unwrap(),
+                    super::agents(root, &defaults, None).unwrap(),
                 )
             };
             assert_eq!(policy(&empty), policy(&printed));
         }
         fs::remove_dir_all(empty).unwrap();
         fs::remove_dir_all(printed).unwrap();
+    }
+
+    #[test]
+    fn agent_settings_take_window_or_none_and_a_bounded_enter_delay() {
+        let root = crate::supervisor::temporary_directory();
+        let defaults = crate::fixtures::inputs().defaults;
+        let agents = |source: &str| {
+            fs::write(root.join("config.toml"), source).unwrap();
+            super::agents(&root, &defaults, None)
+        };
+        assert_eq!(
+            agents("[agents]\nterminal_access = \"none\"\nsend_enter_delay_ms = 5000\n"),
+            Ok(super::Agents {
+                terminal_access: super::TerminalAccess::None,
+                send_enter_delay_ms: 5000,
+            })
+        );
+        assert_eq!(
+            agents("[agents]\nterminal_access = \"window\"\nsend_enter_delay_ms = 0\n"),
+            Ok(super::Agents {
+                terminal_access: super::TerminalAccess::Window,
+                send_enter_delay_ms: 0,
+            })
+        );
+        for source in [
+            "[agents]\nterminal_access = \"all\"\n",
+            "[agents]\nsend_enter_delay_ms = 5001\n",
+            "[agents]\nsend_enter_delay_ms = 4294967296\n",
+            "[agents]\nsend_enter_delay_ms = -1\n",
+        ] {
+            assert!(agents(source).is_err(), "{source}");
+        }
+        fs::remove_dir_all(root).unwrap();
     }
 
     fn command_environment<'a>(command: &'a Command, name: &str) -> Option<Option<&'a OsStr>> {

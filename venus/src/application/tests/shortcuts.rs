@@ -3,7 +3,7 @@ use crate::application::shortcuts::{
     ALT_SHIFT, CTRL_ALT, CTRL_SHIFT, FIXED_SHORTCUTS, native_pointer_shortcut_for,
     shortcut_groups_for,
 };
-use eon_workspace_protocol::v25::{InvokeIntent, Side, Tab};
+use eon_workspace_protocol::v26::{InvokeIntent, Side, Tab};
 
 #[test]
 fn new_window_shortcut_invokes_the_supplied_eon_command() {
@@ -21,7 +21,7 @@ fn new_window_shortcut_invokes_the_supplied_eon_command() {
         shortcut_groups_for(
             NativePlatform::Linux,
             &[],
-            eon_workspace_protocol::v25::Sidebar::Open
+            eon_workspace_protocol::v26::Sidebar::Open
         )
         .iter()
         .flat_map(|group| &group.rows)
@@ -76,14 +76,14 @@ fn shortcut_viewer_uses_live_rows_and_captures_its_local_sequence() {
         id: "project".into(),
         label: "Money ops".into(),
         shortcut: PopupKey::Bound(Shortcut {
-            modifiers: eon_workspace_protocol::v25::ALT,
+            modifiers: eon_workspace_protocol::v26::ALT,
             key: "KeyZ".into(),
         }),
     }];
     let groups = shortcut_groups_for(
         NativePlatform::Linux,
         &entries,
-        eon_workspace_protocol::v25::Sidebar::Open,
+        eon_workspace_protocol::v26::Sidebar::Open,
     );
     let key_shortcut = |key, modifiers| {
         native_key_shortcut_for(NativePlatform::Linux, key, modifiers, &[]).unwrap()
@@ -164,7 +164,7 @@ fn shortcut_viewer_uses_live_rows_and_captures_its_local_sequence() {
         shortcut_groups_for(
             NativePlatform::Linux,
             &[],
-            eon_workspace_protocol::v25::Sidebar::Open
+            eon_workspace_protocol::v26::Sidebar::Open
         )
         .iter()
         .flat_map(|group| &group.rows)
@@ -250,7 +250,7 @@ fn macos_uses_command_for_standard_host_actions_only() {
     let rows = shortcut_groups_for(
         NativePlatform::Macos,
         &[],
-        eon_workspace_protocol::v25::Sidebar::Open,
+        eon_workspace_protocol::v26::Sidebar::Open,
     )
     .into_iter()
     .flat_map(|group| group.rows)
@@ -333,7 +333,7 @@ fn structural_shortcuts_do_not_repeat_and_popup_focus_is_explicit() {
     let mut snapshot = Snapshot {
         workspace: "w1".into(),
         active_workspace: "w1".into(),
-        workspaces: vec![eon_workspace_protocol::v25::WorkspaceInfo {
+        workspaces: vec![eon_workspace_protocol::v26::WorkspaceInfo {
             id: "w1".into(),
             name: None,
             tab_count: 1,
@@ -341,7 +341,7 @@ fn structural_shortcuts_do_not_repeat_and_popup_focus_is_explicit() {
             recency: 0,
         }],
         active_tab: "t1".into(),
-        geometry: eon_workspace_protocol::v25::PopupGeometry {
+        geometry: eon_workspace_protocol::v26::PopupGeometry {
             side_margin: 8.0,
             vertical_margin: 4.0,
         },
@@ -358,7 +358,7 @@ fn structural_shortcuts_do_not_repeat_and_popup_focus_is_explicit() {
         }],
         codex_quota: None,
         claude_quota: None,
-        sidebar: eon_workspace_protocol::v25::Sidebar::Open,
+        sidebar: eon_workspace_protocol::v26::Sidebar::Open,
         attention_queue: Vec::new(),
     };
     show_test_popup(&mut snapshot);
@@ -379,7 +379,7 @@ fn structural_shortcuts_do_not_repeat_and_popup_focus_is_explicit() {
                 intent
             }
         );
-        eon_workspace_protocol::v25::check_popup_action(&snapshot, &action).unwrap();
+        eon_workspace_protocol::v26::check_popup_action(&snapshot, &action).unwrap();
         assert!(!sends_workspace_shortcut(
             &action,
             ElementState::Pressed,
@@ -414,7 +414,7 @@ fn attention_inbox_binding_opens_under_every_sidebar() {
 
 #[test]
 fn attention_inbox_keeps_the_queue_filter_and_entry_across_refreshes() {
-    use eon_workspace_protocol::v25::{
+    use eon_workspace_protocol::v26::{
         Attention, AttentionState, PopupGeometry, QueueEntry, WorkspaceInfo,
     };
     use orbit_protocol::session::Modifiers;
@@ -450,9 +450,9 @@ fn attention_inbox_keeps_the_queue_filter_and_entry_across_refreshes() {
                 pending: false,
                 selected_pane: Some(id.replace('t', "p")),
                 selected_popup: None,
-                columns: vec![eon_workspace_protocol::v25::Column {
+                columns: vec![eon_workspace_protocol::v26::Column {
                     expanded: id.replace('t', "p"),
-                    panes: vec![eon_workspace_protocol::v25::Pane {
+                    panes: vec![eon_workspace_protocol::v26::Pane {
                         id: id.replace('t', "p"),
                         label: id.replace('t', "p"),
                         pinned_name: None,
@@ -486,7 +486,7 @@ fn attention_inbox_keeps_the_queue_filter_and_entry_across_refreshes() {
             target: target.into(),
             attention: Attention {
                 state,
-                record: Some(eon_workspace_protocol::v25::AttentionRecord {
+                record: Some(eon_workspace_protocol::v26::AttentionRecord {
                     kind: None,
                     progress: None,
                     app: "codex".into(),
@@ -540,12 +540,12 @@ fn attention_inbox_keeps_the_queue_filter_and_entry_across_refreshes() {
     assert_eq!(inbox.filter, AttentionFilter::Error);
     assert_eq!(scene(&inbox, &snapshot).attention_rows[0].target, "p2");
     let mut model = WorkspaceModel::default();
-    model.apply(eon_workspace_protocol::v25::Response::Snapshot(
+    model.apply(eon_workspace_protocol::v26::Response::Snapshot(
         snapshot.clone(),
     ));
     let index = inbox.index(&snapshot).unwrap();
     snapshot.attention_queue[1].attention.record =
-        Some(eon_workspace_protocol::v25::AttentionRecord {
+        Some(eon_workspace_protocol::v26::AttentionRecord {
             kind: None,
             progress: None,
             app: "codex".into(),
@@ -557,7 +557,7 @@ fn attention_inbox_keeps_the_queue_filter_and_entry_across_refreshes() {
             others: 0,
         });
     assert_eq!(
-        model.apply(eon_workspace_protocol::v25::Response::Snapshot(
+        model.apply(eon_workspace_protocol::v26::Response::Snapshot(
             snapshot.clone()
         )),
         (false, false),

@@ -2,9 +2,9 @@
 
 use crate::{
     Defaults, Inputs, ManagedPrograms, PaddingColor, PopupCatalog, PopupCommand, PopupDefinition,
-    ShellConfig, StartupAnimation, TerminalConfig,
+    ShellConfig, StartupAnimation, TerminalAccess, TerminalConfig,
 };
-use eon_workspace_protocol::v25::{ALT, PopupGeometry, PopupKey, SHIFT, Shortcut};
+use eon_workspace_protocol::v26::{ALT, PopupGeometry, PopupKey, SHIFT, Shortcut};
 
 pub(crate) fn inputs() -> Inputs {
     Inputs {
@@ -54,6 +54,8 @@ pub(crate) fn inputs() -> Inputs {
             warning_close_last_tab: true,
             animate_working_badge: true,
             sidebar_enabled: true,
+            terminal_access: TerminalAccess::Window,
+            send_enter_delay_ms: 300,
             popups: PopupCatalog {
                 geometry: PopupGeometry {
                     side_margin: 11.0,

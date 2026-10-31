@@ -1,12 +1,13 @@
-//! Eon-owned values and bounded EONW v25 codec for local workspace clients.
+//! Eon-owned values and bounded EONW v26 codec for local workspace clients.
 //!
 //! Every message is a 12-byte header (`EONW`, little-endian version, kind,
 //! zero flags, little-endian payload length) followed by its payload.
-//! Strings and byte fields carry a little-endian `u16` length prefix.
+//! Strings and byte fields carry a little-endian `u16` length prefix, except
+//! pasted and visible terminal text, which carry a `u32` one.
 
 use std::{collections::HashSet, fmt, str};
 
-pub const VERSION: u16 = 25;
+pub const VERSION: u16 = 26;
 pub const HEADER_BYTES: usize = 12;
 const MAGIC: &[u8; 4] = b"EONW";
 const MAX_MESSAGE_BYTES: usize = 2 * 1024 * 1024;
@@ -40,6 +41,15 @@ const MAX_TITLE_BYTES: usize = 96;
 const MAX_STATUS_MESSAGE_BYTES: usize = 256;
 /// Orbit keeps at most 256 records per terminal.
 const MAX_OTHER_RECORDS: u16 = 255;
+/// The bound on a terminal's visible text (EON-C35, ORB-C17).
+pub const MAX_TERMINAL_TEXT_BYTES: usize = 1024 * 1024;
+/// The bound on one paste (EON-C36, ORB-C5).
+pub const MAX_PASTE_BYTES: usize = 64 * 1024;
+/// The bound on a terminal's title and working directory together, as ORBS
+/// bounds its metadata.
+pub const MAX_TERMINAL_METADATA_BYTES: usize = 8 * 1024;
+/// The longest `[agents] send_enter_delay_ms`.
+pub const MAX_ENTER_DELAY_MS: u16 = 5000;
 pub const PROJECT_ENTRY: &str = "project";
 pub const SHIFT: u8 = 1;
 pub const CTRL: u8 = 2;
@@ -52,6 +62,8 @@ const FAILURE: u8 = 130;
 const RUNTIME: u8 = 131;
 const STOPPED: u8 = 132;
 const ENDED: u8 = 133;
+const TEXT: u8 = 134;
+const SENT: u8 = 135;
 
 const INVOKE_POPUP: u8 = 19;
 const DISMISS_POPUP: u8 = 20;
@@ -68,6 +80,8 @@ const TOGGLE_SIDEBAR: u8 = 28;
 const FOCUS_ATTENTION: u8 = 29;
 const NEXT_ATTENTION: u8 = 30;
 const PREVIOUS_ATTENTION: u8 = 31;
+const READ_TERMINAL: u8 = 38;
+const SEND_TERMINAL: u8 = 39;
 const NO_PROGRESS: u8 = 255;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -199,6 +213,25 @@ pub enum Action {
     /// Jump along EON-C31's attention queue.
     NextAttention,
     PreviousAttention,
+    /// Read the visible text of the pane or popup `target`, in any workspace
+    /// of the window (EON-C35).
+    ReadTerminal {
+        target: String,
+    },
+    /// Send `input` to the pane or popup `target`, in any workspace of the
+    /// window (EON-C36).
+    SendTerminal {
+        target: String,
+        input: TerminalInput,
+    },
+}
+
+/// One input for a terminal (EON-C36).
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum TerminalInput {
+    /// Text that [`validate_paste`] accepts.
+    Paste(String),
+    Enter,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -499,11 +532,69 @@ pub enum Response {
     /// A tab or pane close stopped the window's last terminal and ended its
     /// generation, so no workspace remains to snapshot.
     Ended(Ended),
+    Text(TerminalText),
+    Sent(Sent),
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Ended {
     pub generation: String,
+}
+
+/// Which of a tab's terminals a target is.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum TargetId {
+    Pane(String),
+    Popup(String),
+}
+
+/// A pane or popup terminal of the window, named as `eon workspace` names it.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct TerminalTarget {
+    pub workspace: String,
+    pub tab: String,
+    pub id: TargetId,
+    pub terminal: String,
+}
+
+/// Which screen of a terminal is active.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Screen {
+    Primary,
+    Alternate,
+}
+
+/// One read of a terminal's live area as lossy plain text (EON-C35, ORB-C17).
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct TerminalText {
+    pub target: TerminalTarget,
+    /// The calling terminal, when the request named one.
+    pub caller: Option<TerminalTarget>,
+    pub revision: u64,
+    pub screen: Screen,
+    pub rows: u16,
+    pub columns: u16,
+    pub title: String,
+    /// The raw working directory.
+    pub directory: Vec<u8>,
+    /// How many leading rows the text bound left out.
+    pub omitted_rows: u32,
+    /// One line per display row joined by line feeds, with no other control
+    /// character.
+    pub text: String,
+}
+
+/// An input the target's terminal took (EON-C36).
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct Sent {
+    pub target: TerminalTarget,
+    /// The calling terminal, when the request named one.
+    pub caller: Option<TerminalTarget>,
+    /// Whether the paste was bracketed; false for Enter.
+    pub bracketed: bool,
+    /// The window's `[agents] send_enter_delay_ms`: how long a sender waits
+    /// after a paste before its Enter.
+    pub enter_delay_ms: u16,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -740,6 +831,24 @@ pub fn encode_request(request: &Request) -> Result<Vec<u8>> {
         }
         Action::NextAttention => payload.byte(NEXT_ATTENTION),
         Action::PreviousAttention => payload.byte(PREVIOUS_ATTENTION),
+        Action::ReadTerminal { target } => {
+            identity("terminal target", target)?;
+            payload.byte(READ_TERMINAL);
+            payload.string(target);
+        }
+        Action::SendTerminal { target, input } => {
+            identity("terminal target", target)?;
+            payload.byte(SEND_TERMINAL);
+            payload.string(target);
+            match input {
+                TerminalInput::Paste(text) => {
+                    validate_paste(text)?;
+                    payload.byte(0);
+                    payload.long_raw(text.as_bytes());
+                }
+                TerminalInput::Enter => payload.byte(1),
+            }
+        }
     }
     frame(REQUEST, payload.bytes)
 }
@@ -877,6 +986,22 @@ pub fn decode_request(bytes: &[u8]) -> Result<Request> {
         }),
         NEXT_ATTENTION => Some(Action::NextAttention),
         PREVIOUS_ATTENTION => Some(Action::PreviousAttention),
+        READ_TERMINAL => Some(Action::ReadTerminal {
+            target: decoder.string("terminal target", MAX_ID_BYTES)?,
+        }),
+        SEND_TERMINAL => Some(Action::SendTerminal {
+            target: decoder.string("terminal target", MAX_ID_BYTES)?,
+            input: match decoder.byte()? {
+                0 => TerminalInput::Paste(decoder.long_string("paste", MAX_PASTE_BYTES)?),
+                1 => TerminalInput::Enter,
+                value => {
+                    return Err(Error::InvalidTag {
+                        field: "terminal input",
+                        value,
+                    });
+                }
+            },
+        }),
         _ => None,
     };
     if let Some(action) = action {
@@ -903,6 +1028,13 @@ pub fn decode_request(bytes: &[u8]) -> Result<Request> {
             Action::FocusAttention { tab, target } => {
                 identity("tab id", tab)?;
                 identity("attention target", target)?;
+            }
+            Action::ReadTerminal { target } => identity("terminal target", target)?,
+            Action::SendTerminal { target, input } => {
+                identity("terminal target", target)?;
+                if let TerminalInput::Paste(text) = input {
+                    validate_paste(text)?;
+                }
             }
             _ => (),
         }
@@ -1158,7 +1290,30 @@ fn validate_popup_action(action: &Action) -> Result<()> {
         | Action::ToggleSidebar
         | Action::FocusAttention { .. }
         | Action::NextAttention
-        | Action::PreviousAttention => (),
+        | Action::PreviousAttention
+        | Action::ReadTerminal { .. }
+        | Action::SendTerminal { .. } => (),
+    }
+    Ok(())
+}
+
+/// Accepts a paste for [`TerminalInput::Paste`] (EON-C36): nonempty text of
+/// at most [`MAX_PASTE_BYTES`] with no control character other than tab, line
+/// feed and carriage return. Too long text is `FieldTooLong`; anything else
+/// it refuses is `InvalidValue`.
+pub fn validate_paste(text: &str) -> Result<()> {
+    if text.len() > MAX_PASTE_BYTES {
+        return Err(Error::FieldTooLong {
+            field: "paste",
+            length: text.len(),
+        });
+    }
+    if text.is_empty()
+        || text
+            .chars()
+            .any(|character| character.is_control() && !matches!(character, '\t' | '\n' | '\r'))
+    {
+        return Err(Error::InvalidValue { field: "paste" });
     }
     Ok(())
 }
@@ -1234,8 +1389,138 @@ pub fn encode_response(response: &Response) -> Result<Vec<u8>> {
             payload.string(&ended.generation);
             ENDED
         }
+        Response::Text(text) => {
+            validate_terminal_text(text)?;
+            encode_target(&mut payload, &text.target);
+            encode_caller(&mut payload, text.caller.as_ref());
+            payload
+                .bytes
+                .extend_from_slice(&text.revision.to_le_bytes());
+            payload.byte(match text.screen {
+                Screen::Primary => 0,
+                Screen::Alternate => 1,
+            });
+            payload.number(text.rows);
+            payload.number(text.columns);
+            payload.string(&text.title);
+            payload.raw(&text.directory);
+            payload
+                .bytes
+                .extend_from_slice(&text.omitted_rows.to_le_bytes());
+            payload.long_raw(text.text.as_bytes());
+            TEXT
+        }
+        Response::Sent(sent) => {
+            validate_target(&sent.target)?;
+            if let Some(caller) = &sent.caller {
+                validate_target(caller)?;
+            }
+            validate_enter_delay(sent.enter_delay_ms)?;
+            encode_target(&mut payload, &sent.target);
+            encode_caller(&mut payload, sent.caller.as_ref());
+            payload.byte(u8::from(sent.bracketed));
+            payload.number(sent.enter_delay_ms);
+            SENT
+        }
     };
     frame(kind, payload.bytes)
+}
+
+fn validate_target(target: &TerminalTarget) -> Result<()> {
+    identity("target workspace", &target.workspace)?;
+    identity("target tab", &target.tab)?;
+    match &target.id {
+        TargetId::Pane(id) => identity("target pane", id)?,
+        TargetId::Popup(id) => identity("target popup", id)?,
+    }
+    identity("target terminal", &target.terminal)
+}
+
+fn encode_target(encoder: &mut Encoder, target: &TerminalTarget) {
+    encoder.string(&target.workspace);
+    encoder.string(&target.tab);
+    let (tag, id) = match &target.id {
+        TargetId::Pane(id) => (0, id),
+        TargetId::Popup(id) => (1, id),
+    };
+    encoder.byte(tag);
+    encoder.string(id);
+    encoder.string(&target.terminal);
+}
+
+fn decode_target(decoder: &mut Decoder<'_>) -> Result<TerminalTarget> {
+    let workspace = decoder.string("target workspace", MAX_ID_BYTES)?;
+    let tab = decoder.string("target tab", MAX_ID_BYTES)?;
+    let id = match decoder.byte()? {
+        0 => TargetId::Pane(decoder.string("target pane", MAX_ID_BYTES)?),
+        1 => TargetId::Popup(decoder.string("target popup", MAX_ID_BYTES)?),
+        value => {
+            return Err(Error::InvalidTag {
+                field: "target",
+                value,
+            });
+        }
+    };
+    let target = TerminalTarget {
+        workspace,
+        tab,
+        id,
+        terminal: decoder.string("target terminal", MAX_ID_BYTES)?,
+    };
+    validate_target(&target)?;
+    Ok(target)
+}
+
+fn encode_caller(encoder: &mut Encoder, caller: Option<&TerminalTarget>) {
+    encoder.byte(u8::from(caller.is_some()));
+    if let Some(caller) = caller {
+        encode_target(encoder, caller);
+    }
+}
+
+fn decode_caller(decoder: &mut Decoder<'_>) -> Result<Option<TerminalTarget>> {
+    decode_bool(decoder, "caller")?
+        .then(|| decode_target(decoder))
+        .transpose()
+}
+
+fn validate_terminal_text(text: &TerminalText) -> Result<()> {
+    validate_target(&text.target)?;
+    if let Some(caller) = &text.caller {
+        validate_target(caller)?;
+    }
+    let metadata = text.title.len() + text.directory.len();
+    if metadata > MAX_TERMINAL_METADATA_BYTES {
+        return Err(Error::FieldTooLong {
+            field: "terminal title and directory",
+            length: metadata,
+        });
+    }
+    if text.text.len() > MAX_TERMINAL_TEXT_BYTES {
+        return Err(Error::FieldTooLong {
+            field: "terminal text",
+            length: text.text.len(),
+        });
+    }
+    if text
+        .text
+        .chars()
+        .any(|character| character.is_control() && character != '\n')
+    {
+        return Err(Error::InvalidValue {
+            field: "terminal text",
+        });
+    }
+    Ok(())
+}
+
+fn validate_enter_delay(delay: u16) -> Result<()> {
+    if delay > MAX_ENTER_DELAY_MS {
+        return Err(Error::InvalidValue {
+            field: "enter delay",
+        });
+    }
+    Ok(())
 }
 
 pub fn decode_response(bytes: &[u8]) -> Result<Response> {
@@ -1253,6 +1538,45 @@ pub fn decode_response(bytes: &[u8]) -> Result<Response> {
         identity("generation", &ended.generation)?;
         decoder.finish()?;
         return Ok(Response::Ended(ended));
+    }
+    if kind == TEXT {
+        let text = TerminalText {
+            target: decode_target(&mut decoder)?,
+            caller: decode_caller(&mut decoder)?,
+            revision: decode_u64(&mut decoder)?,
+            screen: match decoder.byte()? {
+                0 => Screen::Primary,
+                1 => Screen::Alternate,
+                value => {
+                    return Err(Error::InvalidTag {
+                        field: "screen",
+                        value,
+                    });
+                }
+            },
+            rows: decoder.number()?,
+            columns: decoder.number()?,
+            title: decoder.string("terminal title", MAX_TERMINAL_METADATA_BYTES)?,
+            directory: decoder
+                .raw("terminal directory", MAX_TERMINAL_METADATA_BYTES)?
+                .to_vec(),
+            omitted_rows: decode_u32(&mut decoder)?,
+            text: decoder.long_string("terminal text", MAX_TERMINAL_TEXT_BYTES)?,
+        };
+        decoder.finish()?;
+        validate_terminal_text(&text)?;
+        return Ok(Response::Text(text));
+    }
+    if kind == SENT {
+        let sent = Sent {
+            target: decode_target(&mut decoder)?,
+            caller: decode_caller(&mut decoder)?,
+            bracketed: decode_bool(&mut decoder, "bracketed")?,
+            enter_delay_ms: decoder.number()?,
+        };
+        decoder.finish()?;
+        validate_enter_delay(sent.enter_delay_ms)?;
+        return Ok(Response::Sent(sent));
     }
     if kind != SNAPSHOT {
         return Err(Error::InvalidKind { value: kind });
@@ -2417,6 +2741,13 @@ impl Encoder {
         self.bytes.extend_from_slice(&length.to_le_bytes());
         self.bytes.extend_from_slice(value);
     }
+
+    /// A field whose bound exceeds a `u16` length: a `u32` length prefix.
+    fn long_raw(&mut self, value: &[u8]) {
+        let length = u32::try_from(value.len()).expect("validated EONW field length");
+        self.bytes.extend_from_slice(&length.to_le_bytes());
+        self.bytes.extend_from_slice(value);
+    }
 }
 
 struct Decoder<'a> {
@@ -2459,6 +2790,17 @@ impl<'a> Decoder<'a> {
             return Err(Error::FieldTooLong { field, length });
         }
         self.take(length)
+    }
+
+    fn long_string(&mut self, field: &'static str, maximum: usize) -> Result<String> {
+        let bytes = self.take(4)?;
+        let length = u32::from_le_bytes(bytes.try_into().unwrap()) as usize;
+        if length > maximum {
+            return Err(Error::FieldTooLong { field, length });
+        }
+        str::from_utf8(self.take(length)?)
+            .map(str::to_owned)
+            .map_err(|_| Error::InvalidUtf8 { field })
     }
 
     fn take(&mut self, length: usize) -> Result<&'a [u8]> {
@@ -2865,6 +3207,181 @@ mod tests {
         assert!(decode_response(&forge(&state)).is_err());
     }
 
+    fn terminal_target(id: TargetId, terminal: &str) -> TerminalTarget {
+        TerminalTarget {
+            workspace: "w1".into(),
+            tab: "t1".into(),
+            id,
+            terminal: terminal.into(),
+        }
+    }
+
+    #[test]
+    fn terminal_requests_bound_their_paste_on_both_sides() {
+        let request = |input| Request {
+            id: "r1".into(),
+            caller: None,
+            action: Action::SendTerminal {
+                target: "p1".into(),
+                input,
+            },
+        };
+        let forge = |text: &[u8]| {
+            let mut payload = Encoder::default();
+            payload.string("r1");
+            payload.byte(0);
+            payload.byte(SEND_TERMINAL);
+            payload.string("p1");
+            payload.byte(0);
+            payload.long_raw(text);
+            frame(REQUEST, payload.bytes).unwrap()
+        };
+        let longest = "a".repeat(MAX_PASTE_BYTES);
+        let paste = request(TerminalInput::Paste(longest.clone()));
+        assert_eq!(decode_request(&encode_request(&paste).unwrap()), Ok(paste));
+        let multiline = request(TerminalInput::Paste("a\tb\r\nc".into()));
+        assert_eq!(
+            decode_request(&encode_request(&multiline).unwrap()),
+            Ok(multiline)
+        );
+        let overlong = longest + "a";
+        for (text, error) in [
+            (
+                overlong.as_str(),
+                Error::FieldTooLong {
+                    field: "paste",
+                    length: MAX_PASTE_BYTES + 1,
+                },
+            ),
+            ("", Error::InvalidValue { field: "paste" }),
+            ("a\u{1b}[31m", Error::InvalidValue { field: "paste" }),
+            ("a\u{7f}", Error::InvalidValue { field: "paste" }),
+            ("a\u{9b}", Error::InvalidValue { field: "paste" }),
+        ] {
+            assert_eq!(validate_paste(text), Err(error.clone()), "{text:?}");
+            assert_eq!(
+                encode_request(&request(TerminalInput::Paste(text.into()))),
+                Err(error.clone())
+            );
+            assert_eq!(decode_request(&forge(text.as_bytes())), Err(error));
+        }
+        assert_eq!(
+            decode_request(&forge(b"\xff")),
+            Err(Error::InvalidUtf8 { field: "paste" })
+        );
+        let mut enter = encode_request(&request(TerminalInput::Enter)).unwrap();
+        *enter.last_mut().unwrap() = 2;
+        assert_eq!(
+            decode_request(&enter),
+            Err(Error::InvalidTag {
+                field: "terminal input",
+                value: 2,
+            })
+        );
+        for target in ["", "p 1"] {
+            for action in [
+                Action::ReadTerminal {
+                    target: target.into(),
+                },
+                Action::SendTerminal {
+                    target: target.into(),
+                    input: TerminalInput::Enter,
+                },
+            ] {
+                let request = Request {
+                    id: "r1".into(),
+                    caller: None,
+                    action,
+                };
+                assert_eq!(
+                    encode_request(&request).map_err(field),
+                    Err("terminal target")
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn terminal_text_is_bounded_plain_text_on_both_sides() {
+        let text = |text: String| TerminalText {
+            target: terminal_target(TargetId::Popup("u1".into()), "directory-picker-1"),
+            caller: Some(terminal_target(TargetId::Pane("p1".into()), "session-1")),
+            revision: u64::MAX,
+            screen: Screen::Primary,
+            rows: u16::MAX,
+            columns: u16::MAX,
+            title: "t".repeat(MAX_TERMINAL_METADATA_BYTES / 2),
+            directory: vec![0xff; MAX_TERMINAL_METADATA_BYTES / 2],
+            omitted_rows: u32::MAX,
+            text,
+        };
+        // The largest read fits one frame.
+        let largest = Response::Text(text("\u{4e00}\n".repeat(MAX_TERMINAL_TEXT_BYTES / 4)));
+        let bytes = encode_response(&largest).unwrap();
+        assert_eq!(decode_response(&bytes), Ok(largest));
+        let forge = |text: &TerminalText| {
+            let mut payload = Encoder::default();
+            encode_target(&mut payload, &text.target);
+            encode_caller(&mut payload, text.caller.as_ref());
+            payload
+                .bytes
+                .extend_from_slice(&text.revision.to_le_bytes());
+            payload.byte(0);
+            payload.number(text.rows);
+            payload.number(text.columns);
+            payload.string(&text.title);
+            payload.raw(&text.directory);
+            payload
+                .bytes
+                .extend_from_slice(&text.omitted_rows.to_le_bytes());
+            payload.long_raw(text.text.as_bytes());
+            frame(TEXT, payload.bytes).unwrap()
+        };
+        let mut invalid = Vec::new();
+        for value in ["\u{1b}[0m", "a\rb", "\t"] {
+            invalid.push((text(value.into()), "terminal text"));
+        }
+        invalid.push((
+            text("a".repeat(MAX_TERMINAL_TEXT_BYTES + 1)),
+            "terminal text",
+        ));
+        let mut metadata = text("a".into());
+        metadata.title.push('t');
+        invalid.push((metadata, "terminal title and directory"));
+        let mut tab = text("a".into());
+        tab.target.tab = "t 1".into();
+        invalid.push((tab, "target tab"));
+        let mut caller = text("a".into());
+        caller.caller.as_mut().unwrap().terminal = String::new();
+        invalid.push((caller, "target terminal"));
+        for (text, expected) in invalid {
+            assert_eq!(
+                encode_response(&Response::Text(text.clone())).map_err(field),
+                Err(expected)
+            );
+            assert_eq!(decode_response(&forge(&text)).map_err(field), Err(expected));
+        }
+
+        let sent = |enter_delay_ms| {
+            Response::Sent(Sent {
+                target: terminal_target(TargetId::Pane("p1".into()), "session-1"),
+                caller: None,
+                bracketed: false,
+                enter_delay_ms,
+            })
+        };
+        let bytes = encode_response(&sent(MAX_ENTER_DELAY_MS)).unwrap();
+        assert_eq!(decode_response(&bytes), Ok(sent(MAX_ENTER_DELAY_MS)));
+        assert_eq!(
+            encode_response(&sent(MAX_ENTER_DELAY_MS + 1)).map_err(field),
+            Err("enter delay")
+        );
+        let mut forged = bytes;
+        let end = forged.len();
+        forged[end - 2..].copy_from_slice(&(MAX_ENTER_DELAY_MS + 1).to_le_bytes());
+        assert_eq!(decode_response(&forged).map_err(field), Err("enter delay"));
+    }
+
     fn field(error: Error) -> &'static str {
         match error {
             Error::InvalidTag { field, .. }
@@ -2954,14 +3471,14 @@ mod tests {
         for (action, expected) in [
             (
                 Action::Workspace(WorkspaceAction::CloseTab { tab: "t1".into() }),
-                "454f4e57190001000a00000002007231001202007431",
+                "454f4e571a0001000a00000002007231001202007431",
             ),
             (
                 Action::Workspace(WorkspaceAction::SetTabDirectory {
                     tab: "t1".into(),
                     directory: b"/tmp".to_vec(),
                 }),
-                "454f4e57190001001000000002007231000c0200743104002f746d70",
+                "454f4e571a0001001000000002007231000c0200743104002f746d70",
             ),
             (
                 Action::InvokePopup {
@@ -2970,36 +3487,36 @@ mod tests {
                     expected_instance: Some("u1".into()),
                     intent: InvokeIntent::Focus,
                 },
-                "454f4e571900010015000000020072310013020074310300676974010200753101",
+                "454f4e571a00010015000000020072310013020074310300676974010200753101",
             ),
             (
                 Action::CommitDirectory {
                     target,
                     directory: b"/tmp".to_vec(),
                 },
-                "454f4e571900010014000000020072310015020074310200753104002f746d70",
+                "454f4e571a00010014000000020072310015020074310200753104002f746d70",
             ),
-            (Action::CreateColumn, "454f4e571900010006000000020072310016"),
+            (Action::CreateColumn, "454f4e571a00010006000000020072310016"),
             (
                 Action::ClosePane { pane: "p2".into() },
-                "454f4e57190001000a00000002007231001702007032",
+                "454f4e571a0001000a00000002007231001702007032",
             ),
             (
                 Action::MovePaneSideways(Side::Right),
-                "454f4e571900010006000000020072310019",
+                "454f4e571a00010006000000020072310019",
             ),
             (
                 Action::Edit {
                     file: b"/tmp/a".to_vec(),
                 },
-                "454f4e57190001000e00000002007231001a06002f746d702f61",
+                "454f4e571a0001000e00000002007231001a06002f746d702f61",
             ),
             (
                 Action::CreateCommandPane {
                     argv: vec![b"hx".to_vec(), b"a".to_vec()],
                     focus: false,
                 },
-                "454f4e57190001001000000002007231001b00020002006878010061",
+                "454f4e571a0001001000000002007231001b00020002006878010061",
             ),
             (
                 Action::LaunchTab {
@@ -3007,7 +3524,7 @@ mod tests {
                     argv: vec![],
                     focus: true,
                 },
-                "454f4e57190001000f00000002007231002504002f746d70000001",
+                "454f4e571a0001000f00000002007231002504002f746d70000001",
             ),
             (
                 Action::LaunchTab {
@@ -3015,26 +3532,47 @@ mod tests {
                     argv: vec![b"hx".to_vec(), b"a".to_vec()],
                     focus: false,
                 },
-                "454f4e57190001001600000002007231002504002f746d7002000200687801006100",
+                "454f4e571a0001001600000002007231002504002f746d7002000200687801006100",
             ),
             (
                 Action::ToggleSidebar,
-                "454f4e57190001000600000002007231001c",
+                "454f4e571a0001000600000002007231001c",
             ),
             (
                 Action::FocusAttention {
                     tab: "t1".into(),
                     target: "p2".into(),
                 },
-                "454f4e57190001000e00000002007231001d0200743102007032",
+                "454f4e571a0001000e00000002007231001d0200743102007032",
             ),
             (
                 Action::NextAttention,
-                "454f4e57190001000600000002007231001e",
+                "454f4e571a0001000600000002007231001e",
             ),
             (
                 Action::PreviousAttention,
-                "454f4e57190001000600000002007231001f",
+                "454f4e571a0001000600000002007231001f",
+            ),
+            (
+                Action::ReadTerminal {
+                    target: "p2".into(),
+                },
+                "454f4e571a0001000a00000002007231002602007032",
+            ),
+            (
+                Action::SendTerminal {
+                    target: "p2".into(),
+                    input: TerminalInput::Paste("hi".into()),
+                },
+                // v26's u32-length paste.
+                "454f4e571a000100110000000200723100270200703200020000006869",
+            ),
+            (
+                Action::SendTerminal {
+                    target: "u1".into(),
+                    input: TerminalInput::Enter,
+                },
+                "454f4e571a0001000b0000000200723100270200753101",
             ),
         ] {
             let request = Request {
@@ -3054,7 +3592,7 @@ mod tests {
         let bytes = encode_request(&request).unwrap();
         assert_eq!(
             hex(&bytes),
-            "454f4e57190001001600000002007231010d0073657373696f6e2d322e392d310201",
+            "454f4e571a0001001600000002007231010d0073657373696f6e2d322e392d310201",
         );
         assert_eq!(decode_request(&bytes).unwrap(), request);
         for caller in ["", "session 2"] {
@@ -3152,7 +3690,7 @@ mod tests {
             (
                 snapshot,
                 concat!(
-                    "454f4e5719008100ff0000000100020002000100010000000200743100000041",
+                    "454f4e571a008100ff0000000100020002000100010000000200743100000041",
                     "00008040010003006769740300476974000404004b6579470100020074310400",
                     "2f746d700001020070330102007531030002007031030073703103002f703101",
                     "02007031000002007032030073703203002f7032010200703200000200703303",
@@ -3163,16 +3701,52 @@ mod tests {
                     // w1's tab count, then v22's needs-input rollup and shown rank 0.
                     "02007731000100",
                     "0100",
-                    // v25's empty attention queue.
+                    // v26's empty attention queue.
                     "0000",
                 ),
             ),
-            (failure, "454f4e57190082000a00000004006275737902006e6f"),
+            (failure, "454f4e571a0082000a00000004006275737902006e6f"),
+            (
+                Response::Text(TerminalText {
+                    target: terminal_target(TargetId::Pane("p2".into()), "session-2"),
+                    caller: None,
+                    revision: 7,
+                    screen: Screen::Alternate,
+                    rows: 24,
+                    columns: 80,
+                    title: "t".into(),
+                    directory: b"/".to_vec(),
+                    omitted_rows: 0,
+                    text: "a\nb".into(),
+                }),
+                concat!(
+                    "454f4e571a00860037000000",
+                    // Workspace, tab, pane p2 and its terminal; no caller.
+                    "02007731020074310002007032090073657373696f6e2d3200",
+                    // Revision, alternate screen, 24x80, title, directory,
+                    // omitted rows, then the u32-length text.
+                    "0700000000000000011800500001007401002f0000000003000000610a62",
+                ),
+            ),
+            (
+                Response::Sent(Sent {
+                    target: terminal_target(TargetId::Pane("p2".into()), "session-2"),
+                    caller: Some(terminal_target(TargetId::Popup("u1".into()), "session-3")),
+                    bracketed: true,
+                    enter_delay_ms: 300,
+                }),
+                concat!(
+                    "454f4e571a00870034000000",
+                    "02007731020074310002007032090073657373696f6e2d32",
+                    "0102007731020074310102007531090073657373696f6e2d33",
+                    "012c01",
+                ),
+            ),
             (
                 Response::Ended(Ended {
                     generation: "g1".into(),
                 }),
-                "454f4e57190085000400000002006731",
+                "454f4e571a0085000400000002006731",
             ),
         ] {
             let bytes = encode_response(&response).unwrap();
@@ -3198,7 +3772,7 @@ mod tests {
                     },
                 }),
                 concat!(
-                    "454f4e571900830026000000020067310500302e392e30190002006f6b010002",
+                    "454f4e571a00830026000000020067310500302e392e301a0002006f6b010002",
                     "007331010500726561647900040062757379",
                 ),
             ),
@@ -3207,7 +3781,7 @@ mod tests {
                     generation: "g1".into(),
                     sessions: vec![],
                 }),
-                "454f4e571900840006000000020067310000",
+                "454f4e571a00840006000000020067310000",
             ),
         ] {
             let bytes = encode_lifecycle_response(&response).unwrap();
@@ -3278,7 +3852,7 @@ mod tests {
         assert_eq!(
             hex(&bytes),
             concat!(
-                "454f4e57190081008600000001000100010000000100740000000000000000",
+                "454f4e571a0081008600000001000100010000000100740000000000000000",
                 "0000010001007401002f00010100700001000100700200737002002f700101007000",
                 "01012800000000000000000100000000000000000000000001000002",
                 "02007731020077310100020077310001000100",
@@ -3609,10 +4183,10 @@ mod tests {
                 },
             ),
             (
-                &[38],
+                &[40],
                 Error::InvalidTag {
                     field: "action",
-                    value: 38,
+                    value: 40,
                 },
             ),
             (

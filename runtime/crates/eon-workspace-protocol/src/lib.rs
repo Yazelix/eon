@@ -2,4 +2,4 @@
 
 //! Eon-owned EONW workspace protocol.
 
-pub mod v25;
+pub mod v26;

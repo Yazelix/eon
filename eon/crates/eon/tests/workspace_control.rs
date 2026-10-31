@@ -1,14 +1,16 @@
-use eon_workspace_protocol::v25::{
+use eon_workspace_protocol::v26::{
     Action as ProtocolAction, Availability, Column, Direction, Failure as ProtocolFailure,
     HEADER_BYTES, InvokeIntent, LifecycleResponse, MAX_SESSIONS, Pane, Popup, PopupGeometry,
-    PopupTarget, Request, Response, Runtime, Snapshot, Stopped, Tab, VERSION,
-    WorkspaceAction as Action, declared_message_len, decode_request, decode_response,
-    encode_lifecycle_response, encode_request, encode_response,
+    PopupTarget, Request, Response, Runtime, Screen, Sent, Snapshot, Stopped, Tab, TargetId,
+    TerminalInput, TerminalTarget, TerminalText, VERSION, WorkspaceAction as Action,
+    declared_message_len, decode_request, decode_response, encode_lifecycle_response,
+    encode_request, encode_response,
 };
 use orbit_protocol::management::{
     self as management, ClientMessage as ManagementClientMessage, EndpointIdentity, Failure,
-    FailureCode, LiveIdentity, ObjectIdentity, ProcessOutcome, Record as ManagementRecord,
-    ServerMessage as ManagementServerMessage, TerminationReason, Tombstone,
+    FailureCode, LeaseInput, LiveIdentity, ObjectIdentity, ProcessOutcome,
+    Record as ManagementRecord, Screen as OrbitScreen, ServerMessage as ManagementServerMessage,
+    TerminationReason, Tombstone, VisibleText,
 };
 use std::{
     ffi::OsStr,
@@ -890,6 +892,38 @@ fn managed_orbit_helper() {
                                 }
                                 write_management(stream, ManagementServerMessage::Allowed);
                             }
+                            ManagementClientMessage::ReadVisible if *leased => write_management(
+                                stream,
+                                ManagementServerMessage::Visible(VisibleText {
+                                    revision: 1,
+                                    screen: OrbitScreen::Primary,
+                                    rows: 24,
+                                    columns: 80,
+                                    title: identity.session_id.clone(),
+                                    directory: b"/fake".to_vec(),
+                                    omitted_rows: 0,
+                                    lossy: true,
+                                    text: format!("screen of {}", identity.session_id),
+                                }),
+                            ),
+                            ManagementClientMessage::Input(input) if *leased => {
+                                if let Some(log) = std::env::var_os("EON_TEST_INPUT_LOG") {
+                                    let line = format!("{} {input:?}\n", identity.session_id);
+                                    fs::OpenOptions::new()
+                                        .create(true)
+                                        .append(true)
+                                        .open(log)
+                                        .unwrap()
+                                        .write_all(line.as_bytes())
+                                        .unwrap();
+                                }
+                                write_management(
+                                    stream,
+                                    ManagementServerMessage::Input {
+                                        bracketed: matches!(input, LeaseInput::Paste(_)),
+                                    },
+                                );
+                            }
                             _ => write_management(
                                 stream,
                                 ManagementServerMessage::Failure(Failure {
@@ -1375,7 +1409,7 @@ printf '/selected-\377\n' > "$4"
     let response = encode_response(&Response::Snapshot(Snapshot {
         workspace: "w1".into(),
         active_workspace: "w1".into(),
-        workspaces: vec![eon_workspace_protocol::v25::WorkspaceInfo {
+        workspaces: vec![eon_workspace_protocol::v26::WorkspaceInfo {
             id: "w1".into(),
             name: None,
             tab_count: 1,
@@ -1411,7 +1445,7 @@ printf '/selected-\377\n' > "$4"
         }],
         codex_quota: None,
         claude_quota: None,
-        sidebar: eon_workspace_protocol::v25::Sidebar::Open,
+        sidebar: eon_workspace_protocol::v26::Sidebar::Open,
         attention_queue: Vec::new(),
     }))
     .unwrap();
@@ -6949,5 +6983,190 @@ fn batch_stop_preserves_current_until_all_and_reports_unavailable_generations() 
     fourth.join().unwrap();
     wait_for_successful_exit(&mut current.child);
     assert!(!current_runtime.exists());
+    fs::remove_dir_all(root).unwrap();
+}
+
+/// A full-Eon supervisor over fake Orbits, with `agents` appended to the mock
+/// desktop's configuration, and its control socket.
+fn terminal_access_workspace(root: &Path, agents: &str) -> (TestProcess, PathBuf, PathBuf) {
+    let runtime = root.join("runtime");
+    let config = root.join("config");
+    configure_mock_desktop(&config);
+    fs::OpenOptions::new()
+        .append(true)
+        .open(config.join("config.toml"))
+        .unwrap()
+        .write_all(agents.as_bytes())
+        .unwrap();
+    let stop = root.join("stop");
+    let orbit = root.join("orbit");
+    let venus = root.join("venus");
+    managed_orbit_executable(&orbit);
+    executable(&venus, "#!/bin/sh\nexit 0\n");
+    let child = eon_command(&PathBuf::from(env!("CARGO_BIN_EXE_eon")))
+        .arg("run")
+        .env("EON_RUNTIME_DIR", &runtime)
+        .env("EON_CONFIG_HOME", &config)
+        .env("EON_ORBIT", &orbit)
+        .env("EON_VENUS", &venus)
+        .env("EON_TEST_STOP", &stop)
+        .env("EON_TEST_INPUT_LOG", root.join("input.log"))
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
+        .spawn()
+        .unwrap();
+    let supervisor = TestProcess { child, stop };
+    let generation = generation_runtime(&runtime);
+    let control = generation.join("eon.sock");
+    wait_for(&control);
+    (supervisor, generation, control)
+}
+
+#[test]
+fn terminal_reads_and_sends_reach_a_hidden_workspace_and_change_nothing() {
+    let root = temporary_directory();
+    let (mut supervisor, generation, control) = terminal_access_workspace(&root, "");
+    let snapshot = |response| match response {
+        Response::Snapshot(snapshot) => snapshot,
+        other => panic!("expected a workspace: {other:?}"),
+    };
+    let failure = |response| match response {
+        Response::Failure(failure) => failure.code,
+        other => panic!("expected a failure: {other:?}"),
+    };
+    let hidden = snapshot(workspace_action(&control, "inspect", Action::Inspect));
+    let tab = hidden.tabs[0].id.clone();
+    let pane = hidden.tabs[0].columns[0].panes[0].clone();
+    assert_eq!(pane.session, "session-1");
+    snapshot(workspace_action(
+        &control,
+        "new",
+        Action::NewWorkspace {
+            name: None,
+            focus: true,
+        },
+    ));
+    let before = snapshot(workspace_action(&control, "before", Action::Inspect));
+    assert_eq!(before.workspace, "w2");
+    let target = TerminalTarget {
+        workspace: "w1".into(),
+        tab,
+        id: TargetId::Pane(pane.id.clone()),
+        terminal: pane.session.clone(),
+    };
+    let read = TerminalText {
+        target: target.clone(),
+        caller: None,
+        revision: 1,
+        screen: Screen::Primary,
+        rows: 24,
+        columns: 80,
+        title: "session-1".into(),
+        directory: b"/fake".to_vec(),
+        omitted_rows: 0,
+        text: "screen of session-1".into(),
+    };
+    let read_action = || ProtocolAction::ReadTerminal {
+        target: pane.id.clone(),
+    };
+    assert_eq!(
+        protocol_action(&control, "read", read_action()),
+        Response::Text(read.clone())
+    );
+    // A calling terminal is projected as `eon workspace` names it.
+    let environment = process::environ(live_identity(&generation.join("orbit.sock")).process_id);
+    let caller = environment
+        .split(|byte| *byte == 0)
+        .find_map(|entry| entry.strip_prefix(b"EON_TERMINAL="))
+        .map(|token| String::from_utf8(token.to_vec()).unwrap())
+        .unwrap();
+    assert_eq!(
+        protocol_action_from(&control, "read-caller", Some(&caller), read_action()),
+        Response::Text(TerminalText {
+            caller: Some(target.clone()),
+            ..read
+        })
+    );
+    let send = |id: &str, input| {
+        protocol_action(
+            &control,
+            id,
+            ProtocolAction::SendTerminal {
+                target: pane.id.clone(),
+                input,
+            },
+        )
+    };
+    let sent = |bracketed| {
+        Response::Sent(Sent {
+            target: target.clone(),
+            caller: None,
+            bracketed,
+            enter_delay_ms: 300,
+        })
+    };
+    assert_eq!(
+        send("paste", TerminalInput::Paste("echo hi".into())),
+        sent(true)
+    );
+    assert_eq!(send("enter", TerminalInput::Enter), sent(false));
+    assert_eq!(
+        fs::read_to_string(root.join("input.log")).unwrap(),
+        "session-1 Paste(\"echo hi\")\nsession-1 Enter\n"
+    );
+    assert_eq!(
+        failure(send("enter", TerminalInput::Enter)),
+        "duplicate-request"
+    );
+    assert_eq!(
+        failure(protocol_action(
+            &control,
+            "missing",
+            ProtocolAction::ReadTerminal {
+                target: "p99".into()
+            },
+        )),
+        "unknown-target"
+    );
+    let after = snapshot(workspace_action(&control, "after", Action::Inspect));
+    assert_eq!(
+        (after.workspace.as_str(), after.active_tab.as_str()),
+        (before.workspace.as_str(), before.active_tab.as_str())
+    );
+    assert_eq!(stable_tabs(&after.tabs), stable_tabs(&before.tabs));
+    assert_eq!(after.workspaces, before.workspaces);
+    fs::write(&supervisor.stop, "").unwrap();
+    wait_for_successful_exit(&mut supervisor.child);
+    fs::remove_dir_all(root).unwrap();
+}
+
+#[test]
+fn terminal_access_none_refuses_every_read_and_send() {
+    let root = temporary_directory();
+    let (mut supervisor, _, control) =
+        terminal_access_workspace(&root, "\n[agents]\nterminal_access = \"none\"\n");
+    for (id, action) in [
+        (
+            "read",
+            ProtocolAction::ReadTerminal {
+                target: "p1".into(),
+            },
+        ),
+        (
+            "send",
+            ProtocolAction::SendTerminal {
+                target: "p1".into(),
+                input: TerminalInput::Paste("echo hi".into()),
+            },
+        ),
+    ] {
+        assert!(matches!(
+            protocol_action(&control, id, action),
+            Response::Failure(failure) if failure.code == "terminal-access-off"
+        ));
+    }
+    assert!(!root.join("input.log").exists());
+    fs::write(&supervisor.stop, "").unwrap();
+    wait_for_successful_exit(&mut supervisor.child);
     fs::remove_dir_all(root).unwrap();
 }

@@ -5,6 +5,14 @@ installation, and proven contract changes.
 
 ## Unreleased
 
+- New `[agents]` settings: `terminal_access = "window"` (or `"none"`) decides
+  whether `eon pane read` and `eon pane send` may reach the window's terminals,
+  and `send_enter_delay_ms = 300` is the wait before `eon pane send --enter`
+  sends Enter. The window serves both over EONW v26; the two commands land
+  separately. EONW moves to v26 and Eon to 0.1.9, so after a profile refresh a
+  window started from an older build needs one restart before the new `eon`
+  can control it.
+
 - Ctrl+Tab and Ctrl+Shift+Tab select the next and previous tab, wrapping
   around. They no longer reach the terminal; a configured popup on either key
   takes it.

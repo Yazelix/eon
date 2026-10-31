@@ -6,7 +6,7 @@ use super::{
     },
     workspace,
 };
-use eon_workspace_protocol::v25::{
+use eon_workspace_protocol::v26::{
     Action, Error as ProtocolError, Failure, HEADER_BYTES, LifecycleResponse, MAX_DETAIL_BYTES,
     Request, Response, Runtime, VERSION, WorkspaceAction, declared_message_len,
     decode_lifecycle_response, decode_request, decode_response, encode_lifecycle_response,
@@ -395,12 +395,11 @@ pub(super) fn probe_launch_mode(socket: &Path) -> Result<LaunchMode, EndpointFai
                 failure.detail
             ),
         )),
-        ControlResponse::Workspace(Response::Ended(_)) | ControlResponse::Lifecycle(_) => {
-            Err(EndpointFailure::new(
-                EndpointFailureKind::Corrupt,
-                "supervisor returned the wrong EONW result for launch-mode inspection",
-            ))
-        }
+        ControlResponse::Workspace(Response::Ended(_) | Response::Text(_) | Response::Sent(_))
+        | ControlResponse::Lifecycle(_) => Err(EndpointFailure::new(
+            EndpointFailureKind::Corrupt,
+            "supervisor returned the wrong EONW result for launch-mode inspection",
+        )),
     }
 }
 
@@ -578,10 +577,10 @@ const UNREACHABLE: u8 = 4;
 
 fn failure_status(code: &str) -> u8 {
     match code {
-        "invalid-tab" | "malformed-action" => USAGE,
+        "invalid-tab" | "malformed-action" | "invalid-text" | "input-too-large" => USAGE,
         "unknown-tab" | "unknown-pane" | "unknown-id" | "unknown-session" | "unknown-popup"
         | "stale-popup" | "stale-target" | "unknown-generation" | "unknown-caller"
-        | "unknown-workspace" | "unknown-window" => MISSING,
+        | "unknown-workspace" | "unknown-window" | "unknown-target" => MISSING,
         "missing-supervisor" | "supervisor-unavailable" => UNREACHABLE,
         _ => FAILED,
     }

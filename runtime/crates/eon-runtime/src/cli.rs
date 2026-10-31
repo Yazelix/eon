@@ -16,7 +16,7 @@ use super::{
         list_json, resolve_selector,
     },
 };
-use eon_workspace_protocol::v25::{
+use eon_workspace_protocol::v26::{
     Action, AttentionState, Direction, Failure, PopupTarget, Response, Side, Snapshot, VERSION,
     WorkspaceAction, WorkspaceInfo, valid_caller,
 };
@@ -598,9 +598,10 @@ fn directory_picker(inputs: &Inputs, arguments: Vec<OsString>) -> Result<i32, St
             "cannot retarget tab: {}: {}",
             failure.code, failure.detail
         )),
-        Ok(ControlResponse::Workspace(Response::Ended(_)) | ControlResponse::Lifecycle(_)) => {
-            Err("Eon returned the wrong result for the directory picker".into())
-        }
+        Ok(
+            ControlResponse::Workspace(Response::Ended(_) | Response::Text(_) | Response::Sent(_))
+            | ControlResponse::Lifecycle(_),
+        ) => Err("Eon returned the wrong result for the directory picker".into()),
         Err(error) => Err(format!("cannot retarget tab: {}", error.detail)),
     }
 }
@@ -1037,7 +1038,7 @@ fn control(
     // by Runtime's rule; a WS that resolves to none or several fails unasked.
     // After a yes it checks again that the wN is live before closing it, since
     // Runtime would read a departed wN as another workspace's name; the check
-    // and the close are not atomic. v25 lists only
+    // and the close are not atomic. v26 lists only
     // the caller's or shown workspace's terminals, so the prompt names none.
     if let Action::Workspace(WorkspaceAction::CloseWorkspace { workspace }) = &mut action
         && !json
@@ -1180,6 +1181,10 @@ fn control(
         }
         ControlResponse::Lifecycle(_) => {
             Err("Eon supervisor returned a lifecycle result for a workspace action".into())
+        }
+        // Only `eon pane read` and `eon pane send` ask for these.
+        ControlResponse::Workspace(Response::Text(_) | Response::Sent(_)) => {
+            Err("Eon supervisor returned a terminal result for a workspace action".into())
         }
     }
 }
@@ -1452,7 +1457,7 @@ fn parse_pane_rename_arguments(arguments: &[OsString]) -> Result<(Action, bool),
         _ => return Err(Error::usage(EON_USAGE)),
     };
     if let Some(name) = name {
-        eon_workspace_protocol::v25::validate_pane_name(name)
+        eon_workspace_protocol::v26::validate_pane_name(name)
             .map_err(|error| Error::usage(error.to_string()))?;
     }
     Ok((

@@ -1,5 +1,5 @@
 use crate::scene::{DrawRow, Scene, ScenePreview, bar_workspace, hidden_needs_input};
-use eon_workspace_protocol::v25::{
+use eon_workspace_protocol::v26::{
     AttentionState, Pane, Popup, Response as WorkspaceResponse, Snapshot, Tab,
 };
 use orbit_protocol::FrameReducer;
@@ -445,6 +445,8 @@ impl WorkspaceModel {
             ),
             // The client exits on an ended generation before applying it.
             WorkspaceResponse::Ended(_) => (false, false),
+            // Venus never reads or sends to a terminal over EONW.
+            WorkspaceResponse::Text(_) | WorkspaceResponse::Sent(_) => (false, false),
         }
     }
 
@@ -952,7 +954,7 @@ fn bounded(mut detail: String) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use eon_workspace_protocol::v25::{
+    use eon_workspace_protocol::v26::{
         self as workspace, CodexQuota, CodexQuotaState, Failure, Pane, PopupEntry, PopupKey,
         Shortcut, Tab,
     };
@@ -1069,7 +1071,7 @@ mod tests {
         let snapshot = Snapshot {
             workspace: "w1".into(),
             active_workspace: "w1".into(),
-            workspaces: vec![eon_workspace_protocol::v25::WorkspaceInfo {
+            workspaces: vec![eon_workspace_protocol::v26::WorkspaceInfo {
                 id: "w1".into(),
                 name: None,
                 tab_count: 2,
@@ -1085,7 +1087,7 @@ mod tests {
                     id: "t1".into(),
                     directory: b"/tmp/eon".to_vec(),
                     selected_pane: Some("pane-1".into()),
-                    columns: vec![eon_workspace_protocol::v25::Column {
+                    columns: vec![eon_workspace_protocol::v26::Column {
                         panes: vec![Pane {
                             label: "pane-1".into(),
                             pinned_name: None,
@@ -1106,7 +1108,7 @@ mod tests {
                     id: "t2".into(),
                     directory: b"/tmp/nova".to_vec(),
                     selected_pane: Some("pane-2".into()),
-                    columns: vec![eon_workspace_protocol::v25::Column {
+                    columns: vec![eon_workspace_protocol::v26::Column {
                         panes: vec![Pane {
                             label: "pane-2".into(),
                             pinned_name: None,
@@ -1121,7 +1123,7 @@ mod tests {
                     attention_rollup: None,
                 },
             ],
-            geometry: eon_workspace_protocol::v25::PopupGeometry {
+            geometry: eon_workspace_protocol::v26::PopupGeometry {
                 side_margin: 8.0,
                 vertical_margin: 4.0,
             },
@@ -1455,7 +1457,7 @@ mod tests {
         let mut snapshot = Snapshot {
             workspace: "w1".into(),
             active_workspace: "w1".into(),
-            workspaces: vec![eon_workspace_protocol::v25::WorkspaceInfo {
+            workspaces: vec![eon_workspace_protocol::v26::WorkspaceInfo {
                 id: "w1".into(),
                 name: None,
                 tab_count: 2,
@@ -1478,7 +1480,7 @@ mod tests {
             tabs: vec![pending(1), pending(2)],
             codex_quota: None,
             claude_quota: None,
-            sidebar: eon_workspace_protocol::v25::Sidebar::Open,
+            sidebar: eon_workspace_protocol::v26::Sidebar::Open,
             attention_queue: Vec::new(),
         };
         let wire =
@@ -1525,7 +1527,7 @@ mod tests {
         let mut snapshot = Snapshot {
             workspace: "w1".into(),
             active_workspace: "w1".into(),
-            workspaces: vec![eon_workspace_protocol::v25::WorkspaceInfo {
+            workspaces: vec![eon_workspace_protocol::v26::WorkspaceInfo {
                 id: "w1".into(),
                 name: None,
                 tab_count: 1,
@@ -1554,7 +1556,7 @@ mod tests {
             }],
             codex_quota: None,
             claude_quota: None,
-            sidebar: eon_workspace_protocol::v25::Sidebar::Open,
+            sidebar: eon_workspace_protocol::v26::Sidebar::Open,
             attention_queue: Vec::new(),
         };
         let mut model = WorkspaceModel::default();

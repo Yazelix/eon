@@ -429,12 +429,12 @@ fn shortcut_hints_drop_whole_pairs_and_rebuild_modifier_headers() {
 
 #[test]
 fn eon_bar_keeps_tabs_controls_and_drag_hits_disjoint_under_pressure() {
-    use eon_workspace_protocol::v25::{Pane, PopupGeometry, Tab};
+    use eon_workspace_protocol::v26::{Pane, PopupGeometry, Tab};
 
     let snapshot = Snapshot {
         workspace: "w1".into(),
         active_workspace: "w1".into(),
-        workspaces: vec![eon_workspace_protocol::v25::WorkspaceInfo {
+        workspaces: vec![eon_workspace_protocol::v26::WorkspaceInfo {
             id: "w1".into(),
             name: None,
             tab_count: 1,
@@ -454,7 +454,7 @@ fn eon_bar_keeps_tabs_controls_and_drag_hits_disjoint_under_pressure() {
                 pending: false,
                 selected_pane: Some(format!("p{index}")),
                 selected_popup: None,
-                columns: vec![eon_workspace_protocol::v25::Column {
+                columns: vec![eon_workspace_protocol::v26::Column {
                     panes: vec![Pane {
                         label: format!("p{index}"),
                         pinned_name: None,
@@ -472,7 +472,7 @@ fn eon_bar_keeps_tabs_controls_and_drag_hits_disjoint_under_pressure() {
             .collect(),
         codex_quota: None,
         claude_quota: None,
-        sidebar: eon_workspace_protocol::v25::Sidebar::Open,
+        sidebar: eon_workspace_protocol::v26::Sidebar::Open,
         attention_queue: Vec::new(),
     };
     let metrics = CellMetrics::for_scale(1.0);
@@ -654,7 +654,7 @@ fn eon_bar_keeps_tabs_controls_and_drag_hits_disjoint_under_pressure() {
 
 #[test]
 fn attention_badges_mark_tab_corners_without_moving_tabs() {
-    use eon_workspace_protocol::v25::{
+    use eon_workspace_protocol::v26::{
         Attention, AttentionRecord, AttentionState as State, Column, Pane, PopupGeometry,
     };
 
@@ -689,7 +689,7 @@ fn attention_badges_mark_tab_corners_without_moving_tabs() {
     let mut snapshot = Snapshot {
         workspace: "w1".into(),
         active_workspace: "w1".into(),
-        workspaces: vec![eon_workspace_protocol::v25::WorkspaceInfo {
+        workspaces: vec![eon_workspace_protocol::v26::WorkspaceInfo {
             id: "w1".into(),
             name: None,
             tab_count: 1,
@@ -733,7 +733,7 @@ fn attention_badges_mark_tab_corners_without_moving_tabs() {
             .collect(),
         codex_quota: None,
         claude_quota: None,
-        sidebar: eon_workspace_protocol::v25::Sidebar::Closed,
+        sidebar: eon_workspace_protocol::v26::Sidebar::Closed,
         attention_queue: Vec::new(),
     };
     let metrics = CellMetrics::for_scale(1.0);
@@ -807,7 +807,7 @@ fn attention_badges_mark_tab_corners_without_moving_tabs() {
     );
     // While the sidebar shows, the tabs carry no badge or state; hidden for width, they do.
     let mut open = snapshot.clone();
-    open.sidebar = eon_workspace_protocol::v25::Sidebar::Open;
+    open.sidebar = eon_workspace_protocol::v26::Sidebar::Open;
     let beside = project(&open, 1600, 0.0);
     assert!(beside.sidebar().is_some());
     assert!(beside.tabs.iter().all(|tab| tab.badge.is_none()));

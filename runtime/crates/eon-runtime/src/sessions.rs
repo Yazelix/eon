@@ -1,5 +1,6 @@
 use super::{
     cli::Inputs,
+    control::failure,
     diagnostics::{self, DiagnosticLog},
     managed_environment, platform,
     supervisor::{
@@ -8,11 +9,13 @@ use super::{
     },
     workspace::{is_directory_picker_endpoint, is_directory_picker_session},
 };
-use eon_workspace_protocol::v25::MAX_SESSIONS;
+use eon_workspace_protocol::v26::{
+    Failure, MAX_PASTE_BYTES, MAX_SESSIONS, MAX_TERMINAL_METADATA_BYTES, MAX_TERMINAL_TEXT_BYTES,
+};
 use orbit_protocol::management::{
-    self as management, ClientMessage as ManagementClientMessage, EndpointIdentity, LiveIdentity,
-    ObjectIdentity, ProcessOutcome, ProgramStatus, Record as ManagementRecord,
-    ServerMessage as ManagementServerMessage, TerminationReason, Tombstone,
+    self as management, ClientMessage as ManagementClientMessage, EndpointIdentity, LeaseInput,
+    LiveIdentity, ObjectIdentity, ProcessOutcome, ProgramStatus, Record as ManagementRecord,
+    Refusal, ServerMessage as ManagementServerMessage, TerminationReason, Tombstone, VisibleText,
 };
 use std::{
     collections::HashSet,
@@ -27,6 +30,7 @@ use std::{
     },
     path::{Path, PathBuf},
     process::{Child, Command, Stdio},
+    sync::Arc,
     thread,
     time::{Duration, Instant},
 };
@@ -541,6 +545,7 @@ fn acquire_management(
         orbit_log,
         lease: stream,
         request: None,
+        answered_status: None,
         naming: None,
         stop_sent: false,
         reap_failure_reported: false,
@@ -799,6 +804,9 @@ pub(super) struct RunningSession {
     /// in flight on it (EON-C31 Polling).
     lease: UnixStream,
     request: Option<LeaseRequest>,
+    /// A whole `ProgramStatus` reply that a read or send waited behind, kept
+    /// for the attention poller.
+    answered_status: Option<Vec<u8>>,
     /// The last `AttachAllow` outcome for the presenting Venus (EON-C11).
     naming: Option<Naming>,
     stop_sent: bool,
@@ -823,12 +831,26 @@ struct LeaseRequest {
     unsent: Vec<u8>,
     reply: Vec<u8>,
     deadline: Instant,
+    /// Set while a drainer finishes the request, which then owns its bytes.
+    drainer: Option<Drainer>,
+}
+
+/// A thread that writes a read or send and reads its reply on a clone of the
+/// lease, so a reply given up on never waits unread while the supervisor
+/// blocks on other work (ORB-C13's slow-peer rule). It returns the request's
+/// unsent and reply bytes, and stops early once the request is dropped.
+struct Drainer {
+    thread: thread::JoinHandle<(Vec<u8>, Vec<u8>)>,
+    _request: Arc<()>,
 }
 
 #[derive(Clone, Copy)]
 enum RequestKind {
     ProgramStatus,
     AttachAllow(AttachName),
+    /// A read or send for `eon pane read` or `eon pane send`; one in flight
+    /// outside `terminal_request` was given up, and its reply is discarded.
+    Terminal,
 }
 
 /// A process named to a terminal's Orbit as the one peer it admits to attach
@@ -871,6 +893,12 @@ enum Naming {
 const ATTACH_ALLOW_DEADLINE: Duration = Duration::from_secs(1);
 /// How soon a lease whose naming failed is named again.
 const ATTACH_ALLOW_RETRY: Duration = Duration::from_millis(500);
+/// How long a read or send waits for the lease and Orbit's answer before the
+/// terminal counts as unavailable (EON-C35, EON-C36).
+const TERMINAL_DEADLINE: Duration = Duration::from_secs(2);
+const _: () = assert!(MAX_PASTE_BYTES == management::MAX_INPUT_PASTE_BYTES);
+const _: () = assert!(MAX_TERMINAL_TEXT_BYTES == management::MAX_VISIBLE_TEXT_BYTES);
+const _: () = assert!(MAX_TERMINAL_METADATA_BYTES == orbit_protocol::session::MAX_METADATA_BYTES);
 
 enum ReplyProgress {
     Complete,
@@ -881,8 +909,20 @@ enum ReplyProgress {
 /// Writes what remains of the request, then reads the reply without reading
 /// past its end. A header that does not decode ends the reply, which then
 /// fails to decode. A lease that ends or fails reports `Closed`, which the EOF
-/// probe owns.
+/// probe owns. A request with a drainer waits for it and then continues from
+/// the bytes it returns.
 fn advance_request(lease: &mut UnixStream, request: &mut LeaseRequest) -> ReplyProgress {
+    if let Some(drainer) = request.drainer.take() {
+        if !drainer.thread.is_finished() {
+            request.drainer = Some(drainer);
+            return ReplyProgress::WouldBlock;
+        }
+        let Ok((unsent, reply)) = drainer.thread.join() else {
+            return ReplyProgress::Closed;
+        };
+        request.unsent = unsent;
+        request.reply = reply;
+    }
     while !request.unsent.is_empty() {
         match lease.write(&request.unsent) {
             Ok(0) => return ReplyProgress::Closed,
@@ -932,8 +972,69 @@ fn send_request(
         unsent,
         reply: Vec::new(),
         deadline,
+        drainer: None,
     });
     advance_request(&mut session.lease, request);
+    Ok(())
+}
+
+/// Puts `message` in the lease's request slot and starts a drainer on it.
+/// Nothing is written when the drainer cannot start.
+fn send_drained_request(
+    session: &mut RunningSession,
+    message: &ManagementClientMessage,
+    deadline: Instant,
+) -> Result<(), String> {
+    let mut detached = LeaseRequest {
+        kind: RequestKind::Terminal,
+        unsent: management::encode_client_message(message)
+            .map_err(|error| format!("cannot encode terminal management request: {error}"))?,
+        reply: Vec::new(),
+        deadline,
+        drainer: None,
+    };
+    let mut lease = session
+        .lease
+        .try_clone()
+        .map_err(|error| format!("cannot share the lease: {error}"))?;
+    let alive = Arc::new(());
+    let owner = Arc::downgrade(&alive);
+    let thread = thread::Builder::new()
+        .name("eon-lease-drainer".into())
+        .spawn(move || {
+            while owner.strong_count() > 0
+                && matches!(
+                    advance_request(&mut lease, &mut detached),
+                    ReplyProgress::WouldBlock
+                )
+            {
+                // Wakes when the lease is ready, or every 50 ms to see
+                // whether the request was dropped.
+                let mut ready = libc::pollfd {
+                    fd: lease.as_raw_fd(),
+                    events: if detached.unsent.is_empty() {
+                        libc::POLLIN
+                    } else {
+                        libc::POLLOUT
+                    },
+                    revents: 0,
+                };
+                // SAFETY: ready is one valid pollfd for this live lease clone.
+                unsafe { libc::poll(&mut ready, 1, 50) };
+            }
+            (detached.unsent, detached.reply)
+        })
+        .map_err(|error| format!("cannot start a lease reader: {error}"))?;
+    session.request = Some(LeaseRequest {
+        kind: RequestKind::Terminal,
+        unsent: Vec::new(),
+        reply: Vec::new(),
+        deadline,
+        drainer: Some(Drainer {
+            thread,
+            _request: alive,
+        }),
+    });
     Ok(())
 }
 
@@ -957,7 +1058,11 @@ pub(super) fn send_program_status(
     session: &mut RunningSession,
     deadline: Instant,
 ) -> Result<bool, String> {
-    if session.is_finished() || session.stop_sent || session.request.is_some() {
+    if session.is_finished()
+        || session.stop_sent
+        || session.request.is_some()
+        || session.answered_status.is_some()
+    {
         return Ok(false);
     }
     send_request(
@@ -969,10 +1074,13 @@ pub(super) fn send_program_status(
     Ok(true)
 }
 
-/// Reads the in-flight `ProgramStatus` reply without blocking.
+/// Reads the kept or in-flight `ProgramStatus` reply without blocking.
 pub(super) fn read_program_status(
     session: &mut RunningSession,
 ) -> Result<ProgramStatusRead, String> {
+    if let Some(reply) = session.answered_status.take() {
+        return decode_program_status(&reply);
+    }
     let Some(
         request @ LeaseRequest {
             kind: RequestKind::ProgramStatus,
@@ -993,7 +1101,11 @@ pub(super) fn read_program_status(
     }
     let reply = std::mem::take(&mut request.reply);
     session.request = None;
-    match management::decode_server_message(&reply) {
+    decode_program_status(&reply)
+}
+
+fn decode_program_status(reply: &[u8]) -> Result<ProgramStatusRead, String> {
+    match management::decode_server_message(reply) {
         Ok(ManagementServerMessage::ProgramStatus(status)) => Ok(ProgramStatusRead::Reply(status)),
         Ok(ManagementServerMessage::Busy) => Ok(ProgramStatusRead::Missed),
         Ok(_) => Err("terminal returned the wrong program status result".into()),
@@ -1125,7 +1237,7 @@ fn name_lease(
             }
         }
         Some(LeaseRequest {
-            kind: RequestKind::ProgramStatus,
+            kind: RequestKind::ProgramStatus | RequestKind::Terminal,
             ..
         }) => {
             if !wait || !venus.is_some_and(|venus| needs(session.naming, venus)) {
@@ -1156,6 +1268,175 @@ fn name_lease(
         return false;
     }
     true
+}
+
+/// Reads the target's visible text through ORB-C17 (EON-C35).
+pub(super) fn read_visible(
+    session: &mut RunningSession,
+    log: &DiagnosticLog,
+) -> Result<VisibleText, Failure> {
+    match terminal_request(session, &ManagementClientMessage::ReadVisible, log)? {
+        ManagementServerMessage::Visible(visible) => Ok(visible),
+        _ => Err(unavailable(session, "Orbit returned the wrong result")),
+    }
+}
+
+/// Writes one paste or Enter through ORB-C5's lease input (EON-C36). Returns
+/// whether Orbit bracketed the paste.
+pub(super) fn send_input(
+    session: &mut RunningSession,
+    input: LeaseInput,
+    log: &DiagnosticLog,
+) -> Result<bool, Failure> {
+    match terminal_request(session, &ManagementClientMessage::Input(input), log)? {
+        ManagementServerMessage::Input { bracketed } => Ok(bracketed),
+        _ => Err(unavailable(session, "Orbit returned the wrong result")),
+    }
+}
+
+/// Sends `message` once the lease's request in flight is answered, and reads
+/// its whole answer before returning, so that no reply waits unread across
+/// another supervisor step (ORB-C13's slow-peer rule). An in-flight
+/// `ProgramStatus` reply is kept for the attention poller, and an
+/// `AttachAllow` reply is taken as naming takes it. Blocks the supervisor up
+/// to `TERMINAL_DEADLINE`; a request still unanswered then stays with its
+/// drainer and holds the slot until `drain_given_up_requests` discards its
+/// answer, and a read or send behind it fails at once. No failure carries terminal content.
+fn terminal_request(
+    session: &mut RunningSession,
+    message: &ManagementClientMessage,
+    log: &DiagnosticLog,
+) -> Result<ManagementServerMessage, Failure> {
+    let deadline = Instant::now() + TERMINAL_DEADLINE;
+    loop {
+        if session.is_finished() || session.stop_sent {
+            return Err(ended(session));
+        }
+        match &mut session.request {
+            None => break,
+            Some(LeaseRequest {
+                kind: RequestKind::AttachAllow(_),
+                ..
+            }) => {
+                name_lease(session, None, false, Instant::now(), log);
+            }
+            Some(
+                request @ LeaseRequest {
+                    kind: RequestKind::ProgramStatus,
+                    ..
+                },
+            ) => match advance_request(&mut session.lease, request) {
+                ReplyProgress::Complete => {
+                    session.answered_status = Some(std::mem::take(&mut request.reply));
+                    session.request = None;
+                }
+                ReplyProgress::WouldBlock => {}
+                ReplyProgress::Closed => return Err(ended(session)),
+            },
+            Some(_) => {
+                if drain_request(session).is_err() {
+                    return Err(ended(session));
+                }
+            }
+        }
+        if session.request.is_none() {
+            break;
+        }
+        // A read or send given up earlier has already waited its 2 s.
+        let given_up = matches!(
+            session.request,
+            Some(LeaseRequest {
+                kind: RequestKind::Terminal,
+                ..
+            })
+        );
+        if given_up || Instant::now() >= deadline {
+            return Err(unavailable(
+                session,
+                "its previous request was not answered in time",
+            ));
+        }
+        thread::sleep(Duration::from_millis(1));
+    }
+    send_drained_request(session, message, deadline)
+        .map_err(|error| unavailable(session, &error))?;
+    let reply = loop {
+        let Some(request) = &mut session.request else {
+            unreachable!("the request was just sent");
+        };
+        match advance_request(&mut session.lease, request) {
+            ReplyProgress::Complete => {
+                let reply = std::mem::take(&mut request.reply);
+                session.request = None;
+                break reply;
+            }
+            ReplyProgress::WouldBlock if Instant::now() < deadline => {
+                thread::sleep(Duration::from_millis(1));
+            }
+            ReplyProgress::WouldBlock => {
+                let detail = match message {
+                    ManagementClientMessage::Input(_) => {
+                        "Orbit did not answer within 2 s; the input may still arrive"
+                    }
+                    _ => "Orbit did not answer within 2 s",
+                };
+                return Err(unavailable(session, detail));
+            }
+            ReplyProgress::Closed => return Err(ended(session)),
+        }
+    };
+    match management::decode_server_message(&reply) {
+        // A stopped Orbit's unsolicited result (ORB-C12) came in the reply's
+        // place; the EOF probe finds the lease closed after it.
+        Ok(
+            ManagementServerMessage::Stopped(_) | ManagementServerMessage::Refused(Refusal::Closed),
+        ) => Err(ended(session)),
+        Ok(ManagementServerMessage::Refused(Refusal::UnbracketedNewline)) => Err(failure(
+            "unbracketed-newline",
+            "the text holds a line break and the program has not enabled bracketed paste",
+        )),
+        Ok(ManagementServerMessage::Refused(Refusal::InvalidInput)) => Err(failure(
+            "invalid-text",
+            "the text holds a control character other than tab, line feed and carriage return",
+        )),
+        Ok(ManagementServerMessage::Refused(refusal)) => Err(unavailable(
+            session,
+            &format!("Orbit refused it: {refusal:?}"),
+        )),
+        Ok(ManagementServerMessage::Busy) => Err(unavailable(session, "Orbit answered Busy")),
+        Ok(reply) => Ok(reply),
+        Err(error) => Err(unavailable(session, &format!("invalid result: {error}"))),
+    }
+}
+
+fn ended(session: &RunningSession) -> Failure {
+    failure(
+        "terminal-ended",
+        format!("terminal {} has ended", session.id),
+    )
+}
+
+fn unavailable(session: &RunningSession, detail: &str) -> Failure {
+    failure(
+        "terminal-unavailable",
+        format!("terminal {} is unavailable: {detail}", session.id),
+    )
+}
+
+/// Advances each read or send that `terminal_request` gave up on and
+/// discards its reply once its drainer has read it, freeing the slot.
+pub(super) fn drain_given_up_requests(sessions: &mut [RunningSession]) {
+    for session in sessions {
+        if matches!(
+            session.request,
+            Some(LeaseRequest {
+                kind: RequestKind::Terminal,
+                ..
+            })
+        ) {
+            let _ = drain_request(session);
+        }
+    }
 }
 
 fn naming_failed(
@@ -1888,7 +2169,13 @@ pub(crate) mod tests {
         stop_managed_sessions, unix_connect_with_timeout,
     };
     use crate::{diagnostics::DiagnosticLog, supervisor::temporary_directory};
-    use orbit_protocol::{management::ServerMessage as ManagementServerMessage, session as orbs};
+    use orbit_protocol::{
+        management::{
+            ClientMessage as ManagementClientMessage, LeaseInput, Refusal, Screen,
+            ServerMessage as ManagementServerMessage, VisibleText,
+        },
+        session as orbs,
+    };
     use std::{
         ffi::{OsStr, OsString},
         fs,
@@ -1961,6 +2248,7 @@ pub(crate) mod tests {
             orbit_log: None,
             lease,
             request: None,
+            answered_status: None,
             naming: None,
             stop_sent: false,
             reap_failure_reported: false,
@@ -2350,6 +2638,7 @@ pub(crate) mod tests {
             orbit_log: None,
             lease,
             request: None,
+            answered_status: None,
             naming: None,
             stop_sent: false,
             reap_failure_reported: false,
@@ -2553,6 +2842,7 @@ pub(crate) mod tests {
             unsent: Vec::new(),
             reply: Vec::new(),
             deadline: Instant::now() + Duration::from_secs(2),
+            drainer: None,
         });
         let mut readable = libc::pollfd {
             fd: session.lease.as_raw_fd(),
@@ -2607,6 +2897,298 @@ pub(crate) mod tests {
             Some(Naming::Named(name)) => Some(name),
             _ => None,
         }
+    }
+
+    fn visible(text: &str) -> VisibleText {
+        VisibleText {
+            revision: 3,
+            screen: Screen::Alternate,
+            rows: 2,
+            columns: 10,
+            title: "title".into(),
+            directory: b"/tmp".to_vec(),
+            omitted_rows: 0,
+            lossy: true,
+            text: text.into(),
+        }
+    }
+
+    /// Reads one whole management request from the Runtime's side of a lease.
+    fn read_request(peer: &mut UnixStream) -> ManagementClientMessage {
+        let mut request = Vec::new();
+        let mut byte = [0];
+        loop {
+            if let Some(length) = management::client_message_len(&request).unwrap()
+                && request.len() >= length
+            {
+                return management::decode_client_message(&request).unwrap();
+            }
+            peer.read_exact(&mut byte).unwrap();
+            request.push(byte[0]);
+        }
+    }
+
+    /// Answers each next request on `peer` with one of `replies`, in order,
+    /// from another thread, and returns the requests it read.
+    fn answer(
+        peer: &UnixStream,
+        replies: Vec<ManagementServerMessage>,
+    ) -> thread::JoinHandle<Vec<ManagementClientMessage>> {
+        let mut peer = peer.try_clone().unwrap();
+        peer.set_read_timeout(Some(Duration::from_secs(5))).unwrap();
+        thread::spawn(move || {
+            replies
+                .into_iter()
+                .map(|reply| {
+                    let request = read_request(&mut peer);
+                    peer.write_all(&management::encode_server_message(&reply).unwrap())
+                        .unwrap();
+                    request
+                })
+                .collect()
+        })
+    }
+
+    #[test]
+    fn terminal_requests_map_every_answer_and_queue_behind_the_request_in_flight() {
+        let root = temporary_directory();
+        let log = DiagnosticLog::open_in(Ok(root.join("logs")), "g1-test", "workspace");
+        let (mut session, peer, tombstone) =
+            tombstoned_session(&root, 1, TerminationReason::NaturalExit);
+        let code =
+            |result: Result<bool, eon_workspace_protocol::v26::Failure>| result.unwrap_err().code;
+        let paste = || LeaseInput::Paste("hi".into());
+
+        let orbit = answer(
+            &peer,
+            vec![ManagementServerMessage::Visible(visible("a\nb"))],
+        );
+        assert_eq!(super::read_visible(&mut session, &log), Ok(visible("a\nb")));
+        assert_eq!(
+            orbit.join().unwrap(),
+            [ManagementClientMessage::ReadVisible]
+        );
+        let orbit = answer(
+            &peer,
+            vec![
+                ManagementServerMessage::Input { bracketed: true },
+                ManagementServerMessage::Input { bracketed: false },
+            ],
+        );
+        assert_eq!(super::send_input(&mut session, paste(), &log), Ok(true));
+        assert_eq!(
+            super::send_input(&mut session, LeaseInput::Enter, &log),
+            Ok(false)
+        );
+        assert_eq!(
+            orbit.join().unwrap(),
+            [
+                ManagementClientMessage::Input(paste()),
+                ManagementClientMessage::Input(LeaseInput::Enter),
+            ]
+        );
+
+        for (reply, expected) in [
+            (
+                ManagementServerMessage::Refused(Refusal::UnbracketedNewline),
+                "unbracketed-newline",
+            ),
+            (
+                ManagementServerMessage::Refused(Refusal::InvalidInput),
+                "invalid-text",
+            ),
+            (
+                ManagementServerMessage::Refused(Refusal::Closed),
+                "terminal-ended",
+            ),
+            (
+                ManagementServerMessage::Refused(Refusal::InputFull),
+                "terminal-unavailable",
+            ),
+            (ManagementServerMessage::Busy, "terminal-unavailable"),
+            (
+                ManagementServerMessage::Stopped(tombstone.clone()),
+                "terminal-ended",
+            ),
+            (ManagementServerMessage::Allowed, "terminal-unavailable"),
+        ] {
+            let orbit = answer(&peer, vec![reply]);
+            let failure = super::send_input(&mut session, paste(), &log).unwrap_err();
+            assert_eq!(failure.code, expected);
+            assert!(!failure.detail.contains("hi"), "{failure:?}");
+            orbit.join().unwrap();
+            assert!(session.request.is_none());
+        }
+        let orbit = answer(&peer, vec![ManagementServerMessage::Allowed]);
+        assert_eq!(
+            super::read_visible(&mut session, &log).unwrap_err().code,
+            "terminal-unavailable"
+        );
+        orbit.join().unwrap();
+
+        // A ProgramStatus in flight is answered first and kept for the
+        // attention poller, which sends nothing new until it reads it.
+        assert!(super::send_program_status(&mut session, Instant::now()).unwrap());
+        let status = management::ProgramStatus {
+            count: 0,
+            background: 0,
+            update: 7,
+            terminal_title: String::new(),
+            omitted: Vec::new(),
+            records: Vec::new(),
+        };
+        let orbit = answer(
+            &peer,
+            vec![
+                ManagementServerMessage::ProgramStatus(status.clone()),
+                ManagementServerMessage::Visible(visible("")),
+            ],
+        );
+        assert_eq!(super::read_visible(&mut session, &log), Ok(visible("")));
+        assert_eq!(
+            orbit.join().unwrap(),
+            [
+                ManagementClientMessage::ProgramStatus,
+                ManagementClientMessage::ReadVisible,
+            ]
+        );
+        assert!(!super::send_program_status(&mut session, Instant::now()).unwrap());
+        assert!(matches!(
+            super::read_program_status(&mut session),
+            Ok(ProgramStatusRead::Reply(kept)) if kept == status
+        ));
+        assert!(matches!(
+            super::read_program_status(&mut session),
+            Ok(ProgramStatusRead::Missed)
+        ));
+        // An AttachAllow in flight is answered and names its process first.
+        let name = AttachName::of(std::process::id()).unwrap();
+        name_presentation(std::slice::from_mut(&mut session), Some(name), false, &log);
+        let orbit = answer(
+            &peer,
+            vec![
+                ManagementServerMessage::Allowed,
+                ManagementServerMessage::Input { bracketed: false },
+            ],
+        );
+        assert_eq!(super::send_input(&mut session, paste(), &log), Ok(false));
+        assert!(matches!(
+            orbit.join().unwrap()[0],
+            ManagementClientMessage::AttachAllow { .. }
+        ));
+        assert_eq!(named(&session), Some(name));
+
+        // An answer later than 2 s is unavailable. The request stays in
+        // flight and holds the slot; a read behind it fails at once.
+        let started = Instant::now();
+        let failure = super::send_input(&mut session, paste(), &log).unwrap_err();
+        assert_eq!(failure.code, "terminal-unavailable");
+        assert!(failure.detail.contains("may still arrive"), "{failure:?}");
+        assert!(started.elapsed() >= Duration::from_secs(2));
+        let mut late = peer.try_clone().unwrap();
+        late.set_read_timeout(Some(Duration::from_secs(5))).unwrap();
+        assert_eq!(
+            read_request(&mut late),
+            ManagementClientMessage::Input(paste())
+        );
+        assert!(!super::send_program_status(&mut session, Instant::now()).unwrap());
+        let started = Instant::now();
+        assert_eq!(
+            super::read_visible(&mut session, &log).unwrap_err().code,
+            "terminal-unavailable"
+        );
+        assert!(started.elapsed() < Duration::from_secs(1));
+        // A late reply larger than any socket buffer is read in time while
+        // the supervisor reads nothing (ORB-C13's one-second slow-peer rule).
+        let row = "x".repeat(99);
+        let text = vec![row.as_str(); 9_000].join("\n");
+        let mut big = visible(&text);
+        big.rows = 9_000;
+        big.columns = 99;
+        late.set_write_timeout(Some(Duration::from_secs(1)))
+            .unwrap();
+        late.write_all(
+            &management::encode_server_message(&ManagementServerMessage::Visible(big)).unwrap(),
+        )
+        .expect("Orbit's late reply waits unread");
+        let deadline = Instant::now() + Duration::from_secs(5);
+        while session.request.is_some() {
+            assert!(
+                Instant::now() < deadline,
+                "the late reply was never drained"
+            );
+            super::drain_given_up_requests(std::slice::from_mut(&mut session));
+            thread::sleep(Duration::from_millis(1));
+        }
+
+        // A stopping or closed terminal has ended, and nothing is sent.
+        session.stop_sent = true;
+        assert_eq!(
+            code(super::send_input(&mut session, paste(), &log)),
+            "terminal-ended"
+        );
+        session.stop_sent = false;
+        drop(late);
+        drop(peer);
+        assert_eq!(
+            super::read_visible(&mut session, &log).unwrap_err().code,
+            "terminal-ended"
+        );
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn a_real_orbit_shows_lease_input_in_its_visible_text() {
+        let root = temporary_directory();
+        let log = DiagnosticLog::open_in(Ok(root.join("logs")), "g1-test", "workspace");
+        let mut session = leased_orbit(&root, "printf 'ready\\n'; exec cat");
+        let read_until = |session: &mut RunningSession, wanted: &dyn Fn(&str) -> bool| {
+            let deadline = Instant::now() + Duration::from_secs(5);
+            loop {
+                let visible = super::read_visible(session, &log).unwrap();
+                if wanted(&visible.text) {
+                    return visible;
+                }
+                assert!(
+                    Instant::now() < deadline,
+                    "never saw it: {:?}",
+                    visible.text
+                );
+                thread::sleep(Duration::from_millis(10));
+            }
+        };
+        let ready = read_until(&mut session, &|text| text.starts_with("ready"));
+        assert_eq!(ready.screen, Screen::Primary);
+        assert!(ready.lossy);
+        // A ProgramStatus in flight does not hold the read up.
+        assert!(super::send_program_status(&mut session, Instant::now()).unwrap());
+        // cat never enables bracketed paste, so a line break is refused.
+        assert_eq!(
+            super::send_input(&mut session, LeaseInput::Paste("a\nb".into()), &log)
+                .unwrap_err()
+                .code,
+            "unbracketed-newline"
+        );
+        assert_eq!(
+            super::send_input(&mut session, LeaseInput::Paste("hello".into()), &log),
+            Ok(false)
+        );
+        assert_eq!(
+            super::send_input(&mut session, LeaseInput::Enter, &log),
+            Ok(false)
+        );
+        // The line discipline echoes the line, then cat writes it back.
+        read_until(&mut session, &|text| text.matches("hello").count() == 2);
+        assert_eq!(
+            stop_managed_sessions(std::slice::from_mut(&mut session), Duration::from_secs(5))
+                .unwrap(),
+            ["session-1"]
+        );
+        assert_eq!(
+            super::read_visible(&mut session, &log).unwrap_err().code,
+            "terminal-ended"
+        );
+        fs::remove_dir_all(root).unwrap();
     }
 
     #[test]
