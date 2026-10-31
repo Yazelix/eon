@@ -297,6 +297,8 @@ def peer_signal(message: Boundary.FirstMessage) -> Admission.Signal:
       Admission.Malformed{}
     case Boundary.FirstMessageUnsupported{}:
       Admission.Unsupported{}
+    case Boundary.FirstMessageStranger{}:
+      Admission.Stranger{}
 
 def presented_of(pointer: Pointer) -> Bool:
   match pointer:
@@ -1004,7 +1006,9 @@ def ticked(
             }
           )
 
-def management_signal(event: Boundary.ManagementEvent) -> Management.Signal:
+# A ReadVisible request carries whether the child runs and whether a
+# synchronized update is held, and lease input whether the child runs.
+def management_signal(event: Boundary.ManagementEvent, live: Bool, held: Bool) -> Management.Signal:
   match event:
     case Boundary.ManagementEventConnect{}:
       Management.Connect{}
@@ -1020,6 +1024,14 @@ def management_signal(event: Boundary.ManagementEvent) -> Management.Signal:
       Management.Bad{}
     case Boundary.ManagementEventGone{}:
       Management.Gone{}
+    case Boundary.ManagementEventRead{}:
+      Management.Read{live, held}
+    case Boundary.ManagementEventInput{}:
+      Management.Input{live}
+    case Boundary.ManagementEventAllow{}:
+      Management.Allow{}
+    case Boundary.ManagementEventInvalid{}:
+      Management.Invalid{}
 
 # A stop through the lease begins the reap-gated stop: the host hangs up the
 # child with the bounded shutdown of ORB-C12 and reports its reap, and the
@@ -1053,6 +1065,14 @@ def managed(answer: Management.Answer, session: Session) -> Next():
       (session, [Boundary.ManageProgramStatus{}])
     case Management.Refuse{}:
       (session, [Boundary.ManageRefuse{}])
+    case Management.Visible{}:
+      (session, [Boundary.ManageRead{unstamped()}])
+    case Management.Write{}:
+      (session, [Boundary.ManageInput{}])
+    case Management.Name{}:
+      (session, [Boundary.ManageAllow{}])
+    case Management.Decline{}:
+      (session, [Boundary.ManageDecline{}])
     case Management.Shutdown{}:
       shut_down(session)
     case Management.Quiet{}:
@@ -1067,6 +1087,18 @@ def management(+signal: Management.Signal, session: Session) -> Next():
       managed(
         Management.answer(manage, signal),
         Session{life, written, observer, explicit, waiting, pointer, Management.next(manage, signal)}
+      )
+
+# A management event; a ReadVisible request reads whether the child runs and
+# whether a synchronized update is held, and lease input whether it runs.
+def management_event(
+  event: Boundary.ManagementEvent, +flags: Boundary.Flags, session: Session
+) -> Next():
+  match session:
+    case Session{+life, written, observer, explicit, waiting, pointer, manage}:
+      management(
+        management_signal(event, runs(life), Boundary.held(flags)),
+        Session{life, written, observer, explicit, waiting, pointer, manage}
       )
 
 # A ProgramStatus request (ORB-C15) is answered while the child runs; its
@@ -1201,7 +1233,7 @@ def decide(
     case Boundary.Tick{state, x, y}:
       ticked(state, x, y, flags, session)
     case Boundary.Management{event}:
-      management(management_signal(event), session)
+      management_event(event, flags, session)
     case Boundary.ProgramStatus{foreground}:
       program_status(session)
     case Boundary.ChildExited{drained}:
@@ -1366,6 +1398,10 @@ def presented_at(decision: Boundary.Decision, +revision: Revision.Revision) -> B
       Boundary.LiveAnswer{revision}
     case Boundary.SelectionFinished{old}:
       Boundary.SelectionFinished{revision}
+    # A visible-text read names the revision of the snapshot it reads
+    # (ORB-C17).
+    case Boundary.ManageRead{old}:
+      Boundary.ManageRead{revision}
     case Boundary.TickAnswer{x, y, old}:
       Boundary.TickAnswer{x, y, Revision.next(revision)}
     case other:

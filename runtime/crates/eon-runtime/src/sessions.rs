@@ -540,7 +540,8 @@ fn acquire_management(
         identity: candidate.identity,
         orbit_log,
         lease: stream,
-        program_status: None,
+        request: None,
+        naming: None,
         stop_sent: false,
         reap_failure_reported: false,
         child: None,
@@ -797,7 +798,9 @@ pub(super) struct RunningSession {
     /// This Runtime is the lease's one reader and keeps at most one request
     /// in flight on it (EON-C31 Polling).
     lease: UnixStream,
-    program_status: Option<ProgramStatusRequest>,
+    request: Option<LeaseRequest>,
+    /// The last `AttachAllow` outcome for the presenting Venus (EON-C11).
+    naming: Option<Naming>,
     stop_sent: bool,
     /// The supervisor reported that this terminal cannot be reconciled yet;
     /// later reaps retry without waiting.
@@ -812,13 +815,62 @@ enum SessionEnd {
     OwnerLost,
 }
 
-/// A `ProgramStatus` request in flight on a lease: the request bytes not yet
-/// written, the reply bytes read so far, and the poller's deadline.
-struct ProgramStatusRequest {
+/// The one request in flight on a lease: what it asks, so its reply is never
+/// read as another request's, the request bytes not yet written, the reply
+/// bytes read so far, and its deadline.
+struct LeaseRequest {
+    kind: RequestKind,
     unsent: Vec<u8>,
     reply: Vec<u8>,
     deadline: Instant,
 }
+
+#[derive(Clone, Copy)]
+enum RequestKind {
+    ProgramStatus,
+    AttachAllow(AttachName),
+}
+
+/// A process named to a terminal's Orbit as the one peer it admits to attach
+/// (ORB-C3, ORB-C13 `AttachAllow`): its process ID and its start identity, in
+/// the unit Orbit publishes as `process_start`.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(super) struct AttachName {
+    process_id: u32,
+    process_start: u64,
+}
+
+impl AttachName {
+    /// The name of the running process `process_id`.
+    pub(super) fn of(process_id: u32) -> Result<Self, String> {
+        match platform::process(process_id)? {
+            Some(process) if !process.ended => Ok(Self {
+                process_id,
+                process_start: process.start,
+            }),
+            _ => Err(format!("process {process_id} is not running")),
+        }
+    }
+}
+
+/// What a lease last learned from naming the presenting Venus.
+#[derive(Clone, Copy)]
+enum Naming {
+    Named(AttachName),
+    /// The name was refused, failed or is late; it is sent again from
+    /// `retry`, unless a request for it is still in flight.
+    Failed {
+        name: AttachName,
+        retry: Instant,
+    },
+}
+
+/// How long one `AttachAllow` reply may take before it counts as failed, and
+/// the longest a naming that waits blocks the supervisor, four times the
+/// 250 ms answer ORB-C15 targets for `ProgramStatus`.
+const ATTACH_ALLOW_DEADLINE: Duration = Duration::from_secs(1);
+/// How soon a lease whose naming failed is named again.
+const ATTACH_ALLOW_RETRY: Duration = Duration::from_millis(500);
 
 enum ReplyProgress {
     Complete,
@@ -830,10 +882,7 @@ enum ReplyProgress {
 /// past its end. A header that does not decode ends the reply, which then
 /// fails to decode. A lease that ends or fails reports `Closed`, which the EOF
 /// probe owns.
-fn advance_program_status(
-    lease: &mut UnixStream,
-    request: &mut ProgramStatusRequest,
-) -> ReplyProgress {
+fn advance_request(lease: &mut UnixStream, request: &mut LeaseRequest) -> ReplyProgress {
     while !request.unsent.is_empty() {
         match lease.write(&request.unsent) {
             Ok(0) => return ReplyProgress::Closed,
@@ -869,36 +918,54 @@ fn advance_program_status(
     }
 }
 
-/// What one read of a `ProgramStatus` request found. Busy ends the request; a
-/// passed deadline or an ended lease leaves it in flight, so later reads keep
-/// draining it and return its reply if it comes, while `send_program_status`
-/// sends no other until then. The EOF probe owns an ended lease.
-pub(super) enum ProgramStatusRead {
-    /// No reply yet, before the deadline.
-    Pending,
-    /// No reply by the deadline, a Busy refusal (EON-C31), an ended lease, or
-    /// no request in flight.
-    Missed,
-    Reply(ProgramStatus),
-}
-
-/// Sends a `ProgramStatus` request without blocking, unless one is already in
-/// flight, a Stop was sent, or the run ended. Returns whether it sent one.
-pub(super) fn send_program_status(
+/// Puts `message` in the lease's request slot and starts writing it.
+fn send_request(
     session: &mut RunningSession,
+    kind: RequestKind,
+    message: &ManagementClientMessage,
     deadline: Instant,
-) -> Result<bool, String> {
-    if session.is_finished() || session.stop_sent || session.program_status.is_some() {
-        return Ok(false);
-    }
-    let unsent = management::encode_client_message(&ManagementClientMessage::ProgramStatus)
-        .map_err(|error| format!("cannot encode terminal program status request: {error}"))?;
-    let request = session.program_status.insert(ProgramStatusRequest {
+) -> Result<(), String> {
+    let unsent = management::encode_client_message(message)
+        .map_err(|error| format!("cannot encode terminal management request: {error}"))?;
+    let request = session.request.insert(LeaseRequest {
+        kind,
         unsent,
         reply: Vec::new(),
         deadline,
     });
-    advance_program_status(&mut session.lease, request);
+    advance_request(&mut session.lease, request);
+    Ok(())
+}
+
+/// What one read of a `ProgramStatus` request found. Busy ends the request; a
+/// passed deadline or an ended lease leaves it in flight, so later reads keep
+/// draining it and return its reply if it comes, while no other request is
+/// sent until then. The EOF probe owns an ended lease.
+pub(super) enum ProgramStatusRead {
+    /// No reply yet, before the deadline.
+    Pending,
+    /// No reply by the deadline, a Busy refusal (EON-C31), an ended lease, or
+    /// no `ProgramStatus` request in flight.
+    Missed,
+    Reply(ProgramStatus),
+}
+
+/// Sends a `ProgramStatus` request without blocking, unless a request is
+/// already in flight, a Stop was sent, or the run ended. Returns whether it
+/// sent one.
+pub(super) fn send_program_status(
+    session: &mut RunningSession,
+    deadline: Instant,
+) -> Result<bool, String> {
+    if session.is_finished() || session.stop_sent || session.request.is_some() {
+        return Ok(false);
+    }
+    send_request(
+        session,
+        RequestKind::ProgramStatus,
+        &ManagementClientMessage::ProgramStatus,
+        deadline,
+    )?;
     Ok(true)
 }
 
@@ -906,10 +973,16 @@ pub(super) fn send_program_status(
 pub(super) fn read_program_status(
     session: &mut RunningSession,
 ) -> Result<ProgramStatusRead, String> {
-    let Some(request) = &mut session.program_status else {
+    let Some(
+        request @ LeaseRequest {
+            kind: RequestKind::ProgramStatus,
+            ..
+        },
+    ) = &mut session.request
+    else {
         return Ok(ProgramStatusRead::Missed);
     };
-    match advance_program_status(&mut session.lease, request) {
+    match advance_request(&mut session.lease, request) {
         ReplyProgress::Complete => {}
         ReplyProgress::WouldBlock if Instant::now() < request.deadline => {
             return Ok(ProgramStatusRead::Pending);
@@ -919,7 +992,7 @@ pub(super) fn read_program_status(
         }
     }
     let reply = std::mem::take(&mut request.reply);
-    session.program_status = None;
+    session.request = None;
     match management::decode_server_message(&reply) {
         Ok(ManagementServerMessage::ProgramStatus(status)) => Ok(ProgramStatusRead::Reply(status)),
         Ok(ManagementServerMessage::Busy) => Ok(ProgramStatusRead::Missed),
@@ -928,22 +1001,181 @@ pub(super) fn read_program_status(
     }
 }
 
-/// Advances the in-flight `ProgramStatus` reply without blocking and discards
-/// it once whole, so a Stop written next is never pipelined behind the request
-/// and its answer is never read as the reply. Returns whether nothing remains
-/// in flight.
-fn drain_program_status(session: &mut RunningSession) -> Result<bool, String> {
-    let Some(request) = &mut session.program_status else {
+/// Advances the in-flight request without blocking and discards its reply
+/// once whole, so a request written next is never pipelined behind it and its
+/// answer is never read as the reply. Returns whether nothing remains in
+/// flight.
+fn drain_request(session: &mut RunningSession) -> Result<bool, String> {
+    let Some(request) = &mut session.request else {
         return Ok(true);
     };
-    match advance_program_status(&mut session.lease, request) {
+    match advance_request(&mut session.lease, request) {
         ReplyProgress::Complete => {
-            session.program_status = None;
+            session.request = None;
             Ok(true)
         }
         ReplyProgress::WouldBlock => Ok(false),
-        ReplyProgress::Closed => Err("terminal ended before answering program status".into()),
+        ReplyProgress::Closed => Err("terminal ended before answering its request".into()),
     }
+}
+
+/// Names `venus` to each live terminal whose lease has not named it, as the
+/// one process its Orbit admits to attach (EON-C11), and reads the replies
+/// that came. `wait` blocks until each lease that was sent the name answers
+/// or `ATTACH_ALLOW_DEADLINE` passes, so that a caller shows Venus a terminal
+/// only after naming it; a waiting naming discards an in-flight
+/// `ProgramStatus` reply, as Stop does, rather than wait for the poller. A
+/// lease is never sent a second request while one is in flight, and a late
+/// reply is read by a later call. A refusal, failure or missed deadline is
+/// noted once per lease and name, leaves the terminal unattached, and is
+/// retried after `ATTACH_ALLOW_RETRY`; it never stops the terminal.
+pub(super) fn name_presentation(
+    sessions: &mut [RunningSession],
+    venus: Option<AttachName>,
+    wait: bool,
+    log: &DiagnosticLog,
+) {
+    let deadline = Instant::now() + ATTACH_ALLOW_DEADLINE;
+    loop {
+        let now = Instant::now();
+        let mut pending = false;
+        for session in sessions.iter_mut() {
+            pending |= name_lease(session, venus, wait, now, log);
+        }
+        if !wait || !pending || now >= deadline {
+            return;
+        }
+        thread::sleep(Duration::from_millis(1));
+    }
+}
+
+/// Advances one lease's naming; returns whether it awaits a reply that is
+/// not yet late.
+fn name_lease(
+    session: &mut RunningSession,
+    venus: Option<AttachName>,
+    wait: bool,
+    now: Instant,
+    log: &DiagnosticLog,
+) -> bool {
+    if session.is_finished() || session.stop_sent {
+        return false;
+    }
+    let needs = |naming: Option<Naming>, venus: AttachName| match naming {
+        None => true,
+        Some(Naming::Named(name)) => name != venus,
+        Some(Naming::Failed { name, retry }) => name != venus || now >= retry,
+    };
+    match &mut session.request {
+        Some(
+            request @ LeaseRequest {
+                kind: RequestKind::AttachAllow(_),
+                ..
+            },
+        ) => {
+            let RequestKind::AttachAllow(name) = request.kind else {
+                unreachable!("the request names a process");
+            };
+            match advance_request(&mut session.lease, request) {
+                ReplyProgress::Complete => {
+                    let reply = std::mem::take(&mut request.reply);
+                    session.request = None;
+                    match management::decode_server_message(&reply) {
+                        Ok(ManagementServerMessage::Allowed) => {
+                            session.naming = Some(Naming::Named(name));
+                        }
+                        // A stopped Orbit's unsolicited result (ORB-C12)
+                        // came in the reply's place; the EOF probe finds the
+                        // lease closed after it.
+                        Ok(ManagementServerMessage::Stopped(_)) => return false,
+                        Ok(ManagementServerMessage::Busy) => {
+                            naming_failed(session, name, "Orbit answered Busy", now, log);
+                        }
+                        Ok(ManagementServerMessage::Refused(refusal)) => naming_failed(
+                            session,
+                            name,
+                            &format!("Orbit refused it: {refusal:?}"),
+                            now,
+                            log,
+                        ),
+                        Ok(_) => naming_failed(
+                            session,
+                            name,
+                            "Orbit returned the wrong result",
+                            now,
+                            log,
+                        ),
+                        Err(error) => naming_failed(
+                            session,
+                            name,
+                            &format!("invalid result: {error}"),
+                            now,
+                            log,
+                        ),
+                    }
+                }
+                ReplyProgress::WouldBlock if now < request.deadline => return true,
+                // The request stays in flight; its reply, if it comes, still
+                // names the process.
+                ReplyProgress::WouldBlock => {
+                    naming_failed(session, name, "Orbit did not answer in time", now, log);
+                    return false;
+                }
+                ReplyProgress::Closed => return false,
+            }
+        }
+        Some(LeaseRequest {
+            kind: RequestKind::ProgramStatus,
+            ..
+        }) => {
+            if !wait || !venus.is_some_and(|venus| needs(session.naming, venus)) {
+                return false;
+            }
+            match drain_request(session) {
+                Ok(true) => {}
+                Ok(false) => return true,
+                Err(_) => return false,
+            }
+        }
+        None => {}
+    }
+    let Some(venus) = venus.filter(|venus| needs(session.naming, *venus)) else {
+        return false;
+    };
+    let message = ManagementClientMessage::AttachAllow {
+        process_id: venus.process_id,
+        process_start: venus.process_start,
+    };
+    if let Err(error) = send_request(
+        session,
+        RequestKind::AttachAllow(venus),
+        &message,
+        now + ATTACH_ALLOW_DEADLINE,
+    ) {
+        naming_failed(session, venus, &error, now, log);
+        return false;
+    }
+    true
+}
+
+fn naming_failed(
+    session: &mut RunningSession,
+    name: AttachName,
+    detail: &str,
+    now: Instant,
+    log: &DiagnosticLog,
+) {
+    if !matches!(session.naming, Some(Naming::Failed { name: failed, .. }) if failed == name) {
+        log.note(&format!(
+            "Cannot let Eon Desktop attach to terminal {}; it stays unattached until a retry succeeds: {detail}{}",
+            session.id,
+            session.orbit_log_suffix()
+        ));
+    }
+    session.naming = Some(Naming::Failed {
+        name,
+        retry: now + ATTACH_ALLOW_RETRY,
+    });
 }
 
 impl RunningSession {
@@ -1266,7 +1498,7 @@ fn orbit_command(
     orbit_command
         .arg("serve")
         .arg(socket)
-        .arg("--management-v3")
+        .arg("--management-v4")
         .arg(session_id)
         .arg(run_id)
         .arg(component_generation)
@@ -1472,8 +1704,8 @@ pub(super) fn session_finished(session: &mut RunningSession) -> Result<Option<i3
         // unsolicited, such as the Stopped an Orbit sends when a signal stops
         // it (ORB-C12), and are discarded. Only the record says how the run
         // ended.
-        let progress = match &mut session.program_status {
-            Some(request) => advance_program_status(&mut session.lease, request),
+        let progress = match &mut session.request {
+            Some(request) => advance_request(&mut session.lease, request),
             None => ReplyProgress::Complete,
         };
         match progress {
@@ -1544,7 +1776,7 @@ pub(super) fn stop_managed_sessions(
             .zip(&mut writes)
             .filter(|(_, write)| write.is_none())
         {
-            *write = match drain_program_status(session) {
+            *write = match drain_request(session) {
                 Ok(true) => Some(write_stop(session)),
                 Ok(false) => continue,
                 Err(error) => Some(Err(error)),
@@ -1555,9 +1787,7 @@ pub(super) fn stop_managed_sessions(
         }
         if Instant::now() >= deadline {
             for write in writes.iter_mut().filter(|write| write.is_none()) {
-                *write = Some(Err(
-                    "terminal did not answer program status before stop".into()
-                ));
+                *write = Some(Err("terminal did not answer its request before stop".into()));
             }
             break;
         }
@@ -1651,13 +1881,14 @@ pub(super) fn stop_managed_sessions(
 #[cfg(test)]
 pub(crate) mod tests {
     use super::{
-        EndpointIdentity, LiveIdentity, ManagementRecord, ObjectIdentity, ProcessOutcome,
-        ProgramStatusRead, RunningSession, TerminationReason, Tombstone, bound_io,
-        is_directory_picker_endpoint, managed_session_number, management, orbit_command,
-        read_management_response, session_number, stop_managed_sessions, unix_connect_with_timeout,
+        AttachName, EndpointIdentity, LiveIdentity, ManagementRecord, Naming, ObjectIdentity,
+        ProcessOutcome, ProgramStatusRead, RequestKind, RunningSession, TerminationReason,
+        Tombstone, bound_io, is_directory_picker_endpoint, managed_session_number, management,
+        name_presentation, orbit_command, read_management_response, session_number,
+        stop_managed_sessions, unix_connect_with_timeout,
     };
     use crate::{diagnostics::DiagnosticLog, supervisor::temporary_directory};
-    use orbit_protocol::management::ServerMessage as ManagementServerMessage;
+    use orbit_protocol::{management::ServerMessage as ManagementServerMessage, session as orbs};
     use std::{
         ffi::{OsStr, OsString},
         fs,
@@ -1729,7 +1960,8 @@ pub(crate) mod tests {
             identity,
             orbit_log: None,
             lease,
-            program_status: None,
+            request: None,
+            naming: None,
             stop_sent: false,
             reap_failure_reported: false,
             child: None,
@@ -2117,7 +2349,8 @@ pub(crate) mod tests {
             identity,
             orbit_log: None,
             lease,
-            program_status: None,
+            request: None,
+            naming: None,
             stop_sent: false,
             reap_failure_reported: false,
             child: None,
@@ -2315,7 +2548,8 @@ pub(crate) mod tests {
                     .unwrap(),
             )
             .unwrap();
-        session.program_status = Some(super::ProgramStatusRequest {
+        session.request = Some(super::LeaseRequest {
+            kind: super::RequestKind::ProgramStatus,
             unsent: Vec::new(),
             reply: Vec::new(),
             deadline: Instant::now() + Duration::from_secs(2),
@@ -2341,6 +2575,115 @@ pub(crate) mod tests {
                 .unwrap(),
             ["session-1"]
         );
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    /// The first answer Orbit gives this test process's `Hello`, and the
+    /// connection, which holds an attachment while it stays open.
+    fn hello(session: &RunningSession) -> (orbs::ServerMessage, UnixStream) {
+        let mut peer = UnixStream::connect(&session.endpoint).unwrap();
+        peer.set_read_timeout(Some(Duration::from_secs(5))).unwrap();
+        peer.write_all(&orbs::encode_client_message(&orbs::ClientMessage::Hello).unwrap())
+            .unwrap();
+        let mut answer = Vec::new();
+        let mut byte = [0];
+        let length = loop {
+            if let Some(length) = orbs::server_message_len(&answer).unwrap()
+                && answer.len() >= length
+            {
+                break length;
+            }
+            peer.read_exact(&mut byte).unwrap();
+            answer.push(byte[0]);
+        };
+        (
+            orbs::decode_server_message(&answer[..length]).unwrap(),
+            peer,
+        )
+    }
+
+    fn named(session: &RunningSession) -> Option<AttachName> {
+        match session.naming {
+            Some(Naming::Named(name)) => Some(name),
+            _ => None,
+        }
+    }
+
+    #[test]
+    fn attach_allow_shares_the_request_slot_and_names_the_one_peer_orbit_admits() {
+        let root = temporary_directory();
+        let mut session = leased_orbit(&root, "exec sleep 30");
+        let log = DiagnosticLog::open_in(Ok(root.join("logs")), "g1-test", "workspace");
+        let mut other = Command::new("sleep").arg("30").spawn().unwrap();
+        let other_name = AttachName::of(other.id()).unwrap();
+        let own = AttachName::of(std::process::id()).unwrap();
+        let sessions = std::slice::from_mut(&mut session);
+
+        // Unnamed, a managed Orbit admits no one.
+        assert_eq!(hello(&sessions[0]).0, orbs::ServerMessage::Busy);
+
+        // A naming that does not wait sends nothing behind an in-flight
+        // ProgramStatus, whose reply stays the poller's.
+        assert!(
+            super::send_program_status(&mut sessions[0], Instant::now() + Duration::from_secs(2))
+                .unwrap()
+        );
+        name_presentation(sessions, Some(other_name), false, &log);
+        assert!(matches!(
+            sessions[0].request,
+            Some(super::LeaseRequest {
+                kind: RequestKind::ProgramStatus,
+                ..
+            })
+        ));
+        while matches!(
+            super::read_program_status(&mut sessions[0]).unwrap(),
+            ProgramStatusRead::Pending
+        ) {
+            thread::sleep(Duration::from_millis(1));
+        }
+        assert!(sessions[0].request.is_none());
+
+        // An AttachAllow in flight holds the slot: no ProgramStatus is sent
+        // behind it, and the poller does not take its reply.
+        name_presentation(sessions, Some(other_name), false, &log);
+        assert!(!super::send_program_status(&mut sessions[0], Instant::now()).unwrap());
+        let deadline = Instant::now() + Duration::from_secs(5);
+        while named(&sessions[0]).is_none() {
+            assert!(Instant::now() < deadline, "Orbit never allowed the name");
+            assert!(matches!(
+                super::read_program_status(&mut sessions[0]).unwrap(),
+                ProgramStatusRead::Missed
+            ));
+            name_presentation(sessions, Some(other_name), false, &log);
+            thread::sleep(Duration::from_millis(1));
+        }
+        assert_eq!(named(&sessions[0]), Some(other_name));
+        assert!(sessions[0].request.is_none());
+        // Another process is named, so this one is still refused.
+        assert_eq!(hello(&sessions[0]).0, orbs::ServerMessage::Busy);
+
+        // A waiting naming discards an in-flight ProgramStatus reply and
+        // returns once Orbit admits the named process.
+        assert!(
+            super::send_program_status(&mut sessions[0], Instant::now() + Duration::from_secs(2))
+                .unwrap()
+        );
+        name_presentation(sessions, Some(own), true, &log);
+        assert_eq!(named(&sessions[0]), Some(own));
+        assert!(sessions[0].request.is_none());
+        let (answer, _attached) = hello(&sessions[0]);
+        assert_eq!(answer, orbs::ServerMessage::Attached);
+        // A lease that holds the name is not sent it again.
+        name_presentation(sessions, Some(own), false, &log);
+        assert!(sessions[0].request.is_none());
+
+        assert_eq!(
+            stop_managed_sessions(sessions, Duration::from_secs(5)).unwrap(),
+            ["session-1"]
+        );
+        other.kill().unwrap();
+        other.wait().unwrap();
         fs::remove_dir_all(root).unwrap();
     }
 
@@ -2495,7 +2838,7 @@ pub(crate) mod tests {
         for _ in 0..100 {
             assert!(super::send_program_status(&mut session, Instant::now()).unwrap());
             let started = Instant::now();
-            while !super::drain_program_status(&mut session).unwrap() {
+            while !super::drain_request(&mut session).unwrap() {
                 assert!(started.elapsed() < Duration::from_secs(5), "no reply");
             }
             delays.push(started.elapsed());
@@ -2719,7 +3062,7 @@ pub(crate) mod tests {
             [
                 "serve",
                 "/runtime/orbit.sock",
-                "--management-v3",
+                "--management-v4",
                 "session-1",
                 "run-1",
                 "component-1",
@@ -2816,7 +3159,7 @@ pub(crate) mod tests {
             [
                 "serve",
                 "/runtime/orbit.sock",
-                "--management-v3",
+                "--management-v4",
                 "session-2",
                 "run-2",
                 "component-2",

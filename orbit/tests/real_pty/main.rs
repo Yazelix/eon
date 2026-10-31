@@ -26,6 +26,7 @@ macro_rules! checks {
 }
 
 checks!(
+    attach_allow,
     clipboard,
     clipboard_pressure,
     command_line,
@@ -48,6 +49,7 @@ checks!(
     kitty_screens,
     kitty_scroll,
     late_observer,
+    lease_input,
     lifecycle,
     management_lease,
     management_record,
@@ -78,4 +80,5 @@ checks!(
     #[cfg(target_os = "linux")]
     unreaped_stop,
     unsupported,
+    visible_text,
 );

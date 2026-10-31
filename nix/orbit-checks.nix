@@ -238,6 +238,17 @@ let
       timeout = "60s";
       env.ORBIT_BASH = bash;
     }
+    { name = "attach-allow"; timeout = "30s"; }
+    {
+      name = "visible-text";
+      timeout = "60s";
+      env.ORBIT_BASH = bash;
+    }
+    {
+      name = "lease-input";
+      timeout = "60s";
+      env.ORBIT_BASH = bash;
+    }
     {
       name = "terminal-identity";
       variable = "IDENTITY_SHELL";

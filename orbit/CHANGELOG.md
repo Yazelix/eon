@@ -191,6 +191,32 @@ remain canonical in `docs/CONTRACTS.md`, dependency decisions in
   macOS 27.2, `mac-proof final` at `0e47d26df690c7ff4b2f1a000e174b307a17e656`
   passed `orbit-laws`, every real-PTY check except `orbit-unreaped-stop`,
   and the unit and lifecycle tests natively (`eon-mac-launch-kz4p.12`).
+- Management moves to generation 4, a breaking change with no compatibility
+  window (`eon-agent-parity-a9g0.15`). Under the lease, `ReadVisible` answers
+  `Visible`: the active screen's live area as lossy plain text of at most 1 MiB,
+  with its revision, screen, size, title, directory and the count of leading
+  rows the bound left out. `Input` writes one paste of at most 64 KiB, bracketed
+  when the program enabled bracketed paste, or one Enter, encoded as an attached
+  client's would be, and answers `Input` with whether the paste was bracketed.
+  `AttachAllow` names the one process, by process ID and start identity, that
+  may attach as the interactive client, and answers `Allowed`. `Refused` carries
+  a typed refusal that keeps the lease: an invalid request, an unbracketed
+  newline, a control character, a full input queue, a failed read or a closed
+  PTY. A whole request that does not decode, or one sent while another is in
+  flight, until its answer is fully written, is now refused this way instead of
+  ending the lease, or waiting; a request that breaks framing still ends it.
+  Each answer must be fully written within one second, so a holder that stops
+  reading loses the lease. ORBS and ORBF are unchanged, but a managed run
+  answers `Busy` to a `Hello` from any process other than the named one, and to
+  every `Hello` while no lease is held or no process is named; an unmanaged run
+  admits the first peer as before. Linux reads the peer's process ID from
+  `SO_PEERCRED`; macOS uses `LOCAL_PEERPID` and is unproved. `--management-v3`
+  becomes `--management-v4`, and the live record and tombstone are framed as
+  generation 4, so Eon Runtime and Eon move to generation 4 in the same change;
+  Venus does not use management. A new Eon cannot stop or recover a run started
+  by a generation-3 Orbit. ORB-C17 is indexed as Planned, and ORB-C3, ORB-C5 and
+  ORB-C13 gain the approved clauses, a recorded gap until the installed proof
+  `eon-agent-parity-a9g0.19`.
 
 ## Before this repository
 

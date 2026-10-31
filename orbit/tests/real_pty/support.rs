@@ -253,6 +253,19 @@ pub fn key(letter: char, action: KeyAction) -> ClientMessage {
     })
 }
 
+/// An unmodified Enter key event.
+pub fn enter(action: KeyAction) -> ClientMessage {
+    ClientMessage::Key(KeyEvent {
+        action,
+        key: PhysicalKey::ENTER,
+        modifiers: Modifiers::empty(),
+        consumed_modifiers: Modifiers::empty(),
+        composing: false,
+        text: None,
+        unshifted_codepoint: None,
+    })
+}
+
 /// A Mouse event with no modifiers in column 3, row 2 of the 10x18-pixel cells.
 pub fn mouse(action: MouseAction, button: Option<MouseButton>) -> ClientMessage {
     ClientMessage::Mouse(MouseEvent {
@@ -707,6 +720,40 @@ pub fn alive(pid: i32) -> bool {
     io::Error::last_os_error().raw_os_error() == Some(libc::EPERM)
 }
 
+/// A process's start identity as Orbit reads it: the kernel's start time in
+/// clock ticks since boot on Linux.
+#[cfg(target_os = "linux")]
+pub fn process_start(pid: u32) -> u64 {
+    let stat = fs::read_to_string(format!("/proc/{pid}/stat")).expect("stat");
+    let (_, fields) = stat.rsplit_once(')').expect("stat fields");
+    fields
+        .split_whitespace()
+        .nth(19)
+        .expect("starttime")
+        .parse()
+        .expect("a number")
+}
+
+/// A process's start identity as Orbit reads it: its start time in
+/// microseconds on macOS.
+#[cfg(target_os = "macos")]
+pub fn process_start(pid: u32) -> u64 {
+    // SAFETY: proc_pidinfo fills the zeroed record within its size.
+    let mut info: libc::proc_bsdinfo = unsafe { std::mem::zeroed() };
+    let size = size_of::<libc::proc_bsdinfo>() as libc::c_int;
+    let read = unsafe {
+        libc::proc_pidinfo(
+            pid as libc::c_int,
+            libc::PROC_PIDTBSDINFO,
+            0,
+            (&raw mut info).cast(),
+            size,
+        )
+    };
+    assert_eq!(read, size, "proc_pidinfo {pid}");
+    info.pbi_start_tvsec * 1_000_000 + info.pbi_start_tvusec
+}
+
 pub fn signal(pid: i32, signal: libc::c_int) {
     // SAFETY: sending a signal has no memory effects.
     assert_eq!(unsafe { libc::kill(pid, signal) }, 0, "kill {pid}");
@@ -745,7 +792,7 @@ fn pty_child(server: i32) -> Option<i32> {
 }
 
 /// Orbit's command line for one session, with `options`, such as
-/// `--management-v3` and its identities, before the command.
+/// `--management-v4` and its identities, before the command.
 pub fn server_command(path: &Path, command: &[&OsStr], options: &[&str]) -> Vec<OsString> {
     let binary = env::var_os("ORBIT_BIN").expect("ORBIT_BIN");
     let mut line = vec![binary, "serve".into(), path.into()];

@@ -10,6 +10,10 @@ pub(crate) enum FirstMessage {
     Refused = 3,
     /// Another ORBS version, which gets no answer.
     Unsupported = 4,
+    /// A Hello in a run with management from a peer other than the process the
+    /// lease holder named: no lease or no name, or credentials or a process start
+    /// that could not be read or differ from the name (ORB-C3).
+    Stranger = 5,
 }
 
 /// What applying one input request did.
@@ -107,10 +111,21 @@ pub(crate) enum ManagementEvent {
     AcquireInvalid = 3,
     Status = 4,
     Stop = 5,
-    /// A request that is malformed, over 4 KiB or pipelined.
+    /// A request that breaks framing: a bad header, or a payload over its kind's
+    /// bound.
     Bad = 6,
     /// The connection closed, was refused, or outlived its one-second bound.
     Gone = 7,
+    /// A ReadVisible request (ORB-C17), reported only once no synchronized
+    /// update is held.
+    Read = 8,
+    /// A lease input request (ORB-C5).
+    Input = 9,
+    /// An AttachAllow request (ORB-C3, ORB-C13).
+    Allow = 10,
+    /// A whole request that does not decode, or one sent while another was in
+    /// flight.
+    Invalid = 11,
 }
 
 /// Which process group the host found in the PTY's foreground when the PTY
@@ -425,7 +440,7 @@ fn halves(revision: u64) -> String {
 
 /// The line the worker writes before its first answer, naming the schema
 /// it was generated from; the host refuses a worker that names another.
-pub(crate) const SCHEMA: &str = "schema 2d907a1c5bde0b23";
+pub(crate) const SCHEMA: &str = "schema 1fb6dafe7e2c4ce3";
 
 /// The line that ends each of the worker's answers.
 pub(crate) const END: &str = "end";
@@ -585,6 +600,20 @@ pub(crate) enum Decision {
     /// announcement, and queues its chunks as the resource queue's bound allows. A
     /// resource whose copy fails is not started and loses its number.
     Transfer { start: bool, retire: bool },
+    /// Answers the connection Visible with the active screen's live area as plain
+    /// text, the screen, its size, title and working directory, at `revision`
+    /// (ORB-C17); an extraction that fails answers Refused(ReadFailed). The lease
+    /// stays.
+    ManageRead { revision: u64 },
+    /// Writes the lease input request to the PTY input queue whole, encoded as an
+    /// attached client's paste or Enter would be, and answers Input, or answers
+    /// Refused with its reason and writes nothing (ORB-C5). The lease stays.
+    ManageInput,
+    /// Records the named process on the leased connection, replacing any earlier
+    /// name, and answers Allowed (ORB-C13).
+    ManageAllow,
+    /// Answers Refused(InvalidRequest); the lease stays.
+    ManageDecline,
 }
 
 type Words<'a> = std::str::Split<'a, char>;
@@ -745,6 +774,12 @@ impl Decision {
                 start: flag(&mut words)?,
                 retire: flag(&mut words)?,
             },
+            44 => Self::ManageRead {
+                revision: revision(&mut words)?,
+            },
+            45 => Self::ManageInput,
+            46 => Self::ManageAllow,
+            47 => Self::ManageDecline,
             _ => return None,
         };
         words.next().is_none().then_some(decision)

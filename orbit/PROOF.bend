@@ -261,6 +261,18 @@ def Laws.admission_answers_are_accounted(events, slots):
                   Laws.admission_answers_are_accounted(rest, Admission.Slots{False{}, False{}})
                 case False{} False{}:
                   Laws.admission_answers_are_accounted(rest, Admission.Slots{False{}, False{}})
+        case Admission.Stranger{}:
+          match slots:
+            case Admission.Slots{interactive, observer}:
+              match interactive observer:
+                case True{} True{}:
+                  Laws.admission_answers_are_accounted(rest, Admission.Slots{True{}, True{}})
+                case True{} False{}:
+                  Laws.admission_answers_are_accounted(rest, Admission.Slots{True{}, False{}})
+                case False{} True{}:
+                  Laws.admission_answers_are_accounted(rest, Admission.Slots{False{}, True{}})
+                case False{} False{}:
+                  Laws.admission_answers_are_accounted(rest, Admission.Slots{False{}, False{}})
 
 # Every signal from every route: the audit replays the answer to the route
 # the policy reaches, so induction carries Clean through the list.
@@ -463,6 +475,90 @@ def Laws.management_answers_are_accounted(events, slot):
                   Laws.management_answers_are_accounted(rest, Management.Leased{})
                 case Management.Closing{}:
                   Laws.management_answers_are_accounted(rest, Management.Closing{})
+        case Management.Read{live, held}:
+          match live held:
+            case True{} True{}:
+              match slot:
+                case Management.Free{}:
+                  Laws.management_answers_are_accounted(rest, Management.Free{})
+                case Management.Negotiating{}:
+                  Laws.management_answers_are_accounted(rest, Management.Closing{})
+                case Management.Leased{}:
+                  Laws.management_answers_are_accounted(rest, Management.Leased{})
+                case Management.Closing{}:
+                  Laws.management_answers_are_accounted(rest, Management.Closing{})
+            case True{} False{}:
+              match slot:
+                case Management.Free{}:
+                  Laws.management_answers_are_accounted(rest, Management.Free{})
+                case Management.Negotiating{}:
+                  Laws.management_answers_are_accounted(rest, Management.Closing{})
+                case Management.Leased{}:
+                  Laws.management_answers_are_accounted(rest, Management.Leased{})
+                case Management.Closing{}:
+                  Laws.management_answers_are_accounted(rest, Management.Closing{})
+            case False{} True{}:
+              match slot:
+                case Management.Free{}:
+                  Laws.management_answers_are_accounted(rest, Management.Free{})
+                case Management.Negotiating{}:
+                  Laws.management_answers_are_accounted(rest, Management.Closing{})
+                case Management.Leased{}:
+                  Laws.management_answers_are_accounted(rest, Management.Leased{})
+                case Management.Closing{}:
+                  Laws.management_answers_are_accounted(rest, Management.Closing{})
+            case False{} False{}:
+              match slot:
+                case Management.Free{}:
+                  Laws.management_answers_are_accounted(rest, Management.Free{})
+                case Management.Negotiating{}:
+                  Laws.management_answers_are_accounted(rest, Management.Closing{})
+                case Management.Leased{}:
+                  Laws.management_answers_are_accounted(rest, Management.Leased{})
+                case Management.Closing{}:
+                  Laws.management_answers_are_accounted(rest, Management.Closing{})
+        case Management.Input{live}:
+          match live:
+            case True{}:
+              match slot:
+                case Management.Free{}:
+                  Laws.management_answers_are_accounted(rest, Management.Free{})
+                case Management.Negotiating{}:
+                  Laws.management_answers_are_accounted(rest, Management.Closing{})
+                case Management.Leased{}:
+                  Laws.management_answers_are_accounted(rest, Management.Leased{})
+                case Management.Closing{}:
+                  Laws.management_answers_are_accounted(rest, Management.Closing{})
+            case False{}:
+              match slot:
+                case Management.Free{}:
+                  Laws.management_answers_are_accounted(rest, Management.Free{})
+                case Management.Negotiating{}:
+                  Laws.management_answers_are_accounted(rest, Management.Closing{})
+                case Management.Leased{}:
+                  Laws.management_answers_are_accounted(rest, Management.Leased{})
+                case Management.Closing{}:
+                  Laws.management_answers_are_accounted(rest, Management.Closing{})
+        case Management.Allow{}:
+          match slot:
+            case Management.Free{}:
+              Laws.management_answers_are_accounted(rest, Management.Free{})
+            case Management.Negotiating{}:
+              Laws.management_answers_are_accounted(rest, Management.Closing{})
+            case Management.Leased{}:
+              Laws.management_answers_are_accounted(rest, Management.Leased{})
+            case Management.Closing{}:
+              Laws.management_answers_are_accounted(rest, Management.Closing{})
+        case Management.Invalid{}:
+          match slot:
+            case Management.Free{}:
+              Laws.management_answers_are_accounted(rest, Management.Free{})
+            case Management.Negotiating{}:
+              Laws.management_answers_are_accounted(rest, Management.Closing{})
+            case Management.Leased{}:
+              Laws.management_answers_are_accounted(rest, Management.Leased{})
+            case Management.Closing{}:
+              Laws.management_answers_are_accounted(rest, Management.Closing{})
         case Management.Bad{}:
           match slot:
             case Management.Free{}:
@@ -521,6 +617,92 @@ def Laws.management_program_status_needs_a_live_lease(slot, live):
           {==}
         case False{}:
           {==}
+
+def Laws.management_read_needs_a_live_settled_lease(slot, live, held):
+  match slot:
+    case Management.Free{}:
+      match live held:
+        case True{} True{}:
+          {==}
+        case True{} False{}:
+          {==}
+        case False{} True{}:
+          {==}
+        case False{} False{}:
+          {==}
+    case Management.Negotiating{}:
+      match live held:
+        case True{} True{}:
+          {==}
+        case True{} False{}:
+          {==}
+        case False{} True{}:
+          {==}
+        case False{} False{}:
+          {==}
+    case Management.Leased{}:
+      match live held:
+        case True{} True{}:
+          {==}
+        case True{} False{}:
+          {==}
+        case False{} True{}:
+          {==}
+        case False{} False{}:
+          {==}
+    case Management.Closing{}:
+      match live held:
+        case True{} True{}:
+          {==}
+        case True{} False{}:
+          {==}
+        case False{} True{}:
+          {==}
+        case False{} False{}:
+          {==}
+
+def Laws.management_input_needs_a_live_lease(slot, live):
+  match slot:
+    case Management.Free{}:
+      match live:
+        case True{}:
+          {==}
+        case False{}:
+          {==}
+    case Management.Negotiating{}:
+      match live:
+        case True{}:
+          {==}
+        case False{}:
+          {==}
+    case Management.Leased{}:
+      match live:
+        case True{}:
+          {==}
+        case False{}:
+          {==}
+    case Management.Closing{}:
+      match live:
+        case True{}:
+          {==}
+        case False{}:
+          {==}
+
+def Laws.management_allow_needs_the_lease(slot):
+  match slot:
+    case Management.Free{}:
+      {==}
+    case Management.Negotiating{}:
+      {==}
+    case Management.Leased{}:
+      {==}
+    case Management.Closing{}:
+      {==}
+
+def Laws.admission_strangers_are_busy(slots):
+  match slots:
+    case Admission.Slots{interactive, observer}:
+      {==}
 
 def Laws.resource_starts_stay_within_budget(live, idle, capped, due):
   {==}
@@ -973,7 +1155,8 @@ def Laws.management_follows_its_contract(lines, state):
           lease_carry(
             rest, Laws.after(Session.step(fact, flags, state)),
             Laws.lease_check(
-              Laws.lease(state), fact, Laws.replies(Laws.decided(Session.step(fact, flags, state)))
+              Laws.lease(state), fact, flags,
+              Laws.replies(Laws.decided(Session.step(fact, flags, state)))
             ),
             Leases.step_fits(state, flags, fact),
             Laws.management_follows_its_contract(rest, Laws.after(Session.step(fact, flags, state)))

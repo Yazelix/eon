@@ -731,7 +731,7 @@ fn managed_orbit_helper() {
     let presentation = PathBuf::from(&arguments[serve + 1]);
     let management_argument = arguments
         .iter()
-        .position(|argument| argument == OsStr::new("--management-v3"))
+        .position(|argument| argument == OsStr::new("--management-v4"))
         .unwrap();
     let session_id = arguments[management_argument + 1]
         .to_str()
@@ -776,7 +776,7 @@ fn managed_orbit_helper() {
         record_generation: management::RECORD_GENERATION,
         management_generation: management::VERSION,
         process_id: std::process::id(),
-        process_start: process::own_start_identity(),
+        process_start: process::start_identity(std::process::id()),
         uid: unsafe { libc::geteuid() },
         presentation: endpoint_identity(&presentation),
         management: endpoint_identity(&management_path),
@@ -869,6 +869,27 @@ fn managed_orbit_helper() {
                                 ManagementServerMessage::Status(identity.clone()),
                             ),
                             ManagementClientMessage::Stop if *leased => stop = true,
+                            ManagementClientMessage::AttachAllow {
+                                process_id,
+                                process_start,
+                            } if *leased => {
+                                if let Some(log) = std::env::var_os("EON_TEST_ATTACH_LOG") {
+                                    // One append per line, so the fake Orbits
+                                    // that share the log never interleave.
+                                    let line = format!(
+                                        "{} {process_id} {process_start}\n",
+                                        identity.session_id
+                                    );
+                                    fs::OpenOptions::new()
+                                        .create(true)
+                                        .append(true)
+                                        .open(log)
+                                        .unwrap()
+                                        .write_all(line.as_bytes())
+                                        .unwrap();
+                                }
+                                write_management(stream, ManagementServerMessage::Allowed);
+                            }
                             _ => write_management(
                                 stream,
                                 ManagementServerMessage::Failure(Failure {
@@ -999,6 +1020,46 @@ fn live_identity(endpoint: &Path) -> LiveIdentity {
         );
         thread::sleep(Duration::from_millis(10));
     }
+}
+
+/// Asserts that within `timeout` the fake Orbit of each of `sessions` let the
+/// running process `venus` attach, named by its process ID and start identity
+/// (EON-C11).
+fn assert_named(log: &Path, sessions: &[String], venus: u32, timeout: Duration) {
+    let name = format!("{venus} {}", process::start_identity(venus));
+    let deadline = Instant::now() + timeout;
+    loop {
+        let lines = fs::read_to_string(log).unwrap_or_default();
+        let unnamed = sessions
+            .iter()
+            .filter(|session| {
+                !lines
+                    .lines()
+                    .any(|line| line == format!("{session} {name}"))
+            })
+            .collect::<Vec<_>>();
+        if unnamed.is_empty() {
+            return;
+        }
+        assert!(
+            Instant::now() < deadline,
+            "{unnamed:?} not named to Venus {venus}:\n{lines}"
+        );
+        thread::sleep(Duration::from_millis(10));
+    }
+}
+
+/// The terminals of a snapshot's shown workspace.
+fn snapshot_sessions(snapshot: &Snapshot) -> Vec<String> {
+    snapshot
+        .tabs
+        .iter()
+        .flat_map(|tab| {
+            tab.panes()
+                .map(|pane| pane.session.clone())
+                .chain(tab.popups.iter().map(|popup| popup.session.clone()))
+        })
+        .collect()
 }
 
 fn wait_for(path: &Path) {
@@ -5013,6 +5074,7 @@ fn a_workspace_final_close_shows_the_recent_one_and_attach_keeps_it() {
     .unwrap();
     let stop = root.join("stop");
     let venus_pids = root.join("venus.pids");
+    let attach_log = root.join("attach.log");
     let orbit = root.join("orbit");
     let venus = root.join("venus");
     managed_orbit_executable(&orbit);
@@ -5034,6 +5096,7 @@ fn a_workspace_final_close_shows_the_recent_one_and_attach_keeps_it() {
             .env("EON_TEST_STOP", &stop)
             .env("EON_TEST_VENUS_PIDS", &venus_pids)
             .env("EON_TEST_VENUS_INPUT", root.join("venus-input"))
+            .env("EON_TEST_ATTACH_LOG", &attach_log)
             .stdout(Stdio::null())
             .stderr(Stdio::null());
         command
@@ -5068,6 +5131,15 @@ fn a_workspace_final_close_shows_the_recent_one_and_attach_keeps_it() {
             .collect::<Vec<_>>()
     };
     let first_venus = venus_pid(1);
+    // The Venus that Eon starts is the one each terminal admits: named at
+    // launch, and each new terminal before the reply that shows it.
+    assert_named(
+        &attach_log,
+        &["session-1".into()],
+        first_venus,
+        Duration::from_secs(5),
+    );
+    let mut later = Vec::new();
     for id in ["w2", "w3"] {
         let created = snapshot(workspace_action(
             &control,
@@ -5078,6 +5150,10 @@ fn a_workspace_final_close_shows_the_recent_one_and_attach_keeps_it() {
             },
         ));
         assert_eq!(created.active_workspace, id);
+        let sessions = snapshot_sessions(&created);
+        assert!(!sessions.is_empty());
+        assert_named(&attach_log, &sessions, first_venus, Duration::ZERO);
+        later.extend(sessions);
     }
     // Shown w1, w2, w3, then w1 again: closing w1 shows w3, the most recent, rather than
     // its following sibling or the first remaining workspace, both w2.
@@ -5110,6 +5186,9 @@ fn a_workspace_final_close_shows_the_recent_one_and_attach_keeps_it() {
     let generation_id = generation.file_name().unwrap().to_str().unwrap();
     assert!(eon(&["attach", generation_id]).status().unwrap().success());
     let second_venus = venus_pid(2);
+    // The presented Venus is named to every live terminal before attach
+    // replies.
+    assert_named(&attach_log, &later, second_venus, Duration::ZERO);
     let input = root.join(format!("venus-input.{second_venus}"));
     let deadline = Instant::now() + Duration::from_secs(5);
     let presented = loop {
@@ -5523,6 +5602,7 @@ fn replacement_eon_adopts_exact_runs_and_projects_numeric_workspace() {
     let fallback_stop = root.join("fallback-stop");
     let orbit_log = root.join("orbit.log");
     let venus_log = root.join("venus.log");
+    let attach_log = root.join("attach.log");
     let orbit = root.join("orbit");
     let venus = root.join("venus");
     managed_orbit_executable(&orbit);
@@ -5542,6 +5622,7 @@ fn replacement_eon_adopts_exact_runs_and_projects_numeric_workspace() {
             .env("EON_TEST_STOP", &fallback_stop)
             .env("EON_TEST_ORBIT_LOG", &orbit_log)
             .env("EON_TEST_VENUS_LOG", &venus_log)
+            .env("EON_TEST_ATTACH_LOG", &attach_log)
             .stdout(Stdio::null())
             .stderr(Stdio::null())
             .spawn()
@@ -5564,6 +5645,12 @@ fn replacement_eon_adopts_exact_runs_and_projects_numeric_workspace() {
     let first_venus_log = fs::read_to_string(&venus_log).unwrap();
     let first_venus: u32 = first_venus_log.split('|').next().unwrap().parse().unwrap();
     assert!(first_venus_log.contains("|--no-decorations "));
+    assert_named(
+        &attach_log,
+        &["session-1".into(), "session-2".into()],
+        first_venus,
+        Duration::ZERO,
+    );
 
     first.child.kill().unwrap();
     assert!(!first.child.wait().unwrap().success());
@@ -5635,6 +5722,24 @@ fn replacement_eon_adopts_exact_runs_and_projects_numeric_workspace() {
         stop: fallback_stop.clone(),
     };
     wait_for_connection(&control);
+    // The replacement names its own Venus to the terminals it recovered.
+    let deadline = Instant::now() + Duration::from_secs(5);
+    let replacement_venus: u32 = loop {
+        if let Some(line) = fs::read_to_string(&venus_log).unwrap().lines().nth(1) {
+            break line.split('|').next().unwrap().parse().unwrap();
+        }
+        assert!(
+            Instant::now() < deadline,
+            "the replacement started no Venus"
+        );
+        thread::sleep(Duration::from_millis(10));
+    };
+    assert_named(
+        &attach_log,
+        &["session-1".into(), "session-2".into()],
+        replacement_venus,
+        Duration::from_secs(5),
+    );
     let recovered = invoke(&binary, &runtime, &config, &["workspace", "--json"]);
     assert!(recovered.status.success(), "{}", stdout(&recovered));
     let recovered = stdout(&recovered);
@@ -5658,6 +5763,12 @@ fn replacement_eon_adopts_exact_runs_and_projects_numeric_workspace() {
     assert!(stdout(&created).contains("\"id\":\"p3\""));
     assert!(stdout(&created).contains("\"session\":\"session-3\""));
     assert_eq!(fs::read_to_string(&orbit_log).unwrap().lines().count(), 3);
+    assert_named(
+        &attach_log,
+        &["session-3".into()],
+        replacement_venus,
+        Duration::ZERO,
+    );
 
     let generation_id = generation.file_name().unwrap().to_str().unwrap();
     let stopped = invoke(

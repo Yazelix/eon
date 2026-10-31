@@ -3,7 +3,7 @@ use crate::support::*;
 use orbit_protocol::management::{ProcessOutcome, TerminationReason};
 use std::{fs, path::Path, time::Instant};
 
-const MANAGED: [&str; 4] = ["--management-v3", "session-1", "run-1", "component-1"];
+const MANAGED: [&str; 4] = ["--management-v4", "session-1", "run-1", "component-1"];
 
 /// Kills a descendant a failed check leaves behind.
 struct Descendant(i32);

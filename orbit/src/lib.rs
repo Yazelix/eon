@@ -15,6 +15,7 @@ mod pointer;
 mod pty;
 mod socket;
 mod status;
+mod visible;
 
 /// Whether a nonblocking step finished or must wait on a descriptor.
 #[derive(Debug, PartialEq, Eq)]

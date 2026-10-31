@@ -243,7 +243,13 @@ fn enums() -> HashMap<String, Vec<Case>> {
     let boundary: [(&str, &[&str]); 9] = [
         (
             "FirstMessage",
-            &["Hello", "ObserveMetadata", "Refused", "Unsupported"],
+            &[
+                "Hello",
+                "ObserveMetadata",
+                "Refused",
+                "Unsupported",
+                "Stranger",
+            ],
         ),
         (
             "Effect",
@@ -271,6 +277,10 @@ fn enums() -> HashMap<String, Vec<Case>> {
                 "Stop",
                 "Bad",
                 "Gone",
+                "Read",
+                "Input",
+                "Allow",
+                "Invalid",
             ],
         ),
     ];
@@ -345,9 +355,10 @@ fn law(name: &str) -> Option<Law> {
             outside: "Laws.Disordered",
             start: "Laws.lease",
             noun: "lease",
-            check: |state, fact, _flags, step, _future| {
+            check: |state, fact, flags, step, _future| {
                 format!(
-                    "Laws.lease_check(Laws.lease({state}), {fact}, Laws.replies(Laws.decided({step})))"
+                    "Laws.lease_check(Laws.lease({state}), {fact}, {flags}, \
+                     Laws.replies(Laws.decided({step})))"
                 )
             },
             future: "False{}",
@@ -635,13 +646,35 @@ fn existing_trees(ctx: &Ctx) -> HashMap<&'static str, Node> {
             .copied()
             .filter(|l| !l.trim().is_empty())
             .collect();
-        let mut tree = parse_tree(&body);
+        let mut tree = complete(ctx, fact, parse_tree(&body));
         if seeded {
             tree = plain_leaves(&tree);
         }
         trees.insert(fact, tree);
     }
     trees
+}
+
+/// Adds a leaf for each constructor a split lacks, as after a variant joins
+/// an enum the split matches on.
+fn complete(ctx: &Ctx, fact: &str, tree: Node) -> Node {
+    match tree {
+        Node::Leaf(_) => tree,
+        Node::Split { var, cases } => {
+            let mut cases: Vec<(String, Node)> = cases
+                .into_iter()
+                .map(|(p, c)| (p, complete(ctx, fact, c)))
+                .collect();
+            if let Some(all) = types(fact).get(var.as_str()).and_then(|t| ctx.enums.get(*t)) {
+                for (pat, _) in all {
+                    if !cases.iter().any(|(p, _)| p == pat) {
+                        cases.push((pat.clone(), leaf()));
+                    }
+                }
+            }
+            Node::Split { var, cases }
+        }
+    }
 }
 
 fn plain_leaves(tree: &Node) -> Node {

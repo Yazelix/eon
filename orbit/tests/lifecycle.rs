@@ -458,6 +458,18 @@ fn wait_management_record(path: &Path) -> TestResult<ManagementRecord> {
     }
 }
 
+/// Names this test process, through the lease, as the one interactive client
+/// a managed run admits (ORB-C3).
+fn allow_this_process(manager: &mut ManagementClient) -> TestResult {
+    let process_id = std::process::id();
+    let allow = ManagementClientMessage::AttachAllow {
+        process_id,
+        process_start: process_start_identity(process_id)?,
+    };
+    assert_eq!(manager.request(&allow)?, ManagementServerMessage::Allowed);
+    Ok(())
+}
+
 fn acquire_management(
     record_path: &Path,
     identity: &LiveIdentity,
@@ -1934,7 +1946,7 @@ fn managed_run_survives_launcher_loss_and_has_one_replacement_owner() -> TestRes
     orbit
         .arg(&socket)
         .args([
-            "--management-v3",
+            "--management-v4",
             "session-1",
             "run-1",
             "component-1",
@@ -2011,8 +2023,9 @@ fn managed_run_survives_launcher_loss_and_has_one_replacement_owner() -> TestRes
     drop(rejected);
     thread::sleep(Duration::from_millis(50));
 
-    let (response, initial_manager) = acquire_management(&record_path, &identity)?;
+    let (response, mut initial_manager) = acquire_management(&record_path, &identity)?;
     assert_eq!(response, ManagementServerMessage::Lease(identity.clone()));
+    allow_this_process(&mut initial_manager)?;
     let initial_revision = Client::attach(&socket)?.frame.revision;
 
     assert_eq!(
@@ -2059,6 +2072,7 @@ fn managed_run_survives_launcher_loss_and_has_one_replacement_owner() -> TestRes
         ManagementServerMessage::Status(identity.clone())
     );
 
+    allow_this_process(&mut winner)?;
     let mut presentation = Client::attach(&socket)?;
     presentation.wait_title("survived")?;
     assert!(presentation.frame.revision > initial_revision);
@@ -2097,7 +2111,7 @@ fn management_authority_negatives_fail_closed_without_stopping_session() -> Test
         server_command()
             .arg(&socket)
             .args([
-                "--management-v3",
+                "--management-v4",
                 "session-negative",
                 "run-negative",
                 "component-negative",

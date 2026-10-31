@@ -522,20 +522,72 @@ pub(crate) fn peer_uid(stream: &UnixStream) -> io::Result<u32> {
     Ok(uid)
 }
 
-/// The kernel's start time of this process, in clock ticks since boot.
+/// The process ID of the socket's peer, as the kernel recorded it when the
+/// peer connected (ORB-C3).
 #[cfg(target_os = "linux")]
-pub(crate) fn process_start_identity() -> io::Result<u64> {
-    stat("self")?
+pub(crate) fn peer_pid(stream: &UnixStream) -> io::Result<u32> {
+    // SAFETY: getsockopt fills the zeroed credentials of the owned socket.
+    let mut credentials: libc::ucred = unsafe { std::mem::zeroed() };
+    let mut length = std::mem::size_of::<libc::ucred>() as libc::socklen_t;
+    if unsafe {
+        libc::getsockopt(
+            stream.as_raw_fd(),
+            libc::SOL_SOCKET,
+            libc::SO_PEERCRED,
+            (&raw mut credentials).cast(),
+            &raw mut length,
+        )
+    } == -1
+    {
+        return Err(io::Error::last_os_error());
+    }
+    u32::try_from(credentials.pid)
+        .ok()
+        .filter(|pid| *pid != 0)
+        .ok_or_else(|| errno(libc::EPROTO))
+}
+
+/// The process ID of the socket's peer, as the kernel recorded it when the
+/// peer connected (ORB-C3).
+#[cfg(target_os = "macos")]
+pub(crate) fn peer_pid(stream: &UnixStream) -> io::Result<u32> {
+    let mut pid: pid_t = 0;
+    let mut length = std::mem::size_of::<pid_t>() as libc::socklen_t;
+    // SAFETY: getsockopt fills the peer's pid of the owned socket.
+    if unsafe {
+        libc::getsockopt(
+            stream.as_raw_fd(),
+            libc::SOL_LOCAL,
+            libc::LOCAL_PEERPID,
+            (&raw mut pid).cast(),
+            &raw mut length,
+        )
+    } == -1
+    {
+        return Err(io::Error::last_os_error());
+    }
+    u32::try_from(pid)
+        .ok()
+        .filter(|pid| *pid != 0)
+        .ok_or_else(|| errno(libc::EPROTO))
+}
+
+/// The kernel's start time of process `pid`, in clock ticks since boot.
+#[cfg(target_os = "linux")]
+pub(crate) fn process_start_identity(pid: u32) -> io::Result<u64> {
+    stat(&pid.to_string())?
         .get(19)
         .and_then(|value| value.parse().ok())
         .ok_or_else(|| errno(libc::EPROTO))
 }
 
-/// The kernel's start time of this process in microseconds, as macOS
+/// The kernel's start time of process `pid` in microseconds, as macOS
 /// reports it.
 #[cfg(target_os = "macos")]
-pub(crate) fn process_start_identity() -> io::Result<u64> {
-    bsd_info(std::process::id() as pid_t)
+pub(crate) fn process_start_identity(pid: u32) -> io::Result<u64> {
+    pid_t::try_from(pid)
+        .ok()
+        .and_then(bsd_info)
         .and_then(|info| started(&info))
         .filter(|identity| *identity != 0)
         .ok_or_else(|| errno(libc::EPROTO))

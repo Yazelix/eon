@@ -43,7 +43,7 @@ the socket mode is `0600`. Orbit:
   the owned socket after normal or signal-driven shutdown.
 
 On Linux and Apple Silicon macOS, the private same-boot management owner is
-enabled with `serve SOCKET --management-v3 SESSION_ID RUN_ID COMPONENT_GENERATION -- COMMAND`.
+enabled with `serve SOCKET --management-v4 SESSION_ID RUN_ID COMPONENT_GENERATION -- COMMAND`.
 It derives `SOCKET.management` and `SOCKET.record`, publishes the live record
 only after the PTY, terminal owner, and both sockets are usable, and permits one
 UID- and identity-validated management lease. A launcher may retain an empty
@@ -52,10 +52,12 @@ startup without publishing when the launcher holds it. Lease loss does not stop
 the Session; only explicit Stop does. Natural exit or successful Stop replaces
 the live record with a typed terminal tombstone and removes only the exact
 sockets. Messages and records are limited
-to 4 KiB, identities to 128 UTF-8 bytes, and negotiation to one second. Eon and
-Eonova consume this owner for accepted same-boot recovery and owner-routed
-Stop; this mode does not promise logout, reboot, machine-restart, topology, or
-same-UID isolation.
+to 4 KiB, except a visible-text reply of up to 1 MiB of text and a lease paste
+of up to 64 KiB, identities to 128 UTF-8 bytes, and negotiation to one second.
+The interactive client of a managed run is only the process the lease holder
+names. Eon and Eonova consume this owner for accepted same-boot recovery and
+owner-routed Stop; this mode does not promise logout, reboot, machine-restart,
+topology, or same-UID isolation.
 
 ### Shutdown
 

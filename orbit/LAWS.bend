@@ -87,6 +87,33 @@ law management_program_status_needs_a_live_lease:
   for live: Bool
   {Management.is_records(Management.answer(slot, Management.ProgramStatus{live})) == Bool.and(Management.is_leased(slot), live) : Bool}
 
+# ORB-C17: a ReadVisible request gets the visible text exactly under the
+# lease while the child runs and no synchronized update is held.
+law management_read_needs_a_live_settled_lease:
+  for slot: Management.Slot
+  for live: Bool
+  for held: Bool
+  {Management.is_text(Management.answer(slot, Management.Read{live, held})) == Bool.and(Management.is_leased(slot), Bool.and(live, Bool.not(held))) : Bool}
+
+# ORB-C5: lease input is written exactly under the lease while the child
+# runs.
+law management_input_needs_a_live_lease:
+  for slot: Management.Slot
+  for live: Bool
+  {Management.is_write(Management.answer(slot, Management.Input{live})) == Bool.and(Management.is_leased(slot), live) : Bool}
+
+# ORB-C13 and ORB-C3: only the lease holder names the process that may
+# attach.
+law management_allow_needs_the_lease:
+  for slot: Management.Slot
+  {Management.is_name(Management.answer(slot, Management.Allow{})) == Management.is_leased(slot) : Bool}
+
+# ORB-C3: a Hello from any process other than the one the lease holder
+# named is answered Busy, whatever the slots hold.
+law admission_strangers_are_busy:
+  for slots: Admission.Slots
+  {Admission.answer(slots, Admission.Stranger{}) == Admission.Busy{} : Admission.Answer}
+
 # ORB-C16: Orbit starts a resource exactly when the child runs, no transfer
 # is in progress and fewer than 1,024 resources are announced and not
 # retired, so it holds at most one copy outside storage and never passes the
@@ -314,6 +341,8 @@ def peer_signal(message: Boundary.FirstMessage) -> Admission.Signal:
       Admission.Malformed{}
     case Boundary.FirstMessageUnsupported{}:
       Admission.Unsupported{}
+    case Boundary.FirstMessageStranger{}:
+      Admission.Stranger{}
 
 # A fact that changes no role and begins no stop.
 def quiet(moves: List<&2, Move>, phase: Phase) -> Phase:
@@ -1644,6 +1673,14 @@ def reply(
       Management.Refuse{} <> rest
     case Boundary.ManageStop{}:
       Management.Shutdown{} <> rest
+    case Boundary.ManageRead{revision}:
+      Management.Visible{} <> rest
+    case Boundary.ManageInput{}:
+      Management.Write{} <> rest
+    case Boundary.ManageAllow{}:
+      Management.Name{} <> rest
+    case Boundary.ManageDecline{}:
+      Management.Decline{} <> rest
     case _:
       rest
 
@@ -1664,7 +1701,10 @@ type Lease is Data:
   # A decision broke the contract.
   Breached{}
 
-def management_signal(event: Boundary.ManagementEvent) -> Management.Signal:
+# The lease is kept only while the child runs, so a ReadVisible request or
+# lease input here is live; a read carries whether a synchronized update is
+# held.
+def management_signal(event: Boundary.ManagementEvent, held: Bool) -> Management.Signal:
   match event:
     case Boundary.ManagementEventConnect{}:
       Management.Connect{}
@@ -1680,6 +1720,14 @@ def management_signal(event: Boundary.ManagementEvent) -> Management.Signal:
       Management.Bad{}
     case Boundary.ManagementEventGone{}:
       Management.Gone{}
+    case Boundary.ManagementEventRead{}:
+      Management.Read{True{}, held}
+    case Boundary.ManagementEventInput{}:
+      Management.Input{True{}}
+    case Boundary.ManagementEventAllow{}:
+      Management.Allow{}
+    case Boundary.ManagementEventInvalid{}:
+      Management.Invalid{}
 
 # An accepted Stop begins the stop (ORB-C12); any other answer the audit
 # passes keeps the slot it gives.
@@ -1718,11 +1766,12 @@ def unanswered(replies: List<&2, Management.Answer>, lease: Lease) -> Lease:
       Breached{}
 
 def on_lease(
-  fact: Boundary.Fact, replies: List<&2, Management.Answer>, slot: Management.Slot
+  fact: Boundary.Fact, flags: Boundary.Flags, replies: List<&2, Management.Answer>,
+  slot: Management.Slot
 ) -> Lease:
   match fact:
     case Boundary.Management{event}:
-      answered_event(management_signal(event), slot, replies)
+      answered_event(management_signal(event, Boundary.held(flags)), slot, replies)
     # The lease is kept only while the child runs, so a ProgramStatus request
     # here is live.
     case Boundary.ProgramStatus{foreground}:
@@ -1759,11 +1808,12 @@ def ceased(fact: Boundary.Fact) -> Lease:
       Disordered{}
 
 def lease_check(
-  lease: Lease, fact: Boundary.Fact, replies: List<&2, Management.Answer>
+  lease: Lease, fact: Boundary.Fact, flags: Boundary.Flags,
+  replies: List<&2, Management.Answer>
 ) -> Lease:
   match lease:
     case Leasing{slot}:
-      on_lease(fact, replies, slot)
+      on_lease(fact, flags, replies, slot)
     case Ceased{}:
       ceased(fact)
     case Disordered{}:
@@ -1796,7 +1846,7 @@ def lease_run(lines: List<&2, Boundary.Line>, +state: Session.State, lease: Leas
         case Boundary.Line{+fact, +flags}:
           lease_run(
             rest, after(Session.step(fact, flags, state)),
-            lease_check(lease, fact, replies(decided(Session.step(fact, flags, state))))
+            lease_check(lease, fact, flags, replies(decided(Session.step(fact, flags, state))))
           )
 
 def lease_kept(lease: Lease) -> Bool:

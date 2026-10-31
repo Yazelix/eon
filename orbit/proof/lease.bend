@@ -27,7 +27,7 @@ def choose(p: Laws.Lease, q: Laws.Lease) -> Laws.Lease:
 def fits_started(
   pid: U32, life: Orbit.Lifecycle, observer: Bool, waiting: Session.Waiting, pointer: Session.Pointer, written: Bool, explicit: Bool, manage: Management.Slot, tracker: Status.Tracker, revision: Revision.Revision, was: Bool, future: Bool, held: Bool, unanchored: Bool, clipboard_overflow: Bool, clipboard: Bool, routed: Bool, room: Bool, frame_room: Bool, alternate: Bool, above_live: Bool, tracking: Bool, shift: Bool, result_frame_room: Bool, outside: Bool, host_room: Bool, terminal_room: Bool, pty_full: Bool, metadata_changed: Bool, metadata_fresh: Bool
 ) ->
-  {Laws.lease_check(Laws.lease(Session.State{Session.Session{life, written, observer, explicit, waiting, pointer, manage}, Session.Shown{revision, was}, tracker}), Boundary.Started{pid}, Laws.replies(Laws.decided(Session.begun(Session.fact_advanced(Boundary.Started{pid}, was, revision), held, Nil{}, tracker, Session.anchored(unanchored, Boundary.Started{pid}, Boundary.Flags{held, routed, room, alternate, frame_room, above_live, clipboard, clipboard_overflow, tracking, shift, unanchored, result_frame_room, outside, host_room, terminal_room, pty_full, metadata_changed, metadata_fresh}, future, Session.Session{life, written, observer, explicit, waiting, pointer, manage}))))) == choose(Laws.lease_check(Laws.lease(Session.State{Session.Session{life, written, observer, explicit, waiting, pointer, manage}, Session.Shown{revision, was}, tracker}), Boundary.Started{pid}, Laws.replies(Laws.decided(Session.begun(Session.fact_advanced(Boundary.Started{pid}, was, revision), held, Nil{}, tracker, Session.anchored(unanchored, Boundary.Started{pid}, Boundary.Flags{held, routed, room, alternate, frame_room, above_live, clipboard, clipboard_overflow, tracking, shift, unanchored, result_frame_room, outside, host_room, terminal_room, pty_full, metadata_changed, metadata_fresh}, future, Session.Session{life, written, observer, explicit, waiting, pointer, manage}))))), Laws.lease(Laws.after(Session.begun(Session.fact_advanced(Boundary.Started{pid}, was, revision), held, Nil{}, tracker, Session.anchored(unanchored, Boundary.Started{pid}, Boundary.Flags{held, routed, room, alternate, frame_room, above_live, clipboard, clipboard_overflow, tracking, shift, unanchored, result_frame_room, outside, host_room, terminal_room, pty_full, metadata_changed, metadata_fresh}, future, Session.Session{life, written, observer, explicit, waiting, pointer, manage}))))) : Laws.Lease}:
+  {Laws.lease_check(Laws.lease(Session.State{Session.Session{life, written, observer, explicit, waiting, pointer, manage}, Session.Shown{revision, was}, tracker}), Boundary.Started{pid}, Boundary.Flags{held, routed, room, alternate, frame_room, above_live, clipboard, clipboard_overflow, tracking, shift, unanchored, result_frame_room, outside, host_room, terminal_room, pty_full, metadata_changed, metadata_fresh}, Laws.replies(Laws.decided(Session.begun(Session.fact_advanced(Boundary.Started{pid}, was, revision), held, Nil{}, tracker, Session.anchored(unanchored, Boundary.Started{pid}, Boundary.Flags{held, routed, room, alternate, frame_room, above_live, clipboard, clipboard_overflow, tracking, shift, unanchored, result_frame_room, outside, host_room, terminal_room, pty_full, metadata_changed, metadata_fresh}, future, Session.Session{life, written, observer, explicit, waiting, pointer, manage}))))) == choose(Laws.lease_check(Laws.lease(Session.State{Session.Session{life, written, observer, explicit, waiting, pointer, manage}, Session.Shown{revision, was}, tracker}), Boundary.Started{pid}, Boundary.Flags{held, routed, room, alternate, frame_room, above_live, clipboard, clipboard_overflow, tracking, shift, unanchored, result_frame_room, outside, host_room, terminal_room, pty_full, metadata_changed, metadata_fresh}, Laws.replies(Laws.decided(Session.begun(Session.fact_advanced(Boundary.Started{pid}, was, revision), held, Nil{}, tracker, Session.anchored(unanchored, Boundary.Started{pid}, Boundary.Flags{held, routed, room, alternate, frame_room, above_live, clipboard, clipboard_overflow, tracking, shift, unanchored, result_frame_room, outside, host_room, terminal_room, pty_full, metadata_changed, metadata_fresh}, future, Session.Session{life, written, observer, explicit, waiting, pointer, manage}))))), Laws.lease(Laws.after(Session.begun(Session.fact_advanced(Boundary.Started{pid}, was, revision), held, Nil{}, tracker, Session.anchored(unanchored, Boundary.Started{pid}, Boundary.Flags{held, routed, room, alternate, frame_room, above_live, clipboard, clipboard_overflow, tracking, shift, unanchored, result_frame_room, outside, host_room, terminal_room, pty_full, metadata_changed, metadata_fresh}, future, Session.Session{life, written, observer, explicit, waiting, pointer, manage}))))) : Laws.Lease}:
   match life:
     case Orbit.Detached{pid}:
       match unanchored:
@@ -49,7 +49,7 @@ def fits_started(
 def fits_output(
   foreground: Boundary.Foreground, marks: Bool, life: Orbit.Lifecycle, observer: Bool, waiting: Session.Waiting, pointer: Session.Pointer, written: Bool, explicit: Bool, manage: Management.Slot, tracker: Status.Tracker, revision: Revision.Revision, was: Bool, future: Bool, held: Bool, unanchored: Bool, clipboard_overflow: Bool, clipboard: Bool, routed: Bool, room: Bool, frame_room: Bool, alternate: Bool, above_live: Bool, tracking: Bool, shift: Bool, result_frame_room: Bool, outside: Bool, host_room: Bool, terminal_room: Bool, pty_full: Bool, metadata_changed: Bool, metadata_fresh: Bool
 ) ->
-  {Laws.lease_check(Laws.lease(Session.State{Session.Session{life, written, observer, explicit, waiting, pointer, manage}, Session.Shown{revision, was}, tracker}), Boundary.Output{foreground, marks}, Laws.replies(Laws.decided(Session.begun(Session.fact_advanced(Boundary.Output{foreground, marks}, was, revision), held, [Status.lifetime(tracker, foreground, marks)], Status.after(tracker, foreground, marks), Session.anchored(unanchored, Boundary.Output{foreground, marks}, Boundary.Flags{held, routed, room, alternate, frame_room, above_live, clipboard, clipboard_overflow, tracking, shift, unanchored, result_frame_room, outside, host_room, terminal_room, pty_full, metadata_changed, metadata_fresh}, future, Session.Session{life, written, observer, explicit, waiting, pointer, manage}))))) == choose(Laws.lease_check(Laws.lease(Session.State{Session.Session{life, written, observer, explicit, waiting, pointer, manage}, Session.Shown{revision, was}, tracker}), Boundary.Output{foreground, marks}, Laws.replies(Laws.decided(Session.begun(Session.fact_advanced(Boundary.Output{foreground, marks}, was, revision), held, [Status.lifetime(tracker, foreground, marks)], Status.after(tracker, foreground, marks), Session.anchored(unanchored, Boundary.Output{foreground, marks}, Boundary.Flags{held, routed, room, alternate, frame_room, above_live, clipboard, clipboard_overflow, tracking, shift, unanchored, result_frame_room, outside, host_room, terminal_room, pty_full, metadata_changed, metadata_fresh}, future, Session.Session{life, written, observer, explicit, waiting, pointer, manage}))))), Laws.lease(Laws.after(Session.begun(Session.fact_advanced(Boundary.Output{foreground, marks}, was, revision), held, [Status.lifetime(tracker, foreground, marks)], Status.after(tracker, foreground, marks), Session.anchored(unanchored, Boundary.Output{foreground, marks}, Boundary.Flags{held, routed, room, alternate, frame_room, above_live, clipboard, clipboard_overflow, tracking, shift, unanchored, result_frame_room, outside, host_room, terminal_room, pty_full, metadata_changed, metadata_fresh}, future, Session.Session{life, written, observer, explicit, waiting, pointer, manage}))))) : Laws.Lease}:
+  {Laws.lease_check(Laws.lease(Session.State{Session.Session{life, written, observer, explicit, waiting, pointer, manage}, Session.Shown{revision, was}, tracker}), Boundary.Output{foreground, marks}, Boundary.Flags{held, routed, room, alternate, frame_room, above_live, clipboard, clipboard_overflow, tracking, shift, unanchored, result_frame_room, outside, host_room, terminal_room, pty_full, metadata_changed, metadata_fresh}, Laws.replies(Laws.decided(Session.begun(Session.fact_advanced(Boundary.Output{foreground, marks}, was, revision), held, [Status.lifetime(tracker, foreground, marks)], Status.after(tracker, foreground, marks), Session.anchored(unanchored, Boundary.Output{foreground, marks}, Boundary.Flags{held, routed, room, alternate, frame_room, above_live, clipboard, clipboard_overflow, tracking, shift, unanchored, result_frame_room, outside, host_room, terminal_room, pty_full, metadata_changed, metadata_fresh}, future, Session.Session{life, written, observer, explicit, waiting, pointer, manage}))))) == choose(Laws.lease_check(Laws.lease(Session.State{Session.Session{life, written, observer, explicit, waiting, pointer, manage}, Session.Shown{revision, was}, tracker}), Boundary.Output{foreground, marks}, Boundary.Flags{held, routed, room, alternate, frame_room, above_live, clipboard, clipboard_overflow, tracking, shift, unanchored, result_frame_room, outside, host_room, terminal_room, pty_full, metadata_changed, metadata_fresh}, Laws.replies(Laws.decided(Session.begun(Session.fact_advanced(Boundary.Output{foreground, marks}, was, revision), held, [Status.lifetime(tracker, foreground, marks)], Status.after(tracker, foreground, marks), Session.anchored(unanchored, Boundary.Output{foreground, marks}, Boundary.Flags{held, routed, room, alternate, frame_room, above_live, clipboard, clipboard_overflow, tracking, shift, unanchored, result_frame_room, outside, host_room, terminal_room, pty_full, metadata_changed, metadata_fresh}, future, Session.Session{life, written, observer, explicit, waiting, pointer, manage}))))), Laws.lease(Laws.after(Session.begun(Session.fact_advanced(Boundary.Output{foreground, marks}, was, revision), held, [Status.lifetime(tracker, foreground, marks)], Status.after(tracker, foreground, marks), Session.anchored(unanchored, Boundary.Output{foreground, marks}, Boundary.Flags{held, routed, room, alternate, frame_room, above_live, clipboard, clipboard_overflow, tracking, shift, unanchored, result_frame_room, outside, host_room, terminal_room, pty_full, metadata_changed, metadata_fresh}, future, Session.Session{life, written, observer, explicit, waiting, pointer, manage}))))) : Laws.Lease}:
   match life:
     case Orbit.Detached{pid}:
       match observer:
@@ -10607,7 +10607,7 @@ def fits_output(
 def fits_pty_closed(
   life: Orbit.Lifecycle, observer: Bool, waiting: Session.Waiting, pointer: Session.Pointer, written: Bool, explicit: Bool, manage: Management.Slot, tracker: Status.Tracker, revision: Revision.Revision, was: Bool, future: Bool, held: Bool, unanchored: Bool, clipboard_overflow: Bool, clipboard: Bool, routed: Bool, room: Bool, frame_room: Bool, alternate: Bool, above_live: Bool, tracking: Bool, shift: Bool, result_frame_room: Bool, outside: Bool, host_room: Bool, terminal_room: Bool, pty_full: Bool, metadata_changed: Bool, metadata_fresh: Bool
 ) ->
-  {Laws.lease_check(Laws.lease(Session.State{Session.Session{life, written, observer, explicit, waiting, pointer, manage}, Session.Shown{revision, was}, tracker}), Boundary.PtyClosed{}, Laws.replies(Laws.decided(Session.begun(Session.fact_advanced(Boundary.PtyClosed{}, was, revision), held, Nil{}, tracker, Session.anchored(unanchored, Boundary.PtyClosed{}, Boundary.Flags{held, routed, room, alternate, frame_room, above_live, clipboard, clipboard_overflow, tracking, shift, unanchored, result_frame_room, outside, host_room, terminal_room, pty_full, metadata_changed, metadata_fresh}, future, Session.Session{life, written, observer, explicit, waiting, pointer, manage}))))) == choose(Laws.lease_check(Laws.lease(Session.State{Session.Session{life, written, observer, explicit, waiting, pointer, manage}, Session.Shown{revision, was}, tracker}), Boundary.PtyClosed{}, Laws.replies(Laws.decided(Session.begun(Session.fact_advanced(Boundary.PtyClosed{}, was, revision), held, Nil{}, tracker, Session.anchored(unanchored, Boundary.PtyClosed{}, Boundary.Flags{held, routed, room, alternate, frame_room, above_live, clipboard, clipboard_overflow, tracking, shift, unanchored, result_frame_room, outside, host_room, terminal_room, pty_full, metadata_changed, metadata_fresh}, future, Session.Session{life, written, observer, explicit, waiting, pointer, manage}))))), Laws.lease(Laws.after(Session.begun(Session.fact_advanced(Boundary.PtyClosed{}, was, revision), held, Nil{}, tracker, Session.anchored(unanchored, Boundary.PtyClosed{}, Boundary.Flags{held, routed, room, alternate, frame_room, above_live, clipboard, clipboard_overflow, tracking, shift, unanchored, result_frame_room, outside, host_room, terminal_room, pty_full, metadata_changed, metadata_fresh}, future, Session.Session{life, written, observer, explicit, waiting, pointer, manage}))))) : Laws.Lease}:
+  {Laws.lease_check(Laws.lease(Session.State{Session.Session{life, written, observer, explicit, waiting, pointer, manage}, Session.Shown{revision, was}, tracker}), Boundary.PtyClosed{}, Boundary.Flags{held, routed, room, alternate, frame_room, above_live, clipboard, clipboard_overflow, tracking, shift, unanchored, result_frame_room, outside, host_room, terminal_room, pty_full, metadata_changed, metadata_fresh}, Laws.replies(Laws.decided(Session.begun(Session.fact_advanced(Boundary.PtyClosed{}, was, revision), held, Nil{}, tracker, Session.anchored(unanchored, Boundary.PtyClosed{}, Boundary.Flags{held, routed, room, alternate, frame_room, above_live, clipboard, clipboard_overflow, tracking, shift, unanchored, result_frame_room, outside, host_room, terminal_room, pty_full, metadata_changed, metadata_fresh}, future, Session.Session{life, written, observer, explicit, waiting, pointer, manage}))))) == choose(Laws.lease_check(Laws.lease(Session.State{Session.Session{life, written, observer, explicit, waiting, pointer, manage}, Session.Shown{revision, was}, tracker}), Boundary.PtyClosed{}, Boundary.Flags{held, routed, room, alternate, frame_room, above_live, clipboard, clipboard_overflow, tracking, shift, unanchored, result_frame_room, outside, host_room, terminal_room, pty_full, metadata_changed, metadata_fresh}, Laws.replies(Laws.decided(Session.begun(Session.fact_advanced(Boundary.PtyClosed{}, was, revision), held, Nil{}, tracker, Session.anchored(unanchored, Boundary.PtyClosed{}, Boundary.Flags{held, routed, room, alternate, frame_room, above_live, clipboard, clipboard_overflow, tracking, shift, unanchored, result_frame_room, outside, host_room, terminal_room, pty_full, metadata_changed, metadata_fresh}, future, Session.Session{life, written, observer, explicit, waiting, pointer, manage}))))), Laws.lease(Laws.after(Session.begun(Session.fact_advanced(Boundary.PtyClosed{}, was, revision), held, Nil{}, tracker, Session.anchored(unanchored, Boundary.PtyClosed{}, Boundary.Flags{held, routed, room, alternate, frame_room, above_live, clipboard, clipboard_overflow, tracking, shift, unanchored, result_frame_room, outside, host_room, terminal_room, pty_full, metadata_changed, metadata_fresh}, future, Session.Session{life, written, observer, explicit, waiting, pointer, manage}))))) : Laws.Lease}:
   match life:
     case Orbit.Detached{pid}:
       match observer:
@@ -11829,7 +11829,7 @@ def fits_pty_closed(
 def fits_peer(
   message: Boundary.FirstMessage, life: Orbit.Lifecycle, observer: Bool, waiting: Session.Waiting, pointer: Session.Pointer, written: Bool, explicit: Bool, manage: Management.Slot, tracker: Status.Tracker, revision: Revision.Revision, was: Bool, future: Bool, held: Bool, unanchored: Bool, clipboard_overflow: Bool, clipboard: Bool, routed: Bool, room: Bool, frame_room: Bool, alternate: Bool, above_live: Bool, tracking: Bool, shift: Bool, result_frame_room: Bool, outside: Bool, host_room: Bool, terminal_room: Bool, pty_full: Bool, metadata_changed: Bool, metadata_fresh: Bool
 ) ->
-  {Laws.lease_check(Laws.lease(Session.State{Session.Session{life, written, observer, explicit, waiting, pointer, manage}, Session.Shown{revision, was}, tracker}), Boundary.Peer{message}, Laws.replies(Laws.decided(Session.begun(Session.fact_advanced(Boundary.Peer{message}, was, revision), held, Nil{}, tracker, Session.anchored(unanchored, Boundary.Peer{message}, Boundary.Flags{held, routed, room, alternate, frame_room, above_live, clipboard, clipboard_overflow, tracking, shift, unanchored, result_frame_room, outside, host_room, terminal_room, pty_full, metadata_changed, metadata_fresh}, future, Session.Session{life, written, observer, explicit, waiting, pointer, manage}))))) == choose(Laws.lease_check(Laws.lease(Session.State{Session.Session{life, written, observer, explicit, waiting, pointer, manage}, Session.Shown{revision, was}, tracker}), Boundary.Peer{message}, Laws.replies(Laws.decided(Session.begun(Session.fact_advanced(Boundary.Peer{message}, was, revision), held, Nil{}, tracker, Session.anchored(unanchored, Boundary.Peer{message}, Boundary.Flags{held, routed, room, alternate, frame_room, above_live, clipboard, clipboard_overflow, tracking, shift, unanchored, result_frame_room, outside, host_room, terminal_room, pty_full, metadata_changed, metadata_fresh}, future, Session.Session{life, written, observer, explicit, waiting, pointer, manage}))))), Laws.lease(Laws.after(Session.begun(Session.fact_advanced(Boundary.Peer{message}, was, revision), held, Nil{}, tracker, Session.anchored(unanchored, Boundary.Peer{message}, Boundary.Flags{held, routed, room, alternate, frame_room, above_live, clipboard, clipboard_overflow, tracking, shift, unanchored, result_frame_room, outside, host_room, terminal_room, pty_full, metadata_changed, metadata_fresh}, future, Session.Session{life, written, observer, explicit, waiting, pointer, manage}))))) : Laws.Lease}:
+  {Laws.lease_check(Laws.lease(Session.State{Session.Session{life, written, observer, explicit, waiting, pointer, manage}, Session.Shown{revision, was}, tracker}), Boundary.Peer{message}, Boundary.Flags{held, routed, room, alternate, frame_room, above_live, clipboard, clipboard_overflow, tracking, shift, unanchored, result_frame_room, outside, host_room, terminal_room, pty_full, metadata_changed, metadata_fresh}, Laws.replies(Laws.decided(Session.begun(Session.fact_advanced(Boundary.Peer{message}, was, revision), held, Nil{}, tracker, Session.anchored(unanchored, Boundary.Peer{message}, Boundary.Flags{held, routed, room, alternate, frame_room, above_live, clipboard, clipboard_overflow, tracking, shift, unanchored, result_frame_room, outside, host_room, terminal_room, pty_full, metadata_changed, metadata_fresh}, future, Session.Session{life, written, observer, explicit, waiting, pointer, manage}))))) == choose(Laws.lease_check(Laws.lease(Session.State{Session.Session{life, written, observer, explicit, waiting, pointer, manage}, Session.Shown{revision, was}, tracker}), Boundary.Peer{message}, Boundary.Flags{held, routed, room, alternate, frame_room, above_live, clipboard, clipboard_overflow, tracking, shift, unanchored, result_frame_room, outside, host_room, terminal_room, pty_full, metadata_changed, metadata_fresh}, Laws.replies(Laws.decided(Session.begun(Session.fact_advanced(Boundary.Peer{message}, was, revision), held, Nil{}, tracker, Session.anchored(unanchored, Boundary.Peer{message}, Boundary.Flags{held, routed, room, alternate, frame_room, above_live, clipboard, clipboard_overflow, tracking, shift, unanchored, result_frame_room, outside, host_room, terminal_room, pty_full, metadata_changed, metadata_fresh}, future, Session.Session{life, written, observer, explicit, waiting, pointer, manage}))))), Laws.lease(Laws.after(Session.begun(Session.fact_advanced(Boundary.Peer{message}, was, revision), held, Nil{}, tracker, Session.anchored(unanchored, Boundary.Peer{message}, Boundary.Flags{held, routed, room, alternate, frame_room, above_live, clipboard, clipboard_overflow, tracking, shift, unanchored, result_frame_room, outside, host_room, terminal_room, pty_full, metadata_changed, metadata_fresh}, future, Session.Session{life, written, observer, explicit, waiting, pointer, manage}))))) : Laws.Lease}:
   match message:
     case Boundary.FirstMessageHello{}:
       match life:
@@ -13111,11 +13111,29 @@ def fits_peer(
           {==}
         case Orbit.Stopped{pid}:
           {==}
+    case Boundary.FirstMessageStranger{}:
+      match life:
+        case Orbit.Detached{pid}:
+          match unanchored:
+            case True{}:
+              {==}
+            case False{}:
+              {==}
+        case Orbit.Attached{pid}:
+          match unanchored:
+            case True{}:
+              {==}
+            case False{}:
+              {==}
+        case Orbit.Stopping{pid}:
+          {==}
+        case Orbit.Stopped{pid}:
+          {==}
 
 def fits_applied(
   effect: Boundary.Effect, life: Orbit.Lifecycle, observer: Bool, waiting: Session.Waiting, pointer: Session.Pointer, written: Bool, explicit: Bool, manage: Management.Slot, tracker: Status.Tracker, revision: Revision.Revision, was: Bool, future: Bool, held: Bool, unanchored: Bool, clipboard_overflow: Bool, clipboard: Bool, routed: Bool, room: Bool, frame_room: Bool, alternate: Bool, above_live: Bool, tracking: Bool, shift: Bool, result_frame_room: Bool, outside: Bool, host_room: Bool, terminal_room: Bool, pty_full: Bool, metadata_changed: Bool, metadata_fresh: Bool
 ) ->
-  {Laws.lease_check(Laws.lease(Session.State{Session.Session{life, written, observer, explicit, waiting, pointer, manage}, Session.Shown{revision, was}, tracker}), Boundary.Applied{effect}, Laws.replies(Laws.decided(Session.begun(Session.fact_advanced(Boundary.Applied{effect}, was, revision), held, Nil{}, tracker, Session.anchored(unanchored, Boundary.Applied{effect}, Boundary.Flags{held, routed, room, alternate, frame_room, above_live, clipboard, clipboard_overflow, tracking, shift, unanchored, result_frame_room, outside, host_room, terminal_room, pty_full, metadata_changed, metadata_fresh}, future, Session.Session{life, written, observer, explicit, waiting, pointer, manage}))))) == choose(Laws.lease_check(Laws.lease(Session.State{Session.Session{life, written, observer, explicit, waiting, pointer, manage}, Session.Shown{revision, was}, tracker}), Boundary.Applied{effect}, Laws.replies(Laws.decided(Session.begun(Session.fact_advanced(Boundary.Applied{effect}, was, revision), held, Nil{}, tracker, Session.anchored(unanchored, Boundary.Applied{effect}, Boundary.Flags{held, routed, room, alternate, frame_room, above_live, clipboard, clipboard_overflow, tracking, shift, unanchored, result_frame_room, outside, host_room, terminal_room, pty_full, metadata_changed, metadata_fresh}, future, Session.Session{life, written, observer, explicit, waiting, pointer, manage}))))), Laws.lease(Laws.after(Session.begun(Session.fact_advanced(Boundary.Applied{effect}, was, revision), held, Nil{}, tracker, Session.anchored(unanchored, Boundary.Applied{effect}, Boundary.Flags{held, routed, room, alternate, frame_room, above_live, clipboard, clipboard_overflow, tracking, shift, unanchored, result_frame_room, outside, host_room, terminal_room, pty_full, metadata_changed, metadata_fresh}, future, Session.Session{life, written, observer, explicit, waiting, pointer, manage}))))) : Laws.Lease}:
+  {Laws.lease_check(Laws.lease(Session.State{Session.Session{life, written, observer, explicit, waiting, pointer, manage}, Session.Shown{revision, was}, tracker}), Boundary.Applied{effect}, Boundary.Flags{held, routed, room, alternate, frame_room, above_live, clipboard, clipboard_overflow, tracking, shift, unanchored, result_frame_room, outside, host_room, terminal_room, pty_full, metadata_changed, metadata_fresh}, Laws.replies(Laws.decided(Session.begun(Session.fact_advanced(Boundary.Applied{effect}, was, revision), held, Nil{}, tracker, Session.anchored(unanchored, Boundary.Applied{effect}, Boundary.Flags{held, routed, room, alternate, frame_room, above_live, clipboard, clipboard_overflow, tracking, shift, unanchored, result_frame_room, outside, host_room, terminal_room, pty_full, metadata_changed, metadata_fresh}, future, Session.Session{life, written, observer, explicit, waiting, pointer, manage}))))) == choose(Laws.lease_check(Laws.lease(Session.State{Session.Session{life, written, observer, explicit, waiting, pointer, manage}, Session.Shown{revision, was}, tracker}), Boundary.Applied{effect}, Boundary.Flags{held, routed, room, alternate, frame_room, above_live, clipboard, clipboard_overflow, tracking, shift, unanchored, result_frame_room, outside, host_room, terminal_room, pty_full, metadata_changed, metadata_fresh}, Laws.replies(Laws.decided(Session.begun(Session.fact_advanced(Boundary.Applied{effect}, was, revision), held, Nil{}, tracker, Session.anchored(unanchored, Boundary.Applied{effect}, Boundary.Flags{held, routed, room, alternate, frame_room, above_live, clipboard, clipboard_overflow, tracking, shift, unanchored, result_frame_room, outside, host_room, terminal_room, pty_full, metadata_changed, metadata_fresh}, future, Session.Session{life, written, observer, explicit, waiting, pointer, manage}))))), Laws.lease(Laws.after(Session.begun(Session.fact_advanced(Boundary.Applied{effect}, was, revision), held, Nil{}, tracker, Session.anchored(unanchored, Boundary.Applied{effect}, Boundary.Flags{held, routed, room, alternate, frame_room, above_live, clipboard, clipboard_overflow, tracking, shift, unanchored, result_frame_room, outside, host_room, terminal_room, pty_full, metadata_changed, metadata_fresh}, future, Session.Session{life, written, observer, explicit, waiting, pointer, manage}))))) : Laws.Lease}:
   match effect:
     case Boundary.EffectQuiet{}:
       match life:
@@ -19597,7 +19615,7 @@ def fits_applied(
 def fits_closed(
   full: Bool, life: Orbit.Lifecycle, observer: Bool, waiting: Session.Waiting, pointer: Session.Pointer, written: Bool, explicit: Bool, manage: Management.Slot, tracker: Status.Tracker, revision: Revision.Revision, was: Bool, future: Bool, held: Bool, unanchored: Bool, clipboard_overflow: Bool, clipboard: Bool, routed: Bool, room: Bool, frame_room: Bool, alternate: Bool, above_live: Bool, tracking: Bool, shift: Bool, result_frame_room: Bool, outside: Bool, host_room: Bool, terminal_room: Bool, pty_full: Bool, metadata_changed: Bool, metadata_fresh: Bool
 ) ->
-  {Laws.lease_check(Laws.lease(Session.State{Session.Session{life, written, observer, explicit, waiting, pointer, manage}, Session.Shown{revision, was}, tracker}), Boundary.Closed{full}, Laws.replies(Laws.decided(Session.begun(Session.fact_advanced(Boundary.Closed{full}, was, revision), held, Nil{}, tracker, Session.anchored(unanchored, Boundary.Closed{full}, Boundary.Flags{held, routed, room, alternate, frame_room, above_live, clipboard, clipboard_overflow, tracking, shift, unanchored, result_frame_room, outside, host_room, terminal_room, pty_full, metadata_changed, metadata_fresh}, future, Session.Session{life, written, observer, explicit, waiting, pointer, manage}))))) == choose(Laws.lease_check(Laws.lease(Session.State{Session.Session{life, written, observer, explicit, waiting, pointer, manage}, Session.Shown{revision, was}, tracker}), Boundary.Closed{full}, Laws.replies(Laws.decided(Session.begun(Session.fact_advanced(Boundary.Closed{full}, was, revision), held, Nil{}, tracker, Session.anchored(unanchored, Boundary.Closed{full}, Boundary.Flags{held, routed, room, alternate, frame_room, above_live, clipboard, clipboard_overflow, tracking, shift, unanchored, result_frame_room, outside, host_room, terminal_room, pty_full, metadata_changed, metadata_fresh}, future, Session.Session{life, written, observer, explicit, waiting, pointer, manage}))))), Laws.lease(Laws.after(Session.begun(Session.fact_advanced(Boundary.Closed{full}, was, revision), held, Nil{}, tracker, Session.anchored(unanchored, Boundary.Closed{full}, Boundary.Flags{held, routed, room, alternate, frame_room, above_live, clipboard, clipboard_overflow, tracking, shift, unanchored, result_frame_room, outside, host_room, terminal_room, pty_full, metadata_changed, metadata_fresh}, future, Session.Session{life, written, observer, explicit, waiting, pointer, manage}))))) : Laws.Lease}:
+  {Laws.lease_check(Laws.lease(Session.State{Session.Session{life, written, observer, explicit, waiting, pointer, manage}, Session.Shown{revision, was}, tracker}), Boundary.Closed{full}, Boundary.Flags{held, routed, room, alternate, frame_room, above_live, clipboard, clipboard_overflow, tracking, shift, unanchored, result_frame_room, outside, host_room, terminal_room, pty_full, metadata_changed, metadata_fresh}, Laws.replies(Laws.decided(Session.begun(Session.fact_advanced(Boundary.Closed{full}, was, revision), held, Nil{}, tracker, Session.anchored(unanchored, Boundary.Closed{full}, Boundary.Flags{held, routed, room, alternate, frame_room, above_live, clipboard, clipboard_overflow, tracking, shift, unanchored, result_frame_room, outside, host_room, terminal_room, pty_full, metadata_changed, metadata_fresh}, future, Session.Session{life, written, observer, explicit, waiting, pointer, manage}))))) == choose(Laws.lease_check(Laws.lease(Session.State{Session.Session{life, written, observer, explicit, waiting, pointer, manage}, Session.Shown{revision, was}, tracker}), Boundary.Closed{full}, Boundary.Flags{held, routed, room, alternate, frame_room, above_live, clipboard, clipboard_overflow, tracking, shift, unanchored, result_frame_room, outside, host_room, terminal_room, pty_full, metadata_changed, metadata_fresh}, Laws.replies(Laws.decided(Session.begun(Session.fact_advanced(Boundary.Closed{full}, was, revision), held, Nil{}, tracker, Session.anchored(unanchored, Boundary.Closed{full}, Boundary.Flags{held, routed, room, alternate, frame_room, above_live, clipboard, clipboard_overflow, tracking, shift, unanchored, result_frame_room, outside, host_room, terminal_room, pty_full, metadata_changed, metadata_fresh}, future, Session.Session{life, written, observer, explicit, waiting, pointer, manage}))))), Laws.lease(Laws.after(Session.begun(Session.fact_advanced(Boundary.Closed{full}, was, revision), held, Nil{}, tracker, Session.anchored(unanchored, Boundary.Closed{full}, Boundary.Flags{held, routed, room, alternate, frame_room, above_live, clipboard, clipboard_overflow, tracking, shift, unanchored, result_frame_room, outside, host_room, terminal_room, pty_full, metadata_changed, metadata_fresh}, future, Session.Session{life, written, observer, explicit, waiting, pointer, manage}))))) : Laws.Lease}:
   match full:
     case True{}:
       match life:
@@ -19719,7 +19737,7 @@ def fits_closed(
 def fits_pressured(
   life: Orbit.Lifecycle, observer: Bool, waiting: Session.Waiting, pointer: Session.Pointer, written: Bool, explicit: Bool, manage: Management.Slot, tracker: Status.Tracker, revision: Revision.Revision, was: Bool, future: Bool, held: Bool, unanchored: Bool, clipboard_overflow: Bool, clipboard: Bool, routed: Bool, room: Bool, frame_room: Bool, alternate: Bool, above_live: Bool, tracking: Bool, shift: Bool, result_frame_room: Bool, outside: Bool, host_room: Bool, terminal_room: Bool, pty_full: Bool, metadata_changed: Bool, metadata_fresh: Bool
 ) ->
-  {Laws.lease_check(Laws.lease(Session.State{Session.Session{life, written, observer, explicit, waiting, pointer, manage}, Session.Shown{revision, was}, tracker}), Boundary.Pressured{}, Laws.replies(Laws.decided(Session.begun(Session.fact_advanced(Boundary.Pressured{}, was, revision), held, Nil{}, tracker, Session.anchored(unanchored, Boundary.Pressured{}, Boundary.Flags{held, routed, room, alternate, frame_room, above_live, clipboard, clipboard_overflow, tracking, shift, unanchored, result_frame_room, outside, host_room, terminal_room, pty_full, metadata_changed, metadata_fresh}, future, Session.Session{life, written, observer, explicit, waiting, pointer, manage}))))) == choose(Laws.lease_check(Laws.lease(Session.State{Session.Session{life, written, observer, explicit, waiting, pointer, manage}, Session.Shown{revision, was}, tracker}), Boundary.Pressured{}, Laws.replies(Laws.decided(Session.begun(Session.fact_advanced(Boundary.Pressured{}, was, revision), held, Nil{}, tracker, Session.anchored(unanchored, Boundary.Pressured{}, Boundary.Flags{held, routed, room, alternate, frame_room, above_live, clipboard, clipboard_overflow, tracking, shift, unanchored, result_frame_room, outside, host_room, terminal_room, pty_full, metadata_changed, metadata_fresh}, future, Session.Session{life, written, observer, explicit, waiting, pointer, manage}))))), Laws.lease(Laws.after(Session.begun(Session.fact_advanced(Boundary.Pressured{}, was, revision), held, Nil{}, tracker, Session.anchored(unanchored, Boundary.Pressured{}, Boundary.Flags{held, routed, room, alternate, frame_room, above_live, clipboard, clipboard_overflow, tracking, shift, unanchored, result_frame_room, outside, host_room, terminal_room, pty_full, metadata_changed, metadata_fresh}, future, Session.Session{life, written, observer, explicit, waiting, pointer, manage}))))) : Laws.Lease}:
+  {Laws.lease_check(Laws.lease(Session.State{Session.Session{life, written, observer, explicit, waiting, pointer, manage}, Session.Shown{revision, was}, tracker}), Boundary.Pressured{}, Boundary.Flags{held, routed, room, alternate, frame_room, above_live, clipboard, clipboard_overflow, tracking, shift, unanchored, result_frame_room, outside, host_room, terminal_room, pty_full, metadata_changed, metadata_fresh}, Laws.replies(Laws.decided(Session.begun(Session.fact_advanced(Boundary.Pressured{}, was, revision), held, Nil{}, tracker, Session.anchored(unanchored, Boundary.Pressured{}, Boundary.Flags{held, routed, room, alternate, frame_room, above_live, clipboard, clipboard_overflow, tracking, shift, unanchored, result_frame_room, outside, host_room, terminal_room, pty_full, metadata_changed, metadata_fresh}, future, Session.Session{life, written, observer, explicit, waiting, pointer, manage}))))) == choose(Laws.lease_check(Laws.lease(Session.State{Session.Session{life, written, observer, explicit, waiting, pointer, manage}, Session.Shown{revision, was}, tracker}), Boundary.Pressured{}, Boundary.Flags{held, routed, room, alternate, frame_room, above_live, clipboard, clipboard_overflow, tracking, shift, unanchored, result_frame_room, outside, host_room, terminal_room, pty_full, metadata_changed, metadata_fresh}, Laws.replies(Laws.decided(Session.begun(Session.fact_advanced(Boundary.Pressured{}, was, revision), held, Nil{}, tracker, Session.anchored(unanchored, Boundary.Pressured{}, Boundary.Flags{held, routed, room, alternate, frame_room, above_live, clipboard, clipboard_overflow, tracking, shift, unanchored, result_frame_room, outside, host_room, terminal_room, pty_full, metadata_changed, metadata_fresh}, future, Session.Session{life, written, observer, explicit, waiting, pointer, manage}))))), Laws.lease(Laws.after(Session.begun(Session.fact_advanced(Boundary.Pressured{}, was, revision), held, Nil{}, tracker, Session.anchored(unanchored, Boundary.Pressured{}, Boundary.Flags{held, routed, room, alternate, frame_room, above_live, clipboard, clipboard_overflow, tracking, shift, unanchored, result_frame_room, outside, host_room, terminal_room, pty_full, metadata_changed, metadata_fresh}, future, Session.Session{life, written, observer, explicit, waiting, pointer, manage}))))) : Laws.Lease}:
   match life:
     case Orbit.Detached{pid}:
       match unanchored:
@@ -19741,7 +19759,7 @@ def fits_pressured(
 def fits_reaped(
   +status: U32, life: Orbit.Lifecycle, observer: Bool, waiting: Session.Waiting, pointer: Session.Pointer, written: Bool, explicit: Bool, manage: Management.Slot, tracker: Status.Tracker, revision: Revision.Revision, was: Bool, future: Bool, held: Bool, unanchored: Bool, clipboard_overflow: Bool, clipboard: Bool, routed: Bool, room: Bool, frame_room: Bool, alternate: Bool, above_live: Bool, tracking: Bool, shift: Bool, result_frame_room: Bool, outside: Bool, host_room: Bool, terminal_room: Bool, pty_full: Bool, metadata_changed: Bool, metadata_fresh: Bool
 ) ->
-  {Laws.lease_check(Laws.lease(Session.State{Session.Session{life, written, observer, explicit, waiting, pointer, manage}, Session.Shown{revision, was}, tracker}), Boundary.Reaped{status}, Laws.replies(Laws.decided(Session.begun(Session.fact_advanced(Boundary.Reaped{status}, was, revision), held, Nil{}, tracker, Session.anchored(unanchored, Boundary.Reaped{status}, Boundary.Flags{held, routed, room, alternate, frame_room, above_live, clipboard, clipboard_overflow, tracking, shift, unanchored, result_frame_room, outside, host_room, terminal_room, pty_full, metadata_changed, metadata_fresh}, future, Session.Session{life, written, observer, explicit, waiting, pointer, manage}))))) == choose(Laws.lease_check(Laws.lease(Session.State{Session.Session{life, written, observer, explicit, waiting, pointer, manage}, Session.Shown{revision, was}, tracker}), Boundary.Reaped{status}, Laws.replies(Laws.decided(Session.begun(Session.fact_advanced(Boundary.Reaped{status}, was, revision), held, Nil{}, tracker, Session.anchored(unanchored, Boundary.Reaped{status}, Boundary.Flags{held, routed, room, alternate, frame_room, above_live, clipboard, clipboard_overflow, tracking, shift, unanchored, result_frame_room, outside, host_room, terminal_room, pty_full, metadata_changed, metadata_fresh}, future, Session.Session{life, written, observer, explicit, waiting, pointer, manage}))))), Laws.lease(Laws.after(Session.begun(Session.fact_advanced(Boundary.Reaped{status}, was, revision), held, Nil{}, tracker, Session.anchored(unanchored, Boundary.Reaped{status}, Boundary.Flags{held, routed, room, alternate, frame_room, above_live, clipboard, clipboard_overflow, tracking, shift, unanchored, result_frame_room, outside, host_room, terminal_room, pty_full, metadata_changed, metadata_fresh}, future, Session.Session{life, written, observer, explicit, waiting, pointer, manage}))))) : Laws.Lease}:
+  {Laws.lease_check(Laws.lease(Session.State{Session.Session{life, written, observer, explicit, waiting, pointer, manage}, Session.Shown{revision, was}, tracker}), Boundary.Reaped{status}, Boundary.Flags{held, routed, room, alternate, frame_room, above_live, clipboard, clipboard_overflow, tracking, shift, unanchored, result_frame_room, outside, host_room, terminal_room, pty_full, metadata_changed, metadata_fresh}, Laws.replies(Laws.decided(Session.begun(Session.fact_advanced(Boundary.Reaped{status}, was, revision), held, Nil{}, tracker, Session.anchored(unanchored, Boundary.Reaped{status}, Boundary.Flags{held, routed, room, alternate, frame_room, above_live, clipboard, clipboard_overflow, tracking, shift, unanchored, result_frame_room, outside, host_room, terminal_room, pty_full, metadata_changed, metadata_fresh}, future, Session.Session{life, written, observer, explicit, waiting, pointer, manage}))))) == choose(Laws.lease_check(Laws.lease(Session.State{Session.Session{life, written, observer, explicit, waiting, pointer, manage}, Session.Shown{revision, was}, tracker}), Boundary.Reaped{status}, Boundary.Flags{held, routed, room, alternate, frame_room, above_live, clipboard, clipboard_overflow, tracking, shift, unanchored, result_frame_room, outside, host_room, terminal_room, pty_full, metadata_changed, metadata_fresh}, Laws.replies(Laws.decided(Session.begun(Session.fact_advanced(Boundary.Reaped{status}, was, revision), held, Nil{}, tracker, Session.anchored(unanchored, Boundary.Reaped{status}, Boundary.Flags{held, routed, room, alternate, frame_room, above_live, clipboard, clipboard_overflow, tracking, shift, unanchored, result_frame_room, outside, host_room, terminal_room, pty_full, metadata_changed, metadata_fresh}, future, Session.Session{life, written, observer, explicit, waiting, pointer, manage}))))), Laws.lease(Laws.after(Session.begun(Session.fact_advanced(Boundary.Reaped{status}, was, revision), held, Nil{}, tracker, Session.anchored(unanchored, Boundary.Reaped{status}, Boundary.Flags{held, routed, room, alternate, frame_room, above_live, clipboard, clipboard_overflow, tracking, shift, unanchored, result_frame_room, outside, host_room, terminal_room, pty_full, metadata_changed, metadata_fresh}, future, Session.Session{life, written, observer, explicit, waiting, pointer, manage}))))) : Laws.Lease}:
   match life:
     case Orbit.Detached{pid}:
       {==}
@@ -19763,7 +19781,7 @@ def fits_reaped(
 def fits_not_reaped(
   life: Orbit.Lifecycle, observer: Bool, waiting: Session.Waiting, pointer: Session.Pointer, written: Bool, explicit: Bool, manage: Management.Slot, tracker: Status.Tracker, revision: Revision.Revision, was: Bool, future: Bool, held: Bool, unanchored: Bool, clipboard_overflow: Bool, clipboard: Bool, routed: Bool, room: Bool, frame_room: Bool, alternate: Bool, above_live: Bool, tracking: Bool, shift: Bool, result_frame_room: Bool, outside: Bool, host_room: Bool, terminal_room: Bool, pty_full: Bool, metadata_changed: Bool, metadata_fresh: Bool
 ) ->
-  {Laws.lease_check(Laws.lease(Session.State{Session.Session{life, written, observer, explicit, waiting, pointer, manage}, Session.Shown{revision, was}, tracker}), Boundary.NotReaped{}, Laws.replies(Laws.decided(Session.begun(Session.fact_advanced(Boundary.NotReaped{}, was, revision), held, Nil{}, tracker, Session.anchored(unanchored, Boundary.NotReaped{}, Boundary.Flags{held, routed, room, alternate, frame_room, above_live, clipboard, clipboard_overflow, tracking, shift, unanchored, result_frame_room, outside, host_room, terminal_room, pty_full, metadata_changed, metadata_fresh}, future, Session.Session{life, written, observer, explicit, waiting, pointer, manage}))))) == choose(Laws.lease_check(Laws.lease(Session.State{Session.Session{life, written, observer, explicit, waiting, pointer, manage}, Session.Shown{revision, was}, tracker}), Boundary.NotReaped{}, Laws.replies(Laws.decided(Session.begun(Session.fact_advanced(Boundary.NotReaped{}, was, revision), held, Nil{}, tracker, Session.anchored(unanchored, Boundary.NotReaped{}, Boundary.Flags{held, routed, room, alternate, frame_room, above_live, clipboard, clipboard_overflow, tracking, shift, unanchored, result_frame_room, outside, host_room, terminal_room, pty_full, metadata_changed, metadata_fresh}, future, Session.Session{life, written, observer, explicit, waiting, pointer, manage}))))), Laws.lease(Laws.after(Session.begun(Session.fact_advanced(Boundary.NotReaped{}, was, revision), held, Nil{}, tracker, Session.anchored(unanchored, Boundary.NotReaped{}, Boundary.Flags{held, routed, room, alternate, frame_room, above_live, clipboard, clipboard_overflow, tracking, shift, unanchored, result_frame_room, outside, host_room, terminal_room, pty_full, metadata_changed, metadata_fresh}, future, Session.Session{life, written, observer, explicit, waiting, pointer, manage}))))) : Laws.Lease}:
+  {Laws.lease_check(Laws.lease(Session.State{Session.Session{life, written, observer, explicit, waiting, pointer, manage}, Session.Shown{revision, was}, tracker}), Boundary.NotReaped{}, Boundary.Flags{held, routed, room, alternate, frame_room, above_live, clipboard, clipboard_overflow, tracking, shift, unanchored, result_frame_room, outside, host_room, terminal_room, pty_full, metadata_changed, metadata_fresh}, Laws.replies(Laws.decided(Session.begun(Session.fact_advanced(Boundary.NotReaped{}, was, revision), held, Nil{}, tracker, Session.anchored(unanchored, Boundary.NotReaped{}, Boundary.Flags{held, routed, room, alternate, frame_room, above_live, clipboard, clipboard_overflow, tracking, shift, unanchored, result_frame_room, outside, host_room, terminal_room, pty_full, metadata_changed, metadata_fresh}, future, Session.Session{life, written, observer, explicit, waiting, pointer, manage}))))) == choose(Laws.lease_check(Laws.lease(Session.State{Session.Session{life, written, observer, explicit, waiting, pointer, manage}, Session.Shown{revision, was}, tracker}), Boundary.NotReaped{}, Boundary.Flags{held, routed, room, alternate, frame_room, above_live, clipboard, clipboard_overflow, tracking, shift, unanchored, result_frame_room, outside, host_room, terminal_room, pty_full, metadata_changed, metadata_fresh}, Laws.replies(Laws.decided(Session.begun(Session.fact_advanced(Boundary.NotReaped{}, was, revision), held, Nil{}, tracker, Session.anchored(unanchored, Boundary.NotReaped{}, Boundary.Flags{held, routed, room, alternate, frame_room, above_live, clipboard, clipboard_overflow, tracking, shift, unanchored, result_frame_room, outside, host_room, terminal_room, pty_full, metadata_changed, metadata_fresh}, future, Session.Session{life, written, observer, explicit, waiting, pointer, manage}))))), Laws.lease(Laws.after(Session.begun(Session.fact_advanced(Boundary.NotReaped{}, was, revision), held, Nil{}, tracker, Session.anchored(unanchored, Boundary.NotReaped{}, Boundary.Flags{held, routed, room, alternate, frame_room, above_live, clipboard, clipboard_overflow, tracking, shift, unanchored, result_frame_room, outside, host_room, terminal_room, pty_full, metadata_changed, metadata_fresh}, future, Session.Session{life, written, observer, explicit, waiting, pointer, manage}))))) : Laws.Lease}:
   match life:
     case Orbit.Detached{pid}:
       match unanchored:
@@ -19785,7 +19803,7 @@ def fits_not_reaped(
 def fits_finished(
   life: Orbit.Lifecycle, observer: Bool, waiting: Session.Waiting, pointer: Session.Pointer, written: Bool, explicit: Bool, manage: Management.Slot, tracker: Status.Tracker, revision: Revision.Revision, was: Bool, future: Bool, held: Bool, unanchored: Bool, clipboard_overflow: Bool, clipboard: Bool, routed: Bool, room: Bool, frame_room: Bool, alternate: Bool, above_live: Bool, tracking: Bool, shift: Bool, result_frame_room: Bool, outside: Bool, host_room: Bool, terminal_room: Bool, pty_full: Bool, metadata_changed: Bool, metadata_fresh: Bool
 ) ->
-  {Laws.lease_check(Laws.lease(Session.State{Session.Session{life, written, observer, explicit, waiting, pointer, manage}, Session.Shown{revision, was}, tracker}), Boundary.Finished{}, Laws.replies(Laws.decided(Session.begun(Session.fact_advanced(Boundary.Finished{}, was, revision), held, Nil{}, tracker, Session.anchored(unanchored, Boundary.Finished{}, Boundary.Flags{held, routed, room, alternate, frame_room, above_live, clipboard, clipboard_overflow, tracking, shift, unanchored, result_frame_room, outside, host_room, terminal_room, pty_full, metadata_changed, metadata_fresh}, future, Session.Session{life, written, observer, explicit, waiting, pointer, manage}))))) == choose(Laws.lease_check(Laws.lease(Session.State{Session.Session{life, written, observer, explicit, waiting, pointer, manage}, Session.Shown{revision, was}, tracker}), Boundary.Finished{}, Laws.replies(Laws.decided(Session.begun(Session.fact_advanced(Boundary.Finished{}, was, revision), held, Nil{}, tracker, Session.anchored(unanchored, Boundary.Finished{}, Boundary.Flags{held, routed, room, alternate, frame_room, above_live, clipboard, clipboard_overflow, tracking, shift, unanchored, result_frame_room, outside, host_room, terminal_room, pty_full, metadata_changed, metadata_fresh}, future, Session.Session{life, written, observer, explicit, waiting, pointer, manage}))))), Laws.lease(Laws.after(Session.begun(Session.fact_advanced(Boundary.Finished{}, was, revision), held, Nil{}, tracker, Session.anchored(unanchored, Boundary.Finished{}, Boundary.Flags{held, routed, room, alternate, frame_room, above_live, clipboard, clipboard_overflow, tracking, shift, unanchored, result_frame_room, outside, host_room, terminal_room, pty_full, metadata_changed, metadata_fresh}, future, Session.Session{life, written, observer, explicit, waiting, pointer, manage}))))) : Laws.Lease}:
+  {Laws.lease_check(Laws.lease(Session.State{Session.Session{life, written, observer, explicit, waiting, pointer, manage}, Session.Shown{revision, was}, tracker}), Boundary.Finished{}, Boundary.Flags{held, routed, room, alternate, frame_room, above_live, clipboard, clipboard_overflow, tracking, shift, unanchored, result_frame_room, outside, host_room, terminal_room, pty_full, metadata_changed, metadata_fresh}, Laws.replies(Laws.decided(Session.begun(Session.fact_advanced(Boundary.Finished{}, was, revision), held, Nil{}, tracker, Session.anchored(unanchored, Boundary.Finished{}, Boundary.Flags{held, routed, room, alternate, frame_room, above_live, clipboard, clipboard_overflow, tracking, shift, unanchored, result_frame_room, outside, host_room, terminal_room, pty_full, metadata_changed, metadata_fresh}, future, Session.Session{life, written, observer, explicit, waiting, pointer, manage}))))) == choose(Laws.lease_check(Laws.lease(Session.State{Session.Session{life, written, observer, explicit, waiting, pointer, manage}, Session.Shown{revision, was}, tracker}), Boundary.Finished{}, Boundary.Flags{held, routed, room, alternate, frame_room, above_live, clipboard, clipboard_overflow, tracking, shift, unanchored, result_frame_room, outside, host_room, terminal_room, pty_full, metadata_changed, metadata_fresh}, Laws.replies(Laws.decided(Session.begun(Session.fact_advanced(Boundary.Finished{}, was, revision), held, Nil{}, tracker, Session.anchored(unanchored, Boundary.Finished{}, Boundary.Flags{held, routed, room, alternate, frame_room, above_live, clipboard, clipboard_overflow, tracking, shift, unanchored, result_frame_room, outside, host_room, terminal_room, pty_full, metadata_changed, metadata_fresh}, future, Session.Session{life, written, observer, explicit, waiting, pointer, manage}))))), Laws.lease(Laws.after(Session.begun(Session.fact_advanced(Boundary.Finished{}, was, revision), held, Nil{}, tracker, Session.anchored(unanchored, Boundary.Finished{}, Boundary.Flags{held, routed, room, alternate, frame_room, above_live, clipboard, clipboard_overflow, tracking, shift, unanchored, result_frame_room, outside, host_room, terminal_room, pty_full, metadata_changed, metadata_fresh}, future, Session.Session{life, written, observer, explicit, waiting, pointer, manage}))))) : Laws.Lease}:
   match life:
     case Orbit.Detached{pid}:
       match unanchored:
@@ -19807,7 +19825,7 @@ def fits_finished(
 def fits_role_repeated(
   life: Orbit.Lifecycle, observer: Bool, waiting: Session.Waiting, pointer: Session.Pointer, written: Bool, explicit: Bool, manage: Management.Slot, tracker: Status.Tracker, revision: Revision.Revision, was: Bool, future: Bool, held: Bool, unanchored: Bool, clipboard_overflow: Bool, clipboard: Bool, routed: Bool, room: Bool, frame_room: Bool, alternate: Bool, above_live: Bool, tracking: Bool, shift: Bool, result_frame_room: Bool, outside: Bool, host_room: Bool, terminal_room: Bool, pty_full: Bool, metadata_changed: Bool, metadata_fresh: Bool
 ) ->
-  {Laws.lease_check(Laws.lease(Session.State{Session.Session{life, written, observer, explicit, waiting, pointer, manage}, Session.Shown{revision, was}, tracker}), Boundary.RoleRepeated{}, Laws.replies(Laws.decided(Session.begun(Session.fact_advanced(Boundary.RoleRepeated{}, was, revision), held, Nil{}, tracker, Session.anchored(unanchored, Boundary.RoleRepeated{}, Boundary.Flags{held, routed, room, alternate, frame_room, above_live, clipboard, clipboard_overflow, tracking, shift, unanchored, result_frame_room, outside, host_room, terminal_room, pty_full, metadata_changed, metadata_fresh}, future, Session.Session{life, written, observer, explicit, waiting, pointer, manage}))))) == choose(Laws.lease_check(Laws.lease(Session.State{Session.Session{life, written, observer, explicit, waiting, pointer, manage}, Session.Shown{revision, was}, tracker}), Boundary.RoleRepeated{}, Laws.replies(Laws.decided(Session.begun(Session.fact_advanced(Boundary.RoleRepeated{}, was, revision), held, Nil{}, tracker, Session.anchored(unanchored, Boundary.RoleRepeated{}, Boundary.Flags{held, routed, room, alternate, frame_room, above_live, clipboard, clipboard_overflow, tracking, shift, unanchored, result_frame_room, outside, host_room, terminal_room, pty_full, metadata_changed, metadata_fresh}, future, Session.Session{life, written, observer, explicit, waiting, pointer, manage}))))), Laws.lease(Laws.after(Session.begun(Session.fact_advanced(Boundary.RoleRepeated{}, was, revision), held, Nil{}, tracker, Session.anchored(unanchored, Boundary.RoleRepeated{}, Boundary.Flags{held, routed, room, alternate, frame_room, above_live, clipboard, clipboard_overflow, tracking, shift, unanchored, result_frame_room, outside, host_room, terminal_room, pty_full, metadata_changed, metadata_fresh}, future, Session.Session{life, written, observer, explicit, waiting, pointer, manage}))))) : Laws.Lease}:
+  {Laws.lease_check(Laws.lease(Session.State{Session.Session{life, written, observer, explicit, waiting, pointer, manage}, Session.Shown{revision, was}, tracker}), Boundary.RoleRepeated{}, Boundary.Flags{held, routed, room, alternate, frame_room, above_live, clipboard, clipboard_overflow, tracking, shift, unanchored, result_frame_room, outside, host_room, terminal_room, pty_full, metadata_changed, metadata_fresh}, Laws.replies(Laws.decided(Session.begun(Session.fact_advanced(Boundary.RoleRepeated{}, was, revision), held, Nil{}, tracker, Session.anchored(unanchored, Boundary.RoleRepeated{}, Boundary.Flags{held, routed, room, alternate, frame_room, above_live, clipboard, clipboard_overflow, tracking, shift, unanchored, result_frame_room, outside, host_room, terminal_room, pty_full, metadata_changed, metadata_fresh}, future, Session.Session{life, written, observer, explicit, waiting, pointer, manage}))))) == choose(Laws.lease_check(Laws.lease(Session.State{Session.Session{life, written, observer, explicit, waiting, pointer, manage}, Session.Shown{revision, was}, tracker}), Boundary.RoleRepeated{}, Boundary.Flags{held, routed, room, alternate, frame_room, above_live, clipboard, clipboard_overflow, tracking, shift, unanchored, result_frame_room, outside, host_room, terminal_room, pty_full, metadata_changed, metadata_fresh}, Laws.replies(Laws.decided(Session.begun(Session.fact_advanced(Boundary.RoleRepeated{}, was, revision), held, Nil{}, tracker, Session.anchored(unanchored, Boundary.RoleRepeated{}, Boundary.Flags{held, routed, room, alternate, frame_room, above_live, clipboard, clipboard_overflow, tracking, shift, unanchored, result_frame_room, outside, host_room, terminal_room, pty_full, metadata_changed, metadata_fresh}, future, Session.Session{life, written, observer, explicit, waiting, pointer, manage}))))), Laws.lease(Laws.after(Session.begun(Session.fact_advanced(Boundary.RoleRepeated{}, was, revision), held, Nil{}, tracker, Session.anchored(unanchored, Boundary.RoleRepeated{}, Boundary.Flags{held, routed, room, alternate, frame_room, above_live, clipboard, clipboard_overflow, tracking, shift, unanchored, result_frame_room, outside, host_room, terminal_room, pty_full, metadata_changed, metadata_fresh}, future, Session.Session{life, written, observer, explicit, waiting, pointer, manage}))))) : Laws.Lease}:
   match life:
     case Orbit.Detached{pid}:
       match unanchored:
@@ -19829,7 +19847,7 @@ def fits_role_repeated(
 def fits_refused(
   version: Bool, life: Orbit.Lifecycle, observer: Bool, waiting: Session.Waiting, pointer: Session.Pointer, written: Bool, explicit: Bool, manage: Management.Slot, tracker: Status.Tracker, revision: Revision.Revision, was: Bool, future: Bool, held: Bool, unanchored: Bool, clipboard_overflow: Bool, clipboard: Bool, routed: Bool, room: Bool, frame_room: Bool, alternate: Bool, above_live: Bool, tracking: Bool, shift: Bool, result_frame_room: Bool, outside: Bool, host_room: Bool, terminal_room: Bool, pty_full: Bool, metadata_changed: Bool, metadata_fresh: Bool
 ) ->
-  {Laws.lease_check(Laws.lease(Session.State{Session.Session{life, written, observer, explicit, waiting, pointer, manage}, Session.Shown{revision, was}, tracker}), Boundary.Refused{version}, Laws.replies(Laws.decided(Session.begun(Session.fact_advanced(Boundary.Refused{version}, was, revision), held, Nil{}, tracker, Session.anchored(unanchored, Boundary.Refused{version}, Boundary.Flags{held, routed, room, alternate, frame_room, above_live, clipboard, clipboard_overflow, tracking, shift, unanchored, result_frame_room, outside, host_room, terminal_room, pty_full, metadata_changed, metadata_fresh}, future, Session.Session{life, written, observer, explicit, waiting, pointer, manage}))))) == choose(Laws.lease_check(Laws.lease(Session.State{Session.Session{life, written, observer, explicit, waiting, pointer, manage}, Session.Shown{revision, was}, tracker}), Boundary.Refused{version}, Laws.replies(Laws.decided(Session.begun(Session.fact_advanced(Boundary.Refused{version}, was, revision), held, Nil{}, tracker, Session.anchored(unanchored, Boundary.Refused{version}, Boundary.Flags{held, routed, room, alternate, frame_room, above_live, clipboard, clipboard_overflow, tracking, shift, unanchored, result_frame_room, outside, host_room, terminal_room, pty_full, metadata_changed, metadata_fresh}, future, Session.Session{life, written, observer, explicit, waiting, pointer, manage}))))), Laws.lease(Laws.after(Session.begun(Session.fact_advanced(Boundary.Refused{version}, was, revision), held, Nil{}, tracker, Session.anchored(unanchored, Boundary.Refused{version}, Boundary.Flags{held, routed, room, alternate, frame_room, above_live, clipboard, clipboard_overflow, tracking, shift, unanchored, result_frame_room, outside, host_room, terminal_room, pty_full, metadata_changed, metadata_fresh}, future, Session.Session{life, written, observer, explicit, waiting, pointer, manage}))))) : Laws.Lease}:
+  {Laws.lease_check(Laws.lease(Session.State{Session.Session{life, written, observer, explicit, waiting, pointer, manage}, Session.Shown{revision, was}, tracker}), Boundary.Refused{version}, Boundary.Flags{held, routed, room, alternate, frame_room, above_live, clipboard, clipboard_overflow, tracking, shift, unanchored, result_frame_room, outside, host_room, terminal_room, pty_full, metadata_changed, metadata_fresh}, Laws.replies(Laws.decided(Session.begun(Session.fact_advanced(Boundary.Refused{version}, was, revision), held, Nil{}, tracker, Session.anchored(unanchored, Boundary.Refused{version}, Boundary.Flags{held, routed, room, alternate, frame_room, above_live, clipboard, clipboard_overflow, tracking, shift, unanchored, result_frame_room, outside, host_room, terminal_room, pty_full, metadata_changed, metadata_fresh}, future, Session.Session{life, written, observer, explicit, waiting, pointer, manage}))))) == choose(Laws.lease_check(Laws.lease(Session.State{Session.Session{life, written, observer, explicit, waiting, pointer, manage}, Session.Shown{revision, was}, tracker}), Boundary.Refused{version}, Boundary.Flags{held, routed, room, alternate, frame_room, above_live, clipboard, clipboard_overflow, tracking, shift, unanchored, result_frame_room, outside, host_room, terminal_room, pty_full, metadata_changed, metadata_fresh}, Laws.replies(Laws.decided(Session.begun(Session.fact_advanced(Boundary.Refused{version}, was, revision), held, Nil{}, tracker, Session.anchored(unanchored, Boundary.Refused{version}, Boundary.Flags{held, routed, room, alternate, frame_room, above_live, clipboard, clipboard_overflow, tracking, shift, unanchored, result_frame_room, outside, host_room, terminal_room, pty_full, metadata_changed, metadata_fresh}, future, Session.Session{life, written, observer, explicit, waiting, pointer, manage}))))), Laws.lease(Laws.after(Session.begun(Session.fact_advanced(Boundary.Refused{version}, was, revision), held, Nil{}, tracker, Session.anchored(unanchored, Boundary.Refused{version}, Boundary.Flags{held, routed, room, alternate, frame_room, above_live, clipboard, clipboard_overflow, tracking, shift, unanchored, result_frame_room, outside, host_room, terminal_room, pty_full, metadata_changed, metadata_fresh}, future, Session.Session{life, written, observer, explicit, waiting, pointer, manage}))))) : Laws.Lease}:
   match version:
     case True{}:
       match life:
@@ -19871,7 +19889,7 @@ def fits_refused(
 def fits_observer_gone(
   loss: Boundary.ObserverLoss, life: Orbit.Lifecycle, observer: Bool, waiting: Session.Waiting, pointer: Session.Pointer, written: Bool, explicit: Bool, manage: Management.Slot, tracker: Status.Tracker, revision: Revision.Revision, was: Bool, future: Bool, held: Bool, unanchored: Bool, clipboard_overflow: Bool, clipboard: Bool, routed: Bool, room: Bool, frame_room: Bool, alternate: Bool, above_live: Bool, tracking: Bool, shift: Bool, result_frame_room: Bool, outside: Bool, host_room: Bool, terminal_room: Bool, pty_full: Bool, metadata_changed: Bool, metadata_fresh: Bool
 ) ->
-  {Laws.lease_check(Laws.lease(Session.State{Session.Session{life, written, observer, explicit, waiting, pointer, manage}, Session.Shown{revision, was}, tracker}), Boundary.ObserverGone{loss}, Laws.replies(Laws.decided(Session.begun(Session.fact_advanced(Boundary.ObserverGone{loss}, was, revision), held, Nil{}, tracker, Session.anchored(unanchored, Boundary.ObserverGone{loss}, Boundary.Flags{held, routed, room, alternate, frame_room, above_live, clipboard, clipboard_overflow, tracking, shift, unanchored, result_frame_room, outside, host_room, terminal_room, pty_full, metadata_changed, metadata_fresh}, future, Session.Session{life, written, observer, explicit, waiting, pointer, manage}))))) == choose(Laws.lease_check(Laws.lease(Session.State{Session.Session{life, written, observer, explicit, waiting, pointer, manage}, Session.Shown{revision, was}, tracker}), Boundary.ObserverGone{loss}, Laws.replies(Laws.decided(Session.begun(Session.fact_advanced(Boundary.ObserverGone{loss}, was, revision), held, Nil{}, tracker, Session.anchored(unanchored, Boundary.ObserverGone{loss}, Boundary.Flags{held, routed, room, alternate, frame_room, above_live, clipboard, clipboard_overflow, tracking, shift, unanchored, result_frame_room, outside, host_room, terminal_room, pty_full, metadata_changed, metadata_fresh}, future, Session.Session{life, written, observer, explicit, waiting, pointer, manage}))))), Laws.lease(Laws.after(Session.begun(Session.fact_advanced(Boundary.ObserverGone{loss}, was, revision), held, Nil{}, tracker, Session.anchored(unanchored, Boundary.ObserverGone{loss}, Boundary.Flags{held, routed, room, alternate, frame_room, above_live, clipboard, clipboard_overflow, tracking, shift, unanchored, result_frame_room, outside, host_room, terminal_room, pty_full, metadata_changed, metadata_fresh}, future, Session.Session{life, written, observer, explicit, waiting, pointer, manage}))))) : Laws.Lease}:
+  {Laws.lease_check(Laws.lease(Session.State{Session.Session{life, written, observer, explicit, waiting, pointer, manage}, Session.Shown{revision, was}, tracker}), Boundary.ObserverGone{loss}, Boundary.Flags{held, routed, room, alternate, frame_room, above_live, clipboard, clipboard_overflow, tracking, shift, unanchored, result_frame_room, outside, host_room, terminal_room, pty_full, metadata_changed, metadata_fresh}, Laws.replies(Laws.decided(Session.begun(Session.fact_advanced(Boundary.ObserverGone{loss}, was, revision), held, Nil{}, tracker, Session.anchored(unanchored, Boundary.ObserverGone{loss}, Boundary.Flags{held, routed, room, alternate, frame_room, above_live, clipboard, clipboard_overflow, tracking, shift, unanchored, result_frame_room, outside, host_room, terminal_room, pty_full, metadata_changed, metadata_fresh}, future, Session.Session{life, written, observer, explicit, waiting, pointer, manage}))))) == choose(Laws.lease_check(Laws.lease(Session.State{Session.Session{life, written, observer, explicit, waiting, pointer, manage}, Session.Shown{revision, was}, tracker}), Boundary.ObserverGone{loss}, Boundary.Flags{held, routed, room, alternate, frame_room, above_live, clipboard, clipboard_overflow, tracking, shift, unanchored, result_frame_room, outside, host_room, terminal_room, pty_full, metadata_changed, metadata_fresh}, Laws.replies(Laws.decided(Session.begun(Session.fact_advanced(Boundary.ObserverGone{loss}, was, revision), held, Nil{}, tracker, Session.anchored(unanchored, Boundary.ObserverGone{loss}, Boundary.Flags{held, routed, room, alternate, frame_room, above_live, clipboard, clipboard_overflow, tracking, shift, unanchored, result_frame_room, outside, host_room, terminal_room, pty_full, metadata_changed, metadata_fresh}, future, Session.Session{life, written, observer, explicit, waiting, pointer, manage}))))), Laws.lease(Laws.after(Session.begun(Session.fact_advanced(Boundary.ObserverGone{loss}, was, revision), held, Nil{}, tracker, Session.anchored(unanchored, Boundary.ObserverGone{loss}, Boundary.Flags{held, routed, room, alternate, frame_room, above_live, clipboard, clipboard_overflow, tracking, shift, unanchored, result_frame_room, outside, host_room, terminal_room, pty_full, metadata_changed, metadata_fresh}, future, Session.Session{life, written, observer, explicit, waiting, pointer, manage}))))) : Laws.Lease}:
   match life:
     case Orbit.Detached{pid}:
       match unanchored:
@@ -19901,7 +19919,7 @@ def fits_observer_gone(
 def fits_expired(
   life: Orbit.Lifecycle, observer: Bool, waiting: Session.Waiting, pointer: Session.Pointer, written: Bool, explicit: Bool, manage: Management.Slot, tracker: Status.Tracker, revision: Revision.Revision, was: Bool, future: Bool, held: Bool, unanchored: Bool, clipboard_overflow: Bool, clipboard: Bool, routed: Bool, room: Bool, frame_room: Bool, alternate: Bool, above_live: Bool, tracking: Bool, shift: Bool, result_frame_room: Bool, outside: Bool, host_room: Bool, terminal_room: Bool, pty_full: Bool, metadata_changed: Bool, metadata_fresh: Bool
 ) ->
-  {Laws.lease_check(Laws.lease(Session.State{Session.Session{life, written, observer, explicit, waiting, pointer, manage}, Session.Shown{revision, was}, tracker}), Boundary.Expired{}, Laws.replies(Laws.decided(Session.begun(Session.fact_advanced(Boundary.Expired{}, was, revision), held, Nil{}, tracker, Session.anchored(unanchored, Boundary.Expired{}, Boundary.Flags{held, routed, room, alternate, frame_room, above_live, clipboard, clipboard_overflow, tracking, shift, unanchored, result_frame_room, outside, host_room, terminal_room, pty_full, metadata_changed, metadata_fresh}, future, Session.Session{life, written, observer, explicit, waiting, pointer, manage}))))) == choose(Laws.lease_check(Laws.lease(Session.State{Session.Session{life, written, observer, explicit, waiting, pointer, manage}, Session.Shown{revision, was}, tracker}), Boundary.Expired{}, Laws.replies(Laws.decided(Session.begun(Session.fact_advanced(Boundary.Expired{}, was, revision), held, Nil{}, tracker, Session.anchored(unanchored, Boundary.Expired{}, Boundary.Flags{held, routed, room, alternate, frame_room, above_live, clipboard, clipboard_overflow, tracking, shift, unanchored, result_frame_room, outside, host_room, terminal_room, pty_full, metadata_changed, metadata_fresh}, future, Session.Session{life, written, observer, explicit, waiting, pointer, manage}))))), Laws.lease(Laws.after(Session.begun(Session.fact_advanced(Boundary.Expired{}, was, revision), held, Nil{}, tracker, Session.anchored(unanchored, Boundary.Expired{}, Boundary.Flags{held, routed, room, alternate, frame_room, above_live, clipboard, clipboard_overflow, tracking, shift, unanchored, result_frame_room, outside, host_room, terminal_room, pty_full, metadata_changed, metadata_fresh}, future, Session.Session{life, written, observer, explicit, waiting, pointer, manage}))))) : Laws.Lease}:
+  {Laws.lease_check(Laws.lease(Session.State{Session.Session{life, written, observer, explicit, waiting, pointer, manage}, Session.Shown{revision, was}, tracker}), Boundary.Expired{}, Boundary.Flags{held, routed, room, alternate, frame_room, above_live, clipboard, clipboard_overflow, tracking, shift, unanchored, result_frame_room, outside, host_room, terminal_room, pty_full, metadata_changed, metadata_fresh}, Laws.replies(Laws.decided(Session.begun(Session.fact_advanced(Boundary.Expired{}, was, revision), held, Nil{}, tracker, Session.anchored(unanchored, Boundary.Expired{}, Boundary.Flags{held, routed, room, alternate, frame_room, above_live, clipboard, clipboard_overflow, tracking, shift, unanchored, result_frame_room, outside, host_room, terminal_room, pty_full, metadata_changed, metadata_fresh}, future, Session.Session{life, written, observer, explicit, waiting, pointer, manage}))))) == choose(Laws.lease_check(Laws.lease(Session.State{Session.Session{life, written, observer, explicit, waiting, pointer, manage}, Session.Shown{revision, was}, tracker}), Boundary.Expired{}, Boundary.Flags{held, routed, room, alternate, frame_room, above_live, clipboard, clipboard_overflow, tracking, shift, unanchored, result_frame_room, outside, host_room, terminal_room, pty_full, metadata_changed, metadata_fresh}, Laws.replies(Laws.decided(Session.begun(Session.fact_advanced(Boundary.Expired{}, was, revision), held, Nil{}, tracker, Session.anchored(unanchored, Boundary.Expired{}, Boundary.Flags{held, routed, room, alternate, frame_room, above_live, clipboard, clipboard_overflow, tracking, shift, unanchored, result_frame_room, outside, host_room, terminal_room, pty_full, metadata_changed, metadata_fresh}, future, Session.Session{life, written, observer, explicit, waiting, pointer, manage}))))), Laws.lease(Laws.after(Session.begun(Session.fact_advanced(Boundary.Expired{}, was, revision), held, Nil{}, tracker, Session.anchored(unanchored, Boundary.Expired{}, Boundary.Flags{held, routed, room, alternate, frame_room, above_live, clipboard, clipboard_overflow, tracking, shift, unanchored, result_frame_room, outside, host_room, terminal_room, pty_full, metadata_changed, metadata_fresh}, future, Session.Session{life, written, observer, explicit, waiting, pointer, manage}))))) : Laws.Lease}:
   match life:
     case Orbit.Detached{pid}:
       match observer:
@@ -21099,7 +21117,7 @@ def fits_expired(
 def fits_preview_vertical(
   frev: Revision.Revision, fdirection: Boundary.Direction, life: Orbit.Lifecycle, observer: Bool, waiting: Session.Waiting, pointer: Session.Pointer, written: Bool, explicit: Bool, manage: Management.Slot, tracker: Status.Tracker, revision: Revision.Revision, was: Bool, future: Bool, held: Bool, unanchored: Bool, clipboard_overflow: Bool, clipboard: Bool, routed: Bool, room: Bool, frame_room: Bool, alternate: Bool, above_live: Bool, tracking: Bool, shift: Bool, result_frame_room: Bool, outside: Bool, host_room: Bool, terminal_room: Bool, pty_full: Bool, metadata_changed: Bool, metadata_fresh: Bool
 ) ->
-  {Laws.lease_check(Laws.lease(Session.State{Session.Session{life, written, observer, explicit, waiting, pointer, manage}, Session.Shown{revision, was}, tracker}), Boundary.PreviewVertical{frev, fdirection}, Laws.replies(Laws.decided(Session.begun(Session.fact_advanced(Boundary.PreviewVertical{frev, fdirection}, was, revision), held, Nil{}, tracker, Session.anchored(unanchored, Boundary.PreviewVertical{frev, fdirection}, Boundary.Flags{held, routed, room, alternate, frame_room, above_live, clipboard, clipboard_overflow, tracking, shift, unanchored, result_frame_room, outside, host_room, terminal_room, pty_full, metadata_changed, metadata_fresh}, future, Session.Session{life, written, observer, explicit, waiting, pointer, manage}))))) == choose(Laws.lease_check(Laws.lease(Session.State{Session.Session{life, written, observer, explicit, waiting, pointer, manage}, Session.Shown{revision, was}, tracker}), Boundary.PreviewVertical{frev, fdirection}, Laws.replies(Laws.decided(Session.begun(Session.fact_advanced(Boundary.PreviewVertical{frev, fdirection}, was, revision), held, Nil{}, tracker, Session.anchored(unanchored, Boundary.PreviewVertical{frev, fdirection}, Boundary.Flags{held, routed, room, alternate, frame_room, above_live, clipboard, clipboard_overflow, tracking, shift, unanchored, result_frame_room, outside, host_room, terminal_room, pty_full, metadata_changed, metadata_fresh}, future, Session.Session{life, written, observer, explicit, waiting, pointer, manage}))))), Laws.lease(Laws.after(Session.begun(Session.fact_advanced(Boundary.PreviewVertical{frev, fdirection}, was, revision), held, Nil{}, tracker, Session.anchored(unanchored, Boundary.PreviewVertical{frev, fdirection}, Boundary.Flags{held, routed, room, alternate, frame_room, above_live, clipboard, clipboard_overflow, tracking, shift, unanchored, result_frame_room, outside, host_room, terminal_room, pty_full, metadata_changed, metadata_fresh}, future, Session.Session{life, written, observer, explicit, waiting, pointer, manage}))))) : Laws.Lease}:
+  {Laws.lease_check(Laws.lease(Session.State{Session.Session{life, written, observer, explicit, waiting, pointer, manage}, Session.Shown{revision, was}, tracker}), Boundary.PreviewVertical{frev, fdirection}, Boundary.Flags{held, routed, room, alternate, frame_room, above_live, clipboard, clipboard_overflow, tracking, shift, unanchored, result_frame_room, outside, host_room, terminal_room, pty_full, metadata_changed, metadata_fresh}, Laws.replies(Laws.decided(Session.begun(Session.fact_advanced(Boundary.PreviewVertical{frev, fdirection}, was, revision), held, Nil{}, tracker, Session.anchored(unanchored, Boundary.PreviewVertical{frev, fdirection}, Boundary.Flags{held, routed, room, alternate, frame_room, above_live, clipboard, clipboard_overflow, tracking, shift, unanchored, result_frame_room, outside, host_room, terminal_room, pty_full, metadata_changed, metadata_fresh}, future, Session.Session{life, written, observer, explicit, waiting, pointer, manage}))))) == choose(Laws.lease_check(Laws.lease(Session.State{Session.Session{life, written, observer, explicit, waiting, pointer, manage}, Session.Shown{revision, was}, tracker}), Boundary.PreviewVertical{frev, fdirection}, Boundary.Flags{held, routed, room, alternate, frame_room, above_live, clipboard, clipboard_overflow, tracking, shift, unanchored, result_frame_room, outside, host_room, terminal_room, pty_full, metadata_changed, metadata_fresh}, Laws.replies(Laws.decided(Session.begun(Session.fact_advanced(Boundary.PreviewVertical{frev, fdirection}, was, revision), held, Nil{}, tracker, Session.anchored(unanchored, Boundary.PreviewVertical{frev, fdirection}, Boundary.Flags{held, routed, room, alternate, frame_room, above_live, clipboard, clipboard_overflow, tracking, shift, unanchored, result_frame_room, outside, host_room, terminal_room, pty_full, metadata_changed, metadata_fresh}, future, Session.Session{life, written, observer, explicit, waiting, pointer, manage}))))), Laws.lease(Laws.after(Session.begun(Session.fact_advanced(Boundary.PreviewVertical{frev, fdirection}, was, revision), held, Nil{}, tracker, Session.anchored(unanchored, Boundary.PreviewVertical{frev, fdirection}, Boundary.Flags{held, routed, room, alternate, frame_room, above_live, clipboard, clipboard_overflow, tracking, shift, unanchored, result_frame_room, outside, host_room, terminal_room, pty_full, metadata_changed, metadata_fresh}, future, Session.Session{life, written, observer, explicit, waiting, pointer, manage}))))) : Laws.Lease}:
   match life:
     case Orbit.Detached{pid}:
       match waiting:
@@ -21585,7 +21603,7 @@ def fits_preview_vertical(
 def fits_fault(
   pid: U32, life: Orbit.Lifecycle, observer: Bool, waiting: Session.Waiting, pointer: Session.Pointer, written: Bool, explicit: Bool, manage: Management.Slot, tracker: Status.Tracker, revision: Revision.Revision, was: Bool, future: Bool, held: Bool, unanchored: Bool, clipboard_overflow: Bool, clipboard: Bool, routed: Bool, room: Bool, frame_room: Bool, alternate: Bool, above_live: Bool, tracking: Bool, shift: Bool, result_frame_room: Bool, outside: Bool, host_room: Bool, terminal_room: Bool, pty_full: Bool, metadata_changed: Bool, metadata_fresh: Bool
 ) ->
-  {Laws.lease_check(Laws.lease(Session.State{Session.Session{life, written, observer, explicit, waiting, pointer, manage}, Session.Shown{revision, was}, tracker}), Boundary.Fault{pid}, Laws.replies(Laws.decided(Session.begun(Session.fact_advanced(Boundary.Fault{pid}, was, revision), held, Nil{}, tracker, Session.anchored(unanchored, Boundary.Fault{pid}, Boundary.Flags{held, routed, room, alternate, frame_room, above_live, clipboard, clipboard_overflow, tracking, shift, unanchored, result_frame_room, outside, host_room, terminal_room, pty_full, metadata_changed, metadata_fresh}, future, Session.Session{life, written, observer, explicit, waiting, pointer, manage}))))) == choose(Laws.lease_check(Laws.lease(Session.State{Session.Session{life, written, observer, explicit, waiting, pointer, manage}, Session.Shown{revision, was}, tracker}), Boundary.Fault{pid}, Laws.replies(Laws.decided(Session.begun(Session.fact_advanced(Boundary.Fault{pid}, was, revision), held, Nil{}, tracker, Session.anchored(unanchored, Boundary.Fault{pid}, Boundary.Flags{held, routed, room, alternate, frame_room, above_live, clipboard, clipboard_overflow, tracking, shift, unanchored, result_frame_room, outside, host_room, terminal_room, pty_full, metadata_changed, metadata_fresh}, future, Session.Session{life, written, observer, explicit, waiting, pointer, manage}))))), Laws.lease(Laws.after(Session.begun(Session.fact_advanced(Boundary.Fault{pid}, was, revision), held, Nil{}, tracker, Session.anchored(unanchored, Boundary.Fault{pid}, Boundary.Flags{held, routed, room, alternate, frame_room, above_live, clipboard, clipboard_overflow, tracking, shift, unanchored, result_frame_room, outside, host_room, terminal_room, pty_full, metadata_changed, metadata_fresh}, future, Session.Session{life, written, observer, explicit, waiting, pointer, manage}))))) : Laws.Lease}:
+  {Laws.lease_check(Laws.lease(Session.State{Session.Session{life, written, observer, explicit, waiting, pointer, manage}, Session.Shown{revision, was}, tracker}), Boundary.Fault{pid}, Boundary.Flags{held, routed, room, alternate, frame_room, above_live, clipboard, clipboard_overflow, tracking, shift, unanchored, result_frame_room, outside, host_room, terminal_room, pty_full, metadata_changed, metadata_fresh}, Laws.replies(Laws.decided(Session.begun(Session.fact_advanced(Boundary.Fault{pid}, was, revision), held, Nil{}, tracker, Session.anchored(unanchored, Boundary.Fault{pid}, Boundary.Flags{held, routed, room, alternate, frame_room, above_live, clipboard, clipboard_overflow, tracking, shift, unanchored, result_frame_room, outside, host_room, terminal_room, pty_full, metadata_changed, metadata_fresh}, future, Session.Session{life, written, observer, explicit, waiting, pointer, manage}))))) == choose(Laws.lease_check(Laws.lease(Session.State{Session.Session{life, written, observer, explicit, waiting, pointer, manage}, Session.Shown{revision, was}, tracker}), Boundary.Fault{pid}, Boundary.Flags{held, routed, room, alternate, frame_room, above_live, clipboard, clipboard_overflow, tracking, shift, unanchored, result_frame_room, outside, host_room, terminal_room, pty_full, metadata_changed, metadata_fresh}, Laws.replies(Laws.decided(Session.begun(Session.fact_advanced(Boundary.Fault{pid}, was, revision), held, Nil{}, tracker, Session.anchored(unanchored, Boundary.Fault{pid}, Boundary.Flags{held, routed, room, alternate, frame_room, above_live, clipboard, clipboard_overflow, tracking, shift, unanchored, result_frame_room, outside, host_room, terminal_room, pty_full, metadata_changed, metadata_fresh}, future, Session.Session{life, written, observer, explicit, waiting, pointer, manage}))))), Laws.lease(Laws.after(Session.begun(Session.fact_advanced(Boundary.Fault{pid}, was, revision), held, Nil{}, tracker, Session.anchored(unanchored, Boundary.Fault{pid}, Boundary.Flags{held, routed, room, alternate, frame_room, above_live, clipboard, clipboard_overflow, tracking, shift, unanchored, result_frame_room, outside, host_room, terminal_room, pty_full, metadata_changed, metadata_fresh}, future, Session.Session{life, written, observer, explicit, waiting, pointer, manage}))))) : Laws.Lease}:
   match life:
     case Orbit.Detached{pid}:
       match unanchored:
@@ -21607,7 +21625,7 @@ def fits_fault(
 def fits_wheel(
   input: Boundary.WheelInput, life: Orbit.Lifecycle, observer: Bool, waiting: Session.Waiting, pointer: Session.Pointer, written: Bool, explicit: Bool, manage: Management.Slot, tracker: Status.Tracker, revision: Revision.Revision, was: Bool, future: Bool, held: Bool, unanchored: Bool, clipboard_overflow: Bool, clipboard: Bool, routed: Bool, room: Bool, frame_room: Bool, alternate: Bool, above_live: Bool, tracking: Bool, shift: Bool, result_frame_room: Bool, outside: Bool, host_room: Bool, terminal_room: Bool, pty_full: Bool, metadata_changed: Bool, metadata_fresh: Bool
 ) ->
-  {Laws.lease_check(Laws.lease(Session.State{Session.Session{life, written, observer, explicit, waiting, pointer, manage}, Session.Shown{revision, was}, tracker}), Boundary.Wheel{input}, Laws.replies(Laws.decided(Session.begun(Session.fact_advanced(Boundary.Wheel{input}, was, revision), held, Nil{}, tracker, Session.anchored(unanchored, Boundary.Wheel{input}, Boundary.Flags{held, routed, room, alternate, frame_room, above_live, clipboard, clipboard_overflow, tracking, shift, unanchored, result_frame_room, outside, host_room, terminal_room, pty_full, metadata_changed, metadata_fresh}, future, Session.Session{life, written, observer, explicit, waiting, pointer, manage}))))) == choose(Laws.lease_check(Laws.lease(Session.State{Session.Session{life, written, observer, explicit, waiting, pointer, manage}, Session.Shown{revision, was}, tracker}), Boundary.Wheel{input}, Laws.replies(Laws.decided(Session.begun(Session.fact_advanced(Boundary.Wheel{input}, was, revision), held, Nil{}, tracker, Session.anchored(unanchored, Boundary.Wheel{input}, Boundary.Flags{held, routed, room, alternate, frame_room, above_live, clipboard, clipboard_overflow, tracking, shift, unanchored, result_frame_room, outside, host_room, terminal_room, pty_full, metadata_changed, metadata_fresh}, future, Session.Session{life, written, observer, explicit, waiting, pointer, manage}))))), Laws.lease(Laws.after(Session.begun(Session.fact_advanced(Boundary.Wheel{input}, was, revision), held, Nil{}, tracker, Session.anchored(unanchored, Boundary.Wheel{input}, Boundary.Flags{held, routed, room, alternate, frame_room, above_live, clipboard, clipboard_overflow, tracking, shift, unanchored, result_frame_room, outside, host_room, terminal_room, pty_full, metadata_changed, metadata_fresh}, future, Session.Session{life, written, observer, explicit, waiting, pointer, manage}))))) : Laws.Lease}:
+  {Laws.lease_check(Laws.lease(Session.State{Session.Session{life, written, observer, explicit, waiting, pointer, manage}, Session.Shown{revision, was}, tracker}), Boundary.Wheel{input}, Boundary.Flags{held, routed, room, alternate, frame_room, above_live, clipboard, clipboard_overflow, tracking, shift, unanchored, result_frame_room, outside, host_room, terminal_room, pty_full, metadata_changed, metadata_fresh}, Laws.replies(Laws.decided(Session.begun(Session.fact_advanced(Boundary.Wheel{input}, was, revision), held, Nil{}, tracker, Session.anchored(unanchored, Boundary.Wheel{input}, Boundary.Flags{held, routed, room, alternate, frame_room, above_live, clipboard, clipboard_overflow, tracking, shift, unanchored, result_frame_room, outside, host_room, terminal_room, pty_full, metadata_changed, metadata_fresh}, future, Session.Session{life, written, observer, explicit, waiting, pointer, manage}))))) == choose(Laws.lease_check(Laws.lease(Session.State{Session.Session{life, written, observer, explicit, waiting, pointer, manage}, Session.Shown{revision, was}, tracker}), Boundary.Wheel{input}, Boundary.Flags{held, routed, room, alternate, frame_room, above_live, clipboard, clipboard_overflow, tracking, shift, unanchored, result_frame_room, outside, host_room, terminal_room, pty_full, metadata_changed, metadata_fresh}, Laws.replies(Laws.decided(Session.begun(Session.fact_advanced(Boundary.Wheel{input}, was, revision), held, Nil{}, tracker, Session.anchored(unanchored, Boundary.Wheel{input}, Boundary.Flags{held, routed, room, alternate, frame_room, above_live, clipboard, clipboard_overflow, tracking, shift, unanchored, result_frame_room, outside, host_room, terminal_room, pty_full, metadata_changed, metadata_fresh}, future, Session.Session{life, written, observer, explicit, waiting, pointer, manage}))))), Laws.lease(Laws.after(Session.begun(Session.fact_advanced(Boundary.Wheel{input}, was, revision), held, Nil{}, tracker, Session.anchored(unanchored, Boundary.Wheel{input}, Boundary.Flags{held, routed, room, alternate, frame_room, above_live, clipboard, clipboard_overflow, tracking, shift, unanchored, result_frame_room, outside, host_room, terminal_room, pty_full, metadata_changed, metadata_fresh}, future, Session.Session{life, written, observer, explicit, waiting, pointer, manage}))))) : Laws.Lease}:
   match input:
     case Boundary.WheelInputFits{}:
       match life:
@@ -22581,7 +22599,7 @@ def fits_wheel(
 def fits_selection(
   kind: Boundary.SelectionKind, frev: Revision.Revision, life: Orbit.Lifecycle, observer: Bool, waiting: Session.Waiting, pointer: Session.Pointer, written: Bool, explicit: Bool, manage: Management.Slot, tracker: Status.Tracker, revision: Revision.Revision, was: Bool, future: Bool, held: Bool, unanchored: Bool, clipboard_overflow: Bool, clipboard: Bool, routed: Bool, room: Bool, frame_room: Bool, alternate: Bool, above_live: Bool, tracking: Bool, shift: Bool, result_frame_room: Bool, outside: Bool, host_room: Bool, terminal_room: Bool, pty_full: Bool, metadata_changed: Bool, metadata_fresh: Bool
 ) ->
-  {Laws.lease_check(Laws.lease(Session.State{Session.Session{life, written, observer, explicit, waiting, pointer, manage}, Session.Shown{revision, was}, tracker}), Boundary.Selection{kind, frev}, Laws.replies(Laws.decided(Session.begun(Session.fact_advanced(Boundary.Selection{kind, frev}, was, revision), held, Nil{}, tracker, Session.anchored(unanchored, Boundary.Selection{kind, frev}, Boundary.Flags{held, routed, room, alternate, frame_room, above_live, clipboard, clipboard_overflow, tracking, shift, unanchored, result_frame_room, outside, host_room, terminal_room, pty_full, metadata_changed, metadata_fresh}, future, Session.Session{life, written, observer, explicit, waiting, pointer, manage}))))) == choose(Laws.lease_check(Laws.lease(Session.State{Session.Session{life, written, observer, explicit, waiting, pointer, manage}, Session.Shown{revision, was}, tracker}), Boundary.Selection{kind, frev}, Laws.replies(Laws.decided(Session.begun(Session.fact_advanced(Boundary.Selection{kind, frev}, was, revision), held, Nil{}, tracker, Session.anchored(unanchored, Boundary.Selection{kind, frev}, Boundary.Flags{held, routed, room, alternate, frame_room, above_live, clipboard, clipboard_overflow, tracking, shift, unanchored, result_frame_room, outside, host_room, terminal_room, pty_full, metadata_changed, metadata_fresh}, future, Session.Session{life, written, observer, explicit, waiting, pointer, manage}))))), Laws.lease(Laws.after(Session.begun(Session.fact_advanced(Boundary.Selection{kind, frev}, was, revision), held, Nil{}, tracker, Session.anchored(unanchored, Boundary.Selection{kind, frev}, Boundary.Flags{held, routed, room, alternate, frame_room, above_live, clipboard, clipboard_overflow, tracking, shift, unanchored, result_frame_room, outside, host_room, terminal_room, pty_full, metadata_changed, metadata_fresh}, future, Session.Session{life, written, observer, explicit, waiting, pointer, manage}))))) : Laws.Lease}:
+  {Laws.lease_check(Laws.lease(Session.State{Session.Session{life, written, observer, explicit, waiting, pointer, manage}, Session.Shown{revision, was}, tracker}), Boundary.Selection{kind, frev}, Boundary.Flags{held, routed, room, alternate, frame_room, above_live, clipboard, clipboard_overflow, tracking, shift, unanchored, result_frame_room, outside, host_room, terminal_room, pty_full, metadata_changed, metadata_fresh}, Laws.replies(Laws.decided(Session.begun(Session.fact_advanced(Boundary.Selection{kind, frev}, was, revision), held, Nil{}, tracker, Session.anchored(unanchored, Boundary.Selection{kind, frev}, Boundary.Flags{held, routed, room, alternate, frame_room, above_live, clipboard, clipboard_overflow, tracking, shift, unanchored, result_frame_room, outside, host_room, terminal_room, pty_full, metadata_changed, metadata_fresh}, future, Session.Session{life, written, observer, explicit, waiting, pointer, manage}))))) == choose(Laws.lease_check(Laws.lease(Session.State{Session.Session{life, written, observer, explicit, waiting, pointer, manage}, Session.Shown{revision, was}, tracker}), Boundary.Selection{kind, frev}, Boundary.Flags{held, routed, room, alternate, frame_room, above_live, clipboard, clipboard_overflow, tracking, shift, unanchored, result_frame_room, outside, host_room, terminal_room, pty_full, metadata_changed, metadata_fresh}, Laws.replies(Laws.decided(Session.begun(Session.fact_advanced(Boundary.Selection{kind, frev}, was, revision), held, Nil{}, tracker, Session.anchored(unanchored, Boundary.Selection{kind, frev}, Boundary.Flags{held, routed, room, alternate, frame_room, above_live, clipboard, clipboard_overflow, tracking, shift, unanchored, result_frame_room, outside, host_room, terminal_room, pty_full, metadata_changed, metadata_fresh}, future, Session.Session{life, written, observer, explicit, waiting, pointer, manage}))))), Laws.lease(Laws.after(Session.begun(Session.fact_advanced(Boundary.Selection{kind, frev}, was, revision), held, Nil{}, tracker, Session.anchored(unanchored, Boundary.Selection{kind, frev}, Boundary.Flags{held, routed, room, alternate, frame_room, above_live, clipboard, clipboard_overflow, tracking, shift, unanchored, result_frame_room, outside, host_room, terminal_room, pty_full, metadata_changed, metadata_fresh}, future, Session.Session{life, written, observer, explicit, waiting, pointer, manage}))))) : Laws.Lease}:
   match kind:
     case Boundary.SelectionKindBegin{}:
       match life:
@@ -30509,7 +30527,7 @@ def fits_selection(
 def fits_selected(
   outcome: Boundary.Selected, presented: Bool, life: Orbit.Lifecycle, observer: Bool, waiting: Session.Waiting, pointer: Session.Pointer, written: Bool, explicit: Bool, manage: Management.Slot, tracker: Status.Tracker, revision: Revision.Revision, was: Bool, future: Bool, held: Bool, unanchored: Bool, clipboard_overflow: Bool, clipboard: Bool, routed: Bool, room: Bool, frame_room: Bool, alternate: Bool, above_live: Bool, tracking: Bool, shift: Bool, result_frame_room: Bool, outside: Bool, host_room: Bool, terminal_room: Bool, pty_full: Bool, metadata_changed: Bool, metadata_fresh: Bool
 ) ->
-  {Laws.lease_check(Laws.lease(Session.State{Session.Session{life, written, observer, explicit, waiting, pointer, manage}, Session.Shown{revision, was}, tracker}), Boundary.Selected{outcome, presented}, Laws.replies(Laws.decided(Session.begun(Session.fact_advanced(Boundary.Selected{outcome, presented}, was, revision), held, Nil{}, tracker, Session.anchored(unanchored, Boundary.Selected{outcome, presented}, Boundary.Flags{held, routed, room, alternate, frame_room, above_live, clipboard, clipboard_overflow, tracking, shift, unanchored, result_frame_room, outside, host_room, terminal_room, pty_full, metadata_changed, metadata_fresh}, future, Session.Session{life, written, observer, explicit, waiting, pointer, manage}))))) == choose(Laws.lease_check(Laws.lease(Session.State{Session.Session{life, written, observer, explicit, waiting, pointer, manage}, Session.Shown{revision, was}, tracker}), Boundary.Selected{outcome, presented}, Laws.replies(Laws.decided(Session.begun(Session.fact_advanced(Boundary.Selected{outcome, presented}, was, revision), held, Nil{}, tracker, Session.anchored(unanchored, Boundary.Selected{outcome, presented}, Boundary.Flags{held, routed, room, alternate, frame_room, above_live, clipboard, clipboard_overflow, tracking, shift, unanchored, result_frame_room, outside, host_room, terminal_room, pty_full, metadata_changed, metadata_fresh}, future, Session.Session{life, written, observer, explicit, waiting, pointer, manage}))))), Laws.lease(Laws.after(Session.begun(Session.fact_advanced(Boundary.Selected{outcome, presented}, was, revision), held, Nil{}, tracker, Session.anchored(unanchored, Boundary.Selected{outcome, presented}, Boundary.Flags{held, routed, room, alternate, frame_room, above_live, clipboard, clipboard_overflow, tracking, shift, unanchored, result_frame_room, outside, host_room, terminal_room, pty_full, metadata_changed, metadata_fresh}, future, Session.Session{life, written, observer, explicit, waiting, pointer, manage}))))) : Laws.Lease}:
+  {Laws.lease_check(Laws.lease(Session.State{Session.Session{life, written, observer, explicit, waiting, pointer, manage}, Session.Shown{revision, was}, tracker}), Boundary.Selected{outcome, presented}, Boundary.Flags{held, routed, room, alternate, frame_room, above_live, clipboard, clipboard_overflow, tracking, shift, unanchored, result_frame_room, outside, host_room, terminal_room, pty_full, metadata_changed, metadata_fresh}, Laws.replies(Laws.decided(Session.begun(Session.fact_advanced(Boundary.Selected{outcome, presented}, was, revision), held, Nil{}, tracker, Session.anchored(unanchored, Boundary.Selected{outcome, presented}, Boundary.Flags{held, routed, room, alternate, frame_room, above_live, clipboard, clipboard_overflow, tracking, shift, unanchored, result_frame_room, outside, host_room, terminal_room, pty_full, metadata_changed, metadata_fresh}, future, Session.Session{life, written, observer, explicit, waiting, pointer, manage}))))) == choose(Laws.lease_check(Laws.lease(Session.State{Session.Session{life, written, observer, explicit, waiting, pointer, manage}, Session.Shown{revision, was}, tracker}), Boundary.Selected{outcome, presented}, Boundary.Flags{held, routed, room, alternate, frame_room, above_live, clipboard, clipboard_overflow, tracking, shift, unanchored, result_frame_room, outside, host_room, terminal_room, pty_full, metadata_changed, metadata_fresh}, Laws.replies(Laws.decided(Session.begun(Session.fact_advanced(Boundary.Selected{outcome, presented}, was, revision), held, Nil{}, tracker, Session.anchored(unanchored, Boundary.Selected{outcome, presented}, Boundary.Flags{held, routed, room, alternate, frame_room, above_live, clipboard, clipboard_overflow, tracking, shift, unanchored, result_frame_room, outside, host_room, terminal_room, pty_full, metadata_changed, metadata_fresh}, future, Session.Session{life, written, observer, explicit, waiting, pointer, manage}))))), Laws.lease(Laws.after(Session.begun(Session.fact_advanced(Boundary.Selected{outcome, presented}, was, revision), held, Nil{}, tracker, Session.anchored(unanchored, Boundary.Selected{outcome, presented}, Boundary.Flags{held, routed, room, alternate, frame_room, above_live, clipboard, clipboard_overflow, tracking, shift, unanchored, result_frame_room, outside, host_room, terminal_room, pty_full, metadata_changed, metadata_fresh}, future, Session.Session{life, written, observer, explicit, waiting, pointer, manage}))))) : Laws.Lease}:
   match outcome:
     case Boundary.SelectedApplied{}:
       match life:
@@ -36369,7 +36387,7 @@ def fits_selected(
 def fits_tick(
   tstate: Boundary.TickState, fx: U32, fy: U32, life: Orbit.Lifecycle, observer: Bool, waiting: Session.Waiting, pointer: Session.Pointer, written: Bool, explicit: Bool, manage: Management.Slot, tracker: Status.Tracker, revision: Revision.Revision, was: Bool, future: Bool, held: Bool, unanchored: Bool, clipboard_overflow: Bool, clipboard: Bool, routed: Bool, room: Bool, frame_room: Bool, alternate: Bool, above_live: Bool, tracking: Bool, shift: Bool, result_frame_room: Bool, outside: Bool, host_room: Bool, terminal_room: Bool, pty_full: Bool, metadata_changed: Bool, metadata_fresh: Bool
 ) ->
-  {Laws.lease_check(Laws.lease(Session.State{Session.Session{life, written, observer, explicit, waiting, pointer, manage}, Session.Shown{revision, was}, tracker}), Boundary.Tick{tstate, fx, fy}, Laws.replies(Laws.decided(Session.begun(Session.fact_advanced(Boundary.Tick{tstate, fx, fy}, was, revision), held, Nil{}, tracker, Session.anchored(unanchored, Boundary.Tick{tstate, fx, fy}, Boundary.Flags{held, routed, room, alternate, frame_room, above_live, clipboard, clipboard_overflow, tracking, shift, unanchored, result_frame_room, outside, host_room, terminal_room, pty_full, metadata_changed, metadata_fresh}, future, Session.Session{life, written, observer, explicit, waiting, pointer, manage}))))) == choose(Laws.lease_check(Laws.lease(Session.State{Session.Session{life, written, observer, explicit, waiting, pointer, manage}, Session.Shown{revision, was}, tracker}), Boundary.Tick{tstate, fx, fy}, Laws.replies(Laws.decided(Session.begun(Session.fact_advanced(Boundary.Tick{tstate, fx, fy}, was, revision), held, Nil{}, tracker, Session.anchored(unanchored, Boundary.Tick{tstate, fx, fy}, Boundary.Flags{held, routed, room, alternate, frame_room, above_live, clipboard, clipboard_overflow, tracking, shift, unanchored, result_frame_room, outside, host_room, terminal_room, pty_full, metadata_changed, metadata_fresh}, future, Session.Session{life, written, observer, explicit, waiting, pointer, manage}))))), Laws.lease(Laws.after(Session.begun(Session.fact_advanced(Boundary.Tick{tstate, fx, fy}, was, revision), held, Nil{}, tracker, Session.anchored(unanchored, Boundary.Tick{tstate, fx, fy}, Boundary.Flags{held, routed, room, alternate, frame_room, above_live, clipboard, clipboard_overflow, tracking, shift, unanchored, result_frame_room, outside, host_room, terminal_room, pty_full, metadata_changed, metadata_fresh}, future, Session.Session{life, written, observer, explicit, waiting, pointer, manage}))))) : Laws.Lease}:
+  {Laws.lease_check(Laws.lease(Session.State{Session.Session{life, written, observer, explicit, waiting, pointer, manage}, Session.Shown{revision, was}, tracker}), Boundary.Tick{tstate, fx, fy}, Boundary.Flags{held, routed, room, alternate, frame_room, above_live, clipboard, clipboard_overflow, tracking, shift, unanchored, result_frame_room, outside, host_room, terminal_room, pty_full, metadata_changed, metadata_fresh}, Laws.replies(Laws.decided(Session.begun(Session.fact_advanced(Boundary.Tick{tstate, fx, fy}, was, revision), held, Nil{}, tracker, Session.anchored(unanchored, Boundary.Tick{tstate, fx, fy}, Boundary.Flags{held, routed, room, alternate, frame_room, above_live, clipboard, clipboard_overflow, tracking, shift, unanchored, result_frame_room, outside, host_room, terminal_room, pty_full, metadata_changed, metadata_fresh}, future, Session.Session{life, written, observer, explicit, waiting, pointer, manage}))))) == choose(Laws.lease_check(Laws.lease(Session.State{Session.Session{life, written, observer, explicit, waiting, pointer, manage}, Session.Shown{revision, was}, tracker}), Boundary.Tick{tstate, fx, fy}, Boundary.Flags{held, routed, room, alternate, frame_room, above_live, clipboard, clipboard_overflow, tracking, shift, unanchored, result_frame_room, outside, host_room, terminal_room, pty_full, metadata_changed, metadata_fresh}, Laws.replies(Laws.decided(Session.begun(Session.fact_advanced(Boundary.Tick{tstate, fx, fy}, was, revision), held, Nil{}, tracker, Session.anchored(unanchored, Boundary.Tick{tstate, fx, fy}, Boundary.Flags{held, routed, room, alternate, frame_room, above_live, clipboard, clipboard_overflow, tracking, shift, unanchored, result_frame_room, outside, host_room, terminal_room, pty_full, metadata_changed, metadata_fresh}, future, Session.Session{life, written, observer, explicit, waiting, pointer, manage}))))), Laws.lease(Laws.after(Session.begun(Session.fact_advanced(Boundary.Tick{tstate, fx, fy}, was, revision), held, Nil{}, tracker, Session.anchored(unanchored, Boundary.Tick{tstate, fx, fy}, Boundary.Flags{held, routed, room, alternate, frame_room, above_live, clipboard, clipboard_overflow, tracking, shift, unanchored, result_frame_room, outside, host_room, terminal_room, pty_full, metadata_changed, metadata_fresh}, future, Session.Session{life, written, observer, explicit, waiting, pointer, manage}))))) : Laws.Lease}:
   match tstate:
     case Boundary.TickStateFits{}:
       match life:
@@ -36877,7 +36895,7 @@ def fits_tick(
 def fits_management(
   event: Boundary.ManagementEvent, life: Orbit.Lifecycle, observer: Bool, waiting: Session.Waiting, pointer: Session.Pointer, written: Bool, explicit: Bool, manage: Management.Slot, tracker: Status.Tracker, revision: Revision.Revision, was: Bool, future: Bool, held: Bool, unanchored: Bool, clipboard_overflow: Bool, clipboard: Bool, routed: Bool, room: Bool, frame_room: Bool, alternate: Bool, above_live: Bool, tracking: Bool, shift: Bool, result_frame_room: Bool, outside: Bool, host_room: Bool, terminal_room: Bool, pty_full: Bool, metadata_changed: Bool, metadata_fresh: Bool
 ) ->
-  {Laws.lease_check(Laws.lease(Session.State{Session.Session{life, written, observer, explicit, waiting, pointer, manage}, Session.Shown{revision, was}, tracker}), Boundary.Management{event}, Laws.replies(Laws.decided(Session.begun(Session.fact_advanced(Boundary.Management{event}, was, revision), held, Nil{}, tracker, Session.anchored(unanchored, Boundary.Management{event}, Boundary.Flags{held, routed, room, alternate, frame_room, above_live, clipboard, clipboard_overflow, tracking, shift, unanchored, result_frame_room, outside, host_room, terminal_room, pty_full, metadata_changed, metadata_fresh}, future, Session.Session{life, written, observer, explicit, waiting, pointer, manage}))))) == choose(Laws.lease_check(Laws.lease(Session.State{Session.Session{life, written, observer, explicit, waiting, pointer, manage}, Session.Shown{revision, was}, tracker}), Boundary.Management{event}, Laws.replies(Laws.decided(Session.begun(Session.fact_advanced(Boundary.Management{event}, was, revision), held, Nil{}, tracker, Session.anchored(unanchored, Boundary.Management{event}, Boundary.Flags{held, routed, room, alternate, frame_room, above_live, clipboard, clipboard_overflow, tracking, shift, unanchored, result_frame_room, outside, host_room, terminal_room, pty_full, metadata_changed, metadata_fresh}, future, Session.Session{life, written, observer, explicit, waiting, pointer, manage}))))), Laws.lease(Laws.after(Session.begun(Session.fact_advanced(Boundary.Management{event}, was, revision), held, Nil{}, tracker, Session.anchored(unanchored, Boundary.Management{event}, Boundary.Flags{held, routed, room, alternate, frame_room, above_live, clipboard, clipboard_overflow, tracking, shift, unanchored, result_frame_room, outside, host_room, terminal_room, pty_full, metadata_changed, metadata_fresh}, future, Session.Session{life, written, observer, explicit, waiting, pointer, manage}))))) : Laws.Lease}:
+  {Laws.lease_check(Laws.lease(Session.State{Session.Session{life, written, observer, explicit, waiting, pointer, manage}, Session.Shown{revision, was}, tracker}), Boundary.Management{event}, Boundary.Flags{held, routed, room, alternate, frame_room, above_live, clipboard, clipboard_overflow, tracking, shift, unanchored, result_frame_room, outside, host_room, terminal_room, pty_full, metadata_changed, metadata_fresh}, Laws.replies(Laws.decided(Session.begun(Session.fact_advanced(Boundary.Management{event}, was, revision), held, Nil{}, tracker, Session.anchored(unanchored, Boundary.Management{event}, Boundary.Flags{held, routed, room, alternate, frame_room, above_live, clipboard, clipboard_overflow, tracking, shift, unanchored, result_frame_room, outside, host_room, terminal_room, pty_full, metadata_changed, metadata_fresh}, future, Session.Session{life, written, observer, explicit, waiting, pointer, manage}))))) == choose(Laws.lease_check(Laws.lease(Session.State{Session.Session{life, written, observer, explicit, waiting, pointer, manage}, Session.Shown{revision, was}, tracker}), Boundary.Management{event}, Boundary.Flags{held, routed, room, alternate, frame_room, above_live, clipboard, clipboard_overflow, tracking, shift, unanchored, result_frame_room, outside, host_room, terminal_room, pty_full, metadata_changed, metadata_fresh}, Laws.replies(Laws.decided(Session.begun(Session.fact_advanced(Boundary.Management{event}, was, revision), held, Nil{}, tracker, Session.anchored(unanchored, Boundary.Management{event}, Boundary.Flags{held, routed, room, alternate, frame_room, above_live, clipboard, clipboard_overflow, tracking, shift, unanchored, result_frame_room, outside, host_room, terminal_room, pty_full, metadata_changed, metadata_fresh}, future, Session.Session{life, written, observer, explicit, waiting, pointer, manage}))))), Laws.lease(Laws.after(Session.begun(Session.fact_advanced(Boundary.Management{event}, was, revision), held, Nil{}, tracker, Session.anchored(unanchored, Boundary.Management{event}, Boundary.Flags{held, routed, room, alternate, frame_room, above_live, clipboard, clipboard_overflow, tracking, shift, unanchored, result_frame_room, outside, host_room, terminal_room, pty_full, metadata_changed, metadata_fresh}, future, Session.Session{life, written, observer, explicit, waiting, pointer, manage}))))) : Laws.Lease}:
   match event:
     case Boundary.ManagementEventConnect{}:
       match life:
@@ -37957,11 +37975,883 @@ def fits_management(
           {==}
         case Orbit.Stopped{pid}:
           {==}
+    case Boundary.ManagementEventRead{}:
+      match life:
+        case Orbit.Detached{pid}:
+          match pointer:
+            case Session.Pointer{route, lit, copied}:
+              match route:
+                case Selection.Idle{}:
+                  match manage:
+                    case Management.Free{}:
+                      match held:
+                        case True{}:
+                          match unanchored:
+                            case True{}:
+                              {==}
+                            case False{}:
+                              {==}
+                        case False{}:
+                          match unanchored:
+                            case True{}:
+                              {==}
+                            case False{}:
+                              {==}
+                    case Management.Negotiating{}:
+                      match held:
+                        case True{}:
+                          match unanchored:
+                            case True{}:
+                              {==}
+                            case False{}:
+                              {==}
+                        case False{}:
+                          match unanchored:
+                            case True{}:
+                              {==}
+                            case False{}:
+                              {==}
+                    case Management.Leased{}:
+                      match held:
+                        case True{}:
+                          match unanchored:
+                            case True{}:
+                              {==}
+                            case False{}:
+                              {==}
+                        case False{}:
+                          match unanchored:
+                            case True{}:
+                              {==}
+                            case False{}:
+                              {==}
+                    case Management.Closing{}:
+                      match held:
+                        case True{}:
+                          match unanchored:
+                            case True{}:
+                              {==}
+                            case False{}:
+                              {==}
+                        case False{}:
+                          match unanchored:
+                            case True{}:
+                              {==}
+                            case False{}:
+                              {==}
+                case Selection.Host{}:
+                  match manage:
+                    case Management.Free{}:
+                      match held:
+                        case True{}:
+                          match unanchored:
+                            case True{}:
+                              {==}
+                            case False{}:
+                              {==}
+                        case False{}:
+                          match unanchored:
+                            case True{}:
+                              {==}
+                            case False{}:
+                              {==}
+                    case Management.Negotiating{}:
+                      match held:
+                        case True{}:
+                          match unanchored:
+                            case True{}:
+                              {==}
+                            case False{}:
+                              {==}
+                        case False{}:
+                          match unanchored:
+                            case True{}:
+                              {==}
+                            case False{}:
+                              {==}
+                    case Management.Leased{}:
+                      match held:
+                        case True{}:
+                          match unanchored:
+                            case True{}:
+                              {==}
+                            case False{}:
+                              {==}
+                        case False{}:
+                          match unanchored:
+                            case True{}:
+                              {==}
+                            case False{}:
+                              {==}
+                    case Management.Closing{}:
+                      match held:
+                        case True{}:
+                          match unanchored:
+                            case True{}:
+                              {==}
+                            case False{}:
+                              {==}
+                        case False{}:
+                          match unanchored:
+                            case True{}:
+                              {==}
+                            case False{}:
+                              {==}
+                case Selection.Terminal{}:
+                  match manage:
+                    case Management.Free{}:
+                      match held:
+                        case True{}:
+                          match unanchored:
+                            case True{}:
+                              {==}
+                            case False{}:
+                              {==}
+                        case False{}:
+                          match unanchored:
+                            case True{}:
+                              {==}
+                            case False{}:
+                              {==}
+                    case Management.Negotiating{}:
+                      match held:
+                        case True{}:
+                          match unanchored:
+                            case True{}:
+                              {==}
+                            case False{}:
+                              {==}
+                        case False{}:
+                          match unanchored:
+                            case True{}:
+                              {==}
+                            case False{}:
+                              {==}
+                    case Management.Leased{}:
+                      match held:
+                        case True{}:
+                          match unanchored:
+                            case True{}:
+                              {==}
+                            case False{}:
+                              {==}
+                        case False{}:
+                          match unanchored:
+                            case True{}:
+                              {==}
+                            case False{}:
+                              {==}
+                    case Management.Closing{}:
+                      match held:
+                        case True{}:
+                          match unanchored:
+                            case True{}:
+                              {==}
+                            case False{}:
+                              {==}
+                        case False{}:
+                          match unanchored:
+                            case True{}:
+                              {==}
+                            case False{}:
+                              {==}
+        case Orbit.Attached{pid}:
+          match pointer:
+            case Session.Pointer{route, lit, copied}:
+              match route:
+                case Selection.Idle{}:
+                  match manage:
+                    case Management.Free{}:
+                      match held:
+                        case True{}:
+                          match unanchored:
+                            case True{}:
+                              {==}
+                            case False{}:
+                              {==}
+                        case False{}:
+                          match unanchored:
+                            case True{}:
+                              {==}
+                            case False{}:
+                              {==}
+                    case Management.Negotiating{}:
+                      match held:
+                        case True{}:
+                          match unanchored:
+                            case True{}:
+                              {==}
+                            case False{}:
+                              {==}
+                        case False{}:
+                          match unanchored:
+                            case True{}:
+                              {==}
+                            case False{}:
+                              {==}
+                    case Management.Leased{}:
+                      match held:
+                        case True{}:
+                          match unanchored:
+                            case True{}:
+                              {==}
+                            case False{}:
+                              {==}
+                        case False{}:
+                          match unanchored:
+                            case True{}:
+                              {==}
+                            case False{}:
+                              {==}
+                    case Management.Closing{}:
+                      match held:
+                        case True{}:
+                          match unanchored:
+                            case True{}:
+                              {==}
+                            case False{}:
+                              {==}
+                        case False{}:
+                          match unanchored:
+                            case True{}:
+                              {==}
+                            case False{}:
+                              {==}
+                case Selection.Host{}:
+                  match manage:
+                    case Management.Free{}:
+                      match held:
+                        case True{}:
+                          match unanchored:
+                            case True{}:
+                              {==}
+                            case False{}:
+                              {==}
+                        case False{}:
+                          match unanchored:
+                            case True{}:
+                              {==}
+                            case False{}:
+                              {==}
+                    case Management.Negotiating{}:
+                      match held:
+                        case True{}:
+                          match unanchored:
+                            case True{}:
+                              {==}
+                            case False{}:
+                              {==}
+                        case False{}:
+                          match unanchored:
+                            case True{}:
+                              {==}
+                            case False{}:
+                              {==}
+                    case Management.Leased{}:
+                      match held:
+                        case True{}:
+                          match unanchored:
+                            case True{}:
+                              {==}
+                            case False{}:
+                              {==}
+                        case False{}:
+                          match unanchored:
+                            case True{}:
+                              {==}
+                            case False{}:
+                              {==}
+                    case Management.Closing{}:
+                      match held:
+                        case True{}:
+                          match unanchored:
+                            case True{}:
+                              {==}
+                            case False{}:
+                              {==}
+                        case False{}:
+                          match unanchored:
+                            case True{}:
+                              {==}
+                            case False{}:
+                              {==}
+                case Selection.Terminal{}:
+                  match manage:
+                    case Management.Free{}:
+                      match held:
+                        case True{}:
+                          match unanchored:
+                            case True{}:
+                              {==}
+                            case False{}:
+                              {==}
+                        case False{}:
+                          match unanchored:
+                            case True{}:
+                              {==}
+                            case False{}:
+                              {==}
+                    case Management.Negotiating{}:
+                      match held:
+                        case True{}:
+                          match unanchored:
+                            case True{}:
+                              {==}
+                            case False{}:
+                              {==}
+                        case False{}:
+                          match unanchored:
+                            case True{}:
+                              {==}
+                            case False{}:
+                              {==}
+                    case Management.Leased{}:
+                      match held:
+                        case True{}:
+                          match unanchored:
+                            case True{}:
+                              {==}
+                            case False{}:
+                              {==}
+                        case False{}:
+                          match unanchored:
+                            case True{}:
+                              {==}
+                            case False{}:
+                              {==}
+                    case Management.Closing{}:
+                      match held:
+                        case True{}:
+                          match unanchored:
+                            case True{}:
+                              {==}
+                            case False{}:
+                              {==}
+                        case False{}:
+                          match unanchored:
+                            case True{}:
+                              {==}
+                            case False{}:
+                              {==}
+        case Orbit.Stopping{pid}:
+          {==}
+        case Orbit.Stopped{pid}:
+          {==}
+    case Boundary.ManagementEventInput{}:
+      match life:
+        case Orbit.Detached{pid}:
+          match pointer:
+            case Session.Pointer{route, lit, copied}:
+              match route:
+                case Selection.Idle{}:
+                  match manage:
+                    case Management.Free{}:
+                      match unanchored:
+                        case True{}:
+                          {==}
+                        case False{}:
+                          {==}
+                    case Management.Negotiating{}:
+                      match unanchored:
+                        case True{}:
+                          {==}
+                        case False{}:
+                          {==}
+                    case Management.Leased{}:
+                      match unanchored:
+                        case True{}:
+                          {==}
+                        case False{}:
+                          {==}
+                    case Management.Closing{}:
+                      match unanchored:
+                        case True{}:
+                          {==}
+                        case False{}:
+                          {==}
+                case Selection.Host{}:
+                  match manage:
+                    case Management.Free{}:
+                      match unanchored:
+                        case True{}:
+                          {==}
+                        case False{}:
+                          {==}
+                    case Management.Negotiating{}:
+                      match unanchored:
+                        case True{}:
+                          {==}
+                        case False{}:
+                          {==}
+                    case Management.Leased{}:
+                      match unanchored:
+                        case True{}:
+                          {==}
+                        case False{}:
+                          {==}
+                    case Management.Closing{}:
+                      match unanchored:
+                        case True{}:
+                          {==}
+                        case False{}:
+                          {==}
+                case Selection.Terminal{}:
+                  match manage:
+                    case Management.Free{}:
+                      match unanchored:
+                        case True{}:
+                          {==}
+                        case False{}:
+                          {==}
+                    case Management.Negotiating{}:
+                      match unanchored:
+                        case True{}:
+                          {==}
+                        case False{}:
+                          {==}
+                    case Management.Leased{}:
+                      match unanchored:
+                        case True{}:
+                          {==}
+                        case False{}:
+                          {==}
+                    case Management.Closing{}:
+                      match unanchored:
+                        case True{}:
+                          {==}
+                        case False{}:
+                          {==}
+        case Orbit.Attached{pid}:
+          match pointer:
+            case Session.Pointer{route, lit, copied}:
+              match route:
+                case Selection.Idle{}:
+                  match manage:
+                    case Management.Free{}:
+                      match unanchored:
+                        case True{}:
+                          {==}
+                        case False{}:
+                          {==}
+                    case Management.Negotiating{}:
+                      match unanchored:
+                        case True{}:
+                          {==}
+                        case False{}:
+                          {==}
+                    case Management.Leased{}:
+                      match unanchored:
+                        case True{}:
+                          {==}
+                        case False{}:
+                          {==}
+                    case Management.Closing{}:
+                      match unanchored:
+                        case True{}:
+                          {==}
+                        case False{}:
+                          {==}
+                case Selection.Host{}:
+                  match manage:
+                    case Management.Free{}:
+                      match unanchored:
+                        case True{}:
+                          {==}
+                        case False{}:
+                          {==}
+                    case Management.Negotiating{}:
+                      match unanchored:
+                        case True{}:
+                          {==}
+                        case False{}:
+                          {==}
+                    case Management.Leased{}:
+                      match unanchored:
+                        case True{}:
+                          {==}
+                        case False{}:
+                          {==}
+                    case Management.Closing{}:
+                      match unanchored:
+                        case True{}:
+                          {==}
+                        case False{}:
+                          {==}
+                case Selection.Terminal{}:
+                  match manage:
+                    case Management.Free{}:
+                      match unanchored:
+                        case True{}:
+                          {==}
+                        case False{}:
+                          {==}
+                    case Management.Negotiating{}:
+                      match unanchored:
+                        case True{}:
+                          {==}
+                        case False{}:
+                          {==}
+                    case Management.Leased{}:
+                      match unanchored:
+                        case True{}:
+                          {==}
+                        case False{}:
+                          {==}
+                    case Management.Closing{}:
+                      match unanchored:
+                        case True{}:
+                          {==}
+                        case False{}:
+                          {==}
+        case Orbit.Stopping{pid}:
+          {==}
+        case Orbit.Stopped{pid}:
+          {==}
+    case Boundary.ManagementEventAllow{}:
+      match life:
+        case Orbit.Detached{pid}:
+          match pointer:
+            case Session.Pointer{route, lit, copied}:
+              match route:
+                case Selection.Idle{}:
+                  match manage:
+                    case Management.Free{}:
+                      match unanchored:
+                        case True{}:
+                          {==}
+                        case False{}:
+                          {==}
+                    case Management.Negotiating{}:
+                      match unanchored:
+                        case True{}:
+                          {==}
+                        case False{}:
+                          {==}
+                    case Management.Leased{}:
+                      match unanchored:
+                        case True{}:
+                          {==}
+                        case False{}:
+                          {==}
+                    case Management.Closing{}:
+                      match unanchored:
+                        case True{}:
+                          {==}
+                        case False{}:
+                          {==}
+                case Selection.Host{}:
+                  match manage:
+                    case Management.Free{}:
+                      match unanchored:
+                        case True{}:
+                          {==}
+                        case False{}:
+                          {==}
+                    case Management.Negotiating{}:
+                      match unanchored:
+                        case True{}:
+                          {==}
+                        case False{}:
+                          {==}
+                    case Management.Leased{}:
+                      match unanchored:
+                        case True{}:
+                          {==}
+                        case False{}:
+                          {==}
+                    case Management.Closing{}:
+                      match unanchored:
+                        case True{}:
+                          {==}
+                        case False{}:
+                          {==}
+                case Selection.Terminal{}:
+                  match manage:
+                    case Management.Free{}:
+                      match unanchored:
+                        case True{}:
+                          {==}
+                        case False{}:
+                          {==}
+                    case Management.Negotiating{}:
+                      match unanchored:
+                        case True{}:
+                          {==}
+                        case False{}:
+                          {==}
+                    case Management.Leased{}:
+                      match unanchored:
+                        case True{}:
+                          {==}
+                        case False{}:
+                          {==}
+                    case Management.Closing{}:
+                      match unanchored:
+                        case True{}:
+                          {==}
+                        case False{}:
+                          {==}
+        case Orbit.Attached{pid}:
+          match pointer:
+            case Session.Pointer{route, lit, copied}:
+              match route:
+                case Selection.Idle{}:
+                  match manage:
+                    case Management.Free{}:
+                      match unanchored:
+                        case True{}:
+                          {==}
+                        case False{}:
+                          {==}
+                    case Management.Negotiating{}:
+                      match unanchored:
+                        case True{}:
+                          {==}
+                        case False{}:
+                          {==}
+                    case Management.Leased{}:
+                      match unanchored:
+                        case True{}:
+                          {==}
+                        case False{}:
+                          {==}
+                    case Management.Closing{}:
+                      match unanchored:
+                        case True{}:
+                          {==}
+                        case False{}:
+                          {==}
+                case Selection.Host{}:
+                  match manage:
+                    case Management.Free{}:
+                      match unanchored:
+                        case True{}:
+                          {==}
+                        case False{}:
+                          {==}
+                    case Management.Negotiating{}:
+                      match unanchored:
+                        case True{}:
+                          {==}
+                        case False{}:
+                          {==}
+                    case Management.Leased{}:
+                      match unanchored:
+                        case True{}:
+                          {==}
+                        case False{}:
+                          {==}
+                    case Management.Closing{}:
+                      match unanchored:
+                        case True{}:
+                          {==}
+                        case False{}:
+                          {==}
+                case Selection.Terminal{}:
+                  match manage:
+                    case Management.Free{}:
+                      match unanchored:
+                        case True{}:
+                          {==}
+                        case False{}:
+                          {==}
+                    case Management.Negotiating{}:
+                      match unanchored:
+                        case True{}:
+                          {==}
+                        case False{}:
+                          {==}
+                    case Management.Leased{}:
+                      match unanchored:
+                        case True{}:
+                          {==}
+                        case False{}:
+                          {==}
+                    case Management.Closing{}:
+                      match unanchored:
+                        case True{}:
+                          {==}
+                        case False{}:
+                          {==}
+        case Orbit.Stopping{pid}:
+          {==}
+        case Orbit.Stopped{pid}:
+          {==}
+    case Boundary.ManagementEventInvalid{}:
+      match life:
+        case Orbit.Detached{pid}:
+          match pointer:
+            case Session.Pointer{route, lit, copied}:
+              match route:
+                case Selection.Idle{}:
+                  match manage:
+                    case Management.Free{}:
+                      match unanchored:
+                        case True{}:
+                          {==}
+                        case False{}:
+                          {==}
+                    case Management.Negotiating{}:
+                      match unanchored:
+                        case True{}:
+                          {==}
+                        case False{}:
+                          {==}
+                    case Management.Leased{}:
+                      match unanchored:
+                        case True{}:
+                          {==}
+                        case False{}:
+                          {==}
+                    case Management.Closing{}:
+                      match unanchored:
+                        case True{}:
+                          {==}
+                        case False{}:
+                          {==}
+                case Selection.Host{}:
+                  match manage:
+                    case Management.Free{}:
+                      match unanchored:
+                        case True{}:
+                          {==}
+                        case False{}:
+                          {==}
+                    case Management.Negotiating{}:
+                      match unanchored:
+                        case True{}:
+                          {==}
+                        case False{}:
+                          {==}
+                    case Management.Leased{}:
+                      match unanchored:
+                        case True{}:
+                          {==}
+                        case False{}:
+                          {==}
+                    case Management.Closing{}:
+                      match unanchored:
+                        case True{}:
+                          {==}
+                        case False{}:
+                          {==}
+                case Selection.Terminal{}:
+                  match manage:
+                    case Management.Free{}:
+                      match unanchored:
+                        case True{}:
+                          {==}
+                        case False{}:
+                          {==}
+                    case Management.Negotiating{}:
+                      match unanchored:
+                        case True{}:
+                          {==}
+                        case False{}:
+                          {==}
+                    case Management.Leased{}:
+                      match unanchored:
+                        case True{}:
+                          {==}
+                        case False{}:
+                          {==}
+                    case Management.Closing{}:
+                      match unanchored:
+                        case True{}:
+                          {==}
+                        case False{}:
+                          {==}
+        case Orbit.Attached{pid}:
+          match pointer:
+            case Session.Pointer{route, lit, copied}:
+              match route:
+                case Selection.Idle{}:
+                  match manage:
+                    case Management.Free{}:
+                      match unanchored:
+                        case True{}:
+                          {==}
+                        case False{}:
+                          {==}
+                    case Management.Negotiating{}:
+                      match unanchored:
+                        case True{}:
+                          {==}
+                        case False{}:
+                          {==}
+                    case Management.Leased{}:
+                      match unanchored:
+                        case True{}:
+                          {==}
+                        case False{}:
+                          {==}
+                    case Management.Closing{}:
+                      match unanchored:
+                        case True{}:
+                          {==}
+                        case False{}:
+                          {==}
+                case Selection.Host{}:
+                  match manage:
+                    case Management.Free{}:
+                      match unanchored:
+                        case True{}:
+                          {==}
+                        case False{}:
+                          {==}
+                    case Management.Negotiating{}:
+                      match unanchored:
+                        case True{}:
+                          {==}
+                        case False{}:
+                          {==}
+                    case Management.Leased{}:
+                      match unanchored:
+                        case True{}:
+                          {==}
+                        case False{}:
+                          {==}
+                    case Management.Closing{}:
+                      match unanchored:
+                        case True{}:
+                          {==}
+                        case False{}:
+                          {==}
+                case Selection.Terminal{}:
+                  match manage:
+                    case Management.Free{}:
+                      match unanchored:
+                        case True{}:
+                          {==}
+                        case False{}:
+                          {==}
+                    case Management.Negotiating{}:
+                      match unanchored:
+                        case True{}:
+                          {==}
+                        case False{}:
+                          {==}
+                    case Management.Leased{}:
+                      match unanchored:
+                        case True{}:
+                          {==}
+                        case False{}:
+                          {==}
+                    case Management.Closing{}:
+                      match unanchored:
+                        case True{}:
+                          {==}
+                        case False{}:
+                          {==}
+        case Orbit.Stopping{pid}:
+          {==}
+        case Orbit.Stopped{pid}:
+          {==}
 
 def fits_child_exited(
   drained: Bool, life: Orbit.Lifecycle, observer: Bool, waiting: Session.Waiting, pointer: Session.Pointer, written: Bool, explicit: Bool, manage: Management.Slot, tracker: Status.Tracker, revision: Revision.Revision, was: Bool, future: Bool, held: Bool, unanchored: Bool, clipboard_overflow: Bool, clipboard: Bool, routed: Bool, room: Bool, frame_room: Bool, alternate: Bool, above_live: Bool, tracking: Bool, shift: Bool, result_frame_room: Bool, outside: Bool, host_room: Bool, terminal_room: Bool, pty_full: Bool, metadata_changed: Bool, metadata_fresh: Bool
 ) ->
-  {Laws.lease_check(Laws.lease(Session.State{Session.Session{life, written, observer, explicit, waiting, pointer, manage}, Session.Shown{revision, was}, tracker}), Boundary.ChildExited{drained}, Laws.replies(Laws.decided(Session.begun(Session.fact_advanced(Boundary.ChildExited{drained}, was, revision), held, Nil{}, tracker, Session.anchored(unanchored, Boundary.ChildExited{drained}, Boundary.Flags{held, routed, room, alternate, frame_room, above_live, clipboard, clipboard_overflow, tracking, shift, unanchored, result_frame_room, outside, host_room, terminal_room, pty_full, metadata_changed, metadata_fresh}, future, Session.Session{life, written, observer, explicit, waiting, pointer, manage}))))) == choose(Laws.lease_check(Laws.lease(Session.State{Session.Session{life, written, observer, explicit, waiting, pointer, manage}, Session.Shown{revision, was}, tracker}), Boundary.ChildExited{drained}, Laws.replies(Laws.decided(Session.begun(Session.fact_advanced(Boundary.ChildExited{drained}, was, revision), held, Nil{}, tracker, Session.anchored(unanchored, Boundary.ChildExited{drained}, Boundary.Flags{held, routed, room, alternate, frame_room, above_live, clipboard, clipboard_overflow, tracking, shift, unanchored, result_frame_room, outside, host_room, terminal_room, pty_full, metadata_changed, metadata_fresh}, future, Session.Session{life, written, observer, explicit, waiting, pointer, manage}))))), Laws.lease(Laws.after(Session.begun(Session.fact_advanced(Boundary.ChildExited{drained}, was, revision), held, Nil{}, tracker, Session.anchored(unanchored, Boundary.ChildExited{drained}, Boundary.Flags{held, routed, room, alternate, frame_room, above_live, clipboard, clipboard_overflow, tracking, shift, unanchored, result_frame_room, outside, host_room, terminal_room, pty_full, metadata_changed, metadata_fresh}, future, Session.Session{life, written, observer, explicit, waiting, pointer, manage}))))) : Laws.Lease}:
+  {Laws.lease_check(Laws.lease(Session.State{Session.Session{life, written, observer, explicit, waiting, pointer, manage}, Session.Shown{revision, was}, tracker}), Boundary.ChildExited{drained}, Boundary.Flags{held, routed, room, alternate, frame_room, above_live, clipboard, clipboard_overflow, tracking, shift, unanchored, result_frame_room, outside, host_room, terminal_room, pty_full, metadata_changed, metadata_fresh}, Laws.replies(Laws.decided(Session.begun(Session.fact_advanced(Boundary.ChildExited{drained}, was, revision), held, Nil{}, tracker, Session.anchored(unanchored, Boundary.ChildExited{drained}, Boundary.Flags{held, routed, room, alternate, frame_room, above_live, clipboard, clipboard_overflow, tracking, shift, unanchored, result_frame_room, outside, host_room, terminal_room, pty_full, metadata_changed, metadata_fresh}, future, Session.Session{life, written, observer, explicit, waiting, pointer, manage}))))) == choose(Laws.lease_check(Laws.lease(Session.State{Session.Session{life, written, observer, explicit, waiting, pointer, manage}, Session.Shown{revision, was}, tracker}), Boundary.ChildExited{drained}, Boundary.Flags{held, routed, room, alternate, frame_room, above_live, clipboard, clipboard_overflow, tracking, shift, unanchored, result_frame_room, outside, host_room, terminal_room, pty_full, metadata_changed, metadata_fresh}, Laws.replies(Laws.decided(Session.begun(Session.fact_advanced(Boundary.ChildExited{drained}, was, revision), held, Nil{}, tracker, Session.anchored(unanchored, Boundary.ChildExited{drained}, Boundary.Flags{held, routed, room, alternate, frame_room, above_live, clipboard, clipboard_overflow, tracking, shift, unanchored, result_frame_room, outside, host_room, terminal_room, pty_full, metadata_changed, metadata_fresh}, future, Session.Session{life, written, observer, explicit, waiting, pointer, manage}))))), Laws.lease(Laws.after(Session.begun(Session.fact_advanced(Boundary.ChildExited{drained}, was, revision), held, Nil{}, tracker, Session.anchored(unanchored, Boundary.ChildExited{drained}, Boundary.Flags{held, routed, room, alternate, frame_room, above_live, clipboard, clipboard_overflow, tracking, shift, unanchored, result_frame_room, outside, host_room, terminal_room, pty_full, metadata_changed, metadata_fresh}, future, Session.Session{life, written, observer, explicit, waiting, pointer, manage}))))) : Laws.Lease}:
   match drained:
     case True{}:
       match life:
@@ -58703,7 +59593,7 @@ def fits_child_exited(
 def fits_crowded(
   life: Orbit.Lifecycle, observer: Bool, waiting: Session.Waiting, pointer: Session.Pointer, written: Bool, explicit: Bool, manage: Management.Slot, tracker: Status.Tracker, revision: Revision.Revision, was: Bool, future: Bool, held: Bool, unanchored: Bool, clipboard_overflow: Bool, clipboard: Bool, routed: Bool, room: Bool, frame_room: Bool, alternate: Bool, above_live: Bool, tracking: Bool, shift: Bool, result_frame_room: Bool, outside: Bool, host_room: Bool, terminal_room: Bool, pty_full: Bool, metadata_changed: Bool, metadata_fresh: Bool
 ) ->
-  {Laws.lease_check(Laws.lease(Session.State{Session.Session{life, written, observer, explicit, waiting, pointer, manage}, Session.Shown{revision, was}, tracker}), Boundary.Crowded{}, Laws.replies(Laws.decided(Session.begun(Session.fact_advanced(Boundary.Crowded{}, was, revision), held, Nil{}, tracker, Session.anchored(unanchored, Boundary.Crowded{}, Boundary.Flags{held, routed, room, alternate, frame_room, above_live, clipboard, clipboard_overflow, tracking, shift, unanchored, result_frame_room, outside, host_room, terminal_room, pty_full, metadata_changed, metadata_fresh}, future, Session.Session{life, written, observer, explicit, waiting, pointer, manage}))))) == choose(Laws.lease_check(Laws.lease(Session.State{Session.Session{life, written, observer, explicit, waiting, pointer, manage}, Session.Shown{revision, was}, tracker}), Boundary.Crowded{}, Laws.replies(Laws.decided(Session.begun(Session.fact_advanced(Boundary.Crowded{}, was, revision), held, Nil{}, tracker, Session.anchored(unanchored, Boundary.Crowded{}, Boundary.Flags{held, routed, room, alternate, frame_room, above_live, clipboard, clipboard_overflow, tracking, shift, unanchored, result_frame_room, outside, host_room, terminal_room, pty_full, metadata_changed, metadata_fresh}, future, Session.Session{life, written, observer, explicit, waiting, pointer, manage}))))), Laws.lease(Laws.after(Session.begun(Session.fact_advanced(Boundary.Crowded{}, was, revision), held, Nil{}, tracker, Session.anchored(unanchored, Boundary.Crowded{}, Boundary.Flags{held, routed, room, alternate, frame_room, above_live, clipboard, clipboard_overflow, tracking, shift, unanchored, result_frame_room, outside, host_room, terminal_room, pty_full, metadata_changed, metadata_fresh}, future, Session.Session{life, written, observer, explicit, waiting, pointer, manage}))))) : Laws.Lease}:
+  {Laws.lease_check(Laws.lease(Session.State{Session.Session{life, written, observer, explicit, waiting, pointer, manage}, Session.Shown{revision, was}, tracker}), Boundary.Crowded{}, Boundary.Flags{held, routed, room, alternate, frame_room, above_live, clipboard, clipboard_overflow, tracking, shift, unanchored, result_frame_room, outside, host_room, terminal_room, pty_full, metadata_changed, metadata_fresh}, Laws.replies(Laws.decided(Session.begun(Session.fact_advanced(Boundary.Crowded{}, was, revision), held, Nil{}, tracker, Session.anchored(unanchored, Boundary.Crowded{}, Boundary.Flags{held, routed, room, alternate, frame_room, above_live, clipboard, clipboard_overflow, tracking, shift, unanchored, result_frame_room, outside, host_room, terminal_room, pty_full, metadata_changed, metadata_fresh}, future, Session.Session{life, written, observer, explicit, waiting, pointer, manage}))))) == choose(Laws.lease_check(Laws.lease(Session.State{Session.Session{life, written, observer, explicit, waiting, pointer, manage}, Session.Shown{revision, was}, tracker}), Boundary.Crowded{}, Boundary.Flags{held, routed, room, alternate, frame_room, above_live, clipboard, clipboard_overflow, tracking, shift, unanchored, result_frame_room, outside, host_room, terminal_room, pty_full, metadata_changed, metadata_fresh}, Laws.replies(Laws.decided(Session.begun(Session.fact_advanced(Boundary.Crowded{}, was, revision), held, Nil{}, tracker, Session.anchored(unanchored, Boundary.Crowded{}, Boundary.Flags{held, routed, room, alternate, frame_room, above_live, clipboard, clipboard_overflow, tracking, shift, unanchored, result_frame_room, outside, host_room, terminal_room, pty_full, metadata_changed, metadata_fresh}, future, Session.Session{life, written, observer, explicit, waiting, pointer, manage}))))), Laws.lease(Laws.after(Session.begun(Session.fact_advanced(Boundary.Crowded{}, was, revision), held, Nil{}, tracker, Session.anchored(unanchored, Boundary.Crowded{}, Boundary.Flags{held, routed, room, alternate, frame_room, above_live, clipboard, clipboard_overflow, tracking, shift, unanchored, result_frame_room, outside, host_room, terminal_room, pty_full, metadata_changed, metadata_fresh}, future, Session.Session{life, written, observer, explicit, waiting, pointer, manage}))))) : Laws.Lease}:
   match life:
     case Orbit.Detached{pid}:
       match unanchored:
@@ -58725,7 +59615,7 @@ def fits_crowded(
 def fits_observer_message(
   life: Orbit.Lifecycle, observer: Bool, waiting: Session.Waiting, pointer: Session.Pointer, written: Bool, explicit: Bool, manage: Management.Slot, tracker: Status.Tracker, revision: Revision.Revision, was: Bool, future: Bool, held: Bool, unanchored: Bool, clipboard_overflow: Bool, clipboard: Bool, routed: Bool, room: Bool, frame_room: Bool, alternate: Bool, above_live: Bool, tracking: Bool, shift: Bool, result_frame_room: Bool, outside: Bool, host_room: Bool, terminal_room: Bool, pty_full: Bool, metadata_changed: Bool, metadata_fresh: Bool
 ) ->
-  {Laws.lease_check(Laws.lease(Session.State{Session.Session{life, written, observer, explicit, waiting, pointer, manage}, Session.Shown{revision, was}, tracker}), Boundary.ObserverMessage{}, Laws.replies(Laws.decided(Session.begun(Session.fact_advanced(Boundary.ObserverMessage{}, was, revision), held, Nil{}, tracker, Session.anchored(unanchored, Boundary.ObserverMessage{}, Boundary.Flags{held, routed, room, alternate, frame_room, above_live, clipboard, clipboard_overflow, tracking, shift, unanchored, result_frame_room, outside, host_room, terminal_room, pty_full, metadata_changed, metadata_fresh}, future, Session.Session{life, written, observer, explicit, waiting, pointer, manage}))))) == choose(Laws.lease_check(Laws.lease(Session.State{Session.Session{life, written, observer, explicit, waiting, pointer, manage}, Session.Shown{revision, was}, tracker}), Boundary.ObserverMessage{}, Laws.replies(Laws.decided(Session.begun(Session.fact_advanced(Boundary.ObserverMessage{}, was, revision), held, Nil{}, tracker, Session.anchored(unanchored, Boundary.ObserverMessage{}, Boundary.Flags{held, routed, room, alternate, frame_room, above_live, clipboard, clipboard_overflow, tracking, shift, unanchored, result_frame_room, outside, host_room, terminal_room, pty_full, metadata_changed, metadata_fresh}, future, Session.Session{life, written, observer, explicit, waiting, pointer, manage}))))), Laws.lease(Laws.after(Session.begun(Session.fact_advanced(Boundary.ObserverMessage{}, was, revision), held, Nil{}, tracker, Session.anchored(unanchored, Boundary.ObserverMessage{}, Boundary.Flags{held, routed, room, alternate, frame_room, above_live, clipboard, clipboard_overflow, tracking, shift, unanchored, result_frame_room, outside, host_room, terminal_room, pty_full, metadata_changed, metadata_fresh}, future, Session.Session{life, written, observer, explicit, waiting, pointer, manage}))))) : Laws.Lease}:
+  {Laws.lease_check(Laws.lease(Session.State{Session.Session{life, written, observer, explicit, waiting, pointer, manage}, Session.Shown{revision, was}, tracker}), Boundary.ObserverMessage{}, Boundary.Flags{held, routed, room, alternate, frame_room, above_live, clipboard, clipboard_overflow, tracking, shift, unanchored, result_frame_room, outside, host_room, terminal_room, pty_full, metadata_changed, metadata_fresh}, Laws.replies(Laws.decided(Session.begun(Session.fact_advanced(Boundary.ObserverMessage{}, was, revision), held, Nil{}, tracker, Session.anchored(unanchored, Boundary.ObserverMessage{}, Boundary.Flags{held, routed, room, alternate, frame_room, above_live, clipboard, clipboard_overflow, tracking, shift, unanchored, result_frame_room, outside, host_room, terminal_room, pty_full, metadata_changed, metadata_fresh}, future, Session.Session{life, written, observer, explicit, waiting, pointer, manage}))))) == choose(Laws.lease_check(Laws.lease(Session.State{Session.Session{life, written, observer, explicit, waiting, pointer, manage}, Session.Shown{revision, was}, tracker}), Boundary.ObserverMessage{}, Boundary.Flags{held, routed, room, alternate, frame_room, above_live, clipboard, clipboard_overflow, tracking, shift, unanchored, result_frame_room, outside, host_room, terminal_room, pty_full, metadata_changed, metadata_fresh}, Laws.replies(Laws.decided(Session.begun(Session.fact_advanced(Boundary.ObserverMessage{}, was, revision), held, Nil{}, tracker, Session.anchored(unanchored, Boundary.ObserverMessage{}, Boundary.Flags{held, routed, room, alternate, frame_room, above_live, clipboard, clipboard_overflow, tracking, shift, unanchored, result_frame_room, outside, host_room, terminal_room, pty_full, metadata_changed, metadata_fresh}, future, Session.Session{life, written, observer, explicit, waiting, pointer, manage}))))), Laws.lease(Laws.after(Session.begun(Session.fact_advanced(Boundary.ObserverMessage{}, was, revision), held, Nil{}, tracker, Session.anchored(unanchored, Boundary.ObserverMessage{}, Boundary.Flags{held, routed, room, alternate, frame_room, above_live, clipboard, clipboard_overflow, tracking, shift, unanchored, result_frame_room, outside, host_room, terminal_room, pty_full, metadata_changed, metadata_fresh}, future, Session.Session{life, written, observer, explicit, waiting, pointer, manage}))))) : Laws.Lease}:
   match life:
     case Orbit.Detached{pid}:
       match observer:
@@ -58763,7 +59653,7 @@ def fits_observer_message(
 def fits_scroll_vertical(
   frev: Revision.Revision, frows: U32, life: Orbit.Lifecycle, observer: Bool, waiting: Session.Waiting, pointer: Session.Pointer, written: Bool, explicit: Bool, manage: Management.Slot, tracker: Status.Tracker, revision: Revision.Revision, was: Bool, future: Bool, held: Bool, unanchored: Bool, clipboard_overflow: Bool, clipboard: Bool, routed: Bool, room: Bool, frame_room: Bool, alternate: Bool, above_live: Bool, tracking: Bool, shift: Bool, result_frame_room: Bool, outside: Bool, host_room: Bool, terminal_room: Bool, pty_full: Bool, metadata_changed: Bool, metadata_fresh: Bool
 ) ->
-  {Laws.lease_check(Laws.lease(Session.State{Session.Session{life, written, observer, explicit, waiting, pointer, manage}, Session.Shown{revision, was}, tracker}), Boundary.ScrollVertical{frev, frows}, Laws.replies(Laws.decided(Session.begun(Session.fact_advanced(Boundary.ScrollVertical{frev, frows}, was, revision), held, Nil{}, tracker, Session.anchored(unanchored, Boundary.ScrollVertical{frev, frows}, Boundary.Flags{held, routed, room, alternate, frame_room, above_live, clipboard, clipboard_overflow, tracking, shift, unanchored, result_frame_room, outside, host_room, terminal_room, pty_full, metadata_changed, metadata_fresh}, future, Session.Session{life, written, observer, explicit, waiting, pointer, manage}))))) == choose(Laws.lease_check(Laws.lease(Session.State{Session.Session{life, written, observer, explicit, waiting, pointer, manage}, Session.Shown{revision, was}, tracker}), Boundary.ScrollVertical{frev, frows}, Laws.replies(Laws.decided(Session.begun(Session.fact_advanced(Boundary.ScrollVertical{frev, frows}, was, revision), held, Nil{}, tracker, Session.anchored(unanchored, Boundary.ScrollVertical{frev, frows}, Boundary.Flags{held, routed, room, alternate, frame_room, above_live, clipboard, clipboard_overflow, tracking, shift, unanchored, result_frame_room, outside, host_room, terminal_room, pty_full, metadata_changed, metadata_fresh}, future, Session.Session{life, written, observer, explicit, waiting, pointer, manage}))))), Laws.lease(Laws.after(Session.begun(Session.fact_advanced(Boundary.ScrollVertical{frev, frows}, was, revision), held, Nil{}, tracker, Session.anchored(unanchored, Boundary.ScrollVertical{frev, frows}, Boundary.Flags{held, routed, room, alternate, frame_room, above_live, clipboard, clipboard_overflow, tracking, shift, unanchored, result_frame_room, outside, host_room, terminal_room, pty_full, metadata_changed, metadata_fresh}, future, Session.Session{life, written, observer, explicit, waiting, pointer, manage}))))) : Laws.Lease}:
+  {Laws.lease_check(Laws.lease(Session.State{Session.Session{life, written, observer, explicit, waiting, pointer, manage}, Session.Shown{revision, was}, tracker}), Boundary.ScrollVertical{frev, frows}, Boundary.Flags{held, routed, room, alternate, frame_room, above_live, clipboard, clipboard_overflow, tracking, shift, unanchored, result_frame_room, outside, host_room, terminal_room, pty_full, metadata_changed, metadata_fresh}, Laws.replies(Laws.decided(Session.begun(Session.fact_advanced(Boundary.ScrollVertical{frev, frows}, was, revision), held, Nil{}, tracker, Session.anchored(unanchored, Boundary.ScrollVertical{frev, frows}, Boundary.Flags{held, routed, room, alternate, frame_room, above_live, clipboard, clipboard_overflow, tracking, shift, unanchored, result_frame_room, outside, host_room, terminal_room, pty_full, metadata_changed, metadata_fresh}, future, Session.Session{life, written, observer, explicit, waiting, pointer, manage}))))) == choose(Laws.lease_check(Laws.lease(Session.State{Session.Session{life, written, observer, explicit, waiting, pointer, manage}, Session.Shown{revision, was}, tracker}), Boundary.ScrollVertical{frev, frows}, Boundary.Flags{held, routed, room, alternate, frame_room, above_live, clipboard, clipboard_overflow, tracking, shift, unanchored, result_frame_room, outside, host_room, terminal_room, pty_full, metadata_changed, metadata_fresh}, Laws.replies(Laws.decided(Session.begun(Session.fact_advanced(Boundary.ScrollVertical{frev, frows}, was, revision), held, Nil{}, tracker, Session.anchored(unanchored, Boundary.ScrollVertical{frev, frows}, Boundary.Flags{held, routed, room, alternate, frame_room, above_live, clipboard, clipboard_overflow, tracking, shift, unanchored, result_frame_room, outside, host_room, terminal_room, pty_full, metadata_changed, metadata_fresh}, future, Session.Session{life, written, observer, explicit, waiting, pointer, manage}))))), Laws.lease(Laws.after(Session.begun(Session.fact_advanced(Boundary.ScrollVertical{frev, frows}, was, revision), held, Nil{}, tracker, Session.anchored(unanchored, Boundary.ScrollVertical{frev, frows}, Boundary.Flags{held, routed, room, alternate, frame_room, above_live, clipboard, clipboard_overflow, tracking, shift, unanchored, result_frame_room, outside, host_room, terminal_room, pty_full, metadata_changed, metadata_fresh}, future, Session.Session{life, written, observer, explicit, waiting, pointer, manage}))))) : Laws.Lease}:
   match life:
     case Orbit.Detached{pid}:
       match waiting:
@@ -59297,7 +60187,7 @@ def fits_scroll_vertical(
 def fits_return_to_live(
   life: Orbit.Lifecycle, observer: Bool, waiting: Session.Waiting, pointer: Session.Pointer, written: Bool, explicit: Bool, manage: Management.Slot, tracker: Status.Tracker, revision: Revision.Revision, was: Bool, future: Bool, held: Bool, unanchored: Bool, clipboard_overflow: Bool, clipboard: Bool, routed: Bool, room: Bool, frame_room: Bool, alternate: Bool, above_live: Bool, tracking: Bool, shift: Bool, result_frame_room: Bool, outside: Bool, host_room: Bool, terminal_room: Bool, pty_full: Bool, metadata_changed: Bool, metadata_fresh: Bool
 ) ->
-  {Laws.lease_check(Laws.lease(Session.State{Session.Session{life, written, observer, explicit, waiting, pointer, manage}, Session.Shown{revision, was}, tracker}), Boundary.ReturnToLive{}, Laws.replies(Laws.decided(Session.begun(Session.fact_advanced(Boundary.ReturnToLive{}, was, revision), held, Nil{}, tracker, Session.anchored(unanchored, Boundary.ReturnToLive{}, Boundary.Flags{held, routed, room, alternate, frame_room, above_live, clipboard, clipboard_overflow, tracking, shift, unanchored, result_frame_room, outside, host_room, terminal_room, pty_full, metadata_changed, metadata_fresh}, future, Session.Session{life, written, observer, explicit, waiting, pointer, manage}))))) == choose(Laws.lease_check(Laws.lease(Session.State{Session.Session{life, written, observer, explicit, waiting, pointer, manage}, Session.Shown{revision, was}, tracker}), Boundary.ReturnToLive{}, Laws.replies(Laws.decided(Session.begun(Session.fact_advanced(Boundary.ReturnToLive{}, was, revision), held, Nil{}, tracker, Session.anchored(unanchored, Boundary.ReturnToLive{}, Boundary.Flags{held, routed, room, alternate, frame_room, above_live, clipboard, clipboard_overflow, tracking, shift, unanchored, result_frame_room, outside, host_room, terminal_room, pty_full, metadata_changed, metadata_fresh}, future, Session.Session{life, written, observer, explicit, waiting, pointer, manage}))))), Laws.lease(Laws.after(Session.begun(Session.fact_advanced(Boundary.ReturnToLive{}, was, revision), held, Nil{}, tracker, Session.anchored(unanchored, Boundary.ReturnToLive{}, Boundary.Flags{held, routed, room, alternate, frame_room, above_live, clipboard, clipboard_overflow, tracking, shift, unanchored, result_frame_room, outside, host_room, terminal_room, pty_full, metadata_changed, metadata_fresh}, future, Session.Session{life, written, observer, explicit, waiting, pointer, manage}))))) : Laws.Lease}:
+  {Laws.lease_check(Laws.lease(Session.State{Session.Session{life, written, observer, explicit, waiting, pointer, manage}, Session.Shown{revision, was}, tracker}), Boundary.ReturnToLive{}, Boundary.Flags{held, routed, room, alternate, frame_room, above_live, clipboard, clipboard_overflow, tracking, shift, unanchored, result_frame_room, outside, host_room, terminal_room, pty_full, metadata_changed, metadata_fresh}, Laws.replies(Laws.decided(Session.begun(Session.fact_advanced(Boundary.ReturnToLive{}, was, revision), held, Nil{}, tracker, Session.anchored(unanchored, Boundary.ReturnToLive{}, Boundary.Flags{held, routed, room, alternate, frame_room, above_live, clipboard, clipboard_overflow, tracking, shift, unanchored, result_frame_room, outside, host_room, terminal_room, pty_full, metadata_changed, metadata_fresh}, future, Session.Session{life, written, observer, explicit, waiting, pointer, manage}))))) == choose(Laws.lease_check(Laws.lease(Session.State{Session.Session{life, written, observer, explicit, waiting, pointer, manage}, Session.Shown{revision, was}, tracker}), Boundary.ReturnToLive{}, Boundary.Flags{held, routed, room, alternate, frame_room, above_live, clipboard, clipboard_overflow, tracking, shift, unanchored, result_frame_room, outside, host_room, terminal_room, pty_full, metadata_changed, metadata_fresh}, Laws.replies(Laws.decided(Session.begun(Session.fact_advanced(Boundary.ReturnToLive{}, was, revision), held, Nil{}, tracker, Session.anchored(unanchored, Boundary.ReturnToLive{}, Boundary.Flags{held, routed, room, alternate, frame_room, above_live, clipboard, clipboard_overflow, tracking, shift, unanchored, result_frame_room, outside, host_room, terminal_room, pty_full, metadata_changed, metadata_fresh}, future, Session.Session{life, written, observer, explicit, waiting, pointer, manage}))))), Laws.lease(Laws.after(Session.begun(Session.fact_advanced(Boundary.ReturnToLive{}, was, revision), held, Nil{}, tracker, Session.anchored(unanchored, Boundary.ReturnToLive{}, Boundary.Flags{held, routed, room, alternate, frame_room, above_live, clipboard, clipboard_overflow, tracking, shift, unanchored, result_frame_room, outside, host_room, terminal_room, pty_full, metadata_changed, metadata_fresh}, future, Session.Session{life, written, observer, explicit, waiting, pointer, manage}))))) : Laws.Lease}:
   match life:
     case Orbit.Detached{pid}:
       match waiting:
@@ -59975,7 +60865,7 @@ def fits_return_to_live(
 def fits_exited_before_stop(
   +status: U32, life: Orbit.Lifecycle, observer: Bool, waiting: Session.Waiting, pointer: Session.Pointer, written: Bool, explicit: Bool, manage: Management.Slot, tracker: Status.Tracker, revision: Revision.Revision, was: Bool, future: Bool, held: Bool, unanchored: Bool, clipboard_overflow: Bool, clipboard: Bool, routed: Bool, room: Bool, frame_room: Bool, alternate: Bool, above_live: Bool, tracking: Bool, shift: Bool, result_frame_room: Bool, outside: Bool, host_room: Bool, terminal_room: Bool, pty_full: Bool, metadata_changed: Bool, metadata_fresh: Bool
 ) ->
-  {Laws.lease_check(Laws.lease(Session.State{Session.Session{life, written, observer, explicit, waiting, pointer, manage}, Session.Shown{revision, was}, tracker}), Boundary.ExitedBeforeStop{status}, Laws.replies(Laws.decided(Session.begun(Session.fact_advanced(Boundary.ExitedBeforeStop{status}, was, revision), held, Nil{}, tracker, Session.anchored(unanchored, Boundary.ExitedBeforeStop{status}, Boundary.Flags{held, routed, room, alternate, frame_room, above_live, clipboard, clipboard_overflow, tracking, shift, unanchored, result_frame_room, outside, host_room, terminal_room, pty_full, metadata_changed, metadata_fresh}, future, Session.Session{life, written, observer, explicit, waiting, pointer, manage}))))) == choose(Laws.lease_check(Laws.lease(Session.State{Session.Session{life, written, observer, explicit, waiting, pointer, manage}, Session.Shown{revision, was}, tracker}), Boundary.ExitedBeforeStop{status}, Laws.replies(Laws.decided(Session.begun(Session.fact_advanced(Boundary.ExitedBeforeStop{status}, was, revision), held, Nil{}, tracker, Session.anchored(unanchored, Boundary.ExitedBeforeStop{status}, Boundary.Flags{held, routed, room, alternate, frame_room, above_live, clipboard, clipboard_overflow, tracking, shift, unanchored, result_frame_room, outside, host_room, terminal_room, pty_full, metadata_changed, metadata_fresh}, future, Session.Session{life, written, observer, explicit, waiting, pointer, manage}))))), Laws.lease(Laws.after(Session.begun(Session.fact_advanced(Boundary.ExitedBeforeStop{status}, was, revision), held, Nil{}, tracker, Session.anchored(unanchored, Boundary.ExitedBeforeStop{status}, Boundary.Flags{held, routed, room, alternate, frame_room, above_live, clipboard, clipboard_overflow, tracking, shift, unanchored, result_frame_room, outside, host_room, terminal_room, pty_full, metadata_changed, metadata_fresh}, future, Session.Session{life, written, observer, explicit, waiting, pointer, manage}))))) : Laws.Lease}:
+  {Laws.lease_check(Laws.lease(Session.State{Session.Session{life, written, observer, explicit, waiting, pointer, manage}, Session.Shown{revision, was}, tracker}), Boundary.ExitedBeforeStop{status}, Boundary.Flags{held, routed, room, alternate, frame_room, above_live, clipboard, clipboard_overflow, tracking, shift, unanchored, result_frame_room, outside, host_room, terminal_room, pty_full, metadata_changed, metadata_fresh}, Laws.replies(Laws.decided(Session.begun(Session.fact_advanced(Boundary.ExitedBeforeStop{status}, was, revision), held, Nil{}, tracker, Session.anchored(unanchored, Boundary.ExitedBeforeStop{status}, Boundary.Flags{held, routed, room, alternate, frame_room, above_live, clipboard, clipboard_overflow, tracking, shift, unanchored, result_frame_room, outside, host_room, terminal_room, pty_full, metadata_changed, metadata_fresh}, future, Session.Session{life, written, observer, explicit, waiting, pointer, manage}))))) == choose(Laws.lease_check(Laws.lease(Session.State{Session.Session{life, written, observer, explicit, waiting, pointer, manage}, Session.Shown{revision, was}, tracker}), Boundary.ExitedBeforeStop{status}, Boundary.Flags{held, routed, room, alternate, frame_room, above_live, clipboard, clipboard_overflow, tracking, shift, unanchored, result_frame_room, outside, host_room, terminal_room, pty_full, metadata_changed, metadata_fresh}, Laws.replies(Laws.decided(Session.begun(Session.fact_advanced(Boundary.ExitedBeforeStop{status}, was, revision), held, Nil{}, tracker, Session.anchored(unanchored, Boundary.ExitedBeforeStop{status}, Boundary.Flags{held, routed, room, alternate, frame_room, above_live, clipboard, clipboard_overflow, tracking, shift, unanchored, result_frame_room, outside, host_room, terminal_room, pty_full, metadata_changed, metadata_fresh}, future, Session.Session{life, written, observer, explicit, waiting, pointer, manage}))))), Laws.lease(Laws.after(Session.begun(Session.fact_advanced(Boundary.ExitedBeforeStop{status}, was, revision), held, Nil{}, tracker, Session.anchored(unanchored, Boundary.ExitedBeforeStop{status}, Boundary.Flags{held, routed, room, alternate, frame_room, above_live, clipboard, clipboard_overflow, tracking, shift, unanchored, result_frame_room, outside, host_room, terminal_room, pty_full, metadata_changed, metadata_fresh}, future, Session.Session{life, written, observer, explicit, waiting, pointer, manage}))))) : Laws.Lease}:
   match life:
     case Orbit.Detached{pid}:
       {==}
@@ -59997,7 +60887,7 @@ def fits_exited_before_stop(
 def fits_program_status(
   foreground: Boundary.Foreground, life: Orbit.Lifecycle, observer: Bool, waiting: Session.Waiting, pointer: Session.Pointer, written: Bool, explicit: Bool, manage: Management.Slot, tracker: Status.Tracker, revision: Revision.Revision, was: Bool, future: Bool, held: Bool, unanchored: Bool, clipboard_overflow: Bool, clipboard: Bool, routed: Bool, room: Bool, frame_room: Bool, alternate: Bool, above_live: Bool, tracking: Bool, shift: Bool, result_frame_room: Bool, outside: Bool, host_room: Bool, terminal_room: Bool, pty_full: Bool, metadata_changed: Bool, metadata_fresh: Bool
 ) ->
-  {Laws.lease_check(Laws.lease(Session.State{Session.Session{life, written, observer, explicit, waiting, pointer, manage}, Session.Shown{revision, was}, tracker}), Boundary.ProgramStatus{foreground}, Laws.replies(Laws.decided(Session.begun(Session.fact_advanced(Boundary.ProgramStatus{foreground}, was, revision), held, [Status.lifetime(tracker, foreground, False{})], Status.after(tracker, foreground, False{}), Session.anchored(unanchored, Boundary.ProgramStatus{foreground}, Boundary.Flags{held, routed, room, alternate, frame_room, above_live, clipboard, clipboard_overflow, tracking, shift, unanchored, result_frame_room, outside, host_room, terminal_room, pty_full, metadata_changed, metadata_fresh}, future, Session.Session{life, written, observer, explicit, waiting, pointer, manage}))))) == choose(Laws.lease_check(Laws.lease(Session.State{Session.Session{life, written, observer, explicit, waiting, pointer, manage}, Session.Shown{revision, was}, tracker}), Boundary.ProgramStatus{foreground}, Laws.replies(Laws.decided(Session.begun(Session.fact_advanced(Boundary.ProgramStatus{foreground}, was, revision), held, [Status.lifetime(tracker, foreground, False{})], Status.after(tracker, foreground, False{}), Session.anchored(unanchored, Boundary.ProgramStatus{foreground}, Boundary.Flags{held, routed, room, alternate, frame_room, above_live, clipboard, clipboard_overflow, tracking, shift, unanchored, result_frame_room, outside, host_room, terminal_room, pty_full, metadata_changed, metadata_fresh}, future, Session.Session{life, written, observer, explicit, waiting, pointer, manage}))))), Laws.lease(Laws.after(Session.begun(Session.fact_advanced(Boundary.ProgramStatus{foreground}, was, revision), held, [Status.lifetime(tracker, foreground, False{})], Status.after(tracker, foreground, False{}), Session.anchored(unanchored, Boundary.ProgramStatus{foreground}, Boundary.Flags{held, routed, room, alternate, frame_room, above_live, clipboard, clipboard_overflow, tracking, shift, unanchored, result_frame_room, outside, host_room, terminal_room, pty_full, metadata_changed, metadata_fresh}, future, Session.Session{life, written, observer, explicit, waiting, pointer, manage}))))) : Laws.Lease}:
+  {Laws.lease_check(Laws.lease(Session.State{Session.Session{life, written, observer, explicit, waiting, pointer, manage}, Session.Shown{revision, was}, tracker}), Boundary.ProgramStatus{foreground}, Boundary.Flags{held, routed, room, alternate, frame_room, above_live, clipboard, clipboard_overflow, tracking, shift, unanchored, result_frame_room, outside, host_room, terminal_room, pty_full, metadata_changed, metadata_fresh}, Laws.replies(Laws.decided(Session.begun(Session.fact_advanced(Boundary.ProgramStatus{foreground}, was, revision), held, [Status.lifetime(tracker, foreground, False{})], Status.after(tracker, foreground, False{}), Session.anchored(unanchored, Boundary.ProgramStatus{foreground}, Boundary.Flags{held, routed, room, alternate, frame_room, above_live, clipboard, clipboard_overflow, tracking, shift, unanchored, result_frame_room, outside, host_room, terminal_room, pty_full, metadata_changed, metadata_fresh}, future, Session.Session{life, written, observer, explicit, waiting, pointer, manage}))))) == choose(Laws.lease_check(Laws.lease(Session.State{Session.Session{life, written, observer, explicit, waiting, pointer, manage}, Session.Shown{revision, was}, tracker}), Boundary.ProgramStatus{foreground}, Boundary.Flags{held, routed, room, alternate, frame_room, above_live, clipboard, clipboard_overflow, tracking, shift, unanchored, result_frame_room, outside, host_room, terminal_room, pty_full, metadata_changed, metadata_fresh}, Laws.replies(Laws.decided(Session.begun(Session.fact_advanced(Boundary.ProgramStatus{foreground}, was, revision), held, [Status.lifetime(tracker, foreground, False{})], Status.after(tracker, foreground, False{}), Session.anchored(unanchored, Boundary.ProgramStatus{foreground}, Boundary.Flags{held, routed, room, alternate, frame_room, above_live, clipboard, clipboard_overflow, tracking, shift, unanchored, result_frame_room, outside, host_room, terminal_room, pty_full, metadata_changed, metadata_fresh}, future, Session.Session{life, written, observer, explicit, waiting, pointer, manage}))))), Laws.lease(Laws.after(Session.begun(Session.fact_advanced(Boundary.ProgramStatus{foreground}, was, revision), held, [Status.lifetime(tracker, foreground, False{})], Status.after(tracker, foreground, False{}), Session.anchored(unanchored, Boundary.ProgramStatus{foreground}, Boundary.Flags{held, routed, room, alternate, frame_room, above_live, clipboard, clipboard_overflow, tracking, shift, unanchored, result_frame_room, outside, host_room, terminal_room, pty_full, metadata_changed, metadata_fresh}, future, Session.Session{life, written, observer, explicit, waiting, pointer, manage}))))) : Laws.Lease}:
   match life:
     case Orbit.Detached{pid}:
       match pointer:
@@ -60171,7 +61061,7 @@ def fits_program_status(
 def fits_resources(
   delivered: Bool, idle: Bool, capped: Bool, due: Bool, life: Orbit.Lifecycle, observer: Bool, waiting: Session.Waiting, pointer: Session.Pointer, written: Bool, explicit: Bool, manage: Management.Slot, tracker: Status.Tracker, revision: Revision.Revision, was: Bool, future: Bool, held: Bool, unanchored: Bool, clipboard_overflow: Bool, clipboard: Bool, routed: Bool, room: Bool, frame_room: Bool, alternate: Bool, above_live: Bool, tracking: Bool, shift: Bool, result_frame_room: Bool, outside: Bool, host_room: Bool, terminal_room: Bool, pty_full: Bool, metadata_changed: Bool, metadata_fresh: Bool
 ) ->
-  {Laws.lease_check(Laws.lease(Session.State{Session.Session{life, written, observer, explicit, waiting, pointer, manage}, Session.Shown{revision, was}, tracker}), Boundary.Resources{delivered, idle, capped, due}, Laws.replies(Laws.decided(Session.begun(Session.fact_advanced(Boundary.Resources{delivered, idle, capped, due}, was, revision), held, Nil{}, tracker, Session.anchored(unanchored, Boundary.Resources{delivered, idle, capped, due}, Boundary.Flags{held, routed, room, alternate, frame_room, above_live, clipboard, clipboard_overflow, tracking, shift, unanchored, result_frame_room, outside, host_room, terminal_room, pty_full, metadata_changed, metadata_fresh}, future, Session.Session{life, written, observer, explicit, waiting, pointer, manage}))))) == choose(Laws.lease_check(Laws.lease(Session.State{Session.Session{life, written, observer, explicit, waiting, pointer, manage}, Session.Shown{revision, was}, tracker}), Boundary.Resources{delivered, idle, capped, due}, Laws.replies(Laws.decided(Session.begun(Session.fact_advanced(Boundary.Resources{delivered, idle, capped, due}, was, revision), held, Nil{}, tracker, Session.anchored(unanchored, Boundary.Resources{delivered, idle, capped, due}, Boundary.Flags{held, routed, room, alternate, frame_room, above_live, clipboard, clipboard_overflow, tracking, shift, unanchored, result_frame_room, outside, host_room, terminal_room, pty_full, metadata_changed, metadata_fresh}, future, Session.Session{life, written, observer, explicit, waiting, pointer, manage}))))), Laws.lease(Laws.after(Session.begun(Session.fact_advanced(Boundary.Resources{delivered, idle, capped, due}, was, revision), held, Nil{}, tracker, Session.anchored(unanchored, Boundary.Resources{delivered, idle, capped, due}, Boundary.Flags{held, routed, room, alternate, frame_room, above_live, clipboard, clipboard_overflow, tracking, shift, unanchored, result_frame_room, outside, host_room, terminal_room, pty_full, metadata_changed, metadata_fresh}, future, Session.Session{life, written, observer, explicit, waiting, pointer, manage}))))) : Laws.Lease}:
+  {Laws.lease_check(Laws.lease(Session.State{Session.Session{life, written, observer, explicit, waiting, pointer, manage}, Session.Shown{revision, was}, tracker}), Boundary.Resources{delivered, idle, capped, due}, Boundary.Flags{held, routed, room, alternate, frame_room, above_live, clipboard, clipboard_overflow, tracking, shift, unanchored, result_frame_room, outside, host_room, terminal_room, pty_full, metadata_changed, metadata_fresh}, Laws.replies(Laws.decided(Session.begun(Session.fact_advanced(Boundary.Resources{delivered, idle, capped, due}, was, revision), held, Nil{}, tracker, Session.anchored(unanchored, Boundary.Resources{delivered, idle, capped, due}, Boundary.Flags{held, routed, room, alternate, frame_room, above_live, clipboard, clipboard_overflow, tracking, shift, unanchored, result_frame_room, outside, host_room, terminal_room, pty_full, metadata_changed, metadata_fresh}, future, Session.Session{life, written, observer, explicit, waiting, pointer, manage}))))) == choose(Laws.lease_check(Laws.lease(Session.State{Session.Session{life, written, observer, explicit, waiting, pointer, manage}, Session.Shown{revision, was}, tracker}), Boundary.Resources{delivered, idle, capped, due}, Boundary.Flags{held, routed, room, alternate, frame_room, above_live, clipboard, clipboard_overflow, tracking, shift, unanchored, result_frame_room, outside, host_room, terminal_room, pty_full, metadata_changed, metadata_fresh}, Laws.replies(Laws.decided(Session.begun(Session.fact_advanced(Boundary.Resources{delivered, idle, capped, due}, was, revision), held, Nil{}, tracker, Session.anchored(unanchored, Boundary.Resources{delivered, idle, capped, due}, Boundary.Flags{held, routed, room, alternate, frame_room, above_live, clipboard, clipboard_overflow, tracking, shift, unanchored, result_frame_room, outside, host_room, terminal_room, pty_full, metadata_changed, metadata_fresh}, future, Session.Session{life, written, observer, explicit, waiting, pointer, manage}))))), Laws.lease(Laws.after(Session.begun(Session.fact_advanced(Boundary.Resources{delivered, idle, capped, due}, was, revision), held, Nil{}, tracker, Session.anchored(unanchored, Boundary.Resources{delivered, idle, capped, due}, Boundary.Flags{held, routed, room, alternate, frame_room, above_live, clipboard, clipboard_overflow, tracking, shift, unanchored, result_frame_room, outside, host_room, terminal_room, pty_full, metadata_changed, metadata_fresh}, future, Session.Session{life, written, observer, explicit, waiting, pointer, manage}))))) : Laws.Lease}:
   match delivered:
     case True{}:
       match idle:
@@ -68948,7 +69838,7 @@ def fits_resources(
 
 # Every fact: the per-fact lemma, with the future flag step computes.
 def step_fits(state: Session.State, flags: Boundary.Flags, fact: Boundary.Fact) ->
-  {Laws.lease_check(Laws.lease(state), fact, Laws.replies(Laws.decided(Session.step(fact, flags, state)))) == choose(Laws.lease_check(Laws.lease(state), fact, Laws.replies(Laws.decided(Session.step(fact, flags, state)))), Laws.lease(Laws.after(Session.step(fact, flags, state)))) : Laws.Lease}:
+  {Laws.lease_check(Laws.lease(state), fact, flags, Laws.replies(Laws.decided(Session.step(fact, flags, state)))) == choose(Laws.lease_check(Laws.lease(state), fact, flags, Laws.replies(Laws.decided(Session.step(fact, flags, state)))), Laws.lease(Laws.after(Session.step(fact, flags, state)))) : Laws.Lease}:
   match state:
     case Session.State{session, shown, tracker}:
       match session:

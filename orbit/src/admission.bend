@@ -20,6 +20,9 @@ type Signal is Data:
   Crowded{}
   # The metadata observer sent a message, which it may not.
   Spoke{}
+  # A Hello in a run with management from a peer that is not the process the
+  # lease holder named; Rust makes the identity check, as it does for Acquire.
+  Stranger{}
 
 type Answer is Data:
   Admit{}
@@ -39,7 +42,8 @@ type Answer is Data:
 # first message gets Failure(Protocol); an unsupported version gets nothing.
 # A connection that arrives while another peer negotiates is turned away with
 # Busy at once, and an observer that sends a message ends with
-# Failure(Protocol).
+# Failure(Protocol). A Hello from a peer other than the named process is Busy,
+# whatever the slots hold.
 def decide(signal: Signal, interactive: Bool, observer: Bool) -> Answer:
   match signal:
     case Hello{}:
@@ -76,6 +80,8 @@ def decide(signal: Signal, interactive: Bool, observer: Bool) -> Answer:
           Expel{}
         case False{}:
           Quiet{}
+    case Stranger{}:
+      Busy{}
 
 def answer(slots: Slots, signal: Signal) -> Answer:
   match slots:
@@ -104,6 +110,8 @@ def next(slots: Slots, signal: Signal) -> Slots:
           Slots{interactive, observer}
         case Spoke{}:
           Slots{interactive, False{}}
+        case Stranger{}:
+          Slots{interactive, observer}
 
 def replay(events: List<&2, Signal>, slots: Slots) -> Slots:
   match events:
@@ -117,8 +125,9 @@ def replay(events: List<&2, Signal>, slots: Slots) -> Slots:
 # taken, a valid request on a free slot is never turned away, a reject only
 # ends an attached client, a bad first message is refused or dropped, and a
 # connection that arrives during another's negotiation is turned away without
-# changing either slot, and only an observer is expelled for a message, which
-# frees its slot.
+# changing either slot, only an observer is expelled for a message, which
+# frees its slot, and a Hello from a peer other than the named process is
+# Busy without changing either slot.
 type Audit is Data:
   Clean{slots: Slots}
   Broken{}
@@ -151,6 +160,8 @@ def audit_slots(signal: Signal, answer: Answer, interactive: Bool, observer: Boo
       Clean{Slots{interactive, False{}}}
     case Spoke{} Quiet{} _ False{}:
       Clean{Slots{interactive, False{}}}
+    case Stranger{} Busy{} _ _:
+      Clean{Slots{interactive, observer}}
     case _ _ _ _:
       Broken{}
 

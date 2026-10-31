@@ -1,5 +1,5 @@
 //! Orbit's `serve` command line (consumer compatibility):
-//! `serve [SOCKET] [--management-v3 SESSION_ID RUN_ID COMPONENT_GENERATION]
+//! `serve [SOCKET] [--management-v4 SESSION_ID RUN_ID COMPONENT_GENERATION]
 //! [--ansi-palette-v1 RGB,...] [-- COMMAND ...]`.
 
 use crate::management::Launch;
@@ -13,8 +13,8 @@ use std::{
 };
 
 const ANSI_PALETTE_ARGUMENT: &str = "--ansi-palette-v1";
-const MANAGEMENT_ARGUMENT: &str = "--management-v3";
-const USAGE: &str = "usage: yazelix-orbit serve [SOCKET] [--management-v3 SESSION_ID RUN_ID COMPONENT_GENERATION] [--ansi-palette-v1 RGB,...] [-- COMMAND ...]";
+const MANAGEMENT_ARGUMENT: &str = "--management-v4";
+const USAGE: &str = "usage: yazelix-orbit serve [SOCKET] [--management-v4 SESSION_ID RUN_ID COMPONENT_GENERATION] [--ansi-palette-v1 RGB,...] [-- COMMAND ...]";
 
 /// One session to serve: its socket pathname, its management identities, the
 /// terminal's default ANSI colors, and the PTY child's command line.
@@ -76,12 +76,12 @@ fn take_management(arguments: &mut Vec<OsString>) -> Result<Option<Launch>, Stri
         return Ok(None);
     };
     if positions.next().is_some() {
-        return Err("duplicate --management-v3 argument".into());
+        return Err("duplicate --management-v4 argument".into());
     }
     let values = arguments
         .get(index + 1..index + 4)
         .filter(|_| index + 4 <= launch_end)
-        .ok_or("--management-v3 requires Session, run, and component identities")?;
+        .ok_or("--management-v4 requires Session, run, and component identities")?;
     let launch = Launch::new([&values[0], &values[1], &values[2]].map(OsString::as_os_str))?;
     arguments.drain(index..index + 4);
     Ok(Some(launch))

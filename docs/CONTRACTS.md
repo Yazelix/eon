@@ -1307,7 +1307,10 @@ socket names, JSON fields and protocol identifiers retain their spellings.
 
 ## EON-C11 — Runtime generations and presentation
 
-- **Status:** Proven on x86_64 Linux native Wayland
+- **Status:** Proven on x86_64 Linux native Wayland. Amended on 2026-10-30
+  (approved by Lucca, relayed by eon-overseer) by
+  `eon-agent-parity-a9g0.15`: only the Venus a supervisor starts attaches to
+  its window's terminals, awaiting its amendment proof below.
 - **Consumer:** Eon and eonbase users launching or targeting a product generation.
 - **Trigger:** Launch current generation, inspect an older live generation,
   present a compatible existing surface, stop one generation, or stop a selected
@@ -1362,6 +1365,19 @@ socket names, JSON fields and protocol identifiers retain their spellings.
   - A current launch overlapping clean exit of the final terminal waits for the
     retiring supervisor, then starts one fresh terminal instead of reporting
     presentation success against ended state.
+  - Only the Venus process a supervisor starts to present its window may attach
+    to that window's terminals as their interactive client. The supervisor
+    names that process, by process ID and process start identity, to each live
+    terminal's Orbit through ORB-C13 `AttachAllow`:
+    - when it starts that Venus, at launch and at every later presentation
+      (`eon attach`, a window reattached after detach);
+    - for each terminal it starts, or recovers under EON-C15, while that Venus
+      runs.
+
+    A terminal it cannot name stays unattached, and Venus reports it as it
+    reports a refused attachment (`Busy`) and retries. No other process can
+    attach to a terminal of a managed window, whether or not the window shows
+    it.
 - **Important failures:** Unknown EONW version, incompatible presentation,
   stale or mismatched process identity, lost control, partial Stop, or live
   foreign residue fails closed
@@ -1372,11 +1388,14 @@ socket names, JSON fields and protocol identifiers retain their spellings.
 - **Owner:** Eon Runtime generation identity/selection, namespaces, discovery,
   Present, explicit Stop and exact owned residue; Eon supplies immutable
   assembly/default/validator/graph/Cargo/Nix-generated inputs.
-- **Consumes:** Orbit management v3 and Venus `VEN-C14`.
+- **Consumes:** Orbit management v4, `ORB-C3` admission, and Venus `VEN-C14`.
 - **Boundary:** No manager daemon, persisted topology, machine-restart recovery,
   PTY handoff, old-generation backport, updater, Nix evaluation, package-channel
   identity, presentation compatibility window, remote runtime, plugin API, service-manager
-  requirement, or automatic eviction.
+  requirement, or automatic eviction. Naming the presenting Venus keeps stray
+  same-user processes from taking a terminal's interactive attachment. It is
+  not a defence against same-user code that controls the supervisor or the
+  named Venus.
 - **Assembly boundary:** The `eon-runtime` generation owner hashes Eon's
   source-tree digest, which includes runtime/EONW source and generated-command
   inputs. Exact presentation checks remain; retain the prior executable to
@@ -1405,6 +1424,15 @@ socket names, JSON fields and protocol identifiers retain their spellings.
     Installed: a detached window was presented again by a later build's
     `eon window attach ID` and by the `eon` its generation recorded; see
     EON-C23.
+- **Amendment proof:** The `eon-agent-parity-a9g0.15` amendment is checked by
+  `attach_allow_shares_the_request_slot_and_names_the_one_peer_orbit_admits`
+  in `runtime/crates/eon-runtime/src/sessions.rs`, against a real Orbit, and
+  by `a_workspace_final_close_shows_the_recent_one_and_attach_keeps_it` and
+  `replacement_eon_adopts_exact_runs_and_projects_numeric_workspace` in
+  `eon/crates/eon/tests/workspace_control.rs` (launch, a terminal created
+  afterwards, `eon attach` after detach, and recovered terminals); it awaits
+  its landing revision and one installed observation of Venus attaching at
+  launch, to a new tab, and after detach and attach.
 - **Open proof:** Pending re-proof in this repository: native Present of a live
   surface and launch with `/sys/fs/cgroup` hidden.
 
@@ -1592,7 +1620,7 @@ socket names, JSON fields and protocol identifiers retain their spellings.
   projection, lease collection, deadline, EONW ordering, retained launch claim,
   and exact residue; Orbit `ORB-C13` owns live identity, Ready, lease, terminal state,
   `ORB-C12` cleanup, tombstone, and endpoint cleanup.
-- **Consumes:** Orbit `ORB-C12`, `ORB-C13`, management v3, and Venus `VEN-C14`.
+- **Consumes:** Orbit `ORB-C12`, `ORB-C13`, management v4, and Venus `VEN-C14`.
 - **Boundary:** Same boot and login only; no prior-topology persistence, Orbit or
   machine restart recovery, logout/reboot survival, remote authority, service
   manager, broker, or compatibility adapter. Tombstones grant no authority and
@@ -2777,7 +2805,7 @@ socket names, JSON fields and protocol identifiers retain their spellings.
     sidebar visibility and `[sidebar]` configuration.
   - **Orbit** owns the records, their neutral facts and the terminal title.
   - **Venus** owns presentation and hiding for width (VEN-C30).
-- **Consumes:** ORB-C15, ORB-C13 generation 3, EON-C8 topology, and EON-C10 (EONW v25, still
+- **Consumes:** ORB-C15, ORB-C13 generation 4, EON-C8 topology, and EON-C10 (EONW v25, still
   request and response, with no event stream).
 - **Boundary:**
   - no hooks and no edits to agent configuration;

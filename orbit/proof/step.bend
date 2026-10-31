@@ -13483,6 +13483,24 @@ def fits_peer(
           {==}
         case Orbit.Stopped{pid}:
           {==}
+    case Boundary.FirstMessageStranger{}:
+      match life:
+        case Orbit.Detached{pid}:
+          match unanchored:
+            case True{}:
+              {==}
+            case False{}:
+              {==}
+        case Orbit.Attached{pid}:
+          match unanchored:
+            case True{}:
+              {==}
+            case False{}:
+              {==}
+        case Orbit.Stopping{pid}:
+          {==}
+        case Orbit.Stopped{pid}:
+          {==}
 
 def fits_applied(
   effect: Boundary.Effect, life: Orbit.Lifecycle, observer: Bool, waiting: Session.Waiting, pointer: Session.Pointer, written: Bool, explicit: Bool, manage: Management.Slot, tracker: Status.Tracker, revision: Revision.Revision, was: Bool, future: Bool, held: Bool, unanchored: Bool, clipboard_overflow: Bool, clipboard: Bool, routed: Bool, room: Bool, frame_room: Bool, alternate: Bool, above_live: Bool, tracking: Bool, shift: Bool, result_frame_room: Bool, outside: Bool, host_room: Bool, terminal_room: Bool, pty_full: Bool, metadata_changed: Bool, metadata_fresh: Bool
@@ -32301,6 +32319,878 @@ def fits_management(
               {==}
             case False{}:
               {==}
+        case Orbit.Stopping{pid}:
+          {==}
+        case Orbit.Stopped{pid}:
+          {==}
+    case Boundary.ManagementEventRead{}:
+      match life:
+        case Orbit.Detached{pid}:
+          match pointer:
+            case Session.Pointer{route, lit, copied}:
+              match route:
+                case Selection.Idle{}:
+                  match manage:
+                    case Management.Free{}:
+                      match held:
+                        case True{}:
+                          match unanchored:
+                            case True{}:
+                              {==}
+                            case False{}:
+                              {==}
+                        case False{}:
+                          match unanchored:
+                            case True{}:
+                              {==}
+                            case False{}:
+                              {==}
+                    case Management.Negotiating{}:
+                      match held:
+                        case True{}:
+                          match unanchored:
+                            case True{}:
+                              {==}
+                            case False{}:
+                              {==}
+                        case False{}:
+                          match unanchored:
+                            case True{}:
+                              {==}
+                            case False{}:
+                              {==}
+                    case Management.Leased{}:
+                      match held:
+                        case True{}:
+                          match unanchored:
+                            case True{}:
+                              {==}
+                            case False{}:
+                              {==}
+                        case False{}:
+                          match unanchored:
+                            case True{}:
+                              {==}
+                            case False{}:
+                              {==}
+                    case Management.Closing{}:
+                      match held:
+                        case True{}:
+                          match unanchored:
+                            case True{}:
+                              {==}
+                            case False{}:
+                              {==}
+                        case False{}:
+                          match unanchored:
+                            case True{}:
+                              {==}
+                            case False{}:
+                              {==}
+                case Selection.Host{}:
+                  match manage:
+                    case Management.Free{}:
+                      match held:
+                        case True{}:
+                          match unanchored:
+                            case True{}:
+                              {==}
+                            case False{}:
+                              {==}
+                        case False{}:
+                          match unanchored:
+                            case True{}:
+                              {==}
+                            case False{}:
+                              {==}
+                    case Management.Negotiating{}:
+                      match held:
+                        case True{}:
+                          match unanchored:
+                            case True{}:
+                              {==}
+                            case False{}:
+                              {==}
+                        case False{}:
+                          match unanchored:
+                            case True{}:
+                              {==}
+                            case False{}:
+                              {==}
+                    case Management.Leased{}:
+                      match held:
+                        case True{}:
+                          match unanchored:
+                            case True{}:
+                              {==}
+                            case False{}:
+                              {==}
+                        case False{}:
+                          match unanchored:
+                            case True{}:
+                              {==}
+                            case False{}:
+                              {==}
+                    case Management.Closing{}:
+                      match held:
+                        case True{}:
+                          match unanchored:
+                            case True{}:
+                              {==}
+                            case False{}:
+                              {==}
+                        case False{}:
+                          match unanchored:
+                            case True{}:
+                              {==}
+                            case False{}:
+                              {==}
+                case Selection.Terminal{}:
+                  match manage:
+                    case Management.Free{}:
+                      match held:
+                        case True{}:
+                          match unanchored:
+                            case True{}:
+                              {==}
+                            case False{}:
+                              {==}
+                        case False{}:
+                          match unanchored:
+                            case True{}:
+                              {==}
+                            case False{}:
+                              {==}
+                    case Management.Negotiating{}:
+                      match held:
+                        case True{}:
+                          match unanchored:
+                            case True{}:
+                              {==}
+                            case False{}:
+                              {==}
+                        case False{}:
+                          match unanchored:
+                            case True{}:
+                              {==}
+                            case False{}:
+                              {==}
+                    case Management.Leased{}:
+                      match held:
+                        case True{}:
+                          match unanchored:
+                            case True{}:
+                              {==}
+                            case False{}:
+                              {==}
+                        case False{}:
+                          match unanchored:
+                            case True{}:
+                              {==}
+                            case False{}:
+                              {==}
+                    case Management.Closing{}:
+                      match held:
+                        case True{}:
+                          match unanchored:
+                            case True{}:
+                              {==}
+                            case False{}:
+                              {==}
+                        case False{}:
+                          match unanchored:
+                            case True{}:
+                              {==}
+                            case False{}:
+                              {==}
+        case Orbit.Attached{pid}:
+          match pointer:
+            case Session.Pointer{route, lit, copied}:
+              match route:
+                case Selection.Idle{}:
+                  match manage:
+                    case Management.Free{}:
+                      match held:
+                        case True{}:
+                          match unanchored:
+                            case True{}:
+                              {==}
+                            case False{}:
+                              {==}
+                        case False{}:
+                          match unanchored:
+                            case True{}:
+                              {==}
+                            case False{}:
+                              {==}
+                    case Management.Negotiating{}:
+                      match held:
+                        case True{}:
+                          match unanchored:
+                            case True{}:
+                              {==}
+                            case False{}:
+                              {==}
+                        case False{}:
+                          match unanchored:
+                            case True{}:
+                              {==}
+                            case False{}:
+                              {==}
+                    case Management.Leased{}:
+                      match held:
+                        case True{}:
+                          match unanchored:
+                            case True{}:
+                              {==}
+                            case False{}:
+                              {==}
+                        case False{}:
+                          match unanchored:
+                            case True{}:
+                              {==}
+                            case False{}:
+                              {==}
+                    case Management.Closing{}:
+                      match held:
+                        case True{}:
+                          match unanchored:
+                            case True{}:
+                              {==}
+                            case False{}:
+                              {==}
+                        case False{}:
+                          match unanchored:
+                            case True{}:
+                              {==}
+                            case False{}:
+                              {==}
+                case Selection.Host{}:
+                  match manage:
+                    case Management.Free{}:
+                      match held:
+                        case True{}:
+                          match unanchored:
+                            case True{}:
+                              {==}
+                            case False{}:
+                              {==}
+                        case False{}:
+                          match unanchored:
+                            case True{}:
+                              {==}
+                            case False{}:
+                              {==}
+                    case Management.Negotiating{}:
+                      match held:
+                        case True{}:
+                          match unanchored:
+                            case True{}:
+                              {==}
+                            case False{}:
+                              {==}
+                        case False{}:
+                          match unanchored:
+                            case True{}:
+                              {==}
+                            case False{}:
+                              {==}
+                    case Management.Leased{}:
+                      match held:
+                        case True{}:
+                          match unanchored:
+                            case True{}:
+                              {==}
+                            case False{}:
+                              {==}
+                        case False{}:
+                          match unanchored:
+                            case True{}:
+                              {==}
+                            case False{}:
+                              {==}
+                    case Management.Closing{}:
+                      match held:
+                        case True{}:
+                          match unanchored:
+                            case True{}:
+                              {==}
+                            case False{}:
+                              {==}
+                        case False{}:
+                          match unanchored:
+                            case True{}:
+                              {==}
+                            case False{}:
+                              {==}
+                case Selection.Terminal{}:
+                  match manage:
+                    case Management.Free{}:
+                      match held:
+                        case True{}:
+                          match unanchored:
+                            case True{}:
+                              {==}
+                            case False{}:
+                              {==}
+                        case False{}:
+                          match unanchored:
+                            case True{}:
+                              {==}
+                            case False{}:
+                              {==}
+                    case Management.Negotiating{}:
+                      match held:
+                        case True{}:
+                          match unanchored:
+                            case True{}:
+                              {==}
+                            case False{}:
+                              {==}
+                        case False{}:
+                          match unanchored:
+                            case True{}:
+                              {==}
+                            case False{}:
+                              {==}
+                    case Management.Leased{}:
+                      match held:
+                        case True{}:
+                          match unanchored:
+                            case True{}:
+                              {==}
+                            case False{}:
+                              {==}
+                        case False{}:
+                          match unanchored:
+                            case True{}:
+                              {==}
+                            case False{}:
+                              {==}
+                    case Management.Closing{}:
+                      match held:
+                        case True{}:
+                          match unanchored:
+                            case True{}:
+                              {==}
+                            case False{}:
+                              {==}
+                        case False{}:
+                          match unanchored:
+                            case True{}:
+                              {==}
+                            case False{}:
+                              {==}
+        case Orbit.Stopping{pid}:
+          {==}
+        case Orbit.Stopped{pid}:
+          {==}
+    case Boundary.ManagementEventInput{}:
+      match life:
+        case Orbit.Detached{pid}:
+          match pointer:
+            case Session.Pointer{route, lit, copied}:
+              match route:
+                case Selection.Idle{}:
+                  match manage:
+                    case Management.Free{}:
+                      match unanchored:
+                        case True{}:
+                          {==}
+                        case False{}:
+                          {==}
+                    case Management.Negotiating{}:
+                      match unanchored:
+                        case True{}:
+                          {==}
+                        case False{}:
+                          {==}
+                    case Management.Leased{}:
+                      match unanchored:
+                        case True{}:
+                          {==}
+                        case False{}:
+                          {==}
+                    case Management.Closing{}:
+                      match unanchored:
+                        case True{}:
+                          {==}
+                        case False{}:
+                          {==}
+                case Selection.Host{}:
+                  match manage:
+                    case Management.Free{}:
+                      match unanchored:
+                        case True{}:
+                          {==}
+                        case False{}:
+                          {==}
+                    case Management.Negotiating{}:
+                      match unanchored:
+                        case True{}:
+                          {==}
+                        case False{}:
+                          {==}
+                    case Management.Leased{}:
+                      match unanchored:
+                        case True{}:
+                          {==}
+                        case False{}:
+                          {==}
+                    case Management.Closing{}:
+                      match unanchored:
+                        case True{}:
+                          {==}
+                        case False{}:
+                          {==}
+                case Selection.Terminal{}:
+                  match manage:
+                    case Management.Free{}:
+                      match unanchored:
+                        case True{}:
+                          {==}
+                        case False{}:
+                          {==}
+                    case Management.Negotiating{}:
+                      match unanchored:
+                        case True{}:
+                          {==}
+                        case False{}:
+                          {==}
+                    case Management.Leased{}:
+                      match unanchored:
+                        case True{}:
+                          {==}
+                        case False{}:
+                          {==}
+                    case Management.Closing{}:
+                      match unanchored:
+                        case True{}:
+                          {==}
+                        case False{}:
+                          {==}
+        case Orbit.Attached{pid}:
+          match pointer:
+            case Session.Pointer{route, lit, copied}:
+              match route:
+                case Selection.Idle{}:
+                  match manage:
+                    case Management.Free{}:
+                      match unanchored:
+                        case True{}:
+                          {==}
+                        case False{}:
+                          {==}
+                    case Management.Negotiating{}:
+                      match unanchored:
+                        case True{}:
+                          {==}
+                        case False{}:
+                          {==}
+                    case Management.Leased{}:
+                      match unanchored:
+                        case True{}:
+                          {==}
+                        case False{}:
+                          {==}
+                    case Management.Closing{}:
+                      match unanchored:
+                        case True{}:
+                          {==}
+                        case False{}:
+                          {==}
+                case Selection.Host{}:
+                  match manage:
+                    case Management.Free{}:
+                      match unanchored:
+                        case True{}:
+                          {==}
+                        case False{}:
+                          {==}
+                    case Management.Negotiating{}:
+                      match unanchored:
+                        case True{}:
+                          {==}
+                        case False{}:
+                          {==}
+                    case Management.Leased{}:
+                      match unanchored:
+                        case True{}:
+                          {==}
+                        case False{}:
+                          {==}
+                    case Management.Closing{}:
+                      match unanchored:
+                        case True{}:
+                          {==}
+                        case False{}:
+                          {==}
+                case Selection.Terminal{}:
+                  match manage:
+                    case Management.Free{}:
+                      match unanchored:
+                        case True{}:
+                          {==}
+                        case False{}:
+                          {==}
+                    case Management.Negotiating{}:
+                      match unanchored:
+                        case True{}:
+                          {==}
+                        case False{}:
+                          {==}
+                    case Management.Leased{}:
+                      match unanchored:
+                        case True{}:
+                          {==}
+                        case False{}:
+                          {==}
+                    case Management.Closing{}:
+                      match unanchored:
+                        case True{}:
+                          {==}
+                        case False{}:
+                          {==}
+        case Orbit.Stopping{pid}:
+          {==}
+        case Orbit.Stopped{pid}:
+          {==}
+    case Boundary.ManagementEventAllow{}:
+      match life:
+        case Orbit.Detached{pid}:
+          match pointer:
+            case Session.Pointer{route, lit, copied}:
+              match route:
+                case Selection.Idle{}:
+                  match manage:
+                    case Management.Free{}:
+                      match unanchored:
+                        case True{}:
+                          {==}
+                        case False{}:
+                          {==}
+                    case Management.Negotiating{}:
+                      match unanchored:
+                        case True{}:
+                          {==}
+                        case False{}:
+                          {==}
+                    case Management.Leased{}:
+                      match unanchored:
+                        case True{}:
+                          {==}
+                        case False{}:
+                          {==}
+                    case Management.Closing{}:
+                      match unanchored:
+                        case True{}:
+                          {==}
+                        case False{}:
+                          {==}
+                case Selection.Host{}:
+                  match manage:
+                    case Management.Free{}:
+                      match unanchored:
+                        case True{}:
+                          {==}
+                        case False{}:
+                          {==}
+                    case Management.Negotiating{}:
+                      match unanchored:
+                        case True{}:
+                          {==}
+                        case False{}:
+                          {==}
+                    case Management.Leased{}:
+                      match unanchored:
+                        case True{}:
+                          {==}
+                        case False{}:
+                          {==}
+                    case Management.Closing{}:
+                      match unanchored:
+                        case True{}:
+                          {==}
+                        case False{}:
+                          {==}
+                case Selection.Terminal{}:
+                  match manage:
+                    case Management.Free{}:
+                      match unanchored:
+                        case True{}:
+                          {==}
+                        case False{}:
+                          {==}
+                    case Management.Negotiating{}:
+                      match unanchored:
+                        case True{}:
+                          {==}
+                        case False{}:
+                          {==}
+                    case Management.Leased{}:
+                      match unanchored:
+                        case True{}:
+                          {==}
+                        case False{}:
+                          {==}
+                    case Management.Closing{}:
+                      match unanchored:
+                        case True{}:
+                          {==}
+                        case False{}:
+                          {==}
+        case Orbit.Attached{pid}:
+          match pointer:
+            case Session.Pointer{route, lit, copied}:
+              match route:
+                case Selection.Idle{}:
+                  match manage:
+                    case Management.Free{}:
+                      match unanchored:
+                        case True{}:
+                          {==}
+                        case False{}:
+                          {==}
+                    case Management.Negotiating{}:
+                      match unanchored:
+                        case True{}:
+                          {==}
+                        case False{}:
+                          {==}
+                    case Management.Leased{}:
+                      match unanchored:
+                        case True{}:
+                          {==}
+                        case False{}:
+                          {==}
+                    case Management.Closing{}:
+                      match unanchored:
+                        case True{}:
+                          {==}
+                        case False{}:
+                          {==}
+                case Selection.Host{}:
+                  match manage:
+                    case Management.Free{}:
+                      match unanchored:
+                        case True{}:
+                          {==}
+                        case False{}:
+                          {==}
+                    case Management.Negotiating{}:
+                      match unanchored:
+                        case True{}:
+                          {==}
+                        case False{}:
+                          {==}
+                    case Management.Leased{}:
+                      match unanchored:
+                        case True{}:
+                          {==}
+                        case False{}:
+                          {==}
+                    case Management.Closing{}:
+                      match unanchored:
+                        case True{}:
+                          {==}
+                        case False{}:
+                          {==}
+                case Selection.Terminal{}:
+                  match manage:
+                    case Management.Free{}:
+                      match unanchored:
+                        case True{}:
+                          {==}
+                        case False{}:
+                          {==}
+                    case Management.Negotiating{}:
+                      match unanchored:
+                        case True{}:
+                          {==}
+                        case False{}:
+                          {==}
+                    case Management.Leased{}:
+                      match unanchored:
+                        case True{}:
+                          {==}
+                        case False{}:
+                          {==}
+                    case Management.Closing{}:
+                      match unanchored:
+                        case True{}:
+                          {==}
+                        case False{}:
+                          {==}
+        case Orbit.Stopping{pid}:
+          {==}
+        case Orbit.Stopped{pid}:
+          {==}
+    case Boundary.ManagementEventInvalid{}:
+      match life:
+        case Orbit.Detached{pid}:
+          match pointer:
+            case Session.Pointer{route, lit, copied}:
+              match route:
+                case Selection.Idle{}:
+                  match manage:
+                    case Management.Free{}:
+                      match unanchored:
+                        case True{}:
+                          {==}
+                        case False{}:
+                          {==}
+                    case Management.Negotiating{}:
+                      match unanchored:
+                        case True{}:
+                          {==}
+                        case False{}:
+                          {==}
+                    case Management.Leased{}:
+                      match unanchored:
+                        case True{}:
+                          {==}
+                        case False{}:
+                          {==}
+                    case Management.Closing{}:
+                      match unanchored:
+                        case True{}:
+                          {==}
+                        case False{}:
+                          {==}
+                case Selection.Host{}:
+                  match manage:
+                    case Management.Free{}:
+                      match unanchored:
+                        case True{}:
+                          {==}
+                        case False{}:
+                          {==}
+                    case Management.Negotiating{}:
+                      match unanchored:
+                        case True{}:
+                          {==}
+                        case False{}:
+                          {==}
+                    case Management.Leased{}:
+                      match unanchored:
+                        case True{}:
+                          {==}
+                        case False{}:
+                          {==}
+                    case Management.Closing{}:
+                      match unanchored:
+                        case True{}:
+                          {==}
+                        case False{}:
+                          {==}
+                case Selection.Terminal{}:
+                  match manage:
+                    case Management.Free{}:
+                      match unanchored:
+                        case True{}:
+                          {==}
+                        case False{}:
+                          {==}
+                    case Management.Negotiating{}:
+                      match unanchored:
+                        case True{}:
+                          {==}
+                        case False{}:
+                          {==}
+                    case Management.Leased{}:
+                      match unanchored:
+                        case True{}:
+                          {==}
+                        case False{}:
+                          {==}
+                    case Management.Closing{}:
+                      match unanchored:
+                        case True{}:
+                          {==}
+                        case False{}:
+                          {==}
+        case Orbit.Attached{pid}:
+          match pointer:
+            case Session.Pointer{route, lit, copied}:
+              match route:
+                case Selection.Idle{}:
+                  match manage:
+                    case Management.Free{}:
+                      match unanchored:
+                        case True{}:
+                          {==}
+                        case False{}:
+                          {==}
+                    case Management.Negotiating{}:
+                      match unanchored:
+                        case True{}:
+                          {==}
+                        case False{}:
+                          {==}
+                    case Management.Leased{}:
+                      match unanchored:
+                        case True{}:
+                          {==}
+                        case False{}:
+                          {==}
+                    case Management.Closing{}:
+                      match unanchored:
+                        case True{}:
+                          {==}
+                        case False{}:
+                          {==}
+                case Selection.Host{}:
+                  match manage:
+                    case Management.Free{}:
+                      match unanchored:
+                        case True{}:
+                          {==}
+                        case False{}:
+                          {==}
+                    case Management.Negotiating{}:
+                      match unanchored:
+                        case True{}:
+                          {==}
+                        case False{}:
+                          {==}
+                    case Management.Leased{}:
+                      match unanchored:
+                        case True{}:
+                          {==}
+                        case False{}:
+                          {==}
+                    case Management.Closing{}:
+                      match unanchored:
+                        case True{}:
+                          {==}
+                        case False{}:
+                          {==}
+                case Selection.Terminal{}:
+                  match manage:
+                    case Management.Free{}:
+                      match unanchored:
+                        case True{}:
+                          {==}
+                        case False{}:
+                          {==}
+                    case Management.Negotiating{}:
+                      match unanchored:
+                        case True{}:
+                          {==}
+                        case False{}:
+                          {==}
+                    case Management.Leased{}:
+                      match unanchored:
+                        case True{}:
+                          {==}
+                        case False{}:
+                          {==}
+                    case Management.Closing{}:
+                      match unanchored:
+                        case True{}:
+                          {==}
+                        case False{}:
+                          {==}
         case Orbit.Stopping{pid}:
           {==}
         case Orbit.Stopped{pid}:

@@ -11,8 +11,9 @@ use super::{
     managed_environment::{self, nonempty_environment_path},
     notification, platform, quota,
     sessions::{
-        RunningSession, TAB_VARIABLE, TERMINAL_VARIABLE, acquire_generation_sessions, bound_io,
-        recover_sessions, session_finished, start_orbit, stop_managed_sessions,
+        AttachName, RunningSession, TAB_VARIABLE, TERMINAL_VARIABLE, acquire_generation_sessions,
+        bound_io, name_presentation, recover_sessions, session_finished, start_orbit,
+        stop_managed_sessions,
     },
     workspace::{self, LaunchCommand, SessionEnd, SessionOperation, WorkspaceSet},
 };
@@ -481,6 +482,10 @@ fn venus_command(
 
 struct PresentationProcess {
     child: Child,
+    /// The name each terminal's Orbit admits to attach, read at spawn; none
+    /// if it could not be read, which leaves every terminal unattached
+    /// (EON-C11).
+    name: Option<AttachName>,
     control: UnixStream,
     log: Arc<DiagnosticLog>,
     relay: Option<JoinHandle<()>>,
@@ -488,11 +493,14 @@ struct PresentationProcess {
 }
 
 impl PresentationProcess {
+    /// Starts Venus and names it to `sessions` before it can learn of them
+    /// (EON-C11).
     fn start(
         mut command: Command,
         admission: bool,
         snapshot: Option<Snapshot>,
         timeout: Duration,
+        sessions: &mut [RunningSession],
         log: &Arc<DiagnosticLog>,
     ) -> Result<Self, String> {
         let deadline = Instant::now() + timeout;
@@ -519,9 +527,17 @@ impl PresentationProcess {
         // Command retains its Stdio handles; release them so child exit yields EOF.
         drop(command);
         log.record(&format!("Eon Desktop started: pid {}", child.id()));
+        let name = AttachName::of(child.id())
+            .inspect_err(|error| {
+                log.note(&format!(
+                    "Cannot let Eon Desktop attach to its terminals: {error}"
+                ));
+            })
+            .ok();
         let stderr = child.stderr.take().expect("Eon Desktop stderr is piped");
         let mut process = Self {
             child,
+            name,
             control,
             log: Arc::clone(log),
             relay: None,
@@ -531,6 +547,7 @@ impl PresentationProcess {
             log.relay(stderr)
                 .map_err(|error| format!("cannot relay Eon Desktop diagnostics: {error}"))?,
         );
+        name_presentation(sessions, name, true, log);
         if admission {
             let not_ready = || format!("Venus was not ready within {timeout:?}");
             let result = (|| {
@@ -863,6 +880,7 @@ fn supervise(
             true,
             snapshot,
             PRESENTATION_ADMISSION_TIMEOUT,
+            &mut sessions,
             log,
         )?)
     } else {
@@ -914,6 +932,7 @@ fn supervise(
                         &mut initial_child,
                         operation,
                         startup_animation.as_ref(),
+                        admitted.as_ref().and_then(|venus| venus.name),
                     )
                 },
             )?
@@ -963,6 +982,7 @@ fn supervise(
             false,
             None,
             PRESENTATION_ADMISSION_TIMEOUT,
+            &mut state.sessions,
             log,
         ),
     };
@@ -982,6 +1002,8 @@ fn supervise(
             return Err(errors.join("; "));
         }
     };
+    // Terminals started after an admitted Venus spawned.
+    state.name_presentation(true);
 
     let status = (|| {
         loop {
@@ -1008,6 +1030,8 @@ fn supervise(
             }
 
             if !state.stopping {
+                // The backstop for a naming that failed or came late.
+                state.name_presentation(false);
                 state.follow_attention();
                 if let Some(workspaces) = &state.workspaces {
                     state.pane_labels.reconcile(&workspaces.pane_sessions());
@@ -1058,6 +1082,17 @@ struct SupervisorState {
 }
 
 impl SupervisorState {
+    /// The name the running Venus attaches by (EON-C11).
+    fn presentation_name(&self) -> Option<AttachName> {
+        self.venus.as_ref().and_then(|venus| venus.name)
+    }
+
+    /// Names the running Venus to each terminal not yet named to it.
+    fn name_presentation(&mut self, wait: bool) {
+        let venus = self.presentation_name();
+        name_presentation(&mut self.sessions, venus, wait, &self.log);
+    }
+
     /// The shown workspace with its quotas and attention.
     fn workspace_snapshot(&mut self) -> Option<Snapshot> {
         self.workspaces.as_ref()?;
@@ -1175,6 +1210,7 @@ fn reap_finished_sessions(
         if let Some(code) = finished {
             let session = state.sessions.remove(index);
             state.log.record(&session_end_line(&session, code));
+            let venus = state.presentation_name();
             if let Some(workspace) = &mut state.workspaces {
                 let component_generation = &state.component_generation;
                 let sessions = &mut state.sessions;
@@ -1191,6 +1227,7 @@ fn reap_finished_sessions(
                             initial_child,
                             operation,
                             None,
+                            venus,
                         )
                     });
                 report_session_end(result, &state.log)?;
@@ -1514,6 +1551,7 @@ fn apply_session_operation(
     initial_child: &mut Vec<OsString>,
     operation: SessionOperation,
     startup_animation: Option<&managed_environment::StartupAnimation>,
+    venus: Option<AttachName>,
 ) -> Result<(), String> {
     let (session, directory, command, tab) = match operation {
         SessionOperation::Start {
@@ -1539,7 +1577,7 @@ fn apply_session_operation(
         LaunchCommand::Pane if session.id == "session-1" => initial_child.clone(),
         LaunchCommand::Pane => Vec::new(),
     };
-    let running = start_orbit(
+    let mut running = start_orbit(
         inputs,
         config,
         &session.endpoint,
@@ -1551,6 +1589,8 @@ fn apply_session_operation(
         log,
         Instant::now() + SESSION_START_TIMEOUT,
     )?;
+    // Before the reply that shows Venus the terminal (EON-C11).
+    name_presentation(std::slice::from_mut(&mut running), venus, true, log);
     sessions.push(running);
     if session.id == "session-1" {
         initial_child.clear();
@@ -1596,6 +1636,7 @@ fn cancel_transient_popups(
             }
             state.sessions.remove(index);
         }
+        let venus = state.presentation_name();
         let SupervisorState {
             component_generation,
             workspaces,
@@ -1617,6 +1658,7 @@ fn cancel_transient_popups(
                     initial_child,
                     operation,
                     None,
+                    venus,
                 )
             });
         report_session_end(result, log)?;
@@ -1888,6 +1930,7 @@ fn dispatch_control_request(
                     terminal.requires_startup_admission(),
                     state.workspace_snapshot(),
                     PRESENTATION_ADMISSION_TIMEOUT,
+                    &mut state.sessions,
                     &state.log,
                 )?);
                 Ok(())
@@ -2003,6 +2046,7 @@ fn dispatch_control_request(
                     matches!(action, Action::FocusAttention { tab, .. }
                     if workspace.attention_destination(caller.as_deref(), tab).is_some())
                 });
+            let venus = state.venus.as_ref().and_then(|venus| venus.name);
             let component_generation = &state.component_generation;
             let sessions = &mut state.sessions;
             let initial_child = &mut state.initial_child;
@@ -2039,6 +2083,7 @@ fn dispatch_control_request(
                             initial_child,
                             operation,
                             None,
+                            venus,
                         )
                     },
                 ),
@@ -2729,6 +2774,7 @@ mod tests {
             true,
             Some(snapshot.clone()),
             Duration::from_secs(2),
+            &mut [],
             &log,
         )
         .unwrap();
@@ -2743,6 +2789,7 @@ mod tests {
             true,
             Some(snapshot),
             Duration::from_millis(300),
+            &mut [],
             &log,
         )
         .err()
@@ -2780,9 +2827,15 @@ mod tests {
             "-c",
             "echo \"panicked: backtrace=$RUST_BACKTRACE\" >&2; kill -KILL $$",
         ]);
-        let mut process =
-            super::PresentationProcess::start(command, false, None, Duration::from_secs(2), &log)
-                .unwrap();
+        let mut process = super::PresentationProcess::start(
+            command,
+            false,
+            None,
+            Duration::from_secs(2),
+            &mut [],
+            &log,
+        )
+        .unwrap();
         let deadline = Instant::now() + Duration::from_secs(5);
         while process.exited().unwrap().is_none() {
             assert!(Instant::now() < deadline);

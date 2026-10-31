@@ -12,6 +12,10 @@ type FirstMessage is Data:
   FirstMessageRefused{}
   # Another ORBS version, which gets no answer.
   FirstMessageUnsupported{}
+  # A Hello in a run with management from a peer other than the process the
+  # lease holder named: no lease or no name, or credentials or a process start
+  # that could not be read or differ from the name (ORB-C3).
+  FirstMessageStranger{}
 
 # What applying one input request did.
 type Effect is Data:
@@ -93,10 +97,21 @@ type ManagementEvent is Data:
   ManagementEventAcquireInvalid{}
   ManagementEventStatus{}
   ManagementEventStop{}
-  # A request that is malformed, over 4 KiB or pipelined.
+  # A request that breaks framing: a bad header, or a payload over its kind's
+  # bound.
   ManagementEventBad{}
   # The connection closed, was refused, or outlived its one-second bound.
   ManagementEventGone{}
+  # A ReadVisible request (ORB-C17), reported only once no synchronized
+  # update is held.
+  ManagementEventRead{}
+  # A lease input request (ORB-C5).
+  ManagementEventInput{}
+  # An AttachAllow request (ORB-C3, ORB-C13).
+  ManagementEventAllow{}
+  # A whole request that does not decode, or one sent while another was in
+  # flight.
+  ManagementEventInvalid{}
 
 # Which process group the host found in the PTY's foreground when the PTY
 # turn began, before it fed the turn's output to the terminal, or when it read
@@ -399,6 +414,8 @@ def decode_first_message(arg: U32) -> Maybe<&2, FirstMessage>:
       Some{FirstMessageRefused{}}
     case 4:
       Some{FirstMessageUnsupported{}}
+    case 5:
+      Some{FirstMessageStranger{}}
     case _:
       None{}
 
@@ -509,6 +526,14 @@ def decode_management_event(arg: U32) -> Maybe<&2, ManagementEvent>:
       Some{ManagementEventBad{}}
     case 7:
       Some{ManagementEventGone{}}
+    case 8:
+      Some{ManagementEventRead{}}
+    case 9:
+      Some{ManagementEventInput{}}
+    case 10:
+      Some{ManagementEventAllow{}}
+    case 11:
+      Some{ManagementEventInvalid{}}
     case _:
       None{}
 
@@ -1032,6 +1057,20 @@ type Decision is Data:
   # announcement, and queues its chunks as the resource queue's bound allows. A
   # resource whose copy fails is not started and loses its number.
   Transfer{start: Bool, retire: Bool}
+  # Answers the connection Visible with the active screen's live area as plain
+  # text, the screen, its size, title and working directory, at `revision`
+  # (ORB-C17); an extraction that fails answers Refused(ReadFailed). The lease
+  # stays.
+  ManageRead{revision: Revision.Revision}
+  # Writes the lease input request to the PTY input queue whole, encoded as an
+  # attached client's paste or Enter would be, and answers Input, or answers
+  # Refused with its reason and writes nothing (ORB-C5). The lease stays.
+  ManageInput{}
+  # Records the named process on the leased connection, replacing any earlier
+  # name, and answers Allowed (ORB-C13).
+  ManageAllow{}
+  # Answers Refused(InvalidRequest); the lease stays.
+  ManageDecline{}
 
 def encode_bool(value: Bool) -> String:
   match value:
@@ -1193,6 +1232,14 @@ def encode_decision(decision: Decision) -> String:
       "42" ++ "\n"
     case Transfer{start, retire}:
       "43" ++ " " ++ encode_bool(start) ++ " " ++ encode_bool(retire) ++ "\n"
+    case ManageRead{revision}:
+      "44" ++ " " ++ encode_revision(revision) ++ "\n"
+    case ManageInput{}:
+      "45" ++ "\n"
+    case ManageAllow{}:
+      "46" ++ "\n"
+    case ManageDecline{}:
+      "47" ++ "\n"
 
 # One answer: decisions, carried out in order.
 def Decisions() -> Type:
@@ -1209,4 +1256,4 @@ def encode(decisions: Decisions()) -> String:
 # The line the worker writes before its first answer, naming the schema it
 # was generated from; the host refuses a worker that names another.
 def schema() -> String:
-  "schema 2d907a1c5bde0b23\n"
+  "schema 1fb6dafe7e2c4ce3\n"

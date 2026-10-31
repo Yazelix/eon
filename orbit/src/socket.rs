@@ -1212,6 +1212,11 @@ impl Peer {
 impl Peer {
     /// Answers a negotiated peer whose role is taken with Busy, then closes it.
     pub(crate) fn reject_busy(mut self) -> io::Result<()> {
+        // A peer that closed before its Hello was answered just goes; in a
+        // run with management it is a stranger (ORB-C3).
+        if matches!(self.session, Session::AbortedHello) {
+            return Ok(());
+        }
         if !matches!(self.session, Session::Negotiated(_)) {
             return Err(errno(libc::EPROTO));
         }

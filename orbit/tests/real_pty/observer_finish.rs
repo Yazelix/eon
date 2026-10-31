@@ -1,3 +1,4 @@
+use crate::management_lease::leased;
 use crate::management_record::{suffixed, tombstone};
 use crate::support::*;
 use orbit_protocol::{
@@ -6,7 +7,7 @@ use orbit_protocol::{
 };
 use std::time::Instant;
 
-const MANAGED: [&str; 4] = ["--management-v3", "session-1", "run-1", "component-1"];
+const MANAGED: [&str; 4] = ["--management-v4", "session-1", "run-1", "component-1"];
 
 fn observe(path: &std::path::Path) -> Peer {
     let mut observer = Peer::connect(path, 10.0);
@@ -26,6 +27,8 @@ pub fn run() {
         let mut server = Server::launch(&directory, &[shell.as_os_str()], &[], &[], &MANAGED);
         let record_path = suffixed(&server.path, ".record");
         wait_for(&record_path);
+        let mut lease = leased(&record_path);
+        lease.allow_self();
         let mut client = Peer::attach(&server.path, 10.0);
         client.frame();
         let mut observer = observe(&server.path);

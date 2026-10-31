@@ -77,6 +77,10 @@ enum FirstMessage
   3 Refused
   # Another ORBS version, which gets no answer.
   4 Unsupported
+  # A Hello in a run with management from a peer other than the process the
+  # lease holder named: no lease or no name, or credentials or a process start
+  # that could not be read or differ from the name (ORB-C3).
+  5 Stranger
 
 # What applying one input request did.
 enum Effect
@@ -158,10 +162,21 @@ enum ManagementEvent
   3 AcquireInvalid
   4 Status
   5 Stop
-  # A request that is malformed, over 4 KiB or pipelined.
+  # A request that breaks framing: a bad header, or a payload over its kind's
+  # bound.
   6 Bad
   # The connection closed, was refused, or outlived its one-second bound.
   7 Gone
+  # A ReadVisible request (ORB-C17), reported only once no synchronized
+  # update is held.
+  8 Read
+  # A lease input request (ORB-C5).
+  9 Input
+  # An AttachAllow request (ORB-C3, ORB-C13).
+  10 Allow
+  # A whole request that does not decode, or one sent while another was in
+  # flight.
+  11 Invalid
 
 # Which process group the host found in the PTY's foreground when the PTY
 # turn began, before it fed the turn's output to the terminal, or when it read
@@ -460,3 +475,17 @@ decision 42 ManageRefuse
 # announcement, and queues its chunks as the resource queue's bound allows. A
 # resource whose copy fails is not started and loses its number.
 decision 43 Transfer start:bool retire:bool
+# Answers the connection Visible with the active screen's live area as plain
+# text, the screen, its size, title and working directory, at `revision`
+# (ORB-C17); an extraction that fails answers Refused(ReadFailed). The lease
+# stays.
+decision 44 ManageRead revision:revision
+# Writes the lease input request to the PTY input queue whole, encoded as an
+# attached client's paste or Enter would be, and answers Input, or answers
+# Refused with its reason and writes nothing (ORB-C5). The lease stays.
+decision 45 ManageInput
+# Records the named process on the leased connection, replacing any earlier
+# name, and answers Allowed (ORB-C13).
+decision 46 ManageAllow
+# Answers Refused(InvalidRequest); the lease stays.
+decision 47 ManageDecline

@@ -21,6 +21,7 @@ use libghostty_vt::{
 };
 use orbit_protocol::{
     Frame,
+    management::{LeaseInput, Refusal},
     session::{
         self, ClientMessage, ClipboardLocation, Metadata, ScrollOutcome, ServerMessage,
         VerticalDirection, WheelOutcome,
@@ -724,6 +725,64 @@ impl Orbit {
         }
         self.flush_writes()?;
         Ok(if key { Effect::Key } else { Effect::Write })
+    }
+
+    /// Writes one lease input request whole, encoded as an attached client's
+    /// paste or unmodified Enter press (and its release, when the keyboard
+    /// mode reports releases) would be, and reports whether a paste was
+    /// bracketed (ORB-C5). It refuses a paste holding a control character
+    /// other than tab, line feed and carriage return, one holding a line feed
+    /// or carriage return while the program has not enabled bracketed paste,
+    /// and input the PTY queue cannot take whole; a refusal writes nothing.
+    pub(crate) fn lease_input(&mut self, input: LeaseInput) -> io::Result<Result<bool, Refusal>> {
+        let (bytes, bracketed) = match input {
+            LeaseInput::Paste(text) => {
+                if text
+                    .chars()
+                    .any(|c| c.is_control() && !matches!(c, '\t' | '\n' | '\r'))
+                {
+                    return Ok(Err(Refusal::InvalidInput));
+                }
+                let bracketed = self
+                    .terminal
+                    .mode(Mode::BRACKETED_PASTE)
+                    .map_err(|_| errno(libc::EIO))?;
+                if !bracketed && text.contains(['\n', '\r']) {
+                    return Ok(Err(Refusal::UnbracketedNewline));
+                }
+                let paste = ClientMessage::Paste(text.into_bytes());
+                (
+                    encode_input(&self.terminal, self.surface, paste)?,
+                    bracketed,
+                )
+            }
+            LeaseInput::Enter => {
+                let key = |action| {
+                    ClientMessage::Key(session::KeyEvent {
+                        action,
+                        key: session::PhysicalKey::ENTER,
+                        modifiers: session::Modifiers::empty(),
+                        consumed_modifiers: session::Modifiers::empty(),
+                        composing: false,
+                        text: None,
+                        unshifted_codepoint: None,
+                    })
+                };
+                let mut bytes =
+                    encode_input(&self.terminal, self.surface, key(session::KeyAction::Press))?;
+                bytes.extend(encode_input(
+                    &self.terminal,
+                    self.surface,
+                    key(session::KeyAction::Release),
+                )?);
+                (bytes, false)
+            }
+        };
+        if !self.writes.push(&bytes) {
+            return Ok(Err(Refusal::InputFull));
+        }
+        self.flush_writes()?;
+        Ok(Ok(bracketed))
     }
 
     /// The terminal's foreground process group, if it has one.

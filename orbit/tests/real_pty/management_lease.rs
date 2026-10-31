@@ -18,7 +18,7 @@ use std::{
     time::Duration,
 };
 
-const MANAGED: [&str; 4] = ["--management-v3", "session-2", "run-2", "component-2"];
+const MANAGED: [&str; 4] = ["--management-v4", "session-2", "run-2", "component-2"];
 
 /// What a management connection reads next.
 #[derive(Debug, PartialEq)]
@@ -34,6 +34,8 @@ pub struct Manager {
     record: PathBuf,
     identity: LiveIdentity,
     stream: Option<UnixStream>,
+    /// Bytes read past the last whole message, the start of the next.
+    unread: Vec<u8>,
 }
 
 impl Manager {
@@ -42,6 +44,7 @@ impl Manager {
             record: record.to_path_buf(),
             identity: live(record),
             stream: None,
+            unread: Vec::new(),
         }
     }
 
@@ -53,15 +56,29 @@ impl Manager {
             .set_read_timeout(Some(Duration::from_secs(3)))
             .expect("timeout");
         self.stream = Some(stream);
+        self.unread.clear();
     }
 
-    /// Reads one whole management message, or reports the connection closed.
+    /// Sets how long a read waits for an answer.
+    pub fn set_timeout(&mut self, seconds: f64) {
+        self.stream
+            .as_ref()
+            .expect("connected")
+            .set_read_timeout(Some(Duration::from_secs_f64(seconds)))
+            .expect("timeout");
+    }
+
+    /// Reads one whole management message, or reports the connection closed;
+    /// bytes past it are kept for the next.
     pub fn read(&mut self) -> Reply {
         let stream = self.stream.as_mut().expect("connected");
-        let mut bytes = Vec::new();
+        let mut bytes = std::mem::take(&mut self.unread);
         loop {
             match management::server_message_len(&bytes) {
-                Ok(Some(length)) if bytes.len() >= length => break,
+                Ok(Some(length)) if bytes.len() >= length => {
+                    self.unread = bytes.split_off(length);
+                    break;
+                }
                 Ok(_) => {}
                 Err(error) => return Reply::Malformed(error),
             }
@@ -88,13 +105,20 @@ impl Manager {
 
     /// Sends bytes and reads the answer; an answer the server wrote before
     /// closing, such as Busy, is read even when the bytes could not be sent.
-    fn send_bytes(&mut self, bytes: &[u8]) -> Reply {
+    pub fn send_bytes(&mut self, bytes: &[u8]) -> Reply {
         let _ = self.stream.as_mut().expect("connected").write_all(bytes);
         self.read()
     }
 
     pub fn send(&mut self, message: &ClientMessage) -> Reply {
-        self.send_bytes(&management::encode_client_message(message).expect("encodable request"))
+        self.post(message);
+        self.read()
+    }
+
+    /// Sends a request without reading its answer.
+    pub fn post(&mut self, message: &ClientMessage) {
+        let bytes = management::encode_client_message(message).expect("encodable request");
+        let _ = self.stream.as_mut().expect("connected").write_all(&bytes);
     }
 
     /// Sends Acquire with this identity and the record's inode.
@@ -115,6 +139,23 @@ impl Manager {
         self.acquire_as(self.identity.clone())
     }
 
+    /// Names a process as the one ORB-C3 admits as the interactive client.
+    pub fn allow(&mut self, process_id: u32, process_start: u64) -> Reply {
+        self.send(&ClientMessage::AttachAllow {
+            process_id,
+            process_start,
+        })
+    }
+
+    /// Names this test process, so its next Hello is admitted.
+    pub fn allow_self(&mut self) {
+        let (process_id, process_start) = own_name();
+        assert_eq!(
+            self.allow(process_id, process_start),
+            Reply::Message(ServerMessage::Allowed)
+        );
+    }
+
     /// A header that announces a message over the bound.
     fn oversized(&mut self) -> Reply {
         let mut header = [0; management::HEADER_BYTES];
@@ -126,7 +167,29 @@ impl Manager {
     }
 }
 
-fn failure(reply: &Reply, code: FailureCode) -> bool {
+/// A lease on the run whose record is at `record`, once the previous holder's
+/// departure has freed the slot.
+pub fn leased(record: &Path) -> Manager {
+    let deadline = std::time::Instant::now() + Duration::from_secs(2);
+    loop {
+        let mut lease = Manager::new(record);
+        match lease.acquire() {
+            Reply::Message(ServerMessage::Lease(_)) => return lease,
+            Reply::Message(ServerMessage::Busy) if std::time::Instant::now() < deadline => {
+                sleep(0.02);
+            }
+            other => panic!("expected a lease, received {other:?}"),
+        }
+    }
+}
+
+/// This test process's ID and start identity, as AttachAllow names it.
+pub fn own_name() -> (u32, u64) {
+    let process_id = std::process::id();
+    (process_id, process_start(process_id))
+}
+
+pub fn failure(reply: &Reply, code: FailureCode) -> bool {
     matches!(reply, Reply::Message(ServerMessage::Failure(failure)) if failure.code == code)
 }
 
@@ -200,17 +263,20 @@ pub fn run() {
     drop(changed);
     mode(0o600).expect("chmod");
 
-    // The lease reports status; its loss does not stop the run.
+    // The lease reports status and names the client it admits; its loss
+    // stops neither the run nor that client's attachment.
     let mut lease = Manager::new(&record_path);
     assert_eq!(lease.acquire(), Reply::Message(ServerMessage::Lease(identity.clone())));
     assert_eq!(
         lease.send(&ClientMessage::Status),
         Reply::Message(ServerMessage::Status(identity.clone()))
     );
+    lease.allow_self();
+    let mut client = Peer::attach(&server.path, 4.0);
+    client.frame();
     drop(lease);
     sleep(0.15);
     fs::write(&work, "").expect("work");
-    let mut client = Peer::attach(&server.path, 4.0);
     client.frame_titled("SURVIVED");
     drop(client);
 

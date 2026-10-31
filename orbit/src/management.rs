@@ -4,7 +4,10 @@
 //! management connection with bounded requests, and a tombstone that
 //! replaces the record when the run ends. Every path and identity is
 //! checked here; Bend decides every answer (src/management.bend), including
-//! whether ORB-C15's `ProgramStatus` gets the records.
+//! whether ORB-C15's `ProgramStatus` gets the records, ORB-C17's
+//! `ReadVisible` the visible text and ORB-C5's lease input the PTY. The
+//! connection also holds the process its lease holder names for ORB-C3's
+//! admission.
 
 use crate::{
     Timer,
@@ -13,9 +16,9 @@ use crate::{
     socket::Listener,
 };
 use orbit_protocol::management::{
-    self as protocol, ClientMessage, EndpointIdentity, Failure, FailureCode, LiveIdentity,
-    ObjectIdentity, ProcessOutcome, ProgramStatus, Record, ServerMessage, TerminationReason,
-    Tombstone,
+    self as protocol, ClientMessage, EndpointIdentity, Failure, FailureCode, LeaseInput,
+    LiveIdentity, ObjectIdentity, ProcessOutcome, ProgramStatus, Record, Refusal, ServerMessage,
+    TerminationReason, Tombstone, VisibleText,
 };
 use std::{
     ffi::OsStr,
@@ -30,7 +33,7 @@ use std::{
     path::{Path, PathBuf},
     process::ExitStatus,
     sync::atomic::{AtomicU64, Ordering},
-    time::Duration,
+    time::{Duration, Instant},
 };
 
 /// The bound on a management connection's negotiation and on
@@ -39,7 +42,7 @@ pub(crate) const NEGOTIATION_MS: u32 = 1000;
 
 static NEXT_ARTIFACT: AtomicU64 = AtomicU64::new(0);
 
-/// The identities `--management-v3` names.
+/// The identities `--management-v4` names.
 #[derive(Debug, PartialEq, Eq)]
 pub(crate) struct Launch {
     pub(crate) session_id: String,
@@ -105,8 +108,9 @@ pub(crate) struct Owner {
 }
 
 /// The admitted management connection: one request and one answer at a time,
-/// each at most 4 KiB, and a one-second bound until Bend grants the lease. A
-/// refused connection stays until its Failure is written.
+/// each within its kind's bound, a one-second bound until Bend grants the
+/// lease, and the same bound on writing each answer. A refused connection
+/// stays until its Failure is written.
 pub(crate) struct Connection {
     pub(crate) stream: UnixStream,
     peer_uid: u32,
@@ -114,6 +118,14 @@ pub(crate) struct Connection {
     output: Vec<u8>,
     written: usize,
     close_after_flush: bool,
+    /// Whether a second answer, a refusal of a request sent while the first
+    /// was being written, waits in `output` behind it; nothing more is read
+    /// until both are written.
+    queued: bool,
+    /// The bound on writing the answer in `output`, armed as it is queued: a
+    /// peer that does not read it in time loses the connection, and with it
+    /// the lease (ORB-C13, ORB-C17).
+    reply: Timer,
     /// The negotiation bound, which Bend's Lease ends. Bend's session holds
     /// the slot; Rust reads this only to time the bound and to answer the
     /// lease Stopped after a termination signal, which the host carries out
@@ -121,6 +133,21 @@ pub(crate) struct Connection {
     pub(crate) deadline: Option<Timer>,
     /// Why the last request was refused, for the Failure Bend sends.
     refusal: Option<String>,
+    /// The decoded lease input or name Bend is deciding on.
+    pending: Option<Pending>,
+    /// A ReadVisible request read while a synchronized update was held; the
+    /// host reports it once none is and the output is written, and declines
+    /// a request read meanwhile.
+    held_read: bool,
+    /// The process, by process ID and start identity, that the lease holder
+    /// named as the only peer ORB-C3 admits; it dies with the connection.
+    name: Option<(u32, u64)>,
+}
+
+/// A request's content, which the host keeps while Bend decides it.
+enum Pending {
+    Input(LeaseInput),
+    Allow(u32, u64),
 }
 
 impl Prepared {
@@ -136,7 +163,7 @@ impl Prepared {
             record_generation: protocol::RECORD_GENERATION,
             management_generation: protocol::VERSION,
             process_id: std::process::id(),
-            process_start: platform::process_start_identity()?,
+            process_start: platform::process_start_identity(std::process::id())?,
             uid,
             presentation: endpoint_identity(presentation)?,
             management: endpoint_identity(&self.path)?,
@@ -187,8 +214,13 @@ impl Owner {
             output: Vec::new(),
             written: 0,
             close_after_flush: false,
+            queued: false,
+            reply: Timer::default(),
             deadline: Some(deadline),
             refusal: None,
+            pending: None,
+            held_read: false,
+            name: None,
         });
         Ok(())
     }
@@ -203,10 +235,12 @@ impl Owner {
         Ok(())
     }
 
-    /// Closes a connection whose negotiation bound passed.
+    /// Closes a connection whose negotiation bound passed, or whose answer
+    /// was not written within its bound.
     pub(crate) fn expire(&mut self) -> Option<Event> {
-        let deadline = self.connection.as_mut()?.deadline.as_mut()?;
-        if !deadline.expired() {
+        let connection = self.connection.as_mut()?;
+        let negotiation = connection.deadline.as_mut().is_some_and(Timer::expired);
+        if !(connection.reply.expired() || negotiation) {
             return None;
         }
         self.connection = None;
@@ -214,39 +248,49 @@ impl Owner {
     }
 
     /// Reads the connection's next request and reports it for Bend: one
-    /// whole request at most 4 KiB, never two at once, an Acquire whose
-    /// identity, record, peer and sockets all match this run, and a
-    /// ProgramStatus with the PTY's foreground group sampled as it is read.
+    /// whole request within its kind's bound, an Acquire whose identity,
+    /// record, peer and sockets all match this run, and a ProgramStatus with
+    /// the PTY's foreground group sampled as it is read. A request that breaks
+    /// framing is Bad; a whole one that does not decode, or a read that brings
+    /// more than one whole request, is Invalid, and the whole requests are
+    /// dropped. A ReadVisible read while a synchronized update is `held` waits
+    /// until none is (ORB-C17).
     pub(crate) fn read(
         &mut self,
         foreground: impl FnOnce() -> Foreground,
+        held: bool,
     ) -> io::Result<Option<Fact>> {
-        Ok(self.request()?.map(|request| match request {
+        Ok(self.request(held)?.map(|request| match request {
             Ok(event) => Fact::Management(event),
             Err(ProgramStatusRequest) => Fact::ProgramStatus(foreground()),
         }))
     }
 
-    fn request(&mut self) -> io::Result<Option<Result<Event, ProgramStatusRequest>>> {
+    fn request(&mut self, held: bool) -> io::Result<Option<Result<Event, ProgramStatusRequest>>> {
         let Some(connection) = self.connection.as_mut() else {
             return Ok(None);
         };
-        if !connection.output.is_empty() {
+        if !connection.reads() {
             return Ok(None);
         }
-        let remaining = protocol::MAX_MESSAGE_BYTES.saturating_sub(connection.input.len());
+        let start = connection.input.len();
+        let remaining = protocol::MAX_INPUT_MESSAGE_BYTES.saturating_sub(start);
         if remaining == 0 {
             return Ok(Some(Ok(
                 connection.refuse("management request exceeded its bound")
             )));
         }
-        let mut bytes = [0; protocol::MAX_MESSAGE_BYTES];
-        match connection.stream.read(&mut bytes[..remaining]) {
+        connection.input.resize(start + remaining, 0);
+        let read = connection.stream.read(&mut connection.input[start..]);
+        connection
+            .input
+            .truncate(start + read.as_ref().map_or(0, |read| *read));
+        match read {
             Ok(0) => {
                 self.connection = None;
                 return Ok(Some(Ok(Event::Gone)));
             }
-            Ok(read) => connection.input.extend_from_slice(&bytes[..read]),
+            Ok(_) => {}
             Err(error)
                 if matches!(
                     error.kind(),
@@ -266,16 +310,38 @@ impl Owner {
             Ok(None) => return Ok(None),
             Err(error) => return Ok(Some(Ok(connection.refuse(&error.to_string())))),
         };
-        if connection.input.len() != length {
+        if connection.input.len() < length {
+            return Ok(None);
+        }
+        if connection.input.len() > length {
+            // Pipelined: every whole request goes, and a partial one stays.
+            loop {
+                match protocol::client_message_len(&connection.input) {
+                    Ok(Some(length)) if length <= connection.input.len() => {
+                        connection.input.drain(..length);
+                    }
+                    Ok(_) => break,
+                    Err(error) => return Ok(Some(Ok(connection.refuse(&error.to_string())))),
+                }
+            }
             return Ok(Some(Ok(
-                connection.refuse("management requests cannot be pipelined")
+                connection.invalid("management requests cannot be pipelined")
             )));
         }
-        let message = match protocol::decode_client_message(&connection.input) {
-            Ok(message) => message,
-            Err(error) => return Ok(Some(Ok(connection.refuse(&error.to_string())))),
-        };
+        let message = protocol::decode_client_message(&connection.input);
         connection.input.clear();
+        // A request that arrives while a ReadVisible request waits, or before
+        // the last answer is written, is in flight beside it: it is declined,
+        // and the held read or the answer stays.
+        if connection.held_read || connection.writing() {
+            return Ok(Some(Ok(connection.invalid(
+                "a management request arrived while another was in flight",
+            ))));
+        }
+        let message = match message {
+            Ok(message) => message,
+            Err(error) => return Ok(Some(Ok(connection.invalid(&error.to_string())))),
+        };
         Ok(Some(Ok(match message {
             ClientMessage::Acquire { expected, record } => {
                 let valid = connection.peer_uid == self.identity.uid
@@ -295,7 +361,68 @@ impl Owner {
             ClientMessage::Status => Event::Status,
             ClientMessage::Stop => Event::Stop,
             ClientMessage::ProgramStatus => return Ok(Some(Err(ProgramStatusRequest))),
+            ClientMessage::ReadVisible if held => {
+                connection.held_read = true;
+                return Ok(None);
+            }
+            ClientMessage::ReadVisible => Event::Read,
+            ClientMessage::Input(input) => {
+                connection.pending = Some(Pending::Input(input));
+                Event::Input
+            }
+            ClientMessage::AttachAllow {
+                process_id,
+                process_start,
+            } => {
+                connection.pending = Some(Pending::Allow(process_id, process_start));
+                Event::Allow
+            }
         })))
+    }
+
+    /// Whether a ReadVisible request waits for a synchronized update to end
+    /// and no answer is being written, so it can be reported once no update
+    /// is held.
+    pub(crate) fn read_waits(&self) -> bool {
+        self.connection
+            .as_ref()
+            .is_some_and(|c| c.held_read && c.output.is_empty())
+    }
+
+    /// Reports the held ReadVisible request, once no update is held and the
+    /// connection's output is written, so its answer never meets a pending
+    /// refusal.
+    pub(crate) fn release_read(&mut self) -> Option<Event> {
+        let connection = self
+            .connection
+            .as_mut()
+            .filter(|c| c.held_read && c.output.is_empty())?;
+        connection.held_read = false;
+        Some(Event::Read)
+    }
+
+    /// Forgets a held ReadVisible request, as the run ends.
+    pub(crate) fn drop_held_read(&mut self) {
+        if let Some(connection) = self.connection.as_mut() {
+            connection.held_read = false;
+        }
+    }
+
+    /// Whether `peer` is the process the lease holder named, matched by the
+    /// socket's peer process ID and that process's start identity, read now
+    /// (ORB-C3). Without a lease or a name, no peer is.
+    pub(crate) fn admits(&self, peer: &UnixStream) -> bool {
+        let Some((process_id, process_start)) = self
+            .connection
+            .as_ref()
+            .filter(|connection| connection.deadline.is_none() && !connection.close_after_flush)
+            .and_then(|connection| connection.name)
+        else {
+            return false;
+        };
+        platform::peer_pid(peer).is_ok_and(|pid| pid == process_id)
+            && platform::process_start_identity(process_id)
+                .is_ok_and(|start| start == process_start)
     }
 
     /// Grants the lease: the negotiation bound ends and Lease names the run.
@@ -328,6 +455,58 @@ impl Owner {
         self.respond(&ServerMessage::Busy)
     }
 
+    /// Answers ReadVisible with the visible text, or refuses it when the
+    /// extraction failed (ORB-C17).
+    pub(crate) fn visible(&mut self, visible: Option<VisibleText>) -> io::Result<()> {
+        self.respond(&match visible {
+            Some(visible) => ServerMessage::Visible(visible),
+            None => ServerMessage::Refused(Refusal::ReadFailed),
+        })
+    }
+
+    /// The lease input Bend decided to write.
+    pub(crate) fn take_input(&mut self) -> Option<LeaseInput> {
+        match self.connection.as_mut()?.pending.take()? {
+            Pending::Input(input) => Some(input),
+            Pending::Allow(..) => None,
+        }
+    }
+
+    /// Answers lease input: whether a written paste was bracketed, or why
+    /// nothing was written (ORB-C5).
+    pub(crate) fn input(&mut self, outcome: Result<bool, Refusal>) -> io::Result<()> {
+        self.respond(&match outcome {
+            Ok(bracketed) => ServerMessage::Input { bracketed },
+            Err(refusal) => ServerMessage::Refused(refusal),
+        })
+    }
+
+    /// Records the named process on the leased connection, replacing any
+    /// earlier name, and answers Allowed (ORB-C13).
+    pub(crate) fn allow(&mut self) -> io::Result<()> {
+        let connection = self
+            .connection
+            .as_mut()
+            .ok_or_else(|| errno(libc::EPROTO))?;
+        let Some(Pending::Allow(process_id, process_start)) = connection.pending.take() else {
+            return Err(errno(libc::EPROTO));
+        };
+        connection.name = Some((process_id, process_start));
+        connection.respond(&ServerMessage::Allowed, false)
+    }
+
+    /// Answers a request that did not decode, or one in flight beside
+    /// another, with a typed refusal, after any answer being written; the
+    /// lease stays.
+    pub(crate) fn decline(&mut self) -> io::Result<()> {
+        let connection = self
+            .connection
+            .as_mut()
+            .ok_or_else(|| errno(libc::EPROTO))?;
+        connection.refusal = None;
+        connection.respond(&ServerMessage::Refused(Refusal::InvalidRequest), false)
+    }
+
     fn respond(&mut self, message: &ServerMessage) -> io::Result<()> {
         self.connection
             .as_mut()
@@ -349,6 +528,8 @@ impl Owner {
                 .take()
                 .unwrap_or_else(|| "acquire the management lease before this request".to_owned()),
         };
+        // A refused connection names no process (ORB-C3).
+        connection.name = None;
         connection.respond(&ServerMessage::Failure(Failure { code, detail }), true)
     }
 
@@ -374,6 +555,8 @@ impl Owner {
         if connection.written == connection.output.len() {
             connection.output.clear();
             connection.written = 0;
+            connection.queued = false;
+            connection.reply.set(None);
             if !connection.close_after_flush {
                 return Ok(None);
             }
@@ -382,22 +565,38 @@ impl Owner {
         Ok(Some(Event::Gone))
     }
 
-    /// Answers the lease with the run's tombstone, waiting at most the
-    /// negotiation bound for its socket to take it.
+    /// Answers the lease with the run's tombstone after the rest of any
+    /// answer being written, waiting at most the negotiation bound in all for
+    /// its socket to take them; once the bound passes, nothing more is
+    /// written. A connection closing after a refusal gets only that refusal.
     pub(crate) fn reply_stopped(&mut self, tombstone: Tombstone) {
         let Some(connection) = self.connection.as_mut().filter(|c| c.deadline.is_none()) else {
             return;
         };
-        let Ok(stopped) = encode(&ServerMessage::Stopped(tombstone)) else {
-            return;
-        };
+        let mut bytes = connection.output.split_off(connection.written);
+        if !connection.close_after_flush {
+            let Ok(stopped) = encode(&ServerMessage::Stopped(tombstone)) else {
+                return;
+            };
+            bytes.extend(stopped);
+        }
+        let end = Instant::now() + Duration::from_millis(NEGOTIATION_MS.into());
         let stream = &mut connection.stream;
-        if stream.set_nonblocking(false).is_ok()
-            && stream
-                .set_write_timeout(Some(Duration::from_millis(NEGOTIATION_MS.into())))
-                .is_ok()
-        {
-            let _ = stream.write_all(&stopped);
+        if stream.set_nonblocking(false).is_err() {
+            return;
+        }
+        let mut unwritten = &bytes[..];
+        while !unwritten.is_empty() {
+            let left = end.saturating_duration_since(Instant::now());
+            if left.is_zero() || stream.set_write_timeout(Some(left)).is_err() {
+                return;
+            }
+            match stream.write(unwritten) {
+                Ok(0) => return,
+                Ok(written) => unwritten = &unwritten[written..],
+                Err(error) if error.kind() == io::ErrorKind::Interrupted => {}
+                Err(_) => return,
+            }
         }
     }
 
@@ -431,16 +630,35 @@ struct ProgramStatusRequest;
 impl Connection {
     fn refuse(&mut self, detail: &str) -> Event {
         self.input.clear();
+        // A refused connection's held read gets no answer.
+        self.held_read = false;
         self.refusal = Some(detail.to_owned());
         Event::Bad
     }
 
+    /// A whole request that did not decode, or a pipelined one: the lease
+    /// declines it, and a negotiating connection is refused with `detail`.
+    fn invalid(&mut self, detail: &str) -> Event {
+        self.refusal = Some(detail.to_owned());
+        Event::Invalid
+    }
+
+    /// Queues an answer, which must be written within the bound; one answer
+    /// may wait behind another being written, and the bound stays the first's.
     fn respond(&mut self, message: &ServerMessage, close: bool) -> io::Result<()> {
-        if !self.output.is_empty() {
+        if self.queued || self.close_after_flush {
             return Err(errno(libc::EPROTO));
         }
-        self.output = encode(message)?;
-        self.written = 0;
+        self.pending = None;
+        let bytes = encode(message)?;
+        if self.output.is_empty() {
+            self.output = bytes;
+            self.written = 0;
+            self.reply.set(Some(NEGOTIATION_MS));
+        } else {
+            self.output.extend(bytes);
+            self.queued = true;
+        }
         self.close_after_flush = close;
         Ok(())
     }
@@ -450,8 +668,19 @@ impl Connection {
         !self.output.is_empty()
     }
 
-    pub(crate) fn deadline(&self) -> Option<std::time::Instant> {
-        self.deadline.as_ref().and_then(Timer::deadline)
+    /// Whether the next request is read: not while an answer waits behind
+    /// another, or a refused connection closes.
+    pub(crate) fn reads(&self) -> bool {
+        !self.queued && !self.close_after_flush
+    }
+
+    /// The earliest of the negotiation bound and the answer's bound.
+    pub(crate) fn deadline(&self) -> Option<Instant> {
+        let negotiation = self.deadline.as_ref().and_then(Timer::deadline);
+        match (negotiation, self.reply.deadline()) {
+            (Some(negotiation), Some(reply)) => Some(negotiation.min(reply)),
+            (negotiation, reply) => negotiation.or(reply),
+        }
     }
 }
 

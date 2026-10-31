@@ -5,6 +5,10 @@ installation, and proven contract changes.
 
 ## Unreleased
 
+- Only the Venus that Eon starts for a window can attach to that window's
+  terminals. Another program that connects to a terminal's socket is refused as
+  busy and cannot see its screen or type into it.
+
 - Codex quota shows one chip per window, like Claude.
 
 - Two-cell emoji, including flags, joined families and VS16 hearts, prefer the

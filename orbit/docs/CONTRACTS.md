@@ -112,9 +112,10 @@ PTY pixel size rule needs no wire change.
 
 ## ORB-C3 — Bounded interactive and metadata attachment
 
-- **Status:** Proved
-- **Consumer:** One local input-capable client and one local read-only metadata
-  observer.
+- **Status:** Partially proved
+- **Consumer:** One local input-capable client, which in a run with management
+  is the process the lease holder names (ORB-C13 `AttachAllow`), and one local
+  read-only metadata observer.
 - **Trigger:** A peer negotiates an explicit role on the private presentation
   endpoint.
 - **Result:**
@@ -123,6 +124,14 @@ PTY pixel size rule needs no wire change.
     lifecycle.
   - The observer cannot send terminal, presentation, process, or lifecycle
     mutations.
+  - **Interactive admission.** A run with management admits the input-capable
+    client only from the process its current lease holder last named,
+    matching the peer's process ID and process start identity, read from the
+    connecting socket's credentials, at the `Hello`. Any other peer is
+    answered `Busy` and closed, as a second client is. While no lease is held,
+    or before the holder names a process, no peer is admitted. A run without
+    management admits the first peer, as before. Naming never ends an
+    existing attachment, and metadata-observer admission is unchanged.
 - **Important failures:**
   - Excess roles, incompatible or malformed peers, slow readers, disconnect,
     and exit fail deterministically without disturbing the PTY, child, other
@@ -130,13 +139,23 @@ PTY pixel size rule needs no wire change.
   - Invalid UTF-8 terminal metadata, such as a title libghostty cuts inside a
     character or a non-UTF-8 OSC 7 directory, reaches the client and observer
     as empty and never ends the terminal.
+  - A peer whose credentials or process start cannot be read, or differ from
+    the named process, is refused with `Busy`, changes no state, and leaves
+    the slot free for the named process. A recycled process ID cannot match,
+    because its start identity differs.
 - **Owner:** Orbit's Bend admission policy and Rust socket transport with
-  canonical `orbit-protocol` ORBS v7.
+  canonical `orbit-protocol` ORBS v7; the named process comes from management
+  v4 (ORB-C13), and the peer process ID and start identity come from Orbit's
+  isolated Linux and Darwin peer-credential and process-start mechanics.
 - **Consumes:** Canonical ORBS v7 behavior, preserved through ORBS v14; Venus
   and Eon consume it in this repository.
-- **Boundary:** Visible text observation, agent observation, multiple observers,
+- **Boundary:** Visible text over ORBS, agent observation, multiple observers,
   multiple interactive clients, remote access, and process authority are
-  excluded.
+  excluded. The management lease holder reads visible text through ORB-C17
+  and sends paste and Enter input through ORB-C5, without either ORBS role.
+  Admission tells processes apart, not people or agents: same-user code that
+  controls the named process or the lease holder is out of scope, since no
+  same-UID sandbox is promised (ORB-C13).
 - **Proof:** the `eon-awmq.3` import commit, with the
   `eon-title-utf8-ends-terminal-atq2` commit for invalid metadata
   - **Environment:** x86_64 Linux; `nix flake check -L` (`orbit-laws`,
@@ -154,6 +173,12 @@ PTY pixel size rule needs no wire change.
       [`orbit-silent-peer`](../tests/real_pty/silent_peer.rs)
     - Law [`admission_answers_are_accounted`](../LAWS.bend) (`orbit-laws`)
     - Workspace suite
+- **Open proof:** Interactive admission (`eon-agent-parity-a9g0.15`) is a
+  recorded gap until the installed joint proof `eon-agent-parity-a9g0.19`.
+  Candidate evidence: the real-PTY check
+  [`orbit-attach-allow`](../tests/real_pty/attach_allow.rs) and the law
+  [`admission_strangers_are_busy`](../LAWS.bend) (`orbit-laws`). Darwin's
+  peer-credential mechanics only compile (`EON-C7`).
 
 ## ORB-C4 — Coherent ordered presentation
 
@@ -192,11 +217,13 @@ PTY pixel size rule needs no wire change.
 
 ## ORB-C5 — Semantic terminal interaction
 
-- **Status:** Proved
+- **Status:** Partially proved
 - **Consumer:** Attached clients sending key, mouse, focus, paste, or resize
-  interaction.
+  interaction, and the management lease holder (ORB-C13) sending paste or Enter
+  input.
 - **Trigger:** Orbit accepts one canonical semantic input message or begins one
-  revision-bound left-pointer sequence.
+  revision-bound left-pointer sequence, or Orbit accepts one management lease
+  input request: a paste of up to 64 KiB, or one Enter key.
 - **Result:**
   - Orbit encodes terminal interaction against its authoritative terminal
     state.
@@ -205,16 +232,32 @@ PTY pixel size rule needs no wire change.
     once through its existing terminal-aware mouse encoder.
   - Otherwise Orbit pins the sequence to host selection; Shift always selects
     host text.
+  - Lease input is encoded exactly as an attached client's input would be:
+    - a lease paste as an attached client's `Paste`, bracketed when the
+      program enabled bracketed paste;
+    - a lease Enter as an unmodified Enter press, plus its release when the
+      terminal's keyboard mode reports releases.
+  - Each lease paste is written whole, in owner-loop order with the attached
+    client's input, never interleaved with it.
+  - Lease input needs no attachment, works whether or not a client is
+    attached, and changes no presentation, viewport, selection or attachment
+    state.
+  - The reply says whether a paste was bracketed.
 - **Important failures:** Invalid or terminal-forbidden input fails without
   fallback text or duplicate insertion. Invalid phase order, pressure, cancel,
   endpoint loss, or a terminal-mode change cannot switch an active sequence,
-  emit partial input, or synthesize terminal input.
+  emit partial input, or synthesize terminal input. A lease paste containing
+  a line feed or carriage return while the program has not enabled bracketed
+  paste is refused (`unbracketed-newline`) and writes nothing. Lease input
+  after child exit is impossible because the run has ended (ORB-C13).
 - **Owner:** Canonical platform-neutral `orbit-protocol` values, Orbit's Bend
   selection policy for the pointer route, and its Rust host's libghostty input
   encoding.
-- **Consumes:** Canonical ORBS v9 semantic input, preserved through ORBS v14;
-  Venus and Eon consume it in this repository.
+- **Consumes:** Canonical ORBS v9 semantic input, preserved through ORBS v14,
+  and management v4 lease input; Venus and Eon consume it in this repository.
 - **Boundary:** Candidate-list IME and native input quality remain Venus-owned.
+  Lease input carries no other keys, chords, mouse, focus or resize; raw bytes
+  are never written.
 - **Proof:** the `eon-awmq.3` import commit, with the `eon-awmq.7.1` commit
   for the Kitty release
   - **Environment:** x86_64 Linux; `nix flake check -L` (`orbit-laws`,
@@ -232,6 +275,11 @@ PTY pixel size rule needs no wire change.
     - Laws [`selection_answers_are_accounted`](../LAWS.bend) and
       [`selection_shift_selects_on_the_host`](../LAWS.bend) (`orbit-laws`)
     - Workspace suite
+- **Open proof:** Lease input (`eon-agent-parity-a9g0.15`) is a recorded gap
+  until the installed joint proof `eon-agent-parity-a9g0.19`. Candidate
+  evidence: the real-PTY check
+  [`orbit-lease-input`](../tests/real_pty/lease_input.rs) and the law
+  [`management_input_needs_a_live_lease`](../LAWS.bend) (`orbit-laws`).
 
 ## ORB-C6 — Rich presentation without silent degradation
 
@@ -707,7 +755,7 @@ PTY pixel size rule needs no wire change.
 
 ## ORB-C13 — Same-boot management ownership
 
-- **Status:** Proved
+- **Status:** Partially proved
 - **Consumer:** One local Eon launcher and one later replacement on the same boot
   and login.
 - **Trigger:** A launcher prepares an owned mode-0600 record, Orbit crosses Ready,
@@ -732,8 +780,15 @@ PTY pixel size rule needs no wire change.
   - Lease disconnect before Stop is non-destructive. Two replacements produce
     one winner and one Busy loser; accepted Stop is not cancelled by disconnect.
   - Management carries only bounded identity, live status, the ORB-C15
-    `ProgramStatus` request, and explicit Stop, with one request and response
-    in flight.
+    `ProgramStatus` request, the ORB-C17 `ReadVisible` request, the ORB-C5
+    lease input request, the ORB-C3 `AttachAllow` request, and explicit Stop,
+    with one request and response in flight.
+  - `AttachAllow` names one process, by process ID and process start
+    identity, as the only peer ORB-C3 may admit as the interactive client.
+    Orbit records the name without checking that the process exists; ORB-C3
+    matches it at admission. A later `AttachAllow` replaces the name. The name
+    belongs to the lease that set it: when that lease ends, no process is
+    named until the next lease holder names one.
   - Canonical ORBS remains a separate one-input-client plus
     one-metadata-observer boundary retaining ORB-C1 through ORB-C11.
   - Stop succeeds only through the validated lease after ORB-C12 succeeds.
@@ -746,7 +801,9 @@ PTY pixel size rule needs no wire change.
   - Bounds are explicit:
     - Eon start and recovery: five seconds;
     - Orbit incomplete handshake: one second;
-    - each management message and record: 4 KiB;
+    - each management message and record: 4 KiB, except one ORB-C17
+      `ReadVisible` reply, whose text is at most 1 MiB, and one ORB-C5 lease
+      input request, whose pasted text is at most 64 KiB;
     - each identity: 128 UTF-8 bytes;
     - failure detail: 1 KiB.
   - Runtime directories must be exact UID-owned mode-0700 directories; sockets
@@ -756,7 +813,7 @@ PTY pixel size rule needs no wire change.
     PTY, presentation, child observation, or shutdown.
 - **Owner:** Orbit's private management owner and canonical protocol package;
   platform mechanics remain isolated, while Eon owns consumer policy.
-- **Consumes:** Canonical management v3 and ORB-C12.
+- **Consumes:** Canonical management v4, ORB-C12, ORB-C3, ORB-C5 and ORB-C17.
 - **Boundary:**
   - The contract is per live Orbit run. Eon retains topology, enumeration,
     cleanup, and recovery policy.
@@ -793,6 +850,15 @@ PTY pixel size rule needs no wire change.
     - Both lifecycle checks passed on macOS for the previous Rust server; the
       managed run's `/proc` check that the PTY child inherits no Orbit
       listener is Linux-only.
+- **Open proof:** The management v4 requests (`eon-agent-parity-a9g0.15`),
+  `AttachAllow` and its name included, are a recorded gap until the installed
+  joint proof `eon-agent-parity-a9g0.19`. Candidate evidence: the real-PTY
+  checks [`orbit-attach-allow`](../tests/real_pty/attach_allow.rs),
+  [`orbit-visible-text`](../tests/real_pty/visible_text.rs) and
+  [`orbit-lease-input`](../tests/real_pty/lease_input.rs), and the laws
+  [`management_allow_needs_the_lease`](../LAWS.bend),
+  [`management_answers_are_accounted`](../LAWS.bend) and
+  [`management_follows_its_contract`](../LAWS.bend) (`orbit-laws`).
 
 ## ORB-C14 — Apple Silicon macOS platform
 
@@ -1337,6 +1403,73 @@ PTY pixel size rule needs no wire change.
     for each resource, with byte and chunk counts that follow from its format
     and size, and one retirement for each replaced image; the bead records the
     measurements.
+
+## ORB-C17 — Bounded visible-text reads
+
+- **Status:** Planned
+- **Consumer:** The one validated management lease holder (ORB-C13); in Eon,
+  Eon Runtime acting for `eon pane read`.
+- **Trigger:** The lease holder sends one management `ReadVisible` request.
+- **Result:**
+  - Orbit answers with one snapshot of the terminal at one presentation
+    revision N. It holds:
+    - N;
+    - the active screen, `primary` or `alternate`;
+    - the terminal's rows and columns;
+    - its title and raw working directory, as ORB-C3 reports them;
+    - the active screen's live area as plain UTF-8 text.
+  - **What the text covers.** The live area is the rows a client at live
+    bottom would see, whatever any client's scroll position.
+  - **How the text is laid out:**
+    - one line per display row, top to bottom, separated by line feeds;
+    - trailing blanks are trimmed;
+    - a soft-wrapped row ends in a line break like a hard one;
+    - wide-cell spacers are omitted.
+  - **What the text drops.** Styles, colours, hyperlinks, images, cursor,
+    selection and history are dropped, and the reply says the text is lossy.
+    The text holds no control characters other than line feeds.
+  - **Size bound.** The text is at most 1 MiB. When the live area exceeds
+    that, Orbit keeps the last whole rows that fit and reports how many
+    leading rows it omitted.
+  - **No side effects.** Reading sends nothing to the PTY and changes no
+    terminal, viewport, selection, presentation or lifecycle state.
+  - **No partial updates.** While a synchronized update is held, the read
+    waits for its release or the watchdog, as attachment does (ORB-C4), so it
+    never sees a partial update.
+- **Important failures:**
+  - A malformed request, or one sent while another is in flight, fails with a
+    typed failure and no text; the lease stays.
+  - Extraction failure is a typed failure, never empty or partial text.
+  - A lease holder that does not read its reply loses the lease under
+    ORB-C13's slow-peer rule. That never blocks PTY processing, presentation,
+    the interactive client or cleanup.
+  - After the child exits the run ends (ORB-C13 tombstone), and there is no
+    snapshot.
+- **Owner:**
+  - Orbit's Bend management policy, which admits the request and orders the
+    reply;
+  - its Rust host, which extracts the text with libghostty's plain-text
+    formatter;
+  - canonical `orbit-protocol` management v4.
+- **Consumes:** ORB-C13 (lease, validation, slow-peer rule), ORB-C4 (held
+  updates), ORB-C3 (title and directory values).
+- **Boundary:**
+  - No history, scrollback, semantic command regions, escapes, styles, raw PTY
+    bytes or ORBF frames.
+  - No input, resize, scroll or process authority; lease input is ORB-C5's.
+  - No reader other than the lease holder, and no secret redaction.
+  - The text cannot prove ORB-C6 fidelity.
+  - Orbit identifies no agent; Eon owns agent policy.
+- **Proof:** None yet.
+- **Open proof:** The installed joint proof `eon-agent-parity-a9g0.19` proves
+  it. Candidate evidence from `eon-agent-parity-a9g0.15`: the real-PTY checks
+  [`orbit-visible-text`](../tests/real_pty/visible_text.rs) and
+  [`orbit-lease-input`](../tests/real_pty/lease_input.rs), which refuses
+  malformed and pipelined requests under the lease, the unit tests in
+  [`src/visible.rs`](../src/visible.rs), the management protocol tests in
+  [`crates/protocol/tests/management.rs`](../crates/protocol/tests/management.rs),
+  and the law [`management_read_needs_a_live_settled_lease`](../LAWS.bend)
+  (`orbit-laws`).
 
 ## Focused terminal conformance corpus
 

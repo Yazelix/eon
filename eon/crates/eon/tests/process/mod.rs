@@ -10,11 +10,11 @@ pub fn exists(pid: u32) -> bool {
     Path::new("/proc").join(pid.to_string()).exists()
 }
 
-/// This process's start identity, in the unit Eon Runtime compares with
+/// The start identity of `pid`, in the unit Eon Runtime compares with
 /// Orbit's `process_start`.
 #[cfg(target_os = "linux")]
-pub fn own_start_identity() -> u64 {
-    let stat = fs::read_to_string("/proc/self/stat").unwrap();
+pub fn start_identity(pid: u32) -> u64 {
+    let stat = fs::read_to_string(format!("/proc/{pid}/stat")).unwrap();
     stat.rsplit_once(')')
         .unwrap()
         .1
@@ -69,11 +69,11 @@ pub fn exists(pid: u32) -> bool {
     bsd_info(pid).is_some()
 }
 
-/// This process's start identity, in the unit Eon Runtime compares with
+/// The start identity of `pid`, in the unit Eon Runtime compares with
 /// Orbit's `process_start`: microseconds, as libproc reports it.
 #[cfg(target_os = "macos")]
-pub fn own_start_identity() -> u64 {
-    let info = bsd_info(std::process::id()).unwrap();
+pub fn start_identity(pid: u32) -> u64 {
+    let info = bsd_info(pid).unwrap();
     info.pbi_start_tvsec * 1_000_000 + info.pbi_start_tvusec
 }
 

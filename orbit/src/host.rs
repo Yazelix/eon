@@ -19,8 +19,11 @@ use crate::{
         ClientEvent, ClientState, Listener, ObserverInput, ObserverSend, Peer, Refusal, Role,
         Selection as PendingSelection, Wheel, peer_disconnected, turn_away,
     },
+    visible,
 };
-use orbit_protocol::management::{FailureCode as ManagementFailure, TerminationReason};
+use orbit_protocol::management::{
+    FailureCode as ManagementFailure, Refusal as LeaseRefusal, TerminationReason,
+};
 use orbit_protocol::session::{
     self, ClientMessage, ClipboardLocation, Failure, FailureCode, Modifiers, PreviewOutcome,
     ScrollOutcome, SelectionAction, SelectionPosition, ServerMessage, VerticalDirection,
@@ -617,6 +620,10 @@ impl Host {
     /// keeps writing cannot hold the run open (ORB-C12).
     fn drain_exited(&mut self) -> io::Result<Fact> {
         self.child_exited = true;
+        // A held ReadVisible request ends with the run (ORB-C17).
+        if let Some(management) = self.management.as_mut() {
+            management.drop_held_read();
+        }
         self.stop_resources();
         self.orbit.start_turn();
         let mut drained = false;
@@ -680,6 +687,18 @@ impl Host {
         {
             return Ok(Some(Fact::Management(event)));
         }
+        // A ReadVisible request held for a synchronized update is reported
+        // once none is held: the PTY ended it, or Bend's watchdog Release did
+        // (ORB-C17), and once any refusal sent meanwhile is written.
+        if self.management.as_ref().is_some_and(Management::read_waits)
+            && !self.orbit.synchronized(self.bounds.sync_ms)?
+        {
+            return Ok(self
+                .management
+                .as_mut()
+                .and_then(Management::release_read)
+                .map(Fact::Management));
+        }
         let pty_events = platform::POLLIN
             | if self.orbit.writes_pending() {
                 platform::POLLOUT
@@ -692,12 +711,18 @@ impl Host {
         let mut timers = Vec::with_capacity(3);
         if let Some(management) = &self.management {
             if let Some(connection) = &management.connection {
-                // One request at a time: the next is read once the answer is
-                // written.
+                // One request at a time: a request that arrives while a
+                // ReadVisible request waits for a synchronized update, or
+                // before the answer is written, is read and declined as in
+                // flight; nothing more is read while that refusal waits.
                 let events = if connection.writing() {
                     platform::POLLOUT
                 } else {
+                    0
+                } | if connection.reads() {
                     platform::POLLIN
+                } else {
+                    0
                 };
                 sources.push((
                     Source::ManagementConnection,
@@ -804,8 +829,9 @@ impl Host {
                 {
                     return Ok(None);
                 }
+                let held = self.orbit.synchronized(self.bounds.sync_ms)?;
                 let orbit = &self.orbit;
-                management.read(|| orbit.foreground())
+                management.read(|| orbit.foreground(), held)
             }
             Source::ManagementDeadline => Ok(self
                 .management
@@ -901,6 +927,17 @@ impl Host {
     /// hears whether the current observer has gone or sent a message, so its
     /// slot is current.
     fn peer_fact(&mut self, message: FirstMessage) -> Fact {
+        // In a run with management, a Hello comes only from the process the
+        // lease holder named, matched now by the peer's credentials and
+        // process start (ORB-C3).
+        let message = match (&self.management, &self.peer) {
+            (Some(management), Some(peer))
+                if message == FirstMessage::Hello && !management.admits(&peer.stream) =>
+            {
+                FirstMessage::Stranger
+            }
+            _ => message,
+        };
         let fact = Fact::Peer(message);
         if message != FirstMessage::ObserveMetadata {
             return fact;
@@ -1426,6 +1463,22 @@ impl Host {
                     self.managed()?.program_status(status)?
                 }
                 Decision::ManageRefuse => self.managed()?.refuse()?,
+                Decision::ManageRead { revision } => {
+                    let visible = visible::read(&self.orbit.terminal, revision);
+                    self.managed()?.visible(visible)?
+                }
+                Decision::ManageInput => {
+                    let input = self.managed()?.take_input().ok_or_else(protocol)?;
+                    // A closed PTY takes no input.
+                    let outcome = if self.pty_open {
+                        self.orbit.lease_input(input)?
+                    } else {
+                        Err(LeaseRefusal::Closed)
+                    };
+                    self.managed()?.input(outcome)?
+                }
+                Decision::ManageAllow => self.managed()?.allow()?,
+                Decision::ManageDecline => self.managed()?.decline()?,
                 Decision::ManageRejectIdentity => {
                     self.managed()?.reject(ManagementFailure::InvalidIdentity)?
                 }

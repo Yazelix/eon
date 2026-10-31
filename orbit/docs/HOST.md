@@ -220,6 +220,61 @@ builds the reply from the records, the terminal title and, while it holds a
 record, the background process count it samples then, or `ManageRefuse`,
 for which it sends Busy and keeps the lease.
 
+Management v4's other requests arrive as fact `Management`. The host reads at
+most one request at a time, within the largest request's bound (one lease
+paste). A request stays in flight until its answer is fully written, and one
+that arrives while another is in flight, while a read waits, before an answer
+is fully written or in the same read as an earlier request, is declined as
+below. A request that breaks framing, with a bad header or more than its
+kind's bound, is event `Bad`, which ends the lease. A whole request that does
+not decode is event `Invalid`, and so is a whole request in flight beside
+another, and a read that brings more than one whole request: the host drops
+every whole request in it and keeps a partial one that follows. Bend answers
+`Invalid` under the lease with `ManageDecline`, for which the host sends
+`Refused(InvalidRequest)` and keeps the lease. The refusal goes after any
+answer being written; while it waits behind one, the host reads nothing more.
+Each answer must be fully written within one second of being queued, the
+negotiation bound, timed apart from that bound; a peer that does not read it
+loses the connection, which is event `Gone`, so Bend frees the slot and the
+named process with it. A slow peer delays nothing else.
+
+A `ReadVisible` request is event `Read` with the fact's `held` flag. The host
+reports it only once no synchronized update is held: a request read during
+one is held and reported once the PTY ends the update or the host carries out
+Bend's watchdog `Release`, and once the connection's output is written, so
+its answer never meets a pending refusal. Meanwhile the host still reads the
+connection: a request that arrives is event `Invalid`, which Bend declines
+with `Refused(InvalidRequest)`, and the read stays held. The held request
+goes with the connection, when it is refused, at a stop and at the child's
+exit. Bend still refuses a read reported while an update is held
+(`management_read_needs_a_live_settled_lease`), so a host that broke this
+order would send Busy, never partial text. Bend's `ManageRead` carries the
+revision of the snapshot, which `presented_at` stamps as it stamps a frame;
+the host extracts the active screen's live area with libghostty's plain-text
+formatter, one row at a time ([src/visible.rs](../src/visible.rs)), and
+sends it with the screen, size, title and directory the observer's metadata
+would carry. Extraction only reads the terminal, and any failure is
+`Refused(ReadFailed)`, never partial text.
+
+A lease input request is event `Input`. The host keeps the decoded paste or
+Enter while Bend decides, and `ManageInput` writes it or refuses it
+([src/pty.rs](../src/pty.rs)), as [Lease input](BEHAVIOR.md#lease-input)
+states.
+
+An `AttachAllow` request is event `Allow`; `ManageAllow` records the named
+process ID and start identity on the leased management connection, replacing
+any earlier name, and answers `Allowed`. The name lives on that connection: it
+goes when the connection goes and when Bend refuses it. In a managed run, the
+host classifies each `Hello` as it reports it: it is first message `Stranger`
+unless the connection holds the lease, is not closing and holds a name that
+equals the peer's process ID, read from the socket's credentials
+(`SO_PEERCRED` on Linux, `LOCAL_PEERPID` on macOS), and that process's start
+identity, read then. A credential or start identity it cannot read makes the
+peer a stranger. Bend answers `Stranger` with Busy and keeps both slots
+(`admission_strangers_are_busy`); a stranger that closed before its answer
+just goes. A run without management reports `Hello` as before, and naming
+never touches an attachment.
+
 Bend's session holds the pointer sequence's route, whether a host selection
 is presented, and whether a finished host sequence froze a copy. Rust keeps
 libghostty's gesture and the frozen text, reports whether each host phase or
@@ -248,9 +303,11 @@ proved policy in [src/vertical.bend](../src/vertical.bend). The management
 slot is free, negotiating, leased, or closing, and the proved policy in
 [src/management.bend](../src/management.bend) answers each management event
 from it and gives the slot after Rust carries out the answer. Rust keeps the
-connection, its one-second bound, which `ManageLease` ends, and every identity
-check; it reads the bound only to time it and, after a termination signal,
-which it handles without the worker, to answer the lease Stopped. Frames and metadata
+connection, its one-second bound, which `ManageLease` ends, the bound on writing
+each answer, the process its lease holder named, and every identity check; it
+reads the negotiation bound only to time it and, after a termination signal,
+which it handles without the worker, to answer the lease Stopped, after the rest
+of any answer being written and within one second in all. Frames and metadata
 wait while a synchronized update is open, every publication asks the vertical
 policy, and a scroll without room for its outcome fails with Failure(Terminal)
 before the viewport moves. A return to live output takes the same policy, with
@@ -276,23 +333,27 @@ none holds session state that Bend decides from.
   each management connection's buffers.
 - Timers and loop scheduling: the peer's negotiation deadline, the half-close
   probe, the synchronized-output watchdog and whether it is armed, the
-  management connection's one-second bound, the source the next wait starts
-  from, and each client's output bound. Bend chooses every bound.
-- Raw observations: whether the PTY is still open, whether the host has
-  reported the child's exit, the child's pid and cached exit status, the
-  surface size, a terminal reply that overflowed, the turn's clipboard writes
-  and their overflow, a lost gesture anchor, the frozen copy's text (Bend holds
-  only its presence), the title and working directory last queued for the
-  observer, the turn's program status events and the program status records
-  with their neutral facts, a client's half-close, its unread bytes and
-  negotiation phase, the identity a managed run publishes, a management peer's
-  UID, the containment fixture's fault, and the attachment's resource
-  records: identity numbers by image generation, the started resources with
-  their image id, screen, delivery and the serial after which storage no
-  longer held them, the last queued frame's candidates, the last frame
-  serial extracted and the highest written, and the plane last reported.
+  management connection's one-second bound, a `ReadVisible` request held
+  until no synchronized update is and its connection's output is written, the
+  source the next wait starts from, and each client's output bound. Bend
+  chooses every bound.
+- Raw observations: whether the PTY is still open, whether the host has reported
+  the child's exit, the child's pid and cached exit status, the surface size, a
+  terminal reply that overflowed, the turn's clipboard writes and their
+  overflow, a lost gesture anchor, the frozen copy's text (Bend holds only its
+  presence), the title and working directory last queued for the observer, the
+  turn's program status events and the program status records with their neutral
+  facts, a client's half-close, its unread bytes and negotiation phase, the
+  identity a managed run publishes, a management peer's UID, the process ID and
+  start identity the lease holder named, the containment fixture's fault, and
+  the attachment's resource records: identity numbers by image generation, the
+  started resources with their image id, screen, delivery and the serial after
+  which storage no longer held them, the last queued frame's candidates, the
+  last frame serial extracted and the highest written, and the plane last
+  reported.
 - Carry-out scratch, held only while Bend decides the current fact: the
   facts the host owes Bend before the next wait, a client's decoded or
   refused request, the wheel or pointer phase Bend is deciding on, a
-  management connection awaiting admission or its refusal, and the exit code
+  management connection awaiting admission or its refusal, the lease input
+  or name Bend is deciding on, and the exit code
   Bend's `Finish` chose, which the host returns once the worker exits.

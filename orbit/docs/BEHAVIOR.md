@@ -55,7 +55,7 @@ blind to the schema.
 `yazelix-orbit` takes this command line:
 
 ```sh
-yazelix-orbit serve [SOCKET] [--management-v3 SESSION_ID RUN_ID COMPONENT_GENERATION]
+yazelix-orbit serve [SOCKET] [--management-v4 SESSION_ID RUN_ID COMPONENT_GENERATION]
                   [--ansi-palette-v1 RGB,...] [-- COMMAND ...]
 ```
 
@@ -123,7 +123,7 @@ same way.
 
 ## Management record
 
-`--management-v3` makes the run managed (ORB-C13).
+`--management-v4` makes the run managed (ORB-C13).
 Each identity has 1 to 128 UTF-8 bytes. Before the child starts, Rust opens a
 private management socket at `SOCKET.management`; at Ready it publishes an
 exact user-owned 0600 live record at `SOCKET.record` naming the three
@@ -167,18 +167,30 @@ connection is admitted only while no other holds the slot and gets Busy
 otherwise; it must acquire the lease within one second; Acquire is granted only
 when Rust found the expected identity, the record's exact inode and contents,
 the peer's UID and both sockets all equal to this run's, and fails with
-`InvalidIdentity` and closes otherwise; Status, ProgramStatus and Stop are
-answered only under the lease, and a request out of place, over 4 KiB,
-malformed or pipelined fails with `InvalidRequest` and closes. A refused
-connection keeps the slot until its Failure is written and it closes,
-so a connection meanwhile is Busy. Bend's session holds the slot and whether
-a stop came through the lease, which makes the finish explicit; Rust keeps
-the connection, its one-second bound and the identity checks. Losing the lease
-does not stop the run. An accepted Stop begins the reap-gated stop: the host hangs up
-and reaps the child with the bounded shutdown of ORB-C12, the tombstone
-records the explicit stop and the exact signal, the lease hears `Stopped` with
-it, the observer hears the exit, the interactive client closes without
-`Exited`, and the server exits 0. A child that the escalation leaves
+`InvalidIdentity` and closes otherwise; Status, ProgramStatus,
+[ReadVisible](#visible-text), [lease input](#lease-input),
+[AttachAllow](#interactive-admission) and Stop are answered only under the
+lease. A request out of place, or one that breaks framing, with a bad header
+or more than its kind's bound (4 KiB, or one lease paste), fails with
+`InvalidRequest` and closes. A request is in flight until its answer is fully
+written. A whole request that does not decode, or one in flight beside
+another, which arrives while a read waits, before an answer is fully written
+or in the same read as an earlier one, fails the same way before the lease,
+and under it gets `Refused(InvalidRequest)`, after any answer being written,
+and keeps the lease; the whole requests in that read are dropped and a
+partial one after them is kept. Each answer must be fully written within one
+second of being queued, so a holder that does not read its answer loses the
+connection, and the lease and named process with it, while the PTY and the
+attached client go on. A refused connection keeps the slot until its Failure
+is written and it closes, so a connection meanwhile is Busy. Bend's session
+holds the slot and whether a stop came through the lease, which makes the finish
+explicit; Rust keeps the connection, its one-second bounds and the identity
+checks. Losing the lease does not stop the run. An accepted Stop begins the
+reap-gated stop: the host hangs up and reaps the child with the bounded shutdown
+of ORB-C12, the tombstone records the explicit stop and the exact signal, the
+lease hears `Stopped` with it, after the rest of any answer being written and
+within one second, the observer hears the exit, the interactive client closes
+without `Exited`, and the server exits 0. A child that the escalation leaves
 unreaped, such as one the kernel holds in uninterruptible sleep, keeps the
 run, its live record and the pending Stop: Bend answers `NotReaped` with
 another `Reap`, so the host waits again, two seconds at a time and serving
@@ -206,28 +218,130 @@ policy total.
 any list of connections, requests and departures, from any slot, the answers
 satisfy an audit kept apart from the policy: a connection is admitted only
 into a free slot and is Busy otherwise, a lease is granted only for a valid
-identity during negotiation, Status and Stop are carried out only under the
-lease, ProgramStatus is answered under the lease while the child runs and
-refused with Busy under it after, anything out of place is refused and keeps
-the slot until it closes, and a refused connection is answered nothing more;
-that a Stop is carried out exactly when the lease is held; and that a
-ProgramStatus request gets the records exactly when the lease is held and the
-child runs (`management_program_status_needs_a_live_lease`). Four sensitivity
+identity during negotiation, Status, Stop and AttachAllow are carried out only
+under the lease, ProgramStatus and lease input are answered under the lease
+while the child runs and refused with Busy under it after, ReadVisible is
+answered under the lease while the child runs and no synchronized update is
+held and refused with Busy under it otherwise, a whole request that does not
+decode is declined under the lease, which stays, anything out of place is
+refused and keeps the slot until it closes, and a refused connection is
+answered nothing more; that a Stop is carried out exactly when the lease is
+held; that a ProgramStatus request gets the records exactly when the lease is
+held and the child runs (`management_program_status_needs_a_live_lease`); that
+a ReadVisible request gets the text exactly when the lease is held, the child
+runs and no update is held (`management_read_needs_a_live_settled_lease`);
+that lease input is written exactly when the lease is held and the child runs
+(`management_input_needs_a_live_lease`); and that a name is recorded exactly
+when the lease is held (`management_allow_needs_the_lease`). Four sensitivity
 checks, one that stopped the run during negotiation, one that admitted a
 second connection under the lease, one that freed the slot at a refusal and
 one that admitted a connection while a refused one closed, made the proof
 fail. So did answering ProgramStatus with the records during negotiation,
 which the [management law](#management-law) over `step` caught, and after the
 child's run under the lease, which the audit caught; with the audit changed
-to match, `management_program_status_needs_a_live_lease` caught it too.
+to match, `management_program_status_needs_a_live_lease` caught it too. For
+management v4, in scratch copies of `eon-agent-parity-a9g0.15`'s tree,
+answering a read with text during a held update, writing lease input after
+the child's run and recording a name during negotiation each made the proof
+fail, through the [management law](#management-law) or the audit, and
+`management_read_needs_a_live_settled_lease`,
+`management_input_needs_a_live_lease` and `management_allow_needs_the_lease`,
+each checked alone, failed on them too. So did ending the lease at a
+declined request and refusing a request that does not decode under the lease
+as before, both of which the management law caught.
 
 The real-PTY management-lease check refuses a wrong identity, holds the slot
 with a silent connection so a contender is Busy until the one-second bound
 closes it, refuses Status before the lease, an oversized request and an
 Acquire after the record's mode changed, grants a lease that reports Status,
-keeps the run after the lease goes, lets one of two racing replacements win
-while the other is Busy, and stops the run through the lease with an explicit
-tombstone and exit 0.
+keeps the run and the attachment of the client it named after the lease
+goes, lets one of two racing replacements win while the other is Busy, and
+stops the run through the lease with an explicit tombstone and exit 0. The
+real-PTY [lease-input](#lease-input) check refuses, under the lease, an
+`AttachAllow` naming process 0, an empty paste and two requests in one write,
+answers the Status whose second half follows, ends the lease at a header over
+the input bound with nothing written, and refuses an undecodable request
+before the lease and closes.
+
+### Visible text
+
+A `ReadVisible` request (ORB-C17) is answered under the lease with one snapshot
+at the presentation revision of its decision: the active screen, primary or
+alternate, its rows and columns, the title and working directory the observer's
+metadata carries, and the screen's live area as plain text, one line per row
+joined by line feeds, trailing blanks trimmed, a soft wrap ending its row,
+wide-cell spacers left out and combining marks kept, with every other control
+character replaced by U+FFFD. The text covers the live area whatever a client's
+viewport, and is marked lossy. Past 1 MiB, the leading whole rows are left out
+and counted. The host extracts it with libghostty's plain-text formatter
+([src/visible.rs](../src/visible.rs)); a failure is refused with
+`Refused(ReadFailed)`, never partial text. Reading writes nothing to the PTY and
+sends a client nothing. A request that arrives while a synchronized update is
+held waits for its release or the watchdog ([HOST.md](HOST.md#decisions)), and
+one still waiting when the run ends gets no text. A request that arrives while
+it waits is in flight beside it and gets `Refused(InvalidRequest)`; the read
+stays held. The unit tests in [src/visible.rs](../src/visible.rs) cover the row
+layout, a viewport scrolled into history, the alternate screen, the 1 MiB cut
+and the replacement of control characters.
+
+The real-PTY visible-text check, with no client attached, reads a title, a
+directory, trailing blanks, wide and combining text and a soft-wrapped row,
+and matches the observer's title and directory; reads the alternate screen
+and the primary screen intact after it; reads the live area with the
+revision of an attached client's latest frame while that client is scrolled
+ten rows into history, sends it nothing, and finds its viewport still there
+and the PTY input empty. On a 400 by 250 terminal whose cells each hold an
+`e` and five combining accents, it gets the last 240 rows and 10 omitted. A
+read during a held update stays unanswered for 0.3 s, a Status and a Stop
+sent then each get `Refused(InvalidRequest)` at once, the read
+then sees the whole update once the child ends it, and the lease answers
+Status after; another sees the update the watchdog released, between 0.5 and
+3 s after asking. A read held when a termination signal stops the run, or
+when the child exits, gets no text, and lease input afterwards finds the
+connection closed. Fifty reads during a PTY flood each answer within a second
+with one line per row and no control character, at revisions that never go
+back, while the flood moves on. With the 1 MiB live area, whose answer
+outgrows a socket's buffer: a paste sent while the answer is partly unread
+gets `Refused(InvalidRequest)` after the whole answer and writes nothing; a
+holder that stops reading loses its connection between 0.9 and 2.5 s after
+asking, while a title the child sets meanwhile reaches the attached client
+within a second, and another connection takes the lease; and a termination
+signal while the answer is partly unread finishes it before `Stopped`.
+Sensitivity checks each made the check fail: reporting a read during a held
+update (Bend refused it with Busy), not reading the connection while a read
+waits, not reading it while an answer is written (the paste ran), no bound on
+writing an answer (the lease stayed), and writing `Stopped` without the rest
+of the answer (the answer did not decode).
+
+### Lease input
+
+A lease input request (ORB-C5) writes one paste of up to 64 KiB, or one
+Enter, while the child runs. The host refuses a paste that holds a control
+character other than tab, line feed and carriage return
+(`Refused(InvalidInput)`), and one that holds a line feed or carriage return
+while the program has not enabled bracketed paste
+(`Refused(UnbracketedNewline)`). Otherwise it encodes the paste as an
+attached client's `Paste`, bracketed when the program enabled bracketed
+paste, or Enter as an unmodified Enter press and its release, which the
+keyboard mode encodes or drops, and queues the bytes whole for the PTY,
+answering `Input` with whether the paste was bracketed; input the queue
+cannot take whole is refused with `Refused(InputFull)`, and input after the
+PTY closed while the child runs with `Refused(Closed)`. A refusal writes
+nothing, and lease input needs no attachment, sends a client nothing and
+moves no viewport.
+
+The real-PTY lease-input check pastes and presses Enter with no client
+attached and finds exactly those bytes at the child, after refusing newlines,
+carriage returns, ESC, BEL, DEL and a C1 control. An attached client's same
+paste and Enter write the same bytes; with bracketed paste on, a lease paste
+of two lines is bracketed and equals the client's, and leaves the client,
+scrolled ten rows into history, unsent to and still scrolled; with Kitty
+key-release reporting on, a lease Enter writes its press and its release and
+equals the client's. A 64 KiB lease paste sent while the client types reaches
+the child whole between its keys. Once the child stops reading, lease pastes
+fill the queue until one is refused with `InputFull`, and the lease still
+answers Status. A sensitivity check that returned the viewport to live output
+at lease input made the check fail.
 
 ## Host and worker split
 
@@ -943,7 +1057,7 @@ codec, and the one byte it adds to the header still leaves room for seven
 records at their bounds.
 
 The real-PTY program-status check reads the records through a
-`--management-v3` lease:
+`--management-v4` lease:
 
 - One write carrying `working`, `blocked` and `done` reports, a prompt mark
   and a `working` report leaves the `done` record and the last report. The
@@ -1181,6 +1295,35 @@ laws, the proof covers Bend's decisions, not Rust's decoding or delivery, and
 the running loop does not call the policy for departures; its position already
 reflects them.
 
+### Interactive admission
+
+In a run with management, Rust reports a `Hello` as `Stranger` unless the
+management connection holds the lease and a name, and the peer's process ID
+from the socket's credentials and that process's start identity, read at the
+`Hello`, equal the name ([HOST.md](HOST.md#decisions)). The lease holder sets
+the name with `AttachAllow`, which replaces any earlier one, and the name ends
+with the lease. Bend answers a stranger Busy and changes neither slot
+([src/admission.bend](../src/admission.bend)), so the named process can still
+attach. A run without management admits the first peer. The law
+`admission_strangers_are_busy` proves the Busy answer from any slots, and the
+admission audit keeps both slots; a sensitivity check that admitted a stranger
+into a free slot failed that law and the [lifecycle law](#lifecycle-law), one
+that let a stranger take the slot failed the audit, and one in `step` that
+heard a stranger as a `Hello` failed the lifecycle law.
+
+The real-PTY attach-allow check reproduces eon-ahzkt's probe: a peer sends
+`Hello` and, once attached, pastes a word and presses Enter for a child that
+logs each line. Without management the first peer attaches and its word arrives.
+In a managed run the peer is Busy and closed before any lease, under a lease
+that named no process, with this process's ID and another start identity named,
+with another process named, with no lease after the naming one ended, and under
+a new lease; then the named process attaches and its words arrive, and renaming
+leaves its attachment working. The child's log ends holding only the named
+client's words. On the edge tree before management v4, the first managed probe
+attached and its word reached the shell. Sensitivity checks that never reported
+a stranger, that ignored the start identity, and that admitted any peer while a
+connection named nobody each made the check fail at that case.
+
 ## Lifecycle law
 
 The laws above prove the pure policies; this one proves the whole `step` of
@@ -1195,7 +1338,8 @@ any session state, `step`'s decisions never break the automaton:
 
 - Peers are admitted as the admission audit of
   [src/admission.bend](../src/admission.bend) requires: one interactive client
-  and one observer, Busy only for a taken slot, a repeated role ends the
+  and one observer, Busy only for a taken slot or a stranger
+  ([Interactive admission](#interactive-admission)), a repeated role ends the
   attachment, and an observer that speaks is expelled.
 - A client that closes is detached; any other fact from the client, and
   output, may end the attachment and do nothing else. A report of the
@@ -1418,20 +1562,24 @@ written from the contract and kept apart from `step`, of the slot as the audit
 of [src/management.bend](../src/management.bend) keeps it. It reads only the
 management answers among `step`'s decisions: `ManageAdmit`, `ManageBusy`,
 `ManageLease`, `ManageRejectIdentity`, `ManageReject`, `ManageStatus`,
-`ManageProgramStatus`, `ManageRefuse` and `ManageStop`. It reads the fact
-`ProgramStatus` as a request from a running child under the lease, and as
-out of order once a stop has begun. The law says that over any list of facts
-with their flags, from any session state, `step`'s decisions never break the
+`ManageProgramStatus`, `ManageRefuse`, `ManageRead`, `ManageInput`,
+`ManageAllow`, `ManageDecline` and `ManageStop`. It reads the fact
+`ProgramStatus` as a request from a running child under the lease, and as out of
+order once a stop has begun, and a ReadVisible request as one from a running
+child with the fact's `held` flag. The law says that over any list of facts with
+their flags, from any session state, `step`'s decisions never break the
 automaton:
 
 - Each management event gets at most one answer, the one the management audit
   requires from the slot the automaton keeps, and the slot follows that audit:
   a connection is admitted only into a free slot and is Busy otherwise, a
-  lease is granted only for a valid identity during negotiation, Status and
-  Stop are carried out only under the lease, ProgramStatus is answered under
-  the lease while the child runs, anything out of place is refused and keeps
-  the slot until it closes, and a refused connection is answered nothing
-  more.
+  lease is granted only for a valid identity during negotiation, Status,
+  Stop and AttachAllow are carried out only under the lease, ProgramStatus
+  and lease input are answered under the lease while the child runs,
+  ReadVisible also only while no synchronized update is held, a whole
+  request that does not decode is declined under the lease, which stays,
+  anything out of place is refused and keeps the slot until it closes, and a
+  refused connection is answered nothing more.
 - `ManageStop`, which begins the stop, answers a Stop exactly when the lease
   is held.
 - No other fact answers anything on the management socket.
@@ -1443,13 +1591,16 @@ rest. [PROOF.bend](../PROOF.bend) proves it by the same induction, and
 [proof/lease.bend](../proof/lease.bend), which `step-proof management`
 generates, holds each fact's lemma; rerun it, too, after changing `step` or
 this automaton. The whole proof, with the three laws over `step`, checks in
-about twenty seconds and 2.7 GB.
+about twenty seconds and 2.9 GB.
 
 Two sensitivity checks broke `step` in a scratch copy and made the proof
 fail: one kept the slot from before each event, so an Acquire after a
 connection was answered nothing, and one answered a Stop under the lease with
 nothing, which the lifecycle law allows. Both break the law itself on a
-connection, an Acquire and a Stop. As with the other laws, the proof covers
+connection, an Acquire and a Stop. Two more, for management v4
+(`eon-agent-parity-a9g0.15`), made it fail through this law: one that ignored
+the `held` flag, so a read during a held update got its text, and one that
+answered a read with `ManageAllow`. As with the other laws, the proof covers
 Bend's decisions, not the truth of Rust's facts or their delivery.
 
 ## Refused requests
@@ -1726,8 +1877,8 @@ ORB_BASELINE_CPUS=6-11 ORB_BASELINE_GRID="54 90" \
   descendant-exit, unsupported, interactive-pressure, key-live, mouse,
   slow-observer, observer-finish, stale-socket, clipboard, clipboard-pressure,
   command-line, palette-reset, selection, selection-tick, refused-flush,
-  management-record, management-lease, program-status, terminal-identity and
-  stopped-client-exit.
+  management-record, management-lease, program-status, attach-allow,
+  visible-text, lease-input, terminal-identity and stopped-client-exit.
 
 Building the package runs the Rust unit tests. The real-PTY checks are Rust
 integration tests in [tests/real_pty](../tests/real_pty). They encode every

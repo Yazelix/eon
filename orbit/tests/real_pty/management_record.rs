@@ -14,7 +14,7 @@ use std::{
     path::{Path, PathBuf},
 };
 
-const MANAGED: [&str; 4] = ["--management-v3", "session-1", "run-1", "component-1"];
+const MANAGED: [&str; 4] = ["--management-v4", "session-1", "run-1", "component-1"];
 
 /// The record at a path, decoded canonically.
 pub fn record(path: &Path) -> Record {
@@ -39,13 +39,6 @@ pub fn suffixed(path: &Path, suffix: &str) -> PathBuf {
     let mut name = path.as_os_str().to_owned();
     name.push(suffix);
     name.into()
-}
-
-/// A process's start time in clock ticks since boot, from /proc on Linux.
-fn start_time(pid: i32) -> u64 {
-    let stat = fs::read_to_string(format!("/proc/{pid}/stat")).expect("stat");
-    let (_, fields) = stat.rsplit_once(')').expect("stat fields");
-    fields.split_whitespace().nth(19).expect("starttime").parse().expect("a number")
 }
 
 fn private_file(path: &Path, socket: bool) {
@@ -91,9 +84,7 @@ pub fn run() {
         wait_for(&record_path);
         let live = live(&record_path);
         assert_eq!(live.process_id, server.pid() as u32, "{live:?}");
-        if cfg!(target_os = "linux") {
-            assert_eq!(live.process_start, start_time(server.pid()), "{live:?}");
-        }
+        assert_eq!(live.process_start, process_start(live.process_id), "{live:?}");
         assert_eq!(live.uid, euid, "{live:?}");
         assert_eq!(
             (
@@ -242,9 +233,9 @@ pub fn run() {
         let path = directory.join("orbit.sock");
         let long = "s".repeat(129);
         for options in [
-            &["--management-v3", "", "run", "component"][..],
-            &["--management-v3", &long, "run", "component"],
-            &["--management-v3", "session", "run"],
+            &["--management-v4", "", "run", "component"][..],
+            &["--management-v4", &long, "run", "component"],
+            &["--management-v4", "session", "run"],
         ] {
             run_command(
                 &server_command(&path, &[OsStr::new("/bin/true")], options),
