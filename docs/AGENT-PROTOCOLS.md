@@ -126,13 +126,15 @@ not command catalogs unless the boundary/transition needs them.
 A run includes continuations until control returns; reads are unrestricted. A
 writing run does exactly one:
 
-1. Owns at most one issue and may create/claim/update/implement/close it.
+1. Works issues in sequence, one in progress at a time, and may
+   create/claim/update/implement/close each; finishes or hands off one
+   before claiming the next.
 2. With explicit user authorization, changes a named/accepted planning-only
    batch; claims nothing and changes no implementation.
 
-Bind implementation before writes; return at completion, block, or handoff.
-Report unapproved findings; create issues only for material out-of-scope or
-schedulable work, deferred outside authorized batches.
+Bind each issue before its first write; return at completion, block, or
+handoff. Report unapproved findings; create issues only for material
+out-of-scope or schedulable work, deferred outside authorized batches.
 
 Keep fields current; append only needed contracts, decisions, dependencies,
 acceptance, material failures/negatives, constraining rejections, and approvals.
@@ -151,12 +153,11 @@ otherwise.
 Budget absolute context tokens, not window share; if the host reports none,
 estimate high:
 
-- From 400k, add no scope or new steps: close the issue if it can close by
-  600k, else bring work in progress to a verified state and hand off.
-- Past 600k, continue only to reach an imminent verified state or keep live
-  state that cannot be written down; record why on the issue.
-- Hand off before the host would compact. After any compaction, reread the
-  issue and hand off.
+- From 300k, add no scope or new steps: close the issue if it can
+  close soon, else bring work in progress to a verified state and
+  hand off.
+- Never pass 400k: hand off before the host would compact. After any
+  compaction, reread the issue and hand off.
 
 A handoff is an issue comment: state, next step, and open decisions with
 reasons. The next session primes, e.g. "prime, then continue <issue> from its
