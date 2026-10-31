@@ -82,6 +82,15 @@ without data, such as a version Eon did not pass, still shows nothing. The input
 is workspace-only, and a missing value, an unknown, repeated or empty item, or a
 repeated flag fails before window creation.
 
+With the `ram` item it may pass `--ram-warning-percent N` and
+`--ram-critical-percent N`, and with `cpu`, `--cpu-warning-percent N` and
+`--cpu-average-seconds N`: the levels at which those chips turn orange or red
+([Eon Bar](PRESENTATION.md#eon-bar)). Percentages are 1 through 100 and the
+critical RAM level is not below the warning one; the window is 2 through 600
+seconds. Absence keeps 80, 90, 90 and 30. The inputs are workspace-only, and a
+missing, out-of-range or repeated value fails before window creation. Eon owns
+these `[bar]` settings.
+
 Pass `--pane-frames false` to hide decorative pane borders. The default is
 `true`; both modes keep the same terminal grid, pane headers, click targets and
 accessible bounds. Keyboard focus and hover remain visible with frames off.

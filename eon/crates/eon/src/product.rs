@@ -1,6 +1,6 @@
 use eon_runtime::{
-    Defaults, Inputs, ManagedPrograms, PaddingColor, PopupCatalog, PopupCommand, PopupDefinition,
-    ShellConfig, StartupAnimation, TerminalAccess, TerminalConfig,
+    BarLoad, Defaults, Inputs, ManagedPrograms, PaddingColor, PopupCatalog, PopupCommand,
+    PopupDefinition, ShellConfig, StartupAnimation, TerminalAccess, TerminalConfig,
 };
 use eon_workspace_protocol::v26::{ALT, PopupGeometry, PopupKey, SHIFT, Shortcut};
 
@@ -19,6 +19,12 @@ pub(crate) fn inputs() -> Inputs {
                 "clock",
                 "version",
             ],
+            bar_load: BarLoad {
+                ram_warning_percent: 80,
+                ram_critical_percent: 90,
+                cpu_warning_percent: 90,
+                cpu_average_seconds: 30,
+            },
             shell: ShellConfig {
                 command: vec!["eon-nu".into()],
                 starship: true,

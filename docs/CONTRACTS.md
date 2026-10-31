@@ -2784,7 +2784,9 @@ socket names, JSON fields and protocol identifiers retain their spellings.
 
 ## EON-C32 — Eon Bar items and order
 
-- **Status:** Proven on x86_64 Linux Wayland.
+- **Status:** Proven on x86_64 Linux Wayland. Amended on 2026-10-31 (approved
+  by Lucca, relayed by eon-overseer) by `eon-hjtns`: the CPU and RAM load
+  levels.
 - **Consumer:** Full-Eon workspace users.
 - **Trigger:** A workspace window opens or reopens.
 - **Result:** `[bar] widgets` is an ordered list of unique names from
@@ -2798,25 +2800,39 @@ socket names, JSON fields and protocol identifiers retain their spellings.
   the key shows all six in that order. A listed widget without data still
   shows nothing, as [Eon Bar](../venus/docs/PRESENTATION.md#eon-bar) describes
   for each widget. Narrow windows keep the fixed hiding priority it gives,
-  whatever the order.
+  whatever the order. `ram_warning_percent` and `ram_critical_percent` set the
+  RAM use, in whole percent, from which the RAM label turns orange and red
+  (defaults 80 and 90); `cpu_warning_percent` sets the average CPU use from
+  which the CPU label turns orange (default 90), averaged over the last
+  `cpu_average_seconds` (default 30). Percentages are 1 through 100,
+  `ram_critical_percent` is not below `ram_warning_percent`, and the window is
+  2 through 600 seconds. They apply when a window opens or reopens, like the
+  list.
 - **Important failures:** An unknown or repeated name, a non-string entry, a
-  value that is not a list, or a leftover `[bar] show_version` (removed before
-  1.0, with an error that names `bar.widgets`) fails through the existing
-  startup and replacement handling, preserving live terminals.
-- **Owner:** Eon owns the setting, its names and the default. Runtime parses
-  and validates it and passes it to Venus unchanged as `--bar-items`, with
-  `--eon-version` only when `version` is listed. Venus owns placement, fitting,
-  hover and accessibility.
-- **Boundary:** No per-widget option, configurable hiding priority, new
-  widget, live reload, settings UI, EONW change or platform expansion. Leaving
-  out a quota chip also stops Runtime reading that provider (EON-C27).
-- **Proof:** `eon-igae.14.2`
+  value that is not a list, a load level that is not a whole number in its
+  range, a `ram_critical_percent` below `ram_warning_percent`, or a leftover
+  `[bar] show_version` (removed before 1.0, with an error that names
+  `bar.widgets`) fails through the existing startup and replacement handling,
+  preserving live terminals.
+- **Owner:** Eon owns the settings, their names and defaults. Runtime parses
+  and validates them and passes the list to Venus unchanged as `--bar-items`,
+  with `--eon-version` only when `version` is listed, the RAM levels only when
+  `ram` is listed and the CPU levels only when `cpu` is listed. Venus owns
+  placement, fitting, colour, hover and accessibility.
+- **Boundary:** No per-widget option beyond the CPU and RAM load levels,
+  configurable hiding priority, new widget, live reload, settings UI, EONW
+  change or platform expansion. Leaving out a quota chip also stops Runtime
+  reading that provider (EON-C27).
+- **Proof:** `eon-igae.14.2`, and for the load levels `eon-hjtns`
   - **Environment:** Automated; one isolated installed observation.
   - **Evidence:** `version_badge_uses_supervising_product_and_visibility_at_each_launch`
     and `invalid_presentation_configuration_precedes_supervisor_generation_and_children`;
     the installed observation recorded in `eon-igae.14.2`: a reordered list
     without `cpu` on window open, a leftover `show_version` refused on reattach
-    with live terminals kept, and the corrected list on the next reattach.
+    with live terminals kept, and the corrected list on the next reattach. For
+    the load levels, the same launch test extended to the levels and their
+    failures, Venus's `load_levels_are_a_bounded_workspace_choice`, and the
+    isolated installed observation recorded in `eon-hjtns`.
 
 ## EON-C33 — Several workspaces in one window
 

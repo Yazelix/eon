@@ -31,7 +31,9 @@ Shortcuts viewer lists it; Eon supplies the exact launcher executable.
 
 Eon can supply its running version through `--eon-version` in workspace mode.
 The read-only label uses spare header space and yields before tabs and controls.
-`--bar-items` lets Eon choose which bar items show and in what order.
+`--bar-items` lets Eon choose which bar items show and in what order, and the
+`--ram-*` and `--cpu-*` load levels set when the CPU and RAM chips turn orange
+or red.
 
 Eon can supply Codex and Claude quota facts in the same header. Read-only chips
 show Codex’s white mark and Claude’s original orange splat alongside remaining

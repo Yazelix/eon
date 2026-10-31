@@ -180,6 +180,8 @@ first, before tabs and controls, and unavailable quota leaves the bar unchanged.
 See [quota behavior](CONFIGURATION.md#agent-quota).
 After the quota chips, `CPU 12%` shows whole-machine CPU use over the last 2
 seconds and `RAM 43%` shows whole-machine memory in use; hover them for details.
+They turn orange or red when the machine is under load, at the levels
+[`[bar]`](CONFIGURATION.md#configuration-behavior) sets.
 A reading that can't be taken shows no label rather than 0%. A 24-hour clock
 follows and shows local time; hover it for the date and UTC offset, and it stays
 hidden if the local time zone can't be determined. The `EON <version>` label, in

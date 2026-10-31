@@ -63,6 +63,10 @@ The following block is checked against the command by the test suite.
 # Built-in defaults. Unset and Eon-owned settings remain omitted.
 
 [bar]
+cpu_average_seconds = 30 # Seconds of CPU use that the average covers.
+cpu_warning_percent = 90 # Average CPU use from which the CPU chip turns orange.
+ram_critical_percent = 90 # RAM use from which the RAM chip turns red.
+ram_warning_percent = 80 # RAM use from which the RAM chip turns orange.
 widgets = ["codex_quota", "claude_quota", "cpu", "ram", "clock", "version"] # Eon Bar widgets, in display order.
 
 [terminal]
@@ -171,6 +175,19 @@ unknown or repeated name is a configuration error. Narrow windows hide the
 clock first, then RAM, CPU and the version, whatever the order, then quota
 chips one by one, the one closest to the tabs first. The version belongs to
 its running supervisor; updating the installation does not change it.
+
+The CPU and RAM chips stay neutral on a healthy machine and colour only under
+load. RAM turns orange from `ram_warning_percent` and red from
+`ram_critical_percent`. CPU turns orange while its average over the last
+`cpu_average_seconds` is at least `cpu_warning_percent`, so short spikes stay
+neutral; it has no red. The chips still show the 2-second CPU and current RAM
+use, and hover and accessibility say in words why a chip is coloured. Levels
+compare the whole percentage the chip or its hover shows. Percentages accept
+whole numbers from 1 through 100, and `ram_critical_percent` must not be below
+`ram_warning_percent`; set them equal to skip orange. `cpu_average_seconds`
+accepts 2 through 600. The defaults are listed above. Like `widgets`, they
+apply when a window next opens or reopens, and an out-of-range value is a
+configuration error. See [Eon Bar](../venus/docs/PRESENTATION.md#eon-bar).
 
 Omitting `cursor_trail_color` chooses a random color that lasts as long as the
 running workspace, so `eon attach` reopens with the same color; a new workspace

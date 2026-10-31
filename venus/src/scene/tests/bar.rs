@@ -900,3 +900,222 @@ fn tab_directory_labels_use_current_position_and_bounded_path_context() {
     assert_eq!(labels.0, format!("5  {}", "eon".repeat(100)));
     assert_eq!(labels.1, format!("Tab 5 of 5  {long}"));
 }
+
+#[test]
+fn cpu_and_ram_chips_colour_only_sustained_or_pressing_load_and_say_so() {
+    use crate::{CpuReadings, CpuTimes, Load, LoadLevels, RamUse};
+    use eon_workspace_protocol::v26::{Pane, PopupGeometry, Tab};
+    use std::time::{Duration, Instant};
+
+    let levels = LoadLevels::default();
+    let ram = |percent: u64, levels| {
+        RamUse::parse(&format!(
+            "MemTotal: 100000 kB\nMemAvailable: {} kB\n",
+            (100 - percent) * 1000
+        ))
+        .unwrap()
+        .rated(levels)
+    };
+    for (percent, load, words) in [
+        (79, Load::Normal, ""),
+        (80, Load::High, ": under pressure"),
+        (89, Load::High, ": under pressure"),
+        (90, Load::Critical, ": under heavy pressure"),
+    ] {
+        let shown = ram(percent, levels);
+        assert_eq!(shown.load, load, "{percent}%");
+        assert_eq!(
+            shown.description,
+            format!("RAM use {percent}% of 0.1 GiB{words}")
+        );
+    }
+    let configured = LoadLevels {
+        ram_warning_percent: 50,
+        ram_critical_percent: 50,
+        ..levels
+    };
+    assert_eq!(ram(49, configured).load, Load::Normal);
+    assert_eq!(ram(50, configured).load, Load::Critical);
+
+    // One reading every 2 seconds, each interval `busy` percent busy.
+    let start = Instant::now();
+    let times = |busy: u64, idle: u64| {
+        CpuTimes::parse(&format!(
+            "cpu {busy} 0 0 {idle} 0 0 0 0\ncpu0 0 0 0 0 0 0 0 0"
+        ))
+    };
+    let gap = Duration::from_secs(3);
+    let run = |readings: &mut CpuReadings, levels, from: u64, busy: &[u64]| {
+        let (mut busy_ticks, mut idle_ticks) = (0, 0);
+        busy.iter()
+            .enumerate()
+            .map(|(step, percent)| {
+                busy_ticks += percent;
+                idle_ticks += 100 - percent;
+                readings.push(
+                    start + Duration::from_secs(from + 2 * step as u64),
+                    times(busy_ticks, idle_ticks),
+                    gap,
+                    levels,
+                )
+            })
+            .collect::<Vec<_>>()
+    };
+    // A short spike shows its percentage and stays neutral.
+    let mut readings = CpuReadings::default();
+    let mut spike = vec![10; 16];
+    spike[15] = 100;
+    let shown = run(&mut readings, levels, 0, &spike);
+    let last = shown[15].as_ref().unwrap();
+    assert_eq!((last.label.as_str(), last.load), ("CPU 100%", Load::Normal));
+    assert_eq!(
+        last.description,
+        "CPU use 100% across 1 logical CPU, over the last 2 seconds"
+    );
+    // 95% for 28 seconds is not yet sustained; from 30 seconds it is, even through a dip.
+    let mut readings = CpuReadings::default();
+    let mut busy = vec![95; 18];
+    busy[16] = 70;
+    let shown = run(&mut readings, levels, 0, &busy);
+    assert!(shown[0].is_none());
+    assert_eq!(shown[14].as_ref().unwrap().load, Load::Normal);
+    let sustained = shown[15].as_ref().unwrap();
+    assert_eq!(sustained.load, Load::High);
+    assert_eq!(
+        sustained.description,
+        "CPU use 95% across 1 logical CPU, over the last 2 seconds; \
+         95% on average over the last 30 seconds: under sustained load"
+    );
+    let dip = shown[16].as_ref().unwrap();
+    assert_eq!((dip.label.as_str(), dip.load), ("CPU 70%", Load::High));
+    // An average just under the level stays neutral.
+    let mut readings = CpuReadings::default();
+    assert_eq!(
+        run(&mut readings, levels, 0, &[89; 17])[16]
+            .as_ref()
+            .unwrap()
+            .load,
+        Load::Normal
+    );
+    // A stalled or failed reading starts the window over.
+    let mut readings = CpuReadings::default();
+    run(&mut readings, levels, 0, &[95; 16]);
+    let resumed = run(&mut readings, levels, 40, &[95; 16]);
+    assert!(resumed[0].is_none());
+    assert_eq!(resumed[14].as_ref().unwrap().load, Load::Normal);
+    assert_eq!(resumed[15].as_ref().unwrap().load, Load::High);
+    assert!(
+        readings
+            .push(start + Duration::from_secs(72), None, gap, levels)
+            .is_none()
+    );
+    // Configured levels and windows apply.
+    let quick = LoadLevels {
+        cpu_warning_percent: 50,
+        cpu_average: Duration::from_secs(4),
+        ..levels
+    };
+    let mut readings = CpuReadings::default();
+    let shown = run(&mut readings, quick, 0, &[60, 60, 60]);
+    assert_eq!(shown[1].as_ref().unwrap().load, Load::Normal);
+    let quick_shown = shown[2].as_ref().unwrap();
+    assert_eq!(quick_shown.load, Load::High);
+    assert!(
+        quick_shown
+            .description
+            .ends_with("; 60% on average over the last 4 seconds: under sustained load")
+    );
+    // The average covers exactly the window, even when it is odd or the readings are uneven:
+    // an idle interval then a busy one is 67% over the last 3 of 4 seconds, and 50% over the last
+    // 4 of 4.5 seconds when the idle interval took 2.5 of them.
+    for (window, busy_at, average) in [(3, [2.0, 4.0], 67), (4, [2.5, 4.5], 50)] {
+        let levels = LoadLevels {
+            cpu_warning_percent: 1,
+            cpu_average: Duration::from_secs(window),
+            ..levels
+        };
+        let at = |seconds: f64| start + Duration::from_secs_f64(seconds);
+        let mut readings = CpuReadings::default();
+        readings.push(at(0.0), times(0, 0), gap, levels);
+        let idle = (busy_at[0] * 100.0) as u64;
+        readings.push(at(busy_at[0]), times(0, idle), gap, levels);
+        let busy = ((busy_at[1] - busy_at[0]) * 100.0) as u64;
+        let shown = readings
+            .push(at(busy_at[1]), times(busy, idle), gap, levels)
+            .unwrap();
+        assert!(
+            shown.description.ends_with(&format!(
+                "; {average}% on average over the last {window} seconds: under sustained load"
+            )),
+            "{}",
+            shown.description
+        );
+    }
+
+    // The scene carries each reading's load to its chip, and the words to hover and accessibility.
+    let pressed = ram(91, levels);
+    let snapshot = Snapshot {
+        workspace: "w1".into(),
+        active_workspace: "w1".into(),
+        workspaces: vec![eon_workspace_protocol::v26::WorkspaceInfo {
+            id: "w1".into(),
+            name: None,
+            tab_count: 1,
+            attention: None,
+            recency: 0,
+        }],
+        active_tab: "t1".into(),
+        geometry: PopupGeometry {
+            side_margin: 8.0,
+            vertical_margin: 4.0,
+        },
+        entries: Vec::new(),
+        tabs: vec![Tab {
+            id: "t1".into(),
+            directory: b"/tmp".to_vec(),
+            pending: false,
+            selected_pane: Some("p1".into()),
+            selected_popup: None,
+            columns: vec![eon_workspace_protocol::v26::Column {
+                panes: vec![Pane {
+                    label: "p1".into(),
+                    pinned_name: None,
+                    id: "p1".into(),
+                    session: "s1".into(),
+                    endpoint: b"/tmp/p1.sock".to_vec(),
+                    live: true,
+                    attention: None,
+                }],
+                expanded: "p1".into(),
+            }],
+            popups: Vec::new(),
+            attention_rollup: None,
+        }],
+        codex_quota: None,
+        claude_quota: None,
+        sidebar: eon_workspace_protocol::v26::Sidebar::Open,
+        attention_queue: Vec::new(),
+    };
+    let scene = WorkspaceScene::from_snapshot_with_bar(
+        &snapshot,
+        EonBar {
+            items: &[crate::BarItem::Cpu, crate::BarItem::Ram],
+            cpu: Some(sustained),
+            ram: Some(&pressed),
+            ..EonBar::default()
+        },
+        PhysicalSize::new(3000, 600),
+        CellMetrics::for_scale(1.0),
+        0.0,
+        0.0,
+        |_, text| (text.to_owned(), text.chars().count() as f32 * 10.0),
+        None,
+    );
+    let (cpu, ram) = (scene.cpu.unwrap(), scene.ram.unwrap());
+    assert_eq!((cpu.load, ram.load), (Load::High, Load::Critical));
+    assert_eq!(cpu.description, sustained.description);
+    assert_eq!(
+        ram.description,
+        "RAM use 91% of 0.1 GiB: under heavy pressure"
+    );
+}

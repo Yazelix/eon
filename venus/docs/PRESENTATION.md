@@ -57,6 +57,17 @@ order, selection, and popups; Venus draws the visible scene.
   use 12% across 16 logical CPUs, over the last 2 seconds` and `RAM use 43% of
   31.3 GiB`. A reading that cannot be taken shows no label, never 0%, until the
   next valid one. Other platforms show neither label.
+- CPU and RAM chips colour only under load, and a healthy machine looks quiet:
+  by default RAM is orange from 80% use and red from 90%; CPU is orange while
+  its average over the last 30 seconds is 90% or more, so short spikes stay
+  neutral. The average needs a full window of unbroken readings, so it starts
+  over after a failed reading or a stall. The label still shows the 2-second
+  value. Hover and accessibility say why in words, such as `RAM use 91% of 31.3
+  GiB: under heavy pressure` or `CPU use 70% across 16 logical CPUs, over the
+  last 2 seconds; 93% on average over the last 30 seconds: under sustained
+  load`, so colour is never the only signal. The orange and red are the quota pace
+  scale's, at 4.5:1 or more on the bar. Eon's `[bar]` sets the levels and the
+  averaging window; macOS uses the same ones.
 - The clock shows local 24-hour `HH:MM` and changes within a second of each
   minute; after suspend or a system clock change it corrects within a minute.
   Hover and accessibility name the time, date and UTC offset, such as `Local

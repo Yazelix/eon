@@ -6,7 +6,8 @@ use super::{
     cells::NERD_FONT_FAMILY, palette, physical_outline_width, shaping,
 };
 use crate::{
-    DialogKind, DialogScene, SceneRect, WorkspaceFocus, WorkspaceHeaderControl, WorkspaceScene,
+    DialogKind, DialogScene, Load, SceneRect, WorkspaceFocus, WorkspaceHeaderControl,
+    WorkspaceScene,
     scene::{QuotaProvider, SIDEBAR_EMPTY, SIDEBAR_TITLE, TabBadge, chrome_title_metrics},
 };
 use eon_workspace_protocol::v26::AttentionState;
@@ -1284,6 +1285,11 @@ impl Renderer {
         ] {
             let Some(label) = label else {
                 continue;
+            };
+            let color = match label.load {
+                Load::Normal => color,
+                Load::High => palette::LOAD_HIGH,
+                Load::Critical => palette::LOAD_CRITICAL,
             };
             let content = workspace.bar_item_rect(label.rect, self.metrics);
             if pill {

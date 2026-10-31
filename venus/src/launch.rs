@@ -9,8 +9,9 @@ use std::{
     hash::{BuildHasher, Hash, Hasher},
     os::unix::fs::MetadataExt,
     path::{Path, PathBuf},
+    time::Duration,
 };
-use yazelix_venus::{BarItem, Color, FontSettings, PaddingColor};
+use yazelix_venus::{BarItem, Color, FontSettings, LoadLevels, PaddingColor};
 
 const CURSOR_COLOR_PRESETS: [(&str, Color); 8] = [
     ("magma", rgb(0xff3b30)),
@@ -22,7 +23,7 @@ const CURSOR_COLOR_PRESETS: [(&str, Color); 8] = [
     ("nebula", rgb(0xa970ff)),
     ("bubblegum", rgb(0xff5da2)),
 ];
-const USAGE: &str = "usage: yazelix-venus [--application-id ID] [--no-decorations] [--pane-frames true|false] [--focus-color preset:NAME|custom:#RRGGBB] [--border-width 1..3] [--focus-border-width 1..3] [--warning-close-last-tab true|false] [--animate-working-badge true|false] [--eon-version VERSION] [--bar-items ITEM,...] [--background-opacity VALUE] [--background-blur] [--padding-color extend|extend-always|background] [--cursor-trail-color random|preset:NAME|custom:#RRGGBB] [--cursor-effect-v1 none|tail] [--cursor-trail-color-v1 #RRGGBB] [--cursor-trail-duration-v1 0.25..4.0] [--font-family FAMILY] [--font-fallback FAMILY] [--font-size 6..96] [--line-height 1..3] [--columns N] [--rows N] [ORBIT_SOCKET | --workspace EON_WORKSPACE_SOCKET]";
+const USAGE: &str = "usage: yazelix-venus [--application-id ID] [--no-decorations] [--pane-frames true|false] [--focus-color preset:NAME|custom:#RRGGBB] [--border-width 1..3] [--focus-border-width 1..3] [--warning-close-last-tab true|false] [--animate-working-badge true|false] [--eon-version VERSION] [--bar-items ITEM,...] [--ram-warning-percent 1..100] [--ram-critical-percent 1..100] [--cpu-warning-percent 1..100] [--cpu-average-seconds 2..600] [--background-opacity VALUE] [--background-blur] [--padding-color extend|extend-always|background] [--cursor-trail-color random|preset:NAME|custom:#RRGGBB] [--cursor-effect-v1 none|tail] [--cursor-trail-color-v1 #RRGGBB] [--cursor-trail-duration-v1 0.25..4.0] [--font-family FAMILY] [--font-fallback FAMILY] [--font-size 6..96] [--line-height 1..3] [--columns N] [--rows N] [ORBIT_SOCKET | --workspace EON_WORKSPACE_SOCKET]";
 
 #[derive(Debug)]
 pub(super) struct LaunchArguments {
@@ -40,6 +41,7 @@ pub(super) struct LaunchArguments {
     pub(super) animate_working_badge: bool,
     pub(super) eon_version: Option<String>,
     pub(super) bar_items: Vec<BarItem>,
+    pub(super) load_levels: LoadLevels,
     pub(super) background_opacity: f32,
     pub(super) padding_color: PaddingColor,
     pub(super) background_blur: bool,
@@ -66,6 +68,10 @@ pub(super) fn launch_arguments(
     let mut animate_working_badge = None;
     let mut eon_version = None;
     let mut bar_items = None;
+    let mut ram_warning_percent = None;
+    let mut ram_critical_percent = None;
+    let mut cpu_warning_percent = None;
+    let mut cpu_average_seconds = None;
     let mut background_opacity = None;
     let mut padding_color = None;
     let mut background_blur = false;
@@ -118,6 +124,26 @@ pub(super) fn launch_arguments(
                 .and_then(|value| value.into_string().ok())
                 .and_then(|value| parse_bar_items(&value));
             if bar_items.is_none() {
+                return Err(USAGE.into());
+            }
+        } else if argument == "--ram-warning-percent"
+            || argument == "--ram-critical-percent"
+            || argument == "--cpu-warning-percent"
+        {
+            let percent = if argument == "--ram-warning-percent" {
+                &mut ram_warning_percent
+            } else if argument == "--ram-critical-percent" {
+                &mut ram_critical_percent
+            } else {
+                &mut cpu_warning_percent
+            };
+            option_value(percent, arguments.next())?;
+            if !percent.is_some_and(|percent| (1..=100).contains(&percent)) {
+                return Err(USAGE.into());
+            }
+        } else if argument == "--cpu-average-seconds" {
+            option_value(&mut cpu_average_seconds, arguments.next())?;
+            if !cpu_average_seconds.is_some_and(|seconds| (2..=600).contains(&seconds)) {
                 return Err(USAGE.into());
             }
         } else if argument == "--pane-frames" {
@@ -243,7 +269,22 @@ pub(super) fn launch_arguments(
         }
     }
 
-    if (eon_version.is_some() || bar_items.is_some()) && workspace_socket.is_none() {
+    let load_given = ram_warning_percent
+        .or(ram_critical_percent)
+        .or(cpu_warning_percent)
+        .is_some()
+        || cpu_average_seconds.is_some();
+    let defaults = LoadLevels::default();
+    let load_levels = LoadLevels {
+        ram_warning_percent: ram_warning_percent.unwrap_or(defaults.ram_warning_percent),
+        ram_critical_percent: ram_critical_percent.unwrap_or(defaults.ram_critical_percent),
+        cpu_warning_percent: cpu_warning_percent.unwrap_or(defaults.cpu_warning_percent),
+        cpu_average: cpu_average_seconds.map_or(defaults.cpu_average, Duration::from_secs),
+    };
+    if load_levels.ram_critical_percent < load_levels.ram_warning_percent
+        || ((eon_version.is_some() || bar_items.is_some() || load_given)
+            && workspace_socket.is_none())
+    {
         return Err(USAGE.into());
     }
     if orbit_socket.is_none() && workspace_socket.is_none() {
@@ -306,6 +347,7 @@ pub(super) fn launch_arguments(
         animate_working_badge: animate_working_badge.unwrap_or(true),
         eon_version,
         bar_items: bar_items.unwrap_or_else(|| BarItem::DEFAULT.into()),
+        load_levels,
         background_opacity: background_opacity.unwrap_or(1.0),
         padding_color: padding_color.unwrap_or_default(),
         background_blur,
@@ -509,6 +551,61 @@ mod tests {
                 "accepted {arguments:?}"
             );
         }
+    }
+
+    #[test]
+    fn load_levels_are_a_bounded_workspace_choice() {
+        let parse = |items: &[&str]| {
+            launch_arguments(
+                items
+                    .iter()
+                    .copied()
+                    .chain(["--workspace", "eon.sock"])
+                    .map(OsString::from),
+                None,
+            )
+        };
+        assert_eq!(parse(&[]).unwrap().load_levels, LoadLevels::default());
+        assert_eq!(
+            parse(&[
+                "--ram-warning-percent",
+                "1",
+                "--ram-critical-percent",
+                "1",
+                "--cpu-warning-percent",
+                "100",
+                "--cpu-average-seconds",
+                "600",
+            ])
+            .unwrap()
+            .load_levels,
+            LoadLevels {
+                ram_warning_percent: 1,
+                ram_critical_percent: 1,
+                cpu_warning_percent: 100,
+                cpu_average: Duration::from_secs(600),
+            }
+        );
+        for items in [
+            vec!["--ram-warning-percent", "0"],
+            vec!["--ram-critical-percent", "101"],
+            vec!["--cpu-warning-percent", "-1"],
+            vec!["--cpu-average-seconds", "1"],
+            vec!["--cpu-average-seconds", "601"],
+            vec!["--cpu-average-seconds", "2.5"],
+            vec!["--ram-warning-percent", "95"],
+            vec!["--ram-warning-percent", "70", "--ram-warning-percent", "70"],
+            vec!["--cpu-warning-percent"],
+        ] {
+            assert!(parse(&items).is_err(), "accepted {items:?}");
+        }
+        assert!(
+            launch_arguments(
+                ["--cpu-warning-percent", "90", "orbit.sock"].map(OsString::from),
+                None
+            )
+            .is_err()
+        );
     }
 
     #[test]

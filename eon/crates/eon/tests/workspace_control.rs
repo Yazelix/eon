@@ -2755,7 +2755,7 @@ fn bare_eon_attaches_only_to_the_live_current_generation() {
     assert_eq!(
         fs::read_to_string(log).unwrap(),
         format!(
-            "--no-decorations\n--application-id\neon\n--background-opacity\n0.8\n--padding-color\nextend\n--background-blur\n--cursor-trail-duration-v1\n1.5\n--eon-version\n{}\n--bar-items\ncodex_quota,claude_quota,cpu,ram,clock,version\n--pane-frames\ntrue\n--warning-close-last-tab\ntrue\n--animate-working-badge\ntrue\n--workspace\n{}\n",
+            "--no-decorations\n--application-id\neon\n--background-opacity\n0.8\n--padding-color\nextend\n--background-blur\n--cursor-trail-duration-v1\n1.5\n--eon-version\n{}\n--ram-warning-percent\n80\n--ram-critical-percent\n90\n--cpu-warning-percent\n90\n--cpu-average-seconds\n30\n--bar-items\ncodex_quota,claude_quota,cpu,ram,clock,version\n--pane-frames\ntrue\n--warning-close-last-tab\ntrue\n--animate-working-badge\ntrue\n--workspace\n{}\n",
             env!("CARGO_PKG_VERSION"),
             control.display(),
         )

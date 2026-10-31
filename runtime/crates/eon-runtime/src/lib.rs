@@ -18,7 +18,7 @@ mod workspace;
 pub use cli::{Inputs, run};
 pub use control::Error;
 pub use managed_environment::{
-    Defaults, ManagedPrograms, PaddingColor, PopupCatalog, PopupCommand, PopupDefinition,
+    BarLoad, Defaults, ManagedPrograms, PaddingColor, PopupCatalog, PopupCommand, PopupDefinition,
     ShellConfig, StartupAnimation, TerminalAccess, TerminalConfig,
 };
 

@@ -2,6 +2,42 @@
 //! `/proc/stat`'s aggregate and per-CPU lines and `/proc/meminfo`, on macOS from the Mach host
 //! statistics.
 
+use std::collections::VecDeque;
+use std::time::{Duration, Instant};
+
+/// How loaded a CPU or RAM chip shows the machine; only load beyond normal colours it.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum Load {
+    Normal,
+    High,
+    Critical,
+}
+
+/// When the CPU and RAM chips colour, as Eon's `[bar]` configuration resolves it.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct LoadLevels {
+    pub ram_warning_percent: u8,
+    pub ram_critical_percent: u8,
+    pub cpu_warning_percent: u8,
+    pub cpu_average: Duration,
+}
+
+impl Default for LoadLevels {
+    fn default() -> Self {
+        Self {
+            ram_warning_percent: 80,
+            ram_critical_percent: 90,
+            cpu_warning_percent: 90,
+            cpu_average: Duration::from_secs(30),
+        }
+    }
+}
+
+/// `part` of `whole` in whole percent, rounded to nearest; `whole` must be positive.
+fn percent(part: u64, whole: u64) -> u64 {
+    ((u128::from(part) * 200 + u128::from(whole)) / (u128::from(whole) * 2)) as u64
+}
+
 /// Cumulative whole-machine CPU time since boot, in kernel ticks, and the logical CPUs online.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct CpuTimes {
@@ -73,19 +109,20 @@ impl CpuTimes {
 pub struct CpuUse {
     pub(crate) label: String,
     pub(crate) description: String,
+    pub(crate) load: Load,
 }
 
 impl CpuUse {
     /// Whole-percent use between two readings. Counters that did not advance or went backwards
     /// give no value rather than a false 0% or 100%.
     #[must_use]
-    pub fn between(earlier: CpuTimes, later: CpuTimes) -> Option<Self> {
+    pub(crate) fn between(earlier: CpuTimes, later: CpuTimes) -> Option<Self> {
         let total = later.total.checked_sub(earlier.total)?;
         let busy = later.busy.checked_sub(earlier.busy)?;
         if total == 0 || busy > total {
             return None;
         }
-        let percent = (u128::from(busy) * 200 + u128::from(total)) / (u128::from(total) * 2);
+        let percent = percent(busy, total);
         let cpus = later.cpus;
         let plural = if cpus == 1 { "" } else { "s" };
         Some(Self {
@@ -93,7 +130,76 @@ impl CpuUse {
             description: format!(
                 "CPU use {percent}% across {cpus} logical CPU{plural}, over the last 2 seconds"
             ),
+            load: Load::Normal,
         })
+    }
+}
+
+/// The CPU readings since the last break, back to the newest one at least the averaging window
+/// old, so the chip colours only load sustained over the whole window, never a short spike. Each
+/// reading's counters advance from the one before it, or the readings start over.
+#[derive(Debug, Default)]
+pub struct CpuReadings {
+    readings: VecDeque<(Instant, CpuTimes)>,
+}
+
+impl CpuReadings {
+    /// Records a reading taken at `now`, or a failed one, and returns the use since the previous
+    /// reading, judged by the average over `levels.cpu_average` once the readings span it. A failed
+    /// reading, one taken `gap` or more after the previous, or one that gives no use starts over,
+    /// so every value compares readings about one interval apart.
+    pub fn push(
+        &mut self,
+        now: Instant,
+        times: Option<CpuTimes>,
+        gap: Duration,
+        levels: LoadLevels,
+    ) -> Option<CpuUse> {
+        let shown = self
+            .readings
+            .back()
+            .filter(|(taken, _)| now.duration_since(*taken) < gap)
+            .zip(times)
+            .and_then(|((_, earlier), later)| CpuUse::between(*earlier, later));
+        if shown.is_none() {
+            self.readings.clear();
+        }
+        let times = times?;
+        self.readings.push_back((now, times));
+        let window = levels.cpu_average;
+        while self
+            .readings
+            .get(1)
+            .is_some_and(|(taken, _)| now.duration_since(*taken) >= window)
+        {
+            self.readings.pop_front();
+        }
+        let mut shown = shown?;
+        if let Some(average) = self.average(now, window)
+            && average >= u64::from(levels.cpu_warning_percent)
+        {
+            shown.load = Load::High;
+            shown.description.push_str(&format!(
+                "; {average}% on average over the last {} seconds: under sustained load",
+                window.as_secs()
+            ));
+        }
+        Some(shown)
+    }
+
+    /// Whole-percent use over exactly the last `window`, once the readings span it. Only the share
+    /// of the oldest interval inside the window counts, taking use as even within it.
+    fn average(&self, now: Instant, window: Duration) -> Option<u64> {
+        let (&(first, earliest), &(next, after)) = (self.readings.front()?, self.readings.get(1)?);
+        let latest = self.readings.back()?.1;
+        // Pruning keeps `next` younger than the window, so the share is in [0, 1).
+        let outside = (now.duration_since(first).checked_sub(window)?).as_secs_f64()
+            / next.duration_since(first).as_secs_f64();
+        let at_start =
+            |from: u64, to: u64| from as f64 + (to.saturating_sub(from)) as f64 * outside;
+        let busy = latest.busy as f64 - at_start(earliest.busy, after.busy);
+        let total = latest.total as f64 - at_start(earliest.total, after.total);
+        (total > 0.0).then(|| (busy / total * 100.0).round().clamp(0.0, 100.0) as u64)
     }
 }
 
@@ -102,6 +208,8 @@ impl CpuUse {
 pub struct RamUse {
     pub(crate) label: String,
     pub(crate) description: String,
+    pub(crate) load: Load,
+    pub(crate) percent: u64,
 }
 
 impl RamUse {
@@ -161,11 +269,31 @@ impl RamUse {
         if total == 0 || used > total {
             return None;
         }
-        let percent = (u128::from(used) * 200 + u128::from(total)) / (u128::from(total) * 2);
+        let percent = percent(used, total);
         Some(Self {
             label: format!("RAM {percent}%"),
             description: format!("RAM use {percent}% of {:.1} GiB", total as f64 / per_gib),
+            load: Load::Normal,
+            percent,
         })
+    }
+
+    /// This reading judged against the configured levels, with the pressure named in words.
+    #[must_use]
+    pub fn rated(mut self, levels: LoadLevels) -> Self {
+        self.load = if self.percent >= u64::from(levels.ram_critical_percent) {
+            Load::Critical
+        } else if self.percent >= u64::from(levels.ram_warning_percent) {
+            Load::High
+        } else {
+            Load::Normal
+        };
+        self.description.push_str(match self.load {
+            Load::Normal => "",
+            Load::High => ": under pressure",
+            Load::Critical => ": under heavy pressure",
+        });
+        self
     }
 }
 

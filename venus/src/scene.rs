@@ -1,5 +1,5 @@
 use crate::{
-    CpuUse, MAX_LINK_BYTES, RamUse,
+    CpuUse, Load, MAX_LINK_BYTES, RamUse,
     model::{active_popup, focused_terminal, presented_panes},
     render::{CellMetrics, FALLBACK_CAP_HEIGHT_EM},
 };
@@ -567,6 +567,8 @@ pub(crate) struct WorkspaceLabel {
     pub(crate) rect: SceneRect,
     pub(crate) label: String,
     pub(crate) description: String,
+    /// The machine load a CPU or RAM label shows; other labels stay normal.
+    pub(crate) load: Load,
 }
 
 /// The Eon Bar's leading workspace label (VEN-C21).
@@ -2709,20 +2711,36 @@ impl WorkspaceScene {
                         format!("EON {version}"),
                         format!("Running Eon version {version}"),
                         0,
+                        Load::Normal,
                     )
                 }),
-            bar.cpu
-                .filter(|_| reading(BarItem::Cpu))
-                .map(|cpu| (cpu.label.clone(), cpu.description.clone(), readings)),
-            bar.ram
-                .filter(|_| reading(BarItem::Ram))
-                .map(|ram| (ram.label.clone(), ram.description.clone(), readings)),
-            bar.clock
-                .filter(|_| reading(BarItem::Clock))
-                .map(|clock| (clock.label.clone(), clock.description.clone(), 0)),
+            bar.cpu.filter(|_| reading(BarItem::Cpu)).map(|cpu| {
+                (
+                    cpu.label.clone(),
+                    cpu.description.clone(),
+                    readings,
+                    cpu.load,
+                )
+            }),
+            bar.ram.filter(|_| reading(BarItem::Ram)).map(|ram| {
+                (
+                    ram.label.clone(),
+                    ram.description.clone(),
+                    readings,
+                    ram.load,
+                )
+            }),
+            bar.clock.filter(|_| reading(BarItem::Clock)).map(|clock| {
+                (
+                    clock.label.clone(),
+                    clock.description.clone(),
+                    0,
+                    Load::Normal,
+                )
+            }),
         ]
         .map(|label| {
-            label.map(|(label, description, cells)| WorkspaceLabel {
+            label.map(|(label, description, cells, load)| WorkspaceLabel {
                 rect: SceneRect {
                     // Every label is ASCII (launch validation bounds the version), and
                     // rendering uses terminal cell spacing.
@@ -2732,6 +2750,7 @@ impl WorkspaceScene {
                 },
                 label,
                 description,
+                load,
             })
         });
         let mut fits = true;

@@ -238,7 +238,7 @@ pub(super) fn launch_current(
         let config = configuration_directory()?;
         let terminal =
             managed_environment::terminal_presentation(&config, &inputs.defaults, Some(&log))?;
-        let bar_widgets = window_bar_widgets(mode, &config, inputs, Some(&log))?;
+        let bar = window_bar(mode, &config, inputs, Some(&log))?;
         let popups = (mode == LaunchMode::Workspace)
             .then(|| managed_environment::popup_catalog(&config, &inputs.defaults, Some(&log)))
             .transpose()?;
@@ -257,7 +257,7 @@ pub(super) fn launch_current(
             inputs,
             &config,
             terminal,
-            &bar_widgets,
+            &bar,
             popups,
             startup_animation,
             lifecycle_lock,
@@ -373,17 +373,20 @@ pub(super) fn present_at(
     }
 }
 
-/// The `[bar] widgets` list for one window open, which both its bar and the quota readers follow;
-/// a terminal window has no bar.
-fn window_bar_widgets(
+/// The `[bar]` settings for one window open, whose widgets both its bar and the quota readers
+/// follow; a terminal window has no bar.
+fn window_bar(
     mode: LaunchMode,
     config: &Path,
     inputs: &Inputs,
     log: Option<&DiagnosticLog>,
-) -> Result<Vec<&'static str>, String> {
+) -> Result<managed_environment::Bar, String> {
     match mode {
-        LaunchMode::Workspace => managed_environment::bar_widgets(config, &inputs.defaults, log),
-        LaunchMode::Terminal => Ok(Vec::new()),
+        LaunchMode::Workspace => managed_environment::bar(config, &inputs.defaults, log),
+        LaunchMode::Terminal => Ok(managed_environment::Bar {
+            widgets: Vec::new(),
+            load: inputs.defaults.bar_load,
+        }),
     }
 }
 
@@ -394,7 +397,7 @@ fn venus_command(
     socket: &Path,
     mode: LaunchMode,
     terminal: &managed_environment::TerminalConfig,
-    bar_widgets: &[&str],
+    bar: &managed_environment::Bar,
     application_id: &str,
     decorations: bool,
     warning_close_last_tab: bool,
@@ -460,10 +463,26 @@ fn venus_command(
                 command.arg(flag).arg(width.to_string());
             }
         }
-        if bar_widgets.contains(&"version") {
+        let shown = |widget| bar.widgets.contains(&widget);
+        if shown("version") {
             command.arg("--eon-version").arg(inputs.version);
         }
-        command.arg("--bar-items").arg(bar_widgets.join(","));
+        let load = &bar.load;
+        if shown("ram") {
+            command
+                .arg("--ram-warning-percent")
+                .arg(load.ram_warning_percent.to_string())
+                .arg("--ram-critical-percent")
+                .arg(load.ram_critical_percent.to_string());
+        }
+        if shown("cpu") {
+            command
+                .arg("--cpu-warning-percent")
+                .arg(load.cpu_warning_percent.to_string())
+                .arg("--cpu-average-seconds")
+                .arg(load.cpu_average_seconds.to_string());
+        }
+        command.arg("--bar-items").arg(bar.widgets.join(","));
         if let Ok(executable) = env::current_exe() {
             command.env("EON_NEW_WINDOW_EXECUTABLE", executable);
         }
@@ -764,7 +783,7 @@ fn supervise(
     inputs: &Inputs,
     config: &Path,
     terminal: managed_environment::TerminalConfig,
-    bar_widgets: &[&str],
+    bar: &managed_environment::Bar,
     popups: Option<managed_environment::PopupCatalog>,
     startup_animation: Option<managed_environment::StartupAnimation>,
     lifecycle_lock: fs::File,
@@ -871,7 +890,7 @@ fn supervise(
             &presentation_socket,
             mode,
             &terminal,
-            bar_widgets,
+            bar,
             application_id,
             decorations,
             warning_close_last_tab,
@@ -961,7 +980,7 @@ fn supervise(
         initial_status: None,
         stopping: false,
         quotas: (mode == LaunchMode::Workspace)
-            .then(|| quota::Quotas::start(&inputs.codexbar, bar_widgets)),
+            .then(|| quota::Quotas::start(&inputs.codexbar, &bar.widgets)),
         attention,
         pane_labels: super::pane_labels::Labels::default(),
         agents,
@@ -976,7 +995,7 @@ fn supervise(
                 &presentation_socket,
                 mode,
                 &terminal,
-                bar_widgets,
+                bar,
                 application_id,
                 decorations,
                 warning_close_last_tab,
@@ -1907,14 +1926,14 @@ fn dispatch_control_request(
                     &inputs.defaults,
                     Some(&state.log),
                 )?;
-                let bar_widgets = window_bar_widgets(mode, config, inputs, Some(&state.log))?;
+                let bar = window_bar(mode, config, inputs, Some(&state.log))?;
                 let command = venus_command(
                     inputs,
                     config,
                     &socket,
                     mode,
                     &terminal,
-                    &bar_widgets,
+                    &bar,
                     &state.application_id,
                     state.decorations,
                     managed_environment::warning_close_last_tab(
@@ -1929,7 +1948,7 @@ fn dispatch_control_request(
                     )?,
                 );
                 if let Some(quotas) = &mut state.quotas {
-                    quotas.show(&bar_widgets);
+                    quotas.show(&bar.widgets);
                 }
                 state.venus = Some(PresentationProcess::start(
                     command,
@@ -2275,7 +2294,7 @@ mod tests {
         Action, DiagnosticLog, LaunchMode, SupervisorState, WorkspaceAction, WorkspaceSet,
         cancel_transient_popups, effective_uid, prepare_configuration, prepare_runtime,
         reap_finished_sessions, stop_generation_sessions, stop_owned_session, temporary_directory,
-        venus_command, window_bar_widgets, xdg_path,
+        venus_command, window_bar, xdg_path,
     };
     use crate::sessions::{
         self,
@@ -2989,7 +3008,7 @@ mod tests {
                 Path::new("/runtime.sock"),
                 mode,
                 &inputs.defaults.terminal,
-                &window_bar_widgets(mode, &root, inputs, None).unwrap(),
+                &window_bar(mode, &root, inputs, None).unwrap(),
                 "eon",
                 true,
                 true,
@@ -3030,6 +3049,41 @@ mod tests {
                 assert!(launch_input(&inputs, LaunchMode::Terminal, flag).is_empty());
             }
         }
+        // Load levels reach Venus with the chip they colour, and never a terminal window.
+        let levels = |inputs: &crate::Inputs, mode| {
+            [
+                "--ram-warning-percent",
+                "--ram-critical-percent",
+                "--cpu-warning-percent",
+                "--cpu-average-seconds",
+            ]
+            .map(|flag| {
+                launch_input(inputs, mode, flag)
+                    .first()
+                    .map_or_else(String::new, |value| value.to_str().unwrap().to_owned())
+            })
+        };
+        fs::write(root.join("config.toml"), "").unwrap();
+        assert_eq!(
+            levels(&inputs, LaunchMode::Workspace),
+            ["80", "90", "90", "30"]
+        );
+        fs::write(
+            root.join("config.toml"),
+            "[bar]\nwidgets = ['ram']\nram_warning_percent = 1\nram_critical_percent = 1\n",
+        )
+        .unwrap();
+        assert_eq!(levels(&inputs, LaunchMode::Workspace), ["1", "1", "", ""]);
+        fs::write(
+            root.join("config.toml"),
+            "[bar]\nwidgets = ['cpu']\ncpu_warning_percent = 100\ncpu_average_seconds = 600\n",
+        )
+        .unwrap();
+        assert_eq!(
+            levels(&inputs, LaunchMode::Workspace),
+            ["", "", "100", "600"]
+        );
+        assert_eq!(levels(&inputs, LaunchMode::Terminal), ["", "", "", ""]);
         inputs.defaults.bar_widgets = &["ram", "clock"];
         fs::write(root.join("config.toml"), "[bar]\nunknown = true\n").unwrap();
         assert_eq!(
@@ -3060,6 +3114,38 @@ mod tests {
                 "replaced by bar.widgets",
                 true,
             ),
+            (
+                "[bar]\nram_warning_percent = 0\n",
+                "bar.ram_warning_percent must be from 1 through 100",
+                false,
+            ),
+            (
+                "[bar]\nram_critical_percent = 101\n",
+                "bar.ram_critical_percent must be from 1 through 100",
+                false,
+            ),
+            (
+                "[bar]\nram_warning_percent = 95\n",
+                "must not be below bar.ram_warning_percent",
+                false,
+            ),
+            (
+                "[bar]\ncpu_warning_percent = 256\n",
+                "bar.cpu_warning_percent must be from 1 through 100",
+                false,
+            ),
+            (
+                "[bar]\ncpu_average_seconds = 1\n",
+                "bar.cpu_average_seconds must be from 2 through 600",
+                false,
+            ),
+            (
+                "[bar]\ncpu_average_seconds = 65538\n",
+                "bar.cpu_average_seconds must be from 2 through 600",
+                false,
+            ),
+            ("[bar]\ncpu_warning_percent = -1\n", "invalid value", true),
+            ("[bar]\ncpu_average_seconds = 2.5\n", "invalid type", true),
         ] {
             fs::write(root.join("config.toml"), source).unwrap();
             assert_eq!(
@@ -3068,10 +3154,9 @@ mod tests {
                 every_read,
                 "{source:?}"
             );
-            let failure =
-                window_bar_widgets(LaunchMode::Workspace, &root, &inputs, None).unwrap_err();
+            let failure = window_bar(LaunchMode::Workspace, &root, &inputs, None).unwrap_err();
             assert!(failure.contains(error), "{source:?}: {failure}");
-            assert!(window_bar_widgets(LaunchMode::Terminal, &root, &inputs, None).is_ok());
+            assert!(window_bar(LaunchMode::Terminal, &root, &inputs, None).is_ok());
         }
         fs::remove_dir_all(root).unwrap();
     }
@@ -3103,7 +3188,7 @@ rows = 30
                 Path::new("/orbit.sock"),
                 mode,
                 &terminal,
-                inputs.defaults.bar_widgets,
+                &inputs.defaults.bar(),
                 "eon",
                 true,
                 true,
@@ -3157,7 +3242,7 @@ rows = 30
                     Path::new("/runtime.sock"),
                     mode,
                     &terminal,
-                    inputs.defaults.bar_widgets,
+                    &inputs.defaults.bar(),
                     "eon",
                     true,
                     true,
@@ -3189,7 +3274,7 @@ rows = 30
                     Path::new("/runtime.sock"),
                     mode,
                     &terminal,
-                    inputs.defaults.bar_widgets,
+                    &inputs.defaults.bar(),
                     "eon",
                     true,
                     true,
@@ -3217,7 +3302,7 @@ rows = 30
                 Path::new("/runtime.sock"),
                 LaunchMode::Workspace,
                 &terminal,
-                inputs.defaults.bar_widgets,
+                &inputs.defaults.bar(),
                 "eon",
                 true,
                 true,
@@ -3256,7 +3341,7 @@ rows = 30
                     Path::new("/runtime.sock"),
                     mode,
                     &terminal,
-                    inputs.defaults.bar_widgets,
+                    &inputs.defaults.bar(),
                     "eon",
                     true,
                     true,
@@ -3319,7 +3404,7 @@ rows = 30
                         Path::new("/runtime.sock"),
                         mode,
                         &terminal,
-                        inputs.defaults.bar_widgets,
+                        &inputs.defaults.bar(),
                         "eon",
                         true,
                         true,
@@ -3376,7 +3461,7 @@ rows = 30
                     Path::new("/runtime.sock"),
                     mode,
                     &terminal,
-                    inputs.defaults.bar_widgets,
+                    &inputs.defaults.bar(),
                     "eon",
                     true,
                     true,
@@ -3413,7 +3498,7 @@ rows = 30
                 Path::new("/runtime.sock"),
                 LaunchMode::Workspace,
                 &terminal,
-                inputs.defaults.bar_widgets,
+                &inputs.defaults.bar(),
                 "eon",
                 true,
                 true,
@@ -3450,7 +3535,7 @@ rows = 30
                     Path::new("/runtime.sock"),
                     mode,
                     &terminal,
-                    inputs.defaults.bar_widgets,
+                    &inputs.defaults.bar(),
                     "eon",
                     true,
                     true,
@@ -3500,7 +3585,7 @@ rows = 30
             socket,
             LaunchMode::Workspace,
             &terminal_presentation(0.88, true),
-            inputs.defaults.bar_widgets,
+            &inputs.defaults.bar(),
             "eon",
             true,
             false,
@@ -3516,6 +3601,10 @@ rows = 30
                 "--padding-color",
                 "extend",
                 "--background-blur",
+                "--cpu-warning-percent",
+                "90",
+                "--cpu-average-seconds",
+                "30",
                 "--bar-items",
                 "cpu",
                 "--pane-frames",
@@ -3536,7 +3625,7 @@ rows = 30
             Path::new("/runtime/orbit.sock"),
             LaunchMode::Terminal,
             &terminal_presentation(1.0, false),
-            inputs.defaults.bar_widgets,
+            &inputs.defaults.bar(),
             "eonbase",
             true,
             true,
@@ -3569,7 +3658,7 @@ rows = 30
             Path::new("/runtime/orbit.sock"),
             LaunchMode::Terminal,
             &terminal_presentation(0.0, true),
-            inputs.defaults.bar_widgets,
+            &inputs.defaults.bar(),
             "eonova",
             false,
             true,

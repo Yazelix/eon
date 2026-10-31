@@ -34,13 +34,14 @@ use winit::{
 };
 use yazelix_venus::{
     Accessibility, AccessibilityTarget, AttentionFilter, BarItem, CellMetrics, ClipboardEffect,
-    Color, ConnectionState, CpuTimes, CpuUse, DialogKind, DialogScene, EonBar, FontSettings,
-    FontSetup, HeaderText, Hyperlink, ImageKey, ImageResync, InputState, LocalClock,
-    LocalNoticeSource, MAX_LINK_BYTES, ModelEffect, ModelError, PaddingColor, PresentOutcome,
-    RamUse, Renderer, Scene, SceneRect, SessionModel, ShortcutHintsScene, SidebarView, Transport,
-    TransportEvent, WorkspaceEvent, WorkspaceFocus, WorkspaceHeaderControl, WorkspaceHit,
-    WorkspaceModel, WorkspaceScene, WorkspaceTransport, active_popup, attention_only_change,
-    focused_terminal, labels_only_change, shown_workspace, validate_copy_uri, validate_open_uri,
+    Color, ConnectionState, CpuReadings, CpuTimes, CpuUse, DialogKind, DialogScene, EonBar,
+    FontSettings, FontSetup, HeaderText, Hyperlink, ImageKey, ImageResync, InputState, LoadLevels,
+    LocalClock, LocalNoticeSource, MAX_LINK_BYTES, ModelEffect, ModelError, PaddingColor,
+    PresentOutcome, RamUse, Renderer, Scene, SceneRect, SessionModel, ShortcutHintsScene,
+    SidebarView, Transport, TransportEvent, WorkspaceEvent, WorkspaceFocus, WorkspaceHeaderControl,
+    WorkspaceHit, WorkspaceModel, WorkspaceScene, WorkspaceTransport, active_popup,
+    attention_only_change, focused_terminal, labels_only_change, shown_workspace,
+    validate_copy_uri, validate_open_uri,
 };
 
 mod geometry;
@@ -772,6 +773,7 @@ struct Application {
     animate_working_badge: bool,
     eon_version: Option<String>,
     bar_items: Vec<BarItem>,
+    load_levels: LoadLevels,
     background_opacity: f32,
     padding_color: PaddingColor,
     background_blur: bool,
@@ -807,8 +809,8 @@ struct Application {
     marker_wake: Option<Instant>,
     clock: Option<LocalClock>,
     next_clock: Option<Instant>,
-    /// The previous CPU reading and when it was taken.
-    cpu_times: Option<(Instant, CpuTimes)>,
+    /// The CPU readings that the shown use and its sustained-load average come from.
+    cpu_readings: CpuReadings,
     cpu: Option<CpuUse>,
     ram: Option<RamUse>,
     next_reading: Option<Instant>,
@@ -855,6 +857,7 @@ impl Application {
             animate_working_badge,
             eon_version,
             bar_items,
+            load_levels,
             background_opacity,
             padding_color,
             background_blur,
@@ -887,6 +890,7 @@ impl Application {
             animate_working_badge,
             eon_version,
             bar_items,
+            load_levels,
             background_opacity,
             padding_color,
             background_blur,
@@ -910,7 +914,7 @@ impl Application {
             marker_wake: None,
             clock: None,
             next_clock: None,
-            cpu_times: None,
+            cpu_readings: CpuReadings::default(),
             cpu: None,
             ram: None,
             next_reading: None,
@@ -4760,16 +4764,17 @@ impl ApplicationHandler<UserEvent> for Application {
             && self.next_reading.is_none_or(|due| now >= due)
         {
             self.next_reading = Some(now + READING_INTERVAL);
-            let times = show_cpu.then(CpuTimes::read).flatten();
-            // Each value compares readings about one interval apart, as the label says. After a
-            // failed read or an event-loop stall, the next reading starts over.
-            let cpu = self
-                .cpu_times
-                .filter(|(taken, _)| now.duration_since(*taken) < READING_INTERVAL * 3 / 2)
-                .zip(times)
-                .and_then(|((_, earlier), later)| CpuUse::between(earlier, later));
-            self.cpu_times = times.map(|times| (now, times));
-            let ram = show_ram.then(RamUse::read).flatten();
+            // After a failed read or an event-loop stall, the next reading starts over.
+            let cpu = self.cpu_readings.push(
+                now,
+                show_cpu.then(CpuTimes::read).flatten(),
+                READING_INTERVAL * 3 / 2,
+                self.load_levels,
+            );
+            let ram = show_ram
+                .then(RamUse::read)
+                .flatten()
+                .map(|ram| ram.rated(self.load_levels));
             if cpu != self.cpu || ram != self.ram {
                 self.cpu = cpu;
                 self.ram = ram;

@@ -63,6 +63,8 @@ impl EonConfig {
 pub struct Defaults {
     /// Every Eon Bar widget name, in the order shown when `[bar] widgets` is omitted.
     pub bar_widgets: &'static [&'static str],
+    /// When the Eon Bar's CPU and RAM chips colour.
+    pub bar_load: BarLoad,
     pub shell: ShellConfig,
     pub terminal: TerminalConfig,
     pub anima: StartupAnimation,
@@ -90,10 +92,45 @@ pub struct StartupAnimation {
     pub duration_seconds: u64,
 }
 
+/// When the Eon Bar's CPU and RAM chips colour (`[bar]`).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct BarLoad {
+    /// RAM use, in whole percent, from which the RAM chip is orange.
+    pub ram_warning_percent: u8,
+    /// RAM use, in whole percent, from which the RAM chip is red.
+    pub ram_critical_percent: u8,
+    /// Average CPU use, in whole percent, from which the CPU chip is orange.
+    pub cpu_warning_percent: u8,
+    /// How many seconds of CPU use that average covers.
+    pub cpu_average_seconds: u16,
+}
+
+/// The window's `[bar]` settings, read when it opens.
+#[derive(Debug, PartialEq, Eq)]
+pub(crate) struct Bar {
+    pub(crate) widgets: Vec<&'static str>,
+    pub(crate) load: BarLoad,
+}
+
+#[cfg(test)]
+impl Defaults {
+    /// The `[bar]` settings of an empty configuration.
+    pub(crate) fn bar(&self) -> Bar {
+        Bar {
+            widgets: self.bar_widgets.to_vec(),
+            load: self.bar_load,
+        }
+    }
+}
+
 #[derive(Debug, Default, Deserialize)]
 #[serde(default)]
 struct BarSettings {
     widgets: Option<Vec<String>>,
+    ram_warning_percent: Option<u64>,
+    ram_critical_percent: Option<u64>,
+    cpu_warning_percent: Option<u64>,
+    cpu_average_seconds: Option<u64>,
     #[serde(deserialize_with = "removed_show_version")]
     show_version: (),
     #[serde(flatten)]
@@ -106,13 +143,56 @@ fn removed_show_version<'de, D: serde::Deserializer<'de>>(_: D) -> Result<(), D:
     ))
 }
 
-pub(crate) fn bar_widgets(
+pub(crate) fn bar(
     root: &Path,
     defaults: &Defaults,
     log: Option<&DiagnosticLog>,
-) -> Result<Vec<&'static str>, String> {
-    let Some(names) = read_config(root, log)?.bar.widgets else {
-        return Ok(defaults.bar_widgets.to_vec());
+) -> Result<Bar, String> {
+    let settings = read_config(root, log)?.bar;
+    let percent = |key: &str, value: Option<u64>, default: u8| {
+        value.map_or(Ok(default), |value| {
+            u8::try_from(value)
+                .ok()
+                .filter(|value| (1..=100).contains(value))
+                .ok_or_else(|| format!("bar.{key} must be from 1 through 100"))
+        })
+    };
+    let ram_warning_percent = percent(
+        "ram_warning_percent",
+        settings.ram_warning_percent,
+        defaults.bar_load.ram_warning_percent,
+    )?;
+    let ram_critical_percent = percent(
+        "ram_critical_percent",
+        settings.ram_critical_percent,
+        defaults.bar_load.ram_critical_percent,
+    )?;
+    if ram_critical_percent < ram_warning_percent {
+        return Err("bar.ram_critical_percent must not be below bar.ram_warning_percent".into());
+    }
+    let load = BarLoad {
+        ram_warning_percent,
+        ram_critical_percent,
+        cpu_warning_percent: percent(
+            "cpu_warning_percent",
+            settings.cpu_warning_percent,
+            defaults.bar_load.cpu_warning_percent,
+        )?,
+        cpu_average_seconds: settings.cpu_average_seconds.map_or(
+            Ok(defaults.bar_load.cpu_average_seconds),
+            |seconds| {
+                u16::try_from(seconds)
+                    .ok()
+                    .filter(|seconds| (2..=600).contains(seconds))
+                    .ok_or("bar.cpu_average_seconds must be from 2 through 600")
+            },
+        )?,
+    };
+    let Some(names) = settings.widgets else {
+        return Ok(Bar {
+            widgets: defaults.bar_widgets.to_vec(),
+            load,
+        });
     };
     let mut widgets = Vec::with_capacity(names.len());
     for name in names {
@@ -127,7 +207,7 @@ pub(crate) fn bar_widgets(
         }
         widgets.push(widget);
     }
-    Ok(widgets)
+    Ok(Bar { widgets, load })
 }
 
 #[derive(Debug, Default, Deserialize)]
@@ -362,7 +442,13 @@ pub(crate) fn print_defaults(defaults: &Defaults, json: bool) -> Result<String, 
         popups.insert(entry.id.clone(), settings);
     }
     let mut config = json!({
-        "bar": { "widgets": defaults.bar_widgets },
+        "bar": {
+            "widgets": defaults.bar_widgets,
+            "ram_warning_percent": defaults.bar_load.ram_warning_percent,
+            "ram_critical_percent": defaults.bar_load.ram_critical_percent,
+            "cpu_warning_percent": defaults.bar_load.cpu_warning_percent,
+            "cpu_average_seconds": defaults.bar_load.cpu_average_seconds,
+        },
         "terminal": terminal,
         "shell": defaults.shell,
         "anima": defaults.anima,
@@ -419,6 +505,10 @@ fn defaults_table(
     for (key, value) in settings.as_object().unwrap() {
         let comment = match key.as_str() {
             "widgets" => "Eon Bar widgets, in display order.",
+            "ram_warning_percent" => "RAM use from which the RAM chip turns orange.",
+            "ram_critical_percent" => "RAM use from which the RAM chip turns red.",
+            "cpu_warning_percent" => "Average CPU use from which the CPU chip turns orange.",
+            "cpu_average_seconds" => "Seconds of CPU use that the average covers.",
             "background_opacity" => "Opacity of the terminal's default background.",
             "background_blur" => "Request compositor background blur.",
             "padding_color" => "How terminal padding takes its background colour.",
@@ -1291,7 +1381,7 @@ mod tests {
                     terminal_presentation(root, &defaults, None).unwrap(),
                     startup_animation(root, &defaults, None).unwrap(),
                     popup_catalog(root, &defaults, None).unwrap(),
-                    super::bar_widgets(root, &defaults, None).unwrap(),
+                    super::bar(root, &defaults, None).unwrap(),
                     warning_close_last_tab(root, &defaults, None).unwrap(),
                     animate_working_badge(root, &defaults, None).unwrap(),
                     sidebar_enabled(root, &defaults, None).unwrap(),
