@@ -23,7 +23,7 @@ const CURSOR_COLOR_PRESETS: [(&str, Color); 8] = [
     ("nebula", rgb(0xa970ff)),
     ("bubblegum", rgb(0xff5da2)),
 ];
-const USAGE: &str = "usage: yazelix-venus [--application-id ID] [--no-decorations] [--pane-frames true|false] [--focus-color preset:NAME|custom:#RRGGBB] [--border-width 1..3] [--focus-border-width 1..3] [--warning-close-last-tab true|false] [--animate-working-badge true|false] [--eon-version VERSION] [--bar-items ITEM,...] [--ram-warning-percent 1..100] [--ram-critical-percent 1..100] [--cpu-warning-percent 1..100] [--cpu-average-seconds 2..600] [--background-opacity VALUE] [--background-blur] [--padding-color extend|extend-always|background] [--cursor-trail-color random|preset:NAME|custom:#RRGGBB] [--cursor-effect-v1 none|tail] [--cursor-trail-color-v1 #RRGGBB] [--cursor-trail-duration-v1 0.25..4.0] [--font-family FAMILY] [--font-fallback FAMILY] [--font-size 6..96] [--line-height 1..3] [--columns N] [--rows N] [ORBIT_SOCKET | --workspace EON_WORKSPACE_SOCKET]";
+const USAGE: &str = "usage: yazelix-venus [--application-id ID] [--no-decorations] [--pane-frames true|false] [--focus-color preset:NAME|custom:#RRGGBB] [--border-width 1..3] [--focus-border-width 1..3] [--warning-close-last-tab true|false] [--animate-working-badge true|false] [--eon-version VERSION] [--bar-items ITEM,...] [--ram-warning-percent 1..100] [--ram-critical-percent 1..100] [--cpu-warning-percent 1..100] [--cpu-average-seconds 2..600] [--disk-warning-percent 1..100] [--disk-critical-percent 1..100] [--disk-path ABSOLUTE_PATH] [--background-opacity VALUE] [--background-blur] [--padding-color extend|extend-always|background] [--cursor-trail-color random|preset:NAME|custom:#RRGGBB] [--cursor-effect-v1 none|tail] [--cursor-trail-color-v1 #RRGGBB] [--cursor-trail-duration-v1 0.25..4.0] [--font-family FAMILY] [--font-fallback FAMILY] [--font-size 6..96] [--line-height 1..3] [--columns N] [--rows N] [ORBIT_SOCKET | --workspace EON_WORKSPACE_SOCKET]";
 
 #[derive(Debug)]
 pub(super) struct LaunchArguments {
@@ -42,6 +42,9 @@ pub(super) struct LaunchArguments {
     pub(super) eon_version: Option<String>,
     pub(super) bar_items: Vec<BarItem>,
     pub(super) load_levels: LoadLevels,
+    /// The absolute path whose filesystem the disk chip measures: `--disk-path`, else an absolute
+    /// HOME, else none.
+    pub(super) disk_path: Option<PathBuf>,
     pub(super) background_opacity: f32,
     pub(super) padding_color: PaddingColor,
     pub(super) background_blur: bool,
@@ -72,6 +75,9 @@ pub(super) fn launch_arguments(
     let mut ram_critical_percent = None;
     let mut cpu_warning_percent = None;
     let mut cpu_average_seconds = None;
+    let mut disk_warning_percent = None;
+    let mut disk_critical_percent = None;
+    let mut disk_path: Option<PathBuf> = None;
     let mut background_opacity = None;
     let mut padding_color = None;
     let mut background_blur = false;
@@ -129,13 +135,19 @@ pub(super) fn launch_arguments(
         } else if argument == "--ram-warning-percent"
             || argument == "--ram-critical-percent"
             || argument == "--cpu-warning-percent"
+            || argument == "--disk-warning-percent"
+            || argument == "--disk-critical-percent"
         {
             let percent = if argument == "--ram-warning-percent" {
                 &mut ram_warning_percent
             } else if argument == "--ram-critical-percent" {
                 &mut ram_critical_percent
-            } else {
+            } else if argument == "--cpu-warning-percent" {
                 &mut cpu_warning_percent
+            } else if argument == "--disk-warning-percent" {
+                &mut disk_warning_percent
+            } else {
+                &mut disk_critical_percent
             };
             option_value(percent, arguments.next())?;
             if !percent.is_some_and(|percent| (1..=100).contains(&percent)) {
@@ -144,6 +156,18 @@ pub(super) fn launch_arguments(
         } else if argument == "--cpu-average-seconds" {
             option_value(&mut cpu_average_seconds, arguments.next())?;
             if !cpu_average_seconds.is_some_and(|seconds| (2..=600).contains(&seconds)) {
+                return Err(USAGE.into());
+            }
+        } else if argument == "--disk-path" {
+            // Any absolute path, UTF-8 or not, as Eon expands it from HOME.
+            if disk_path.is_some() {
+                return Err(USAGE.into());
+            }
+            disk_path = arguments
+                .next()
+                .map(PathBuf::from)
+                .filter(|path| path.is_absolute());
+            if disk_path.is_none() {
                 return Err(USAGE.into());
             }
         } else if argument == "--pane-frames" {
@@ -272,16 +296,22 @@ pub(super) fn launch_arguments(
     let load_given = ram_warning_percent
         .or(ram_critical_percent)
         .or(cpu_warning_percent)
+        .or(disk_warning_percent)
+        .or(disk_critical_percent)
         .is_some()
-        || cpu_average_seconds.is_some();
+        || cpu_average_seconds.is_some()
+        || disk_path.is_some();
     let defaults = LoadLevels::default();
     let load_levels = LoadLevels {
         ram_warning_percent: ram_warning_percent.unwrap_or(defaults.ram_warning_percent),
         ram_critical_percent: ram_critical_percent.unwrap_or(defaults.ram_critical_percent),
         cpu_warning_percent: cpu_warning_percent.unwrap_or(defaults.cpu_warning_percent),
         cpu_average: cpu_average_seconds.map_or(defaults.cpu_average, Duration::from_secs),
+        disk_warning_percent: disk_warning_percent.unwrap_or(defaults.disk_warning_percent),
+        disk_critical_percent: disk_critical_percent.unwrap_or(defaults.disk_critical_percent),
     };
     if load_levels.ram_critical_percent < load_levels.ram_warning_percent
+        || load_levels.disk_critical_percent < load_levels.disk_warning_percent
         || ((eon_version.is_some() || bar_items.is_some() || load_given)
             && workspace_socket.is_none())
     {
@@ -348,6 +378,11 @@ pub(super) fn launch_arguments(
         eon_version,
         bar_items: bar_items.unwrap_or_else(|| BarItem::DEFAULT.into()),
         load_levels,
+        disk_path: disk_path.or_else(|| {
+            env::var_os("HOME")
+                .map(PathBuf::from)
+                .filter(|home| home.is_absolute())
+        }),
         background_opacity: background_opacity.unwrap_or(1.0),
         padding_color: padding_color.unwrap_or_default(),
         background_blur,
@@ -381,6 +416,7 @@ fn parse_bar_items(list: &str) -> Option<Vec<BarItem>> {
             "claude_quota" => BarItem::ClaudeQuota,
             "cpu" => BarItem::Cpu,
             "ram" => BarItem::Ram,
+            "disk" => BarItem::Disk,
             "clock" => BarItem::Clock,
             "version" => BarItem::Version,
             _ => return None,
@@ -531,6 +567,10 @@ mod tests {
                 .bar_items,
             [BarItem::Clock, BarItem::ClaudeQuota, BarItem::Cpu]
         );
+        assert_eq!(
+            parse(&["--bar-items", "disk,ram"]).unwrap().bar_items,
+            [BarItem::Disk, BarItem::Ram]
+        );
         assert!(parse(&["--bar-items", ""]).unwrap().bar_items.is_empty());
         for items in [
             vec!["--bar-items", "gpu"],
@@ -576,6 +616,10 @@ mod tests {
                 "100",
                 "--cpu-average-seconds",
                 "600",
+                "--disk-warning-percent",
+                "1",
+                "--disk-critical-percent",
+                "100",
             ])
             .unwrap()
             .load_levels,
@@ -584,9 +628,51 @@ mod tests {
                 ram_critical_percent: 1,
                 cpu_warning_percent: 100,
                 cpu_average: Duration::from_secs(600),
+                disk_warning_percent: 1,
+                disk_critical_percent: 100,
             }
         );
+        // The disk chip measures `--disk-path`, else an absolute HOME.
+        assert_eq!(
+            parse(&[]).unwrap().disk_path,
+            env::var_os("HOME")
+                .map(PathBuf::from)
+                .filter(|home| home.is_absolute())
+        );
+        assert_eq!(
+            parse(&["--disk-path", "/srv/data"]).unwrap().disk_path,
+            Some(PathBuf::from("/srv/data"))
+        );
+        let non_utf8: OsString = std::os::unix::ffi::OsStringExt::from_vec(b"/srv/\xff".to_vec());
+        assert_eq!(
+            launch_arguments(
+                [
+                    OsString::from("--disk-path"),
+                    non_utf8.clone(),
+                    OsString::from("--workspace"),
+                    OsString::from("eon.sock"),
+                ],
+                None,
+            )
+            .unwrap()
+            .disk_path,
+            Some(PathBuf::from(non_utf8))
+        );
         for items in [
+            vec!["--disk-warning-percent", "0"],
+            vec!["--disk-critical-percent", "101"],
+            vec!["--disk-warning-percent", "96"],
+            vec![
+                "--disk-critical-percent",
+                "95",
+                "--disk-critical-percent",
+                "95",
+            ],
+            vec!["--disk-path", "data"],
+            vec!["--disk-path", ""],
+            vec!["--disk-path", "~/data"],
+            vec!["--disk-path", "/srv", "--disk-path", "/srv"],
+            vec!["--disk-path"],
             vec!["--ram-warning-percent", "0"],
             vec!["--ram-critical-percent", "101"],
             vec!["--cpu-warning-percent", "-1"],
@@ -599,13 +685,20 @@ mod tests {
         ] {
             assert!(parse(&items).is_err(), "accepted {items:?}");
         }
-        assert!(
-            launch_arguments(
-                ["--cpu-warning-percent", "90", "orbit.sock"].map(OsString::from),
-                None
-            )
-            .is_err()
-        );
+        for flag in [
+            ["--cpu-warning-percent", "90"],
+            ["--disk-warning-percent", "90"],
+            ["--disk-path", "/srv"],
+        ] {
+            assert!(
+                launch_arguments(
+                    flag.into_iter().chain(["orbit.sock"]).map(OsString::from),
+                    None
+                )
+                .is_err(),
+                "accepted {flag:?} without a workspace"
+            );
+        }
     }
 
     #[test]

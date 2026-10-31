@@ -63,8 +63,10 @@ impl EonConfig {
 pub struct Defaults {
     /// Every Eon Bar widget name, in the order shown when `[bar] widgets` is omitted.
     pub bar_widgets: &'static [&'static str],
-    /// When the Eon Bar's CPU and RAM chips colour.
+    /// When the Eon Bar's CPU, RAM and disk chips colour.
     pub bar_load: BarLoad,
+    /// The path whose filesystem the Eon Bar's disk chip measures: absolute, `~` or `~/...`.
+    pub bar_disk_path: &'static str,
     pub shell: ShellConfig,
     pub terminal: TerminalConfig,
     pub anima: StartupAnimation,
@@ -92,7 +94,7 @@ pub struct StartupAnimation {
     pub duration_seconds: u64,
 }
 
-/// When the Eon Bar's CPU and RAM chips colour (`[bar]`).
+/// When the Eon Bar's CPU, RAM and disk chips colour (`[bar]`).
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct BarLoad {
     /// RAM use, in whole percent, from which the RAM chip is orange.
@@ -103,6 +105,10 @@ pub struct BarLoad {
     pub cpu_warning_percent: u8,
     /// How many seconds of CPU use that average covers.
     pub cpu_average_seconds: u16,
+    /// Disk use, in whole percent, from which the disk chip is orange.
+    pub disk_warning_percent: u8,
+    /// Disk use, in whole percent, from which the disk chip is red.
+    pub disk_critical_percent: u8,
 }
 
 /// The window's `[bar]` settings, read when it opens.
@@ -110,6 +116,9 @@ pub struct BarLoad {
 pub(crate) struct Bar {
     pub(crate) widgets: Vec<&'static str>,
     pub(crate) load: BarLoad,
+    /// The absolute path the disk chip measures; none when `~` names a HOME that is unset or
+    /// relative, so the chip has no reading.
+    pub(crate) disk_path: Option<PathBuf>,
 }
 
 #[cfg(test)]
@@ -119,6 +128,7 @@ impl Defaults {
         Bar {
             widgets: self.bar_widgets.to_vec(),
             load: self.bar_load,
+            disk_path: disk_path(self.bar_disk_path, nonempty_environment_path("HOME")).unwrap(),
         }
     }
 }
@@ -131,6 +141,9 @@ struct BarSettings {
     ram_critical_percent: Option<u64>,
     cpu_warning_percent: Option<u64>,
     cpu_average_seconds: Option<u64>,
+    disk_warning_percent: Option<u64>,
+    disk_critical_percent: Option<u64>,
+    disk_path: Option<String>,
     #[serde(deserialize_with = "removed_show_version")]
     show_version: (),
     #[serde(flatten)]
@@ -141,6 +154,30 @@ fn removed_show_version<'de, D: serde::Deserializer<'de>>(_: D) -> Result<(), D:
     Err(serde::de::Error::custom(
         "bar.show_version is replaced by bar.widgets; list \"version\" there to show the version",
     ))
+}
+
+/// The absolute path `value` names: itself when absolute, or under `home` for `~` and `~/...`.
+/// `~` under a HOME that is unset or relative names no path.
+fn disk_path(value: &str, home: Option<PathBuf>) -> Result<Option<PathBuf>, String> {
+    // Redundant slashes after `~/` stay under `home`: `~//data` is `home/data`.
+    let under_home = if value == "~" {
+        Some("")
+    } else {
+        value
+            .strip_prefix("~/")
+            .map(|rest| rest.trim_start_matches('/'))
+    };
+    match under_home {
+        Some(rest) => Ok(home.filter(|home| home.is_absolute()).map(|home| {
+            if rest.is_empty() {
+                home
+            } else {
+                home.join(rest)
+            }
+        })),
+        None if Path::new(value).is_absolute() => Ok(Some(PathBuf::from(value))),
+        None => Err("bar.disk_path must be ~, absolute, or start with ~/".into()),
+    }
 }
 
 pub(crate) fn bar(
@@ -170,6 +207,26 @@ pub(crate) fn bar(
     if ram_critical_percent < ram_warning_percent {
         return Err("bar.ram_critical_percent must not be below bar.ram_warning_percent".into());
     }
+    let disk_warning_percent = percent(
+        "disk_warning_percent",
+        settings.disk_warning_percent,
+        defaults.bar_load.disk_warning_percent,
+    )?;
+    let disk_critical_percent = percent(
+        "disk_critical_percent",
+        settings.disk_critical_percent,
+        defaults.bar_load.disk_critical_percent,
+    )?;
+    if disk_critical_percent < disk_warning_percent {
+        return Err("bar.disk_critical_percent must not be below bar.disk_warning_percent".into());
+    }
+    let disk_path = disk_path(
+        settings
+            .disk_path
+            .as_deref()
+            .unwrap_or(defaults.bar_disk_path),
+        nonempty_environment_path("HOME"),
+    )?;
     let load = BarLoad {
         ram_warning_percent,
         ram_critical_percent,
@@ -187,11 +244,14 @@ pub(crate) fn bar(
                     .ok_or("bar.cpu_average_seconds must be from 2 through 600")
             },
         )?,
+        disk_warning_percent,
+        disk_critical_percent,
     };
     let Some(names) = settings.widgets else {
         return Ok(Bar {
             widgets: defaults.bar_widgets.to_vec(),
             load,
+            disk_path,
         });
     };
     let mut widgets = Vec::with_capacity(names.len());
@@ -207,7 +267,11 @@ pub(crate) fn bar(
         }
         widgets.push(widget);
     }
-    Ok(Bar { widgets, load })
+    Ok(Bar {
+        widgets,
+        load,
+        disk_path,
+    })
 }
 
 #[derive(Debug, Default, Deserialize)]
@@ -448,6 +512,9 @@ pub(crate) fn print_defaults(defaults: &Defaults, json: bool) -> Result<String, 
             "ram_critical_percent": defaults.bar_load.ram_critical_percent,
             "cpu_warning_percent": defaults.bar_load.cpu_warning_percent,
             "cpu_average_seconds": defaults.bar_load.cpu_average_seconds,
+            "disk_warning_percent": defaults.bar_load.disk_warning_percent,
+            "disk_critical_percent": defaults.bar_load.disk_critical_percent,
+            "disk_path": defaults.bar_disk_path,
         },
         "terminal": terminal,
         "shell": defaults.shell,
@@ -509,6 +576,9 @@ fn defaults_table(
             "ram_critical_percent" => "RAM use from which the RAM chip turns red.",
             "cpu_warning_percent" => "Average CPU use from which the CPU chip turns orange.",
             "cpu_average_seconds" => "Seconds of CPU use that the average covers.",
+            "disk_warning_percent" => "Disk use from which the disk chip turns orange.",
+            "disk_critical_percent" => "Disk use from which the disk chip turns red.",
+            "disk_path" => "Path whose filesystem the disk chip measures.",
             "background_opacity" => "Opacity of the terminal's default background.",
             "background_blur" => "Request compositor background blur.",
             "padding_color" => "How terminal padding takes its background colour.",
@@ -1329,9 +1399,9 @@ fn prepend_path(prefix: &Path, path: Option<&OsStr>, owner: &str) -> Result<OsSt
 mod tests {
     use super::{
         ALT, ManagedPrograms, PopupCommand, PopupDefinition, PopupKey, SHIFT, Shortcut, Tool,
-        animate_working_badge, command as managed_command, integration_mask, popup_catalog,
-        prepare_popup_command, prepend_path, read_shell_config, sidebar_enabled, startup_animation,
-        terminal_presentation, tool, warning_close_last_tab,
+        animate_working_badge, command as managed_command, disk_path, integration_mask,
+        popup_catalog, prepare_popup_command, prepend_path, read_shell_config, sidebar_enabled,
+        startup_animation, terminal_presentation, tool, warning_close_last_tab,
     };
     use std::{
         ffi::{OsStr, OsString},
@@ -1340,6 +1410,32 @@ mod tests {
         path::{Path, PathBuf},
         process::Command,
     };
+
+    #[test]
+    fn disk_path_expands_home_and_keeps_absolute_paths() {
+        let home = || Some(PathBuf::from("/home/test"));
+        for (value, path) in [
+            ("~", "/home/test"),
+            ("~/", "/home/test"),
+            ("~/work/eon", "/home/test/work/eon"),
+            ("~//work", "/home/test/work"),
+            ("/srv/data", "/srv/data"),
+        ] {
+            assert_eq!(disk_path(value, home()), Ok(Some(path.into())), "{value}");
+        }
+        // Under an unset or relative HOME, `~` names no path and the chip has no reading.
+        for home in [None, Some(PathBuf::from("home/test"))] {
+            assert_eq!(disk_path("~/work", home.clone()), Ok(None));
+            assert_eq!(disk_path("/srv", home), Ok(Some("/srv".into())));
+        }
+        for value in ["", "work", "./work", "~user", "~user/work"] {
+            assert_eq!(
+                disk_path(value, home()),
+                Err("bar.disk_path must be ~, absolute, or start with ~/".into()),
+                "{value}"
+            );
+        }
+    }
 
     #[test]
     fn config_defaults_roundtrip_through_the_resolver_and_json() {
@@ -1418,6 +1514,13 @@ mod tests {
             // `Defaults` holds a static widget list.
             bar_widgets: Box::leak(bar.widgets.into_boxed_slice()),
             bar_load: bar.load,
+            // The configured path, as `eon config defaults` prints it, not its expansion.
+            bar_disk_path: super::read_config(root, None)?
+                .bar
+                .disk_path
+                .map_or(defaults.bar_disk_path, |path| {
+                    Box::leak(path.into_boxed_str())
+                }),
             shell: read_shell_config(root, defaults, None)?,
             terminal: terminal_presentation(root, defaults, None)?,
             anima: anima.clone().unwrap_or_else(|| defaults.anima.clone()),

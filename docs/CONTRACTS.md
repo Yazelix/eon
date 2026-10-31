@@ -2786,44 +2786,53 @@ socket names, JSON fields and protocol identifiers retain their spellings.
 
 - **Status:** Proven on x86_64 Linux Wayland. Amended on 2026-10-31 (approved
   by Lucca, relayed by eon-overseer) by `eon-hjtns`: the CPU and RAM load
-  levels.
+  levels. Amended on 2026-10-31 (approved by Lucca, relayed by eon-overseer) by
+  `eon-d7itl`: the disk widget.
 - **Consumer:** Full-Eon workspace users.
 - **Trigger:** A workspace window opens or reopens.
 - **Result:** `[bar] widgets` is an ordered list of unique names from
-  `codex_quota`, `claude_quota`, `cpu`, `ram`, `clock` and `version`. The Eon
-  Bar shows the listed widgets left to right in that order, between the drag
-  region and Shortcuts and Close. `codex_quota` and `claude_quota` are the
+  `codex_quota`, `claude_quota`, `cpu`, `ram`, `disk`, `clock` and `version`.
+  The Eon Bar shows the listed widgets left to right in that order, between the
+  drag region and Shortcuts and Close. `codex_quota` and `claude_quota` are the
   quota chips (EON-C27), `cpu` and `ram` the whole-machine CPU and memory use
-  labels, `clock` the local 24-hour clock, and `version` the read-only
-  `EON <version>` label of the supervisor serving the window. A widget left
-  out doesn't show, and `widgets = []` leaves only tabs and controls. Omitting
-  the key shows all six in that order. A listed widget without data still
-  shows nothing, as [Eon Bar](../venus/docs/PRESENTATION.md#eon-bar) describes
-  for each widget. Narrow windows keep the fixed hiding priority it gives,
-  whatever the order. `ram_warning_percent` and `ram_critical_percent` set the
-  RAM use, in whole percent, from which the RAM label turns orange and red
-  (defaults 80 and 90); `cpu_warning_percent` sets the average CPU use from
-  which the CPU label turns orange (default 90), averaged over the last
-  `cpu_average_seconds` (default 30). Percentages are 1 through 100,
-  `ram_critical_percent` is not below `ram_warning_percent`, and the window is
-  2 through 600 seconds. They apply when a window opens or reopens, like the
-  list.
+  labels, `disk` the used percentage of the filesystem holding the configured
+  path, `clock` the local 24-hour clock, and `version` the read-only
+  `EON <version>` label of the supervisor serving the window. A widget left out
+  doesn't show, and `widgets = []` leaves only tabs and controls. Omitting the
+  key shows all seven in that order. A listed widget without data still shows
+  nothing, as [Eon Bar](../venus/docs/PRESENTATION.md#eon-bar) describes for
+  each widget. Narrow windows keep the fixed hiding priority it gives, whatever
+  the order. `ram_warning_percent` and `ram_critical_percent` set the RAM use,
+  in whole percent, from which the RAM label turns orange and red (defaults 80
+  and 90); `cpu_warning_percent` sets the average CPU use from which the CPU
+  label turns orange (default 90), averaged over the last `cpu_average_seconds`
+  (default 30). `disk_path` (default `~`) names the path whose filesystem `disk`
+  measures: `~` or a path starting with `~/` under HOME, or an absolute path.
+  `disk_warning_percent` and `disk_critical_percent` set the disk use from which
+  the disk label turns orange and red (defaults 85 and 95), with the same rule
+  as RAM's levels. Percentages are 1 through 100, `ram_critical_percent` is not
+  below `ram_warning_percent` nor `disk_critical_percent` below
+  `disk_warning_percent`, and the window is 2 through 600 seconds. They apply
+  when a window opens or reopens, like the list.
 - **Important failures:** An unknown or repeated name, a non-string entry, a
   value that is not a list, a load level that is not a whole number in its
-  range, a `ram_critical_percent` below `ram_warning_percent`, or a leftover
+  range, a critical level below its warning level, a `disk_path` other than
+  `~`, a path starting with `~/` or an absolute path, or a leftover
   `[bar] show_version` (removed before 1.0, with an error that names
   `bar.widgets`) fails through the existing startup and replacement handling,
   preserving live terminals.
 - **Owner:** Eon owns the settings, their names and defaults. Runtime parses
   and validates them and passes the list to Venus unchanged as `--bar-items`,
   with `--eon-version` only when `version` is listed, the RAM levels only when
-  `ram` is listed and the CPU levels only when `cpu` is listed. Venus owns
-  placement, fitting, colour, hover and accessibility.
-- **Boundary:** No per-widget option beyond the CPU and RAM load levels,
-  configurable hiding priority, new widget, live reload, settings UI, EONW
-  change or platform expansion. Leaving out a quota chip also stops Runtime
-  reading that provider (EON-C27).
-- **Proof:** `eon-igae.14.2`, and for the load levels `eon-hjtns`
+  `ram` is listed, the CPU levels only when `cpu` is listed, and the disk
+  levels and resolved path only when `disk` is listed. Venus owns placement,
+  fitting, colour, hover and accessibility.
+- **Boundary:** No per-widget option beyond the CPU, RAM and disk load levels
+  and the disk widget, configurable hiding priority, new widget, live reload,
+  settings UI, EONW change or platform expansion. Leaving out a quota chip also
+  stops Runtime reading that provider (EON-C27).
+- **Proof:** `eon-igae.14.2`, for the load levels `eon-hjtns`, and for the disk
+  widget `eon-d7itl`
   - **Environment:** Automated; one isolated installed observation.
   - **Evidence:** `version_badge_uses_supervising_product_and_visibility_at_each_launch`
     and `invalid_presentation_configuration_precedes_supervisor_generation_and_children`;
@@ -2832,7 +2841,17 @@ socket names, JSON fields and protocol identifiers retain their spellings.
     with live terminals kept, and the corrected list on the next reattach. For
     the load levels, the same launch test extended to the levels and their
     failures, Venus's `load_levels_are_a_bounded_workspace_choice`, and the
-    isolated installed observation recorded in `eon-hjtns`.
+    isolated installed observation recorded in `eon-hjtns`. For the disk widget,
+    the same launch test extended to the disk levels, the disk path's expansion
+    and its failures, `disk_path_expands_home_and_keeps_absolute_paths`, the
+    default launch in `bare_eon_attaches_only_to_the_live_current_generation`,
+    Venus's `load_levels_are_a_bounded_workspace_choice` and
+    `bar_items_are_an_ordered_workspace_choice` extended to the disk inputs,
+    `disk_chip_shows_filesystem_use_and_colours_only_when_filling_up`, the
+    `disk_use_*` reading tests,
+    `readings_yield_after_the_clock_and_have_no_actions` extended to the disk
+    chip's hiding order and accessible node, and the isolated installed
+    observation recorded in `eon-d7itl`.
 
 ## EON-C33 — Several workspaces in one window
 

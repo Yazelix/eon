@@ -386,6 +386,7 @@ fn window_bar(
         LaunchMode::Terminal => Ok(managed_environment::Bar {
             widgets: Vec::new(),
             load: inputs.defaults.bar_load,
+            disk_path: None,
         }),
     }
 }
@@ -481,6 +482,16 @@ fn venus_command(
                 .arg(load.cpu_warning_percent.to_string())
                 .arg("--cpu-average-seconds")
                 .arg(load.cpu_average_seconds.to_string());
+        }
+        if shown("disk") {
+            command
+                .arg("--disk-warning-percent")
+                .arg(load.disk_warning_percent.to_string())
+                .arg("--disk-critical-percent")
+                .arg(load.disk_critical_percent.to_string());
+            if let Some(path) = &bar.disk_path {
+                command.arg("--disk-path").arg(path);
+            }
         }
         command.arg("--bar-items").arg(bar.widgets.join(","));
         if let Ok(executable) = env::current_exe() {
@@ -3021,7 +3032,11 @@ mod tests {
                 .collect::<Vec<_>>()
         };
         for (source, widgets, visible) in [
-            ("", "codex_quota,claude_quota,cpu,ram,clock,version", true),
+            (
+                "",
+                "codex_quota,claude_quota,cpu,ram,disk,clock,version",
+                true,
+            ),
             (
                 "[bar]\nwidgets = ['clock', 'version', 'ram']\n",
                 "clock,version,ram",
@@ -3049,13 +3064,17 @@ mod tests {
                 assert!(launch_input(&inputs, LaunchMode::Terminal, flag).is_empty());
             }
         }
-        // Load levels reach Venus with the chip they colour, and never a terminal window.
+        // Load levels and the disk path reach Venus with the chip they belong to, and never a
+        // terminal window. `~` names the supervisor's HOME.
         let levels = |inputs: &crate::Inputs, mode| {
             [
                 "--ram-warning-percent",
                 "--ram-critical-percent",
                 "--cpu-warning-percent",
                 "--cpu-average-seconds",
+                "--disk-warning-percent",
+                "--disk-critical-percent",
+                "--disk-path",
             ]
             .map(|flag| {
                 launch_input(inputs, mode, flag)
@@ -3063,17 +3082,23 @@ mod tests {
                     .map_or_else(String::new, |value| value.to_str().unwrap().to_owned())
             })
         };
+        let home = crate::managed_environment::nonempty_environment_path("HOME").unwrap();
+        assert!(home.is_absolute());
+        let home = home.to_str().unwrap();
         fs::write(root.join("config.toml"), "").unwrap();
         assert_eq!(
             levels(&inputs, LaunchMode::Workspace),
-            ["80", "90", "90", "30"]
+            ["80", "90", "90", "30", "85", "95", home]
         );
         fs::write(
             root.join("config.toml"),
             "[bar]\nwidgets = ['ram']\nram_warning_percent = 1\nram_critical_percent = 1\n",
         )
         .unwrap();
-        assert_eq!(levels(&inputs, LaunchMode::Workspace), ["1", "1", "", ""]);
+        assert_eq!(
+            levels(&inputs, LaunchMode::Workspace),
+            ["1", "1", "", "", "", "", ""]
+        );
         fs::write(
             root.join("config.toml"),
             "[bar]\nwidgets = ['cpu']\ncpu_warning_percent = 100\ncpu_average_seconds = 600\n",
@@ -3081,9 +3106,30 @@ mod tests {
         .unwrap();
         assert_eq!(
             levels(&inputs, LaunchMode::Workspace),
-            ["", "", "100", "600"]
+            ["", "", "100", "600", "", "", ""]
         );
-        assert_eq!(levels(&inputs, LaunchMode::Terminal), ["", "", "", ""]);
+        for (path, measured) in [
+            ("~/work/eon", format!("{home}/work/eon")),
+            ("/srv/data", "/srv/data".to_owned()),
+        ] {
+            fs::write(
+                root.join("config.toml"),
+                format!(
+                    "[bar]\nwidgets = ['disk']\ndisk_warning_percent = 1\n\
+                     disk_critical_percent = 100\ndisk_path = '{path}'\n"
+                ),
+            )
+            .unwrap();
+            assert_eq!(
+                levels(&inputs, LaunchMode::Workspace),
+                ["", "", "", "", "1", "100", &measured],
+                "{path}"
+            );
+        }
+        assert_eq!(
+            levels(&inputs, LaunchMode::Terminal),
+            ["", "", "", "", "", "", ""]
+        );
         inputs.defaults.bar_widgets = &["ram", "clock"];
         fs::write(root.join("config.toml"), "[bar]\nunknown = true\n").unwrap();
         assert_eq!(
@@ -3146,6 +3192,27 @@ mod tests {
             ),
             ("[bar]\ncpu_warning_percent = -1\n", "invalid value", true),
             ("[bar]\ncpu_average_seconds = 2.5\n", "invalid type", true),
+            (
+                "[bar]\ndisk_warning_percent = 0\n",
+                "bar.disk_warning_percent must be from 1 through 100",
+                false,
+            ),
+            (
+                "[bar]\ndisk_critical_percent = 101\n",
+                "bar.disk_critical_percent must be from 1 through 100",
+                false,
+            ),
+            (
+                "[bar]\ndisk_warning_percent = 96\n",
+                "bar.disk_critical_percent must not be below bar.disk_warning_percent",
+                false,
+            ),
+            (
+                "[bar]\ndisk_path = 'work'\n",
+                "bar.disk_path must be ~, absolute, or start with ~/",
+                false,
+            ),
+            ("[bar]\ndisk_path = 1\n", "invalid type", true),
         ] {
             fs::write(root.join("config.toml"), source).unwrap();
             assert_eq!(

@@ -220,6 +220,37 @@ dependency decision does not establish public-distribution proof.
   standard-library or existing-dependency API covers these readings; if libc
   drops `mach_host_self`, move to mach2 through the dependency gate.
 
+### Disk use reading
+
+- **Selected shape:** direct `rustix = "=1.1.4"` with default features
+  disabled and `fs` and `std` enabled, the exact version already in the lock,
+  declared for Linux and macOS only (`eon-d7itl`, the Eon Bar disk chip in
+  [PRESENTATION.md](PRESENTATION.md#eon-bar)). Approved by Lucca 2026-10-31
+  (relayed by eon-overseer). The lock gains one edge and no package or version.
+  On Linux rustix 1.1.4 is already in Venus's build through async-io,
+  async-process, async-signal, polling (which calloop reaches it through),
+  wayland-backend, wayland-client, wayland-cursor, wl-clipboard-rs and zbus, so
+  nothing more compiles; on macOS it and errno, both already locked, enter
+  Venus's build. `std` lets `statvfs` take a `&Path`.
+  MIT OR Apache-2.0 OR Apache-2.0 WITH LLVM-exception.
+- **Capability:** a safe `statvfs` for the disk chip on Linux and macOS: the
+  filesystem's fragment size and its total, free and unprivileged-available
+  block counts. Venus relies only on rustix's documented `fs::statvfs`
+  returning its own `StatVfs` with `u64` counts on both backends. Its result
+  feeds pure, tested arithmetic (`DiskUse::of`) that computes use as GNU df
+  does, used over used plus available, rounded up, and rejects empty or
+  overflowing readings; std's `MetadataExt::dev` finds the mount point. Venus
+  adds no unsafe code. Other platforms have no reading.
+- **Rejected:** the standard library, which has no `statvfs`; libc's unsafe
+  `statvfs`, since Venus is removing its unsafe code under `eon-b4vh`; the nix
+  crate, a new package for the same call; spawning `df` or `stat -f` every
+  reading, a process per reading with a fragile output format; and sysinfo, a
+  second owner for readings Venus already takes.
+- **Exit:** replacing it costs one call site in `src/system.rs`. Remove the
+  edge if Venus drops the disk chip or the standard library gains `statvfs`;
+  follow the version the rest of the lock resolves, through the dependency
+  gate.
+
 ## Measured comparison
 
 Minimal Rust 2024 scratch binaries were resolved and checked on Rust 1.96.0.

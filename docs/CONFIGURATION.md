@@ -6,7 +6,7 @@ cursor preset and 100x30 grid; it is not the empty-configuration default:
 
 ```toml
 [bar]
-widgets = ["codex_quota", "claude_quota", "cpu", "ram", "clock", "version"]
+widgets = ["codex_quota", "claude_quota", "cpu", "ram", "disk", "clock", "version"]
 
 [terminal]
 background_opacity = 0.80
@@ -65,9 +65,12 @@ The following block is checked against the command by the test suite.
 [bar]
 cpu_average_seconds = 30 # Seconds of CPU use that the average covers.
 cpu_warning_percent = 90 # Average CPU use from which the CPU chip turns orange.
+disk_critical_percent = 95 # Disk use from which the disk chip turns red.
+disk_path = "~" # Path whose filesystem the disk chip measures.
+disk_warning_percent = 85 # Disk use from which the disk chip turns orange.
 ram_critical_percent = 90 # RAM use from which the RAM chip turns red.
 ram_warning_percent = 80 # RAM use from which the RAM chip turns orange.
-widgets = ["codex_quota", "claude_quota", "cpu", "ram", "clock", "version"] # Eon Bar widgets, in display order.
+widgets = ["codex_quota", "claude_quota", "cpu", "ram", "disk", "clock", "version"] # Eon Bar widgets, in display order.
 
 [terminal]
 background_blur = true # Request compositor background blur.
@@ -167,14 +170,15 @@ keys with wrong types or values still fail, including unsupported widget names.
 
 `[bar] widgets` chooses which Eon Bar widgets show and their order, left to
 right between the tabs and the Shortcuts and Close buttons: the Codex and
-Claude quota chips, CPU and RAM use, the local clock and `EON <version>`. Each
-name appears at most once. A widget left out doesn't show, `widgets = []`
-leaves only the tabs and buttons, and omitting the key uses the built-in list
-above. The list applies when a window next opens or reopens, and an
-unknown or repeated name is a configuration error. Narrow windows hide the
-clock first, then RAM, CPU and the version, whatever the order, then quota
-chips one by one, the one closest to the tabs first. The version belongs to
-its running supervisor; updating the installation does not change it.
+Claude quota chips, CPU, RAM and disk use, the local clock and
+`EON <version>`. Each name appears at most once. A widget left out doesn't
+show, `widgets = []` leaves only the tabs and buttons, and omitting the key
+uses the built-in list above. The list applies when a window next opens or
+reopens, and an unknown or repeated name is a configuration error. Narrow
+windows hide the clock first, then disk, RAM, CPU and the version, whatever
+the order, then quota chips one by one, the one closest to the tabs first. The
+version belongs to its running supervisor; updating the installation does not
+change it.
 
 The CPU and RAM chips stay neutral on a healthy machine and colour only under
 load. RAM turns orange from `ram_warning_percent` and red from
@@ -188,6 +192,17 @@ whole numbers from 1 through 100, and `ram_critical_percent` must not be below
 accepts 2 through 600. The defaults are listed above. Like `widgets`, they
 apply when a window next opens or reopens, and an out-of-range value is a
 configuration error. See [Eon Bar](../venus/docs/PRESENTATION.md#eon-bar).
+
+The disk chip shows how full the filesystem holding `disk_path` is, read every
+30 seconds: used space over used plus available space, rounded up as GNU df
+rounds it. `disk_path` is an absolute path, or `~` or a path starting with
+`~/` for your home directory and paths under it; empty, relative and `~user`
+paths are configuration errors. A path that doesn't exist is not an error: the
+chip shows no reading. The chip turns orange from `disk_warning_percent` and red
+from `disk_critical_percent`, under the same rules as RAM's levels:
+`disk_critical_percent` must not be below `disk_warning_percent`. The 30-second
+refresh is fixed, since disk use changes slowly. Like the other `[bar]` keys,
+they apply when a window next opens or reopens.
 
 Omitting `cursor_trail_color` chooses a random color that lasts as long as the
 running workspace, so `eon attach` reopens with the same color; a new workspace

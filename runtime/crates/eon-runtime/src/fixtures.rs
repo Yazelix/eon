@@ -18,6 +18,7 @@ pub(crate) fn inputs() -> Inputs {
                 "claude_quota",
                 "cpu",
                 "ram",
+                "disk",
                 "clock",
                 "version",
             ],
@@ -26,7 +27,10 @@ pub(crate) fn inputs() -> Inputs {
                 ram_critical_percent: 90,
                 cpu_warning_percent: 90,
                 cpu_average_seconds: 30,
+                disk_warning_percent: 85,
+                disk_critical_percent: 95,
             },
+            bar_disk_path: "~",
             shell: ShellConfig {
                 command: vec!["fixture-shell".into()],
                 starship: true,

@@ -11,15 +11,14 @@ order, selection, and popups; Venus draws the visible scene.
 - Tabs show their one-based position and the directory leaf or `/` from Eon's tab
   launch directory. Long labels use middle ellipsis; hover shows the full path.
   Selection brightens the tab, and keyboard focus adds an outline.
-- Tab pills and quota, CPU, RAM and clock widgets share one height and centre
-  line, starting half the card-title height below the window top. The allocated
-  card areas start lower so the gap to the tops of the titles' capital letters
-  equals the space above the pills. This extra space yields first on short
-  windows, before the bar's top gap and pill height. Tabs keep their fills;
-  widgets have no fill and use rounded outlines
-  in the pane cards' neutral colour and `border_width`. The plain version label
-  and header controls share their centre. Hover and accessibility bounds stay
-  unchanged.
+- Tab pills and quota, CPU, RAM, disk and clock widgets share one height and
+  centre line, starting half the card-title height below the window top. The
+  allocated card areas start lower so the gap to the tops of the titles' capital
+  letters equals the space above the pills. This extra space yields first on
+  short windows, before the bar's top gap and pill height. Tabs keep their
+  fills; widgets have no fill and use rounded outlines in the pane cards'
+  neutral colour and `border_width`. The plain version label and header controls
+  share their centre. Hover and accessibility bounds stay unchanged.
 - New tab sits beside the last tab and pins to the tab-region edge when tabs
   overflow. Shortcut help and Close stay at the right. A small empty area lets
   users drag an undecorated window without taking clicks from tabs or controls.
@@ -57,16 +56,32 @@ order, selection, and popups; Venus draws the visible scene.
   use 12% across 16 logical CPUs, over the last 2 seconds` and `RAM use 43% of
   31.3 GiB`. A reading that cannot be taken shows no label, never 0%, until the
   next valid one. Other platforms show neither label.
-- CPU and RAM chips colour only under load, and a healthy machine looks quiet:
-  by default RAM is orange from 80% use and red from 90%; CPU is orange while
-  its average over the last 30 seconds is 90% or more, so short spikes stay
-  neutral. The average needs a full window of unbroken readings, so it starts
-  over after a failed reading or a stall. The label still shows the 2-second
-  value. Hover and accessibility say why in words, such as `RAM use 91% of 31.3
-  GiB: under heavy pressure` or `CPU use 70% across 16 logical CPUs, over the
-  last 2 seconds; 93% on average over the last 30 seconds: under sustained
-  load`, so colour is never the only signal. The orange and red are the quota pace
-  scale's, at 4.5:1 or more on the bar. Eon's `[bar]` sets the levels and the
+- `DISK 80%` shows the used share of the filesystem holding the path Eon's
+  `[bar] disk_path` names, by default the home directory, as GNU df computes it
+  from `statvfs` on Linux and macOS: used blocks over used plus available ones,
+  so space reserved for root counts as neither, rounded up. It appears with its
+  first reading when the window opens and refreshes every 30 seconds, since
+  disk use changes slowly. The reading runs off the window's thread, so a slow
+  or hung filesystem never freezes the window; the chip keeps its last reading
+  meanwhile. The chip keeps the width of `DISK 100%` with its text centred.
+  Hover and accessibility say, for example, `Disk use 80% of 929.4 GiB on /,
+  181.2 GiB free`, naming the topmost directory above the path on the same
+  filesystem (device), usually its mount point, or the path itself when that
+  cannot be found. Sizes keep one decimal, like RAM's. A path that does not
+  exist, or a reading that cannot be taken, shows no label, never 0%, until the
+  next valid one. Other platforms show no label.
+- CPU, RAM and disk chips colour only under load, and a healthy machine looks
+  quiet: by default RAM is orange from 80% use and red from 90%, disk orange
+  from 85% and red from 95%, and CPU orange while its average over the last 30
+  seconds is 90% or more, so short spikes stay neutral. The average needs a
+  full window of unbroken readings, so it starts over after a failed reading or
+  a stall. The label still shows the 2-second value. Hover and accessibility
+  say why in words, such as `RAM use 91% of 31.3 GiB: under heavy pressure`,
+  `Disk use 87% of 929.4 GiB on /, 120.8 GiB free: filling up` (`: nearly full`
+  when red) or `CPU use 70% across 16 logical CPUs, over the last 2 seconds;
+  93% on average over the last 30 seconds: under sustained load`, so colour is
+  never the only signal. The orange and red are the quota pace scale's, at
+  4.5:1 or more on the bar. Eon's `[bar]` sets the levels and the
   averaging window; macOS uses the same ones.
 - The clock shows local 24-hour `HH:MM` and changes within a second of each
   minute; after suspend or a system clock change it corrects within a minute.
@@ -79,14 +94,15 @@ order, selection, and popups; Venus draws the visible scene.
   supervisor. Without a version from Eon, no label shows.
 - Eon's `[bar] widgets` chooses which of these items show and their order, left
   to right between the drag region and Shortcuts and Close. By default the order
-  is Codex quota, Claude quota, CPU, RAM, clock and version. A left-out item has
-  no chip, hover or accessible node, and a left-out CPU, RAM or clock is never
-  read and never wakes Venus. Accessibility order follows the visual order. The
-  items use only spare drag-region space and keep its minimum. Whatever the
-  order, narrow windows hide the clock first, then RAM, CPU and the version,
-  then quota chips, before tabs or controls. No item has an action or a keyboard
-  focus target, and none drags the window. A change in quota, a reading or the
-  clock never moves the tabs, cancels scrolling or resizes terminals.
+  is Codex quota, Claude quota, CPU, RAM, disk, clock and version. A left-out
+  item has no chip, hover or accessible node, and a left-out CPU, RAM, disk or
+  clock is never read and never wakes Venus. Accessibility order follows the
+  visual order. The items use only spare drag-region space and keep its minimum.
+  Whatever the order, narrow windows hide the clock first, then disk, RAM, CPU
+  and the version, then quota chips, before tabs or controls. No item has an
+  action or a keyboard focus target, and none drags the window. A change in
+  quota, a reading or the clock never moves the tabs, cancels scrolling or
+  resizes terminals.
 
 ### Panes and popups
 

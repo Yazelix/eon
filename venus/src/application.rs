@@ -34,13 +34,13 @@ use winit::{
 };
 use yazelix_venus::{
     Accessibility, AccessibilityTarget, AttentionFilter, BarItem, CellMetrics, ClipboardEffect,
-    Color, ConnectionState, CpuReadings, CpuTimes, CpuUse, DialogKind, DialogScene, EonBar,
-    FontSettings, FontSetup, HeaderText, Hyperlink, ImageKey, ImageResync, InputState, LoadLevels,
-    LocalClock, LocalNoticeSource, MAX_LINK_BYTES, ModelEffect, ModelError, PaddingColor,
-    PresentOutcome, RamUse, Renderer, Scene, SceneRect, SessionModel, ShortcutHintsScene,
-    SidebarView, Transport, TransportEvent, WorkspaceEvent, WorkspaceFocus, WorkspaceHeaderControl,
-    WorkspaceHit, WorkspaceModel, WorkspaceScene, WorkspaceTransport, active_popup,
-    attention_only_change, focused_terminal, labels_only_change, shown_workspace,
+    Color, ConnectionState, CpuReadings, CpuTimes, CpuUse, DialogKind, DialogScene, DiskUse,
+    EonBar, FontSettings, FontSetup, HeaderText, Hyperlink, ImageKey, ImageResync, InputState,
+    LoadLevels, LocalClock, LocalNoticeSource, MAX_LINK_BYTES, ModelEffect, ModelError,
+    PaddingColor, PresentOutcome, RamUse, Renderer, Scene, SceneRect, SessionModel,
+    ShortcutHintsScene, SidebarView, Transport, TransportEvent, WorkspaceEvent, WorkspaceFocus,
+    WorkspaceHeaderControl, WorkspaceHit, WorkspaceModel, WorkspaceScene, WorkspaceTransport,
+    active_popup, attention_only_change, focused_terminal, labels_only_change, shown_workspace,
     validate_copy_uri, validate_open_uri,
 };
 
@@ -67,6 +67,8 @@ const BLINK_INTERVAL: Duration = Duration::from_millis(500);
 const SPINNER_INTERVAL: Duration = Duration::from_millis(100);
 const MINUTE: Duration = Duration::from_secs(60);
 const READING_INTERVAL: Duration = Duration::from_secs(2);
+/// Disk use changes slowly, so the disk chip reads every 30 seconds rather than every 2.
+const DISK_INTERVAL: Duration = Duration::from_secs(30);
 const ANIMATION_FRAME_INTERVAL: Duration = Duration::from_millis(16);
 const INITIAL_RETRY_DELAY: Duration = Duration::from_millis(250);
 const MAX_RETRY_DELAY: Duration = Duration::from_secs(5);
@@ -424,6 +426,8 @@ enum UserEvent {
     Transport,
     Workspace,
     NewWindowFailed(String),
+    /// A disk reading taken off the event-loop thread, not yet rated.
+    Disk(Option<DiskUse>),
 }
 
 impl From<AccessKitEvent> for UserEvent {
@@ -774,6 +778,8 @@ struct Application {
     eon_version: Option<String>,
     bar_items: Vec<BarItem>,
     load_levels: LoadLevels,
+    /// The absolute path whose filesystem the disk chip measures, if any.
+    disk_path: Option<PathBuf>,
     background_opacity: f32,
     padding_color: PaddingColor,
     background_blur: bool,
@@ -814,6 +820,10 @@ struct Application {
     cpu: Option<CpuUse>,
     ram: Option<RamUse>,
     next_reading: Option<Instant>,
+    disk: Option<DiskUse>,
+    next_disk: Option<Instant>,
+    /// Whether a disk reading is outstanding; while one is, due readings are skipped.
+    disk_reading: bool,
     window_focused: bool,
     window_occluded: bool,
     workspace_focus: WorkspaceFocus,
@@ -858,6 +868,7 @@ impl Application {
             eon_version,
             bar_items,
             load_levels,
+            disk_path,
             background_opacity,
             padding_color,
             background_blur,
@@ -891,6 +902,7 @@ impl Application {
             eon_version,
             bar_items,
             load_levels,
+            disk_path,
             background_opacity,
             padding_color,
             background_blur,
@@ -918,6 +930,9 @@ impl Application {
             cpu: None,
             ram: None,
             next_reading: None,
+            disk: None,
+            next_disk: None,
+            disk_reading: false,
             next_animation: None,
             window_focused: false,
             window_occluded: false,
@@ -1181,6 +1196,7 @@ impl Application {
                     version: self.eon_version.as_deref(),
                     cpu: self.cpu.as_ref(),
                     ram: self.ram.as_ref(),
+                    disk: self.disk.as_ref(),
                     clock: self.clock.as_ref(),
                     workspace_picker: picker.as_deref(),
                 },
@@ -1676,6 +1692,7 @@ impl Application {
                 version: self.eon_version.as_deref(),
                 cpu: self.cpu.as_ref(),
                 ram: self.ram.as_ref(),
+                disk: self.disk.as_ref(),
                 clock: self.clock.as_ref(),
                 workspace_picker: picker.as_deref(),
             },
@@ -2636,6 +2653,32 @@ impl Application {
                 LocalNoticeSource::Input,
                 format!("Cannot start a new Eon window request: {error}"),
             );
+            self.refresh_client_view();
+        }
+    }
+
+    /// Reads the disk on its own thread, so a slow or hung filesystem never freezes the window;
+    /// the reading arrives as `UserEvent::Disk`. A thread that cannot start shows no label.
+    fn read_disk(&mut self) {
+        let Some(path) = self.disk_path.clone() else {
+            return;
+        };
+        let proxy = self.proxy.clone();
+        let result = thread::Builder::new()
+            .name("venus-disk-reading".into())
+            .spawn(move || {
+                let _ = proxy.send_event(UserEvent::Disk(DiskUse::read(&path)));
+            });
+        self.disk_reading = result.is_ok();
+        if result.is_err() {
+            self.show_disk(None);
+        }
+    }
+
+    fn show_disk(&mut self, disk: Option<DiskUse>) {
+        let disk = disk.map(|disk| disk.rated(self.load_levels));
+        if disk != self.disk {
+            self.disk = disk;
             self.refresh_client_view();
         }
     }
@@ -3832,6 +3875,7 @@ impl Application {
         let version_hovered = matches!(hovered_hit, Some(WorkspaceHit::Version));
         let cpu_hovered = matches!(hovered_hit, Some(WorkspaceHit::Cpu));
         let ram_hovered = matches!(hovered_hit, Some(WorkspaceHit::Ram));
+        let disk_hovered = matches!(hovered_hit, Some(WorkspaceHit::Disk));
         let clock_hovered = matches!(hovered_hit, Some(WorkspaceHit::Clock));
         let mut refresh = false;
         let mut presented = false;
@@ -3847,6 +3891,7 @@ impl Application {
         state.renderer.set_version_hovered(version_hovered);
         state.renderer.set_cpu_hovered(cpu_hovered);
         state.renderer.set_ram_hovered(ram_hovered);
+        state.renderer.set_disk_hovered(disk_hovered);
         state.renderer.set_clock_hovered(clock_hovered);
         state.renderer.set_pressed_header(match self.header_press {
             Some(HeaderPress::Control(control)) => Some(control),
@@ -4171,6 +4216,7 @@ impl ApplicationHandler<UserEvent> for Application {
                                 | WorkspaceHit::Version
                                 | WorkspaceHit::Cpu
                                 | WorkspaceHit::Ram
+                                | WorkspaceHit::Disk
                                 | WorkspaceHit::Clock
                                 | WorkspaceHit::Control(_),
                             ) => hit,
@@ -4408,6 +4454,7 @@ impl ApplicationHandler<UserEvent> for Application {
                             | WorkspaceHit::Version
                             | WorkspaceHit::Cpu
                             | WorkspaceHit::Ram
+                            | WorkspaceHit::Disk
                             | WorkspaceHit::Clock,
                         ) => None,
                         None => None,
@@ -4554,6 +4601,10 @@ impl ApplicationHandler<UserEvent> for Application {
                     .model
                     .set_venus_notice(LocalNoticeSource::Input, detail);
                 self.refresh_client_view();
+            }
+            UserEvent::Disk(disk) => {
+                self.disk_reading = false;
+                self.show_disk(disk);
             }
             UserEvent::Exit => event_loop.exit(),
             UserEvent::Present => {
@@ -4742,10 +4793,11 @@ impl ApplicationHandler<UserEvent> for Application {
         self.retry_column_views(now);
         // Items Eon leaves out of the bar are never read and never wake Venus.
         let shown = |item| self.bar_items.contains(&item);
-        let (show_clock, show_cpu, show_ram) = (
+        let (show_clock, show_cpu, show_ram, show_disk) = (
             shown(BarItem::Clock),
             shown(BarItem::Cpu),
             shown(BarItem::Ram),
+            shown(BarItem::Disk),
         );
         if self.workspace_model.snapshot().is_some()
             && show_clock
@@ -4779,6 +4831,16 @@ impl ApplicationHandler<UserEvent> for Application {
                 self.cpu = cpu;
                 self.ram = ram;
                 self.refresh_client_view();
+            }
+        }
+        if self.workspace_model.snapshot().is_some()
+            && show_disk
+            && self.disk_path.is_some()
+            && self.next_disk.is_none_or(|due| now >= due)
+        {
+            self.next_disk = Some(now + DISK_INTERVAL);
+            if !self.disk_reading {
+                self.read_disk();
             }
         }
         if self.next_age.is_some_and(|due| now >= due) {
@@ -4840,6 +4902,7 @@ impl ApplicationHandler<UserEvent> for Application {
                 self.next_clock,
                 self.next_age,
                 self.next_reading,
+                self.next_disk,
                 next_marker.filter(|due| *due > now),
                 self.terminal.selection_scroll.next,
                 self.terminal.terminal_scroll.preview_retry_at(),

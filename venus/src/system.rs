@@ -1,11 +1,13 @@
-//! Whole-machine CPU and memory use for the Eon Bar (`docs/PRESENTATION.md`): on Linux from
-//! `/proc/stat`'s aggregate and per-CPU lines and `/proc/meminfo`, on macOS from the Mach host
-//! statistics.
+//! Whole-machine CPU and memory use and one filesystem's use for the Eon Bar
+//! (`docs/PRESENTATION.md`): on Linux from `/proc/stat`'s aggregate and per-CPU lines and
+//! `/proc/meminfo`, on macOS from the Mach host statistics, and on both from `statvfs`.
 
 use std::collections::VecDeque;
+use std::os::unix::fs::MetadataExt;
+use std::path::Path;
 use std::time::{Duration, Instant};
 
-/// How loaded a CPU or RAM chip shows the machine; only load beyond normal colours it.
+/// How loaded a CPU, RAM or disk chip shows the machine; only load beyond normal colours it.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) enum Load {
     Normal,
@@ -13,13 +15,29 @@ pub(crate) enum Load {
     Critical,
 }
 
-/// When the CPU and RAM chips colour, as Eon's `[bar]` configuration resolves it.
+impl Load {
+    /// A whole-percent use judged against two levels: high from `warning`, critical from
+    /// `critical`, both inclusive.
+    fn of(percent: u64, warning: u8, critical: u8) -> Self {
+        if percent >= u64::from(critical) {
+            Self::Critical
+        } else if percent >= u64::from(warning) {
+            Self::High
+        } else {
+            Self::Normal
+        }
+    }
+}
+
+/// When the CPU, RAM and disk chips colour, as Eon's `[bar]` configuration resolves it.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct LoadLevels {
     pub ram_warning_percent: u8,
     pub ram_critical_percent: u8,
     pub cpu_warning_percent: u8,
     pub cpu_average: Duration,
+    pub disk_warning_percent: u8,
+    pub disk_critical_percent: u8,
 }
 
 impl Default for LoadLevels {
@@ -29,6 +47,8 @@ impl Default for LoadLevels {
             ram_critical_percent: 90,
             cpu_warning_percent: 90,
             cpu_average: Duration::from_secs(30),
+            disk_warning_percent: 85,
+            disk_critical_percent: 95,
         }
     }
 }
@@ -281,13 +301,11 @@ impl RamUse {
     /// This reading judged against the configured levels, with the pressure named in words.
     #[must_use]
     pub fn rated(mut self, levels: LoadLevels) -> Self {
-        self.load = if self.percent >= u64::from(levels.ram_critical_percent) {
-            Load::Critical
-        } else if self.percent >= u64::from(levels.ram_warning_percent) {
-            Load::High
-        } else {
-            Load::Normal
-        };
+        self.load = Load::of(
+            self.percent,
+            levels.ram_warning_percent,
+            levels.ram_critical_percent,
+        );
         self.description.push_str(match self.load {
             Load::Normal => "",
             Load::High => ": under pressure",
@@ -295,6 +313,116 @@ impl RamUse {
         });
         self
     }
+}
+
+/// The use of the filesystem holding one path, from one reading, as shown in the Eon Bar.
+#[derive(Debug, PartialEq, Eq)]
+pub struct DiskUse {
+    pub(crate) label: String,
+    pub(crate) description: String,
+    pub(crate) load: Load,
+    percent: u64,
+}
+
+impl DiskUse {
+    /// Reads the filesystem holding `path` with `statvfs` on Linux and macOS. A failed call, or
+    /// another platform, gives no value.
+    #[must_use]
+    pub fn read(path: &Path) -> Option<Self> {
+        let (blocks, free, available, fragment) = statvfs(path)?;
+        // Hover names the mount point, or the measured path when it cannot be found.
+        let mount = mount_point(path);
+        Self::of(
+            blocks,
+            free,
+            available,
+            fragment,
+            &mount.as_deref().unwrap_or(path).display().to_string(),
+        )
+    }
+
+    /// Whole-percent use as GNU df computes it from `statvfs` counts in `fragment`-byte units: used
+    /// blocks (all less free ones) over used and unprivileged-available ones, so space reserved
+    /// for root counts as neither, rounded up. Free space is the available blocks. An empty
+    /// filesystem size, free blocks above all blocks, nothing used or available, or a size past
+    /// `u64` bytes gives no value rather than a false 0%.
+    pub(crate) fn of(
+        blocks: u64,
+        free: u64,
+        available: u64,
+        fragment: u64,
+        mount: &str,
+    ) -> Option<Self> {
+        let size = blocks.checked_mul(fragment)?;
+        let used = blocks.checked_sub(free)?.checked_mul(fragment)?;
+        let available = available.checked_mul(fragment)?;
+        let counted = used.checked_add(available)?;
+        if size == 0 || counted == 0 {
+            return None;
+        }
+        let percent = (u128::from(used) * 100).div_ceil(u128::from(counted)) as u64;
+        let gib = |bytes: u64| bytes as f64 / f64::from(1 << 30);
+        Some(Self {
+            label: format!("DISK {percent}%"),
+            description: format!(
+                "Disk use {percent}% of {:.1} GiB on {mount}, {:.1} GiB free",
+                gib(size),
+                gib(available)
+            ),
+            load: Load::Normal,
+            percent,
+        })
+    }
+
+    /// This reading judged against the configured levels, with how full it is named in words.
+    #[must_use]
+    pub fn rated(mut self, levels: LoadLevels) -> Self {
+        self.load = Load::of(
+            self.percent,
+            levels.disk_warning_percent,
+            levels.disk_critical_percent,
+        );
+        self.description.push_str(match self.load {
+            Load::Normal => "",
+            Load::High => ": filling up",
+            Load::Critical => ": nearly full",
+        });
+        self
+    }
+}
+
+/// The total, free and unprivileged-available blocks of the filesystem holding `path`, and its
+/// fragment size.
+#[cfg(any(target_os = "linux", target_os = "macos"))]
+fn statvfs(path: &Path) -> Option<(u64, u64, u64, u64)> {
+    let stats = rustix::fs::statvfs(path).ok()?;
+    Some((
+        stats.f_blocks,
+        stats.f_bfree,
+        stats.f_bavail,
+        stats.f_frsize,
+    ))
+}
+
+/// Other platforms have no filesystem reading.
+#[cfg(not(any(target_os = "linux", target_os = "macos")))]
+fn statvfs(_: &Path) -> Option<(u64, u64, u64, u64)> {
+    None
+}
+
+/// The mount point of the filesystem holding `path`, without reading mount tables: the topmost
+/// ancestor of its canonical form on the same device. None when that cannot be read.
+fn mount_point(path: &Path) -> Option<std::path::PathBuf> {
+    let path = std::fs::canonicalize(path).ok()?;
+    let device = std::fs::metadata(&path).ok()?.dev();
+    let mut mount = path.as_path();
+    while let Some(parent) = mount.parent() {
+        if std::fs::metadata(parent).ok()?.dev() != device {
+            break;
+        }
+        mount = parent;
+    }
+    Some(mount.to_path_buf())
 }
 
 /// The macOS host calls, the only unsafe code in Venus (`docs/CRATES.md`); `eon-b4vh` tracks
@@ -531,6 +659,88 @@ mod tests {
             let meminfo = format!("MemTotal: {total} kB\nMemAvailable: {available} kB\n");
             assert_eq!(RamUse::parse(&meminfo).unwrap().label, label, "{meminfo:?}");
         }
+    }
+
+    #[test]
+    fn disk_use_is_used_over_used_and_available_rounded_up_as_gnu_df_does() {
+        // 4 KiB fragments of a 100 GiB filesystem: 80 GiB used, 15 GiB free to users and 5 GiB
+        // reserved for root, so use is 80 of 95 GiB, 84.2% rounded up.
+        let gib = 1 << 18;
+        let shown = DiskUse::of(100 * gib, 20 * gib, 15 * gib, 4096, "/home").unwrap();
+        assert_eq!(shown.label, "DISK 85%");
+        assert_eq!(
+            shown.description,
+            "Disk use 85% of 100.0 GiB on /home, 15.0 GiB free"
+        );
+        // GiB keep one decimal, like RAM's total.
+        let shown = DiskUse::of(9 * gib + gib / 2, 3 * gib, 3 * gib, 4096, "/").unwrap();
+        assert_eq!(
+            shown.description,
+            "Disk use 69% of 9.5 GiB on /, 3.0 GiB free"
+        );
+        // Whole percentages round up, from 0 to 100.
+        for (blocks, free, available, label) in [
+            (3, 3, 3, "DISK 0%"),
+            (1000, 999, 999, "DISK 1%"),
+            (200, 199, 199, "DISK 1%"),
+            (3, 1, 1, "DISK 67%"),
+            (3, 0, 0, "DISK 100%"),
+            // A full filesystem with root's reserve left still reads 100%.
+            (10, 1, 0, "DISK 100%"),
+        ] {
+            assert_eq!(
+                DiskUse::of(blocks, free, available, 1, "/").unwrap().label,
+                label,
+                "{blocks} {free} {available}"
+            );
+        }
+    }
+
+    #[test]
+    fn disk_use_rejects_bad_readings_instead_of_showing_zero() {
+        for (blocks, free, available, fragment) in [
+            // No size.
+            (0, 0, 0, 4096),
+            (100, 50, 50, 0),
+            // Free blocks above all blocks.
+            (100, 101, 50, 4096),
+            // Nothing used or available.
+            (100, 100, 0, 4096),
+            // Sizes past u64 bytes.
+            (u64::MAX, 0, 0, 2),
+            (u64::MAX / 2, u64::MAX / 4, u64::MAX / 2, 2),
+        ] {
+            assert_eq!(
+                DiskUse::of(blocks, free, available, fragment, "/"),
+                None,
+                "{blocks} {free} {available} {fragment}"
+            );
+        }
+    }
+
+    #[test]
+    fn disk_use_reads_the_filesystem_holding_a_path() {
+        let shown = DiskUse::read(Path::new("/")).unwrap();
+        assert!(shown.label.starts_with("DISK "), "{}", shown.label);
+        assert!(
+            shown.description.contains(" on /, "),
+            "{}",
+            shown.description
+        );
+        assert_eq!(mount_point(Path::new("/")), Some("/".into()));
+        // A path below the root mount names the topmost ancestor on its device.
+        let directory = std::env::temp_dir();
+        let mount = mount_point(&directory).unwrap();
+        let device = |path: &Path| std::fs::metadata(path).unwrap().dev();
+        assert_eq!(device(&mount), device(&directory));
+        assert!(
+            mount
+                .parent()
+                .is_none_or(|parent| device(parent) != device(&mount))
+        );
+        let missing = directory.join("eon-disk-reading-missing");
+        assert_eq!(DiskUse::read(&missing), None);
+        assert_eq!(mount_point(&missing), None);
     }
 
     #[test]

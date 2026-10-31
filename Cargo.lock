@@ -3513,6 +3513,7 @@ dependencies = [
  "libc",
  "orbit-protocol",
  "pollster",
+ "rustix 1.1.4",
  "unicode-script",
  "wgpu",
  "winit",

@@ -34,7 +34,7 @@ pub use scene::{
     workspace_column_width,
 };
 pub(crate) use system::Load;
-pub use system::{CpuReadings, CpuTimes, CpuUse, LoadLevels, RamUse};
+pub use system::{CpuReadings, CpuTimes, CpuUse, DiskUse, LoadLevels, RamUse};
 pub use transport::{
     SendError, Transport, TransportEvent, WorkspaceEvent, WorkspaceTransport,
     read_workspace_response,

@@ -179,9 +179,12 @@ hours. Chips hide one by one under width pressure, the one closest to the tabs
 first, before tabs and controls, and unavailable quota leaves the bar unchanged.
 See [quota behavior](CONFIGURATION.md#agent-quota).
 After the quota chips, `CPU 12%` shows whole-machine CPU use over the last 2
-seconds and `RAM 43%` shows whole-machine memory in use; hover them for details.
-They turn orange or red when the machine is under load, at the levels
-[`[bar]`](CONFIGURATION.md#configuration-behavior) sets.
+seconds, `RAM 43%` shows whole-machine memory in use, and `DISK 80%` shows how
+full the filesystem holding your home directory is, refreshed every 30 seconds;
+hover them for details, such as the disk's size, mount point and free space.
+They turn orange or red when the machine is under load or the disk fills up, at
+the levels [`[bar]`](CONFIGURATION.md#configuration-behavior) sets, which also
+chooses the path the disk chip measures.
 A reading that can't be taken shows no label rather than 0%. A 24-hour clock
 follows and shows local time; hover it for the date and UTC offset, and it stays
 hidden if the local time zone can't be determined. The `EON <version>` label, in
@@ -189,7 +192,7 @@ softened cyan, sits by default at the edge, just before `?` and `×`; it names
 the running supervisor, so updating the installation doesn't change it. `[bar]
 widgets` chooses which of these show and in what order (see
 [Configuration](CONFIGURATION.md#configuration-behavior)). When the bar runs
-short of space the clock hides first, then RAM, CPU and the version label,
+short of space the clock hides first, then disk, RAM, CPU and the version label,
 before any quota chip. See [Eon Bar](../venus/docs/PRESENTATION.md#eon-bar) for
 the details of each item.
 

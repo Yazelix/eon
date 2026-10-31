@@ -38,6 +38,7 @@ const CLAUDE_SEVEN_DAY_QUOTA: NodeId = NodeId(17);
 const SIDEBAR: NodeId = NodeId(18);
 const SIDEBAR_EMPTY_STATE: NodeId = NodeId(19);
 const WORKSPACE_LABEL: NodeId = NodeId(20);
+const DISK: NodeId = NodeId(21);
 // Scene rows are u16, so this range cannot collide with fixed or text-run nodes.
 const WORKSPACE_NODE_START: u64 = 1 << 32;
 // Two IDs per u32 duration fit below links; workspace allocation stops before this range.
@@ -375,6 +376,7 @@ impl Snapshot {
                     [
                         (CPU, &workspace.cpu),
                         (RAM, &workspace.ram),
+                        (DISK, &workspace.disk),
                         (CLOCK, &workspace.clock),
                         (VERSION, &workspace.version),
                     ]
@@ -527,6 +529,7 @@ impl Snapshot {
             for (id, label) in [
                 (CPU, &workspace.cpu),
                 (RAM, &workspace.ram),
+                (DISK, &workspace.disk),
                 (CLOCK, &workspace.clock),
                 (VERSION, &workspace.version),
             ] {
@@ -1630,6 +1633,8 @@ mod tests {
         .unwrap();
         let ram =
             crate::RamUse::parse("MemTotal: 32800000 kB\nMemAvailable: 18677760 kB\n").unwrap();
+        let gib = 1 << 18;
+        let disk = crate::DiskUse::of(1000 * gib, 200 * gib, 200 * gib, 4096, "/").unwrap();
         let clock = crate::LocalClock::new(
             &jiff::civil::date(2026, 10, 21)
                 .at(14, 5, 0, 0)
@@ -1667,13 +1672,14 @@ mod tests {
             sidebar: eon_workspace_protocol::v26::Sidebar::Open,
             attention_queue: Vec::new(),
         };
-        let project = |logical_width: u32, version, cpu, ram, clock| {
+        let project = |logical_width: u32, version, cpu, ram, disk, clock| {
             WorkspaceScene::from_snapshot_with_bar(
                 &snapshot,
                 EonBar {
                     version,
                     cpu,
                     ram,
+                    disk,
                     clock,
                     ..EonBar::default()
                 },
@@ -1690,27 +1696,36 @@ mod tests {
                 None,
             )
         };
-        let full_quotas = project(3000, None, None, None, None).quotas;
-        // Widths that show CPU use without RAM, and RAM without the clock.
-        let mut partial = [false; 2];
+        let full_quotas = project(3000, None, None, None, None, None).quotas;
+        // Widths that show CPU use without RAM, RAM without disk, and disk without the clock.
+        let mut partial = [false; 3];
         for version in [None, Some("9.8.7")] {
             for logical_width in (100..=1600).step_by(5) {
-                let baseline = project(logical_width, version, None, None, None);
-                let scene = project(logical_width, version, Some(&cpu), Some(&ram), Some(&clock));
+                let baseline = project(logical_width, version, None, None, None, None);
+                let scene = project(
+                    logical_width,
+                    version,
+                    Some(&cpu),
+                    Some(&ram),
+                    Some(&disk),
+                    Some(&clock),
+                );
                 assert_eq!(scene.tabs, baseline.tabs);
                 assert_eq!(scene.controls, baseline.controls);
                 assert_eq!(scene.terminal, baseline.terminal);
                 assert_eq!(scene.version.is_some(), baseline.version.is_some());
-                // The clock yields first, then RAM, then CPU use, before the version label and
-                // quotas.
-                assert!(scene.clock.is_none() || scene.ram.is_some());
+                // The clock yields first, then disk, RAM and CPU use, before the version label
+                // and quotas.
+                assert!(scene.clock.is_none() || scene.disk.is_some());
+                assert!(scene.disk.is_none() || scene.ram.is_some());
                 assert!(scene.ram.is_none() || scene.cpu.is_some());
                 let Some(shown_cpu) = &scene.cpu else {
                     assert!(logical_width < 1600, "a wide bar shows CPU use");
                     continue;
                 };
                 partial[0] |= scene.ram.is_none();
-                partial[1] |= scene.ram.is_some() && scene.clock.is_none();
+                partial[1] |= scene.ram.is_some() && scene.disk.is_none();
+                partial[2] |= scene.disk.is_some() && scene.clock.is_none();
                 assert_eq!(scene.quotas.len(), full_quotas.len());
                 assert_eq!(scene.quotas[0].label, full_quotas[0].label);
                 assert_eq!(version.is_some(), scene.version.is_some());
@@ -1718,11 +1733,15 @@ mod tests {
                 if let Some(shown_ram) = &scene.ram {
                     assert_eq!(shown_ram.label, "RAM 43%");
                 }
+                if let Some(shown_disk) = &scene.disk {
+                    assert_eq!(shown_disk.label, "DISK 80%");
+                }
                 // The readings follow the quota chips in order, and the version label sits at
                 // the edge before Shortcuts and Close.
                 let labels = [
                     (CPU, Some(shown_cpu)),
                     (RAM, scene.ram.as_ref()),
+                    (DISK, scene.disk.as_ref()),
                     (CLOCK, scene.clock.as_ref()),
                     (VERSION, scene.version.as_ref()),
                 ]
@@ -1733,9 +1752,11 @@ mod tests {
                 for (id, label) in &labels {
                     assert_eq!(label.rect.left, left);
                     left = label.rect.right();
-                    // CPU and RAM keep the width of `CPU 100%`; the clock fits its text.
+                    // CPU and RAM keep the width of `CPU 100%`, disk that of `DISK 100%`; the
+                    // clock fits its text.
                     let cells = match *id {
                         CPU | RAM => "CPU 100%".len(),
+                        DISK => "DISK 100%".len(),
                         CLOCK => label.label.len(),
                         _ => continue,
                     };
@@ -1750,6 +1771,7 @@ mod tests {
                 for (label, hit) in [
                     (Some(shown_cpu), crate::WorkspaceHit::Cpu),
                     (scene.ram.as_ref(), crate::WorkspaceHit::Ram),
+                    (scene.disk.as_ref(), crate::WorkspaceHit::Disk),
                 ] {
                     let Some(label) = label else { continue };
                     assert_eq!(
@@ -1779,8 +1801,9 @@ mod tests {
                         "CPU use 12% across 2 logical CPUs, over the last 2 seconds",
                     ),
                     (RAM, "RAM use 43% of 31.3 GiB"),
+                    (DISK, "Disk use 80% of 1000.0 GiB on /, 200.0 GiB free"),
                 ] {
-                    if id == RAM && scene.ram.is_none() {
+                    if (id == RAM && scene.ram.is_none()) || (id == DISK && scene.disk.is_none()) {
                         continue;
                     }
                     let node = node(&tree, id);
@@ -1791,7 +1814,7 @@ mod tests {
                 }
             }
         }
-        assert_eq!(partial, [true; 2]);
+        assert_eq!(partial, [true; 3]);
     }
 
     #[test]
@@ -1862,6 +1885,7 @@ mod tests {
                     version: Some("9.8.7"),
                     cpu: Some(&cpu),
                     ram: Some(&ram),
+                    disk: None,
                     clock: Some(&clock),
                     workspace_picker: None,
                 },

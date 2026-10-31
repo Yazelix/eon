@@ -1,5 +1,5 @@
 use crate::{
-    CpuUse, Load, MAX_LINK_BYTES, RamUse,
+    CpuUse, DiskUse, Load, MAX_LINK_BYTES, RamUse,
     model::{active_popup, focused_terminal, presented_panes},
     render::{CellMetrics, FALLBACK_CAP_HEIGHT_EM},
 };
@@ -567,7 +567,7 @@ pub(crate) struct WorkspaceLabel {
     pub(crate) rect: SceneRect,
     pub(crate) label: String,
     pub(crate) description: String,
-    /// The machine load a CPU or RAM label shows; other labels stay normal.
+    /// The machine load a CPU, RAM or disk label shows; other labels stay normal.
     pub(crate) load: Load,
 }
 
@@ -639,17 +639,19 @@ pub enum BarItem {
     ClaudeQuota,
     Cpu,
     Ram,
+    Disk,
     Clock,
     Version,
 }
 
 impl BarItem {
     /// Every item, in the order Venus shows them when Eon names none.
-    pub const DEFAULT: [Self; 6] = [
+    pub const DEFAULT: [Self; 7] = [
         Self::CodexQuota,
         Self::ClaudeQuota,
         Self::Cpu,
         Self::Ram,
+        Self::Disk,
         Self::Clock,
         Self::Version,
     ];
@@ -661,6 +663,7 @@ pub struct EonBar<'a> {
     pub version: Option<&'a str>,
     pub cpu: Option<&'a CpuUse>,
     pub ram: Option<&'a RamUse>,
+    pub disk: Option<&'a DiskUse>,
     pub clock: Option<&'a LocalClock>,
     /// The `workspaces` popup entry's label and chord, while Eon configures that entry; the
     /// workspace label then opens it.
@@ -674,6 +677,7 @@ impl Default for EonBar<'_> {
             version: None,
             cpu: None,
             ram: None,
+            disk: None,
             clock: None,
             workspace_picker: None,
         }
@@ -712,6 +716,7 @@ pub enum WorkspaceHit<'a> {
     Version,
     Cpu,
     Ram,
+    Disk,
     Clock,
     Control(WorkspaceHeaderControl),
     Drag,
@@ -1459,6 +1464,7 @@ pub struct WorkspaceScene {
     pub(crate) version: Option<WorkspaceLabel>,
     pub(crate) cpu: Option<WorkspaceLabel>,
     pub(crate) ram: Option<WorkspaceLabel>,
+    pub(crate) disk: Option<WorkspaceLabel>,
     pub(crate) clock: Option<WorkspaceLabel>,
     pub(crate) controls: [WorkspaceControl; 3],
     pub hints: Option<ShortcutHintsScene>,
@@ -2697,11 +2703,12 @@ impl WorkspaceScene {
             - drag_region.left)
             .max(0.0);
         // Read-only labels take spare header space without shortening tabs, in this order, and
-        // stop at the first that does not fit: the clock yields first, then RAM, then CPU use,
-        // then the version label. The readings also need every quota chip shown.
+        // stop at the first that does not fit: the clock yields first, then disk, RAM and CPU
+        // use, then the version label. The readings also need every quota chip shown.
         let shown = |item| bar.items.contains(&item);
         let reading = |item| quotas.len() == quota_count && shown(item);
-        // CPU and RAM keep the width of `CPU 100%`, so the header never shifts as they change.
+        // CPU and RAM keep the width of `CPU 100%`, and disk that of `DISK 100%`, so the header
+        // never shifts as they change.
         let readings = "CPU 100%".len();
         let mut labels = [
             bar.version
@@ -2728,6 +2735,14 @@ impl WorkspaceScene {
                     ram.description.clone(),
                     readings,
                     ram.load,
+                )
+            }),
+            bar.disk.filter(|_| reading(BarItem::Disk)).map(|disk| {
+                (
+                    disk.label.clone(),
+                    disk.description.clone(),
+                    "DISK 100%".len(),
+                    disk.load,
                 )
             }),
             bar.clock.filter(|_| reading(BarItem::Clock)).map(|clock| {
@@ -2768,10 +2783,11 @@ impl WorkspaceScene {
             }
         }
         // Quota chips and labels sit in Eon's order between the drag region and Shortcuts.
-        let [version, cpu, ram, clock] = labels;
+        let [version, cpu, ram, disk, clock] = labels;
         let mut labels = [
             (BarItem::Cpu, cpu),
             (BarItem::Ram, ram),
+            (BarItem::Disk, disk),
             (BarItem::Clock, clock),
             (BarItem::Version, version),
         ];
@@ -2794,7 +2810,7 @@ impl WorkspaceScene {
                 }
             }
         }
-        let [(_, cpu), (_, ram), (_, clock), (_, version)] = labels;
+        let [(_, cpu), (_, ram), (_, disk), (_, clock), (_, version)] = labels;
         let tab_scroll_limit = (tab_end - tab_viewport.right()).max(0.0);
         let active = tabs[active_tab].rect;
         // Revealing the first tab never scrolls.
@@ -2856,6 +2872,7 @@ impl WorkspaceScene {
                 version,
                 cpu,
                 ram,
+                disk,
                 clock,
                 controls,
                 hints,
@@ -3036,6 +3053,7 @@ impl WorkspaceScene {
             version,
             cpu,
             ram,
+            disk,
             clock,
             controls,
             hints,
@@ -3193,6 +3211,13 @@ impl WorkspaceScene {
         }
         if self.ram.as_ref().is_some_and(|ram| ram.rect.contains(x, y)) {
             return Some(WorkspaceHit::Ram);
+        }
+        if self
+            .disk
+            .as_ref()
+            .is_some_and(|disk| disk.rect.contains(x, y))
+        {
+            return Some(WorkspaceHit::Disk);
         }
         if self
             .clock

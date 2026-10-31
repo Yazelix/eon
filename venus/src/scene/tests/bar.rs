@@ -997,6 +997,15 @@ fn cpu_and_ram_chips_colour_only_sustained_or_pressing_load_and_say_so() {
             .load,
         Load::Normal
     );
+    // An average of exactly the level colours the chip and says why.
+    let mut readings = CpuReadings::default();
+    let at_level = run(&mut readings, levels, 0, &[90; 17]).remove(16).unwrap();
+    assert_eq!(at_level.load, Load::High);
+    assert_eq!(
+        at_level.description,
+        "CPU use 90% across 1 logical CPU, over the last 2 seconds; \
+         90% on average over the last 30 seconds: under sustained load"
+    );
     // A stalled or failed reading starts the window over.
     let mut readings = CpuReadings::default();
     run(&mut readings, levels, 0, &[95; 16]);
@@ -1118,4 +1127,169 @@ fn cpu_and_ram_chips_colour_only_sustained_or_pressing_load_and_say_so() {
         ram.description,
         "RAM use 91% of 0.1 GiB: under heavy pressure"
     );
+}
+
+#[test]
+fn a_failed_cpu_reading_restarts_the_sustained_load_window() {
+    use crate::{CpuReadings, CpuTimes, Load, LoadLevels};
+    use std::time::{Duration, Instant};
+
+    let levels = LoadLevels::default();
+    let start = Instant::now();
+    let gap = Duration::from_secs(3);
+    let (mut busy, mut idle) = (0, 0);
+    let mut readings = CpuReadings::default();
+    // Two seconds apart, each interval 95% busy; `None` is a failed reading.
+    let mut push = |step: u64, read: bool| {
+        busy += 95;
+        idle += 5;
+        let times = CpuTimes::parse(&format!(
+            "cpu {busy} 0 0 {idle} 0 0 0 0\ncpu0 0 0 0 0 0 0 0 0"
+        ))
+        .filter(|_| read);
+        readings.push(start + Duration::from_secs(2 * step), times, gap, levels)
+    };
+    for step in 0..16 {
+        push(step, true);
+    }
+    assert_eq!(push(16, true).unwrap().load, Load::High);
+    assert!(push(17, false).is_none());
+    // The first reading after the failure has nothing to compare with.
+    assert!(push(18, true).is_none());
+    // Its use shows again from the next reading, neutral until a full 30 seconds of new
+    // readings has accumulated.
+    for step in 19..33 {
+        assert_eq!(push(step, true).unwrap().load, Load::Normal, "step {step}");
+    }
+    assert_eq!(push(33, true).unwrap().load, Load::High);
+}
+
+#[test]
+fn disk_chip_shows_filesystem_use_and_colours_only_when_filling_up() {
+    use crate::{BarItem, DiskUse, Load, LoadLevels};
+    use eon_workspace_protocol::v26::{Pane, PopupGeometry, Tab};
+
+    let levels = LoadLevels::default();
+    // A 1000 GiB filesystem with no root reserve, `percent` used.
+    let disk = |percent: u64, levels| {
+        let gib = 1 << 18;
+        DiskUse::of(
+            1000 * gib,
+            (100 - percent) * 10 * gib,
+            (100 - percent) * 10 * gib,
+            4096,
+            "/",
+        )
+        .unwrap()
+        .rated(levels)
+    };
+    for (percent, load, words) in [
+        (84, Load::Normal, ""),
+        (85, Load::High, ": filling up"),
+        (94, Load::High, ": filling up"),
+        (95, Load::Critical, ": nearly full"),
+    ] {
+        let shown = disk(percent, levels);
+        assert_eq!(shown.label, format!("DISK {percent}%"));
+        assert_eq!(shown.load, load, "{percent}%");
+        assert_eq!(
+            shown.description,
+            format!(
+                "Disk use {percent}% of 1000.0 GiB on /, {}.0 GiB free{words}",
+                (100 - percent) * 10
+            )
+        );
+    }
+    let configured = LoadLevels {
+        disk_warning_percent: 50,
+        disk_critical_percent: 70,
+        ..levels
+    };
+    assert_eq!(disk(49, configured).load, Load::Normal);
+    assert_eq!(disk(50, configured).load, Load::High);
+    assert_eq!(disk(70, configured).load, Load::Critical);
+
+    let snapshot = Snapshot {
+        workspace: "w1".into(),
+        active_workspace: "w1".into(),
+        workspaces: vec![eon_workspace_protocol::v26::WorkspaceInfo {
+            id: "w1".into(),
+            name: None,
+            tab_count: 1,
+            attention: None,
+            recency: 0,
+        }],
+        active_tab: "t1".into(),
+        geometry: PopupGeometry {
+            side_margin: 8.0,
+            vertical_margin: 4.0,
+        },
+        entries: Vec::new(),
+        tabs: vec![Tab {
+            id: "t1".into(),
+            directory: b"/tmp".to_vec(),
+            pending: false,
+            selected_pane: Some("p1".into()),
+            selected_popup: None,
+            columns: vec![eon_workspace_protocol::v26::Column {
+                panes: vec![Pane {
+                    label: "p1".into(),
+                    pinned_name: None,
+                    id: "p1".into(),
+                    session: "s1".into(),
+                    endpoint: b"/tmp/p1.sock".to_vec(),
+                    live: true,
+                    attention: None,
+                }],
+                expanded: "p1".into(),
+            }],
+            popups: Vec::new(),
+            attention_rollup: None,
+        }],
+        codex_quota: None,
+        claude_quota: None,
+        sidebar: eon_workspace_protocol::v26::Sidebar::Open,
+        attention_queue: Vec::new(),
+    };
+    let metrics = CellMetrics::for_scale(1.0);
+    let project = |items: &[BarItem], disk| {
+        WorkspaceScene::from_snapshot_with_bar(
+            &snapshot,
+            EonBar {
+                items,
+                disk,
+                ..EonBar::default()
+            },
+            PhysicalSize::new(3000, 600),
+            metrics,
+            0.0,
+            0.0,
+            |_, text| (text.to_owned(), text.chars().count() as f32 * 10.0),
+            None,
+        )
+    };
+    let full = disk(95, levels);
+    let scene = project(&[BarItem::Disk], Some(&full));
+    let shown = scene.disk.as_ref().unwrap();
+    assert_eq!(shown.label, "DISK 95%");
+    assert_eq!(shown.load, Load::Critical);
+    assert_eq!(shown.description, full.description);
+    // Sized for `DISK 100%`, so the bar never shifts as the use changes.
+    assert_eq!(
+        shown.rect.width,
+        "DISK 100%".len() as f32 * metrics.width + metrics.padding * 2.0
+    );
+    assert_eq!(shown.rect.right(), scene.controls[1].rect.left);
+    assert_eq!(
+        scene.hit_test(
+            shown.rect.left + shown.rect.width / 2.0,
+            shown.rect.height / 2.0
+        ),
+        Some(crate::WorkspaceHit::Disk)
+    );
+    // A missing reading, or a disk left out of the bar, shows no chip.
+    let empty = project(&[BarItem::Disk], None);
+    assert!(empty.disk.is_none());
+    assert_eq!(empty.drag_region.right(), empty.controls[1].rect.left);
+    assert!(project(&[BarItem::Ram], Some(&full)).disk.is_none());
 }

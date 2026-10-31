@@ -5,6 +5,14 @@ installation, and proven contract changes.
 
 ## Unreleased
 
+- The Eon Bar shows `DISK 80%`, the used share of the filesystem holding your
+  home directory, after RAM by default, refreshed every 30 seconds. Hover and
+  accessibility give its size, mount point and free space. It turns orange from
+  85% use and red from 95%, saying `filling up` or `nearly full` in words.
+  `[bar] widgets` accepts `disk`, and `[bar] disk_path`, `disk_warning_percent`
+  and `disk_critical_percent` set the measured path and the levels (EON-C32
+  amended).
+
 - Migration floor: v0.1.1, the oldest release whose configuration Eon keeps
   loading. A leftover v0.1.1 `[bar] show_version` still stops the load.
 

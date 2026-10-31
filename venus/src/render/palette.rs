@@ -18,7 +18,7 @@ pub(super) const TERMINAL_FALLBACK: SceneColor = rgb(10, 13, 20);
 /// The neutral outline around a card: every pane outline but the selected column's expanded
 /// pane, popups, the agent sidebar, the dialog, and the sidebar row for the current pane.
 pub(super) const CARD_OUTLINE: SceneColor = rgb(86, 106, 126);
-/// The outline of an Eon Bar chip: quota, CPU, RAM and clock.
+/// The outline of an Eon Bar chip: quota, CPU, RAM, disk and clock.
 pub(super) const CHIP_OUTLINE: SceneColor = rgb(86, 106, 126);
 /// The fill under a hovered, pressed or keyboard-selected chrome item: sidebar rows, pane header
 /// titles and bar controls, and the disc behind a sidebar badge on such a row.
@@ -97,6 +97,7 @@ pub(super) const QUOTA_PACE: [(f32, SceneColor); 5] = [
     // Half a window early or more.
     (0.50, rgb(255, 107, 107)),
 ];
-/// CPU and RAM chips under load (`docs/PRESENTATION.md`, Eon Bar): the pace scale's orange and red.
+/// CPU, RAM and disk chips under load (`docs/PRESENTATION.md`, Eon Bar): the pace scale's orange
+/// and red.
 pub(super) const LOAD_HIGH: SceneColor = QUOTA_PACE[3].1;
 pub(super) const LOAD_CRITICAL: SceneColor = QUOTA_PACE[4].1;

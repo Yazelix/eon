@@ -140,6 +140,7 @@ pub(super) struct HeaderInteraction {
     version_hovered: bool,
     cpu_hovered: bool,
     ram_hovered: bool,
+    disk_hovered: bool,
     clock_hovered: bool,
     pressed_header: Option<WorkspaceHeaderControl>,
 }
@@ -608,6 +609,10 @@ impl Renderer {
         self.header.ram_hovered = hovered;
     }
 
+    pub fn set_disk_hovered(&mut self, hovered: bool) {
+        self.header.disk_hovered = hovered;
+    }
+
     pub fn set_clock_hovered(&mut self, hovered: bool) {
         self.header.clock_hovered = hovered;
     }
@@ -781,6 +786,10 @@ impl Renderer {
             && let Some(ram) = &workspace.ram
         {
             (ram.description.as_str(), ram.rect)
+        } else if self.header.disk_hovered
+            && let Some(disk) = &workspace.disk
+        {
+            (disk.description.as_str(), disk.rect)
         } else if self.header.clock_hovered
             && let Some(clock) = &workspace.clock
         {
@@ -1280,6 +1289,7 @@ impl Renderer {
         for (label, color, pill) in [
             (&workspace.cpu, palette::SECONDARY_TEXT, true),
             (&workspace.ram, palette::SECONDARY_TEXT, true),
+            (&workspace.disk, palette::SECONDARY_TEXT, true),
             (&workspace.clock, palette::SECONDARY_TEXT, true),
             (&workspace.version, palette::VERSION_TEXT, false),
         ] {

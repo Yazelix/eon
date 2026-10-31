@@ -16,6 +16,9 @@ unicode-script = "=0.5.8"
 wgpu = { version = "=30.0.0", default-features = false, features = ["std", "wgsl"] }
 winit = { version = "=0.30.13", default-features = false, features = ["rwh_06"] }
 
+[target.'cfg(any(target_os = "linux", target_os = "macos"))'.dependencies]
+rustix = { version = "=1.1.4", default-features = false, features = ["fs", "std"] }
+
 [target.'cfg(target_os = "linux")'.dependencies]
 accesskit_winit = { version = "=0.34.2", default-features = false, features = ["accesskit_unix", "async-io"] }
 wgpu = { version = "=30.0.0", default-features = false, features = ["vulkan"] }

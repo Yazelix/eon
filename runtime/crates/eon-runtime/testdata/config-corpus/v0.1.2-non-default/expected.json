@@ -10,6 +10,9 @@
     "bar": {
       "cpu_average_seconds": 30,
       "cpu_warning_percent": 90,
+      "disk_critical_percent": 95,
+      "disk_path": "~",
+      "disk_warning_percent": 85,
       "ram_critical_percent": 90,
       "ram_warning_percent": 80,
       "widgets": [

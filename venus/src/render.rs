@@ -229,10 +229,11 @@ struct ContentKey {
     scrollback_label: Option<String>,
     /// The whole dialog, since its rows and kind change without a new generation.
     dialog: Option<DialogScene>,
-    /// CPU and RAM use and the clock change without a new presentation generation. CPU and RAM
-    /// key on their descriptions, whose CPU count and total the hover shows and the label does not.
+    /// CPU, RAM and disk use and the clock change without a new presentation generation. The
+    /// readings key on their descriptions, whose details the hover shows and the label does not.
     cpu: Option<String>,
     ram: Option<String>,
+    disk: Option<String>,
     clock: Option<String>,
     /// Each drawn terminal's image band, the selected terminal's first, then the other columns'.
     /// An upload, a freed texture, or a marker coming due changes it, so it stands in for a
@@ -1471,6 +1472,9 @@ impl Renderer {
             ram: workspace
                 .and_then(|workspace| workspace.ram.as_ref())
                 .map(|ram| ram.description.clone()),
+            disk: workspace
+                .and_then(|workspace| workspace.disk.as_ref())
+                .map(|disk| disk.description.clone()),
             clock: workspace
                 .and_then(|workspace| workspace.clock.as_ref())
                 .map(|clock| clock.label.clone()),

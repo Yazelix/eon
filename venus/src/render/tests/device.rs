@@ -45,6 +45,7 @@ fn content_cache_separates_generations_and_viewer_state() {
         dialog,
         cpu: None,
         ram: None,
+        disk: None,
         clock: None,
         images: Vec::new(),
     };
