@@ -9,8 +9,8 @@ use eon_workspace_protocol::v26::{
 use orbit_protocol::management::{
     self as management, ClientMessage as ManagementClientMessage, EndpointIdentity, Failure,
     FailureCode, LeaseInput, LiveIdentity, ObjectIdentity, ProcessOutcome,
-    Record as ManagementRecord, Screen as OrbitScreen, ServerMessage as ManagementServerMessage,
-    TerminationReason, Tombstone, VisibleText,
+    Record as ManagementRecord, Refusal, Screen as OrbitScreen,
+    ServerMessage as ManagementServerMessage, TerminationReason, Tombstone, VisibleText,
 };
 use std::{
     ffi::OsStr,
@@ -854,7 +854,21 @@ fn managed_orbit_helper() {
                     {
                         let request = management::decode_client_message(&input[..length]).unwrap();
                         input.drain(..length);
+                        // A test scripts how Orbit refuses a read by writing
+                        // `busy` or `closed` to the file EON_TEST_ORBIT_REPLY names.
+                        let scripted = std::env::var_os("EON_TEST_ORBIT_REPLY")
+                            .and_then(|path| fs::read_to_string(path).ok())
+                            .and_then(|reply| match reply.trim() {
+                                "busy" => Some(ManagementServerMessage::Busy),
+                                "closed" => Some(ManagementServerMessage::Refused(Refusal::Closed)),
+                                _ => None,
+                            });
                         match request {
+                            ManagementClientMessage::ReadVisible
+                                if *leased && scripted.is_some() =>
+                            {
+                                write_management(stream, scripted.unwrap());
+                            }
                             ManagementClientMessage::Acquire { expected, record }
                                 if !*leased
                                     && expected == identity
@@ -7011,6 +7025,7 @@ fn terminal_access_workspace(root: &Path, agents: &str) -> (TestProcess, PathBuf
         .env("EON_VENUS", &venus)
         .env("EON_TEST_STOP", &stop)
         .env("EON_TEST_INPUT_LOG", root.join("input.log"))
+        .env("EON_TEST_ORBIT_REPLY", root.join("orbit-reply"))
         .stdout(Stdio::null())
         .stderr(Stdio::null())
         .spawn()
@@ -7169,4 +7184,144 @@ fn terminal_access_none_refuses_every_read_and_send() {
     fs::write(&supervisor.stop, "").unwrap();
     wait_for_successful_exit(&mut supervisor.child);
     fs::remove_dir_all(root).unwrap();
+}
+
+#[test]
+fn pane_read_prints_the_text_or_json_and_exits_by_failure() {
+    let root = temporary_directory();
+    let (mut supervisor, generation, _) = terminal_access_workspace(&root, "");
+    let eon = |root: &Path| {
+        let mut command = eon_command(Path::new(env!("CARGO_BIN_EXE_eon")));
+        command
+            .env("EON_RUNTIME_DIR", root.join("runtime"))
+            .env("EON_CONFIG_HOME", root.join("config"));
+        command
+    };
+    let run = |arguments: &[&str]| eon(&root).args(arguments).output().unwrap();
+    let before = stable_workspace_json(&run(&["workspace", "--json"]));
+    let human = run(&["pane", "read", "p1"]);
+    assert_eq!(human.status.code(), Some(0));
+    assert_eq!(stdout(&human), "screen of session-1\n");
+    assert!(human.stderr.is_empty());
+    let id = generation.file_name().unwrap().to_str().unwrap();
+    let expected = |caller| {
+        serde_json::json!({
+            "generation": id,
+            "window": null,
+            "workspace": "w1",
+            "tab": "t1",
+            "pane": "p1",
+            "popup": null,
+            "terminal": "session-1",
+            "caller": caller,
+            "revision": 1,
+            "screen": "primary",
+            "rows": 24,
+            "columns": 80,
+            "title": "session-1",
+            "directory": "/fake",
+            "text": "screen of session-1",
+            "omitted_rows": 0,
+            "lossy": true,
+        })
+    };
+    let json = run(&["pane", "read", "p1", "--json"]);
+    assert_eq!(json.status.code(), Some(0));
+    assert_eq!(
+        serde_json::from_str::<serde_json::Value>(stdout(&json)).unwrap(),
+        expected(serde_json::Value::Null)
+    );
+    // From an Eon terminal, `caller` names it as `eon workspace` does.
+    let environment = process::environ(live_identity(&generation.join("orbit.sock")).process_id);
+    let caller = environment
+        .split(|byte| *byte == 0)
+        .find_map(|entry| entry.strip_prefix(b"EON_TERMINAL="))
+        .map(|token| String::from_utf8(token.to_vec()).unwrap())
+        .unwrap();
+    let from_caller = eon(&root)
+        .args(["pane", "read", "p1", "--json"])
+        .env("EON_TERMINAL", &caller)
+        .output()
+        .unwrap();
+    assert_eq!(from_caller.status.code(), Some(0));
+    assert_eq!(
+        serde_json::from_str::<serde_json::Value>(stdout(&from_caller)).unwrap(),
+        expected(serde_json::json!({
+            "terminal": "session-1",
+            "tab": "t1",
+            "pane": "p1",
+            "popup": null,
+        }))
+    );
+    for (arguments, status, code) in [
+        (&["pane", "read", "p99"][..], 3, Some("unknown-target")),
+        (&["pane", "read", "bad/id"], 2, Some("malformed-action")),
+        (&["pane", "read"], 2, None),
+        (&["pane", "read", "p1", "p2"], 2, None),
+    ] {
+        let human = run(arguments);
+        assert_eq!(human.status.code(), Some(status), "{arguments:?}");
+        assert!(human.stdout.is_empty(), "{arguments:?}");
+        let json = run(&[arguments, &["--json"]].concat());
+        assert_eq!(json.status.code(), Some(status), "{arguments:?}");
+        if let Some(code) = code {
+            assert!(String::from_utf8_lossy(&human.stderr).starts_with(&format!("error {code}: ")));
+            assert!(
+                stdout(&json).contains(&format!("\"code\":\"{code}\"")),
+                "{arguments:?}"
+            );
+        }
+    }
+    // Orbit's refusals reach the CLI as exit 1 without terminal content.
+    for (reply, code) in [
+        ("closed", "terminal-ended"),
+        ("busy", "terminal-unavailable"),
+    ] {
+        fs::write(root.join("orbit-reply"), reply).unwrap();
+        let human = run(&["pane", "read", "p1"]);
+        let json = run(&["pane", "read", "p1", "--json"]);
+        assert_eq!(
+            (human.status.code(), json.status.code()),
+            (Some(1), Some(1)),
+            "{reply}"
+        );
+        assert!(human.stdout.is_empty(), "{reply}");
+        assert!(String::from_utf8_lossy(&human.stderr).starts_with(&format!("error {code}: ")));
+        assert!(
+            stdout(&json).contains(&format!("\"code\":\"{code}\"")),
+            "{reply}"
+        );
+        assert!(!stdout(&json).contains("screen of"), "{reply}");
+    }
+    fs::remove_file(root.join("orbit-reply")).unwrap();
+    assert_eq!(run(&["pane", "read", "p1"]).status.code(), Some(0));
+    // Reading changed nothing a person sees.
+    assert_eq!(
+        stable_workspace_json(&run(&["workspace", "--json"])),
+        before
+    );
+    fs::write(&supervisor.stop, "").unwrap();
+    wait_for_successful_exit(&mut supervisor.child);
+    let missing = run(&["pane", "read", "p1", "--json"]);
+    assert_eq!(missing.status.code(), Some(4));
+    assert!(stdout(&missing).contains("\"code\":\"missing-supervisor\""));
+    fs::remove_dir_all(&root).unwrap();
+
+    let off = temporary_directory();
+    let (mut supervisor, _, _) =
+        terminal_access_workspace(&off, "\n[agents]\nterminal_access = \"none\"\n");
+    let refused = eon(&off)
+        .args(["pane", "read", "p1", "--json"])
+        .output()
+        .unwrap();
+    assert_eq!(refused.status.code(), Some(1));
+    assert!(stdout(&refused).contains("\"code\":\"terminal-access-off\""));
+    assert!(!stdout(&refused).contains("screen of"));
+    let refused = eon(&off).args(["pane", "read", "p1"]).output().unwrap();
+    assert_eq!(refused.status.code(), Some(1));
+    assert!(refused.stdout.is_empty());
+    assert!(String::from_utf8_lossy(&refused.stderr).starts_with("error terminal-access-off: "));
+    fs::write(&supervisor.stop, "").unwrap();
+    wait_for_successful_exit(&mut supervisor.child);
+    fs::remove_dir_all(off).unwrap();
 }

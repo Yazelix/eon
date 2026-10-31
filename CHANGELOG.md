@@ -5,6 +5,12 @@ installation, and proven contract changes.
 
 ## Unreleased
 
+- `eon pane read TARGET [--json]` prints the visible text of a pane or popup in
+  any workspace of the window, shown or hidden, and changes nothing the window
+  shows. `--json` adds the target, the calling terminal, the screen, its size,
+  title, directory and revision. `[agents] terminal_access = "none"` refuses
+  it.
+
 - New `[agents]` settings: `terminal_access = "window"` (or `"none"`) decides
   whether `eon pane read` and `eon pane send` may reach the window's terminals,
   and `send_enter_delay_ms = 300` is the wait before `eon pane send --enter`

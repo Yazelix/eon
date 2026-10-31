@@ -3,8 +3,9 @@ use eon_workspace_protocol::v26::{
     Action, Attention, AttentionKind, AttentionState, ClaudeQuotaState, CodexQuotaState,
     Column as SnapshotColumn, Direction, Failure, InvokeIntent, MAX_COLUMNS, MAX_DIRECTORY_BYTES,
     MAX_SESSIONS, MAX_TABS, Pane as SnapshotPane, Popup as SnapshotPopup,
-    PopupEntry as SnapshotEntry, PopupKey, PopupTarget, QuotaWindow, Side, Sidebar, Snapshot,
-    Tab as SnapshotTab, TargetId, TerminalTarget, WorkspaceAction, check_popup_action,
+    PopupEntry as SnapshotEntry, PopupKey, PopupTarget, QuotaWindow, Screen, Side, Sidebar,
+    Snapshot, Tab as SnapshotTab, TargetId, TerminalTarget, TerminalText, WorkspaceAction,
+    check_popup_action,
 };
 use std::{
     collections::VecDeque,
@@ -2414,6 +2415,53 @@ pub(crate) fn caller_output(snapshot: &Snapshot, session: Option<&str>, json: bo
     }
 }
 
+/// `eon pane read --json` without the generation and window the CLI puts in
+/// front (EON-C35).
+pub(crate) fn terminal_text_json(read: &TerminalText) -> String {
+    let caller = read.caller.as_ref().map_or_else(
+        || "null".into(),
+        |caller| {
+            format!(
+                "{{\"terminal\":\"{}\",\"tab\":\"{}\",{}}}",
+                json_escape(&caller.terminal),
+                json_escape(&caller.tab),
+                target_id_json(&caller.id)
+            )
+        },
+    );
+    format!(
+        "{{\"workspace\":\"{}\",\"tab\":\"{}\",{},\"terminal\":\"{}\",\"caller\":{caller},\"revision\":{},\"screen\":\"{}\",\"rows\":{},\"columns\":{},\"title\":\"{}\",\"directory\":{},\"text\":\"{}\",\"omitted_rows\":{},\"lossy\":true}}\n",
+        json_escape(&read.target.workspace),
+        json_escape(&read.target.tab),
+        target_id_json(&read.target.id),
+        json_escape(&read.target.terminal),
+        read.revision,
+        match read.screen {
+            Screen::Primary => "primary",
+            Screen::Alternate => "alternate",
+        },
+        read.rows,
+        read.columns,
+        json_escape(&read.title),
+        json_path(&read.directory),
+        json_escape(&read.text),
+        read.omitted_rows,
+    )
+}
+
+/// `pane` and `popup`, one of them null, as `caller` reports them.
+fn target_id_json(id: &TargetId) -> String {
+    let (pane, popup) = match id {
+        TargetId::Pane(id) => (Some(id.as_str()), None),
+        TargetId::Popup(id) => (None, Some(id.as_str())),
+    };
+    let mut output = "\"pane\":".to_owned();
+    json_option(&mut output, pane);
+    output.push_str(",\"popup\":");
+    json_option(&mut output, popup);
+    output
+}
+
 pub(crate) fn human(snapshot: &Snapshot) -> String {
     let mut output = format!(
         "active {}\nsidebar {}\n",
@@ -4107,6 +4155,36 @@ mod tests {
             );
             assert_eq!(super::caller_output(&snapshot, session, false), "");
         }
+    }
+
+    #[test]
+    fn terminal_text_json_names_the_target_and_caller_and_keeps_raw_directories() {
+        let target = |workspace: &str, id| TerminalTarget {
+            workspace: workspace.into(),
+            tab: "t2".into(),
+            id,
+            terminal: "session-4".into(),
+        };
+        let read = TerminalText {
+            target: target("w2", TargetId::Popup("u3".into())),
+            caller: Some(target("w1", TargetId::Pane("p1".into()))),
+            revision: 7,
+            screen: Screen::Alternate,
+            rows: 2,
+            columns: 10,
+            title: "vim \"a\"".into(),
+            directory: b"/tmp/\xff".to_vec(),
+            omitted_rows: 1,
+            text: "one\ntwo".into(),
+        };
+        assert_eq!(
+            super::terminal_text_json(&read),
+            "{\"workspace\":\"w2\",\"tab\":\"t2\",\"pane\":null,\"popup\":\"u3\",\
+             \"terminal\":\"session-4\",\"caller\":{\"terminal\":\"session-4\",\"tab\":\"t2\",\
+             \"pane\":\"p1\",\"popup\":null},\"revision\":7,\"screen\":\"alternate\",\"rows\":2,\
+             \"columns\":10,\"title\":\"vim \\\"a\\\"\",\"directory\":[47,116,109,112,47,255],\
+             \"text\":\"one\\ntwo\",\"omitted_rows\":1,\"lossy\":true}\n"
+        );
     }
 
     #[test]

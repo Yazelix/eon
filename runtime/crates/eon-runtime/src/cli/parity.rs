@@ -93,9 +93,7 @@ fn cli_path(action: &Action) -> CliPath {
                 "eon-agent-parity-a9g0.6 adds column, sidebar and attention commands",
             );
         }
-        Action::ReadTerminal { .. } => {
-            return Exception("eon-agent-parity-a9g0.17 adds `eon pane read`");
-        }
+        Action::ReadTerminal { target } => words(&["pane", "read", target]),
         Action::SendTerminal { .. } => {
             return Exception("eon-agent-parity-a9g0.18 adds `eon pane send`");
         }

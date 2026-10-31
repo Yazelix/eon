@@ -3097,8 +3097,13 @@ socket names, JSON fields and protocol identifiers retain their spellings.
   - protection against code running as the same user.
 - **Proof:** None yet.
 - **Open proof:** The installed joint proof `eon-agent-parity-a9g0.19` proves
-  it, after the command lands (`eon-agent-parity-a9g0.17`). Candidate evidence
-  from `eon-agent-parity-a9g0.16`: the EONW v26 codec tests in
+  it. Candidate evidence: from `eon-agent-parity-a9g0.17`, the CLI test
+  `pane_read_prints_the_text_or_json_and_exits_by_failure` in
+  [`workspace_control.rs`](../eon/crates/eon/tests/workspace_control.rs), which
+  checks human and JSON output, `caller`, each failure exit (Orbit's
+  `terminal-ended` and `terminal-unavailable` from a fake Orbit) and that a
+  read changes no workspace state; from `eon-agent-parity-a9g0.16`, the EONW v26
+  codec tests in
   [`v26.rs`](../runtime/crates/eon-workspace-protocol/src/v26.rs), the lease
   tests in [`sessions.rs`](../runtime/crates/eon-runtime/src/sessions.rs) (one
   against a real Orbit), and the supervisor tests

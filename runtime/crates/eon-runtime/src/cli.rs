@@ -13,7 +13,7 @@ use super::{
     windows,
     workspace::{
         caller_output, human as human_output, json as json_output, json_escape, list_human,
-        list_json, resolve_selector,
+        list_json, resolve_selector, terminal_text_json,
     },
 };
 use eon_workspace_protocol::v26::{
@@ -849,6 +849,7 @@ fn help_text(version: &str, color: bool) -> String {
   {command}pane rename PANE NAME [--json]{reset}              Pin a pane name; empty clears
   {command}pane rename PANE --clear [--json]{reset}           Restore automatic pane naming
   {command}pane move up|down|left|right [--json]{reset}       Move the selected pane
+  {command}pane read PANE|POPUP [--json]{reset}               Print a pane's or popup's text
   {command}focus ID|left|right|up|down [--json]{reset}        Focus by ID or navigate
 
 {heading}Tools & information{reset}
@@ -873,6 +874,7 @@ WS is a workspace ID (w1, w2, ...) or its exact name.
 workspace new --name NAME names the new workspace; created gives its ID.
 With --no-focus, workspace new keeps the shown workspace, and either
 pane create keeps the selected pane and any popup.
+pane read reaches hidden workspaces; [agents] terminal_access governs it.
 Where shown, {command}--json{reset} prints JSON and skips confirmation.
 Without a terminal, a confirmation needs yes or exits 1 (not-confirmed).
 Exit status: 0 success, 1 failed, 2 invalid command, 3 target not found,
@@ -1100,6 +1102,10 @@ fn control(
             return report_failure(&unreachable_supervisor(error, generation), json);
         }
     };
+    let window = resolved
+        .window
+        .as_deref()
+        .map_or_else(|| "null".into(), |id| format!("\"{}\"", json_escape(id)));
     match response {
         ControlResponse::Workspace(Response::Snapshot(snapshot)) => {
             let caller = if inspecting {
@@ -1111,10 +1117,6 @@ fn control(
             } else {
                 String::new()
             };
-            let window = resolved
-                .window
-                .as_deref()
-                .map_or_else(|| "null".into(), |id| format!("\"{}\"", json_escape(id)));
             // The reply projects the caller's workspace. wN identities rise and
             // are never reused, and the supervisor lists the workspaces in the
             // same request step that creates one, so the highest is the new one.
@@ -1162,13 +1164,9 @@ fn control(
         ControlResponse::Workspace(Response::Ended(ended)) => {
             write_stdout(if json {
                 format!(
-                    "{{\"ended\":{{\"generation\":\"{}\"}},\"generation\":\"{}\",\"window\":{}}}\n",
+                    "{{\"ended\":{{\"generation\":\"{}\"}},\"generation\":\"{}\",\"window\":{window}}}\n",
                     json_escape(&ended.generation),
                     json_escape(generation),
-                    resolved
-                        .window
-                        .as_deref()
-                        .map_or_else(|| "null".into(), |id| format!("\"{}\"", json_escape(id)))
                 )
             } else {
                 format!(
@@ -1182,8 +1180,20 @@ fn control(
         ControlResponse::Lifecycle(_) => {
             Err("Eon supervisor returned a lifecycle result for a workspace action".into())
         }
-        // Only `eon pane read` and `eon pane send` ask for these.
-        ControlResponse::Workspace(Response::Text(_) | Response::Sent(_)) => {
+        ControlResponse::Workspace(Response::Text(read)) => {
+            write_stdout(if json {
+                format!(
+                    "{{\"generation\":\"{}\",\"window\":{window},{}",
+                    json_escape(generation),
+                    &terminal_text_json(&read)[1..]
+                )
+            } else {
+                format!("{}\n", read.text)
+            })?;
+            Ok(0)
+        }
+        // Only `eon pane send` asks for this.
+        ControlResponse::Workspace(Response::Sent(_)) => {
             Err("Eon supervisor returned a terminal result for a workspace action".into())
         }
     }
@@ -1419,6 +1429,9 @@ fn parse_control_arguments(arguments: &[OsString]) -> Result<(Action, bool), Err
         ["tab", "move", "right"] => Action::Workspace(WorkspaceAction::Move(Direction::Right)),
         ["pane", "close", pane] => Action::ClosePane {
             pane: (*pane).into(),
+        },
+        ["pane", "read", target] => Action::ReadTerminal {
+            target: (*target).into(),
         },
         ["pane", "move", "up"] => Action::Workspace(WorkspaceAction::Move(Direction::Up)),
         ["pane", "move", "down"] => Action::Workspace(WorkspaceAction::Move(Direction::Down)),
@@ -2207,6 +2220,34 @@ mod tests {
             (Action::ClosePane { pane: "p3".into() }, false)
         );
         assert!(parse_control_arguments(&["pane", "close"].map(Into::into)).is_err());
+    }
+
+    #[test]
+    fn pane_read_takes_one_target_and_an_optional_json_flag() {
+        let read = |target: &str| Action::ReadTerminal {
+            target: target.into(),
+        };
+        assert_eq!(
+            parse_control_arguments(&["pane", "read", "u2", "--json"].map(Into::into)).unwrap(),
+            (read("u2"), true)
+        );
+        assert_eq!(
+            parse_control_arguments(&["pane", "read", "p1"].map(Into::into)).unwrap(),
+            (read("p1"), false)
+        );
+        for args in [
+            &["pane", "read"][..],
+            &["pane", "read", "p1", "p2"],
+            &["pane", "read", "--", "p1"],
+            &["pane", "read", "p1", "--no-focus"],
+            &["pane", "read", "p1", "--json", "--json"],
+        ] {
+            assert!(
+                parse_control_arguments(&args.iter().map(OsString::from).collect::<Vec<_>>())
+                    .is_err(),
+                "{args:?}"
+            );
+        }
     }
 
     #[test]
