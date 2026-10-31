@@ -227,7 +227,7 @@ Paths below are relative to the repository root.
   `runtime/crates/eon-runtime/src/cli/parity.rs` maps them, and its test checks
   that each workspace command parses to its action and each lifecycle command is
   in `eon --help`. Venus-local view state is listed as an exception and has no
-  EONW action. See [Humans and Agents](../AGENTS.md#humans-and-agents). Open
+  EONW action. See [Humans and Agents](AGENT-RULES.md#humans-and-agents). Open
   gaps: `eon-agent-parity-a9g0`.
 
 ### Runtime and supervisor lifecycle
@@ -307,7 +307,7 @@ Paths below are relative to the repository root.
   Orbit receive resolved values as launch inputs or over EONW and parse none.
   Each user-visible value must be a documented setting or recorded as fixed
   with a reason. See
-  [Configurability](../AGENTS.md#configurability). Open gaps:
+  [Configurability](AGENT-RULES.md#configurability). Open gaps:
   `eon-configurability-qkq8`.
 
 ### Nix composition

@@ -125,7 +125,7 @@ It retains the earlier delivery/lifecycle proof for unchanged runtime behavior.
 
 ## Website copy for an approved release
 
-Draft for `yazelix.com`, pending publication and approval of the release trust anchor:
+Draft for `eonterm.com`, pending publication and approval of the release trust anchor:
 
 Download the reviewed Linux `eon-install` bootstrap and inspect its source.
 Use the independently approved Eon signer record to install an exact release

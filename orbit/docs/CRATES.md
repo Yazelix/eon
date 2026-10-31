@@ -6,8 +6,9 @@ Upstream project revisions keep their usual meaning.
 
 This is the durable index of direct and architecture-shaping crate decisions.
 The [reference map](REFERENCES.md) records projects worth studying; appearance
-there does not approve a dependency. The [root `AGENTS.md`](../../AGENTS.md)
-defines the dependency gate, and Beads retain the full candidate evidence.
+there does not approve a dependency. The root
+[agent rules](../../docs/AGENT-RULES.md#contract-driven-method) define the
+dependency gate, and Beads retain the full candidate evidence.
 
 ## Current decisions
 

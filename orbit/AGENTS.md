@@ -13,10 +13,11 @@ and ORBF), and the `orbit-governance` tool.
 
 Orbit owns a real PTY process and the sole authoritative libghostty terminal
 state. The process survives graphical-client exit or disconnection while Orbit
-remains running. Exactly one local client may attach. Attachment supplies one
-coherent complete host-authored structured presentation frame followed by
-ordered frame revisions. The client sends semantic input; Orbit encodes it
-against authoritative terminal state and alone answers terminal queries.
+remains running. `ORB-C3` and `ORB-C13` bound which clients may attach and
+manage a session. Attachment supplies one coherent complete host-authored
+structured presentation frame followed by ordered frame revisions. The client
+sends semantic input; Orbit encodes it against authoritative terminal state and
+alone answers terminal queries.
 
 Clients never reconstruct terminal authority from Formatter output or raw PTY
 bytes. The presentation boundary accounts explicitly for rich terminal state,
@@ -26,10 +27,10 @@ across Orbit or machine restarts is outside the contract.
 
 ## Fixed boundaries
 
-Orbit serves one terminal per session over a local Unix socket to one active
-client; multiplayer is a deliberate non-goal. Orbit has no remote transport,
-Zellij compatibility, layouts, tabs, plugins, or configuration framework.
-Broaden these only by explicit user decision.
+Orbit serves one terminal per session over a local Unix socket, only to the
+clients `ORB-C3` and `ORB-C13` admit; multiplayer is a deliberate non-goal.
+Orbit has no remote transport, Zellij compatibility, layouts, tabs, plugins, or
+configuration framework. Broaden these only by explicit user decision.
 
 Classify every `orbit-protocol` change as compatible or breaking and name each
 known consumer: Venus, Eon Runtime, and Eon. Breaking changes,

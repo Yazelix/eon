@@ -4,10 +4,11 @@ Orbit studies existing work at the implementation boundary where it can answer
 a concrete question. A reference is evidence, not an architectural foundation,
 dependency decision, or authorization to inherit its feature set.
 
-When claiming an implementation bead, follow the evidence-first gate in
-`AGENTS.md`. The bead classifies each source as required before code,
-conditional on a named failure, comparison only, or rejected scope. Planning
-routing does not count as implementation evidence.
+When claiming an implementation bead, follow the evidence-first gate in the root
+[agent rules](../../docs/AGENT-RULES.md#contract-driven-method). The bead
+classifies each source as required before code, conditional on a named failure,
+comparison only, or rejected scope. Planning routing does not count as
+implementation evidence.
 
 1. Inspect the current source and documentation for every required reference,
    recording a release or commit when behavior matters.
@@ -22,14 +23,14 @@ routing does not count as implementation evidence.
    feature.
 
 When a slice may change Cargo dependencies, follow the separate crate gate in
-`AGENTS.md` and record the durable outcome in [the crate decision
-index](CRATES.md). Compare credible implementation shapes rather than choosing
-the first crate encountered in reference research. Normally include the
-no-new-crate or existing-dependency path and at least two viable crate-backed
-alternatives, with a smaller set only when the recorded search finds fewer
-credible choices. Architecture fit, ownership, owned LOC, transitive cost,
-maintenance, platform and build consequences, and focused measurements decide
-the recommendation.
+the root [agent rules](../../docs/AGENT-RULES.md#contract-driven-method) and
+record the durable outcome in [the crate decision index](CRATES.md). Compare
+credible implementation shapes rather than choosing the first crate encountered
+in reference research. Normally include the no-new-crate or existing-dependency
+path and at least two viable crate-backed alternatives, with a smaller set only
+when the recorded search finds fewer credible choices. Architecture fit,
+ownership, owned LOC, transitive cost, maintenance, platform and build
+consequences, and focused measurements decide the recommendation.
 
 The implementation remains clean-room. Orbit may reproduce user-visible
 behavior and independently derive checks, but it does not copy source from

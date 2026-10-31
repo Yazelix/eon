@@ -327,7 +327,7 @@ not need Nix, and Nix users receive the same accepted component set.
 
 ## Website
 
-Until a Nix-free install is published, `yazelix.com` can explain Eon and label
+Until a Nix-free install is published, `eonterm.com` can explain Eon and label
 Nix as the required path. After accepted delivery proof and publication
 approval, the site can publish direct Linux installation instructions. GitHub
 release assets or another immutable object store remain the authority for

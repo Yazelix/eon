@@ -111,4 +111,4 @@ Contributors and coding agents start with [AGENTS.md](AGENTS.md) and
 [contracts](docs/CONTRACTS.md) record component ownership, exact product
 boundaries and proof. Pull requests from outside the Yazelix organization are
 read as reference and reimplemented here, with the author credited as
-co-author; see [Outside Contributions](AGENTS.md#outside-contributions).
+co-author; see [Outside Contributions](docs/AGENT-RULES.md#outside-contributions).

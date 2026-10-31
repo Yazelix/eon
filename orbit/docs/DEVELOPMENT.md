@@ -120,17 +120,18 @@ that an agent read a reference, that evidence is truthful, or that a runtime
 contract actually passes. It deliberately does not parse `.agent-protocols.*`
 or generated `AGENTS.md`: Starcompass owns that interpretation.
 
-The tool's test, run by `nix develop -c eon-test`, also enforces the
-workspace dependency direction in the root `AGENTS.md`, including that the
-protocol crates' manifests inherit no workspace settings. It reads
-`cargo metadata` and checks every kind of direct declared dependency, not code
-semantics or crates reached through third-party packages. Every workspace
-member needs a rule. Beyond `AGENTS.md`, the test lets `eon` depend on
-`eon-manifest`, limits Orbit to `orbit-protocol` and this tool to no workspace
-crate (chosen in `eon-monorepo-2oko.8`), keeps Eon's `mac-proof` harness off
-every workspace crate (`eon-mac-launch-kz4p.8`), and fails a new member until
-the test gives it one. Orbit must keep its direct `libghostty-vt` dependency, so
-renaming the engine crate fails the test instead of disabling the rule.
+The tool's test, run by `nix develop -c eon-test`, also enforces the workspace
+dependency direction in the root [agent
+rules](../../docs/AGENT-RULES.md#product-boundary), including that the protocol
+crates' manifests inherit no workspace settings. It reads `cargo metadata` and
+checks every kind of direct declared dependency, not code semantics or crates
+reached through third-party packages. Every workspace member needs a rule.
+Beyond the root rule, the test lets `eon` depend on `eon-manifest`, limits Orbit
+to `orbit-protocol` and this tool to no workspace crate (chosen in
+`eon-monorepo-2oko.8`), keeps Eon's `mac-proof` harness off every workspace
+crate (`eon-mac-launch-kz4p.8`), and fails a new member until the test gives it
+one. Orbit must keep its direct `libghostty-vt` dependency, so renaming the
+engine crate fails the test instead of disabling the rule.
 
 ## Documentation map
 
@@ -151,6 +152,7 @@ evidence or internal development work.
 References are studied when a slice begins; they do not authorize additional
 features or dependencies.
 
-The [root](../../AGENTS.md) and [Orbit](../AGENTS.md) `AGENTS.md` files own
-implementation policy: reference and dependency gates, proof tied to exact
+The [root `AGENTS.md`](../../AGENTS.md) with its
+[detail](../../docs/AGENT-RULES.md) and the [Orbit `AGENTS.md`](../AGENTS.md)
+own implementation policy: reference and dependency gates, proof tied to exact
 commits, protocol exceptions, and the platform seam.
