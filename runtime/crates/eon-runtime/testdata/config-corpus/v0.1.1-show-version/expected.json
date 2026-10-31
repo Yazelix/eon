@@ -1,4 +1,84 @@
 {
-  "error": "invalid Eon configuration config.toml: TOML parse error at line 5, column 16\n  |\n5 | show_version = false\n  |                ^^^^^\nbar.show_version is replaced by bar.widgets; list \"version\" there to show the version\n",
-  "expected_failure": "eon-wc119 turns bar.show_version into an alias of bar.widgets"
+  "resolved": {
+    "agents": {
+      "send_enter_delay_ms": 300,
+      "terminal_access": "window"
+    },
+    "anima": {
+      "duration_seconds": 2,
+      "enabled": true,
+      "style": "fixture-animation"
+    },
+    "bar": {
+      "cpu_average_seconds": 30,
+      "cpu_warning_percent": 90,
+      "disk_critical_percent": 95,
+      "disk_path": "~",
+      "disk_warning_percent": 85,
+      "ram_critical_percent": 90,
+      "ram_warning_percent": 80,
+      "widgets": [
+        "codex_quota",
+        "claude_quota",
+        "cpu",
+        "ram",
+        "disk",
+        "clock"
+      ]
+    },
+    "popups": {
+      "agent": {
+        "command": "auto",
+        "enabled": true,
+        "keep_alive": true,
+        "keybinding": "Alt+Shift+L",
+        "label": "Fixture agent"
+      },
+      "anima": {
+        "enabled": true,
+        "keybinding": "Alt+Shift+A",
+        "label": "Fixture anima"
+      },
+      "git": {
+        "command": [
+          "fixture-git"
+        ],
+        "enabled": true,
+        "keep_alive": true,
+        "keybinding": "Alt+Shift+J",
+        "label": "Fixture git"
+      },
+      "project": {
+        "keybinding": "Alt+Z",
+        "label": "Fixture project"
+      }
+    },
+    "shell": {
+      "atuin": true,
+      "carapace": true,
+      "command": [
+        "fixture-shell"
+      ],
+      "mise": true,
+      "starship": true,
+      "zoxide": true
+    },
+    "sidebar": {
+      "enabled": true
+    },
+    "terminal": {
+      "background_blur": true,
+      "background_opacity": 0.6,
+      "font_fallbacks": [],
+      "padding_color": "extend",
+      "pane_frames": true
+    },
+    "workspace": {
+      "animate_working_badge": true,
+      "warning_close_last_tab": true
+    }
+  },
+  "warnings": [
+    "eon: bar.show_version in config.toml is deprecated since v0.1.2; use bar.widgets"
+  ]
 }

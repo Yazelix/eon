@@ -2792,7 +2792,9 @@ socket names, JSON fields and protocol identifiers retain their spellings.
 - **Status:** Proven on x86_64 Linux Wayland. Amended on 2026-10-31 (approved
   by Lucca, relayed by eon-overseer) by `eon-hjtns`: the CPU and RAM load
   levels. Amended on 2026-10-31 (approved by Lucca, relayed by eon-overseer) by
-  `eon-d7itl`: the disk widget.
+  `eon-d7itl`: the disk widget. Amended on 2026-10-31 (approved by Lucca,
+  relayed by eon-overseer) by `eon-wc119`: a leftover `show_version` loads as
+  an alias.
 - **Consumer:** Full-Eon workspace users.
 - **Trigger:** A workspace window opens or reopens.
 - **Result:** `[bar] widgets` is an ordered list of unique names from
@@ -2819,13 +2821,16 @@ socket names, JSON fields and protocol identifiers retain their spellings.
   below `ram_warning_percent` nor `disk_critical_percent` below
   `disk_warning_percent`, and the window is 2 through 600 seconds. They apply
   when a window opens or reopens, like the list.
+  A leftover `[bar] show_version` (deprecated in v0.1.2) still loads, with one
+  warning naming `bar.widgets`: `false` reads as the default list without
+  `version`, `true` as the default list, and a `widgets` key set beside it
+  wins.
 - **Important failures:** An unknown or repeated name, a non-string entry, a
   value that is not a list, a load level that is not a whole number in its
   range, a critical level below its warning level, a `disk_path` other than
-  `~`, a path starting with `~/` or an absolute path, or a leftover
-  `[bar] show_version` (removed before 1.0, with an error that names
-  `bar.widgets`) fails through the existing startup and replacement handling,
-  preserving live terminals.
+  `~`, a path starting with `~/` or an absolute path, or a `[bar] show_version`
+  that is not true or false fails through the existing startup and replacement
+  handling, preserving live terminals.
 - **Owner:** Eon owns the settings, their names and defaults. Runtime parses
   and validates them and passes the list to Venus unchanged as `--bar-items`,
   with `--eon-version` only when `version` is listed, the RAM levels only when
@@ -2836,17 +2841,18 @@ socket names, JSON fields and protocol identifiers retain their spellings.
   and the disk widget, configurable hiding priority, new widget, live reload,
   settings UI, EONW change or platform expansion. Leaving out a quota chip also
   stops Runtime reading that provider (EON-C27).
-- **Proof:** `eon-igae.14.2`, for the load levels `eon-hjtns`, and for the disk
-  widget `eon-d7itl`
+- **Proof:** `eon-igae.14.2`, for the load levels `eon-hjtns`, for the disk
+  widget `eon-d7itl`, and for the leftover `show_version` alias `eon-wc119`
   - **Environment:** Automated; one isolated installed observation.
   - **Evidence:** `version_badge_uses_supervising_product_and_visibility_at_each_launch`
     and `invalid_presentation_configuration_precedes_supervisor_generation_and_children`;
     the installed observation recorded in `eon-igae.14.2`: a reordered list
     without `cpu` on window open, a leftover `show_version` refused on reattach
-    with live terminals kept, and the corrected list on the next reattach. For
-    the load levels, the same launch test extended to the levels and their
-    failures, Venus's `load_levels_are_a_bounded_workspace_choice`, and the
-    isolated installed observation recorded in `eon-hjtns`. For the disk widget,
+    (before `eon-wc119`) with live terminals kept, and the corrected list on
+    the next reattach. For the load levels, the same launch test extended to
+    the levels and their failures, Venus's
+    `load_levels_are_a_bounded_workspace_choice`, and the isolated installed
+    observation recorded in `eon-hjtns`. For the disk widget,
     the same launch test extended to the disk levels, the disk path's expansion
     and its failures, `disk_path_expands_home_and_keeps_absolute_paths`, the
     default launch in `bare_eon_attaches_only_to_the_live_current_generation`,
@@ -2856,7 +2862,11 @@ socket names, JSON fields and protocol identifiers retain their spellings.
     `disk_use_*` reading tests,
     `readings_yield_after_the_clock_and_have_no_actions` extended to the disk
     chip's hiding order and accessible node, and the isolated installed
-    observation recorded in `eon-d7itl`.
+    observation recorded in `eon-d7itl`. For the `show_version` alias,
+    `deprecated_show_version_reads_as_bar_widgets`,
+    `configuration_corpus_loads_from_the_migration_floor`, the extended
+    `version_badge_uses_supervising_product_and_visibility_at_each_launch`, and
+    the isolated installed observation recorded in `eon-wc119`.
 
 ## EON-C33 — Several workspaces in one window
 

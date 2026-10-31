@@ -1,4 +1,102 @@
 {
-  "error": "invalid Eon configuration config.toml: TOML parse error at line 6, column 16\n  |\n6 | show_version = true\n  |                ^^^^\nbar.show_version is replaced by bar.widgets; list \"version\" there to show the version\n",
-  "expected_failure": "eon-wc119 turns bar.show_version into an alias of bar.widgets"
+  "resolved": {
+    "agents": {
+      "send_enter_delay_ms": 300,
+      "terminal_access": "window"
+    },
+    "anima": {
+      "duration_seconds": 3,
+      "enabled": true,
+      "style": "random"
+    },
+    "bar": {
+      "cpu_average_seconds": 30,
+      "cpu_warning_percent": 90,
+      "disk_critical_percent": 95,
+      "disk_path": "~",
+      "disk_warning_percent": 85,
+      "ram_critical_percent": 90,
+      "ram_warning_percent": 80,
+      "widgets": [
+        "codex_quota",
+        "claude_quota",
+        "cpu",
+        "ram",
+        "disk",
+        "clock",
+        "version"
+      ]
+    },
+    "popups": {
+      "agent": {
+        "command": "auto",
+        "enabled": true,
+        "keep_alive": true,
+        "keybinding": "Alt+Shift+L",
+        "label": "Fixture agent"
+      },
+      "anima": {
+        "enabled": true,
+        "keybinding": "Alt+Shift+A",
+        "label": "Fixture anima"
+      },
+      "files": {
+        "command": [
+          "eon-yazi"
+        ],
+        "enabled": true,
+        "keep_alive": true,
+        "keybinding": "Alt+Shift+F",
+        "label": "Files"
+      },
+      "git": {
+        "command": [
+          "fixture-git"
+        ],
+        "enabled": true,
+        "keep_alive": true,
+        "keybinding": "Alt+Shift+J",
+        "label": "Fixture git"
+      },
+      "project": {
+        "keybinding": "Alt+Z",
+        "label": "Fixture project"
+      }
+    },
+    "shell": {
+      "atuin": true,
+      "carapace": true,
+      "command": [
+        "eon-nu"
+      ],
+      "mise": true,
+      "starship": true,
+      "zoxide": true
+    },
+    "sidebar": {
+      "enabled": true
+    },
+    "terminal": {
+      "background_blur": true,
+      "background_opacity": 0.8,
+      "columns": 100,
+      "cursor_trail_color": "preset:ice",
+      "cursor_trail_duration": 1.5,
+      "font_fallbacks": [],
+      "font_family": "Iosevka",
+      "font_size": 16.0,
+      "line_height": 1.125,
+      "padding_color": "extend",
+      "pane_frames": true,
+      "rows": 30
+    },
+    "workspace": {
+      "animate_working_badge": true,
+      "warning_close_last_tab": true
+    }
+  },
+  "warnings": [
+    "eon: ignoring unknown setting popup in config.toml",
+    "eon: bar.show_version in config.toml is deprecated since v0.1.2; use bar.widgets"
+  ]
 }

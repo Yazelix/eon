@@ -168,6 +168,13 @@ naming its dotted path and the configuration file. This lets an older running
 window keep using the settings it knows after a newer build adds a key. Known
 keys with wrong types or values still fail, including unsupported widget names.
 
+A key that a later release deprecated still loads, read as its replacement,
+with one warning that names the replacement; Eon never rewrites
+`config.toml`. When the replacement is set too, it wins and the deprecated key
+is ignored with a warning. `[bar] show_version`, deprecated in v0.1.2, reads as
+`[bar] widgets`: `false` gives the built-in widget list without `version`, and
+`true` gives the built-in list. Any other value is a configuration error.
+
 `[bar] widgets` chooses which Eon Bar widgets show and their order, left to
 right between the tabs and the Shortcuts and Close buttons: the Codex and
 Claude quota chips, CPU, RAM and disk use, the local clock and

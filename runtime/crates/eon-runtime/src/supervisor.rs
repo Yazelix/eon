@@ -3048,6 +3048,16 @@ mod tests {
                 false,
             ),
             ("[bar]\nwidgets = []\n", "", false),
+            (
+                "[bar]\nshow_version = false\n",
+                "codex_quota,claude_quota,cpu,ram,disk,clock",
+                false,
+            ),
+            (
+                "[bar]\nshow_version = true\n",
+                "codex_quota,claude_quota,cpu,ram,disk,clock,version",
+                true,
+            ),
         ] {
             fs::write(root.join("config.toml"), source).unwrap();
             assert_eq!(
@@ -3156,8 +3166,8 @@ mod tests {
             ("[bar]\nwidgets = [1]\n", "invalid type", true),
             ("[bar]\nwidgets = 'ram'\n", "invalid type", true),
             (
-                "[bar]\nshow_version = false\n",
-                "replaced by bar.widgets",
+                "[bar]\nshow_version = 'no'\n",
+                "bar.show_version must be true or false",
                 true,
             ),
             (

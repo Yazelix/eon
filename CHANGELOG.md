@@ -12,9 +12,16 @@ installation, and proven contract changes.
   `[bar] widgets` accepts `disk`, and `[bar] disk_path`, `disk_warning_percent`
   and `disk_critical_percent` set the measured path and the levels (EON-C32
   amended).
+- Deprecated: `[bar] show_version`, replaced by `[bar] widgets`. A leftover
+  v0.1.1 `show_version` opens its window again instead of stopping the load:
+  Eon reads it as `[bar] widgets` and logs one warning naming the replacement,
+  without rewriting `config.toml`. `show_version = false` shows the built-in
+  widgets without the version and `true` shows them all; when `widgets` is set
+  too, it wins and `show_version` is ignored with a warning. Eon removes the
+  alias only once the migration floor passes v0.1.2.
 
 - Migration floor: v0.1.1, the oldest release whose configuration Eon keeps
-  loading. A leftover v0.1.1 `[bar] show_version` still stops the load.
+  loading.
 
 - The Eon Bar's CPU and RAM chips colour when the machine is under load: RAM
   turns orange from 80% use and red from 90%, and CPU turns orange while its

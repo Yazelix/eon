@@ -2630,7 +2630,10 @@ fn invalid_presentation_configuration_precedes_supervisor_generation_and_childre
     );
 
     for (source, field) in [
-        ("[bar]\nshow_version = false\n", "bar.widgets"),
+        (
+            "[bar]\nshow_version = 'no'\n",
+            "bar.show_version must be true or false",
+        ),
         ("[bar]\nwidgets = ['gpu']\n", "unknown widget"),
         ("[bar]\nwidgets = ['cpu', 'cpu']\n", "repeats"),
         (

@@ -35,6 +35,10 @@ struct EonConfig {
     popups: BTreeMap<String, PopupEntrySettings>,
     #[serde(flatten)]
     unknown: BTreeMap<String, toml::Value>,
+    /// The deprecated keys read through `ALIASES`, each with whether its
+    /// replacement was also set and so won.
+    #[serde(skip)]
+    deprecated: Vec<(&'static Alias, bool)>,
 }
 
 impl EonConfig {
@@ -144,16 +148,8 @@ struct BarSettings {
     disk_warning_percent: Option<u64>,
     disk_critical_percent: Option<u64>,
     disk_path: Option<String>,
-    #[serde(deserialize_with = "removed_show_version")]
-    show_version: (),
     #[serde(flatten)]
     unknown: BTreeMap<String, toml::Value>,
-}
-
-fn removed_show_version<'de, D: serde::Deserializer<'de>>(_: D) -> Result<(), D::Error> {
-    Err(serde::de::Error::custom(
-        "bar.show_version is replaced by bar.widgets; list \"version\" there to show the version",
-    ))
 }
 
 /// The absolute path `value` names: itself when absolute, or under `home` for `~` and `~/...`.
@@ -185,7 +181,7 @@ pub(crate) fn bar(
     defaults: &Defaults,
     log: Option<&DiagnosticLog>,
 ) -> Result<Bar, String> {
-    let settings = read_config(root, log)?.bar;
+    let settings = read_config(root, defaults, log)?.bar;
     let percent = |key: &str, value: Option<u64>, default: u8| {
         value.map_or(Ok(default), |value| {
             u8::try_from(value)
@@ -691,7 +687,7 @@ pub(crate) fn startup_animation(
     defaults: &Defaults,
     log: Option<&DiagnosticLog>,
 ) -> Result<Option<StartupAnimation>, String> {
-    let settings = read_config(root, log)?.anima;
+    let settings = read_config(root, defaults, log)?.anima;
     let anima = StartupAnimation {
         enabled: settings.enabled.unwrap_or(defaults.anima.enabled),
         style: settings
@@ -719,7 +715,7 @@ pub(crate) fn warning_close_last_tab(
     defaults: &Defaults,
     log: Option<&DiagnosticLog>,
 ) -> Result<bool, String> {
-    Ok(read_config(root, log)?
+    Ok(read_config(root, defaults, log)?
         .workspace
         .warning_close_last_tab
         .unwrap_or(defaults.warning_close_last_tab))
@@ -730,7 +726,7 @@ pub(crate) fn animate_working_badge(
     defaults: &Defaults,
     log: Option<&DiagnosticLog>,
 ) -> Result<bool, String> {
-    Ok(read_config(root, log)?
+    Ok(read_config(root, defaults, log)?
         .workspace
         .animate_working_badge
         .unwrap_or(defaults.animate_working_badge))
@@ -741,7 +737,7 @@ pub(crate) fn sidebar_enabled(
     defaults: &Defaults,
     log: Option<&DiagnosticLog>,
 ) -> Result<bool, String> {
-    Ok(read_config(root, log)?
+    Ok(read_config(root, defaults, log)?
         .sidebar
         .enabled
         .unwrap_or(defaults.sidebar_enabled))
@@ -752,7 +748,7 @@ pub(crate) fn agents(
     defaults: &Defaults,
     log: Option<&DiagnosticLog>,
 ) -> Result<Agents, String> {
-    let settings = read_config(root, log)?.agents;
+    let settings = read_config(root, defaults, log)?.agents;
     let delay = settings
         .send_enter_delay_ms
         .unwrap_or(defaults.send_enter_delay_ms.into());
@@ -772,7 +768,7 @@ pub(crate) fn terminal_presentation(
     defaults: &Defaults,
     log: Option<&DiagnosticLog>,
 ) -> Result<TerminalConfig, String> {
-    let settings = read_config(root, log)?.terminal;
+    let settings = read_config(root, defaults, log)?.terminal;
     let base = &defaults.terminal;
     let terminal = TerminalConfig {
         background_opacity: settings
@@ -871,7 +867,7 @@ pub(crate) fn popup_catalog(
     defaults: &Defaults,
     log: Option<&DiagnosticLog>,
 ) -> Result<PopupCatalog, String> {
-    let mut config = read_config(root, log)?;
+    let mut config = read_config(root, defaults, log)?;
     // Popup margins are Eon's fixed values, not configuration (EON-C10).
     let geometry = defaults.popups.geometry;
 
@@ -1212,9 +1208,10 @@ pub(crate) fn command(
     // keys in its log; stderr here is that terminal's scrollback. Every other launch warns.
     let warned = env::var_os(CONFIG_WARNED_VARIABLE).is_some();
     let shell = match tool {
-        Tool::Nu | Tool::Bash if warned => {
-            Some(shell_config(parse_config(config)?.shell, defaults)?)
-        }
+        Tool::Nu | Tool::Bash if warned => Some(shell_config(
+            parse_config(config, defaults)?.shell,
+            defaults,
+        )?),
         Tool::Nu | Tool::Bash => Some(read_shell_config(config, defaults, None)?),
         _ => None,
     };
@@ -1317,7 +1314,7 @@ fn read_shell_config(
     defaults: &Defaults,
     log: Option<&DiagnosticLog>,
 ) -> Result<ShellConfig, String> {
-    shell_config(read_config(root, log)?.shell, defaults)
+    shell_config(read_config(root, defaults, log)?.shell, defaults)
 }
 
 fn shell_config(settings: ShellSettings, defaults: &Defaults) -> Result<ShellConfig, String> {
@@ -1339,10 +1336,94 @@ fn shell_config(settings: ShellSettings, defaults: &Defaults) -> Result<ShellCon
     Ok(shell)
 }
 
-/// Parses the configuration and warns once per unknown key: through `log`, which
-/// remembers what it has noted, else on stderr.
-fn read_config(root: &Path, log: Option<&DiagnosticLog>) -> Result<EonConfig, String> {
-    let config = parse_config(root)?;
+/// A configuration key a release deprecated, read as its replacement without
+/// rewriting the file (eon-c8ytm). An entry may go, with its corpus fixtures,
+/// only once the migration floor is above `deprecated_in`, never while it
+/// equals it.
+#[derive(Debug)]
+struct Alias {
+    old: &'static str,
+    new: &'static str,
+    /// The release that first warned about, or stopped accepting, `old`.
+    deprecated_in: &'static str,
+    /// The value for `new` given the value of `old`, or `None` to drop `old`
+    /// without a replacement.
+    translate: fn(&toml::Value, &Defaults) -> Result<Option<toml::Value>, String>,
+}
+
+#[rustfmt::skip]
+const ALIASES: &[Alias] = &[
+    Alias { old: "bar.show_version", new: "bar.widgets", deprecated_in: "v0.1.2", translate: show_version },
+];
+
+/// `show_version = false` hid the version badge, which `[bar] widgets` now lists.
+fn show_version(value: &toml::Value, defaults: &Defaults) -> Result<Option<toml::Value>, String> {
+    let shown = value
+        .as_bool()
+        .ok_or("bar.show_version must be true or false")?;
+    let widgets = defaults.bar_widgets.iter().copied();
+    Ok(Some(
+        widgets
+            .filter(|widget| shown || *widget != "version")
+            .collect::<Vec<_>>()
+            .into(),
+    ))
+}
+
+/// Reads each deprecated key in `table` as its replacement, unless the
+/// replacement is set too, and returns the aliases it applied. A value that
+/// cannot be translated fails even when the replacement wins.
+fn translate_deprecated<'a>(
+    table: &mut toml::Table,
+    aliases: &'a [Alias],
+    defaults: &Defaults,
+) -> Result<Vec<(&'a Alias, bool)>, String> {
+    // The table holding a dotted key, creating missing tables when `create`.
+    fn parent<'a>(
+        mut table: &'a mut toml::Table,
+        key: &'static str,
+        create: bool,
+    ) -> Option<(&'a mut toml::Table, &'static str)> {
+        let (path, name) = key.rsplit_once('.').unwrap_or(("", key));
+        for part in path.split('.').filter(|part| !part.is_empty()) {
+            if create {
+                table
+                    .entry(part)
+                    .or_insert_with(|| toml::Table::new().into());
+            }
+            table = table.get_mut(part)?.as_table_mut()?;
+        }
+        Some((table, name))
+    }
+    let mut applied = Vec::new();
+    for alias in aliases {
+        let Some(value) =
+            parent(table, alias.old, false).and_then(|(table, name)| table.remove(name))
+        else {
+            continue;
+        };
+        let value = (alias.translate)(&value, defaults)?;
+        let replaced =
+            parent(table, alias.new, false).is_some_and(|(table, name)| table.contains_key(name));
+        if !replaced
+            && let Some(value) = value
+            && let Some((table, name)) = parent(table, alias.new, true)
+        {
+            table.insert(name.into(), value);
+        }
+        applied.push((alias, replaced));
+    }
+    Ok(applied)
+}
+
+/// Parses the configuration and warns once per unknown or deprecated key:
+/// through `log`, which remembers what it has noted, else on stderr.
+fn read_config(
+    root: &Path,
+    defaults: &Defaults,
+    log: Option<&DiagnosticLog>,
+) -> Result<EonConfig, String> {
+    let config = parse_config(root, defaults)?;
     for warning in config_warnings(&config, &root.join("config.toml")) {
         if let Some(log) = log {
             log.note_once(&warning);
@@ -1353,23 +1434,35 @@ fn read_config(root: &Path, log: Option<&DiagnosticLog>) -> Result<EonConfig, St
     Ok(config)
 }
 
-/// One warning per unknown key of the configuration read from `path`.
+/// One warning per unknown or deprecated key of the configuration read from `path`.
 fn config_warnings(config: &EonConfig, path: &Path) -> Vec<String> {
-    config
-        .unknown_keys()
-        .into_iter()
-        .map(|key| {
+    let path = path.to_string_lossy();
+    let path = path.escape_debug();
+    let unknown = config.unknown_keys().into_iter().map(|key| {
+        format!(
+            "eon: ignoring unknown setting {} in {path}",
+            key.escape_debug()
+        )
+    });
+    let deprecated = config.deprecated.iter().map(|(alias, replaced)| {
+        if *replaced {
             format!(
-                "eon: ignoring unknown setting {} in {}",
-                key.escape_debug(),
-                path.to_string_lossy().escape_debug(),
+                "eon: ignoring deprecated setting {} in {path}; {} is set",
+                alias.old, alias.new
             )
-        })
-        .collect()
+        } else {
+            format!(
+                "eon: {} in {path} is deprecated since {}; use {}",
+                alias.old, alias.deprecated_in, alias.new
+            )
+        }
+    });
+    unknown.chain(deprecated).collect()
 }
 
-/// Parses the configuration without warning about unknown keys.
-fn parse_config(root: &Path) -> Result<EonConfig, String> {
+/// Parses the configuration, reading deprecated keys as their replacements,
+/// without warning about unknown or deprecated keys.
+fn parse_config(root: &Path, defaults: &Defaults) -> Result<EonConfig, String> {
     let path = root.join("config.toml");
     let source = match fs::read_to_string(&path) {
         Ok(source) => source,
@@ -1380,8 +1473,23 @@ fn parse_config(root: &Path) -> Result<EonConfig, String> {
             return Err(format!("cannot read {}: {error}", path.display()));
         }
     };
-    toml::from_str(&source)
-        .map_err(|error| format!("invalid Eon configuration {}: {error}", path.display()))
+    let invalid = |error: String| format!("invalid Eon configuration {}: {error}", path.display());
+    // Parsing the text keeps each error's line and column; a deprecated key
+    // lands among the unknown keys until the translation below replaces it.
+    let mut config: EonConfig =
+        toml::from_str(&source).map_err(|error: toml::de::Error| invalid(error.to_string()))?;
+    let mut table: toml::Table =
+        toml::from_str(&source).map_err(|error: toml::de::Error| invalid(error.to_string()))?;
+    let deprecated = translate_deprecated(&mut table, ALIASES, defaults).map_err(invalid)?;
+    if !deprecated.is_empty() {
+        // The text parsed, so only a translated value can fail here, and its
+        // error has no line or column.
+        config = table
+            .try_into()
+            .map_err(|error: toml::de::Error| invalid(error.to_string()))?;
+    }
+    config.deprecated = deprecated;
+    Ok(config)
 }
 
 fn prepend_path(prefix: &Path, path: Option<&OsStr>, owner: &str) -> Result<OsString, String> {
@@ -1475,7 +1583,7 @@ mod tests {
             assert_eq!(json["terminal"].get("font_family").is_some(), explicit);
             fs::write(printed.join("config.toml"), toml).unwrap();
             assert!(
-                super::read_config(&printed, None)
+                super::read_config(&printed, &defaults, None)
                     .unwrap()
                     .unknown_keys()
                     .is_empty()
@@ -1505,8 +1613,10 @@ mod tests {
         root: &Path,
         defaults: &super::Defaults,
     ) -> Result<(serde_json::Value, Vec<String>), String> {
-        let warnings =
-            super::config_warnings(&super::parse_config(root)?, Path::new("config.toml"));
+        let warnings = super::config_warnings(
+            &super::parse_config(root, defaults)?,
+            Path::new("config.toml"),
+        );
         let bar = super::bar(root, defaults, None)?;
         let agents = super::agents(root, defaults, None)?;
         let anima = startup_animation(root, defaults, None)?;
@@ -1515,7 +1625,7 @@ mod tests {
             bar_widgets: Box::leak(bar.widgets.into_boxed_slice()),
             bar_load: bar.load,
             // The configured path, as `eon config defaults` prints it, not its expansion.
-            bar_disk_path: super::read_config(root, None)?
+            bar_disk_path: super::read_config(root, defaults, None)?
                 .bar
                 .disk_path
                 .map_or(defaults.bar_disk_path, |path| {
@@ -1681,7 +1791,8 @@ nested = { value = true }
             "g1-0123456789abcdef0123456789abcdef",
             "workspace",
         );
-        let config = super::read_config(&root, Some(&log)).unwrap();
+        let defaults = crate::fixtures::inputs().defaults;
+        let config = super::read_config(&root, &defaults, Some(&log)).unwrap();
         assert_eq!(config.shell.starship, Some(false));
         assert_eq!(config.terminal.background_opacity, Some(0.37));
         assert_eq!(
@@ -1739,7 +1850,7 @@ nested = { value = true }
         )
         .unwrap();
         assert!(
-            super::read_config(&root, None)
+            super::read_config(&root, &defaults, None)
                 .unwrap_err()
                 .contains("background_opacity")
         );
@@ -1749,7 +1860,7 @@ nested = { value = true }
     // Fails when every reread of an unchanged file warns again, as the supervisor's
     // several reads per start and per new terminal once did (EON-C9: one warning).
     #[test]
-    fn rereads_through_one_log_warn_once_per_unknown_key() {
+    fn rereads_through_one_log_warn_once_per_unknown_or_deprecated_key() {
         let root = crate::supervisor::temporary_directory();
         let log = super::DiagnosticLog::open_in(
             Ok(root.join("logs")),
@@ -1765,11 +1876,12 @@ nested = { value = true }
         }
         fs::write(
             &path,
-            "[popup]\nside_margin = 13.0\n[terminal]\nnew_field = 1\n",
+            "[popup]\nside_margin = 13.0\n[terminal]\nnew_field = 1\n[bar]\nshow_version = false\n",
         )
         .unwrap();
         for _ in 0..2 {
             terminal_presentation(&root, &inputs.defaults, Some(&log)).unwrap();
+            super::bar(&root, &inputs.defaults, Some(&log)).unwrap();
         }
         let log_path = fs::read_dir(root.join("logs"))
             .unwrap()
@@ -1789,7 +1901,112 @@ nested = { value = true }
             );
         }
         assert_eq!(logged.matches("ignoring unknown setting").count(), 2);
+        assert_eq!(
+            logged.matches(" is deprecated since ").count(),
+            1,
+            "{logged}"
+        );
         fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn deprecated_show_version_reads_as_bar_widgets() {
+        let root = crate::supervisor::temporary_directory();
+        let defaults = crate::fixtures::inputs().defaults;
+        let read = |source: &str| {
+            fs::write(root.join("config.toml"), source).unwrap();
+            let warnings = super::config_warnings(
+                &super::parse_config(&root, &defaults)?,
+                Path::new("config.toml"),
+            );
+            Ok::<_, String>((super::bar(&root, &defaults, None)?.widgets, warnings))
+        };
+        let (widgets, warnings) = read("[bar]\nshow_version = false\n").unwrap();
+        let mut expected = defaults.bar_widgets.to_vec();
+        expected.retain(|widget| *widget != "version");
+        assert_eq!(widgets, expected);
+        assert_eq!(
+            warnings,
+            ["eon: bar.show_version in config.toml is deprecated since v0.1.2; use bar.widgets"]
+        );
+        let (widgets, warnings) = read("[bar]\nshow_version = true\n").unwrap();
+        assert_eq!(widgets, defaults.bar_widgets);
+        assert_eq!(warnings.len(), 1);
+        let (widgets, warnings) =
+            read("[bar]\nshow_version = false\nwidgets = ['version']\n").unwrap();
+        assert_eq!(widgets, ["version"]);
+        assert_eq!(
+            warnings,
+            [
+                "eon: ignoring deprecated setting bar.show_version in config.toml; bar.widgets is set"
+            ]
+        );
+        for source in [
+            "[bar]\nshow_version = 'no'\n",
+            "[bar]\nshow_version = 0\n",
+            "[bar]\nwidgets = ['cpu']\nshow_version = 'no'\n",
+        ] {
+            let error = read(source).unwrap_err();
+            assert!(
+                error.ends_with("config.toml: bar.show_version must be true or false"),
+                "{error}"
+            );
+        }
+        // Errors keep their position, and a deprecated key changes no other check.
+        for (source, position) in [
+            ("[bar]\nwidgets = 'version'\n", "line 2, column 11"),
+            (
+                "[bar]\nshow_version = false\n[terminal]\nbackground_opacity = 'x'\n",
+                "line 4, column 22",
+            ),
+            (
+                "[bar]\nshow_version = false\n[terminal]\nfont_family = 2026-10-31\n",
+                "line 4, column 15",
+            ),
+        ] {
+            let error = read(source).unwrap_err();
+            assert!(error.contains(position), "{error}");
+        }
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    // Fails when an alias that drops its key inserts one, or one that moves a key
+    // into a missing table does not create it.
+    #[test]
+    fn deprecated_keys_drop_or_move_into_missing_tables() {
+        let defaults = crate::fixtures::inputs().defaults;
+        let aliases = [
+            super::Alias {
+                old: "dropped",
+                new: "kept",
+                deprecated_in: "v0",
+                translate: |_, _| Ok(None),
+            },
+            super::Alias {
+                old: "a.moved",
+                new: "b.c.moved",
+                deprecated_in: "v0",
+                translate: |value, _| Ok(Some(value.clone())),
+            },
+        ];
+        let mut table: toml::Table = toml::from_str("dropped = 1\n[a]\nmoved = 2\n").unwrap();
+        let applied = super::translate_deprecated(&mut table, &aliases, &defaults).unwrap();
+        assert_eq!(applied.len(), 2);
+        assert_eq!(table, toml::from_str("a = {}\nb.c.moved = 2\n").unwrap());
+    }
+
+    // Fails when an alias names a replacement `eon config defaults --json` does
+    // not print, or still prints the key it replaces.
+    #[test]
+    fn deprecated_keys_alias_current_settings() {
+        let defaults = crate::fixtures::inputs().defaults;
+        let json: serde_json::Value =
+            serde_json::from_str(&super::print_defaults(&defaults, true).unwrap()).unwrap();
+        let pointer = |key: &str| format!("/{}", key.replace('.', "/"));
+        for alias in super::ALIASES {
+            assert!(json.pointer(&pointer(alias.new)).is_some(), "{alias:?}");
+            assert!(json.pointer(&pointer(alias.old)).is_none(), "{alias:?}");
+        }
     }
 
     #[test]
