@@ -103,6 +103,7 @@ fn a_local_dry_run_round_trips_the_candidate_tree() {
             "keys=planned",
             "views=planned",
             "detach=planned",
+            "admission=planned",
             "crash=planned",
             "adoption=planned",
             "stop=planned",

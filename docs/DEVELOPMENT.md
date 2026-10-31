@@ -95,11 +95,13 @@ backdrop below every window on the main display during its captures. With
 Accessibility, which lets it post key events, it also dismisses the first tab's
 picker, which takes a key, and drives Eon through the `eon` CLI, a driver in
 its first pane and keys sent to Venus. That covers panes, tabs, focus, `eon
-edit`, a pane's environment and size, the Files popup, Command+V, detach, a
-Venus crash and supervisor adoption. With both Accessibility and Screen
-Recording, captures of Venus's window also check its background translucency
-over the backdrop, a Kitty image, zoom and the Shortcuts dialog. Granting
-either permission takes a click in System Settings. A step that lacks what it
+edit`, a pane's environment and size, the Files popup, Command+V, detach,
+Orbit's refusal of an attaching client that is not Eon, `eon pane read` and
+`eon pane send`, a Venus crash and supervisor adoption. With both
+Accessibility and Screen Recording, captures of Venus's window also check its
+background translucency over the backdrop, a Kitty image, zoom and the
+Shortcuts dialog. Granting either permission takes a click in System
+Settings. A step that lacks what it
 needs is skipped and listed for Yu in `summary.txt`. A run whose only non-passing
 steps are these skips passes and reports how many steps were left for Yu; each
 step's status stays skipped. Command+C on a pointer selection, the Eon Bar's chips

@@ -7,11 +7,15 @@ use crate::{
     retina,
     step::{Failure, Log, Outcome, Runner, capture_stdout, check, execute, succeed},
 };
+use orbit_protocol::session::{
+    self as orbs, ClientMessage, KeyAction, KeyEvent, Modifiers, PhysicalKey, ServerMessage,
+};
 use serde_json::Value;
 use std::{
     collections::{BTreeMap, BTreeSet},
     fs::{self, File},
-    io::{self, BufRead, BufReader},
+    io::{self, BufRead, BufReader, Read, Write},
+    os::unix::net::UnixStream,
     path::{Path, PathBuf},
     process::{Child, Command, Stdio},
     sync::mpsc,
@@ -230,6 +234,19 @@ const STEPS: &[Spec] = &[
         window: true,
         timeout: Duration::from_secs(2 * 60),
         body: detach,
+    },
+    Spec {
+        name: "admission",
+        needs: KEYS,
+        requires: &["picker"],
+        proves: "Orbit admits only Eon's Venus (ORB-C3): an ORBS client that is not Eon gets \
+                 Busy, and the command it would type never runs, from a hidden tab's shell, a \
+                 hidden popup's and, while Venus is detached, the shown tab's. Text Venus pastes \
+                 reaches a new tab's shell, a popup's, and the tab's again after `eon attach`, \
+                 as `eon pane read` shows, and `eon pane send` runs a command in the hidden shell",
+        window: true,
+        timeout: Duration::from_secs(4 * 60),
+        body: admission,
     },
     Spec {
         name: "crash",
@@ -990,6 +1007,69 @@ impl Scenario {
         mac::press(venus, &keys).map_err(Failure::Check)
     }
 
+    /// Puts `text` on the Mac's clipboard with `pbcopy`.
+    fn copy(&self, text: &str, log: &mut Log, deadline: Instant) -> Outcome {
+        let copied = self.root.join("copied");
+        fs::write(&copied, text)
+            .map_err(|error| Failure::Check(format!("{}: {error}", copied.display())))?;
+        succeed(
+            log,
+            Command::new("/bin/sh")
+                .args(["-c", r#"/usr/bin/pbcopy < "$0""#])
+                .arg(&copied),
+            deadline,
+            false,
+        )
+        .map(drop)
+    }
+
+    /// Pastes `text`, a shell comment, with Command+V and Return into the
+    /// terminal Venus shows, until `eon pane read` finds it in pane or popup
+    /// `target`. Venus may not have attached when the first paste arrives, so
+    /// it pastes again every five seconds. Return leaves the shell's line
+    /// empty for what a stranger would type.
+    fn typed(&mut self, target: &str, text: &str, log: &mut Log, deadline: Instant) -> Outcome {
+        self.copy(text, log, deadline)?;
+        loop {
+            self.press(&[PASTE, RETURN], log, deadline)?;
+            let wait = deadline.min(Instant::now() + Duration::from_secs(5));
+            let read = until(wait, || {
+                let reply = self.act(&["pane", "read", target], log, deadline)?;
+                Ok(reply["text"]
+                    .as_str()
+                    .is_some_and(|shown| shown.contains(text))
+                    .then_some(()))
+            });
+            match read {
+                Err(Failure::Timeout) if Instant::now() < deadline => {}
+                other => return other,
+            }
+        }
+    }
+
+    /// Runs `script` in the driver's pane, which creates one pane, and
+    /// returns that pane.
+    fn new_pane(
+        &mut self,
+        script: &str,
+        log: &mut Log,
+        deadline: Instant,
+    ) -> Result<Pane, Failure> {
+        let before: BTreeSet<String> = panes(&self.workspace(log, deadline)?)
+            .into_iter()
+            .map(|pane| pane.id)
+            .collect();
+        self.inside(script, log, deadline)?;
+        let after = panes(&self.workspace(log, deadline)?);
+        let mut created = after.into_iter().filter(|pane| !before.contains(&pane.id));
+        match (created.next(), created.next()) {
+            (Some(pane), None) => Ok(pane),
+            _ => Err(Failure::Check(format!(
+                "`{script}` did not create one pane"
+            ))),
+        }
+    }
+
     /// Runs `script` with /bin/sh in the driver's pane and returns its output.
     fn inside(
         &mut self,
@@ -1181,6 +1261,11 @@ const PASTE: Key = Key {
     code: 9,
     flags: COMMAND,
 };
+/// The scenario's own popup, a shell (`launch` configures it).
+const SHELL_POPUP: Key = Key {
+    code: 31,
+    flags: OPTION | SHIFT,
+};
 
 /// Where the largest on-screen window of process `venus` lies on the main
 /// display.
@@ -1325,6 +1410,7 @@ struct Pane {
     id: String,
     tab: String,
     session: String,
+    endpoint: String,
 }
 
 /// Every pane of `eon workspace --json`, tab by tab.
@@ -1343,6 +1429,7 @@ fn panes(workspace: &Value) -> Vec<Pane> {
                     id: text(&pane["id"]),
                     tab: text(&tab["id"]),
                     session: text(&pane["session"]),
+                    endpoint: text(&pane["endpoint"]),
                 })
         })
         .collect()
@@ -1360,19 +1447,18 @@ fn selection(workspace: &Value) -> (String, String) {
     (active.to_owned(), pane.unwrap_or_default().to_owned())
 }
 
-/// The active tab's shown popup's entry, such as `files`.
-fn shown_popup(workspace: &Value) -> Option<String> {
+/// The active tab's shown popup.
+fn shown_popup(workspace: &Value) -> Option<&Value> {
     let active = &workspace["active_tab"];
     let tab = workspace["tabs"]
         .as_array()?
         .iter()
         .find(|tab| &tab["id"] == active)?;
     let shown = tab["selected_popup"].as_str()?;
-    let popup = tab["popups"]
+    tab["popups"]
         .as_array()?
         .iter()
-        .find(|popup| popup["id"] == shown)?;
-    popup["entry"].as_str().map(str::to_owned)
+        .find(|popup| popup["id"] == shown)
 }
 
 /// Where the largest of `windows` (x, y, width and height) lies, in shares
@@ -1473,7 +1559,10 @@ fn launch(scenario: &mut Scenario, log: &mut Log, deadline: Instant) -> Outcome 
     // Anima would delay the picker by three seconds.
     fs::write(
         config.join("config.toml"),
-        format!("[anima]\nenabled = false\n\n[terminal]\nbackground_opacity = {OPACITY}\n"),
+        format!(
+            "[anima]\nenabled = false\n\n[terminal]\nbackground_opacity = {OPACITY}\n\n\
+             [popups.shell]\ncommand = [\"/bin/sh\"]\nkeybinding = \"Alt+Shift+O\"\n"
+        ),
     )
     .map_err(failed)?;
     let driver = scenario.root.join("driver.sh");
@@ -1975,10 +2064,9 @@ fn keys(scenario: &mut Scenario, log: &mut Log, deadline: Instant) -> Outcome {
     scenario.press(&[FILES], log, deadline)?;
     log.line("mac-proof: waiting for the Files popup");
     until(deadline, || {
-        Ok(
-            (shown_popup(&scenario.workspace(log, deadline)?).as_deref() == Some("files"))
-                .then_some(()),
-        )
+        Ok(shown_popup(&scenario.workspace(log, deadline)?)
+            .is_some_and(|popup| popup["entry"] == "files")
+            .then_some(()))
     })?;
     scenario.press(&[FILES], log, deadline)?;
     log.line("mac-proof: waiting for the Files popup to hide");
@@ -1991,18 +2079,8 @@ fn keys(scenario: &mut Scenario, log: &mut Log, deadline: Instant) -> Outcome {
     // Command+V puts `pbcopy`'s text, which replaces the Mac's clipboard,
     // into a pane that reads one line.
     let token = format!("mac-proof paste {}", std::process::id());
-    let copied = scenario.root.join("copied");
     let pasted = scenario.root.join("pasted");
-    fs::write(&copied, &token)
-        .map_err(|error| Failure::Check(format!("{}: {error}", copied.display())))?;
-    succeed(
-        log,
-        Command::new("/bin/sh")
-            .args(["-c", r#"/usr/bin/pbcopy < "$0""#])
-            .arg(&copied),
-        deadline,
-        false,
-    )?;
+    scenario.copy(&token, log, deadline)?;
     // Renamed into place, so the harness never reads it half written.
     let reader = format!(
         r#"IFS= read -r line; printf %s "$line" > {0}.tmp && /bin/mv {0}.tmp {0}; exec /bin/sleep 3600"#,
@@ -2059,6 +2137,154 @@ fn detach(scenario: &mut Scenario, log: &mut Log, deadline: Instant) -> Outcome 
         log,
         deadline,
     )
+}
+
+fn admission(scenario: &mut Scenario, log: &mut Log, deadline: Instant) -> Outcome {
+    let eon = quote(&scenario.eon_path().to_string_lossy());
+    let marker = scenario.root.join("stranger");
+    let id = std::process::id();
+    scenario.show_driver(log, deadline)?;
+    let hidden = scenario.new_pane(
+        &format!("{eon} pane create --json --no-focus -- /bin/sh"),
+        log,
+        deadline,
+    )?;
+    let work = quote(&scenario.work().to_string_lossy());
+    let shown = scenario.new_pane(
+        &format!("{eon} tab create --json --directory {work} -- /bin/sh"),
+        log,
+        deadline,
+    )?;
+    scenario.typed(&shown.id, &format!("# mac-proof tab {id}"), log, deadline)?;
+
+    scenario.press(&[SHELL_POPUP], log, deadline)?;
+    log.line("mac-proof: waiting for the shell popup");
+    let (popup, endpoint) = until(deadline, || {
+        let workspace = scenario.workspace(log, deadline)?;
+        Ok(shown_popup(&workspace)
+            .filter(|popup| popup["entry"] == "shell")
+            .and_then(|popup| {
+                Some((
+                    popup["id"].as_str()?.to_owned(),
+                    popup["endpoint"].as_str()?.to_owned(),
+                ))
+            }))
+    })?;
+    scenario.typed(&popup, &format!("# mac-proof popup {id}"), log, deadline)?;
+    scenario.press(&[SHELL_POPUP], log, deadline)?;
+    log.line("mac-proof: waiting for the shell popup to hide");
+    until(deadline, || {
+        Ok(shown_popup(&scenario.workspace(log, deadline)?)
+            .is_none()
+            .then_some(()))
+    })?;
+    // Venus lets go of the popup's terminal a moment after it hides, and
+    // until then Orbit answers Busy to anyone.
+    thread::sleep(Duration::from_secs(2));
+
+    stranger(&hidden.endpoint, &marker, log)?;
+    stranger(&endpoint, &marker, log)?;
+    let sent = scenario.root.join("sent");
+    let command = format!("/usr/bin/touch {}", quote(&sent.to_string_lossy()));
+    scenario.act(
+        &["pane", "send", &hidden.id, "--enter", "--", &command],
+        log,
+        deadline,
+    )?;
+    log.line("mac-proof: waiting for the command eon pane send typed");
+    until(deadline, || Ok(sent.exists().then_some(())))?;
+
+    let venus = scenario.wait_for_venus(log, deadline)?;
+    scenario.press(&[DETACH], log, deadline)?;
+    log.line(&format!("mac-proof: waiting for Venus {venus} to end"));
+    until(deadline, || {
+        Ok((scenario.venus(log, deadline)? != Some(venus)).then_some(()))
+    })?;
+    // Orbit sees Venus's connection close a moment later.
+    thread::sleep(Duration::from_secs(2));
+    stranger(&shown.endpoint, &marker, log)?;
+    scenario.reattach(log, deadline)?;
+    scenario.typed(
+        &shown.id,
+        &format!("# mac-proof attach {id}"),
+        log,
+        deadline,
+    )
+}
+
+/// eon-ahzkt's probe, from a process that is not Eon: an ORBS client says
+/// Hello on `endpoint`, which Orbit must answer Busy and close (ORB-C3). Were
+/// it admitted, it would type a command that creates `marker` and fail.
+fn stranger(endpoint: &str, marker: &Path, log: &mut Log) -> Outcome {
+    log.line(&format!("mac-proof: a stranger says Hello on {endpoint}"));
+    let failed = |error: io::Error| Failure::Check(format!("the stranger on {endpoint}: {error}"));
+    let mut stream = UnixStream::connect(endpoint).map_err(failed)?;
+    stream
+        .set_read_timeout(Some(Duration::from_secs(5)))
+        .map_err(failed)?;
+    let encode = |message: &ClientMessage| {
+        orbs::encode_client_message(message)
+            .map_err(|error| Failure::Check(format!("encoding {message:?}: {error:?}")))
+    };
+    stream
+        .write_all(&encode(&ClientMessage::Hello)?)
+        .map_err(failed)?;
+    let mut received = Vec::new();
+    let (answer, length) = loop {
+        let mut chunk = [0; 4096];
+        let read = stream.read(&mut chunk).map_err(failed)?;
+        check(read > 0, || {
+            format!("Orbit on {endpoint} closed before it answered Hello")
+        })?;
+        received.extend_from_slice(&chunk[..read]);
+        let length = orbs::server_message_len(&received).map_err(|error| {
+            Failure::Check(format!("an ORBS header from {endpoint}: {error:?}"))
+        })?;
+        if let Some(length) = length.filter(|length| received.len() >= *length) {
+            let answer = orbs::decode_server_message(&received[..length]).map_err(|error| {
+                Failure::Check(format!("an ORBS message from {endpoint}: {error:?}"))
+            })?;
+            break (answer, length);
+        }
+    };
+    if answer == ServerMessage::Busy {
+        let mut rest = Vec::new();
+        stream.read_to_end(&mut rest).map_err(failed)?;
+        log.line("mac-proof: answered Busy, then closed");
+        let after = received.len() - length + rest.len();
+        return check(after == 0, || {
+            format!("Orbit on {endpoint} sent {after} bytes after Busy")
+        });
+    }
+    let enter = |action| {
+        ClientMessage::Key(KeyEvent {
+            action,
+            key: PhysicalKey::ENTER,
+            modifiers: Modifiers::empty(),
+            consumed_modifiers: Modifiers::empty(),
+            composing: false,
+            text: None,
+            unshifted_codepoint: None,
+        })
+    };
+    let command = format!("/usr/bin/touch {}", quote(&marker.to_string_lossy()));
+    for message in [
+        ClientMessage::Paste(command.into_bytes()),
+        enter(KeyAction::Press),
+        enter(KeyAction::Release),
+    ] {
+        stream.write_all(&encode(&message)?).map_err(failed)?;
+    }
+    thread::sleep(Duration::from_secs(3));
+    Err(Failure::Check(format!(
+        "Orbit on {endpoint} answered a stranger's Hello with {}, and its command {}",
+        format!("{answer:?}").chars().take(80).collect::<String>(),
+        if marker.exists() {
+            "ran"
+        } else {
+            "did not run within 3 s"
+        }
+    )))
 }
 
 fn crash(scenario: &mut Scenario, log: &mut Log, deadline: Instant) -> Outcome {
@@ -2340,9 +2566,9 @@ mod tests {
                 {"id": "t1", "selected_pane": "p1", "selected_popup": null, "popups": [],
                  "panes": [{"id": "p1", "session": "session-1"}]},
                 {"id": "t2", "selected_pane": "p3", "selected_popup": "u1",
-                 "popups": [{"id": "u1", "entry": "files"}],
+                 "popups": [{"id": "u1", "entry": "files", "endpoint": "/tmp/es-9/u1.sock"}],
                  "panes": [{"id": "p2", "session": "session-2"},
-                           {"id": "p3", "session": "session-3"}]}
+                           {"id": "p3", "session": "session-3", "endpoint": "/tmp/es-9/p3.sock"}]}
             ]
         });
         let found = panes(&workspace);
@@ -2353,10 +2579,14 @@ mod tests {
                 id: "p3".to_owned(),
                 tab: "t2".to_owned(),
                 session: "session-3".to_owned(),
+                endpoint: "/tmp/es-9/p3.sock".to_owned(),
             }
         );
         assert_eq!(selection(&workspace), ("t2".to_owned(), "p3".to_owned()));
-        assert_eq!(shown_popup(&workspace).as_deref(), Some("files"));
+        assert_eq!(
+            shown_popup(&workspace),
+            Some(&json!({"id": "u1", "entry": "files", "endpoint": "/tmp/es-9/u1.sock"}))
+        );
         assert_eq!(
             shown_popup(&json!({"active_tab": "t1", "tabs": workspace["tabs"]})),
             None

@@ -1376,6 +1376,7 @@ dependencies = [
  "objc2-app-kit 0.3.2",
  "objc2-core-foundation",
  "objc2-core-graphics",
+ "orbit-protocol",
  "serde_json",
 ]
 
