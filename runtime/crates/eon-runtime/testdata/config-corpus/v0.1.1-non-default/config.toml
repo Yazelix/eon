@@ -1,0 +1,62 @@
+# Every key v0.1.1 accepted, set to a value other than its default, except
+# [bar] show_version (see v0.1.1-show-version).
+# Unset keys resolve to the eon-runtime test fixture defaults.
+
+[terminal]
+background_opacity = 0.37
+background_blur = false
+pane_frames = false
+cursor_trail_color = "custom:#ff8800"
+cursor_trail_duration = 2.5
+font_family = "Iosevka"
+font_fallbacks = ["Noto Sans Mono", "Symbols Nerd Font Mono"]
+font_size = 13.5
+line_height = 1.25
+columns = 120
+rows = 40
+
+[shell]
+command = ["bash", "-l"]
+starship = false
+zoxide = false
+atuin = false
+carapace = false
+
+[anima]
+enabled = false
+style = "aquarium"
+duration_seconds = 9
+
+# [popup] margins became fixed in c077225 (EON-C10); this build ignores the
+# table with a warning.
+[popup]
+side_margin = 13
+vertical_margin = 9
+
+[popups.project]
+label = "Projects"
+keybinding = "Alt+P"
+
+[popups.git]
+command = ["tig"]
+label = "Tig"
+keybinding = "Alt+Shift+G"
+keep_alive = false
+
+[popups.agent]
+command = ["claude"]
+label = "Claude"
+keybinding = "Alt+Shift+C"
+keep_alive = false
+
+[popups.anima]
+enabled = false
+
+[popups.files]
+command = ["eon-yazi"]
+label = "Files"
+keybinding = "Alt+Shift+F"
+keep_alive = false
+
+[popups.retired]
+enabled = false

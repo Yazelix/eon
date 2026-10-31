@@ -1,0 +1,51 @@
+# The documented examples in docs/CONFIGURATION.md at v0.1.2, verbatim.
+# [popup] margins became fixed in c077225 (EON-C10); this build ignores the
+# table with a warning.
+
+[bar]
+widgets = ["codex_quota", "claude_quota", "cpu", "ram", "clock", "version"]
+
+[terminal]
+background_opacity = 0.80
+background_blur = true
+padding_color = "extend"
+pane_frames = true
+focus_color = "custom:#b207fb"
+border_width = 1
+focus_border_width = 1
+cursor_trail_color = "preset:ice"
+cursor_trail_duration = 1.5
+font_family = "Iosevka"
+font_size = 16
+line_height = 1.125
+columns = 100
+rows = 30
+
+[shell]
+command = ["eon-nu"]
+starship = true
+zoxide = true
+atuin = true
+carapace = true
+mise = true
+
+[anima]
+enabled = true
+style = "random"
+duration_seconds = 3
+
+[workspace]
+warning_close_last_tab = true
+
+[sidebar]
+enabled = true
+
+[popup]
+side_margin = 8
+vertical_margin = 4
+
+[popups.monitor]
+command = ["btop"]
+keybinding = "Alt+Shift+O"
+label = "Monitor"
+keep_alive = true

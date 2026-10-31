@@ -1,0 +1,100 @@
+{
+  "resolved": {
+    "agents": {
+      "send_enter_delay_ms": 300,
+      "terminal_access": "window"
+    },
+    "anima": {
+      "duration_seconds": 3,
+      "enabled": true,
+      "style": "random"
+    },
+    "bar": {
+      "cpu_average_seconds": 30,
+      "cpu_warning_percent": 90,
+      "ram_critical_percent": 90,
+      "ram_warning_percent": 80,
+      "widgets": [
+        "codex_quota",
+        "claude_quota",
+        "cpu",
+        "ram",
+        "clock",
+        "version"
+      ]
+    },
+    "popups": {
+      "agent": {
+        "command": "auto",
+        "enabled": true,
+        "keep_alive": true,
+        "keybinding": "Alt+Shift+L",
+        "label": "Fixture agent"
+      },
+      "anima": {
+        "enabled": true,
+        "keybinding": "Alt+Shift+A",
+        "label": "Fixture anima"
+      },
+      "git": {
+        "command": [
+          "fixture-git"
+        ],
+        "enabled": true,
+        "keep_alive": true,
+        "keybinding": "Alt+Shift+J",
+        "label": "Fixture git"
+      },
+      "monitor": {
+        "command": [
+          "btop"
+        ],
+        "enabled": true,
+        "keep_alive": true,
+        "keybinding": "Alt+Shift+O",
+        "label": "Monitor"
+      },
+      "project": {
+        "keybinding": "Alt+Z",
+        "label": "Fixture project"
+      }
+    },
+    "shell": {
+      "atuin": true,
+      "carapace": true,
+      "command": [
+        "eon-nu"
+      ],
+      "mise": true,
+      "starship": true,
+      "zoxide": true
+    },
+    "sidebar": {
+      "enabled": true
+    },
+    "terminal": {
+      "background_blur": true,
+      "background_opacity": 0.8,
+      "border_width": 1,
+      "columns": 100,
+      "cursor_trail_color": "preset:ice",
+      "cursor_trail_duration": 1.5,
+      "focus_border_width": 1,
+      "focus_color": "custom:#b207fb",
+      "font_fallbacks": [],
+      "font_family": "Iosevka",
+      "font_size": 16.0,
+      "line_height": 1.125,
+      "padding_color": "extend",
+      "pane_frames": true,
+      "rows": 30
+    },
+    "workspace": {
+      "animate_working_badge": true,
+      "warning_close_last_tab": true
+    }
+  },
+  "warnings": [
+    "eon: ignoring unknown setting popup in config.toml"
+  ]
+}

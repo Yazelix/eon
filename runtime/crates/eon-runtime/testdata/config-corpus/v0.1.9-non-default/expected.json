@@ -1,0 +1,93 @@
+{
+  "resolved": {
+    "agents": {
+      "send_enter_delay_ms": 0,
+      "terminal_access": "none"
+    },
+    "anima": {
+      "enabled": false
+    },
+    "bar": {
+      "cpu_average_seconds": 60,
+      "cpu_warning_percent": 75,
+      "ram_critical_percent": 85,
+      "ram_warning_percent": 70,
+      "widgets": [
+        "clock",
+        "cpu"
+      ]
+    },
+    "popups": {
+      "agent": {
+        "command": [
+          "claude"
+        ],
+        "enabled": true,
+        "keep_alive": false,
+        "keybinding": "Alt+Shift+C",
+        "label": "Claude"
+      },
+      "files": {
+        "command": [
+          "eon-yazi"
+        ],
+        "enabled": true,
+        "keep_alive": false,
+        "keybinding": "Alt+Shift+F",
+        "label": "Files"
+      },
+      "git": {
+        "command": [
+          "tig"
+        ],
+        "enabled": true,
+        "keep_alive": false,
+        "keybinding": "Alt+Shift+G",
+        "label": "Tig"
+      },
+      "project": {
+        "keybinding": "Alt+P",
+        "label": "Projects"
+      }
+    },
+    "shell": {
+      "atuin": false,
+      "carapace": false,
+      "command": [
+        "bash",
+        "-l"
+      ],
+      "mise": false,
+      "starship": false,
+      "zoxide": false
+    },
+    "sidebar": {
+      "enabled": false
+    },
+    "terminal": {
+      "background_blur": false,
+      "background_opacity": 0.37,
+      "border_width": 2,
+      "columns": 120,
+      "cursor_trail_color": "custom:#ff8800",
+      "cursor_trail_duration": 2.5,
+      "focus_border_width": 3,
+      "focus_color": "custom:#00ff88",
+      "font_fallbacks": [
+        "Noto Sans Mono",
+        "Symbols Nerd Font Mono"
+      ],
+      "font_family": "Iosevka",
+      "font_size": 13.5,
+      "line_height": 1.25,
+      "padding_color": "background",
+      "pane_frames": false,
+      "rows": 40
+    },
+    "workspace": {
+      "animate_working_badge": false,
+      "warning_close_last_tab": false
+    }
+  },
+  "warnings": []
+}

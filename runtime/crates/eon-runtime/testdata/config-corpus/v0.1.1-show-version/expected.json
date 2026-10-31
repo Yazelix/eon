@@ -1,0 +1,4 @@
+{
+  "error": "invalid Eon configuration config.toml: TOML parse error at line 5, column 16\n  |\n5 | show_version = false\n  |                ^^^^^\nbar.show_version is replaced by bar.widgets; list \"version\" there to show the version\n",
+  "expected_failure": "eon-wc119 turns bar.show_version into an alias of bar.widgets"
+}

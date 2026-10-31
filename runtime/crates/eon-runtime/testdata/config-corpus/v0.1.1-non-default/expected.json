@@ -1,0 +1,96 @@
+{
+  "resolved": {
+    "agents": {
+      "send_enter_delay_ms": 300,
+      "terminal_access": "window"
+    },
+    "anima": {
+      "enabled": false
+    },
+    "bar": {
+      "cpu_average_seconds": 30,
+      "cpu_warning_percent": 90,
+      "ram_critical_percent": 90,
+      "ram_warning_percent": 80,
+      "widgets": [
+        "codex_quota",
+        "claude_quota",
+        "cpu",
+        "ram",
+        "clock",
+        "version"
+      ]
+    },
+    "popups": {
+      "agent": {
+        "command": [
+          "claude"
+        ],
+        "enabled": true,
+        "keep_alive": false,
+        "keybinding": "Alt+Shift+C",
+        "label": "Claude"
+      },
+      "files": {
+        "command": [
+          "eon-yazi"
+        ],
+        "enabled": true,
+        "keep_alive": false,
+        "keybinding": "Alt+Shift+F",
+        "label": "Files"
+      },
+      "git": {
+        "command": [
+          "tig"
+        ],
+        "enabled": true,
+        "keep_alive": false,
+        "keybinding": "Alt+Shift+G",
+        "label": "Tig"
+      },
+      "project": {
+        "keybinding": "Alt+P",
+        "label": "Projects"
+      }
+    },
+    "shell": {
+      "atuin": false,
+      "carapace": false,
+      "command": [
+        "bash",
+        "-l"
+      ],
+      "mise": true,
+      "starship": false,
+      "zoxide": false
+    },
+    "sidebar": {
+      "enabled": true
+    },
+    "terminal": {
+      "background_blur": false,
+      "background_opacity": 0.37,
+      "columns": 120,
+      "cursor_trail_color": "custom:#ff8800",
+      "cursor_trail_duration": 2.5,
+      "font_fallbacks": [
+        "Noto Sans Mono",
+        "Symbols Nerd Font Mono"
+      ],
+      "font_family": "Iosevka",
+      "font_size": 13.5,
+      "line_height": 1.25,
+      "padding_color": "extend",
+      "pane_frames": false,
+      "rows": 40
+    },
+    "workspace": {
+      "animate_working_badge": true,
+      "warning_close_last_tab": true
+    }
+  },
+  "warnings": [
+    "eon: ignoring unknown setting popup in config.toml"
+  ]
+}

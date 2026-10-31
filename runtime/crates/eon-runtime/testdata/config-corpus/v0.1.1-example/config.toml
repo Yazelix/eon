@@ -1,0 +1,40 @@
+# The documented examples in docs/CONFIGURATION.md at v0.1.1, verbatim.
+# [popup] margins became fixed in c077225 (EON-C10); this build ignores the
+# table with a warning.
+
+[bar]
+show_version = true
+
+[terminal]
+background_opacity = 0.80
+background_blur = true
+pane_frames = true
+cursor_trail_color = "preset:ice"
+cursor_trail_duration = 1.5
+font_family = "Iosevka"
+font_size = 16
+line_height = 1.125
+columns = 100
+rows = 30
+
+[shell]
+command = ["eon-nu"]
+starship = true
+zoxide = true
+atuin = true
+carapace = true
+
+[anima]
+enabled = true
+style = "random"
+duration_seconds = 3
+
+[popup]
+side_margin = 8
+vertical_margin = 4
+
+[popups.files]
+command = ["eon-yazi"]
+keybinding = "Alt+Shift+F"
+label = "Files"
+keep_alive = true

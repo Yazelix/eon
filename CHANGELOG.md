@@ -5,6 +5,9 @@ installation, and proven contract changes.
 
 ## Unreleased
 
+- Migration floor: v0.1.1, the oldest release whose configuration Eon keeps
+  loading. A leftover v0.1.1 `[bar] show_version` still stops the load.
+
 - The Eon Bar's CPU and RAM chips colour when the machine is under load: RAM
   turns orange from 80% use and red from 90%, and CPU turns orange while its
   30-second average is 90% or more, so short spikes stay neutral. Hover and

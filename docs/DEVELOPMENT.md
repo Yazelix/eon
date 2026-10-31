@@ -243,6 +243,16 @@ Sources and compilation stay in the ordinary build directory.
 Helix source-delivery check. It rejects evaluation-time Codeberg and SourceHut
 fetches and compiles all ten bundled grammars through Helix's production builder.
 
+Every build loads the configuration corpus in
+`runtime/crates/eon-runtime/testdata/config-corpus`: `config.toml` fixtures from
+each release, each beside an `expected.json` of the resolved values and
+warnings it must keep giving (on a mismatch the test prints what the fixture
+resolves to). A release that adds or changes a configuration key adds or
+updates its fixture. A renamed or removed key keeps its alias and fixture until
+the declared migration floor (`MIGRATION_FLOOR` beside the corpus test in Eon
+Runtime's `managed_environment.rs`, also stated in `CHANGELOG.md`) passes them;
+then both go together.
+
 Use Beads for implementation plans and deferred decisions:
 
 ```sh

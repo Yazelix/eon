@@ -1,0 +1,5 @@
+# v0.1.1's [bar] show_version at its non-default value; v0.1.2 replaced it
+# with [bar] widgets.
+
+[bar]
+show_version = false

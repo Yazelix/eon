@@ -1273,13 +1273,7 @@ fn shell_config(settings: ShellSettings, defaults: &Defaults) -> Result<ShellCon
 /// remembers what it has noted, else on stderr.
 fn read_config(root: &Path, log: Option<&DiagnosticLog>) -> Result<EonConfig, String> {
     let config = parse_config(root)?;
-    let path = root.join("config.toml");
-    for key in config.unknown_keys() {
-        let warning = format!(
-            "eon: ignoring unknown setting {} in {}",
-            key.escape_debug(),
-            path.to_string_lossy().escape_debug(),
-        );
+    for warning in config_warnings(&config, &root.join("config.toml")) {
         if let Some(log) = log {
             log.note_once(&warning);
         } else {
@@ -1287,6 +1281,21 @@ fn read_config(root: &Path, log: Option<&DiagnosticLog>) -> Result<EonConfig, St
         }
     }
     Ok(config)
+}
+
+/// One warning per unknown key of the configuration read from `path`.
+fn config_warnings(config: &EonConfig, path: &Path) -> Vec<String> {
+    config
+        .unknown_keys()
+        .into_iter()
+        .map(|key| {
+            format!(
+                "eon: ignoring unknown setting {} in {}",
+                key.escape_debug(),
+                path.to_string_lossy().escape_debug(),
+            )
+        })
+        .collect()
 }
 
 /// Parses the configuration without warning about unknown keys.
@@ -1392,6 +1401,99 @@ mod tests {
         }
         fs::remove_dir_all(empty).unwrap();
         fs::remove_dir_all(printed).unwrap();
+    }
+
+    /// The configuration `root` resolves to, in `eon config defaults --json` shape
+    /// over the test fixture defaults rather than Eon's, and its warnings.
+    fn resolved_config(
+        root: &Path,
+        defaults: &super::Defaults,
+    ) -> Result<(serde_json::Value, Vec<String>), String> {
+        let warnings =
+            super::config_warnings(&super::parse_config(root)?, Path::new("config.toml"));
+        let bar = super::bar(root, defaults, None)?;
+        let agents = super::agents(root, defaults, None)?;
+        let anima = startup_animation(root, defaults, None)?;
+        let resolved = super::Defaults {
+            // `Defaults` holds a static widget list.
+            bar_widgets: Box::leak(bar.widgets.into_boxed_slice()),
+            bar_load: bar.load,
+            shell: read_shell_config(root, defaults, None)?,
+            terminal: terminal_presentation(root, defaults, None)?,
+            anima: anima.clone().unwrap_or_else(|| defaults.anima.clone()),
+            warning_close_last_tab: warning_close_last_tab(root, defaults, None)?,
+            animate_working_badge: animate_working_badge(root, defaults, None)?,
+            sidebar_enabled: sidebar_enabled(root, defaults, None)?,
+            terminal_access: agents.terminal_access,
+            send_enter_delay_ms: agents.send_enter_delay_ms,
+            popups: popup_catalog(root, defaults, None)?,
+            custom_popup_keep_alive: defaults.custom_popup_keep_alive,
+            ansi_palette: defaults.ansi_palette,
+            agent_commands: defaults.agent_commands,
+        };
+        let mut resolved: serde_json::Value =
+            serde_json::from_str(&super::print_defaults(&resolved, true)?).unwrap();
+        if anima.is_none() {
+            resolved["anima"] = serde_json::json!({ "enabled": false });
+        }
+        Ok((resolved, warnings))
+    }
+
+    /// The migration floor: the oldest release whose configuration and durable
+    /// state Eon keeps reading. Migration code and corpus fixtures below it may be
+    /// deleted.
+    const MIGRATION_FLOOR: &str = "v0.1.1";
+
+    // Fails when a configuration that an earlier release at or above the migration
+    // floor accepted stops loading or changes meaning (eon-c8ytm). Each
+    // `testdata/config-corpus/<release>[-<case>]` holds a `config.toml` and an
+    // `expected.json`: its resolved values and warnings, or, for a file this build
+    // still rejects, the error and the reason it is expected.
+    #[test]
+    fn configuration_corpus_loads_from_the_migration_floor() {
+        let release = |name: &str| -> Vec<u64> {
+            name.strip_prefix('v')
+                .unwrap()
+                .split('.')
+                .map(|part| part.parse().unwrap())
+                .collect()
+        };
+        let floor = release(MIGRATION_FLOOR);
+        let defaults = crate::fixtures::inputs().defaults;
+        let corpus = Path::new(env!("CARGO_MANIFEST_DIR")).join("testdata/config-corpus");
+        let mut fixtures = fs::read_dir(&corpus)
+            .unwrap()
+            .map(|entry| entry.unwrap().path())
+            .collect::<Vec<_>>();
+        fixtures.sort();
+        assert!(fixtures.len() >= 3, "{fixtures:?}");
+        for root in fixtures {
+            let name = root.file_name().unwrap().to_str().unwrap();
+            assert!(
+                release(name.split('-').next().unwrap()) >= floor,
+                "{name} is below the migration floor; delete it with its migration code"
+            );
+            let expected: serde_json::Value =
+                serde_json::from_str(&fs::read_to_string(root.join("expected.json")).unwrap())
+                    .unwrap();
+            let actual = match resolved_config(&root, &defaults) {
+                Ok((resolved, warnings)) => {
+                    serde_json::json!({ "resolved": resolved, "warnings": warnings })
+                }
+                Err(error) => {
+                    assert!(expected["expected_failure"].is_string(), "{name}: {error}");
+                    serde_json::json!({
+                        "error": error.replace(&format!("{}/", root.display()), ""),
+                        "expected_failure": expected["expected_failure"],
+                    })
+                }
+            };
+            assert!(
+                actual == expected,
+                "{name} resolves to\n{}",
+                serde_json::to_string_pretty(&actual).unwrap()
+            );
+        }
     }
 
     #[test]
