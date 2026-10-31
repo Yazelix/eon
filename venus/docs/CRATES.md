@@ -183,7 +183,8 @@ dependency decision does not establish public-distribution proof.
 ### Local time zone
 
 - **Selected shape:** jiff 0.2.38 with default features disabled and `std`,
-  `tz-system` and `tzdb-zoneinfo` enabled (`eon-igae.4`, VEN-C27). Linux and
+  `tz-system` and `tzdb-zoneinfo` enabled (`eon-igae.4`, the Eon Bar clock in
+  [PRESENTATION.md](PRESENTATION.md#eon-bar)). Linux and
   macOS compile only jiff and jiff-core. The lockfile also lists jiff-static,
   behind a `cfg(any())` gate that never builds, and defmt, an optional
   dependency left disabled. Unlicense or MIT.
@@ -201,7 +202,8 @@ dependency decision does not establish public-distribution proof.
 
 - **Selected shape:** target-only libc 0.2.189 on macOS, the workspace's exact
   pin, already in Venus's macOS build through core-foundation, so the lock
-  gains one edge and no package (`eon-mac-launch-kz4p.3`, VEN-C28).
+  gains one edge and no package (`eon-mac-launch-kz4p.3`, the Eon Bar CPU and
+  RAM labels in [PRESENTATION.md](PRESENTATION.md#eon-bar)).
 - **Owner consequence:** Venus's library root denies unsafe code instead of
   forbidding it, and one macOS-only module in `src/system.rs` allows it: the
   host port taken once per process, `host_statistics`, a zeroed

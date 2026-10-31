@@ -223,6 +223,19 @@ background, under the title text and outline; collapsed title rows, popups,
 zoom and frameless mode keep their existing backgrounds. The setting applies
 when a window opens or reopens.
 
+`background_opacity` sets how opaque each terminal's default background is, in
+Eon and eonbase alike. It also covers the terminal padding, the title rows and
+gaps that share that background (above), and the agent sidebar card. Explicit
+cell backgrounds, selection, text and the cursor keep their own colours, and the
+Eon Bar stays the opaque bar colour. With pane frames on, so do the gaps and
+footer outside the cards; with them off, the frameless terminal-background
+strips below the bar, sidebar and footer included, take this opacity.
+See-through areas still take clicks. `background_blur` asks the compositor to
+blur what shows through. It is independent of opacity, so a fully opaque
+background hides it, and a compositor without blur ignores it. See [Window
+background and
+decorations](../venus/docs/PRESENTATION.md#window-background-and-decorations).
+
 Opacity accepts `0.0` through `1.0`. Blur and pane frames are booleans. Font size
 accepts 6–96 logical pixels, line height accepts 1–3, and a supplied columns and
 rows pair must fit 100,000 cells. `font_fallbacks` accepts an ordered array of at

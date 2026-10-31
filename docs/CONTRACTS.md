@@ -12,7 +12,8 @@ and remaining limitations. Owning Beads and Git retain execution history;
 - **Partially proved:** one exact useful slice is proved with a required gap
 - **Proven:** an exact check, component set, platform and artifact cover the
   contract
-- **Retired:** explicitly replaced or removed; its ID is never reused
+- **Retired:** explicitly replaced, removed, or demoted to a feature; its ID is
+  never reused
 
 Proofs cite revisions of this repository. "Pending re-proof in this repository"
 marks an earlier proof that was not repeated after consolidation; it is
@@ -55,8 +56,11 @@ socket names, JSON fields and protocol identifiers retain their spellings.
   prose table cells.
 - Contract IDs are stable and repository-qualified. Never renumber or reuse an
   ID; mark an explicitly removed contract retired.
-- Only current user-visible behavior, correctness boundaries, ownership
-  invariants, and interfaces between subsystems belong here.
+- Only behavior that meets the
+  [contract criterion](AGENT-RULES.md#contract-driven-method) belongs here: a
+  wire or format, lifecycle, trust rule, ownership invariant, script or agent
+  surface, or platform scope. Presentation is a feature, kept in its bead and
+  the user documentation.
 - Every implementation Bead names the contracts it changes, proves, consumes,
   hardens, or preserves and records exact child revisions.
 - Historical execution evidence belongs in Beads and Git, not this current-state
@@ -1486,71 +1490,21 @@ socket names, JSON fields and protocol identifiers retain their spellings.
 
 ## EON-C13 — Terminal-background opacity policy
 
-- **Status:** Proven
-- **Consumer:** Every Eon or eonbase Venus surface.
-- **Trigger:** Eon creates or reopens a surface while
-  `$EON_CONFIG_HOME/config.toml` contains optional
-  `terminal.background_opacity`.
-- **Result:** Eon accepts one finite `f32` in `0.0..=1.0`, defaults absence to
-  `0.80`, and passes the exact value as `--background-opacity` before Venus
-  endpoints. Eon and eonbase share it. A live Venus is unchanged; replacement
-  reads one current configuration snapshot while Orbit and its PTY remain live.
-- **Important failures:** Invalid initial configuration names the field and
-  starts no supervisor, Orbit, or Venus. Invalid replacement configuration
-  returns bounded presentation failure without stopping Orbit or its child.
-- **Owner:** Eon supplies the default; Eon Runtime owns strict configuration
-  and launch projection; Venus owns native rendering.
-- **Consumes:** Venus `VEN-C11`.
-- **Boundary:** Opacity affects only terminal default background and padding, not
-  explicit cells, text, cursor, selection, chrome, decorations, input, hit
-  testing, accessibility, or click-through. No profile, public override,
-  watcher, live reload, Orbit restart, non-Wayland claim, or renderer fallback.
-- **Proof:** `795d735a8f61ef439c56d68e1cc4d3929af0dfcf`, `eon-monorepo-2oko.6`.
-  - **Environment:** Automated tier; installed tier.
-  - **Evidence:** `bare_eon_attaches_only_to_the_live_current_generation` checks
-    the default `--background-opacity 0.8`;
-    `eonbase_reopens_without_workspace_or_a_second_session` rereads an explicit
-    value on reopen;
-    `invalid_presentation_configuration_precedes_supervisor_generation_and_children`
-    rejects invalid values; Venus `background_opacity_selects_only_proved_surface_modes`,
-    `background_opacity_premultiplies_clear_colors` and
-    `background_opacity_skips_only_default_cell_backgrounds`. Installed checklist
-    item 8 at the `0.80` default.
+- **Status:** Retired 2026-10-30 by Lucca: demoted to a feature; behavior in
+  [Configuration behavior](CONFIGURATION.md#configuration-behavior); proof in
+  `eon-monorepo-2oko.6`, `eon-vn0nk`.
+- **Reason:** Background opacity is presentation that only a person looking at
+  the window relies on. Its `[terminal] background_opacity` key and default stay
+  documented in Configuration, which EON-C28 covers.
 
 ## EON-C14 — Default compositor blur policy
 
-- **Status:** Proven by the automated tier; the installed backdrop is pending
-  re-proof in this repository.
-- **Consumer:** Every Eon or eonbase Venus surface.
-- **Trigger:** Eon creates or reopens a surface while
-  `$EON_CONFIG_HOME/config.toml` contains optional strict boolean
-  `terminal.background_blur`.
-- **Result:** Absence defaults to `true`; true passes exactly one
-  `--background-blur` before Venus endpoints and false omits it. Eon and eonbase
-  share the setting. A live Venus is unchanged; replacement uses one current
-  configuration snapshot while Orbit and its PTY remain live. Blur remains
-  independent from opacity.
-- **Important failures:** Invalid initial configuration names the field and
-  starts no supervisor, Orbit, or Venus. Invalid replacement configuration is
-  bounded without stopping Orbit. Unsupported compositor policy remains
-  Venus/compositor best effort and does not make Eon launch fail.
-- **Owner:** Eon supplies the default; Eon Runtime owns strict configuration
-  and launch projection; Venus and the compositor own native behavior.
-- **Consumes:** Venus `VEN-C15` and EON-C13.
-- **Boundary:** No capability probe, automatic opacity, blur strength, public
-  override, watcher, live reload, fallback renderer, Eonova-specific policy, or
-  non-Wayland visual claim.
-- **Proof:** `795d735a8f61ef439c56d68e1cc4d3929af0dfcf`, `eon-monorepo-2oko.6`.
-  - **Environment:** Automated tier.
-  - **Evidence:** `bare_eon_attaches_only_to_the_live_current_generation` checks
-    one default `--background-blur`; `eonbase_reopens_without_workspace_or_a_second_session`
-    omits blur under `background_blur = false`, then rereads the configuration
-    on reopen and restores the default blur once the setting is removed;
-    `invalid_presentation_configuration_precedes_supervisor_generation_and_children`
-    rejects invalid values.
-- **Open proof:** Pending re-proof in this repository: the installed frosted
-  backdrop on a blur-capable compositor such as COSMIC; headless Sway has no
-  blur protocol.
+- **Status:** Retired 2026-10-30 by Lucca: demoted to a feature; behavior in
+  [Configuration behavior](CONFIGURATION.md#configuration-behavior); proof in
+  `eon-monorepo-2oko.6`, `eon-vn0nk`.
+- **Reason:** Background blur is presentation that only a person looking at the
+  window relies on. Its `[terminal] background_blur` key and default stay
+  documented in Configuration, which EON-C28 covers.
 
 ## EON-C15 — Same-boot Orbit recovery
 
@@ -1923,7 +1877,9 @@ socket names, JSON fields and protocol identifiers retain their spellings.
     snapshot.
   - `[terminal] padding_color` accepts `extend` (default), `extend-always`, or
     `background`; Eon Runtime resolves it and supplies Venus's `--padding-color`
-    launch input for terminal padding as VEN-C11 describes.
+    launch input for terminal padding as
+    [Configuration behavior](CONFIGURATION.md#configuration-behavior)
+    describes.
   - The authoritative startup workspace Snapshot transfer and native readiness
     share one absolute thirty-second deadline, including large snapshots, so a
     busy machine does not close a slow but healthy window. A missed deadline
@@ -2061,7 +2017,8 @@ socket names, JSON fields and protocol identifiers retain their spellings.
 - **Result:** Full Eon presents one native Eon Bar at the existing tab-strip
   height. Eon-authored tab identity and action policy feed Venus's tab-first
   responsive layout, New tab beside the rightmost tab or pinned at the
-  tab-region edge during overflow, Shortcuts when EON-C24 needs its fallback,
+  tab-region edge during overflow, Shortcuts when the bottom shortcut hints
+  ([Eon Bar and tabs](USAGE.md#eon-bar-and-tabs)) need its fallback,
   and active-tab Close, which is available on the final tab and goes through
   the final-close prompt (EON-C8),
   shortcut tooltips, visible keyboard focus, AccessKit buttons, and bounded
@@ -2118,7 +2075,8 @@ socket names, JSON fields and protocol identifiers retain their spellings.
 ## EON-C22 — Trustworthy Codex quota in the Eon Bar
 
 - **Status:** Retired 2026-10-14 by Lucca. EON-C27 owns Codex quota collection
-  through CodexBar and the chip policy; Venus `VEN-C22` owns the Codex chip.
+  through CodexBar and the chip policy; Venus's Codex chip is described in
+  [Eon Bar](../venus/docs/PRESENTATION.md#eon-bar).
 - **Reason:** The direct `codex app-server` collector this contract described no
   longer exists, so it cannot be proved in this repository.
 
@@ -2196,128 +2154,28 @@ socket names, JSON fields and protocol identifiers retain their spellings.
 
 ## EON-C24 — Bottom shortcut hints
 
-- **Status:** Proven on x86_64 Linux native Wayland.
-- **Consumer:** A full-Eon user on native x86_64 Linux Wayland.
-- **Trigger:** A fresh window, physical Alt+Shift+B, native focus, current
-  enabled popup catalog, or window bounds/scale changes.
-- **Result:** One compact native footer starts visible. Its window-local
-  visibility survives tab and popup switches and resize; hiding returns its
-  space to terminal content. Grouped hints derive from actual bindings and
-  enabled/remapped popup entries, with one badge header per modifier group.
-  Compact groups spread across the bar with equal gaps,
-  outer groups near its edges and a lone group centered. Modifier headers alone
-  have padded rounded backgrounds without braces; group bodies stay plain.
-  Insets, badge padding and minimum gaps participate in whole-hint fitting.
-  The footer is the margin below the pane cards: its hints sit on the window
-  background without a frame, band fill or separator, across the window's width,
-  and its band reaches the window's bottom edge. The row is at least the edge
-  padding tall. Hints use steel-blue modifier headers, mint keys and gray labels.
-  Copy, Paste and Open link retain their bindings and full-help
-  entries, without footer hints. Compact headers use C/A/S aliases joined by
-  hyphens, such as A-S; the compact tab range is 1..9, while full help retains
-  Alt+0 for the tenth tab. Short labels use keys/hints, one pane-move hint for both axes and
-  one tab-move hint. Full
-  help and accessible names retain complete chords and actions; creation
-  labels name the tab, pane or window explicitly. Width pressure drops whole hints,
-  retaining help and the visibility toggle longest. The header Shortcuts button is
-  omitted only when all applicable hints fit and the button lacks keyboard
-  focus. Alt+/ and the complete modal viewer remain available. F6 stays in full
-  help and keyboard navigation, without a footer hint.
-  Ctrl+Tab and Ctrl+Shift+Tab stay in full help and dispatch, without footer hints.
-  Project is omitted from hints; Alt+Z and its full-help entry remain available.
-  Alt+Shift+D has the hint "detach", derived like the others. Alt+Shift+H has
-  the hint "sidebar", omitted while `sidebar` is `Off`. Alt+G and Alt+Shift+G
-  have the hints "next agent" and "previous agent" under every `sidebar`.
-- **Important failures:** The toggle is captured once per press, without repeat
-  or release leakage. Visibility changes preserve focus, selected identities
-  and live terminals; normal resizing is their only terminal effect. Popup
-  configuration on Alt+Shift+B takes the toggle's key under EON-C20 and leaves
-  the hints in their current visibility.
-  Tiny bounds preserve valid geometry and whole chords. Accessible hints are
-  read-only, without extra focus stops or announcements.
-- **Owner:** Venus owns presentation and window-local visibility under
-  VEN-C24. Eon Runtime owns the reserved popup keys. Orbit owns terminal
-  resizing. Eon owns product composition and exact accepted component pins.
-- **Consumes:** EON-C19/C20/C21, VEN-C24, existing EONW v7 and ORBF2/ORBS13.
-- **Boundary:** No minor-mode framework, child-application key discovery,
-  interactive hints, durable preference, configuration option, dependency,
-  wire change or platform expansion, except that the hints read `sidebar` from
-  EONW v25. Future real modes replace contents from
-  their actual bindings at the same footer height.
-- **Proof:** `795d735a8f61ef439c56d68e1cc4d3929af0dfcf`, `eon-monorepo-2oko.6`.
-  - **Environment:** Automated tier; installed tier.
-  - **Evidence:** `popup_configuration_owns_defaults_overrides_and_collisions`;
-    Venus `shortcut_hints_follow_bindings_catalog_and_native_focus`,
-    `shortcut_hints_drop_whole_pairs_and_rebuild_modifier_headers`,
-    `shortcut_hints_are_read_only_and_retire_hidden_help_actions` and
-    `workspace_shortcut_capture_starts_once_and_retains_release`. Installed
-    checklist item 5.
-  - **Override evidence (`eon-igae.10`):** Runtime
-    `popup_configuration_owns_defaults_overrides_and_collisions` and Venus
-    `configured_popups_take_fixed_bindings_except_reserved_keys`; the installed
-    observation is pending.
-  - **Detach hint (`eon-prove-close-and-detach-batch-bf8t`):**
-    `shortcut_hints_follow_bindings_catalog_and_native_focus`; isolated
-    installed dogfood (edge `22915af5dca41f87e706ad548c0506f79c17648f`,
-    installed `eon` profile
-    `/nix/store/gfg385rm8mvdv6cfxqxnmc0bn033w7hv-eon-0.1.1`, private headless
-    Sway, 1280x720) showed `D detach` in the footer's Alt+Shift group.
-  - **Sidebar hint (`eon-agent-sidebar-yx8.13`):** the installed dogfood
-    recorded under Venus VEN-C30 (edge `d6ce117`, code tree `a0d664d`, whose
-    `nix build` gave `/nix/store/p6mzlpdlk24k6v12plxcc99hyq9m1ghi-eon-0.1.1`,
-    x86_64 Linux, private headless Sway, 1280x720) showed `H sidebar` in the
-    footer's Alt+Shift group.
-  - **Attention-key hints (`eon-agent-sidebar-yx8.8`):** the installed dogfood
-    recorded under Venus VEN-C30 (edge `0e3912b`, code tree `bce96f9`, whose
-    `nix build` gave `/nix/store/r18mya95p393gbd2jsmhmjw785cazk4g-eon-0.1.1`,
-    x86_64 Linux, private headless Sway, 1280x720) showed `G next agent` in
-    the footer's Alt group and `G previous agent` in its Alt+Shift group, also
-    with `[sidebar] enabled = false`.
-  - **Tab-cycling keys (`eon-ctrl-tab-next-tab-q6vj`):** the installed
-    dogfood recorded under Venus VEN-C8 (edge `62c8cb5`, code tree `1c304b4`, whose `nix build` gave
-    `/nix/store/wgrz0ladwg0r4c3addmjiqkijwah8900-eon-0.1.8`, x86_64 Linux,
-    private headless Sway, 1280x720)
-    showed no footer hint for Ctrl+Tab or Ctrl+Shift+Tab.
-- **Open proof:** Pending re-proof in this repository: footer placement below
-  the cards across widths, fractional scales and minimum fonts on an installed
-  surface. No performance, macOS or screen-reader workflow claim.
+- **Status:** Retired 2026-10-30 by Lucca: demoted to a feature; behavior in
+  [Eon Bar and tabs](USAGE.md#eon-bar-and-tabs); proof in `eon-monorepo-2oko.6`,
+  `eon-igae.10`, `eon-prove-close-and-detach-batch-bf8t`,
+  `eon-agent-sidebar-yx8.13`, `eon-agent-sidebar-yx8.8`,
+  `eon-ctrl-tab-next-tab-q6vj`, `eon-vn0nk`.
+- **Reason:** The footer hints are presentation. Their toggle and every other
+  binding stay listed in the Alt+/ viewer under EON-C20, and popup precedence
+  over the toggle key stays there too.
 
 ## EON-C25 — Running Eon version badge
 
-- **Status:** Proven on x86_64 Linux Wayland.
-- **Consumer:** Full-Eon workspace users.
-- **Trigger:** A workspace window opens or reopens.
-- **Result:** The native top bar shows a read-only `EON <version>` label in regular terminal
-  monospace and softened cyan from the supervisor serving that window. It shows
-  when `[bar] widgets` lists `version`, as the default does, at the place the
-  list gives it (EON-C32); leaving `version` out hides the complete label.
-  Settings apply when opening/reopening a presentation. Updating an
-  installation cannot relabel a running supervisor. Shortcut help and close
-  stay last.
-- **Important failures:** Missing identity produces no badge; invalid launch identity is
-  rejected. Narrow layouts hide secondary information before required controls
-  and the active tab lose their reserved space. Invalid configuration fails
-  through existing startup/replacement handling, preserving live terminals.
-- **Owner:** Eon supplies product version/default and exact composition; Runtime
-  parses configuration and supplies immutable supervised launch inputs; Venus
-  owns native rendering, width fitting, hover and static accessibility.
-- **Boundary:** One badge; no polling, EONW change, channel/build-ID promise,
-  settings UI or platform expansion.
-- **Proof:** `795d735a8f61ef439c56d68e1cc4d3929af0dfcf`, `eon-monorepo-2oko.6`.
-  - **Environment:** Automated tier; installed tier.
-  - **Evidence:** `version_badge_uses_supervising_product_and_visibility_at_each_launch`;
-    Venus `eon_version_is_bounded_workspace_identity` and
-    `version_label_uses_only_spare_space_and_has_no_actions`. Installed
-    checklist item 6 shows `EON 0.1.0`.
-- **Open proof:** Pending re-proof in this repository: narrow hiding, scale
-  1.25, header order with shortcut help and close, and a supervisor whose
-  version differs from its client. No
-  performance, macOS, screen-reader workflow or Nix-free delivery claim.
+- **Status:** Retired 2026-10-30 by Lucca: demoted to a feature; behavior in
+  [Eon Bar and tabs](USAGE.md#eon-bar-and-tabs); proof in `eon-monorepo-2oko.6`,
+  `eon-vn0nk`.
+- **Reason:** The version label is presentation. EON-C32 owns whether it shows
+  and its place in the bar.
 
 ## EON-C26 — Passive Claude quota in the Eon Bar
 
 - **Status:** Retired 2026-10-14 by Lucca. EON-C27 owns Claude quota collection
-  through CodexBar and the chip policy; Venus `VEN-C26` owns the Claude chip.
+  through CodexBar and the chip policy; Venus's Claude chip is described in
+  [Eon Bar](../venus/docs/PRESENTATION.md#eon-bar).
 - **Reason:** The status-line collector this contract described no longer
   exists, so it cannot be proved in this repository.
 
@@ -2336,7 +2194,8 @@ socket names, JSON fields and protocol identifiers retain their spellings.
   I/O.
   The native chips show every supplied supported window and remaining
   percentage, one chip per window for each provider
-  (VEN-C26), with provider periods, optional resets and observation time.
+  ([Eon Bar](../venus/docs/PRESENTATION.md#eon-bar)), with provider periods,
+  optional resets and observation time.
   Claude needs no status-line setup. No reset is invented for an idle window.
 - **Ownership:** Pinned CodexBar owns provider collection and credential access;
   Runtime owns bounded subprocesses, validation, freshness and the stored
@@ -2491,49 +2350,20 @@ socket names, JSON fields and protocol identifiers retain their spellings.
 
 ## EON-C29 — Local clock in the Eon Bar
 
-- **Status:** Proven on x86_64 Linux Wayland.
-- **Consumer:** Full-Eon workspace users.
-- **Trigger:** A workspace window is open while the local wall-clock minute
-  changes.
-- **Result:** The Eon Bar shows Venus's VEN-C27 local 24-hour clock when
-  `[bar] widgets` lists `clock`, as the default does (EON-C32).
-- **Important failures:** As VEN-C27: an unknown local time zone shows no
-  clock, and narrow windows hide the clock before every other top-bar item.
-- **Owner:** Eon owns the default and composition; Venus owns the clock under
-  VEN-C27.
-- **Boundary:** No setting beyond EON-C32's list, EONW change, 12-hour mode or
-  platform expansion; a 12-hour setting needs its own decision.
-- **Proof:** `eon-igae.4`
-  - **Environment:** Automated; one isolated installed observation.
-  - **Evidence:** Venus `local_clock_names_minute_date_and_offset` and
-    `local_clock_yields_first_and_has_no_actions`; the installed observation
-    recorded in `eon-igae.4`.
+- **Status:** Retired 2026-10-30 by Lucca: demoted to a feature; behavior in
+  [Eon Bar and tabs](USAGE.md#eon-bar-and-tabs); proof in `eon-igae.4`,
+  `eon-vn0nk`.
+- **Reason:** The clock is presentation. EON-C32 owns whether it shows and its
+  place in the bar.
 
 ## EON-C30 — CPU and memory use in the Eon Bar
 
-- **Status:** Proven on x86_64 Linux Wayland. Amended on 2026-10-27
-  (approved by Lucca, relayed by eon-overseer) by `eon-mac-launch-kz4p.3`:
-  Apple Silicon macOS readings, awaiting EON-C7's native proof.
-- **Consumer:** Full-Eon workspace users on x86_64 Linux, and on Apple
-  Silicon macOS once EON-C7 is proven.
-- **Trigger:** A workspace window is open.
-- **Result:** The Eon Bar shows Venus's VEN-C28 whole-machine CPU label when
-  `[bar] widgets` lists `cpu` and its RAM label when the list has `ram`, as
-  the default does for both (EON-C32).
-- **Important failures:** As VEN-C28: an unreadable reading shows no label
-  rather than 0%, and narrow windows hide the RAM label right after the clock,
-  then the CPU label.
-- **Owner:** Eon owns the default and composition; Venus owns sampling and the
-  labels under VEN-C28.
-- **Boundary:** No setting beyond EON-C32's list, and no EONW change.
-- **Proof:** `eon-cpu-widget-eon-bar-acxs`, `eon-igae.3`
-  - **Environment:** Automated; isolated installed observations.
-  - **Evidence:** Venus `cpu_use_counts_iowait_idle_and_guest_once`,
-    `cpu_use_rejects_bad_readings_instead_of_showing_zero`,
-    `ram_use_is_total_minus_available_over_total`,
-    `ram_use_rejects_bad_readings_instead_of_showing_zero` and
-    `readings_yield_after_the_clock_and_have_no_actions`; the installed
-    observations recorded in `eon-cpu-widget-eon-bar-acxs` and `eon-igae.3`.
+- **Status:** Retired 2026-10-30 by Lucca: demoted to a feature; behavior in
+  [Eon Bar and tabs](USAGE.md#eon-bar-and-tabs); proof in
+  `eon-cpu-widget-eon-bar-acxs`, `eon-igae.3`, `eon-vn0nk`.
+- **Reason:** The CPU and RAM labels are presentation. EON-C32 owns whether they
+  show and their place in the bar; the proof record keeps the 2026-10-27 macOS
+  amendment.
 
 ## EON-C31 — Agent attention
 
@@ -2949,10 +2779,14 @@ socket names, JSON fields and protocol identifiers retain their spellings.
 - **Result:** `[bar] widgets` is an ordered list of unique names from
   `codex_quota`, `claude_quota`, `cpu`, `ram`, `clock` and `version`. The Eon
   Bar shows the listed widgets left to right in that order, between the drag
-  region and Shortcuts and Close (VEN-C29). A widget left out doesn't show,
-  and `widgets = []` leaves only tabs and controls. Omitting the key shows all
-  six in that order. A listed widget without data still shows nothing, as its
-  own contract says. Narrow windows keep the fixed hiding priority of VEN-C29
+  region and Shortcuts and Close. `codex_quota` and `claude_quota` are the
+  quota chips (EON-C27), `cpu` and `ram` the whole-machine CPU and memory use
+  labels, `clock` the local 24-hour clock, and `version` the read-only
+  `EON <version>` label of the supervisor serving the window. A widget left
+  out doesn't show, and `widgets = []` leaves only tabs and controls. Omitting
+  the key shows all six in that order. A listed widget without data still
+  shows nothing, as [Eon Bar](../venus/docs/PRESENTATION.md#eon-bar) describes
+  for each widget. Narrow windows keep the fixed hiding priority it gives,
   whatever the order.
 - **Important failures:** An unknown or repeated name, a non-string entry, a
   value that is not a list, or a leftover `[bar] show_version` (removed before
@@ -2961,7 +2795,7 @@ socket names, JSON fields and protocol identifiers retain their spellings.
 - **Owner:** Eon owns the setting, its names and the default. Runtime parses
   and validates it and passes it to Venus unchanged as `--bar-items`, with
   `--eon-version` only when `version` is listed. Venus owns placement, fitting,
-  hover and accessibility under VEN-C29.
+  hover and accessibility.
 - **Boundary:** No per-widget option, configurable hiding priority, new
   widget, live reload, settings UI, EONW change or platform expansion. Leaving
   out a quota chip also stops Runtime reading that provider (EON-C27).

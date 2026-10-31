@@ -19,8 +19,8 @@ older-CPU compatibility for a published cache artifact.
   integration boundary, review, or decision remains open
 - **Proved:** the owning Bead is accepted and the listed immutable revision and
   checks cover the contract
-- **Retired:** the user explicitly replaced or removed the contract; its ID is
-  never reused
+- **Retired:** the user explicitly replaced, removed, or demoted the contract
+  to a feature; its ID is never reused
 
 Proofs cite revisions of this repository. "Pending re-proof in this
 repository" marks an earlier proof that was not repeated after consolidation;
@@ -1522,8 +1522,11 @@ remains owned by `orb-vt-unicode-baselines-i32`; performance remains owned by
   prose table cells.
 - Contract IDs are stable and repository-qualified. Never renumber or reuse an
   ID; mark an explicitly removed contract retired.
-- Only user-approved user-visible behavior, correctness boundaries, ownership
-  invariants, and interfaces between subsystems receive contract IDs.
+- Only user-approved behavior that meets the
+  [contract criterion](../../docs/AGENT-RULES.md#contract-driven-method)
+  receives a contract ID: a wire or format, lifecycle, trust rule, ownership
+  invariant, script or agent surface, or platform scope. Presentation is a
+  feature, kept in its bead and the user documentation.
 - Do not index functions, modules, dependencies, configuration literals,
   individual tests, or speculative future features.
 - Every product implementation Bead names the contract IDs it creates, changes,

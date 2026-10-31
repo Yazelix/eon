@@ -64,7 +64,7 @@ native Wayland interaction are the falsifiers.
 `eon-bottom-hints-bar-vmum` inspects Nova `38a5e29eb078e939d9729dfdbbdf3362292c20b9`
 and its pinned zjhints `709d56292217920a5b7e2702302cd66b60ed6477` documentation
 and modifier-grouping patch. Compact grouping, visible startup, reclaimed space
-and whole-hint priority fitting inform VEN-C24. Nova is Apache-2.0 and zjhints
+and whole-hint priority fitting inform the footer. Nova is Apache-2.0 and zjhints
 MIT; inspection only, with no code copied or adapted. Venus uses actual native
 binding descriptors and popup facts, existing cosmic-text measurement, Scene
 rectangles, rendering and AccessKit. Plugin panes, terminal-cell width guesses,
@@ -124,7 +124,7 @@ existing glyphon 0.12 custom-glyph hook scales and caches that fixed mask;
 image generation, a decoder, second GPU pipeline, generic icon API, altered
 mark, and text-shaped lookalike are rejected.
 
-VEN-C26 consumes typed Claude facts from canonical EONW v8 at Runtime
+The Claude chip consumes typed Claude facts from canonical EONW v8 at Runtime
 `2f9630723254ad7d9401ae40e459cef1fbfe8a17`. The existing Codex chip is the
 native comparison: reuse measurement, row priority, hover and static AccessKit
 projection. Claude uses a plain C monogram, without copied brand artwork.
@@ -132,7 +132,7 @@ Provider collection and freshness remain Runtime responsibilities.
 
 ### CPU and memory use
 
-VEN-C28 (`eon-cpu-widget-eon-bar-acxs`) compares btop v1.4.7
+`eon-cpu-widget-eon-bar-acxs` compares btop v1.4.7
 (`6e39144aaf5a6bc01b9f795010b0914431067183`,
 `src/linux/btop_collect.cpp`) and Waybar 0.15.0
 (`90b209add8937514d0a987aa842e701bd8f1232e`,
@@ -187,7 +187,7 @@ backwards: a wrapped counter shows nothing for that interval, as on Linux.
 
 ### Local clock
 
-VEN-C27 (`eon-igae.4`) compares Waybar's clock module at tag 0.14.0
+`eon-igae.4` compares Waybar's clock module at tag 0.14.0
 (`41de8964f1e3278edf07902ad68ca5e01e7abeeb`, `src/modules/clock.cpp`), which
 sleeps until the next whole interval of wall-clock time (default 60 seconds)
 and formats the moment in the local zone. Venus adopts only the wake at the

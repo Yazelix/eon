@@ -101,7 +101,8 @@ in-tree version. VEN-C31 entered with ORBF v3 in ORBS v14.
 - **Partially proved:** a useful exact slice is proved but required evidence is
   still open
 - **Proved:** the listed immutable revision and evidence cover the contract
-- **Retired:** explicitly replaced or removed; its ID is never reused
+- **Retired:** explicitly replaced, removed, or demoted to a feature; its ID is
+  never reused
 
 Proofs cite revisions of this repository. "Pending re-proof in this repository"
 marks an earlier proof that was not repeated after consolidation; it is
@@ -423,6 +424,15 @@ re-proved when that platform or feature is next touched.
   and offline-failure observation, native title, and reader announcement of
   workspace action failures.
 
+## VEN-C6 — Structured accessibility
+
+- **Status:** Retired 2026-10-30 by Lucca: a dropped plan. VEN-C6 named a
+  planned structured accessibility contract that was never approved: `eon-68v`
+  deferred it, and `ven-audit-venus-accessibility-p2h` and `ven-q3w` removed the
+  plan.
+- **Reason:** The index never recorded the ID; it is retired so that it is never
+  reused.
+
 ## VEN-C7 — Authoritative history and selection interaction
 
 - **Status:** Proved on x86_64 Linux by the automated tier; native Linux
@@ -622,7 +632,9 @@ re-proved when that platform or feature is next touched.
     bottom; inside it, title rows and the space between stacked pane cards share the
     expanded terminal's background color/opacity under the surface-wide blur request,
     so the stack has one background. In framed, unzoomed expanded panes, the band
-    below the title rule follows VEN-C11's top-padding color and opacity rules
+    below the title rule follows the top padding's color and opacity rules
+    (`padding_color` in
+    [Configuration behavior](../../docs/CONFIGURATION.md#configuration-behavior))
     instead of the shared title-row background; title text, cutouts and outlines
     stay above it, while collapsed rows, popups, zoom and frameless headers retain
     their existing backgrounds. Nothing above that top edge or outside those
@@ -855,24 +867,13 @@ re-proved when that platform or feature is next touched.
 
 ## VEN-C9 — Optional native decorations
 
-- **Status:** Proved by the automated tier; native decoration rendering is
-  pending re-proof in this repository.
-- **Consumer:** A user launching Venus.
-- **Trigger:** Launch with or without one `--no-decorations` option.
-- **Result:** The option requests an undecorated native window before creation;
-  omission retains decorations.
-- **Important failures:** Unknown, duplicate, or excess arguments fail with
-  bounded usage before window or transport creation.
-- **Owner:** Venus CLI admission and winit native window attributes.
-- **Consumes:** Exact locked winit 0.30.13; no Orbit or Eon protocol boundary.
-- **Boundary:** Runtime decoration changes are outside this launch-only contract.
-- **Proof:** `795d735a8f61ef439c56d68e1cc4d3929af0dfcf`
-  - **Environment:** Automated.
-  - **Evidence:** `arguments_are_complete_bounded_and_defaulted` and
-    `launch_values_project_to_native_window_attributes` in the workspace suite.
-- **Open proof:** Pending re-proof in this repository: installed
-  `--no-decorations` rendering under a decorating compositor; dogfood item 11
-  started it but did not judge decorations.
+- **Status:** Retired 2026-10-30 by Lucca: demoted to a feature; behavior in
+  [Window background and
+  decorations](PRESENTATION.md#window-background-and-decorations); proof in
+  `eon-monorepo-2oko.6`, `eon-vn0nk`.
+- **Reason:** Window decorations are presentation. The `--no-decorations` launch
+  argument is an internal interface documented in [Window identity and
+  decoration](LAUNCH.md#window-identity-and-decoration).
 
 ## VEN-C10 — Native paste
 
@@ -907,43 +908,23 @@ re-proved when that platform or feature is next touched.
 
 ## VEN-C11 — Terminal-background opacity
 
-- **Status:** Proved
-- **Consumer:** One Venus native surface.
-- **Trigger:** Launch with an optional finite `--background-opacity VALUE` in
-  `0.0..=1.0`.
-- **Result:** Omission equals `1.0`; the value applies only to terminal default
-  background, later Orbit-authored background changes, and terminal padding.
-  The agent sidebar's card background (VEN-C30) follows it too, as the
-  background of the terminal in the leftmost visible column. Explicit cells,
-  selection, inverse video, workspace chrome, notices, focus, foreground
-  effects, input, hit testing, and accessibility remain unchanged.
-  Terminal padding follows `[terminal] padding_color`. `extend` (default) gives
-  the padding beside each edge row and column the background of its nearest
-  cell. On the primary screen it does not extend vertically when the nearest
-  row has a default-background cell or a full-height powerline glyph.
-  `extend-always` extends without those exceptions. `background` paints the
-  terminal default background as before. Background opacity applies to the
-  padding as today, and the padding stays inside the pane rounded card.
-- **Important failures:** Invalid values fail before window creation; values
-  below `1.0` require a proved premultiplied surface and otherwise fail before
-  presentation.
-- **Owner:** Venus launch policy and renderer surface composition.
-- **Consumes:** Exact winit 0.30.13, wgpu 30.0.0, glyphon 0.12.0, canonical
-  ORBS, and canonical EONW.
-- **Boundary:** Broader Linux compositor proof remains open.
-- **Proof:** `795d735a8f61ef439c56d68e1cc4d3929af0dfcf`
-  - **Environment:** Automated and installed.
-  - **Evidence:** `background_opacity_selects_only_proved_surface_modes`,
-    `background_opacity_premultiplies_clear_colors`,
-    `background_opacity_skips_only_default_cell_backgrounds`,
-    `background_opacity_provenance_distinguishes_default_explicit_selection_and_inverse`,
-    and `arguments_are_complete_bounded_and_defaulted` in the workspace suite;
-    dogfood checklist item 8.
-  - **Agent sidebar card (`eon-agent-sidebar-yx8.13`):**
-    `card_backdrop_keeps_cards_like_the_agent_sidebar_at_terminal_opacity` and
-    the installed dogfood recorded under VEN-C30: at Eon's default 0.80 the
-    card's background measured the same as the pane's, with and without pane
-    frames.
+- **Status:** Retired 2026-10-30 by Lucca: demoted to a feature; behavior in
+  [Window background and
+  decorations](PRESENTATION.md#window-background-and-decorations); proof in
+  `eon-monorepo-2oko.6`, `eon-agent-sidebar-yx8.13`, `eon-vn0nk`.
+- **Reason:** Background opacity is presentation. The `--background-opacity`
+  launch argument is an internal interface documented in [Background and
+  cursor](LAUNCH.md#background-and-cursor).
+
+## VEN-C12 — Unrecorded identifier
+
+- **Status:** Retired 2026-10-30 by Lucca: lost in consolidation.
+  `ven-caller-application-identity-dcb` planned VEN-C12 for caller-owned
+  application identity, found the ID already assigned, and was delivered as
+  VEN-C17 (`eon-eonterm-application-identity-xwi`). No VEN-C12 entry reached
+  this repository, and bead history does not say what held it.
+- **Reason:** The index never recorded the ID; it is retired so that it is never
+  reused.
 
 ## VEN-C13 — Terminal-authored clipboard delivery
 
@@ -1011,33 +992,14 @@ re-proved when that platform or feature is next touched.
 
 ## VEN-C15 — Compositor-owned background blur
 
-- **Status:** Proved by the automated tier; the native compositor backdrop is
-  pending re-proof in this repository.
-- **Consumer:** One Venus native Wayland surface.
-- **Trigger:** Launch with an optional `--background-blur` flag.
-- **Result:** Before showing the window, Venus asks its native host for full-
-  surface compositor blur; omission makes no request. Translucent terminal
-  pixels reveal compositor blur while explicit cells, selection, inverse,
-  chrome, notices, focus, text, cursor, input, IME, and accessibility retain
-  their owners. The compositor owns capability, algorithm, strength, and policy.
-- **Important failures:** Unsupported or policy-disabled compositors remain best
-  effort without failing launch; duplicate, unknown, or excess arguments fail
-  before window creation.
-- **Owner:** Venus owns one boolean request, winit owns native protocol lifecycle,
-  and the compositor owns the effect.
-- **Consumes:** The workspace's patched winit 0.30.13, which carries the
-  backport of upstream winit `c4afadbfabf7b1e7989b40b493db1a4c7bd8ff4e`;
-  unchanged `VEN-C11`, canonical ORBS, and canonical EONW.
-- **Boundary:** Stable crates.io winit lacks the mechanism; non-COSMIC Linux
-  compositors remain unproved; no API reports capability or compositor
-  acceptance or controls strength.
-- **Proof:** `795d735a8f61ef439c56d68e1cc4d3929af0dfcf`
-  - **Environment:** Automated.
-  - **Evidence:** `arguments_are_complete_bounded_and_defaulted` and
-    `launch_values_project_to_native_window_attributes` in the workspace suite.
-- **Open proof:** Pending re-proof in this repository: the installed backdrop
-  on a blur-capable compositor such as COSMIC (headless Sway has no blur
-  protocol), and blur off/on comparison across explicit opacity values.
+- **Status:** Retired 2026-10-30 by Lucca: demoted to a feature; behavior in
+  [Window background and
+  decorations](PRESENTATION.md#window-background-and-decorations); proof in
+  `eon-monorepo-2oko.6`, `eon-vn0nk`.
+- **Reason:** Background blur is presentation. The `--background-blur` launch
+  argument is documented in [Background and
+  cursor](LAUNCH.md#background-and-cursor), and the patched winit it needs in
+  [Native background blur decision](CRATES.md#native-background-blur-decision).
 
 ## VEN-C16 — Native Linux Wayland and Apple Silicon macOS platforms
 
@@ -1364,7 +1326,8 @@ re-proved when that platform or feature is next touched.
   region stay unchanged. Scrollable tabs keep the leading space and retain their labels,
   overflow, reveal, selection, hover path, stable identity, and accessibility.
   New tab follows the rightmost tab when tabs fit and stays at the tab-region
-  edge during overflow. Keyboard shortcuts (when VEN-C24 requires the fallback)
+  edge during overflow. Keyboard shortcuts (when the bottom shortcut hints of
+  [Eon Bar and tabs](../../docs/USAGE.md#eon-bar-and-tabs) require the fallback)
   and active-tab Close remain trailing
   controls. Close tab is available on the final tab and goes through the same
   VEN-C8 final-close prompt as Alt+Shift+W. The buttons use the existing CreateTab and exact-active-tab CloseTab
@@ -1431,8 +1394,9 @@ re-proved when that platform or feature is next touched.
   owns its native presentation; the application owns input, local viewer state,
   and action routing; AccessKit projects the same rectangles and identities.
   Eon retains workspace topology and action-policy ownership; winit and the
-  compositor own native window movement. VEN-C24 owns conditional Shortcuts
-  visibility.
+  compositor own native window movement. The bottom shortcut hints
+  ([Eon Bar and tabs](../../docs/USAGE.md#eon-bar-and-tabs)) own conditional
+  Shortcuts visibility.
 - **Consumes:** VEN-C8, VEN-C20, canonical EONW, ORBF v2 / ORBS v13, and the
   workspace's patched winit 0.30.13.
 - **Boundary:** No second row, widget framework, status/quota data, polling,
@@ -1566,64 +1530,11 @@ re-proved when that platform or feature is next touched.
 
 ## VEN-C22 — Codex quota fact chip
 
-- **Status:** Proven on x86_64 Linux by the automated tier; native quota
-  rendering is pending re-proof in this repository.
-- **Consumer:** One person using a Venus surface controlled by a full Eon
-  workspace.
-- **Trigger:** The current complete EONW v6 snapshot supplies, changes, or
-  removes its optional Codex quota observation.
-- **Result:** Venus projects one noninteractive fact chip per Codex window into
-  the existing single-row Eon Bar, five-hour then seven-day, as VEN-C26 does for
-  Claude. Each fresh chip shows the exact monochrome OpenAI Blossom, that
-  window's elapsed/total position and remaining percentage, such as
-  `[mark] 3h/5h 74%`. Under pressure chips disappear one by one, the one closest
-  to the tabs first, before active-tab identity, fixed controls, or the bounded
-  drag region lose their accepted space. Stale labels include `old` on every
-  chip; a blocked or unknown observation shows one chip with the mark followed
-  by `blocked` or `unknown`.
-  Hover text and the static AccessKit label of each chip name Codex and its
-  window explicitly and expose that window's human-readable position and
-  remaining percentage, reset availability, and source freshness or permission
-  state without raw epoch timestamps.
-- **Important failures:** An absent observation creates no rectangle, gap, hit,
-  action, focus target, or accessibility node. Missing resets remain explicit;
-  unusual durations use exact minute labels. A stale label that cannot retain
-  `old` disappears. Narrow and tiny widths retain the VEN-C21 tab and control
-  priority. Quota-only refreshes, and refreshes that differ only in EON-C31
-  attention or sidebar visibility, do not recenter workspace navigation, cancel
-  terminal scroll, replace the attachment, or send an Orbit resize, except that
-  a change in whether the agent sidebar shows resizes the columns (VEN-C30). Venus has
-  no quota cache outside the current EONW snapshot and does not refresh or infer
-  provider state.
-- **Owner:** Under EON-C27, pinned CodexBar owns provider collection; Eon
-  Runtime owns bounded subprocesses, validation, freshness and the optional EONW
-  field. Venus Scene owns chip text and responsive geometry; the existing
-  glyphon renderer owns the exact monochrome mark; hover and AccessKit own the
-  explicit provider name.
-- **Consumes:** Canonical EONW quota fields; VEN-C21; unchanged ORBF v2 / ORBS
-  v13.
-- **Boundary:** One fixed monochrome service mark adds no generic icon or image
-  system, decoder, provider parsing, process, filesystem or network access,
-  timer, cache, quota mutation, account identity, click action, focus target,
-  alert, threshold color other than the pace gradient (VEN-C22/VEN-C26 — Pace
-  color), chart, configuration, widget framework, second row, other provider,
-  Orbit change, or platform expansion. One exception: the mark
-  may also sit in the clickable, focusable rows of the agent sidebar
-  (VEN-C30). Workspace transport loss
-  expires the optional quota while retaining the last useful workspace.
-- **Proof:** `795d735a8f61ef439c56d68e1cc4d3929af0dfcf`
-  - **Environment:** Automated.
-  - **Evidence:** `quota_chip_preserves_truth_layout_and_static_accessibility`,
-    `quota_icons_preserve_transparency_and_shape_across_scales`, and
-    `quota_refresh_and_workspace_failures_preserve_structure` in the workspace
-    suite. One chip per Codex window, the closest-to-the-tabs falling order and
-    the per-chip AccessKit identity (`eon-7iml`) are proved by the updated
-    `quota_chip_preserves_truth_layout_and_static_accessibility` and
-    `two_provider_chips_share_layout_without_losing_identity_or_freshness`;
-    that bead's commit is its revision.
-- **Open proof:** Pending re-proof in this repository: installed Codex chips
-  (dogfood item 6 had no provider authentication), native stale, blocked,
-  unknown and absent states, and AT-SPI chip labels.
+- **Status:** Retired 2026-10-30 by Lucca: demoted to a feature; behavior in
+  [Eon Bar](PRESENTATION.md#eon-bar); proof in `eon-monorepo-2oko.6`,
+  `eon-7iml`, `eon-l8lt`, `eon-vn0nk`.
+- **Reason:** The Codex chip is presentation over quota facts that EON-C27
+  collects and canonical EONW carries.
 
 ## VEN-C23 — New Eon window shortcut
 
@@ -1659,82 +1570,12 @@ re-proved when that platform or feature is next touched.
 
 ## VEN-C24 — Contextual bottom shortcut hints
 
-- **Status:** Proved on x86_64 Linux native Wayland.
-- **Consumer:** One person using a Venus window attached to an Eon workspace.
-- **Trigger:** A fresh workspace window, physical Alt+Shift+B, current native
-  focus or popup catalog changes, and window size or scale changes.
-- **Result:** A fresh window shows one compact, read-only native footer. Its
-  window-local visibility choice survives tab switches, popups and resize.
-  Showing reserves footer space; hiding returns it to terminal content.
-  Initial configured terminal rows include the footer overhead. Hints derive
-  from fixed dispatch descriptors and the current enabled popup catalog, group
-  shared modifiers once in a continuous row, and retain complete key/action
-  pairs in a stable order. Compact groups spread across the bar with equal gaps,
-  outer groups near its edges and a lone group centered. Modifier headers alone
-  have padded rounded backgrounds without braces; group bodies stay plain.
-  Insets, badge padding and minimum gaps participate in whole-hint fitting.
-  The footer is the margin below the pane cards: its hints sit on the window
-  background without a frame, band fill or separator, across the window's width,
-  and its band reaches the window's bottom edge. The row is at least the edge
-  padding tall. Hints use steel-blue modifier headers, mint keys and gray labels.
-  Copy, Paste and Open link stay in full help and dispatch, without footer hints.
-  Compact modifier headers use C/A/S aliases joined by hyphens, such as A-S.
-  The compact tab range is 1..9; full help retains the tenth-tab Alt+0 binding.
-  Short labels use keys and hints; one pane-move hint groups horizontal and vertical
-  keys, and one tab-move hint holds the tab keys.
-  Full help and accessible labels retain complete chords and action names.
-  Creation labels name the tab, pane, column or window explicitly.
-  Width pressure drops low-priority hints before help and the visibility
-  toggle. Native focus-specific keys appear only in their applicable context.
-  F6 stays in full help and keyboard navigation, without a footer hint.
-  Ctrl+Tab and Ctrl+Shift+Tab stay in full help and dispatch, without footer hints.
-  Project is omitted from hints; Alt+Z and its full-help entry remain available.
-  Alt+Shift+H has the hint "sidebar", omitted while the EONW snapshot's
-  `sidebar` is `Off` (VEN-C30). Alt+G and Alt+Shift+G have the hints "next
-  agent" and "previous agent" under every `sidebar`.
-  The header Shortcuts button is omitted only when the visible footer covers
-  every applicable hint and that button lacks keyboard focus; otherwise it
-  remains. Alt+/ and the complete viewer
-  remain available, including the hints toggle entry. The viewer retains its
-  existing modal input isolation.
-- **Important failures:** A press toggles once; repeats and releases do not
-  leak to terminals. Toggling preserves focus, selected identities and live
-  processes; normal terminal resizing is its only terminal effect. Tiny bounds
-  omit whole hints and preserve valid Scene geometry. Hidden hints leave no
-  accessible footer. Visible hints expose complete chords as read-only text,
-  without extra keyboard-focus targets or live announcements.
-- **Owner:** Venus owns native visibility, projection, fitting, Scene geometry,
-  rendering, input and AccessKit. Eon owns product selection and delivery;
-  a current Eon popup may take the toggle's key under VEN-C20; Orbit owns
-  resizing.
-- **Consumes:** Existing VEN-C19/C20/C21, canonical EONW, and ORBF v2 / ORBS v13.
-- **Boundary:** No new input mode, child-application key discovery, interactive
-  hints, durable preference, generic widget registry, dependency, wire change
-  or platform expansion, except that the hints read `sidebar` from EONW v25.
-  Future Eon modes supply hints from their own actual bindings and replace
-  contents at the same footer height.
-- **Proof:** `795d735a8f61ef439c56d68e1cc4d3929af0dfcf`
-  - **Environment:** Automated and installed.
-  - **Evidence:** `shortcut_hints_follow_bindings_catalog_and_native_focus`,
-    `shortcut_hints_drop_whole_pairs_and_rebuild_modifier_headers`, and
-    `shortcut_hints_are_read_only_and_retire_hidden_help_actions` in the
-    workspace suite; dogfood checklist item 5.
-  - **Override evidence (`eon-igae.10`):**
-    `configured_popups_take_fixed_bindings_except_reserved_keys`; the installed
-    observation is pending.
-  - **Sidebar hints (`eon-agent-sidebar-yx8.13`):** the installed dogfood
-    recorded under VEN-C30: the footer showed `H sidebar` in the Alt+Shift
-    group, and `Escape terminal` and `Up/Down agents` while a row had focus.
-  - **Attention-key hints (`eon-agent-sidebar-yx8.8`):** the installed
-    dogfood recorded under VEN-C30: the footer showed `G next agent` in the
-    Alt group and `G previous agent` in the Alt+Shift group, also with
-    `sidebar` `Off`.
-  - **Tab-cycling keys (`eon-ctrl-tab-next-tab-q6vj`):** the installed
-    dogfood recorded under VEN-C8: the footer showed no hint for Ctrl+Tab or
-    Ctrl+Shift+Tab.
-- **Open proof:** Pending re-proof in this repository: native raster checks of
-  the footer below the cards across widths and fractional scale, and read-only
-  AT-SPI footer lifecycle.
+- **Status:** Retired 2026-10-30 by Lucca: demoted to a feature; behavior in
+  [Eon Bar and tabs](../../docs/USAGE.md#eon-bar-and-tabs); proof in
+  `eon-monorepo-2oko.6`, `eon-igae.10`, `eon-agent-sidebar-yx8.13`,
+  `eon-agent-sidebar-yx8.8`, `eon-ctrl-tab-next-tab-q6vj`, `eon-vn0nk`.
+- **Reason:** The footer hints are presentation. Their bindings and popup
+  precedence stay with the VEN-C20 viewer and dispatch.
 
 ## Rules
 
@@ -1746,8 +1587,11 @@ re-proved when that platform or feature is next touched.
   prose table cells.
 - Contract IDs are stable and repository-qualified. Never renumber or reuse an
   ID; mark an explicitly removed contract retired.
-- Only current user-visible behavior, correctness boundaries, ownership
-  invariants, and interfaces with Orbit and Eon belong here.
+- Only behavior that meets the
+  [contract criterion](../../docs/AGENT-RULES.md#contract-driven-method)
+  belongs here: a wire or format, lifecycle, trust rule, ownership invariant,
+  script or agent surface, or platform scope. Presentation is a feature, kept
+  in its bead and the user documentation.
 - Every implementation Bead names contracts it changes, proves, consumes,
   hardens, or preserves.
 - Historical execution evidence belongs in Beads and Git, not this current-state
@@ -1757,288 +1601,59 @@ re-proved when that platform or feature is next touched.
 
 ## VEN-C25 — Native Eon version label
 
-- **Status:** Proven on native x86_64 Linux Wayland.
-- **Consumer:** Eon Runtime and native workspace users.
-- **Trigger:** A workspace client receives an optional supervising Eon version
-  through `--eon-version`.
-- **Result:** One read-only `EON <version>` label in regular terminal monospace and
-  softened cyan joins the existing top row, by default (VEN-C29) at its edge,
-  right before shortcut help when visible and before close. Its full version is
-  available through hover and a static AccessKit label; it adds no focus target
-  or action and is not a window-drag target.
-  Width fitting hides it before required controls and active-tab reservation.
-- **Important failures:** Absent input means no label; malformed or standalone input is
-  rejected. Existing workspace/terminal behavior and footer bounds remain owned
-  by VEN-C21/C24.
-- **Owner:** Runtime supplies immutable product identity; Venus owns validation
-  and native projection.
-- **Boundary:** No EONW change, widget framework, version discovery, polling,
-  dependency or platform expansion.
-- **Proof:** `795d735a8f61ef439c56d68e1cc4d3929af0dfcf`, `eon-igae.3`
-  - **Environment:** Automated and installed.
-  - **Evidence:** `eon_version_is_bounded_workspace_identity` and
-    `version_label_uses_only_spare_space_and_has_no_actions` in the workspace
-    suite; dogfood checklist item 6; the edge placement after the readings in
-    the installed observation recorded in `eon-igae.3`.
-- **Open proof:** Pending re-proof in this repository: native narrow-width
-  hiding, label pointer/drag inertness, and AT-SPI order.
+- **Status:** Retired 2026-10-30 by Lucca: demoted to a feature; behavior in
+  [Eon Bar](PRESENTATION.md#eon-bar); proof in `eon-monorepo-2oko.6`,
+  `eon-igae.3`, `eon-vn0nk`.
+- **Reason:** The version label is presentation. The `--eon-version` launch
+  argument is an internal interface documented in [Workspace
+  mode](LAUNCH.md#workspace-mode).
 
 ## VEN-C26 — Claude quota beside Codex
 
-- **Status:** Proven on x86_64 Linux by the automated tier; native quota
-  rendering is pending re-proof in this repository. Installed Eon composition
-  remains Eon's responsibility.
-- **Trigger and result:** A complete canonical EONW snapshot supplies an
-  optional Claude observation. Venus shows one read-only Claude chip per window
-  Claude reports, five-hour then seven-day. Each chip has the Claude splat and
-  that window's remaining percentage, led by its elapsed position such as
-  `3d2h/7d` when Claude reports a reset, as on Codex's chip; a window without a
-  reset shows no position. Each chip's hover and static accessible label name
-  Claude, that window, freshness and how far into the window the observation
-  is, or that its reset time is unavailable. Stale text keeps `old` on every
-  chip.
-- **Ownership:** Runtime alone supplies source facts, age and invalidation.
-  Venus uses its existing Scene, renderer, hover and AccessKit owners. All
-  provider chips stay in the existing row. Chips disappear one by one, the one
-  closest to the tabs first, before required tabs, controls or drag space.
-  Codex's mark, labels and provider policy remain unchanged.
-- **Failure:** Absent facts, and any window Claude does not report, have no
-  chip, gap or accessible node. Workspace
-  transport loss removes both observations while keeping the last useful
-  topology. Quota-only changes do not replace attachments, scroll positions or
-  navigation. No quota chip has an action or keyboard focus target.
-- **Consumes:** Canonical EONW quota fields; the in-tree Orbit codec stays
-  unchanged.
-- **Boundary:** `eon-claude-quota-eon-bar-zm5f` owns this slice. No
-  provider parsing, credential access, client polling, new module, dependency,
-  framework, row or platform promise.
-- **Proof:** `795d735a8f61ef439c56d68e1cc4d3929af0dfcf`
-  - **Environment:** Automated.
-  - **Evidence:** `two_provider_chips_share_layout_without_losing_identity_or_freshness`
-    and `quota_icons_preserve_transparency_and_shape_across_scales` in the
-    workspace suite. One chip per Claude window and the closest-to-the-tabs
-    falling order (`eon-claude-chip-split-u3ik`) are proved by the updated
-    `two_provider_chips_share_layout_without_losing_identity_or_freshness`;
-    that bead's commit is its revision.
-- **Open proof:** Pending re-proof in this repository: the installed Claude
-  chips beside Codex, native stale,
-  Claude-only and transport-loss states, and AT-SPI provider labels. The
-  elapsed-position labels (`eon-claude-chip-position-iubd`) are proved by the
-  automated tier only; their installed view is pending.
-
-### VEN-C22/VEN-C26 — Optional-reset consumer refinement
-
-- **Status:** Proven by the automated tier; native rendering is pending
-  re-proof in this repository.
-- **Contract:** Consume canonical EONW v9 with unchanged quota chips.
-  Fresh and stale provider windows may lack a reset. Show their actual remaining
-  percentage and state; hover/accessibility say reset time unavailable.
-  Historical codec validators remain unchanged. No provider mechanism, new
-  field, presentation owner or platform is introduced.
-- **Preservation:** The in-tree Orbit codec remains unchanged; preserve the
-  restored version/help order of VEN-C25.
-- **Proof:** `795d735a8f61ef439c56d68e1cc4d3929af0dfcf`
-  - **Environment:** Automated.
-  - **Evidence:** `quota_without_reset_retains_percent_and_accessible_freshness`
-    in the workspace suite.
-- **Open proof:** Pending re-proof in this repository: installed chips without
-  a reset.
-
-### VEN-C22/VEN-C26 — Pace color
-
-- **Status:** Proven on x86_64 Linux Wayland by the automated tier and an
-  isolated installed observation with fixture quota data; AT-SPI labels are
-  pending native observation.
-- **Contract:** Each fresh quota window with a reset, past its first tenth,
-  colors its chip's label on a continuous green, yellow, orange, red gradient
-  by how early its current pace runs out before the reset, projected linearly
-  from the snapshot's used and elapsed shares at the observation time. Full
-  green is comfortably under pace; exactly on pace is a light green turning
-  toward yellow; full red runs out at least half a window early. A used-up
-  window is always colored. Stale, blocked, unknown, reset-less and younger
-  windows keep the neutral text color. Hover and the static accessible label
-  say, for each colored window, that at this pace it lasts until reset, runs
-  out about a stated time before reset, or is used up, so color is never the
-  only signal. `old`, the marks, text, widths and hiding order are unchanged;
-  every gradient color keeps at least 4.5:1 contrast on the Eon Bar.
-- **Owner:** Venus Scene projects the color and wording from snapshot facts;
-  the existing glyphon renderer, hover and AccessKit owners present them. No
-  EONW, Runtime, provider, configuration, timer, dependency or module change.
-- **Proof:** `eon-l8lt`; that bead's commit is its revision.
-  - **Environment:** Automated tier; isolated installed tier (private headless
-    Sway 1.12, pixman, 1600x900, x86_64 Linux) with only CodexBar replaced by a
-    fixture.
-  - **Evidence:** `quota_shortfall_projects_linear_pace_with_a_basis_only`,
-    `quota_pace_colors_fresh_windows_and_says_so_in_words` and
-    `quota_pace_gradient_is_ordered_readable_and_colors_only_judged_windows` in
-    the workspace suite. Installed: the Codex chip's comfortably-under-pace
-    five-hour window drew in full green and its far-over-pace seven-day window
-    in full red with a neutral separator, Claude's on-pace five-hour chip in
-    the on-pace green and its seven-day chip between yellow and orange, each
-    glyph color sampled equal to the gradient value; hover said "At this pace
-    it lasts until reset" and "runs out about 5d8h before reset".
-- **Open proof:** AT-SPI labels and the stale, blocked and used-up states on
-  the installed product.
-
-### VEN-C26 — Claude splat icon
-
-- **Status:** Proven by the automated tier; native rendering is pending
-  re-proof in this repository.
-- **Contract:** Replace the quota chip C monogram with Claude's recognizable
-  splat in its original terracotta orange (`#D97757`), preserving its logo bounds,
-  text, both available windows, hover/accessibility identity, freshness, compact
-  and hidden states, and static no-action behavior.
-- **Owner:** Venus's existing custom-glyph renderer and bundled alpha mask.
-  No provider, protocol, dependency, module or platform change. One exception
-  to that and to the static no-action behavior: the splat may also sit in the
-  clickable, focusable rows of the agent sidebar (VEN-C30).
-- **Proof:** `795d735a8f61ef439c56d68e1cc4d3929af0dfcf`
-  - **Environment:** Automated.
-  - **Evidence:** `quota_icons_preserve_transparency_and_shape_across_scales` in
-    the workspace suite.
-- **Open proof:** Pending re-proof in this repository: the installed splat
-  icon.
+- **Status:** Retired 2026-10-30 by Lucca: demoted to a feature; behavior in
+  [Eon Bar](PRESENTATION.md#eon-bar); proof in `eon-monorepo-2oko.6`,
+  `eon-claude-chip-split-u3ik`, `eon-claude-chip-position-iubd`, `eon-l8lt`,
+  `eon-vn0nk`.
+- **Reason:** The Claude chip, its splat, and the optional-reset and pace colour
+  refinements it shared with the Codex chip are presentation over quota facts
+  that EON-C27 collects.
 
 ## VEN-C27 — Local clock in the Eon Bar
 
-- **Status:** Proven on native x86_64 Linux Wayland.
-- **Consumer:** One person using a Venus surface controlled by a full Eon
-  workspace.
-- **Trigger:** A workspace surface is presented, or the local wall-clock minute
-  changes.
-- **Result:** One read-only `HH:MM` label in terminal monospace shows local
-  24-hour time in the existing top row in the quota chips' rounded outline, by
-  default (VEN-C29) after the quota chips and the CPU and RAM labels and before
-  the version label, Shortcuts and Close. It changes within a second of
-  each minute boundary. Hover and a static AccessKit label name the time, date
-  and UTC offset, such as `Local time 14:05, Wednesday 21 October 2026,
-  UTC−03:00`.
-  The clock uses only spare drag-region space and keeps that region's minimum;
-  it appears only while every quota chip shows, so width fitting hides it
-  before the version label, quota chips, tabs or controls.
-- **Important failures:** An undeterminable local time zone shows no clock,
-  never UTC in its place. A clock-only change does not replace attachments,
-  recenter navigation, cancel scrolling or send an Orbit resize. The clock has
-  no action, focus target or drag behavior. After suspend or a system clock
-  change it corrects within one minute.
-- **Owner:** Venus Scene owns the text and geometry, the application owns the
-  minute wake, and jiff resolves the system time zone from `TZ` or
-  `/etc/localtime`.
-- **Boundary:** No EONW or runtime change, configuration, 12-hour mode,
-  calendar, other time zone, widget framework or platform expansion. Its one
-  dependency is `jiff` (`docs/CRATES.md`).
-- **Proof:** `eon-igae.4`, `eon-igae.3`
-  - **Environment:** Automated and installed.
-  - **Evidence:** `local_clock_names_minute_date_and_offset` and
-    `local_clock_yields_first_and_has_no_actions` in the workspace suite;
-    isolated installed observations recorded in `eon-igae.4` and, for the
-    rounded fill and placement before the version label, `eon-igae.3`.
+- **Status:** Retired 2026-10-30 by Lucca: demoted to a feature; behavior in
+  [Eon Bar](PRESENTATION.md#eon-bar); proof in `eon-igae.4`, `eon-igae.3`,
+  `eon-vn0nk`.
+- **Reason:** The clock is presentation. Its jiff dependency stays recorded in
+  [Local time zone](CRATES.md#local-time-zone).
 
 ## VEN-C28 — CPU and memory use in the Eon Bar
 
-- **Status:** Proven on native x86_64 Linux Wayland. Amended on 2026-10-27
-  (approved by Lucca, relayed by eon-overseer) by `eon-mac-launch-kz4p.3`:
-  readings on Apple Silicon macOS, implemented and awaiting native proof.
-- **Consumer:** One person using a Venus surface controlled by a full Eon
-  workspace on Linux or Apple Silicon macOS.
-- **Trigger:** A workspace surface is presented, and every 2 seconds after.
-- **Result:** Two read-only labels in terminal monospace, `CPU 12%` then
-  `RAM 43%`, sit in the existing top row, by default (VEN-C29) after the
-  quota chips and before the clock, each in the quota chips' rounded outline.
-  Each chip keeps the width of `CPU 100%` whatever the value, with its text
-  centered, so neighbouring items never shift. The CPU label shows
-  whole-machine CPU use over the last 2 seconds as a whole percentage, from
-  `/proc/stat` on Linux and from the Mach host CPU load ticks on macOS, where
-  user, system and nice time count as busy; it first appears one interval
-  after the surface opens. The RAM label shows whole-machine memory use as a
-  whole percentage read on the same wake; it appears with the first reading.
-  On Linux it is MemTotal minus MemAvailable over MemTotal from
-  `/proc/meminfo`; on macOS it is Activity Monitor's Memory Used, app memory
-  (internal pages less purgeable ones) plus wired and compressed pages, over
-  `hw.memsize`. Hover and static AccessKit labels say `CPU use 12% across 16
-  logical CPUs, over the last 2 seconds`, counting the later sample's per-CPU
-  `/proc/stat` lines on Linux and the logical CPUs online on macOS, and
-  `RAM use 43% of 31.3 GiB`. The labels
-  use only spare drag-region space and keep that region's minimum; they appear
-  only while every quota chip shows, so width fitting hides the clock first,
-  then the RAM label, then the CPU label, before the version label, quota
-  chips, tabs or controls.
-- **Important failures:** An unreadable, malformed or non-advancing CPU
-  sample, one without per-CPU lines, or an unreadable or malformed memory
-  reading, one without MemTotal or MemAvailable, with a zero MemTotal or with
-  MemAvailable above MemTotal, shows no label for that reading, never 0%. On
-  macOS a failed host call, a CPU counter that went backwards (the 32-bit tick
-  counters wrap about every 50 days on a 10-core Mac), purgeable pages above
-  internal ones, or use above `hw.memsize` likewise shows no label. A hidden
-  label returns with the next valid reading. A change to either reading
-  does not replace attachments, recenter navigation, cancel scrolling or send
-  an Orbit resize. Neither label has an action, focus target or drag behavior.
-  Platforms other than Linux and macOS show neither label.
-- **Owner:** Venus Scene owns the text and geometry, the application owns the
-  2-second wake, and a Venus module reads and parses `/proc/stat` and
-  `/proc/meminfo` on Linux and calls the Mach host statistics and
-  `hw.memsize` on macOS.
-- **Boundary:** No EONW or runtime change, configuration, per-core view, swap,
-  per-process or GPU memory, history, graph or platform beyond Linux and Apple
-  Silicon macOS. Its one dependency is target-only libc on macOS
-  (`docs/CRATES.md`).
-- **Proof:** `eon-cpu-widget-eon-bar-acxs`, `eon-igae.3`, `eon-igae.14.4`,
-  `eon-icoh`
-  - **Environment:** Automated and installed.
-  - **Evidence:** `cpu_use_counts_iowait_idle_and_guest_once`,
-    `cpu_use_rejects_bad_readings_instead_of_showing_zero`,
-    `ram_use_is_total_minus_available_over_total`,
-    `ram_use_rejects_bad_readings_instead_of_showing_zero` and
-    `readings_yield_after_the_clock_and_have_no_actions` in the Venus suite;
-    isolated installed observations recorded in
-    `eon-cpu-widget-eon-bar-acxs`, `eon-igae.3`, `eon-igae.14.4`, for the
-    one-space label centered in its fixed-width chip, and `eon-icoh`, for the
-    hover text naming the logical CPU count.
-- **Open proof:** macOS: the chips with plausible values in the native capture
-  and Venus log of the macOS harness (`eon-mac-launch-kz4p.12`).
-  `host_cpu_use_counts_user_system_and_nice_as_busy` and
-  `host_ram_use_is_app_wired_and_compressed_over_physical_memory` cover the
-  macOS arithmetic on Linux.
+- **Status:** Retired 2026-10-30 by Lucca: demoted to a feature; behavior in
+  [Eon Bar](PRESENTATION.md#eon-bar); proof in `eon-cpu-widget-eon-bar-acxs`,
+  `eon-igae.3`, `eon-igae.14.4`, `eon-icoh`, `eon-vn0nk`.
+- **Reason:** The CPU and RAM labels are presentation. Their macOS libc
+  dependency stays recorded in [macOS CPU and memory
+  readings](CRATES.md#macos-cpu-and-memory-readings); the proof record keeps the
+  2026-10-27 macOS amendment and its open proof.
 
 ## VEN-C29 — Eon Bar item order
 
-- **Status:** Proven by the automated tier; installed placement of a chosen
-  order is pending `eon-igae.14.2`, which makes Eon pass the input.
-- **Consumer:** Eon Runtime launching a Venus surface for a full Eon workspace.
-- **Trigger:** A workspace launch with an optional `--bar-items ITEM,...`
-  naming any of `codex_quota`, `claude_quota`, `cpu`, `ram`, `clock` and
-  `version`, each at most once.
-- **Result:** The named items sit left to right in that order, between the
-  drag region and Shortcuts and Close. An item left out gets no chip, hit
-  target, hover or AccessKit node, and Venus neither reads nor wakes for a
-  left-out CPU, RAM or clock. An empty value shows no items. Without the input
-  the order is `codex_quota`, `claude_quota`, `cpu`, `ram`, `clock`, `version`.
-  AccessKit order follows the visual order. Width fitting keeps its fixed
-  priority whatever the order: the clock hides first, then RAM, then CPU, then
-  the version label, then quota chips, before tabs or controls.
-- **Important failures:** A missing value, an unknown, repeated or empty name,
-  a repeated flag, or the input without `--workspace` fails before window
-  creation. A named item without data (no quota from EONW, no `--eon-version`,
-  no valid reading) shows nothing, as its own contract says.
-- **Owner:** Eon owns the choice and passes it at launch; Venus owns
-  validation, placement and fitting.
-- **Boundary:** No EONW change, configuration file, per-item option,
-  configurable hiding priority or new item.
-- **Proof:** `eon-igae.14.1`
-  - **Environment:** Automated; the default bar observed installed.
-  - **Evidence:** `bar_items_are_an_ordered_workspace_choice` and
-    `eon_orders_and_omits_bar_items` in the Venus suite; the existing
-    VEN-C25, VEN-C27 and VEN-C28 tests for the default order; the installed
-    observation recorded in `eon-igae.14.1`.
+- **Status:** Retired 2026-10-30 by Lucca: demoted to a feature; behavior in
+  [Eon Bar](PRESENTATION.md#eon-bar); proof in `eon-igae.14.1`, `eon-vn0nk`.
+- **Reason:** Item order is presentation. EON-C32 owns the setting, and the
+  `--bar-items` launch argument is an internal interface documented in
+  [Workspace mode](LAUNCH.md#workspace-mode).
 
 ## VEN-C30 — Agent sidebar
 
 - **Status:** Partially proved: on x86_64 Linux Wayland every clause is proved
-  except compositor blur through the card, which waits on VEN-C15's native
-  backdrop re-proof, and the current row's outline over a hovered row's
-  highlight, which no isolated capture could produce
-  (`eon-sidebar-you-are-here-3743`). Approved by Lucca on 2026-10-21 (draft 15 on
-  `eon-agent-sidebar-yx8.1`, there named VEN-C29). `eon-agent-sidebar-yx8.3`
+  except compositor blur through the card, which waits on the native backdrop
+  re-proof of background blur ([Window background and
+  decorations](PRESENTATION.md#window-background-and-decorations)), and the
+  current row's outline over a hovered row's highlight, which no isolated
+  capture could produce (`eon-sidebar-you-are-here-3743`). Approved by Lucca on
+  2026-10-21 (draft 15 on `eon-agent-sidebar-yx8.1`, there under an earlier
+  draft ID). `eon-agent-sidebar-yx8.3`
   implements visibility, layout and hiding for width, Alt+Shift+H, the
   sidebar's AccessKit region and the empty state;
   `eon-agent-sidebar-yx8.13` implements contents, row navigation, F6 and row
@@ -2070,13 +1685,15 @@ re-proved when that platform or feature is next touched.
       full width, its controls and its drag region.
     - Its card uses the border width and the pane cards' corner radius, with
       "Agents" in its rounded top edge in the pane-title style, using the shared
-      chrome title metric. Where no row is highlighted, its fill, from its rounded
-      top edge down, takes the background of the terminal in the leftmost visible
-      column at the terminal-background opacity (VEN-C11), so it reads like the panes
-      and compositor blur (VEN-C15) shows through it as through them. Focused
-      and hovered rows take an
-      opaque highlight. Without pane frames, where pane cards have no outline
-      either, that column's background reaches across the sidebar's area.
+      chrome title metric. Where no row is highlighted, its fill, from its
+      rounded top edge down, takes the background of the terminal in the
+      leftmost visible column at the terminal-background opacity ([Window
+      background and
+      decorations](PRESENTATION.md#window-background-and-decorations)), so it
+      reads like the panes and compositor blur shows through it as through them.
+      Focused and hovered rows take an opaque highlight. Without pane frames,
+      where pane cards have no outline either, that column's background reaches
+      across the sidebar's area.
     - It pushes the tab columns, so opening or closing it resizes the visible
       terminals once.
     - Venus hides it when the total remaining column area would drop below 80
@@ -2098,8 +1715,9 @@ re-proved when that platform or feature is next touched.
       terminal with attention.
     - A row shows:
       - the state glyph;
-      - the app icon: Venus maps `app=claude-code` to the Claude splat
-        (VEN-C26) and `app=codex` to the Codex mark (VEN-C22);
+      - the app icon: Venus maps `app=claude-code` to the Claude splat and
+        `app=codex` to the Codex mark of the quota chips
+        ([Eon Bar](PRESENTATION.md#eon-bar));
       - one label, the first that is not empty of: the attention `name`, for
         `app=claude-code` only, which Claude Code sets to its session name or
         title; the record title; and the app's name (`Claude`, `Codex`, or any
@@ -2166,11 +1784,12 @@ re-proved when that platform or feature is next touched.
   - **Eon** owns state, visibility and actions (EON-C31).
 - **Attention-only refreshes.** A snapshot that differs only in attention or
   `sidebar` keeps rejected-action notices (VEN-C8) and disturbs no navigation,
-  scroll, attachment or resize, as quota-only refreshes already do (VEN-C22);
-  a change in the sidebar's visibility resizes the columns as Layout says.
-  VEN-C8, VEN-C22 and EON-C8 carry this clause.
-- **Consumes:** EONW v25 and the VEN-C22 and VEN-C26 icons, under the
-  exceptions those contracts record for sidebar rows.
+  scroll, attachment or resize, as quota-only refreshes already do
+  (`quota_refresh_and_workspace_failures_preserve_structure`); a change in the
+  sidebar's visibility resizes the columns as Layout says. VEN-C8 and EON-C8
+  carry this clause.
+- **Consumes:** EONW v25 and the Codex and Claude marks of the quota chips
+  ([Eon Bar](PRESENTATION.md#eon-bar)), which sidebar rows reuse.
 - **Boundary:**
   - no interpretation of provider events, terminal output or process data,
     except mapping the reported `app` identifier to an icon and to whether
@@ -2365,8 +1984,8 @@ re-proved when that platform or feature is next touched.
       `2  w` with no marker.
 - **Open proof:**
   - Compositor blur through the card: headless Sway has no blur, so only its
-    translucency was measured. It waits on VEN-C15's native backdrop
-    re-proof.
+    translucency was measured. It waits on the native backdrop re-proof of
+    background blur, whose open proof `eon-vn0nk` records.
   - The current row's outline drawn over a hovered row's highlight
     (`eon-sidebar-you-are-here-3743`): in the isolated captures neither a
     `swaymsg` pointer warp nor a relative move gave a Venus row hover, so
@@ -2424,9 +2043,11 @@ re-proved when that platform or feature is next touched.
     ratio of the two, so entries stay on their cells until a frame in the new
     geometry arrives. All entries draw in one band, above every cell background
     and below text, text decorations and the cursor, in the frame's order.
-    Images move with their rows under VEN-C7's precision translation. VEN-C11's
-    background opacity does not apply to them; their own alpha blends over what
-    lies beneath, including a selection highlight, which an image can therefore
+    Images move with their rows under VEN-C7's precision translation. The
+    terminal background opacity ([Window background and
+    decorations](PRESENTATION.md#window-background-and-decorations)) does not
+    apply to them; their own alpha blends over what lies beneath, including a
+    selection highlight, which an image can therefore
     cover. Images are clipped to the terminal's grid area and drawn under
     anything Venus stacks above that terminal: overlays, notices, hints and
     popup cards.
@@ -2576,9 +2197,10 @@ re-proved when that platform or feature is next touched.
     keeps the filter. An attention-only refresh disturbs nothing else (VEN-C30).
   - **Input while open.** Keyboard, pointer, IME, clipboard, link and other shortcut input does
     not reach its normal target, as for the shortcut viewer.
-  - **Shortcuts.** Alt+/ lists Alt+Q (VEN-C20). The footer (VEN-C24) shows `Q inbox` in its Alt
-    group, and while the inbox is open, its own keys. A popup configured on Alt+Q takes the key,
-    as with other fixed bindings.
+  - **Shortcuts.** Alt+/ lists Alt+Q (VEN-C20). The footer ([Eon Bar and
+    tabs](../../docs/USAGE.md#eon-bar-and-tabs)) shows `Q inbox` in its Alt group, and while the
+    inbox is open, its own keys. A popup configured on Alt+Q takes the key, as with other fixed
+    bindings.
   - **Accessibility.** The inbox is one named AccessKit dialog, "Attention inbox". It holds the
     four filters, each named with its count and marked when selected, and the rows, each named
     as its sidebar row would be, plus its workspace for a row of another workspace. Accessibility

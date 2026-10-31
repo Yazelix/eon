@@ -1,5 +1,6 @@
-//! Whole-machine CPU and memory use for the Eon Bar (VEN-C28): on Linux from `/proc/stat`'s
-//! aggregate and per-CPU lines and `/proc/meminfo`, on macOS from the Mach host statistics.
+//! Whole-machine CPU and memory use for the Eon Bar (`docs/PRESENTATION.md`): on Linux from
+//! `/proc/stat`'s aggregate and per-CPU lines and `/proc/meminfo`, on macOS from the Mach host
+//! statistics.
 
 /// Cumulative whole-machine CPU time since boot, in kernel ticks, and the logical CPUs online.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]

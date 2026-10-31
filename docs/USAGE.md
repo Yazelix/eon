@@ -179,17 +179,32 @@ hours. Chips hide one by one under width pressure, the one closest to the tabs
 first, before tabs and controls, and unavailable quota leaves the bar unchanged.
 See [quota behavior](CONFIGURATION.md#agent-quota).
 After the quota chips, `CPU 12%` shows whole-machine CPU use over the last 2
-seconds and `RAM 43%` shows whole-machine memory in use; hover them for
-details. A 24-hour clock follows and shows local time; hover it for the date
-and UTC offset, and it stays hidden if the local time zone can't be
-determined. The `EON <version>` label sits at the edge, just before `?` and
-`×`. When the bar runs short of space the clock hides first, then RAM, then
-CPU.
+seconds and `RAM 43%` shows whole-machine memory in use; hover them for details.
+A reading that can't be taken shows no label rather than 0%. A 24-hour clock
+follows and shows local time; hover it for the date and UTC offset, and it stays
+hidden if the local time zone can't be determined. The `EON <version>` label, in
+softened cyan, sits by default at the edge, just before `?` and `×`; it names
+the running supervisor, so updating the installation doesn't change it. `[bar]
+widgets` chooses which of these show and in what order (see
+[Configuration](CONFIGURATION.md#configuration-behavior)). When the bar runs
+short of space the clock hides first, then RAM, CPU and the version label,
+before any quota chip. See [Eon Bar](../venus/docs/PRESENTATION.md#eon-bar) for
+the details of each item.
 
 The bottom hints bar starts visible. Alt+Shift+B hides or restores it for this
-window, returning or reserving its space without restarting terminals. Hints
-follow the current bindings, enabled popup catalog and native focus; narrow
-windows omit whole hints. Compact groups spread across the bar with
+window, returning or reserving its space without restarting terminals; the
+choice lasts through tab and popup switches and resizes. Each press toggles
+once; repeats and releases never reach the terminal, and toggling keeps focus
+and the selected tab and pane. Hidden hints leave no accessible footer; visible
+hints are read-only text, with no extra focus stops or announcements. The
+initial window adds the footer's space, so configured `rows` stay terminal
+rows. Hints follow the current bindings,
+enabled popup catalog and native focus; narrow windows omit whole hints, keeping
+the help and hints-toggle hints longest. Alt+Shift+D shows `detach`, Alt+Shift+H
+shows `sidebar` unless the sidebar is turned off, and Alt+G and Alt+Shift+G show
+`next agent` and `previous agent`. F6, Ctrl+Tab and Ctrl+Shift+Tab, and Project
+(Alt+Z) have no hint but stay in full help. Hints that create something name the
+tab, pane, column or window. Compact groups spread across the bar with
 equal gaps and the outer groups near its edges; a lone group stays centered. Hint spacing stays compact.
 Only modifier headers have padded rounded backgrounds. Each pane is its own
 rounded card, stacked without gaps in its column's allocated card area. Even

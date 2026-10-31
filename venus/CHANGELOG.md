@@ -2,6 +2,12 @@
 
 ## Unreleased
 
+- VEN-C9, VEN-C11, VEN-C15, VEN-C22 and VEN-C24 to VEN-C29 are retired,
+  demoted to features (`eon-vn0nk`). Their behavior is in
+  `docs/PRESENTATION.md`, and the bottom shortcut hints in the root
+  `docs/USAGE.md`. VEN-C6 and VEN-C12, IDs the index never recorded, get
+  Retired headings. No behavior or wire change.
+
 - VEN-C22: Codex quota shows one chip per window, like Claude, hiding chips
   one by one under width pressure (`eon-7iml`). No wire change.
 

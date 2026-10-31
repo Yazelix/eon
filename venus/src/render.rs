@@ -490,7 +490,7 @@ fn card_backdrops(
         ))
     })
     .collect::<Vec<_>>();
-    // The agent sidebar's card takes the background of the card beside it (VEN-C11),
+    // The agent sidebar's card takes the background of the card beside it (VEN-C30),
     // so it reads like the panes and blur shows through it as through them.
     if workspace.sidebar().is_some() {
         let beside = cards
@@ -1530,7 +1530,7 @@ impl Renderer {
             } else {
                 // Each column's strip takes its own terminal's background; strips meet in the
                 // middle of the gaps between columns and reach the window's sides, so the first
-                // also lies under a visible agent sidebar (VEN-C11).
+                // also lies under a visible agent sidebar (VEN-C30).
                 let mut strips = std::iter::once((workspace.terminal, scene))
                     .chain(
                         workspace
