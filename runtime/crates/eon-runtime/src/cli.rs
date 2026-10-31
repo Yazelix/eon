@@ -12,19 +12,19 @@ use super::{
     supervisor::{LaunchMode, configuration_directory, launch_current, prepare_configuration},
     windows,
     workspace::{
-        caller_output, human as human_output, json as json_output, json_escape, list_human,
-        list_json, resolve_selector, terminal_text_json,
+        caller_output, failure_human, human as human_output, json as json_output, json_escape,
+        list_human, list_json, resolve_selector, terminal_sent_json, terminal_text_json,
     },
 };
 use eon_workspace_protocol::v26::{
-    Action, AttentionState, Direction, Failure, PopupTarget, Response, Side, Snapshot, VERSION,
-    WorkspaceAction, WorkspaceInfo, valid_caller,
+    Action, AttentionState, Direction, Failure, MAX_PASTE_BYTES, PopupTarget, Response, Side,
+    Snapshot, TerminalInput, VERSION, WorkspaceAction, WorkspaceInfo, valid_caller, validate_paste,
 };
 use std::{
     env,
     ffi::{OsStr, OsString},
     fs,
-    io::{IsTerminal, Write},
+    io::{IsTerminal, Read, Write},
     os::unix::{
         ffi::{OsStrExt, OsStringExt},
         process::{CommandExt, ExitStatusExt},
@@ -734,6 +734,9 @@ fn execute(inputs: &Inputs, arguments: Vec<OsString>) -> Result<i32, Error> {
         }
         [command, ..] if control_command(command) => {
             let (arguments, target) = parse_workspace_target_arguments(&arguments)?;
+            if let Some(send) = parse_pane_send_arguments(&arguments)? {
+                return send_terminal(inputs, send, target);
+            }
             let (action, json) = parse_control_arguments(&arguments)?;
             let list = arguments.first().is_some_and(|value| value == "workspaces");
             control(inputs, action, json, list, target)
@@ -850,6 +853,8 @@ fn help_text(version: &str, color: bool) -> String {
   {command}pane rename PANE --clear [--json]{reset}           Restore automatic pane naming
   {command}pane move up|down|left|right [--json]{reset}       Move the selected pane
   {command}pane read PANE|POPUP [--json]{reset}               Print a pane's or popup's text
+  {command}pane send PANE|POPUP [--enter] [--json]{reset}     Paste TEXT, then Enter if asked
+    {command}[--stdin | -- TEXT]{reset}                       TEXT up to 64 KiB, or Enter alone
   {command}focus ID|left|right|up|down [--json]{reset}        Focus by ID or navigate
 
 {heading}Tools & information{reset}
@@ -874,7 +879,8 @@ WS is a workspace ID (w1, w2, ...) or its exact name.
 workspace new --name NAME names the new workspace; created gives its ID.
 With --no-focus, workspace new keeps the shown workspace, and either
 pane create keeps the selected pane and any popup.
-pane read reaches hidden workspaces; [agents] terminal_access governs it.
+pane read and send reach hidden workspaces; [agents] terminal_access
+governs both. pane send --enter waits [agents] send_enter_delay_ms first.
 Where shown, {command}--json{reset} prints JSON and skips confirmation.
 Without a terminal, a confirmation needs yes or exits 1 (not-confirmed).
 Exit status: 0 success, 1 failed, 2 invalid command, 3 target not found,
@@ -1102,10 +1108,7 @@ fn control(
             return report_failure(&unreachable_supervisor(error, generation), json);
         }
     };
-    let window = resolved
-        .window
-        .as_deref()
-        .map_or_else(|| "null".into(), |id| format!("\"{}\"", json_escape(id)));
+    let window = window_json(resolved.window.as_deref());
     match response {
         ControlResponse::Workspace(Response::Snapshot(snapshot)) => {
             let caller = if inspecting {
@@ -1192,11 +1195,121 @@ fn control(
             })?;
             Ok(0)
         }
-        // Only `eon pane send` asks for this.
+        // Only `eon pane send` asks for this, through `send_terminal`.
         ControlResponse::Workspace(Response::Sent(_)) => {
             Err("Eon supervisor returned a terminal result for a workspace action".into())
         }
     }
+}
+
+/// A result's `window`: its ID, or null for the default namespace.
+fn window_json(window: Option<&str>) -> String {
+    window.map_or_else(|| "null".into(), |id| format!("\"{}\"", json_escape(id)))
+}
+
+/// `eon pane send` (EON-C36): checks TEXT before anything is sent, pastes it,
+/// then waits the window's Enter delay and sends Enter when asked. Empty TEXT
+/// counts as none.
+fn send_terminal(inputs: &Inputs, send: PaneSend, target: WorkspaceTarget) -> Result<i32, Error> {
+    let json = send.json;
+    let text = match send.text {
+        SendText::None => Vec::new(),
+        SendText::Operand(text) => text.into_vec(),
+        SendText::Stdin => {
+            let mut text = Vec::new();
+            std::io::stdin()
+                .lock()
+                .take(MAX_PASTE_BYTES as u64 + 1)
+                .read_to_end(&mut text)
+                .map_err(|error| format!("cannot read stdin: {error}"))?;
+            text
+        }
+    };
+    if text.is_empty() && !send.enter {
+        return Err(Error::usage(
+            "eon pane send needs TEXT or --enter\nRun `eon --help` for commands and examples.",
+        ));
+    }
+    let text = if text.is_empty() {
+        None
+    } else if text.len() > MAX_PASTE_BYTES {
+        let detail =
+            format!("TEXT is over the {MAX_PASTE_BYTES}-byte limit; send a file's path instead");
+        return Ok(report_failure(&failure("input-too-large", detail), json)?);
+    } else {
+        match String::from_utf8(text) {
+            Ok(text) if validate_paste(&text).is_ok() => Some(text),
+            _ => {
+                let detail = "TEXT must be UTF-8 without control characters other than tab, \
+                              line feed and carriage return";
+                return Ok(report_failure(&failure("invalid-text", detail), json)?);
+            }
+        }
+    };
+    let caller = match calling_terminal() {
+        Ok(caller) => caller,
+        Err(error) => return Ok(report_failure(&error, json)?),
+    };
+    let action = |input| Action::SendTerminal {
+        target: send.target.clone(),
+        input,
+    };
+    if let Err(error) = validate_action(caller.clone(), action(TerminalInput::Enter)) {
+        return Ok(report_failure(
+            &failure("malformed-action", error.detail),
+            json,
+        )?);
+    }
+    let resolved = match resolve_workspace(inputs, target, caller.as_deref()) {
+        Ok(resolved) => resolved,
+        Err(error) => return Ok(report_failure(&error, json)?),
+    };
+    let request =
+        |input| match send_action_from(Ok(&resolved.socket), caller.clone(), action(input)) {
+            Ok(ControlResponse::Workspace(Response::Sent(sent))) => Ok(sent),
+            Ok(ControlResponse::Workspace(Response::Failure(failure))) => Err(failure),
+            Ok(_) => Err(failure(
+                "unrepresentable-state",
+                "Eon returned the wrong result for a terminal send",
+            )),
+            Err(error) if error.kind == EndpointFailureKind::InvalidAction => {
+                Err(failure("malformed-action", error.detail))
+            }
+            Err(error) => Err(unreachable_supervisor(error, &resolved.generation)),
+        };
+    // No TEXT means --enter alone. The Enter goes after the window's delay, so
+    // the program takes the whole paste first; once the paste is in, an Enter
+    // failure leaves it there.
+    let bytes = text.as_ref().map_or(0, String::len);
+    let (sent, enter_failure) = match text {
+        None => match request(TerminalInput::Enter) {
+            Ok(sent) => (sent, None),
+            Err(failure) => return Ok(report_failure(&failure, json)?),
+        },
+        Some(text) => match request(TerminalInput::Paste(text)) {
+            Err(failure) => return Ok(report_failure(&failure, json)?),
+            Ok(pasted) if send.enter => {
+                thread::sleep(Duration::from_millis(pasted.enter_delay_ms.into()));
+                (pasted, request(TerminalInput::Enter).err())
+            }
+            Ok(pasted) => (pasted, None),
+        },
+    };
+    let enter = send.enter && enter_failure.is_none();
+    if json {
+        write_stdout(format!(
+            "{{\"generation\":\"{}\",\"window\":{},{}",
+            json_escape(&resolved.generation),
+            window_json(resolved.window.as_deref()),
+            &terminal_sent_json(&sent, bytes, enter, enter_failure.as_ref())[1..]
+        ))?;
+    } else if let Some(failure) = &enter_failure {
+        eprintln!(
+            "{}the text was pasted; Enter was not sent",
+            failure_human(failure)
+        );
+    }
+    Ok(if enter_failure.is_some() { 1 } else { 0 })
 }
 
 fn unreachable_supervisor(error: EndpointFailure, generation: &str) -> Failure {
@@ -1374,6 +1487,64 @@ fn parse_workspace_target_arguments(
         *slot = Some(value.to_owned());
     }
     Ok((values, target))
+}
+
+/// `pane send TARGET [--enter] [--stdin] [--json] [-- TEXT]` (EON-C36).
+#[derive(Debug, PartialEq)]
+struct PaneSend {
+    target: String,
+    text: SendText,
+    enter: bool,
+    json: bool,
+}
+
+#[derive(Debug, PartialEq)]
+enum SendText {
+    None,
+    Operand(OsString),
+    Stdin,
+}
+
+fn parse_pane_send_arguments(arguments: &[OsString]) -> Result<Option<PaneSend>, Error> {
+    let [command, operation, rest @ ..] = arguments else {
+        return Ok(None);
+    };
+    if command != "pane" || operation != "send" {
+        return Ok(None);
+    }
+    let (options, operands) = match rest.iter().position(|argument| argument == "--") {
+        Some(separator) => (&rest[..separator], Some(&rest[separator + 1..])),
+        None => (rest, None),
+    };
+    let mut target = None;
+    let (mut enter, mut stdin, mut json) = (false, false, false);
+    for option in options {
+        let flag = match option.to_str() {
+            Some("--enter") => &mut enter,
+            Some("--stdin") => &mut stdin,
+            Some("--json") => &mut json,
+            Some(id) if target.is_none() && !id.starts_with('-') => {
+                target = Some(id.to_owned());
+                continue;
+            }
+            _ => return Err(Error::usage(EON_USAGE)),
+        };
+        if std::mem::replace(flag, true) {
+            return Err(Error::usage(EON_USAGE));
+        }
+    }
+    let text = match (operands, stdin) {
+        (None, false) => SendText::None,
+        (None, true) => SendText::Stdin,
+        (Some([text]), false) => SendText::Operand(text.clone()),
+        _ => return Err(Error::usage(EON_USAGE)),
+    };
+    Ok(Some(PaneSend {
+        target: target.ok_or_else(|| Error::usage(EON_USAGE))?,
+        text,
+        enter,
+        json,
+    }))
 }
 
 fn parse_control_arguments(arguments: &[OsString]) -> Result<(Action, bool), Error> {
@@ -2220,6 +2391,51 @@ mod tests {
             (Action::ClosePane { pane: "p3".into() }, false)
         );
         assert!(parse_control_arguments(&["pane", "close"].map(Into::into)).is_err());
+    }
+
+    #[test]
+    fn pane_send_takes_one_target_one_text_source_and_each_flag_once() {
+        let parse = |args: &[&str]| {
+            parse_pane_send_arguments(&args.iter().map(OsString::from).collect::<Vec<_>>())
+                .map_err(|error| error.status)
+        };
+        let send = |text, enter, json| {
+            Ok(Some(PaneSend {
+                target: "u2".into(),
+                text,
+                enter,
+                json,
+            }))
+        };
+        assert_eq!(parse(&["pane", "create"]), Ok(None));
+        assert_eq!(
+            parse(&["pane", "send", "u2", "--", "--enter"]),
+            send(SendText::Operand("--enter".into()), false, false)
+        );
+        assert_eq!(
+            parse(&["pane", "send", "--json", "u2", "--enter", "--", ""]),
+            send(SendText::Operand("".into()), true, true)
+        );
+        assert_eq!(
+            parse(&["pane", "send", "u2", "--stdin", "--enter"]),
+            send(SendText::Stdin, true, false)
+        );
+        assert_eq!(
+            parse(&["pane", "send", "u2", "--enter"]),
+            send(SendText::None, true, false)
+        );
+        for args in [
+            &["pane", "send"][..],
+            &["pane", "send", "--", "text"],
+            &["pane", "send", "u2", "text"],
+            &["pane", "send", "u2", "--"],
+            &["pane", "send", "u2", "--", "a", "b"],
+            &["pane", "send", "u2", "--stdin", "--", "text"],
+            &["pane", "send", "u2", "--enter", "--enter"],
+            &["pane", "send", "u2", "--no-focus", "--", "text"],
+        ] {
+            assert_eq!(parse(args), Err(2), "{args:?}");
+        }
     }
 
     #[test]

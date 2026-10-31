@@ -3,7 +3,7 @@ use eon_workspace_protocol::v26::{
     Action, Attention, AttentionKind, AttentionState, ClaudeQuotaState, CodexQuotaState,
     Column as SnapshotColumn, Direction, Failure, InvokeIntent, MAX_COLUMNS, MAX_DIRECTORY_BYTES,
     MAX_SESSIONS, MAX_TABS, Pane as SnapshotPane, Popup as SnapshotPopup,
-    PopupEntry as SnapshotEntry, PopupKey, PopupTarget, QuotaWindow, Screen, Side, Sidebar,
+    PopupEntry as SnapshotEntry, PopupKey, PopupTarget, QuotaWindow, Screen, Sent, Side, Sidebar,
     Snapshot, Tab as SnapshotTab, TargetId, TerminalTarget, TerminalText, WorkspaceAction,
     check_popup_action,
 };
@@ -2418,23 +2418,9 @@ pub(crate) fn caller_output(snapshot: &Snapshot, session: Option<&str>, json: bo
 /// `eon pane read --json` without the generation and window the CLI puts in
 /// front (EON-C35).
 pub(crate) fn terminal_text_json(read: &TerminalText) -> String {
-    let caller = read.caller.as_ref().map_or_else(
-        || "null".into(),
-        |caller| {
-            format!(
-                "{{\"terminal\":\"{}\",\"tab\":\"{}\",{}}}",
-                json_escape(&caller.terminal),
-                json_escape(&caller.tab),
-                target_id_json(&caller.id)
-            )
-        },
-    );
     format!(
-        "{{\"workspace\":\"{}\",\"tab\":\"{}\",{},\"terminal\":\"{}\",\"caller\":{caller},\"revision\":{},\"screen\":\"{}\",\"rows\":{},\"columns\":{},\"title\":\"{}\",\"directory\":{},\"text\":\"{}\",\"omitted_rows\":{},\"lossy\":true}}\n",
-        json_escape(&read.target.workspace),
-        json_escape(&read.target.tab),
-        target_id_json(&read.target.id),
-        json_escape(&read.target.terminal),
+        "{{{},\"revision\":{},\"screen\":\"{}\",\"rows\":{},\"columns\":{},\"title\":\"{}\",\"directory\":{},\"text\":\"{}\",\"omitted_rows\":{},\"lossy\":true}}\n",
+        terminal_json(&read.target, read.caller.as_ref()),
         read.revision,
         match read.screen {
             Screen::Primary => "primary",
@@ -2446,6 +2432,57 @@ pub(crate) fn terminal_text_json(read: &TerminalText) -> String {
         json_path(&read.directory),
         json_escape(&read.text),
         read.omitted_rows,
+    )
+}
+
+/// `eon pane send --json` without the generation and window the CLI puts in
+/// front (EON-C36): what reached the target, and the Enter's failure when the
+/// paste reached it and the Enter did not. No bytes means Enter alone, so
+/// `bracketed` is null.
+pub(crate) fn terminal_sent_json(
+    sent: &Sent,
+    bytes: usize,
+    enter: bool,
+    error: Option<&Failure>,
+) -> String {
+    let bracketed = if bytes == 0 {
+        "null".into()
+    } else {
+        sent.bracketed.to_string()
+    };
+    let error = error.map_or_else(String::new, |error| {
+        format!(
+            ",\"error\":{{\"code\":\"{}\",\"detail\":\"{}\"}}",
+            json_escape(&error.code),
+            json_escape(&error.detail)
+        )
+    });
+    format!(
+        "{{{},\"bytes\":{bytes},\"bracketed\":{bracketed},\"enter\":{enter}{error}}}\n",
+        terminal_json(&sent.target, sent.caller.as_ref())
+    )
+}
+
+/// A target's `workspace`, `tab`, `pane`, `popup` and `terminal`, then the
+/// calling terminal as `eon workspace` reports `caller`.
+fn terminal_json(target: &TerminalTarget, caller: Option<&TerminalTarget>) -> String {
+    let caller = caller.map_or_else(
+        || "null".into(),
+        |caller| {
+            format!(
+                "{{\"terminal\":\"{}\",\"tab\":\"{}\",{}}}",
+                json_escape(&caller.terminal),
+                json_escape(&caller.tab),
+                target_id_json(&caller.id)
+            )
+        },
+    );
+    format!(
+        "\"workspace\":\"{}\",\"tab\":\"{}\",{},\"terminal\":\"{}\",\"caller\":{caller}",
+        json_escape(&target.workspace),
+        json_escape(&target.tab),
+        target_id_json(&target.id),
+        json_escape(&target.terminal)
     )
 }
 
@@ -4155,6 +4192,38 @@ mod tests {
             );
             assert_eq!(super::caller_output(&snapshot, session, false), "");
         }
+    }
+
+    #[test]
+    fn terminal_sent_json_reports_what_was_sent_and_an_enter_failure() {
+        let sent = Sent {
+            target: TerminalTarget {
+                workspace: "w2".into(),
+                tab: "t3".into(),
+                id: TargetId::Pane("p4".into()),
+                terminal: "session-5".into(),
+            },
+            caller: None,
+            bracketed: false,
+            enter_delay_ms: 300,
+        };
+        let target = "\"workspace\":\"w2\",\"tab\":\"t3\",\"pane\":\"p4\",\"popup\":null,\
+                      \"terminal\":\"session-5\",\"caller\":null";
+        assert_eq!(
+            super::terminal_sent_json(&sent, 0, true, None),
+            format!("{{{target},\"bytes\":0,\"bracketed\":null,\"enter\":true}}\n")
+        );
+        let failure = Failure {
+            code: "terminal-ended".into(),
+            detail: "terminal \"x\" has ended".into(),
+        };
+        assert_eq!(
+            super::terminal_sent_json(&sent, 5, false, Some(&failure)),
+            format!(
+                "{{{target},\"bytes\":5,\"bracketed\":false,\"enter\":false,\
+                 \"error\":{{\"code\":\"terminal-ended\",\"detail\":\"terminal \\\"x\\\" has ended\"}}}}\n"
+            )
+        );
     }
 
     #[test]

@@ -3185,8 +3185,13 @@ socket names, JSON fields and protocol identifiers retain their spellings.
   - protection against code running as the same user.
 - **Proof:** None yet.
 - **Open proof:** The installed joint proof `eon-agent-parity-a9g0.19` proves
-  it, after the command lands (`eon-agent-parity-a9g0.18`). Candidate evidence
-  from `eon-agent-parity-a9g0.16`: the EONW v26 codec tests, which refuse
+  it. Candidate evidence: from `eon-agent-parity-a9g0.18`, the CLI test
+  `pane_send_pastes_then_waits_for_enter_and_exits_by_failure` in
+  [`workspace_control.rs`](../eon/crates/eon/tests/workspace_control.rs), which
+  checks the JSON reply, the Enter delay, `--stdin`, each failure exit
+  (Orbit's refusals from a fake Orbit), an Enter that fails after its paste,
+  and that refusals send nothing and a send changes no workspace state; from
+  `eon-agent-parity-a9g0.16`, the EONW v26 codec tests, which refuse
   invalid and oversized text on both sides, the lease tests, which map every
   Orbit answer to its failure code and show lease input in a real Orbit's
   text, and the two supervisor tests named under EON-C35.

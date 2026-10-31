@@ -854,19 +854,37 @@ fn managed_orbit_helper() {
                     {
                         let request = management::decode_client_message(&input[..length]).unwrap();
                         input.drain(..length);
-                        // A test scripts how Orbit refuses a read by writing
-                        // `busy` or `closed` to the file EON_TEST_ORBIT_REPLY names.
-                        let scripted = std::env::var_os("EON_TEST_ORBIT_REPLY")
+                        // A test scripts how Orbit refuses a read or an input
+                        // by writing `busy`, `closed`, `unbracketed` (pastes
+                        // only) or `busy-enter` (Enter only) to the file
+                        // EON_TEST_ORBIT_REPLY names.
+                        let reply = std::env::var_os("EON_TEST_ORBIT_REPLY")
                             .and_then(|path| fs::read_to_string(path).ok())
-                            .and_then(|reply| match reply.trim() {
-                                "busy" => Some(ManagementServerMessage::Busy),
-                                "closed" => Some(ManagementServerMessage::Refused(Refusal::Closed)),
-                                _ => None,
-                            });
+                            .unwrap_or_default();
+                        let scripted = match (reply.trim(), &request) {
+                            (
+                                "busy",
+                                ManagementClientMessage::ReadVisible
+                                | ManagementClientMessage::Input(_),
+                            )
+                            | ("busy-enter", ManagementClientMessage::Input(LeaseInput::Enter)) => {
+                                Some(ManagementServerMessage::Busy)
+                            }
+                            (
+                                "closed",
+                                ManagementClientMessage::ReadVisible
+                                | ManagementClientMessage::Input(_),
+                            ) => Some(ManagementServerMessage::Refused(Refusal::Closed)),
+                            (
+                                "unbracketed",
+                                ManagementClientMessage::Input(LeaseInput::Paste(_)),
+                            ) => Some(ManagementServerMessage::Refused(
+                                Refusal::UnbracketedNewline,
+                            )),
+                            _ => None,
+                        };
                         match request {
-                            ManagementClientMessage::ReadVisible
-                                if *leased && scripted.is_some() =>
-                            {
+                            _ if *leased && scripted.is_some() => {
                                 write_management(stream, scripted.unwrap());
                             }
                             ManagementClientMessage::Acquire { expected, record }
@@ -929,6 +947,20 @@ fn managed_orbit_helper() {
                                         .open(log)
                                         .unwrap()
                                         .write_all(line.as_bytes())
+                                        .unwrap();
+                                }
+                                // When each input arrived, in milliseconds.
+                                if let Some(log) = std::env::var_os("EON_TEST_INPUT_TIMES") {
+                                    let since = std::time::SystemTime::now()
+                                        .duration_since(std::time::UNIX_EPOCH)
+                                        .unwrap()
+                                        .as_millis();
+                                    fs::OpenOptions::new()
+                                        .create(true)
+                                        .append(true)
+                                        .open(log)
+                                        .unwrap()
+                                        .write_all(format!("{since} {input:?}\n").as_bytes())
                                         .unwrap();
                                 }
                                 write_management(
@@ -7026,6 +7058,7 @@ fn terminal_access_workspace(root: &Path, agents: &str) -> (TestProcess, PathBuf
         .env("EON_TEST_STOP", &stop)
         .env("EON_TEST_INPUT_LOG", root.join("input.log"))
         .env("EON_TEST_ORBIT_REPLY", root.join("orbit-reply"))
+        .env("EON_TEST_INPUT_TIMES", root.join("input-times.log"))
         .stdout(Stdio::null())
         .stderr(Stdio::null())
         .spawn()
@@ -7321,6 +7354,204 @@ fn pane_read_prints_the_text_or_json_and_exits_by_failure() {
     assert_eq!(refused.status.code(), Some(1));
     assert!(refused.stdout.is_empty());
     assert!(String::from_utf8_lossy(&refused.stderr).starts_with("error terminal-access-off: "));
+    fs::write(&supervisor.stop, "").unwrap();
+    wait_for_successful_exit(&mut supervisor.child);
+    fs::remove_dir_all(off).unwrap();
+}
+
+#[test]
+fn pane_send_pastes_then_waits_for_enter_and_exits_by_failure() {
+    let root = temporary_directory();
+    let (mut supervisor, generation, _) =
+        terminal_access_workspace(&root, "\n[agents]\nsend_enter_delay_ms = 400\n");
+    let eon = |root: &Path| {
+        let mut command = eon_command(Path::new(env!("CARGO_BIN_EXE_eon")));
+        command
+            .env("EON_RUNTIME_DIR", root.join("runtime"))
+            .env("EON_CONFIG_HOME", root.join("config"));
+        command
+    };
+    let run = |arguments: &[&str]| eon(&root).args(arguments).output().unwrap();
+    let sent = || fs::read_to_string(root.join("input.log")).unwrap_or_default();
+    let json = |output: &Output| serde_json::from_str::<serde_json::Value>(stdout(output)).unwrap();
+    let before = stable_workspace_json(&run(&["workspace", "--json"]));
+    let id = generation.file_name().unwrap().to_str().unwrap();
+    let reply = |bytes: usize, bracketed: serde_json::Value, enter: bool| {
+        serde_json::json!({
+            "generation": id,
+            "window": null,
+            "workspace": "w1",
+            "tab": "t1",
+            "pane": "p1",
+            "popup": null,
+            "terminal": "session-1",
+            "caller": null,
+            "bytes": bytes,
+            "bracketed": bracketed,
+            "enter": enter,
+        })
+    };
+
+    let paste = run(&["pane", "send", "p1", "--json", "--", "echo hi"]);
+    assert_eq!(paste.status.code(), Some(0));
+    assert_eq!(json(&paste), reply(7, true.into(), false));
+    // --enter waits the window's delay between the paste and the Enter.
+    let submit = run(&["pane", "send", "p1", "--enter", "--json", "--", "ls"]);
+    assert_eq!(submit.status.code(), Some(0));
+    assert_eq!(json(&submit), reply(2, true.into(), true));
+    let times = fs::read_to_string(root.join("input-times.log")).unwrap();
+    let times = times
+        .lines()
+        .map(|line| line.split_once(' ').unwrap())
+        .collect::<Vec<_>>();
+    let [.., (pasted, "Paste(\"ls\")"), (entered, "Enter")] = times.as_slice() else {
+        panic!("{times:?}");
+    };
+    let waited = entered.parse::<u64>().unwrap() - pasted.parse::<u64>().unwrap();
+    assert!(waited >= 400, "Enter came {waited} ms after the paste");
+    let human = run(&["pane", "send", "p1", "--enter"]);
+    assert_eq!(human.status.code(), Some(0));
+    assert!(human.stdout.is_empty() && human.stderr.is_empty());
+    // Empty TEXT counts as none: with --enter it sends Enter alone.
+    let enter = run(&["pane", "send", "p1", "--enter", "--json", "--", ""]);
+    assert_eq!(json(&enter), reply(0, serde_json::Value::Null, true));
+    let mut piped = eon(&root)
+        .args(["pane", "send", "p1", "--stdin", "--json"])
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .spawn()
+        .unwrap();
+    piped
+        .stdin
+        .take()
+        .unwrap()
+        .write_all(b"from stdin")
+        .unwrap();
+    let piped = piped.wait_with_output().unwrap();
+    assert_eq!(json(&piped), reply(10, true.into(), false));
+    assert_eq!(
+        sent(),
+        "session-1 Paste(\"echo hi\")\nsession-1 Paste(\"ls\")\nsession-1 Enter\n\
+         session-1 Enter\nsession-1 Enter\nsession-1 Paste(\"from stdin\")\n"
+    );
+
+    // Refusals before the supervisor, and the supervisor's, send nothing.
+    let log = sent();
+    let too_large = "a".repeat(64 * 1024 + 1);
+    let not_utf8 = OsStr::from_bytes(b"\xff");
+    for (arguments, status, code) in [
+        (
+            vec![OsStr::new("--"), OsStr::new("\u{1b}[31mred")],
+            2,
+            Some("invalid-text"),
+        ),
+        (vec![OsStr::new("--"), not_utf8], 2, Some("invalid-text")),
+        (
+            vec![OsStr::new("--"), OsStr::new(&too_large)],
+            2,
+            Some("input-too-large"),
+        ),
+        (vec![], 2, None),
+        (vec![OsStr::new("--"), OsStr::new("")], 2, None),
+        (vec![OsStr::new("text")], 2, None),
+        (
+            vec![OsStr::new("--stdin"), OsStr::new("--"), OsStr::new("x")],
+            2,
+            None,
+        ),
+        // Empty standard input is no TEXT.
+        (vec![OsStr::new("--stdin")], 2, None),
+    ] {
+        for flags in [&[][..], &[OsStr::new("--json")]] {
+            let output = eon(&root)
+                .args(["pane", "send", "p1"])
+                .args(flags)
+                .args(&arguments)
+                .output()
+                .unwrap();
+            assert_eq!(
+                output.status.code(),
+                Some(status),
+                "{arguments:?} {flags:?}"
+            );
+            match (code, flags.is_empty()) {
+                (Some(code), true) => assert!(
+                    String::from_utf8_lossy(&output.stderr).starts_with(&format!("error {code}: ")),
+                    "{arguments:?}"
+                ),
+                (Some(code), false) => assert!(
+                    stdout(&output).contains(&format!("\"code\":\"{code}\"")),
+                    "{arguments:?}"
+                ),
+                (None, _) => assert!(output.stdout.is_empty(), "{arguments:?}"),
+            }
+        }
+    }
+    let missing = run(&["pane", "send", "p99", "--json", "--", "x"]);
+    assert_eq!(missing.status.code(), Some(3));
+    assert!(stdout(&missing).contains("\"code\":\"unknown-target\""));
+    // Orbit's refusals exit 1, with nothing sent.
+    for (script, text, code) in [
+        ("unbracketed", "a\nb", "unbracketed-newline"),
+        ("closed", "x", "terminal-ended"),
+        ("busy", "x", "terminal-unavailable"),
+    ] {
+        fs::write(root.join("orbit-reply"), script).unwrap();
+        let human = run(&["pane", "send", "p1", "--enter", "--", text]);
+        assert_eq!(human.status.code(), Some(1), "{script}");
+        assert!(String::from_utf8_lossy(&human.stderr).starts_with(&format!("error {code}: ")));
+        let output = run(&["pane", "send", "p1", "--enter", "--json", "--", text]);
+        assert_eq!(output.status.code(), Some(1), "{script}");
+        assert!(
+            stdout(&output).contains(&format!("\"code\":\"{code}\"")),
+            "{script}"
+        );
+    }
+    assert_eq!(sent(), log);
+    // A paste that lands before a failed Enter stays, and the reply says so.
+    fs::write(root.join("orbit-reply"), "busy-enter").unwrap();
+    let half = run(&["pane", "send", "p1", "--enter", "--json", "--", "x"]);
+    assert_eq!(half.status.code(), Some(1));
+    let mut value = json(&half);
+    let error = value.as_object_mut().unwrap().remove("error").unwrap();
+    assert_eq!(error["code"], "terminal-unavailable");
+    assert_eq!(value, reply(1, true.into(), false));
+    let half = run(&["pane", "send", "p1", "--enter", "--", "y"]);
+    assert_eq!(half.status.code(), Some(1));
+    assert!(half.stdout.is_empty());
+    let error = String::from_utf8_lossy(&half.stderr);
+    assert!(error.starts_with("error terminal-unavailable: "), "{error}");
+    assert!(
+        error.ends_with("the text was pasted; Enter was not sent\n"),
+        "{error}"
+    );
+    assert_eq!(
+        sent(),
+        format!("{log}session-1 Paste(\"x\")\nsession-1 Paste(\"y\")\n")
+    );
+    fs::remove_file(root.join("orbit-reply")).unwrap();
+    // Sending changed nothing a person sees but the program.
+    assert_eq!(
+        stable_workspace_json(&run(&["workspace", "--json"])),
+        before
+    );
+    fs::write(&supervisor.stop, "").unwrap();
+    wait_for_successful_exit(&mut supervisor.child);
+    let gone = run(&["pane", "send", "p1", "--json", "--", "x"]);
+    assert_eq!(gone.status.code(), Some(4));
+    assert!(stdout(&gone).contains("\"code\":\"missing-supervisor\""));
+    fs::remove_dir_all(&root).unwrap();
+
+    let off = temporary_directory();
+    let (mut supervisor, _, _) =
+        terminal_access_workspace(&off, "\n[agents]\nterminal_access = \"none\"\n");
+    let refused = eon(&off)
+        .args(["pane", "send", "p1", "--enter", "--json", "--", "x"])
+        .output()
+        .unwrap();
+    assert_eq!(refused.status.code(), Some(1));
+    assert!(stdout(&refused).contains("\"code\":\"terminal-access-off\""));
+    assert!(!off.join("input.log").exists());
     fs::write(&supervisor.stop, "").unwrap();
     wait_for_successful_exit(&mut supervisor.child);
     fs::remove_dir_all(off).unwrap();

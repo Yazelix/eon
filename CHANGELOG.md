@@ -5,6 +5,14 @@ installation, and proven contract changes.
 
 ## Unreleased
 
+- `eon pane send TARGET [--enter] [--stdin] [--json] [-- TEXT]` pastes up to
+  64 KiB of text into a pane or popup in any workspace of the window, bracketed
+  when the program asked for bracketed paste, and with `--enter` presses Enter
+  after `[agents] send_enter_delay_ms`. It refuses control characters, and a
+  line break when the program has not enabled bracketed paste, sending
+  nothing. Selection, the shown workspace and popup, and focus stay as they
+  are. `[agents] terminal_access = "none"` refuses it.
+
 - `eon pane read TARGET [--json]` prints the visible text of a pane or popup in
   any workspace of the window, shown or hidden, and changes nothing the window
   shows. `--json` adds the target, the calling terminal, the screen, its size,
@@ -14,9 +22,8 @@ installation, and proven contract changes.
 - New `[agents]` settings: `terminal_access = "window"` (or `"none"`) decides
   whether `eon pane read` and `eon pane send` may reach the window's terminals,
   and `send_enter_delay_ms = 300` is the wait before `eon pane send --enter`
-  sends Enter. The window serves both over EONW v26; the two commands land
-  separately. EONW moves to v26 and Eon to 0.1.9, so after a profile refresh a
-  window started from an older build needs one restart before the new `eon`
+  sends Enter. EONW moves to v26 and Eon to 0.1.9, so after a profile refresh
+  a window started from an older build needs one restart before the new `eon`
   can control it.
 
 - Ctrl+Tab and Ctrl+Shift+Tab select the next and previous tab, wrapping

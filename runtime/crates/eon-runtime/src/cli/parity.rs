@@ -15,10 +15,13 @@ enum CliPath {
     Lifecycle(&'static str),
     /// No command: why, naming the open bead that adds one.
     Exception(&'static str),
+    /// These arguments parse to a `pane send` whose one request is exactly
+    /// this action.
+    Send(Vec<OsString>),
 }
 
 fn cli_path(action: &Action) -> CliPath {
-    use CliPath::{Command, Exception, Lifecycle};
+    use CliPath::{Command, Exception, Lifecycle, Send};
     let words = |words: &[&str]| words.iter().map(OsString::from).collect::<Vec<_>>();
     let flag = |set: bool, flag: &str| if set { words(&[flag]) } else { Vec::new() };
     let direction = |direction: &Direction| match direction {
@@ -94,8 +97,11 @@ fn cli_path(action: &Action) -> CliPath {
             );
         }
         Action::ReadTerminal { target } => words(&["pane", "read", target]),
-        Action::SendTerminal { .. } => {
-            return Exception("eon-agent-parity-a9g0.18 adds `eon pane send`");
+        Action::SendTerminal { target, input } => {
+            return Send(match input {
+                TerminalInput::Paste(text) => words(&["pane", "send", target, "--", text]),
+                TerminalInput::Enter => words(&["pane", "send", target, "--enter"]),
+            });
         }
         Action::ClosePane { pane } => words(&["pane", "close", pane]),
         Action::RenamePane { pane, name: None } => {
@@ -274,6 +280,30 @@ fn every_eonw_action_has_a_cli_path_or_a_named_exception() {
                     .any(|line| line.trim_start().starts_with(&format!("{command} "))),
                 "{command} is not in eon --help"
             ),
+            CliPath::Send(arguments) => {
+                assert!(control_command(&arguments[0]), "{arguments:?}");
+                let send = parse_workspace_target_arguments(&arguments)
+                    .and_then(|(arguments, _)| parse_pane_send_arguments(&arguments))
+                    .map_err(|error| error.message)
+                    .unwrap()
+                    .unwrap();
+                let input = match (send.text, send.enter) {
+                    (SendText::Operand(text), false) => {
+                        TerminalInput::Paste(text.into_string().unwrap())
+                    }
+                    (SendText::None, true) => TerminalInput::Enter,
+                    other => panic!("{arguments:?} is not one request: {other:?}"),
+                };
+                assert!(!send.json, "{arguments:?}");
+                assert_eq!(
+                    Action::SendTerminal {
+                        target: send.target,
+                        input
+                    },
+                    action,
+                    "{arguments:?}"
+                );
+            }
             CliPath::Exception(reason) => {
                 assert!(reason.contains("eon-"), "{action:?}: {reason}");
             }

@@ -423,6 +423,7 @@ on terminals; redirected output is plain text. A nonempty `NO_COLOR` or
 | `eon pane move up\|down [--json]` | Move the selected pane, or the calling pane, one position within its column |
 | `eon pane move left\|right [--json]` | Move the selected pane, or the calling pane, into the neighbouring column, as Ctrl+Alt+H/L does |
 | `eon pane read TARGET [--json]` | Print the visible text of pane or popup TARGET, in any workspace of the window, without changing anything; see [Reading a terminal](#reading-a-terminal) |
+| `eon pane send TARGET [--enter] [--stdin] [--json] [-- TEXT]` | Paste TEXT, or standard input with `--stdin`, into pane or popup TARGET in any workspace of the window, then with `--enter` press Enter; see [Sending to a terminal](#sending-to-a-terminal) |
 | `eon focus ID\|left\|right\|up\|down [--json]` | Focus a stable identity or traverse the workspace |
 | `eon versions` | Print Eon, protocol, and component identities |
 | `eon config-path` | Create and print the configuration root |
@@ -531,6 +532,60 @@ target exits 3 (`unknown-target`). No failure carries terminal content. Any
 process running as you can read terminals this way: `terminal_access` is a
 preference, not a security boundary.
 
+### Sending to a terminal
+
+`eon pane send TARGET -- TEXT` pastes TEXT into a pane or popup, named as for
+`eon pane read`, in any workspace of the window, as if you had pasted it there:
+bracketed when the program enabled bracketed paste. `--stdin` reads TEXT from
+standard input instead. `--enter` then presses Enter, after
+[`[agents] send_enter_delay_ms`](CONFIGURATION.md#configuration-behavior)
+(300 ms by default) so the program takes the whole paste first; `--enter`
+without TEXT, or with empty TEXT, presses Enter alone. A line break in TEXT
+never submits it. Sending changes no selection, shown workspace or popup,
+scroll position or focus; a hidden popup receives the text and stays hidden.
+
+Keep each send short and point the program at a file for long material. Some
+agents treat long pastes as outside material: Claude Code marks pastes over
+800 characters or 3 lines that way.
+
+With `--json` the reply names the target and `caller` as `eon pane read` does,
+with `generation` and `window`, `bytes` (TEXT's length, 0 for Enter alone),
+`bracketed` (null for Enter alone) and `enter`. Human output prints nothing on
+success.
+
+A send refuses, with nothing sent:
+
+- `invalid-text`, exit 2: TEXT is not UTF-8, or holds ESC, DEL or another
+  control character other than tab, line feed and carriage return;
+- `input-too-large`, exit 2: TEXT is over 64 KiB;
+- no TEXT and no `--enter`, exit 2;
+- `unbracketed-newline`, exit 1: TEXT has a line break and the program has not
+  enabled bracketed paste;
+- `terminal-access-off`, exit 1, when `[agents] terminal_access` is `"none"`.
+
+It also exits 1 with `terminal-ended` once the program has exited, and with
+`terminal-unavailable` when the terminal's Orbit refuses, does not answer
+within 2 s, or runs an older version until the terminal restarts. A send that
+timed out may still arrive. When the paste lands and the Enter then fails, the
+command exits 1, the text stays in the program, and the JSON reply carries
+`enter: false` and the Enter's `error`. An unknown target exits 3
+(`unknown-target`).
+
+**Sandboxed agents.** A sandboxed agent that may connect to Unix sockets can
+drive Eon, and `eon pane create` and `eon pane send` then run commands outside
+its sandbox. Codex with `sandbox_workspace_write.network_access = true` and
+Claude Code with `sandbox.network.allowAllUnixSockets = true` allow this; both
+tools' default sandbox modes block it. `[agents] terminal_access` is not a
+security boundary.
+
+**Codex's shared daemon.** By default the Codex TUI runs its commands through a
+shared background server, which keeps the environment of the terminal that
+started it. Its `eon` commands then carry that terminal's `EON_TERMINAL`, or
+none when it started outside Eon, so `eon pane create` and the rest act for
+that terminal, or for the shown workspace, not for the pane Codex runs in; once
+that terminal has ended they exit 3. Start Codex in Eon with
+`codex --no-daemon`.
+
 ### Exit status
 
 `eon` and `eonbase` commands exit with the same status with or without
@@ -578,6 +633,10 @@ ln -s ~/.nix-profile/share/eon/skills/eon ~/.agents/skills/eon
 
 Remove a skill by deleting its link: `rm ~/.claude/skills/eon` or
 `rm ~/.agents/skills/eon`.
+
+An agent's sandbox does not contain what it does through `eon pane create`,
+`eon pane read` and `eon pane send`, and Codex needs `--no-daemon` in Eon; see
+[Sending to a terminal](#sending-to-a-terminal).
 
 Optionally add a session-start hook. Merge the following `SessionStart` entry
 into `~/.claude/settings.json`, preserving your other settings and hooks:
