@@ -2283,7 +2283,10 @@ socket names, JSON fields and protocol identifiers retain their spellings.
 ## EON-C28 — 1.x stability
 
 - **Status:** Planned (`eon-igae.1`, approved by Lucca 2026-10-20). It binds
-  from v1.0.0; 0.x releases make no stability promise.
+  from v1.0.0; 0.x releases make no stability promise. Amended on 2026-10-31
+  (approved by Lucca, relayed by eon-overseer) by `eon-c8ytm`: delegated
+  lifecycle for older generations, newer list and trust values, and no
+  rewrite of `config.toml`.
 - **Consumer:** People, scripts and agents that use Eon 1.0 on x86_64 Linux on
   native Wayland and upgrade within 1.x.
 - **Trigger:** Installing a later 1.x release over 1.0 or another 1.x release.
@@ -2303,12 +2306,13 @@ socket names, JSON fields and protocol identifiers retain their spellings.
     1.0 loads in every 1.x with the same meaning, and the documented
     `EON_CONFIG_HOME` and `EON_RUNTIME_DIR` variables keep theirs. A setting
     deprecated in 1.x still loads and warns (the first deprecation adds the
-    warning); none is removed before 2.0. A built-in popup added in 1.x never
-    changes the meaning of a configured `[popups.<id>]` with the same ID.
-    Appearance means the `[bar]`, `[terminal]` and `[anima]` settings; they
-    and their 1.0 values keep loading, though how they render may change.
-    Every other default changes only with a changelog entry and a setting that
-    restores the old value.
+    warning); none is removed before 2.0. Eon never rewrites `config.toml` on
+    its own; 2.0 ships `eon config migrate` for 1.x files. A built-in popup
+    added in 1.x never changes the meaning of a configured `[popups.<id>]`
+    with the same ID. Appearance means the `[bar]`, `[terminal]` and `[anima]`
+    settings; they and their 1.0 values keep loading, though how they render
+    may change. Every other default changes only with a changelog entry and a
+    setting that restores the old value.
   - **Shortcuts:** every default shortcut the Alt+/ viewer lists at 1.0 keeps
     its action. A later default never makes a 1.0 configuration fail: a
     shortcut the user configured takes precedence over a default on the same
@@ -2317,9 +2321,9 @@ socket names, JSON fields and protocol identifiers retain their spellings.
     [EON-C20](#eon-c20--discoverable-native-shortcuts) names (Alt+Slash and
     Alt+0 through Alt+9), which 1.x never enlarges.
   - **Upgrades:** installing a later 1.x never stops live terminals. The new
-    `eon` keeps the EONW lifecycle codec of every earlier 1.x release, so it
-    lists and stops every older 1.x generation through
-    [EON-C11](#eon-c11--runtime-generations-and-presentation).
+    `eon` lists and stops every older 1.x generation through
+    [EON-C11](#eon-c11--runtime-generations-and-presentation), with its own
+    codec or by running the generation's recorded `eon`.
     `eon attach GENERATION` presents one only when its presentation is
     compatible, which 1.x does not guarantee.
 - **Important failures:** A 1.x release that rejects a 1.0 configuration,
@@ -2328,9 +2332,10 @@ socket names, JSON fields and protocol identifiers retain their spellings.
   shortcut's action, drops a 1.x lifecycle codec, or stops live terminals on
   install breaks this contract; such a change waits for 2.0. Unknown
   configuration keys are ignored with a warning naming the key and file, so
-  typos stay visible. A configuration written for a newer 1.x may still fail
-  in an older one when it gives a known key a value the older release does
-  not accept.
+  typos stay visible. In a configuration written for a newer 1.x, an older
+  release skips list values it does not know, with a warning; a trust setting
+  with an unknown value takes its most restrictive choice; any other unknown
+  value of a known key may still fail.
 - **Owner:** Eon owns the promise, the release review against it and the
   managed command names its Nix composition installs. Eon Runtime owns the
   commands, JSON, exit statuses, lifecycle codecs and configuration parsing
@@ -3305,3 +3310,43 @@ socket names, JSON fields and protocol identifiers retain their spellings.
       `terminal-access-off`, and its picker stayed pending.
     - Older generation: `eon pane send` exited 4 with
       `supervisor-unavailable`, as recorded under EON-C35.
+
+## EON-C37 — Upgrades within 0.x
+
+- **Status:** Planned (`eon-c8ytm`, approved by Lucca 2026-10-31, relayed by
+  eon-overseer). It binds from the announcement: the macOS launch or the first
+  public announcement, whichever comes first.
+- **Consumer:** People, scripts and agents that use Eon 0.x on x86_64 Linux on
+  native Wayland and upgrade or roll back within 0.x.
+- **Trigger:** Installing a later 0.x release over an earlier one at or above
+  its declared migration floor, or rolling back to one.
+- **Result:** A `config.toml` that loaded in the earlier release loads with
+  the same meaning or, for a deprecated key, its documented replacement and a
+  warning naming it. A 0.N.y patch release removes no key, command, flag or
+  JSON field. A removed key warns and never stops startup, unless ignoring it
+  would widen access, run something the user did not configure, or lose data.
+  Eon never rewrites `config.toml` on its own. Durable state written at or
+  above the floor is read or migrated, and the earlier file stays readable by
+  the earlier release, so rollback within the floor loses no setting.
+  Installing never stops live terminals, and the new `eon` lists and stops
+  older generations directly or through their recorded `eon`.
+- **Important failures:** A release that fails on, or silently changes the
+  meaning of, a configuration that loaded at its floor; deletes migration code
+  above its floor; or rewrites user configuration without an explicit command.
+- **Owner:** Eon owns the promise, the release review against it and each
+  release's declared migration floor. Eon Runtime owns the configuration
+  parsing, durable-state reading and lifecycle commands that carry it.
+- **Boundary:** Not covered: how appearance and layout render; behavior that
+  no document states; the ORBS and ORBF protocols, EONW beyond listing and
+  stopping older generations above, and the component manifest format, which
+  carry their own versions; internal helpers that no document lists, such as
+  `eon-directory-picker`; the unprefixed tool names inside terminals; Anima's
+  styles and options; eonbase; the behavior of pinned tools such as Helix,
+  Yazi and Nushell when their pins update; reattaching across
+  presentation-incompatible releases, which needs the earlier release's
+  executable (EON-C11); and every platform other than x86_64 Linux on native
+  Wayland, including the macOS preview.
+- **Proof:** None yet.
+- **Open proof:** The config and state corpus test (`eon-embg6`) in
+  `eon-test`, plus one installed skip-version observation (floor release to
+  new release) and one rollback observation per minor release.
