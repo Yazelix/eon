@@ -6,6 +6,12 @@ remain canonical in `docs/CONTRACTS.md`, dependency decisions in
 
 ## Unreleased
 
+- ORB-C3's interactive admission is proved on Darwin: on a GitHub macOS
+  runner, `orbit-attach-allow` passed natively, and on the installed Eon a
+  `Hello` from a process other than Venus got `Busy` on hidden terminals and
+  while the window was detached, while Venus still attached. Wire and
+  behavior are unchanged (`eon-mac-launch-kz4p.47`).
+
 - ORB-C17 becomes Proved, and ORB-C3, ORB-C5 and ORB-C13 become Proved
   again: on the installed Eon, Eon Runtime's management lease read and pasted
   into hidden terminals, and a `Hello` from a process other than Venus got

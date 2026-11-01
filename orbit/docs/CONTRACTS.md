@@ -159,7 +159,8 @@ PTY pixel size rule needs no wire change.
 - **Proof:** the `eon-awmq.3` import commit, with the
   `eon-title-utf8-ends-terminal-atq2` commit for invalid metadata and the
   `eon-agent-parity-a9g0.15` commit (`9c90032`) for interactive admission,
-  proved installed by the `eon-agent-parity-a9g0.19` commit
+  proved installed by the `eon-agent-parity-a9g0.19` commit and on Darwin at
+  `6ea9181` (`eon-mac-launch-kz4p.47`)
   - **Environment:** x86_64 Linux; `nix flake check -L` (`orbit-laws`,
     `orbit-boundary`, `orbit-terminfo`, every `orbit-<name>` real-PTY
     check); sandboxed `nix develop -c eon-test` (workspace and installer,
@@ -169,7 +170,12 @@ PTY pixel size rule needs no wire change.
     installed Eon built from edge `acc29d2`
     (`/nix/store/n9qkzdwngqvcbxfpla66k57vjsqdwgga-eon-0.1.9`, Orbit
     `/nix/store/c6xzav8mbqbwp4dm4niyqy4n4s5774pr-yazelix-orbit-0.1.0`) in a
-    private headless Sway 1.12
+    private headless Sway 1.12. Darwin: `mac-proof.yml` run
+    [41254939912](https://github.com/Yazelix/eon/actions/runs/41254939912) on
+    edge `6ea9181` (tree `62b7f53`), a GitHub `macos-15` runner (Apple M1
+    virtual machine `VirtualMac2,1`, 3 CPUs, 7 GiB, macOS 15.8.2 (24H232),
+    Nix 2.35.2 without sandbox) in its logged-in GUI session, with the Eon
+    built there (`/nix/store/p3vnvzr45lw8pbfl35w9ljfnkc3imj7d-eon-0.1.9`)
   - **Evidence:**
     - [`metadata_observer_is_canonical_read_only_and_reports_changes`](../src/socket.rs)
     - [`nonreading_observer_converges_on_the_latest_metadata`](../src/socket.rs)
@@ -192,8 +198,15 @@ PTY pixel size rule needs no wire change.
       launch, to a later tab, a hidden workspace's tab and the popup when
       shown, and to each again after detach and `eon attach`; typing reached
       the later tab, the hidden workspace's tab and the popup.
-- **Open proof:** Darwin's peer-credential and process-start mechanics for
-  interactive admission only compile; no macOS run has exercised them.
+    - Darwin: `orbit-attach-allow` passed natively, through Darwin's
+      `LOCAL_PEERPID` peer process ID and `proc_pidinfo` process start. In
+      the `admission` scenario step, an ORBS client that is not Eon got
+      `Busy` and was closed with no further bytes on a hidden tab's terminal,
+      a hidden keep-alive popup's terminal, and the shown tab's terminal
+      while Venus was detached. Text Venus pasted reached a new tab's shell,
+      the popup's shell and the tab's shell again after `eon attach`, each
+      read back with `eon pane read`, and `eon pane send --enter` ran a
+      command in the hidden shell.
 
 ## ORB-C4 — Coherent ordered presentation
 
@@ -974,9 +987,9 @@ PTY pixel size rule needs no wire change.
   assertions that read Linux-only process state do not run on macOS. Eon
   records its own macOS proof under `EON-C7` in
   [`docs/CONTRACTS.md`](../../docs/CONTRACTS.md). This proof predates
-  management v4: ORB-C3's admission of only the named process
-  (`eon-agent-parity-a9g0.15`) reads peer credentials and process start
-  through Darwin calls that only compile.
+  management v4; ORB-C3 records the Darwin proof of its admission of only the
+  named process (`eon-agent-parity-a9g0.15`), whose peer process ID and process
+  start come from Darwin's `LOCAL_PEERPID` and `proc_pidinfo`.
 
 ## ORB-C15 — Program status records
 
