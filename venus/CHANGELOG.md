@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+- Consume EONW v28, which carries the window's running-windows summary and
+  supervisor name and start time (`eon-7cf0y.4`). This change supplies data only;
+  running-window presentation remains separate.
+
 - Consume EONW v27, which adds a scope to quota windows and each provider's
   last failed quota read. Claude's scoped windows show as their own chips
   after its unscoped chips (`eon-wqkjc`); Venus shows no failure.

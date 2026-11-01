@@ -10,6 +10,7 @@ use super::{
     generation::{current_generation, generation_directory, record_launcher, remove_launcher},
     managed_environment::{self, TerminalAccess, nonempty_environment_path},
     notification, platform, quota,
+    running::Running,
     sessions::{
         self, AttachName, RunningSession, TAB_VARIABLE, TERMINAL_VARIABLE,
         acquire_generation_sessions, bound_io, name_presentation, recover_sessions,
@@ -17,9 +18,10 @@ use super::{
     },
     workspace::{self, LaunchCommand, SessionEnd, SessionOperation, WorkspaceSet},
 };
-use eon_workspace_protocol::v27::{
+use eon_workspace_protocol::v28::{
     Action, Availability, Ended, Failure, LifecycleResponse, Request, Response, Runtime, Screen,
-    Sent, Snapshot, Stopped, TerminalInput, TerminalText, VERSION, WorkspaceAction,
+    Sent, Snapshot, Stopped, TerminalInput, TerminalText, VERSION, WindowEntry, WindowState,
+    WorkspaceAction,
 };
 use orbit_protocol::management::{LeaseInput, Screen as OrbitScreen};
 use std::{
@@ -590,7 +592,7 @@ impl PresentationProcess {
                 };
                 if let Some(snapshot) = snapshot {
                     let bytes =
-                        eon_workspace_protocol::v27::encode_response(&Response::Snapshot(snapshot))
+                        eon_workspace_protocol::v28::encode_response(&Response::Snapshot(snapshot))
                             .map_err(|error| format!("cannot encode startup workspace: {error}"))?;
                     let mut remaining = bytes.as_slice();
                     while !remaining.is_empty() {
@@ -806,6 +808,27 @@ fn supervise(
     decorations: bool,
     log: &Arc<DiagnosticLog>,
 ) -> Result<i32, String> {
+    let started_at = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map_err(|error| format!("cannot record supervisor start: {error}"))?
+        .as_millis()
+        .try_into()
+        .map_err(|_| "supervisor start time exceeds Unix milliseconds")?;
+    let root = runtime
+        .parent()
+        .and_then(Path::parent)
+        .expect("generation runtime has a root");
+    let window = super::windows::runtime_window(root);
+    let running = (mode == LaunchMode::Workspace)
+        .then(|| {
+            Running::start(
+                base_runtime_directory("eon"),
+                root,
+                generation,
+                Arc::clone(log),
+            )
+        })
+        .transpose()?;
     let _lifecycle_lock = lifecycle_lock;
     let launch_directory = env::current_dir()
         .map_err(|error| format!("cannot resolve Eon launch directory: {error}"))?;
@@ -852,38 +875,50 @@ fn supervise(
     let fresh_animation = startup_animation.is_some() && sessions.is_empty() && !recovered_picker;
     let admitted = if terminal.requires_startup_admission() || fresh_animation {
         let snapshot = if mode == LaunchMode::Workspace {
-            Some(
-                if sessions.is_empty() && !recovered_picker {
-                    WorkspaceSet::pending(
-                        runtime.to_path_buf(),
-                        launch_directory.clone(),
-                        env::home_dir(),
-                        popup_catalog.clone(),
-                        |_, _| Ok(Vec::new()),
-                        |_| Ok(()),
-                    )?
+            let workspaces = if sessions.is_empty() && !recovered_picker {
+                WorkspaceSet::pending(
+                    runtime.to_path_buf(),
+                    launch_directory.clone(),
+                    env::home_dir(),
+                    popup_catalog.clone(),
+                    |_, _| Ok(Vec::new()),
+                    |_| Ok(()),
+                )?
+            } else {
+                let recovered = if sessions.is_empty() {
+                    vec![(
+                        1,
+                        workspace::Session {
+                            id: initial_session_id.into(),
+                            endpoint: initial_endpoint.clone(),
+                        },
+                    )]
                 } else {
-                    let recovered = if sessions.is_empty() {
-                        vec![(
-                            1,
-                            workspace::Session {
-                                id: initial_session_id.into(),
-                                endpoint: initial_endpoint.clone(),
-                            },
-                        )]
-                    } else {
-                        recovered_workspace_sessions(&sessions)?
-                    };
-                    WorkspaceSet::with_recovered_sessions(
-                        runtime.to_path_buf(),
-                        launch_directory.clone(),
-                        env::home_dir(),
-                        recovered,
-                        popup_catalog.clone(),
-                    )?
-                }
-                .snapshot(),
-            )
+                    recovered_workspace_sessions(&sessions)?
+                };
+                WorkspaceSet::with_recovered_sessions(
+                    runtime.to_path_buf(),
+                    launch_directory.clone(),
+                    env::home_dir(),
+                    recovered,
+                    popup_catalog.clone(),
+                )?
+            };
+            let mut snapshot = workspaces.snapshot();
+            if let Some(running) = &running {
+                running.apply(
+                    &mut snapshot,
+                    WindowEntry {
+                        window: window.clone(),
+                        generation: generation.into(),
+                        name: Some(workspaces.window_name()),
+                        started_at: Some(started_at),
+                        live_terminals: Some(live_sessions(&sessions).count() as u16),
+                        state: WindowState::Live,
+                    },
+                );
+            }
+            Some(snapshot)
         } else {
             None
         };
@@ -981,6 +1016,9 @@ fn supervise(
         None
     };
     let mut state = SupervisorState {
+        started_at,
+        window,
+        running,
         component_generation: generation.to_owned(),
         application_id: application_id.into(),
         decorations,
@@ -1067,6 +1105,18 @@ fn supervise(
                 // The backstop for a naming that failed or came late.
                 state.name_presentation(false);
                 state.follow_attention();
+                if let Some(running) = &mut state.running {
+                    running.tick(Instant::now(), || {
+                        (
+                            state
+                                .workspaces
+                                .as_ref()
+                                .expect("full Eon has a workspace")
+                                .window_name(),
+                            live_sessions(&state.sessions).count() as u16,
+                        )
+                    });
+                }
                 if let Some(workspaces) = &state.workspaces {
                     state.pane_labels.reconcile(&workspaces.pane_sessions());
                 }
@@ -1074,12 +1124,16 @@ fn supervise(
                 state.pane_labels.reconcile(&[]);
             }
 
+            let mut handled = false;
             if control_listener.accept(|request| {
+                handled = true;
                 dispatch_control_request(request, &mut state, inputs, config, runtime, generation)
             })? {
                 return Ok(state.initial_status.unwrap_or(0));
             }
-            thread::sleep(Duration::from_millis(25));
+            if !handled {
+                thread::sleep(Duration::from_millis(25));
+            }
         }
     })();
     drop(control_listener);
@@ -1099,6 +1153,9 @@ fn supervise(
 }
 
 struct SupervisorState {
+    started_at: u64,
+    window: Option<String>,
+    running: Option<Running>,
     component_generation: String,
     application_id: String,
     decorations: bool,
@@ -1148,6 +1205,19 @@ impl SupervisorState {
                 Err(error)
             }
         })?;
+        if let Some(running) = &self.running {
+            running.apply(
+                &mut snapshot,
+                WindowEntry {
+                    window: self.window.clone(),
+                    generation: self.component_generation.clone(),
+                    name: Some(workspaces.window_name()),
+                    started_at: Some(self.started_at),
+                    live_terminals: Some(live_sessions(&self.sessions).count() as u16),
+                    state: WindowState::Live,
+                },
+            );
+        }
         self.pane_labels.present(&mut snapshot, workspaces.home());
         if let Some(quotas) = &self.quotas {
             quotas.apply(&mut snapshot);
@@ -1863,7 +1933,7 @@ fn dispatch_control_request(
                     WorkspaceAction::InspectRuntime | WorkspaceAction::InspectPresentation,
                 ),
             ..
-        } => match runtime_status(inputs, generation, &state.sessions, mode) {
+        } => match runtime_status(inputs, generation, state, mode) {
             Ok(mut runtime) => {
                 if state.stopping {
                     runtime.attach = Availability {
@@ -1971,7 +2041,7 @@ fn dispatch_control_request(
                 )?);
                 Ok(())
             });
-            match result.and_then(|()| runtime_status(inputs, generation, &state.sessions, mode)) {
+            match result.and_then(|()| runtime_status(inputs, generation, state, mode)) {
                 Ok(runtime) => (
                     ControlResponse::Lifecycle(LifecycleResponse::Runtime(runtime)),
                     false,
@@ -2252,25 +2322,29 @@ fn closed(result: Result<Response, Failure>) -> (ControlResponse, bool) {
     (ControlResponse::Workspace(response), ended)
 }
 
+fn live_sessions(sessions: &[RunningSession]) -> impl Iterator<Item = &RunningSession> {
+    sessions.iter().filter(|session| {
+        !session.is_finished() && !workspace::is_directory_picker_session(&session.id)
+    })
+}
+
 fn runtime_status(
     inputs: &Inputs,
     generation: &str,
-    sessions: &[RunningSession],
+    state: &SupervisorState,
     mode: LaunchMode,
 ) -> Result<Runtime, String> {
-    if mode == LaunchMode::Terminal && sessions.is_empty() {
+    if mode == LaunchMode::Terminal && state.sessions.is_empty() {
         return Err("supervisor has no live terminals".into());
     }
     Ok(Runtime {
         generation: generation.into(),
+        name: state.workspaces.as_ref().map(WorkspaceSet::window_name),
+        started_at: state.started_at,
         eon_version: inputs.version.into(),
         workspace_protocol: VERSION,
         component_report: inputs.component_report()?.to_owned(),
-        sessions: sessions
-            .iter()
-            .filter(|session| {
-                !session.is_finished() && !workspace::is_directory_picker_session(&session.id)
-            })
+        sessions: live_sessions(&state.sessions)
             .map(|session| session.id.clone())
             .collect(),
         attach: Availability {
@@ -2430,6 +2504,9 @@ mod tests {
         );
         assert_eq!(sessions.len(), 2);
         let mut state = SupervisorState {
+            started_at: 1,
+            window: None,
+            running: None,
             component_generation: "component-1".into(),
             application_id: String::new(),
             decorations: false,
@@ -2512,6 +2589,9 @@ mod tests {
         let record = sessions::tests::record(&sessions[0]).to_path_buf();
         fs::set_permissions(&record, fs::Permissions::from_mode(0o644)).unwrap();
         let mut state = SupervisorState {
+            started_at: 1,
+            window: None,
+            running: None,
             component_generation: "component-1".into(),
             application_id: String::new(),
             decorations: false,
@@ -2629,6 +2709,9 @@ mod tests {
         assert_eq!(sessions[0].orbit_log.as_ref(), Some(&orbit_log));
         kill_orbit_worker(orbit);
         let mut state = SupervisorState {
+            started_at: 1,
+            window: None,
+            running: None,
             component_generation: "component-1".into(),
             application_id: String::new(),
             decorations: false,
@@ -2680,6 +2763,9 @@ mod tests {
         let orbit_log = session.orbit_log.clone().unwrap();
         kill_worker(&session);
         let mut state = SupervisorState {
+            started_at: 1,
+            window: None,
+            running: None,
             component_generation: "component-1".into(),
             application_id: String::new(),
             decorations: false,
@@ -2768,6 +2854,9 @@ mod tests {
         let record = sessions::tests::record(&sessions[0]).to_path_buf();
         fs::set_permissions(&record, fs::Permissions::from_mode(0o644)).unwrap();
         let mut state = SupervisorState {
+            started_at: 1,
+            window: None,
+            running: None,
             component_generation: "component-1".into(),
             application_id: String::new(),
             decorations: false,
@@ -2844,7 +2933,7 @@ mod tests {
 
     #[test]
     fn startup_snapshot_transfer_uses_the_admission_deadline() {
-        use eon_workspace_protocol::v27::{
+        use eon_workspace_protocol::v28::{
             Column, Pane, PopupGeometry, Response, Snapshot, Tab, encode_response,
         };
         use std::time::{Duration, Instant};
@@ -2853,7 +2942,7 @@ mod tests {
         let snapshot = Snapshot {
             workspace: "w1".into(),
             active_workspace: "w1".into(),
-            workspaces: vec![eon_workspace_protocol::v27::WorkspaceInfo {
+            workspaces: vec![eon_workspace_protocol::v28::WorkspaceInfo {
                 id: "w1".into(),
                 name: None,
                 tab_count: 64,
@@ -2893,7 +2982,8 @@ mod tests {
             claude_quota: None,
             codex_quota_failure: None,
             claude_quota_failure: None,
-            sidebar: eon_workspace_protocol::v27::Sidebar::Open,
+            running: None,
+            sidebar: eon_workspace_protocol::v28::Sidebar::Open,
             attention_queue: Vec::new(),
         };
         let expected = encode_response(&Response::Snapshot(snapshot.clone())).unwrap();

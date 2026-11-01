@@ -6,7 +6,7 @@ Both crates build and test without the Eon crates.
 | Package | Owns | Version |
 |---|---|---|
 | `eon-runtime` | Invocation, terminal lifecycle, workspace state, configuration parsing and generation identity | `0.1.0` |
-| `eon-workspace-protocol` | EONW v27 types and bounded codec | `0.1.0` |
+| `eon-workspace-protocol` | EONW v28 types and bounded codec | `0.1.0` |
 
 ## Consumer boundary
 
@@ -76,7 +76,8 @@ Successful missing quota clears prior facts.
 Eon's [EON-C27](../docs/CONTRACTS.md#eon-c27--codexbar-quota-collection)
 owns product policy and installed acceptance.
 
-EONW v27 adds a scope to quota windows and each provider's last failed quota
+EONW v28 carries the running-windows summary and supervisor name and start time
+(EON-C23). v27 adds a scope to quota windows and each provider's last failed quota
 read (EON-C27). v26 adds terminal reads and sends for EON-C35 and EON-C36: a request that
 reads a pane's or popup's visible text in any workspace of the window, one that
 pastes text or sends Enter to it, and their replies. v25 adds the window-wide
@@ -103,7 +104,7 @@ its calling terminal; v12 adds a request that
 moves the selected pane into the neighbouring column; v11 adds a request that
 closes one pane by its stable identity; v10 arranges each tab's panes into up
 to four columns; v9 permits genuinely absent provider resets, including stale
-observations. Only v27 remains: the CLI
+observations. Only v28 remains: the CLI
 inspects and stops supervisors that use it, lists any other as incompatible,
 and presentation remains bound to the original exact executable.
 
@@ -113,7 +114,7 @@ Runtime and codec have separate package manifests and version owners. Runtime
 depends on the in-tree Orbit protocol crate.
 
 EONW's complete package is its Cargo manifest, `src/lib.rs` and
-`src/v27.rs`. It has no external dependencies, feature declarations,
+`src/v28.rs`. It has no external dependencies, feature declarations,
 build script or workspace-inherited settings.
 
 Runtime evolution has one owner here; Eon owns product composition and
@@ -156,3 +157,26 @@ artifacts.
 | README | 127 |
 | License and notice | 209 |
 | **Total** | **13,998** |
+
+Full-Eon supervisors cache the running-windows summary off the control loop.
+An existing loop tick checks directory mtimes and held lifecycle locks at most
+once per second; unchanged fingerprints send no requests. The worker blocks on
+a channel, probes peers in batches of at most 32 with one-second
+per-peer deadlines, and keeps its previous result on a scan error, retrying at
+the next gate. Discovery opens existing locks read-only and never cleans up
+another generation. The owner updates its generation directory mtime when its
+name or terminal count changes so peers can observe those changes without an
+idle polling worker.
+Compatible terminal-only supervisors have no workspace name and are excluded,
+including when an explicit `EON_RUNTIME_DIR` is shared with full Eon.
+Discovery retains inactive generation watch identities so a supervisor recovered
+in an existing directory is found again. When a blocked control loop resumes,
+its one-second gate publishes readiness and refreshes its cached peer health;
+healthy idle supervisors do not send periodic health probes.
+Queued control requests run without an idle sleep between them, so simultaneous
+peer inspections can meet their one-second deadlines. The idle loop retains its
+25 ms sleep; snapshot building never performs discovery.
+The worker publishes its pre-probe fingerprint with the inventory, avoiding a
+second scan solely because new watch identities were discovered. Unsafe entries
+are skipped with one diagnostic; a failed scan invalidates its fingerprint so
+it cannot freeze the last result. Lifecycle lock reads are nonblocking.

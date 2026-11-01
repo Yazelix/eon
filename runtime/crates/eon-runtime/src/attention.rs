@@ -7,7 +7,7 @@ use super::{
     sessions::{self, ProgramStatusRead, RunningSession},
     workspace::is_directory_picker_session,
 };
-use eon_workspace_protocol::v27::{
+use eon_workspace_protocol::v28::{
     self as eonw, Action, AttentionKind, AttentionRecord, AttentionState as State, Sidebar,
     Snapshot,
 };
@@ -655,7 +655,7 @@ impl Attention {
 mod tests {
     use super::*;
     use ProgramState::{Blocked, Done, Error, Idle, Working};
-    use eon_workspace_protocol::v27::{Column, Pane, Popup, PopupGeometry, Tab};
+    use eon_workspace_protocol::v28::{Column, Pane, Popup, PopupGeometry, Tab};
     use std::{fs, slice, thread};
 
     /// A record created at its change `changed`.
@@ -735,7 +735,7 @@ mod tests {
         Snapshot {
             workspace: "w1".into(),
             active_workspace: "w1".into(),
-            workspaces: vec![eon_workspace_protocol::v27::WorkspaceInfo {
+            workspaces: vec![eon_workspace_protocol::v28::WorkspaceInfo {
                 id: "w1".into(),
                 name: None,
                 tab_count: tabs.len(),
@@ -753,6 +753,7 @@ mod tests {
             claude_quota: None,
             codex_quota_failure: None,
             claude_quota_failure: None,
+            running: None,
             sidebar: Sidebar::Off,
             attention_queue: Vec::new(),
         }
@@ -1610,7 +1611,7 @@ mod tests {
             managed_environment::{PopupCatalog, PopupCommand, PopupDefinition},
             workspace::{Session, SessionEnd, WorkspaceSet},
         };
-        use eon_workspace_protocol::v27::{PopupKey, WorkspaceAction};
+        use eon_workspace_protocol::v28::{PopupKey, WorkspaceAction};
         let mut window = WorkspaceSet::with_recovered_sessions(
             "/runtime".into(),
             "/".into(),
@@ -1821,7 +1822,7 @@ mod tests {
         // carries its own rollup.
         let mut reply = before[1].clone();
         reply.workspaces = ["w1", "w2"]
-            .map(|id| eon_workspace_protocol::v27::WorkspaceInfo {
+            .map(|id| eon_workspace_protocol::v28::WorkspaceInfo {
                 id: id.into(),
                 ..reply.workspaces[0].clone()
             })

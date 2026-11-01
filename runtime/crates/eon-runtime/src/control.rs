@@ -6,7 +6,7 @@ use super::{
     },
     workspace,
 };
-use eon_workspace_protocol::v27::{
+use eon_workspace_protocol::v28::{
     Action, Error as ProtocolError, Failure, HEADER_BYTES, LifecycleResponse, MAX_DETAIL_BYTES,
     Request, Response, Runtime, VERSION, WorkspaceAction, declared_message_len,
     decode_lifecycle_response, decode_request, decode_response, encode_lifecycle_response,
@@ -53,6 +53,8 @@ impl EndpointFailure {
     }
 }
 
+// Snapshot payloads are already heap-owned; keep the direct value API.
+#[allow(clippy::large_enum_variant)]
 pub(super) enum ControlResponse {
     Workspace(Response),
     Lifecycle(LifecycleResponse),

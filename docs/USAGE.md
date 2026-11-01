@@ -408,19 +408,19 @@ on terminals; redirected output is plain text. A nonempty `NO_COLOR` or
 | `eon anima [STYLE] [CHILD OPTIONS...]` | Run pinned Anima in the caller's terminal without starting a workspace; `--help` lists styles and options |
 | `eon run [-- COMMAND...]` | Start a fresh workspace picker, optionally for an exact first command |
 | `eon window new` | Open an independent Eon window and print its window ID |
-| `eon windows [--json]` | List independent windows and their running generations, or that a window has ended |
+| `eon windows [--json]` | List independent windows and their running generations, or that a window has ended, with each live generation's name and start time |
 | `eon window attach ID` | Present one window's live generation after detach, through the Eon build that started it when needed |
 | `eon window stop ID [--json]` | Stop only the selected window's terminals |
 | `eon window stop all [--json]` | Attempt Stop in every independent window |
 | `eon quit [--json]` | Quit the window of the calling terminal, stopping its terminals after Stop's confirmation; outside Eon, quit the only running window, or list the running windows and stop nothing when several run |
 | `eon quit --all [--json]` | Attempt Stop in the default window and in every independent window, the caller's window last |
 | `eon attach [GENERATION]` | Present the current or one selected compatible generation |
-| `eon generations [--json]` | List validated current and older generations |
+| `eon generations [--json]` | List validated current and older generations, with each live one's window name and start time |
 | `eon stop GENERATION [--json]` | Stop one generation through its supervisor |
 | `eon stop previous [--json]` | Attempt every other non-dead generation |
 | `eon stop all [--json]` | Attempt every non-dead generation, including current |
 | `eon workspaces [--json]` | List the window's workspaces in order, with each one's ID, name, whether it is shown, its tab count, its most urgent agent attention state, and its recency (0 for the shown one, then 1 for the one shown before it, and so on, the Workspaces picker's order) |
-| `eon workspace [--json]` | Inspect the live tab, pane, popup, and terminal mapping, with each terminal's agent attention state, app and name; JSON includes each terminal's full agent attention record and the Codex and Claude quota readings, and the calling terminal in `caller` (null without `EON_TERMINAL`; a `caller` line in human output only when present) |
+| `eon workspace [--json]` | Inspect the live tab, pane, popup, and terminal mapping, with each terminal's agent attention state, app and name; JSON includes each terminal's full agent attention record and the Codex and Claude quota readings, and the calling terminal in `caller` (null without `EON_TERMINAL`; a `caller` line in human output only when present); JSON `running` holds this window and the other running Eon windows, each with its ID, generation, name, start time and live terminal count |
 | `eon workspace new [--name NAME] [--no-focus] [--json]` | Add a workspace after the shown one, with one tab and its directory picker, and show it; with `--no-focus` the shown workspace stays. The reply names the new workspace's ID in `created` (`created wN` in human output) |
 | `eon workspace switch WS [--json]` | Show workspace WS, with its tabs, panes and popups as it left them |
 | `eon workspace rename [WS] NAME [--json]` | Name workspace WS, or the caller's workspace; an empty NAME clears the name |

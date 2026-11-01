@@ -109,13 +109,13 @@ fn clipping_test_fonts() -> FontSetup {
 }
 
 fn retained_frame_text_clip(size: PhysicalSize<u32>) -> (WorkspaceScene, SceneRect) {
-    use eon_workspace_protocol::v27::{Column, Pane, PopupGeometry, Sidebar, Snapshot, Tab};
+    use eon_workspace_protocol::v28::{Column, Pane, PopupGeometry, Sidebar, Snapshot, Tab};
 
     let metrics = CellMetrics::for_scale(1.0);
     let snapshot = Snapshot {
         workspace: "w1".into(),
         active_workspace: "w1".into(),
-        workspaces: vec![eon_workspace_protocol::v27::WorkspaceInfo {
+        workspaces: vec![eon_workspace_protocol::v28::WorkspaceInfo {
             id: "w1".into(),
             name: None,
             tab_count: 1,
@@ -153,6 +153,7 @@ fn retained_frame_text_clip(size: PhysicalSize<u32>) -> (WorkspaceScene, SceneRe
         claude_quota: None,
         codex_quota_failure: None,
         claude_quota_failure: None,
+        running: None,
         sidebar: Sidebar::Closed,
         attention_queue: Vec::new(),
     };
@@ -199,12 +200,12 @@ fn retained_frame_text_clip(size: PhysicalSize<u32>) -> (WorkspaceScene, SceneRe
 
 fn fractional_card_workspace(scale: f64, scroll: f32) -> WorkspaceScene {
     use crate::scene::{EonBar, ShortcutHintsScene};
-    use eon_workspace_protocol::v27::{Column, Pane, PopupGeometry, Sidebar, Snapshot, Tab};
+    use eon_workspace_protocol::v28::{Column, Pane, PopupGeometry, Sidebar, Snapshot, Tab};
 
     let snapshot = Snapshot {
         workspace: "w1".into(),
         active_workspace: "w1".into(),
-        workspaces: vec![eon_workspace_protocol::v27::WorkspaceInfo {
+        workspaces: vec![eon_workspace_protocol::v28::WorkspaceInfo {
             id: "w1".into(),
             name: None,
             tab_count: 1,
@@ -244,6 +245,7 @@ fn fractional_card_workspace(scale: f64, scroll: f32) -> WorkspaceScene {
         claude_quota: None,
         codex_quota_failure: None,
         claude_quota_failure: None,
+        running: None,
         sidebar: Sidebar::Closed,
         attention_queue: Vec::new(),
     };

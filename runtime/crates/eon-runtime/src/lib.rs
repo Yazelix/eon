@@ -10,6 +10,7 @@ mod notification;
 mod pane_labels;
 mod platform;
 mod quota;
+mod running;
 mod sessions;
 mod supervisor;
 mod windows;

@@ -1,5 +1,5 @@
 use super::managed_environment::{PopupCatalog, PopupCommand, PopupDefinition};
-use eon_workspace_protocol::v27::{
+use eon_workspace_protocol::v28::{
     Action, Attention, AttentionKind, AttentionState, ClaudeQuotaState, CodexQuotaState,
     Column as SnapshotColumn, Direction, Failure, InvokeIntent, MAX_COLUMNS, MAX_DIRECTORY_BYTES,
     MAX_SESSIONS, MAX_TABS, Pane as SnapshotPane, Popup as SnapshotPopup,
@@ -304,7 +304,7 @@ impl WorkspaceSet {
         snapshot.workspaces = self
             .workspaces
             .iter()
-            .map(|workspace| eon_workspace_protocol::v27::WorkspaceInfo {
+            .map(|workspace| eon_workspace_protocol::v28::WorkspaceInfo {
                 id: workspace.id.clone(),
                 name: workspace.name.clone(),
                 tab_count: workspace.tabs.len(),
@@ -400,6 +400,32 @@ impl WorkspaceSet {
             .find(|target| target.terminal == session)
     }
 
+    pub(crate) fn window_name(&self) -> String {
+        let workspace = &self.workspaces[self.shown];
+        let directory = &workspace.tabs[workspace.active].directory;
+        let name = workspace.name.clone().unwrap_or_else(|| {
+            if workspace.home.as_ref() == Some(directory) {
+                "~".into()
+            } else {
+                directory
+                    .file_name()
+                    .unwrap_or(directory.as_os_str())
+                    .to_string_lossy()
+                    .into_owned()
+            }
+        });
+        name.chars()
+            .map(|character| {
+                if eon_workspace_protocol::v28::pane_label_character(character) {
+                    character
+                } else {
+                    '\u{fffd}'
+                }
+            })
+            .take(eon_workspace_protocol::v28::MAX_WINDOW_NAME_CHARS)
+            .collect()
+    }
+
     pub(crate) fn home(&self) -> Option<&Path> {
         self.workspaces
             .first()
@@ -407,7 +433,7 @@ impl WorkspaceSet {
     }
 
     fn resolve_workspace(&self, target: &str) -> Result<usize, Failure> {
-        eon_workspace_protocol::v27::validate_workspace_name(target)
+        eon_workspace_protocol::v28::validate_workspace_name(target)
             .map_err(|error| action_error("malformed-action", error.to_string()))?;
         resolve_selector(
             self.workspaces
@@ -538,7 +564,7 @@ impl WorkspaceSet {
                     .map(str::trim)
                     .filter(|name| !name.is_empty());
                 if let Some(name) = name {
-                    eon_workspace_protocol::v27::validate_pane_name(name)
+                    eon_workspace_protocol::v28::validate_pane_name(name)
                         .map_err(|error| action_error("malformed-action", error.to_string()))?;
                 }
                 let target = self.workspaces[index]
@@ -554,10 +580,10 @@ impl WorkspaceSet {
             }
             Action::Workspace(WorkspaceAction::NewWorkspace { name, focus }) => {
                 if let Some(name) = &name {
-                    eon_workspace_protocol::v27::validate_workspace_name(name)
+                    eon_workspace_protocol::v28::validate_workspace_name(name)
                         .map_err(|error| action_error("malformed-action", error.to_string()))?;
                 }
-                if self.workspaces.len() >= eon_workspace_protocol::v27::MAX_WORKSPACES {
+                if self.workspaces.len() >= eon_workspace_protocol::v28::MAX_WORKSPACES {
                     return Err(action_error(
                         "workspace-limit",
                         "a window holds at most 32 workspaces",
@@ -590,7 +616,7 @@ impl WorkspaceSet {
             }
             Action::Workspace(WorkspaceAction::RenameWorkspace { workspace, name }) => {
                 if !name.is_empty() {
-                    eon_workspace_protocol::v27::validate_workspace_name(&name)
+                    eon_workspace_protocol::v28::validate_workspace_name(&name)
                         .map_err(|error| action_error("malformed-action", error.to_string()))?;
                 }
                 let target = workspace
@@ -826,7 +852,7 @@ impl Workspace {
         Snapshot {
             workspace: self.id.clone(),
             active_workspace: self.id.clone(),
-            workspaces: vec![eon_workspace_protocol::v27::WorkspaceInfo {
+            workspaces: vec![eon_workspace_protocol::v28::WorkspaceInfo {
                 id: self.id.clone(),
                 name: self.name.clone(),
                 tab_count: self.tabs.len(),
@@ -902,6 +928,7 @@ impl Workspace {
             claude_quota: None,
             codex_quota_failure: None,
             claude_quota_failure: None,
+            running: None,
             sidebar: Sidebar::Off,
             attention_queue: Vec::new(),
         }
@@ -2555,6 +2582,22 @@ pub(crate) fn human(snapshot: &Snapshot) -> String {
             ));
         }
     }
+    if let Some(running) = &snapshot.running {
+        for (kind, entry) in std::iter::once(("this", &running.this)).chain(
+            running
+                .others
+                .iter()
+                .flatten()
+                .map(|entry| ("other", entry)),
+        ) {
+            output.push_str(&format!("running {kind} window={} generation={} name={} started_at={} live_terminals={} state={}\n",
+                entry.window.as_deref().unwrap_or("default"), entry.generation.escape_debug(),
+                entry.name.as_deref().unwrap_or("unknown").escape_debug(),
+                entry.started_at.map_or_else(|| "unknown".into(), |v| v.to_string()),
+                entry.live_terminals.map_or_else(|| "unknown".into(), |v| v.to_string()),
+                window_state(entry.state)));
+        }
+    }
     output
 }
 
@@ -2684,8 +2727,65 @@ pub(crate) fn json(snapshot: &Snapshot) -> String {
         json_attention(&mut output, Some(&entry.attention));
         output.push('}');
     }
-    output.push_str("]}\n");
+    output.push_str("],\"running\":");
+    if let Some(running) = &snapshot.running {
+        output.push_str("{\"this\":");
+        json_window(&mut output, &running.this, false);
+        output.push_str(",\"others\":");
+        if let Some(others) = &running.others {
+            output.push('[');
+            for (index, entry) in others.iter().enumerate() {
+                if index != 0 {
+                    output.push(',');
+                }
+                json_window(&mut output, entry, true);
+            }
+            output.push(']');
+        } else {
+            output.push_str("null");
+        }
+        output.push_str(&format!(",\"omitted\":{}}}", running.omitted));
+    } else {
+        output.push_str("null");
+    }
+    output.push_str("}\n");
     output
+}
+
+fn window_state(state: eon_workspace_protocol::v28::WindowState) -> &'static str {
+    use eon_workspace_protocol::v28::WindowState;
+    match state {
+        WindowState::Live => "live",
+        WindowState::Incompatible => "incompatible",
+        WindowState::Unreachable => "unreachable",
+    }
+}
+
+fn json_window(
+    output: &mut String,
+    entry: &eon_workspace_protocol::v28::WindowEntry,
+    include_state: bool,
+) {
+    output.push_str("{\"window\":");
+    json_option(output, entry.window.as_deref());
+    output.push_str(&format!(
+        ",\"generation\":\"{}\",\"name\":",
+        json_escape(&entry.generation)
+    ));
+    json_option(output, entry.name.as_deref());
+    output.push_str(&format!(
+        ",\"started_at\":{},\"live_terminals\":{}",
+        entry
+            .started_at
+            .map_or_else(|| "null".into(), |v| v.to_string()),
+        entry
+            .live_terminals
+            .map_or_else(|| "null".into(), |v| v.to_string())
+    ));
+    if include_state {
+        output.push_str(&format!(",\"state\":\"{}\"", window_state(entry.state)));
+    }
+    output.push('}');
 }
 
 /// The full attention record, or `null` without attention.
@@ -2934,13 +3034,13 @@ fn action_error(code: &'static str, detail: impl Into<String>) -> Failure {
     }
 }
 
-fn shortcut_text(shortcut: &eon_workspace_protocol::v27::Shortcut) -> String {
+fn shortcut_text(shortcut: &eon_workspace_protocol::v28::Shortcut) -> String {
     let mut parts = Vec::new();
     for (bit, name) in [
-        (eon_workspace_protocol::v27::CTRL, "Ctrl"),
-        (eon_workspace_protocol::v27::ALT, "Alt"),
-        (eon_workspace_protocol::v27::SHIFT, "Shift"),
-        (eon_workspace_protocol::v27::SUPER, "Super"),
+        (eon_workspace_protocol::v28::CTRL, "Ctrl"),
+        (eon_workspace_protocol::v28::ALT, "Alt"),
+        (eon_workspace_protocol::v28::SHIFT, "Shift"),
+        (eon_workspace_protocol::v28::SUPER, "Super"),
     ] {
         if shortcut.modifiers & bit != 0 {
             parts.push(name.to_string());
@@ -3000,7 +3100,7 @@ pub(crate) fn json_escape(value: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use eon_workspace_protocol::v27::{ALT, PopupGeometry, QuotaFailureReason, Shortcut};
+    use eon_workspace_protocol::v28::{ALT, PopupGeometry, QuotaFailureReason, Shortcut};
 
     fn two_workspace_set(
         mut operate: impl FnMut(SessionOperation) -> Result<(), String>,
@@ -3256,8 +3356,8 @@ mod tests {
             ("w1", "w3")
         );
         assert_eq!(caller_view.tabs, original);
-        eon_workspace_protocol::v27::encode_response(
-            &eon_workspace_protocol::v27::Response::Snapshot(caller_view),
+        eon_workspace_protocol::v28::encode_response(
+            &eon_workspace_protocol::v28::Response::Snapshot(caller_view),
         )
         .unwrap();
 
@@ -3348,7 +3448,7 @@ mod tests {
             .code,
             "malformed-action"
         );
-        while set.workspaces.len() < eon_workspace_protocol::v27::MAX_WORKSPACES {
+        while set.workspaces.len() < eon_workspace_protocol::v28::MAX_WORKSPACES {
             set.dispatch(
                 &format!("new-{}", set.workspaces.len()),
                 None,
@@ -3404,8 +3504,8 @@ mod tests {
         )
         .unwrap();
         let snapshot = set.snapshot();
-        eon_workspace_protocol::v27::encode_response(
-            &eon_workspace_protocol::v27::Response::Snapshot(snapshot.clone()),
+        eon_workspace_protocol::v28::encode_response(
+            &eon_workspace_protocol::v28::Response::Snapshot(snapshot.clone()),
         )
         .unwrap();
         assert_eq!(snapshot.workspaces.len(), 1);
@@ -3477,8 +3577,8 @@ mod tests {
         assert_eq!(error.code, "session-start");
         assert_eq!(error.detail, "start failed");
         let snapshot = set.snapshot();
-        eon_workspace_protocol::v27::encode_response(
-            &eon_workspace_protocol::v27::Response::Snapshot(snapshot.clone()),
+        eon_workspace_protocol::v28::encode_response(
+            &eon_workspace_protocol::v28::Response::Snapshot(snapshot.clone()),
         )
         .unwrap();
         assert_eq!(snapshot.workspace, "w1");
@@ -4284,8 +4384,108 @@ mod tests {
     }
 
     #[test]
+    fn window_name_uses_shown_workspace_then_directory_and_home() {
+        use std::os::unix::ffi::OsStrExt;
+        let mut set = WorkspaceSet::with_recovered_sessions(
+            "/runtime".into(),
+            "/home/me".into(),
+            Some("/home/me".into()),
+            vec![(
+                1,
+                Session {
+                    id: "session-1".into(),
+                    endpoint: "/runtime/orbit.sock".into(),
+                },
+            )],
+            catalog(),
+        )
+        .unwrap();
+        assert_eq!(set.window_name(), "~");
+        set.workspaces[0].tabs[0].directory =
+            Path::new(std::ffi::OsStr::from_bytes(b"/tmp/\xffname")).into();
+        assert_eq!(set.window_name(), "�name");
+        set.workspaces[0].tabs[0].directory =
+            Path::new(std::ffi::OsStr::from_bytes(b"/tmp/a\x1bb\nc")).into();
+        assert_eq!(set.window_name(), "a�b�c");
+        set.workspaces[0].name = Some("🦀".repeat(64));
+        assert_eq!(set.window_name(), "🦀".repeat(64));
+        set.workspaces[0].name = None;
+        set.workspaces[0].tabs[0].directory = format!("/tmp/{}", "🦀".repeat(65)).into();
+        assert_eq!(set.window_name(), "🦀".repeat(64));
+    }
+
+    #[test]
+    fn cli_json_carries_running_windows() {
+        use eon_workspace_protocol::v28::{RunningWindows, WindowEntry, WindowState};
+        let set = WorkspaceSet::with_recovered_sessions(
+            "/runtime".into(),
+            "/".into(),
+            None,
+            vec![(
+                1,
+                Session {
+                    id: "session-1".into(),
+                    endpoint: "/runtime/orbit.sock".into(),
+                },
+            )],
+            catalog(),
+        )
+        .unwrap();
+        let mut snapshot = set.snapshot();
+        assert_eq!(
+            serde_json::from_str::<serde_json::Value>(&json(&snapshot))
+                .unwrap()
+                .get("running"),
+            Some(&serde_json::Value::Null)
+        );
+        let this = WindowEntry {
+            window: None,
+            generation: "g1".into(),
+            name: Some("a\"\n🦀".into()),
+            started_at: Some(123),
+            live_terminals: Some(1),
+            state: WindowState::Live,
+        };
+        snapshot.running = Some(RunningWindows {
+            this: this.clone(),
+            others: None,
+            omitted: 0,
+        });
+        let initial: serde_json::Value = serde_json::from_str(&json(&snapshot)).unwrap();
+        assert!(initial["running"]["others"].is_null());
+        snapshot.running.as_mut().unwrap().others = Some(vec![WindowEntry {
+            window: Some("1234abcd".into()),
+            generation: "g2".into(),
+            name: None,
+            started_at: None,
+            live_terminals: None,
+            state: WindowState::Incompatible,
+        }]);
+        snapshot.running.as_mut().unwrap().omitted = 7;
+        let value: serde_json::Value = serde_json::from_str(&json(&snapshot)).unwrap();
+        assert_eq!(value["running"]["this"]["window"], serde_json::Value::Null);
+        assert_eq!(value["running"]["this"]["name"], this.name.unwrap());
+        assert_eq!(value["running"]["this"]["started_at"], 123);
+        assert_eq!(value["running"]["this"]["live_terminals"], 1);
+        assert_eq!(value["running"]["others"][0]["state"], "incompatible");
+        assert!(value["running"]["others"][0]["name"].is_null());
+        assert!(value["running"]["others"][0]["started_at"].is_null());
+        assert!(value["running"]["others"][0]["live_terminals"].is_null());
+        assert_eq!(value["running"]["omitted"], 7);
+        let human = human(&snapshot);
+        assert_eq!(
+            human
+                .lines()
+                .filter(|line| line.starts_with("running "))
+                .count(),
+            2
+        );
+        assert!(human.contains("a\\\"\\n🦀"), "{human}");
+    }
+
+    #[test]
     fn cli_json_carries_the_full_attention_record_and_quotas_but_human_output_does_not() {
-        use eon_workspace_protocol::v27::{
+        use eon_workspace_protocol::v28::{
             AttentionKind, AttentionRecord, ClaudeQuota, ClaudeQuotaState, CodexQuota,
             CodexQuotaState, QuotaWindow,
         };
@@ -4390,7 +4590,7 @@ mod tests {
             reason: QuotaFailureReason::InvalidWindow,
         });
         snapshot.attention_queue = vec![
-            eon_workspace_protocol::v27::QueueEntry {
+            eon_workspace_protocol::v28::QueueEntry {
                 workspace: "w1".into(),
                 tab: "t1".into(),
                 target: "p1".into(),
@@ -4399,7 +4599,7 @@ mod tests {
                     .clone()
                     .unwrap(),
             },
-            eon_workspace_protocol::v27::QueueEntry {
+            eon_workspace_protocol::v28::QueueEntry {
                 workspace: "w2".into(),
                 tab: "t\"2".into(),
                 target: "p\\2".into(),
@@ -4433,12 +4633,12 @@ mod tests {
             r#"],"sidebar":"closed","codex_quota":{"state":"stale","observed_at":1720000000000,"windows":[{"duration_minutes":300,"remaining_percent":80,"resets_at":1720000300000,"scope":null},{"duration_minutes":10080,"remaining_percent":60,"resets_at":null,"scope":null}]}"#,
             r#","claude_quota":{"state":"fresh","observed_at":1720000001000,"windows":[{"duration_minutes":300,"remaining_percent":25,"resets_at":1720000600000,"scope":null},{"duration_minutes":10080,"remaining_percent":40,"resets_at":null,"scope":"Fable \"x\""}]}"#,
             r#","codex_quota_failure":null,"claude_quota_failure":{"at":1720000002000,"reason":"invalid_window"}"#,
-            r#","attention_queue":[{"workspace":"w1","tab":"t1","target":"p1","attention":{"state":"needs-input","app":"codex","name":"eon \"9a\"","kind":"permission","progress":40,"title":"secret \"title\"","message":"secret \"message\"\\path","changed_at":1720000000123,"stale":true,"others":3}},{"workspace":"w2","tab":"t\"2","target":"p\\2","attention":{"state":"finished","app":null,"name":null,"kind":null,"progress":null,"title":null,"message":null,"changed_at":1720000000456,"stale":false,"others":0}}]}"#,
+            r#","attention_queue":[{"workspace":"w1","tab":"t1","target":"p1","attention":{"state":"needs-input","app":"codex","name":"eon \"9a\"","kind":"permission","progress":40,"title":"secret \"title\"","message":"secret \"message\"\\path","changed_at":1720000000123,"stale":true,"others":3}},{"workspace":"w2","tab":"t\"2","target":"p\\2","attention":{"state":"finished","app":null,"name":null,"kind":null,"progress":null,"title":null,"message":null,"changed_at":1720000000456,"stale":false,"others":0}}],"running":null}"#,
             "\n"
         )));
         assert!(
             json(&workspace.snapshot())
-                .ends_with("\"sidebar\":\"off\",\"codex_quota\":null,\"claude_quota\":null,\"codex_quota_failure\":null,\"claude_quota_failure\":null,\"attention_queue\":[]}\n")
+                .ends_with("\"sidebar\":\"off\",\"codex_quota\":null,\"claude_quota\":null,\"codex_quota_failure\":null,\"claude_quota_failure\":null,\"attention_queue\":[],\"running\":null}\n")
         );
         snapshot.codex_quota.as_mut().unwrap().windows[0].resets_at = Some(18_446_744_073_709_552);
         assert!(json(&snapshot).contains(r#""resets_at":18446744073709552000"#));
@@ -4572,8 +4772,8 @@ mod tests {
         let after = workspace.snapshot();
         assert_eq!(after.tabs.len(), 1);
         assert_eq!(after.tabs[0].columns.len(), MAX_COLUMNS);
-        eon_workspace_protocol::v27::encode_response(
-            &eon_workspace_protocol::v27::Response::Snapshot(after),
+        eon_workspace_protocol::v28::encode_response(
+            &eon_workspace_protocol::v28::Response::Snapshot(after),
         )
         .unwrap();
         fs::remove_dir_all(root).unwrap();
@@ -6562,8 +6762,8 @@ mod tests {
             .unwrap_err();
         assert_eq!(error.code, "session-start");
         assert_eq!(workspace.snapshot(), initial);
-        eon_workspace_protocol::v27::encode_response(
-            &eon_workspace_protocol::v27::Response::Snapshot(workspace.snapshot()),
+        eon_workspace_protocol::v28::encode_response(
+            &eon_workspace_protocol::v28::Response::Snapshot(workspace.snapshot()),
         )
         .unwrap();
 
@@ -6628,8 +6828,8 @@ mod tests {
             assert!(json(&state).contains(
                 r#"{"id":"agent","label":"Agent","keybinding":"Alt+A","overridden_by":null,"default_keybinding":null}"#
             ));
-            eon_workspace_protocol::v27::encode_response(
-                &eon_workspace_protocol::v27::Response::Snapshot(state),
+            eon_workspace_protocol::v28::encode_response(
+                &eon_workspace_protocol::v28::Response::Snapshot(state),
             )
             .unwrap();
         }

@@ -10,8 +10,9 @@ use super::supervisor::{
     try_lock_supervisor_lifecycle, validate_private_directory,
 };
 use super::workspace::json_escape;
-use eon_workspace_protocol::v27::{
-    Action, Availability, Failure, LifecycleResponse, Response, Stopped, WorkspaceAction,
+use eon_workspace_protocol::v28::{
+    Action, Availability, Failure, LifecycleResponse, MAX_RUNNING_WINDOWS, Response, Stopped,
+    WindowEntry, WindowState, WorkspaceAction,
 };
 use std::{
     env,
@@ -26,7 +27,8 @@ use std::{
     },
     path::{Path, PathBuf},
     process::Command,
-    time::Instant,
+    thread,
+    time::{Duration, Instant},
 };
 
 pub(super) fn current_generation(inputs: &Inputs) -> Result<String, String> {
@@ -362,6 +364,8 @@ pub(super) struct GenerationRecord {
     kind: &'static str,
     pub(super) state: &'static str,
     runtime: PathBuf,
+    name: Option<String>,
+    started_at: Option<u64>,
     eon_version: Option<String>,
     workspace_protocol: Option<u16>,
     component_report: Option<String>,
@@ -393,6 +397,7 @@ fn discover_generations(
         current_path,
         &supervisor_lock_path(root, current),
         component_report,
+        true,
     )];
     for (id, path) in candidates {
         let id = id.to_string_lossy();
@@ -403,10 +408,125 @@ fn discover_generations(
                 path,
                 &supervisor_lock_path(root, &id),
                 component_report,
+                true,
             ));
         }
     }
     Ok(records)
+}
+
+pub(super) struct SupervisorInventory {
+    pub entries: Vec<WindowEntry>,
+    /// Include dormant generations: recovery can reuse their existing directory.
+    pub observed: Vec<(PathBuf, String)>,
+}
+
+pub(super) const RUNNING_PROBE_TIMEOUT: Duration = Duration::from_secs(1);
+
+/// Read-only, off-loop inventory with at most 32 concurrent peer probes.
+pub(super) fn live_supervisors(
+    base: &Path,
+    self_root: &Path,
+    generation: &str,
+    log: &super::diagnostics::DiagnosticLog,
+) -> Result<(SupervisorInventory, super::running::Fingerprint), String> {
+    let (roots, _) = super::running::window_roots(base, Some(log))?;
+    let mut candidates = Vec::new();
+    let mut observed = Vec::new();
+    for root in roots {
+        let generations = match generation_candidates(&root) {
+            Ok(generations) => generations,
+            Err(error) => {
+                log.note_once(&format!(
+                    "skipping running Eon namespace {}: {error}",
+                    root.display()
+                ));
+                continue;
+            }
+        };
+        for (id, runtime) in generations {
+            let Some(id) = id.to_str().filter(|id| valid_generation(id)) else {
+                continue;
+            };
+            if root == self_root && id == generation {
+                continue;
+            }
+            observed.push((root.clone(), id.to_owned()));
+            let lock = supervisor_lock_path(&root, id);
+            let held = match super::running::supervisor_held(&lock) {
+                Ok(held) => held,
+                Err(error) => {
+                    log.note_once(&format!("skipping running Eon generation: {error}"));
+                    continue;
+                }
+            };
+            if held {
+                let window = (root != base)
+                    .then(|| root.file_name().unwrap().to_string_lossy().into_owned());
+                candidates.push((
+                    WindowEntry {
+                        window,
+                        generation: id.into(),
+                        name: None,
+                        started_at: None,
+                        live_terminals: None,
+                        state: WindowState::Unreachable,
+                    },
+                    runtime,
+                    lock,
+                ));
+            }
+        }
+    }
+    let fingerprint = super::running::Fingerprint::read(base, &observed)?;
+    let mut candidates = candidates.into_iter();
+    let mut entries = Vec::new();
+    loop {
+        let batch: Vec<_> = candidates.by_ref().take(MAX_RUNNING_WINDOWS).collect();
+        if batch.is_empty() {
+            break;
+        }
+        let inspected = thread::scope(|scope| {
+            let probes: Vec<_> = batch
+                .into_iter()
+                .map(|(entry, runtime, lock)| {
+                    let id = entry.generation.clone();
+                    let probe = thread::Builder::new()
+                        .spawn_scoped(scope, move || {
+                            inspect_generation(&id, "previous", runtime, &lock, "", false)
+                        })
+                        .map_err(|error| {
+                            format!("cannot start running Eon window inspection: {error}")
+                        })?;
+                    Ok((entry, probe))
+                })
+                .collect::<Result<_, String>>()?;
+            probes
+                .into_iter()
+                .map(|(mut entry, probe)| {
+                    let record = probe
+                        .join()
+                        .map_err(|_| "running Eon window inspection panicked".to_string())?;
+                    match record.state {
+                        // Full Eon always supplies its derived workspace name; eonbase has none.
+                        "live" if record.name.is_none() => return Ok(None),
+                        "live" => {
+                            entry.name = record.name;
+                            entry.started_at = record.started_at;
+                            entry.live_terminals = Some(record.sessions.len() as u16);
+                            entry.state = WindowState::Live;
+                        }
+                        "incompatible" => entry.state = WindowState::Incompatible,
+                        _ => {}
+                    }
+                    Ok(Some(entry))
+                })
+                .filter_map(Result::transpose)
+                .collect::<Result<Vec<_>, String>>()
+        })?;
+        entries.extend(inspected);
+    }
+    Ok((SupervisorInventory { entries, observed }, fingerprint))
 }
 
 fn inspect_selected_generation(
@@ -444,6 +564,7 @@ fn inspect_selected_generation(
         runtime,
         &supervisor_lock_path(root, target),
         component_report,
+        true,
     )))
 }
 
@@ -453,6 +574,7 @@ fn inspect_generation(
     runtime: PathBuf,
     lifecycle_lock: &Path,
     current_components: &str,
+    cleanup: bool,
 ) -> GenerationRecord {
     if !valid_generation(id) {
         return failed_generation(
@@ -482,7 +604,12 @@ fn inspect_generation(
     }
 
     let socket = runtime.join("eon.sock");
-    let mut record = match probe_generation_runtime(&socket) {
+    let probe = if cleanup {
+        probe_generation_runtime(&socket)
+    } else {
+        probe_generation_runtime_until(&socket, Instant::now() + RUNNING_PROBE_TIMEOUT)
+    };
+    let mut record = match probe {
         Ok(info) if info.generation != id => failed_generation(
             id,
             kind,
@@ -497,7 +624,8 @@ fn inspect_generation(
         ),
         Ok(mut info) => {
             // A supervisor that refuses presentation itself keeps its reason.
-            let other_build = info.component_report != current_components && info.attach.available;
+            let other_build =
+                cleanup && info.component_report != current_components && info.attach.available;
             if other_build {
                 info.attach = Availability {
                     available: false,
@@ -510,6 +638,8 @@ fn inspect_generation(
                 id: id.into(),
                 kind,
                 state: "live",
+                name: info.name,
+                started_at: Some(info.started_at),
                 eon_version: Some(info.eon_version),
                 workspace_protocol: Some(info.workspace_protocol),
                 component_report: Some(info.component_report),
@@ -524,10 +654,12 @@ fn inspect_generation(
         Err(error) => {
             let dead = error.kind == EndpointFailureKind::Dead;
             let mut record = failed_generation(id, kind, runtime.clone(), error);
-            if record.state == "incompatible" {
+            if cleanup && record.state == "incompatible" {
                 record.launcher = recorded_launcher(&runtime);
             }
-            if dead && let Ok(Some(_lifecycle_lock)) = try_lock_supervisor_lifecycle(lifecycle_lock)
+            if cleanup
+                && dead
+                && let Ok(Some(_lifecycle_lock)) = try_lock_supervisor_lifecycle(lifecycle_lock)
             {
                 remove_dead_socket(&socket);
                 remove_launcher(&runtime);
@@ -585,6 +717,8 @@ fn failed_generation(
         kind,
         state,
         runtime,
+        name: None,
+        started_at: None,
         eon_version: None,
         workspace_protocol: None,
         component_report: None,
@@ -678,6 +812,12 @@ fn generations_human(records: &[GenerationRecord]) -> String {
         if let Some(eon) = &record.launcher {
             output.push_str(&format!("  executable {}\n", eon.display()));
         }
+        if let Some(started_at) = record.started_at {
+            output.push_str(&format!(
+                "  name={} started_at={started_at}\n",
+                record.name.as_deref().unwrap_or("unknown").escape_debug()
+            ));
+        }
         for session in &record.sessions {
             output.push_str(&format!("  terminal {session}\n"));
         }
@@ -697,10 +837,12 @@ fn generations_json(records: &[GenerationRecord]) -> String {
             output.push(',');
         }
         output.push_str(&format!(
-            "{{\"id\":\"{}\",\"kind\":\"{}\",\"state\":\"{}\",\"eon_version\":{},\"workspace_protocol\":{},\"component_report\":{},\"executable\":{},\"sessions\":[",
+            "{{\"id\":\"{}\",\"kind\":\"{}\",\"state\":\"{}\",\"name\":{},\"started_at\":{},\"eon_version\":{},\"workspace_protocol\":{},\"component_report\":{},\"executable\":{},\"sessions\":[",
             json_escape(&record.id),
             record.kind,
             record.state,
+            json_option(record.name.as_deref()),
+            record.started_at.map_or_else(|| "null".into(), |value| value.to_string()),
             json_option(record.eon_version.as_deref()),
             record.workspace_protocol.map_or_else(|| "null".into(), |value| value.to_string()),
             json_option(record.component_report.as_deref()),
@@ -1081,6 +1223,197 @@ mod tests {
         thread,
         time::{Duration, Instant},
     };
+
+    #[test]
+    fn read_only_discovery_skips_bad_entries() {
+        use std::os::unix::fs::DirBuilderExt;
+        let base = temporary_directory();
+        fs::set_permissions(&base, fs::Permissions::from_mode(0o700)).unwrap();
+        let log = crate::diagnostics::DiagnosticLog::open_in(Ok(base.join("logs")), "test", "test");
+        let bad_id = "g1-11111111111111111111111111111111";
+        let good_id = "g1-22222222222222222222222222222222";
+        fs::DirBuilder::new()
+            .recursive(true)
+            .mode(0o700)
+            .create(generation_directory(&base, bad_id))
+            .unwrap();
+        let bad_lock = supervisor_lock_path(&base, bad_id);
+        fs::create_dir(&bad_lock).unwrap();
+        let good_root = base.join("w/00000001");
+        fs::DirBuilder::new()
+            .recursive(true)
+            .mode(0o700)
+            .create(generation_directory(&good_root, good_id))
+            .unwrap();
+        let held = lock_supervisor_lifecycle(&supervisor_lock_path(&good_root, good_id)).unwrap();
+        let over_limit = base.join("w/00000002");
+        for index in 0..=super::MAX_GENERATIONS {
+            fs::DirBuilder::new()
+                .recursive(true)
+                .mode(0o700)
+                .create(generation_directory(
+                    &over_limit,
+                    &format!("g1-{index:032x}"),
+                ))
+                .unwrap();
+        }
+        for _ in 0..2 {
+            let (inventory, fingerprint) =
+                super::live_supervisors(&base, &base, "self", &log).unwrap();
+            assert_eq!(
+                fingerprint,
+                super::super::running::Fingerprint::read(&base, &inventory.observed).unwrap()
+            );
+            assert_eq!(inventory.entries.len(), 1);
+            assert_eq!(inventory.entries[0].generation, good_id);
+        }
+        let notes = fs::read_dir(base.join("logs"))
+            .unwrap()
+            .map(|entry| fs::read_to_string(entry.unwrap().path()).unwrap())
+            .collect::<String>();
+        assert_eq!(
+            notes
+                .lines()
+                .filter(|line| line.contains(bad_lock.to_str().unwrap()))
+                .count(),
+            1
+        );
+        assert_eq!(
+            notes
+                .lines()
+                .filter(|line| line.contains(over_limit.to_str().unwrap()))
+                .count(),
+            1
+        );
+        held.unlock().unwrap();
+        drop(log);
+        fs::remove_dir_all(base).unwrap();
+    }
+
+    #[test]
+    fn read_only_discovery_excludes_terminal_only_supervisors() {
+        use eon_workspace_protocol::v28::{
+            Availability, HEADER_BYTES, LifecycleResponse, Runtime, declared_message_len,
+            encode_lifecycle_response,
+        };
+        use std::io::{Read, Write};
+        let base = temporary_directory();
+        fs::set_permissions(&base, fs::Permissions::from_mode(0o700)).unwrap();
+        let id = "g1-11111111111111111111111111111111";
+        let directory = generation_directory(&base, id);
+        fs::create_dir_all(&directory).unwrap();
+        for path in [base.join("generations"), directory.clone()] {
+            fs::set_permissions(path, fs::Permissions::from_mode(0o700)).unwrap();
+        }
+        let socket = directory.join("eon.sock");
+        let listener = UnixListener::bind(&socket).unwrap();
+        fs::set_permissions(&socket, fs::Permissions::from_mode(0o600)).unwrap();
+        let held = lock_supervisor_lifecycle(&supervisor_lock_path(&base, id)).unwrap();
+        let server = thread::spawn(move || {
+            let (mut stream, _) = listener.accept().unwrap();
+            let mut request = vec![0; HEADER_BYTES];
+            stream.read_exact(&mut request).unwrap();
+            request.resize(declared_message_len(&request).unwrap(), 0);
+            stream.read_exact(&mut request[HEADER_BYTES..]).unwrap();
+            let available = Availability {
+                available: true,
+                reason: "terminal-only supervisor".into(),
+            };
+            let response = LifecycleResponse::Runtime(Runtime {
+                generation: id.into(),
+                name: None,
+                started_at: 123,
+                eon_version: "fixture".into(),
+                workspace_protocol: eon_workspace_protocol::v28::VERSION,
+                component_report: "fixture".into(),
+                sessions: vec!["session-1".into()],
+                attach: available.clone(),
+                stop: available,
+            });
+            stream
+                .write_all(&encode_lifecycle_response(&response).unwrap())
+                .unwrap();
+        });
+        let log = crate::diagnostics::DiagnosticLog::open_in(Ok(base.join("logs")), "test", "test");
+        let entries = super::live_supervisors(&base, &base.join("w/1234abcd"), id, &log)
+            .unwrap()
+            .0;
+        server.join().unwrap();
+        held.unlock().unwrap();
+        assert!(
+            entries.entries.is_empty(),
+            "eonbase appeared as a window: {:?}",
+            entries.entries
+        );
+        assert_eq!(entries.observed.len(), 1);
+        fs::remove_dir_all(base).unwrap();
+    }
+
+    #[test]
+    fn read_only_inspection_keeps_dead_generation_residue() {
+        let base = temporary_directory();
+        fs::set_permissions(&base, fs::Permissions::from_mode(0o700)).unwrap();
+        let id = "g1-11111111111111111111111111111111";
+        let directory = generation_directory(&base, id);
+        fs::create_dir_all(&directory).unwrap();
+        for path in [base.join("generations"), directory.clone()] {
+            fs::set_permissions(path, fs::Permissions::from_mode(0o700)).unwrap();
+        }
+        let socket = directory.join("eon.sock");
+        drop(UnixListener::bind(&socket).unwrap());
+        fs::set_permissions(&socket, fs::Permissions::from_mode(0o600)).unwrap();
+        let deadline = Instant::now() + Duration::from_secs(5);
+        while UnixStream::connect(&socket).is_ok() {
+            assert!(Instant::now() < deadline);
+            thread::sleep(Duration::from_millis(1));
+        }
+        symlink("/bin/false", directory.join("eon")).unwrap();
+        let lock = supervisor_lock_path(&base, id);
+        let record =
+            super::inspect_generation(id, "previous", directory.clone(), &lock, "test", false);
+        assert_eq!(record.state, "dead");
+        assert!(
+            super::live_supervisors(
+                &base,
+                &base,
+                "other",
+                &crate::diagnostics::DiagnosticLog::open_in(Ok(base.join("logs")), "test", "test")
+            )
+            .unwrap()
+            .0
+            .entries
+            .is_empty()
+        );
+        assert!(!lock.exists(), "read-only discovery created a lock");
+        assert!(fs::symlink_metadata(socket).is_ok());
+        assert_eq!(
+            fs::read_link(directory.join("eon")).unwrap(),
+            Path::new("/bin/false")
+        );
+        fs::remove_dir_all(base).unwrap();
+    }
+
+    #[test]
+    fn generations_json_carries_name_and_started_at() {
+        let mut record = super::dead_generation("g1", "previous", "/runtime".into(), "ended");
+        let value: serde_json::Value =
+            serde_json::from_str(&super::generations_json(std::slice::from_ref(&record))).unwrap();
+        assert_eq!(
+            value["generations"][0].get("name"),
+            Some(&serde_json::Value::Null)
+        );
+        assert_eq!(
+            value["generations"][0].get("started_at"),
+            Some(&serde_json::Value::Null)
+        );
+        record.state = "live";
+        record.name = Some("quoted \"name\"".into());
+        record.started_at = Some(123);
+        let value: serde_json::Value =
+            serde_json::from_str(&super::generations_json(&[record])).unwrap();
+        assert_eq!(value["generations"][0]["name"], "quoted \"name\"");
+        assert_eq!(value["generations"][0]["started_at"], 123);
+    }
 
     #[test]
     fn confirmation_requires_yes_and_only_terminal_declines_succeed() {

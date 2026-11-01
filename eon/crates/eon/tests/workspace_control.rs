@@ -1,4 +1,4 @@
-use eon_workspace_protocol::v27::{
+use eon_workspace_protocol::v28::{
     Action as ProtocolAction, Availability, Column, Direction, Failure as ProtocolFailure,
     HEADER_BYTES, InvokeIntent, LifecycleResponse, MAX_SESSIONS, Pane, Popup, PopupGeometry,
     PopupTarget, Request, Response, Runtime, Screen, Sent, Snapshot, Stopped, Tab, TargetId,
@@ -1457,7 +1457,7 @@ printf '/selected-\377\n' > "$4"
     let response = encode_response(&Response::Snapshot(Snapshot {
         workspace: "w1".into(),
         active_workspace: "w1".into(),
-        workspaces: vec![eon_workspace_protocol::v27::WorkspaceInfo {
+        workspaces: vec![eon_workspace_protocol::v28::WorkspaceInfo {
             id: "w1".into(),
             name: None,
             tab_count: 1,
@@ -1495,7 +1495,8 @@ printf '/selected-\377\n' > "$4"
         claude_quota: None,
         codex_quota_failure: None,
         claude_quota_failure: None,
-        sidebar: eon_workspace_protocol::v27::Sidebar::Open,
+        running: None,
+        sidebar: eon_workspace_protocol::v28::Sidebar::Open,
         attention_queue: Vec::new(),
     }))
     .unwrap();
@@ -6813,6 +6814,291 @@ fn quit_all_stops_the_default_namespace_and_every_window_caller_last() {
 }
 
 #[test]
+fn running_windows_name_each_other_and_refresh_on_start_and_end() {
+    let root = (0_u32..)
+        .map(|n| std::env::temp_dir().join(format!("er{n:x}")))
+        .find(|path| match fs::create_dir(path) {
+            Ok(()) => true,
+            Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => false,
+            Err(error) => panic!("{}: {error}", path.display()),
+        })
+        .unwrap();
+    let runtime = root.join("r");
+    let config = root.join("config");
+    configure_mock_desktop(&config);
+    let stop = root.join("stop");
+    let orbit = root.join("orbit");
+    let venus = root.join("venus");
+    managed_orbit_executable(&orbit);
+    executable(&venus, "#!/bin/sh\nexit 0\n");
+    let binary = PathBuf::from(env!("CARGO_BIN_EXE_eon"));
+    let command = || {
+        let mut command = eon_command(&binary);
+        command
+            .current_dir(&root)
+            .env("EON_RUNTIME_DIR", &runtime)
+            .env("EON_CONFIG_HOME", &config)
+            .env("EON_ORBIT", &orbit)
+            .env("EON_VENUS", &venus)
+            .env("EON_TEST_STOP", &stop);
+        command
+    };
+    let mut first = TestProcess {
+        child: command()
+            .arg("run")
+            .stdout(Stdio::null())
+            .stderr(Stdio::null())
+            .spawn()
+            .unwrap(),
+        stop: stop.clone(),
+    };
+    let control = generation_runtime(&runtime).join("eon.sock");
+    wait_for_connection(&control);
+    let query = |window: Option<&str>| {
+        let mut c = command();
+        c.args(["workspace", "--json"]);
+        if let Some(id) = window {
+            c.args(["--window", id]);
+        }
+        let output = c.output().unwrap();
+        assert!(
+            output.status.success(),
+            "{} {}",
+            stdout(&output),
+            String::from_utf8_lossy(&output.stderr)
+        );
+        serde_json::from_slice::<serde_json::Value>(&output.stdout).unwrap()["running"].clone()
+    };
+    let wait = |window: Option<&str>, expected: usize| {
+        let deadline = Instant::now() + Duration::from_secs(5);
+        loop {
+            let running = query(window);
+            if running["others"]
+                .as_array()
+                .is_some_and(|others| others.len() == expected)
+            {
+                break running;
+            }
+            assert!(
+                Instant::now() < deadline,
+                "summary did not refresh: {running}"
+            );
+            thread::sleep(Duration::from_millis(20));
+        }
+    };
+    let single = wait(None, 0);
+    assert!(single["this"]["window"].is_null());
+    assert_eq!(single["this"]["live_terminals"], 1);
+    assert_eq!(
+        single["this"]["name"],
+        root.file_name().unwrap().to_str().unwrap()
+    );
+    assert!(single["this"]["started_at"].as_u64().unwrap() > 0);
+    // A burst of peer inspections must fit the same one-second deadline as discovery.
+    let deadline = Instant::now() + Duration::from_secs(1);
+    let clients: Vec<_> = (0..64)
+        .map(|index| {
+            let mut stream = UnixStream::connect(&control).unwrap();
+            stream
+                .write_all(
+                    &encode_request(&Request {
+                        id: format!("burst-{index}"),
+                        caller: None,
+                        action: ProtocolAction::Workspace(Action::InspectRuntime),
+                    })
+                    .unwrap(),
+                )
+                .unwrap();
+            stream
+        })
+        .collect();
+    for mut stream in clients {
+        let remaining = deadline
+            .checked_duration_since(Instant::now())
+            .expect("queued inspections exceeded one second");
+        stream.set_read_timeout(Some(remaining)).unwrap();
+        let response = read_request(&mut stream);
+        assert!(matches!(
+            eon_workspace_protocol::v28::decode_lifecycle_response(&response).unwrap(),
+            LifecycleResponse::Runtime(_)
+        ));
+    }
+    let output = command().args(["window", "new"]).output().unwrap();
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let second = stdout(&output).trim().to_owned();
+    let second_control = generation_runtime(&runtime.join("w").join(&second)).join("eon.sock");
+    wait_for_connection(&second_control);
+    let a = wait(None, 1);
+    let b = wait(Some(&second), 1);
+    assert_eq!(a["others"][0]["window"], second);
+    assert!(b["others"][0]["window"].is_null());
+    assert_eq!(a["others"][0]["generation"], b["this"]["generation"]);
+    assert_eq!(a["others"][0]["started_at"], b["this"]["started_at"]);
+    assert_eq!(b["others"][0]["name"], a["this"]["name"]);
+    assert!(matches!(
+        workspace_action(
+            &second_control,
+            "rename",
+            Action::RenameWorkspace {
+                workspace: None,
+                name: "second".into(),
+            }
+        ),
+        Response::Snapshot(_)
+    ));
+    let deadline = Instant::now() + Duration::from_secs(5);
+    loop {
+        let running = query(None);
+        if running["others"][0]["name"] == "second" {
+            break;
+        }
+        assert!(
+            Instant::now() < deadline,
+            "renamed peer is stale: {running}"
+        );
+        thread::sleep(Duration::from_millis(20));
+    }
+    assert!(matches!(
+        protocol_action(
+            &second_control,
+            "terminal",
+            ProtocolAction::LaunchTab {
+                directory: root.as_os_str().as_bytes().to_vec(),
+                argv: vec![],
+                focus: false,
+            }
+        ),
+        Response::Snapshot(_)
+    ));
+    let deadline = Instant::now() + Duration::from_secs(5);
+    loop {
+        let running = query(None);
+        if running["others"][0]["live_terminals"] == 2 {
+            break;
+        }
+        assert!(
+            Instant::now() < deadline,
+            "peer terminal count is stale: {running}"
+        );
+        thread::sleep(Duration::from_millis(20));
+    }
+    let inventory = invoke(&binary, &runtime, &config, &["windows", "--json"]);
+    let inventory: serde_json::Value = serde_json::from_slice(&inventory.stdout).unwrap();
+    assert_eq!(
+        inventory["windows"][0]["inventory"]["generations"][0]["name"],
+        "second"
+    );
+    assert_eq!(
+        unsafe { libc::kill(first.child.id() as libc::pid_t, libc::SIGSTOP) },
+        0
+    );
+    let output = command().args(["window", "new"]).output().unwrap();
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let third = stdout(&output).trim().to_owned();
+    let deadline = Instant::now() + Duration::from_secs(5);
+    loop {
+        let summary = query(Some(&second));
+        if summary["others"].as_array().is_some_and(|entries| {
+            entries
+                .iter()
+                .any(|entry| entry["window"].is_null() && entry["state"] == "unreachable")
+        }) {
+            break;
+        }
+        assert!(
+            Instant::now() < deadline,
+            "paused peer was not marked unreachable: {summary}"
+        );
+        thread::sleep(Duration::from_millis(20));
+    }
+    // Let the initial candidate-list change and its in-flight probes settle.
+    thread::sleep(Duration::from_millis(2200));
+    assert_eq!(
+        unsafe { libc::kill(first.child.id() as libc::pid_t, libc::SIGCONT) },
+        0
+    );
+    let deadline = Instant::now() + Duration::from_secs(5);
+    loop {
+        let summary = query(Some(&second));
+        if summary["others"].as_array().is_some_and(|entries| {
+            entries
+                .iter()
+                .any(|entry| entry["window"].is_null() && entry["state"] == "live")
+        }) {
+            break;
+        }
+        assert!(
+            Instant::now() < deadline,
+            "resumed peer stayed unreachable: {summary}"
+        );
+        thread::sleep(Duration::from_millis(20));
+    }
+    let three = wait(None, 2);
+    let peers = three["others"].as_array().unwrap();
+    assert!(peers[0]["window"].as_str().unwrap() < peers[1]["window"].as_str().unwrap());
+    assert_eq!(three["omitted"], 0);
+    wait(Some(&second), 2);
+    wait(Some(&third), 2);
+    let stopped = invoke(
+        &binary,
+        &runtime,
+        &config,
+        &["window", "stop", &third, "--json"],
+    );
+    assert!(stopped.status.success(), "{}", stdout(&stopped));
+    wait(None, 1);
+    first.child.kill().unwrap();
+    first.child.wait().unwrap();
+    wait(Some(&second), 0);
+    thread::sleep(Duration::from_millis(1200));
+    assert!(
+        control.parent().unwrap().is_dir(),
+        "crash unexpectedly removed the generation directory"
+    );
+    first.child = command()
+        .arg("run")
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
+        .spawn()
+        .unwrap();
+    wait_for_connection(&control);
+    wait(Some(&second), 1);
+    assert!(
+        query(None)["this"]["started_at"].as_u64().unwrap()
+            > single["this"]["started_at"].as_u64().unwrap()
+    );
+    let stopped = invoke(
+        &binary,
+        &runtime,
+        &config,
+        &["window", "stop", &second, "--json"],
+    );
+    assert!(stopped.status.success(), "{}", stdout(&stopped));
+    wait(None, 0);
+    let stopped = invoke(
+        &binary,
+        &runtime,
+        &config,
+        &[
+            "stop",
+            single["this"]["generation"].as_str().unwrap(),
+            "--json",
+        ],
+    );
+    assert!(stopped.status.success(), "{}", stdout(&stopped));
+    wait_for_successful_exit(&mut first.child);
+    fs::remove_dir_all(root).unwrap();
+}
+
+#[test]
 fn new_windows_keep_independent_supervisors_and_stop_by_window_id() {
     // A window's terminal sockets leave this root only about ten bytes within macOS's
     // 104-byte socket paths, so it takes the first free short name, not a pid and counter.
@@ -7082,6 +7368,8 @@ fn previous_supervisor(runtime: &Path, id: &str) -> thread::JoinHandle<()> {
                     (
                         LifecycleResponse::Runtime(Runtime {
                             generation: server_id.clone(),
+                            name: None,
+                            started_at: 0,
                             eon_version: "0.1.0".into(),
                             workspace_protocol: VERSION,
                             component_report: "previous components".into(),
@@ -7128,14 +7416,35 @@ fn generations_from_another_eonw_are_incompatible_and_not_stopped() {
     let config = root.join("config");
     let id = format!("g1-{:032x}", 11);
     let listener = generation_listener(&runtime, &id);
+    let held = fs::OpenOptions::new()
+        .read(true)
+        .write(true)
+        .create(true)
+        .truncate(false)
+        .mode(0o600)
+        .open(runtime.join(format!("supervisor-{id}.lock")))
+        .unwrap();
+    held.lock().unwrap();
+    let done = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
+    let probes = std::sync::Arc::new(AtomicU64::new(0));
+    let server_probes = probes.clone();
+    let server_done = done.clone();
+    listener.set_nonblocking(true).unwrap();
     // An older build's supervisor rejects each request in its own framing.
     let server = thread::spawn(move || {
-        for _ in 0..2 {
-            let (mut stream, _) = listener.accept().unwrap();
-            assert_eq!(
+        while !server_done.load(Ordering::SeqCst) {
+            let (mut stream, _) = match listener.accept() {
+                Ok(peer) => peer,
+                Err(error) if error.kind() == std::io::ErrorKind::WouldBlock => {
+                    thread::sleep(Duration::from_millis(5));
+                    continue;
+                }
+                Err(error) => panic!("{error}"),
+            };
+            assert!(matches!(
                 decode_request(&read_request(&mut stream)).unwrap().action,
-                ProtocolAction::Workspace(Action::InspectPresentation)
-            );
+                ProtocolAction::Workspace(Action::InspectPresentation | Action::InspectRuntime)
+            ));
             let mut failure = encode_response(&Response::Failure(ProtocolFailure {
                 code: "unsupported-version".into(),
                 detail: format!("unsupported EONW version {VERSION}"),
@@ -7143,6 +7452,7 @@ fn generations_from_another_eonw_are_incompatible_and_not_stopped() {
             .unwrap();
             failure[4..6].copy_from_slice(&11u16.to_le_bytes());
             stream.write_all(&failure).unwrap();
+            server_probes.fetch_add(1, Ordering::SeqCst);
         }
     });
 
@@ -7170,7 +7480,79 @@ fn generations_from_another_eonw_are_incompatible_and_not_stopped() {
     assert_eq!(stopped.status.code(), Some(1), "{}", stdout(&stopped));
     let stopped: serde_json::Value = serde_json::from_str(stdout(&stopped)).unwrap();
     assert_eq!(stopped["error"]["code"], "stop-unavailable", "{stopped}");
+    configure_mock_desktop(&config);
+    let stop = root.join("stop");
+    let orbit = root.join("orbit");
+    let venus = root.join("venus");
+    managed_orbit_executable(&orbit);
+    executable(&venus, "#!/bin/sh\nexit 0\n");
+    let mut current = TestProcess {
+        child: eon_command(&binary)
+            .arg("run")
+            .current_dir(&root)
+            .env("EON_RUNTIME_DIR", &runtime)
+            .env("EON_CONFIG_HOME", &config)
+            .env("EON_ORBIT", &orbit)
+            .env("EON_VENUS", &venus)
+            .env("EON_TEST_STOP", &stop)
+            .stdout(Stdio::null())
+            .stderr(Stdio::null())
+            .spawn()
+            .unwrap(),
+        stop,
+    };
+    // The new generation is the only other directory besides the mock.
+    let startup_deadline = Instant::now() + Duration::from_secs(5);
+    let control = loop {
+        assert!(
+            Instant::now() < startup_deadline,
+            "current generation did not start"
+        );
+        let path = fs::read_dir(runtime.join("generations"))
+            .unwrap()
+            .filter_map(Result::ok)
+            .map(|entry| entry.path().join("eon.sock"))
+            .find(|path| path.parent().unwrap().file_name().unwrap() != id.as_str());
+        if let Some(path) = path {
+            break path;
+        }
+        assert!(current.child.try_wait().unwrap().is_none());
+        thread::sleep(Duration::from_millis(10));
+    };
+    wait_for_connection(&control);
+    let deadline = Instant::now() + Duration::from_secs(3);
+    loop {
+        let output = invoke(&binary, &runtime, &config, &["workspace", "--json"]);
+        let value: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
+        if let Some(peer) = value["running"]["others"]
+            .as_array()
+            .and_then(|peers| peers.first())
+        {
+            assert_eq!(peer["state"], "incompatible");
+            assert_eq!(peer["generation"], id);
+            for field in ["name", "started_at", "live_terminals"] {
+                assert!(peer[field].is_null());
+            }
+            break;
+        }
+        assert!(
+            Instant::now() < deadline,
+            "missing incompatible peer: {value}"
+        );
+        thread::sleep(Duration::from_millis(20));
+    }
+    thread::sleep(Duration::from_millis(1200));
+    let idle_probes = probes.load(Ordering::SeqCst);
+    thread::sleep(Duration::from_millis(1200));
+    assert_eq!(
+        probes.load(Ordering::SeqCst),
+        idle_probes,
+        "idle discovery probed a peer"
+    );
+    done.store(true, Ordering::SeqCst);
     server.join().unwrap();
+    held.unlock().unwrap();
+    drop(current);
     fs::remove_dir_all(root).unwrap();
 }
 

@@ -10,6 +10,13 @@ installation, and proven contract changes.
   running window, or lists them when several run. `eon quit --all` stops every
   window, the default one included. Commands > Quit this window runs `eon quit`
   (`eon-7cf0y.1`).
+- Each window carries a running-windows summary, available as `running` in
+  `eon workspace --json` and as `running` lines in human output. It names this
+  window and the other running windows, their generations, supervisor start
+  times and live terminal counts. `eon generations --json` and the generation
+  inventory in `eon windows --json` include `name` and `started_at`.
+  EONW moves to v28 and Eon to 0.1.11 (`eon-7cf0y.4`); older windows remain
+  attachable and stoppable through the recorded `eon` that started them.
 
 - Fixed: Eon windows and generations from this release on share one Claude
   quota read every five minutes when the shared schedule is usable; otherwise
