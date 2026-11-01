@@ -84,7 +84,8 @@ repeated flag fails before window creation.
 
 With the `ram` item it may pass `--ram-warning-percent N` and
 `--ram-critical-percent N`, and with `cpu`, `--cpu-warning-percent N` and
-`--cpu-average-seconds N`: the levels at which those chips turn orange or red
+`--cpu-average-seconds N`: the levels at which those chips turn orange or red,
+and the window of the CPU average that hover and accessibility give
 ([Eon Bar](PRESENTATION.md#eon-bar)). Percentages are 1 through 100 and the
 critical RAM level is not below the warning one; the window is 2 through 600
 seconds. Absence keeps 80, 90, 90 and 30. The inputs are workspace-only, and a

@@ -2804,7 +2804,9 @@ socket names, JSON fields and protocol identifiers retain their spellings.
   levels. Amended on 2026-10-31 (approved by Lucca, relayed by eon-overseer) by
   `eon-d7itl`: the disk widget. Amended on 2026-10-31 (approved by Lucca,
   relayed by eon-overseer) by `eon-wc119`: a leftover `show_version` loads as
-  an alias.
+  an alias. Amended on 2026-10-31 (approved by Lucca, "ok" to options A and E,
+  recorded on the bead) by `eon-0oh9v`: the CPU label colours by the use it
+  shows, and its hover gives the average.
 - **Consumer:** Full-Eon workspace users.
 - **Trigger:** A workspace window opens or reopens.
 - **Result:** `[bar] widgets` is an ordered list of unique names from
@@ -2821,10 +2823,12 @@ socket names, JSON fields and protocol identifiers retain their spellings.
   each widget. Narrow windows keep the fixed hiding priority it gives, whatever
   the order. `ram_warning_percent` and `ram_critical_percent` set the RAM use,
   in whole percent, from which the RAM label turns orange and red (defaults 80
-  and 90); `cpu_warning_percent` sets the average CPU use from which the CPU
-  label turns orange (default 90), averaged over the last `cpu_average_seconds`
-  (default 30). `disk_path` (default `~`) names the path whose filesystem `disk`
-  measures: `~` or a path starting with `~/` under HOME, or an absolute path.
+  and 90); `cpu_warning_percent` sets the CPU use the label shows, over the last
+  2 seconds, from which the CPU label turns orange (default 90), and
+  `cpu_average_seconds` the window of the average CPU use that its hover and
+  accessibility text also give (default 30). `disk_path` (default `~`) names
+  the path whose filesystem `disk` measures: `~` or a path starting with `~/`
+  under HOME, or an absolute path.
   `disk_warning_percent` and `disk_critical_percent` set the disk use from which
   the disk label turns orange and red (defaults 85 and 95), with the same rule
   as RAM's levels. Percentages are 1 through 100, `ram_critical_percent` is not
@@ -2851,8 +2855,9 @@ socket names, JSON fields and protocol identifiers retain their spellings.
   and the disk widget, configurable hiding priority, new widget, live reload,
   settings UI, EONW change or platform expansion. Leaving out a quota chip also
   stops Runtime reading that provider (EON-C27).
-- **Proof:** `eon-igae.14.2`, for the load levels `eon-hjtns`, for the disk
-  widget `eon-d7itl`, and for the leftover `show_version` alias `eon-wc119`
+- **Proof:** `eon-igae.14.2`, for the load levels `eon-hjtns` and
+  `eon-0oh9v`, for the disk widget `eon-d7itl`, and for the leftover
+  `show_version` alias `eon-wc119`
   - **Environment:** Automated; one isolated installed observation.
   - **Evidence:** `version_badge_uses_supervising_product_and_visibility_at_each_launch`
     and `invalid_presentation_configuration_precedes_supervisor_generation_and_children`;
@@ -2876,7 +2881,10 @@ socket names, JSON fields and protocol identifiers retain their spellings.
     `deprecated_show_version_reads_as_bar_widgets`,
     `configuration_corpus_loads_from_the_migration_floor`, the extended
     `version_badge_uses_supervising_product_and_visibility_at_each_launch`, and
-    the isolated installed observation recorded in `eon-wc119`.
+    the isolated installed observation recorded in `eon-wc119`. For the CPU
+    colour by the shown use, `cpu_and_ram_chips_colour_under_load_and_say_so`,
+    `a_failed_cpu_reading_restarts_the_average_window`, and the isolated
+    installed observation recorded in `eon-0oh9v`.
 
 ## EON-C33 — Several workspaces in one window
 

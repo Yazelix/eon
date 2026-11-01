@@ -815,7 +815,7 @@ struct Application {
     marker_wake: Option<Instant>,
     clock: Option<LocalClock>,
     next_clock: Option<Instant>,
-    /// The CPU readings that the shown use and its sustained-load average come from.
+    /// The CPU readings that the shown use and its average over the window come from.
     cpu_readings: CpuReadings,
     cpu: Option<CpuUse>,
     ram: Option<RamUse>,

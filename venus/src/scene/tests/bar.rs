@@ -902,7 +902,7 @@ fn tab_directory_labels_use_current_position_and_bounded_path_context() {
 }
 
 #[test]
-fn cpu_and_ram_chips_colour_only_sustained_or_pressing_load_and_say_so() {
+fn cpu_and_ram_chips_colour_under_load_and_say_so() {
     use crate::{CpuReadings, CpuTimes, Load, LoadLevels, RamUse};
     use eon_workspace_protocol::v26::{Pane, PopupGeometry, Tab};
     use std::time::{Duration, Instant};
@@ -961,58 +961,79 @@ fn cpu_and_ram_chips_colour_only_sustained_or_pressing_load_and_say_so() {
             })
             .collect::<Vec<_>>()
     };
-    // A short spike shows its percentage and stays neutral.
+    let average = |percent: u64, window: u64| {
+        format!("; {percent}% on average over the last {window} seconds")
+    };
+    // A burst colours the chip at once, and hover gives the quieter average beside it.
     let mut readings = CpuReadings::default();
-    let mut spike = vec![10; 16];
-    spike[15] = 100;
-    let shown = run(&mut readings, levels, 0, &spike);
-    let last = shown[15].as_ref().unwrap();
-    assert_eq!((last.label.as_str(), last.load), ("CPU 100%", Load::Normal));
+    let mut burst = vec![10; 16];
+    burst[15] = 100;
+    let shown = run(&mut readings, levels, 0, &burst);
+    let busy = shown[15].as_ref().unwrap();
+    assert_eq!((busy.label.as_str(), busy.load), ("CPU 100%", Load::High));
     assert_eq!(
-        last.description,
-        "CPU use 100% across 1 logical CPU, over the last 2 seconds"
+        busy.description,
+        format!(
+            "CPU use 100% across 1 logical CPU, over the last 2 seconds: under high load{}",
+            average(16, 30)
+        )
     );
-    // 95% for 28 seconds is not yet sustained; from 30 seconds it is, even through a dip.
+    // The level is inclusive and follows the shown use, whatever the average.
     let mut readings = CpuReadings::default();
-    let mut busy = vec![95; 18];
-    busy[16] = 70;
-    let shown = run(&mut readings, levels, 0, &busy);
+    let mut at_level = vec![10; 17];
+    at_level[16] = 90;
+    let shown = run(&mut readings, levels, 0, &at_level).remove(16).unwrap();
+    assert_eq!(shown.load, Load::High);
+    assert!(
+        shown
+            .description
+            .ends_with(&format!(": under high load{}", average(15, 30)))
+    );
+    let mut readings = CpuReadings::default();
+    let mut below = vec![95; 17];
+    below[16] = 89;
+    let shown = run(&mut readings, levels, 0, &below).remove(16).unwrap();
+    assert_eq!(shown.load, Load::Normal);
+    assert_eq!(
+        shown.description,
+        format!(
+            "CPU use 89% across 1 logical CPU, over the last 2 seconds{}",
+            average(95, 30)
+        )
+    );
+    // The average shows only once the readings span the window.
+    let mut readings = CpuReadings::default();
+    let shown = run(&mut readings, levels, 0, &[95; 16]);
     assert!(shown[0].is_none());
-    assert_eq!(shown[14].as_ref().unwrap().load, Load::Normal);
-    let sustained = shown[15].as_ref().unwrap();
-    assert_eq!(sustained.load, Load::High);
+    assert_eq!(shown[14].as_ref().unwrap().load, Load::High);
     assert_eq!(
-        sustained.description,
-        "CPU use 95% across 1 logical CPU, over the last 2 seconds; \
-         95% on average over the last 30 seconds: under sustained load"
+        shown[14].as_ref().unwrap().description,
+        "CPU use 95% across 1 logical CPU, over the last 2 seconds: under high load"
     );
-    let dip = shown[16].as_ref().unwrap();
-    assert_eq!((dip.label.as_str(), dip.load), ("CPU 70%", Load::High));
-    // An average just under the level stays neutral.
-    let mut readings = CpuReadings::default();
-    assert_eq!(
-        run(&mut readings, levels, 0, &[89; 17])[16]
+    assert!(
+        shown[15]
             .as_ref()
             .unwrap()
-            .load,
-        Load::Normal
-    );
-    // An average of exactly the level colours the chip and says why.
-    let mut readings = CpuReadings::default();
-    let at_level = run(&mut readings, levels, 0, &[90; 17]).remove(16).unwrap();
-    assert_eq!(at_level.load, Load::High);
-    assert_eq!(
-        at_level.description,
-        "CPU use 90% across 1 logical CPU, over the last 2 seconds; \
-         90% on average over the last 30 seconds: under sustained load"
+            .description
+            .ends_with(&average(95, 30))
     );
     // A stalled or failed reading starts the window over.
-    let mut readings = CpuReadings::default();
-    run(&mut readings, levels, 0, &[95; 16]);
     let resumed = run(&mut readings, levels, 40, &[95; 16]);
     assert!(resumed[0].is_none());
-    assert_eq!(resumed[14].as_ref().unwrap().load, Load::Normal);
-    assert_eq!(resumed[15].as_ref().unwrap().load, Load::High);
+    assert!(
+        !resumed[14]
+            .as_ref()
+            .unwrap()
+            .description
+            .contains("average")
+    );
+    assert!(
+        resumed[15]
+            .as_ref()
+            .unwrap()
+            .description
+            .ends_with(&average(95, 30))
+    );
     assert!(
         readings
             .push(start + Duration::from_secs(72), None, gap, levels)
@@ -1025,15 +1046,11 @@ fn cpu_and_ram_chips_colour_only_sustained_or_pressing_load_and_say_so() {
         ..levels
     };
     let mut readings = CpuReadings::default();
-    let shown = run(&mut readings, quick, 0, &[60, 60, 60]);
+    let shown = run(&mut readings, quick, 0, &[60, 40, 60]);
     assert_eq!(shown[1].as_ref().unwrap().load, Load::Normal);
     let quick_shown = shown[2].as_ref().unwrap();
     assert_eq!(quick_shown.load, Load::High);
-    assert!(
-        quick_shown
-            .description
-            .ends_with("; 60% on average over the last 4 seconds: under sustained load")
-    );
+    assert!(quick_shown.description.ends_with(&average(50, 4)));
     // The average covers exactly the window, even when it is odd or the readings are uneven:
     // an idle interval then a busy one is 67% over the last 3 of 4 seconds, and 50% over the last
     // 4 of 4.5 seconds when the idle interval took 2.5 of them.
@@ -1054,7 +1071,7 @@ fn cpu_and_ram_chips_colour_only_sustained_or_pressing_load_and_say_so() {
             .unwrap();
         assert!(
             shown.description.ends_with(&format!(
-                "; {average}% on average over the last {window} seconds: under sustained load"
+                "; {average}% on average over the last {window} seconds"
             )),
             "{}",
             shown.description
@@ -1109,7 +1126,7 @@ fn cpu_and_ram_chips_colour_only_sustained_or_pressing_load_and_say_so() {
         &snapshot,
         EonBar {
             items: &[crate::BarItem::Cpu, crate::BarItem::Ram],
-            cpu: Some(sustained),
+            cpu: Some(busy),
             ram: Some(&pressed),
             ..EonBar::default()
         },
@@ -1122,7 +1139,7 @@ fn cpu_and_ram_chips_colour_only_sustained_or_pressing_load_and_say_so() {
     );
     let (cpu, ram) = (scene.cpu.unwrap(), scene.ram.unwrap());
     assert_eq!((cpu.load, ram.load), (Load::High, Load::Critical));
-    assert_eq!(cpu.description, sustained.description);
+    assert_eq!(cpu.description, busy.description);
     assert_eq!(
         ram.description,
         "RAM use 91% of 0.1 GiB: under heavy pressure"
@@ -1130,8 +1147,8 @@ fn cpu_and_ram_chips_colour_only_sustained_or_pressing_load_and_say_so() {
 }
 
 #[test]
-fn a_failed_cpu_reading_restarts_the_sustained_load_window() {
-    use crate::{CpuReadings, CpuTimes, Load, LoadLevels};
+fn a_failed_cpu_reading_restarts_the_average_window() {
+    use crate::{CpuReadings, CpuTimes, LoadLevels};
     use std::time::{Duration, Instant};
 
     let levels = LoadLevels::default();
@@ -1149,19 +1166,24 @@ fn a_failed_cpu_reading_restarts_the_sustained_load_window() {
         .filter(|_| read);
         readings.push(start + Duration::from_secs(2 * step), times, gap, levels)
     };
+    let average = "; 95% on average over the last 30 seconds";
     for step in 0..16 {
         push(step, true);
     }
-    assert_eq!(push(16, true).unwrap().load, Load::High);
+    assert!(push(16, true).unwrap().description.ends_with(average));
     assert!(push(17, false).is_none());
     // The first reading after the failure has nothing to compare with.
     assert!(push(18, true).is_none());
-    // Its use shows again from the next reading, neutral until a full 30 seconds of new
-    // readings has accumulated.
+    // Its use shows again from the next reading, without an average until a full 30 seconds of
+    // new readings has accumulated.
     for step in 19..33 {
-        assert_eq!(push(step, true).unwrap().load, Load::Normal, "step {step}");
+        let description = push(step, true).unwrap().description;
+        assert!(
+            !description.contains("average"),
+            "step {step}: {description}"
+        );
     }
-    assert_eq!(push(33, true).unwrap().load, Load::High);
+    assert!(push(33, true).unwrap().description.ends_with(average));
 }
 
 #[test]

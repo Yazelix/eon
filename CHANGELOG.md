@@ -37,9 +37,10 @@ installation, and proven contract changes.
   loading.
 
 - The Eon Bar's CPU and RAM chips colour when the machine is under load: RAM
-  turns orange from 80% use and red from 90%, and CPU turns orange while its
-  30-second average is 90% or more, so short spikes stay neutral. Hover and
-  accessibility say why in words. `[bar] ram_warning_percent`,
+  turns orange from 80% use and red from 90%, and CPU turns orange while the
+  2-second use it shows is 90% or more. Hover and accessibility say why in
+  words, and for CPU also give the average over the last 30 seconds, such as
+  `45% on average over the last 30 seconds`. `[bar] ram_warning_percent`,
   `ram_critical_percent`, `cpu_warning_percent` and `cpu_average_seconds` set
   the levels and the averaging window (EON-C32 amended).
 

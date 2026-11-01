@@ -99,6 +99,7 @@ fn compact_pane_headers_share_title_height_and_full_row_targets() {
                 windows: Vec::new(),
             });
             let cpu = CpuUse {
+                percent: 12,
                 label: "CPU 12%".into(),
                 description: "CPU".into(),
                 load: crate::Load::Normal,

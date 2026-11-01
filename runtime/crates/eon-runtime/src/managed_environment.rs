@@ -67,7 +67,7 @@ impl EonConfig {
 pub struct Defaults {
     /// Every Eon Bar widget name, in the order shown when `[bar] widgets` is omitted.
     pub bar_widgets: &'static [&'static str],
-    /// When the Eon Bar's CPU, RAM and disk chips colour.
+    /// When the Eon Bar's CPU, RAM and disk chips colour, and the CPU hover's averaging window.
     pub bar_load: BarLoad,
     /// The path whose filesystem the Eon Bar's disk chip measures: absolute, `~` or `~/...`.
     pub bar_disk_path: &'static str,
@@ -105,9 +105,9 @@ pub struct BarLoad {
     pub ram_warning_percent: u8,
     /// RAM use, in whole percent, from which the RAM chip is red.
     pub ram_critical_percent: u8,
-    /// Average CPU use, in whole percent, from which the CPU chip is orange.
+    /// CPU use over the last 2 seconds, in whole percent, from which the CPU chip is orange.
     pub cpu_warning_percent: u8,
-    /// How many seconds of CPU use that average covers.
+    /// How many seconds of CPU use the average in the CPU chip's hover covers.
     pub cpu_average_seconds: u16,
     /// Disk use, in whole percent, from which the disk chip is orange.
     pub disk_warning_percent: u8,
@@ -570,8 +570,8 @@ fn defaults_table(
             "widgets" => "Eon Bar widgets, in display order.",
             "ram_warning_percent" => "RAM use from which the RAM chip turns orange.",
             "ram_critical_percent" => "RAM use from which the RAM chip turns red.",
-            "cpu_warning_percent" => "Average CPU use from which the CPU chip turns orange.",
-            "cpu_average_seconds" => "Seconds of CPU use that the average covers.",
+            "cpu_warning_percent" => "CPU use from which the CPU chip turns orange.",
+            "cpu_average_seconds" => "Seconds of CPU use that the hover's average covers.",
             "disk_warning_percent" => "Disk use from which the disk chip turns orange.",
             "disk_critical_percent" => "Disk use from which the disk chip turns red.",
             "disk_path" => "Path whose filesystem the disk chip measures.",

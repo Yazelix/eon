@@ -32,9 +32,10 @@ Shortcuts viewer lists it; Eon supplies the exact launcher executable.
 Eon can supply its running version through `--eon-version` in workspace mode.
 The read-only label uses spare header space and yields before tabs and controls.
 `--bar-items` lets Eon choose which bar items show and in what order, the
-`--ram-*`, `--cpu-*` and `--disk-*-percent` load levels set when the CPU, RAM
-and disk chips turn orange or red, and `--disk-path` names the path whose
-filesystem the disk chip measures.
+`--*-percent` load levels set when the CPU, RAM and disk chips turn orange or
+red, `--cpu-average-seconds` sets the window of the CPU average that hover and
+accessibility give, and `--disk-path` names the path whose filesystem the disk
+chip measures.
 
 Eon can supply Codex and Claude quota facts in the same header. Read-only chips
 show Codex’s white mark and Claude’s original orange splat alongside remaining

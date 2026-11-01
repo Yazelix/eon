@@ -63,8 +63,8 @@ The following block is checked against the command by the test suite.
 # Built-in defaults. Unset and Eon-owned settings remain omitted.
 
 [bar]
-cpu_average_seconds = 30 # Seconds of CPU use that the average covers.
-cpu_warning_percent = 90 # Average CPU use from which the CPU chip turns orange.
+cpu_average_seconds = 30 # Seconds of CPU use that the hover's average covers.
+cpu_warning_percent = 90 # CPU use from which the CPU chip turns orange.
 disk_critical_percent = 95 # Disk use from which the disk chip turns red.
 disk_path = "~" # Path whose filesystem the disk chip measures.
 disk_warning_percent = 85 # Disk use from which the disk chip turns orange.
@@ -189,16 +189,16 @@ change it.
 
 The CPU and RAM chips stay neutral on a healthy machine and colour only under
 load. RAM turns orange from `ram_warning_percent` and red from
-`ram_critical_percent`. CPU turns orange while its average over the last
-`cpu_average_seconds` is at least `cpu_warning_percent`, so short spikes stay
-neutral; it has no red. The chips still show the 2-second CPU and current RAM
-use, and hover and accessibility say in words why a chip is coloured. Levels
-compare the whole percentage the chip or its hover shows. Percentages accept
-whole numbers from 1 through 100, and `ram_critical_percent` must not be below
-`ram_warning_percent`; set them equal to skip orange. `cpu_average_seconds`
-accepts 2 through 600. The defaults are listed above. Like `widgets`, they
-apply when a window next opens or reopens, and an out-of-range value is a
-configuration error. See [Eon Bar](../venus/docs/PRESENTATION.md#eon-bar).
+`ram_critical_percent`. CPU turns orange while the 2-second use it shows is at
+least `cpu_warning_percent`, so bursts show; it has no red. Hover and
+accessibility say in words why a chip is coloured, and also give CPU's average
+over the last `cpu_average_seconds`. Levels compare the whole percentage the
+chip shows. Percentages accept whole numbers from 1 through 100, and
+`ram_critical_percent` must not be below `ram_warning_percent`; set them equal
+to skip orange. `cpu_average_seconds` accepts 2 through 600. The defaults are
+listed above. Like `widgets`, they apply when a window next opens or reopens,
+and an out-of-range value is a configuration error.
+See [Eon Bar](../venus/docs/PRESENTATION.md#eon-bar).
 
 The disk chip shows how full the filesystem holding `disk_path` is, read every
 30 seconds: used space over used plus available space, rounded up as GNU df

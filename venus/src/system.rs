@@ -29,7 +29,8 @@ impl Load {
     }
 }
 
-/// When the CPU, RAM and disk chips colour, as Eon's `[bar]` configuration resolves it.
+/// When the CPU, RAM and disk chips colour, and the CPU hover's averaging window, as Eon's `[bar]`
+/// configuration resolves them.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct LoadLevels {
     pub ram_warning_percent: u8,
@@ -127,6 +128,7 @@ impl CpuTimes {
 /// CPU use between two readings, as shown in the workspace header.
 #[derive(Debug, PartialEq, Eq)]
 pub struct CpuUse {
+    pub(crate) percent: u64,
     pub(crate) label: String,
     pub(crate) description: String,
     pub(crate) load: Load,
@@ -146,6 +148,7 @@ impl CpuUse {
         let cpus = later.cpus;
         let plural = if cpus == 1 { "" } else { "s" };
         Some(Self {
+            percent,
             label: format!("CPU {percent}%"),
             description: format!(
                 "CPU use {percent}% across {cpus} logical CPU{plural}, over the last 2 seconds"
@@ -156,8 +159,8 @@ impl CpuUse {
 }
 
 /// The CPU readings since the last break, back to the newest one at least the averaging window
-/// old, so the chip colours only load sustained over the whole window, never a short spike. Each
-/// reading's counters advance from the one before it, or the readings start over.
+/// old, so hover can give the average over the whole window beside the shown use. Each reading's
+/// counters advance from the one before it, or the readings start over.
 #[derive(Debug, Default)]
 pub struct CpuReadings {
     readings: VecDeque<(Instant, CpuTimes)>,
@@ -165,9 +168,10 @@ pub struct CpuReadings {
 
 impl CpuReadings {
     /// Records a reading taken at `now`, or a failed one, and returns the use since the previous
-    /// reading, judged by the average over `levels.cpu_average` once the readings span it. A failed
-    /// reading, one taken `gap` or more after the previous, or one that gives no use starts over,
-    /// so every value compares readings about one interval apart.
+    /// reading, high from `levels.cpu_warning_percent` and with the average over
+    /// `levels.cpu_average` once the readings span it. A failed reading, one taken `gap` or more
+    /// after the previous, or one that gives no use starts over, so every value compares readings
+    /// about one interval apart.
     pub fn push(
         &mut self,
         now: Instant,
@@ -195,12 +199,13 @@ impl CpuReadings {
             self.readings.pop_front();
         }
         let mut shown = shown?;
-        if let Some(average) = self.average(now, window)
-            && average >= u64::from(levels.cpu_warning_percent)
-        {
+        if shown.percent >= u64::from(levels.cpu_warning_percent) {
             shown.load = Load::High;
+            shown.description.push_str(": under high load");
+        }
+        if let Some(average) = self.average(now, window) {
             shown.description.push_str(&format!(
-                "; {average}% on average over the last {} seconds: under sustained load",
+                "; {average}% on average over the last {} seconds",
                 window.as_secs()
             ));
         }
