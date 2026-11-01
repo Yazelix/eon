@@ -314,9 +314,9 @@ at the release tag in its `src/site.ts`. Text and media have different triggers:
   window/pane semantics require a site text update for the release they ship
   in, in that release's bead or its own site bead. Guides name the tag they
   were checked against and label planned or unproven behaviour.
-- **Media (screenshots, clips, demos) refreshes on product milestones, not on
-  every visual commit.** A milestone is a release where accumulated visual
-  changes are worth showing, chosen by the user. Each clip names the release it
+- **Media (screenshots, clips, demos) refreshes on releases the user picks for
+  a media refresh, not on every visual commit.** The user picks a release when
+  its accumulated visual changes are worth showing. Each clip names the release it
   was recorded on; slightly stale demos are accepted. A clip must be re-recorded
   only when it is wrong: a key or interaction it demonstrates no longer does
   what it shows. Geometry, border or colour changes alone do not force it.
