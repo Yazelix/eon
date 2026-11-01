@@ -407,7 +407,7 @@ fn venus_command(
     animate_working_badge: bool,
 ) -> Command {
     let mut command = Command::new(&inputs.venus);
-    command
+    managed_environment::remove_agent_session(&mut command)
         .env_remove(TERMINAL_VARIABLE)
         .env_remove(TAB_VARIABLE);
     if !decorations {
@@ -3806,6 +3806,13 @@ rows = 30
             assert!(environment.iter().any(|(key, value)| {
                 *key == "EON_CONFIG_HOME" && *value == Some(config.as_os_str())
             }));
+            // Venus's link openers and `eon window new` must not carry the session of
+            // an agent whose shell started Eon (eon-geigu).
+            assert!(
+                environment
+                    .iter()
+                    .any(|(key, value)| *key == "CLAUDE_CODE_MESSAGING_TOKEN" && value.is_none())
+            );
         }
         assert_eq!(
             terminal.get_args().map(OsString::from).collect::<Vec<_>>(),

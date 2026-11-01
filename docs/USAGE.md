@@ -716,6 +716,19 @@ Eon. Inside Eon it prints one sentence and the human `eon workspace` output,
 including the caller line; a failed workspace query does not fail the session.
 Remove the entry to remove the hook.
 
+When an agent's shell starts Eon, such as `eon` run by Claude Code, Eon
+removes a fixed list of agent session, nesting-marker and credential names,
+such as `CLAUDE_CODE_CHILD_SESSION` and `CLAUDE_CODE_MESSAGING_TOKEN`, from its
+terminals, popups, Venus and quota reader. A Claude Code started in an Eon
+terminal then saves its transcripts, and the launching session's messaging
+token stays with that session. EON-C9 in
+[`CONTRACTS.md`](CONTRACTS.md#eon-c9--managed-shell-environment) lists exactly
+which names. Other variables the agent's shell set, such as `CLAUDE_CONFIG_DIR`,
+API keys, or a `GIT_EDITOR` the agent set for its own commands, still reach Eon
+terminals. Only a supervisor started after you update Eon removes these names;
+closing and reopening a window, reattaching it, or recovering it keeps the
+old environment.
+
 ### Accelerando glyphs
 
 In Eon's native terminal, `eon anima accelerando` shows the 8,192-glyph alien

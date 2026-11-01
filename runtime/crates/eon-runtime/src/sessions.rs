@@ -1776,7 +1776,7 @@ fn orbit_command(
     log: Option<&DiagnosticLog>,
 ) -> Result<Command, String> {
     let mut orbit_command = Command::new(&inputs.orbit);
-    orbit_command
+    managed_environment::remove_agent_session(&mut orbit_command)
         .arg("serve")
         .arg(socket)
         .arg("--management-v4")
@@ -3754,6 +3754,14 @@ pub(crate) mod tests {
             ]
             .map(OsString::from)
         );
+        // Fails when a default shell or an explicit command, such as an agent pane,
+        // inherits the session of the agent whose shell started Eon (eon-geigu).
+        for command in [&default, &explicit] {
+            for name in ["CLAUDE_CODE_CHILD_SESSION", "CLAUDE_CODE_MESSAGING_TOKEN"] {
+                assert_eq!(command_environment(command, name), Some(None), "{name}");
+            }
+            assert_eq!(command_environment(command, "CLAUDE_CONFIG_DIR"), None);
+        }
         fs::remove_dir_all(root).unwrap();
     }
 }

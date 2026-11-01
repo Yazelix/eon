@@ -1205,6 +1205,62 @@ fn popup_executable(
         }))
 }
 
+/// Session identity, nesting markers and session credentials that agents export to
+/// the commands they run, checked against Claude Code 2.1.303, Codex 0.166.0,
+/// OpenCode 2.0.32, Pi coding-agent 1.4.0 and Grok 1.0.62. When Eon starts from an
+/// agent's shell, its children must not inherit them: Claude Code reads an inherited
+/// `CLAUDE_CODE_CHILD_SESSION` as a child session and saves no transcript, and the
+/// messaging token is that session's credential. Settings a person sets on purpose,
+/// such as `CLAUDE_CONFIG_DIR` or API keys, are not listed (EON-C9).
+const AGENT_SESSION_VARIABLES: &[&str] = &[
+    // Claude Code.
+    "CLAUDECODE",
+    "CLAUDE_PID",
+    "CLAUDE_EFFORT",
+    "CLAUDE_CODE_CHILD_SESSION",
+    "CLAUDE_CODE_SESSION_ID",
+    "CLAUDE_CODE_SESSION_ATTENDED",
+    "CLAUDE_CODE_ENTRYPOINT",
+    "CLAUDE_CODE_EXECPATH",
+    "CLAUDE_CODE_MESSAGING_SOCKET",
+    "CLAUDE_CODE_MESSAGING_TOKEN",
+    "CLAUDE_CODE_SESSION_ACCESS_TOKEN",
+    "CLAUDE_SESSION_INGRESS_TOKEN_FILE",
+    "CLAUDE_CODE_REMOTE_SESSION_ID",
+    "CLAUDE_CODE_REMOTE_SESSION_UUID",
+    "CLAUDE_CODE_CLOUD_SESSION_ID",
+    "CLAUDE_CODE_BRIDGE_SESSION_ID",
+    "CLAUDE_CODE_HOST_SESSION_ID",
+    // Claude Code and OpenCode.
+    "AI_AGENT",
+    // Codex.
+    "CODEX_SESSION_ID",
+    "CODEX_THREAD_ID",
+    "CODEX_TOOL_CALL_ID",
+    "CODEX_VERSION",
+    "CODEX_PERMISSION_PROFILE",
+    "CODEX_CI",
+    // OpenCode.
+    "OPENCODE",
+    "OPENCODE_SESSION_ID",
+    "OPENCODE_TERMINAL",
+    // Pi.
+    "PI_CODING_AGENT",
+    "PI_SESSION_ID",
+    "PI_SESSION_FILE",
+    "PI_REASONING_LEVEL",
+    // Grok, in the commands its hooks run.
+    "GROK_SESSION_ID",
+];
+
+/// Keeps the launching agent's session out of a child the supervisor starts.
+pub(crate) fn remove_agent_session(command: &mut Command) -> &mut Command {
+    for name in AGENT_SESSION_VARIABLES {
+        command.env_remove(name);
+    }
+    command
+}
+
 pub(crate) fn session_path(prefix: &Path) -> Result<OsString, String> {
     prepend_path(prefix, env::var_os("PATH").as_deref(), "Eon terminal")
 }
@@ -1533,8 +1589,9 @@ mod tests {
     use super::{
         ALT, ManagedPrograms, PopupCommand, PopupDefinition, PopupKey, SHIFT, Shortcut, Tool,
         animate_working_badge, command as managed_command, disk_path, integration_mask,
-        popup_catalog, prepare_popup_command, prepend_path, read_shell_config, sidebar_enabled,
-        startup_animation, terminal_presentation, tool, warning_close_last_tab,
+        popup_catalog, prepare_popup_command, prepend_path, read_shell_config,
+        remove_agent_session, sidebar_enabled, startup_animation, terminal_presentation, tool,
+        warning_close_last_tab,
     };
     use std::{
         ffi::{OsStr, OsString},
@@ -2875,5 +2932,85 @@ keep_alive = false
             std::env::split_paths(&path).collect::<Vec<_>>(),
             ["/managed/bin", "/usr/bin"].map(PathBuf::from)
         );
+    }
+
+    #[test]
+    fn children_drop_the_launching_agent_session_and_keep_agent_settings() {
+        // What Claude Code 2.1.303, Codex 0.166.0, OpenCode 2.0.32, Pi 1.4.0 and Grok
+        // 1.0.62 export to the commands they run (eon-geigu), and what stays: settings
+        // a person sets on purpose and markers left out on purpose.
+        let session = [
+            "CLAUDECODE",
+            "CLAUDE_PID",
+            "CLAUDE_EFFORT",
+            "CLAUDE_CODE_CHILD_SESSION",
+            "CLAUDE_CODE_SESSION_ID",
+            "CLAUDE_CODE_SESSION_ATTENDED",
+            "CLAUDE_CODE_ENTRYPOINT",
+            "CLAUDE_CODE_EXECPATH",
+            "CLAUDE_CODE_MESSAGING_SOCKET",
+            "CLAUDE_CODE_MESSAGING_TOKEN",
+            "CLAUDE_CODE_SESSION_ACCESS_TOKEN",
+            "CLAUDE_SESSION_INGRESS_TOKEN_FILE",
+            "CLAUDE_CODE_REMOTE_SESSION_ID",
+            "CLAUDE_CODE_REMOTE_SESSION_UUID",
+            "CLAUDE_CODE_CLOUD_SESSION_ID",
+            "CLAUDE_CODE_BRIDGE_SESSION_ID",
+            "CLAUDE_CODE_HOST_SESSION_ID",
+            "AI_AGENT",
+            "CODEX_SESSION_ID",
+            "CODEX_THREAD_ID",
+            "CODEX_TOOL_CALL_ID",
+            "CODEX_VERSION",
+            "CODEX_PERMISSION_PROFILE",
+            "CODEX_CI",
+            "OPENCODE",
+            "OPENCODE_SESSION_ID",
+            "OPENCODE_TERMINAL",
+            "PI_CODING_AGENT",
+            "PI_SESSION_ID",
+            "PI_SESSION_FILE",
+            "PI_REASONING_LEVEL",
+            "GROK_SESSION_ID",
+        ];
+        let kept = [
+            "CLAUDE_CONFIG_DIR",
+            "CLAUDE_CODE_FORCE_SESSION_PERSISTENCE",
+            "CLAUDE_CODE_USE_BEDROCK",
+            "CLAUDE_CODE_CONTAINER_ID",
+            "ANTHROPIC_API_KEY",
+            "CODEX_HOME",
+            "CODEX_SANDBOX",
+            "OPENAI_API_KEY",
+            "OPENCODE_CONFIG",
+            "AGENT",
+            "PI_CODING_AGENT_DIR",
+            "PI_MODEL",
+            "GROK_LEADER_SOCKET",
+            "TRACEPARENT",
+            "EDITOR",
+        ];
+        let mut command = Command::new("/managed/orbit");
+        for name in session.iter().chain(&kept) {
+            command.env(name, "parent");
+        }
+        remove_agent_session(&mut command);
+
+        for name in session {
+            assert!(
+                !command
+                    .get_envs()
+                    .any(|(variable, value)| variable == name && value.is_some()),
+                "{name} reaches the child"
+            );
+        }
+        for name in kept {
+            assert!(
+                command
+                    .get_envs()
+                    .any(|(variable, value)| variable == name && value.is_some()),
+                "{name} is removed"
+            );
+        }
     }
 }

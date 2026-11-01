@@ -790,13 +790,9 @@ impl Quotas {
     }
 }
 
-fn fetch(
-    program: &Path,
-    provider: &str,
-    timeout: Duration,
-    stop: &mpsc::Receiver<()>,
-) -> Result<Option<Vec<u8>>, Failure> {
-    let mut child = Command::new(program)
+fn quota_command(program: &Path, provider: &str) -> Command {
+    let mut command = Command::new(program);
+    super::managed_environment::remove_agent_session(&mut command)
         .env_remove(super::sessions::TERMINAL_VARIABLE)
         .env_remove(super::sessions::TAB_VARIABLE)
         .args([
@@ -814,7 +810,17 @@ fn fetch(
         .stdin(Stdio::null())
         .stdout(Stdio::piped())
         .stderr(Stdio::null())
-        .process_group(0)
+        .process_group(0);
+    command
+}
+
+fn fetch(
+    program: &Path,
+    provider: &str,
+    timeout: Duration,
+    stop: &mpsc::Receiver<()>,
+) -> Result<Option<Vec<u8>>, Failure> {
+    let mut child = quota_command(program, provider)
         .spawn()
         .map_err(|_| Failure::Start)?;
     let mut output = child.stdout.take().expect("piped quota output");
@@ -1143,6 +1149,21 @@ mod tests {
         let mut expires = quota;
         expires.windows[0].resets_at = Some(NOW + 10);
         assert_eq!(present_at(expires, NOW + 10).unwrap().windows.len(), 1);
+    }
+
+    #[test]
+    fn quota_reads_carry_no_terminal_or_agent_session() {
+        for provider in ["codex", "claude"] {
+            let command = quota_command(Path::new("/managed/codexbar"), provider);
+            for name in ["EON_TERMINAL", "EON_TAB", "CLAUDE_CODE_MESSAGING_TOKEN"] {
+                assert!(
+                    command
+                        .get_envs()
+                        .any(|(key, value)| key == name && value.is_none()),
+                    "{provider} {name}"
+                );
+            }
+        }
     }
 
     #[test]

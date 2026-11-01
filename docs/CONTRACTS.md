@@ -756,8 +756,9 @@ socket names, JSON fields and protocol identifiers retain their spellings.
 ## EON-C9 — Managed shell environment
 
 - **Status:** Proven
-- **Consumer:** People and agents inspecting Eon configuration defaults, and Eon
-  terminals launched under Nushell or Bash.
+- **Consumer:** People and agents inspecting Eon configuration defaults, Eon
+  terminals launched under Nushell or Bash, and every terminal, popup, Venus
+  and quota reader the supervisor starts.
 - **Trigger:** Eon prints configuration defaults or constructs a child launch environment.
 - **Result:**
   - `eon config defaults` prints a TOML configuration representing this build's
@@ -797,6 +798,25 @@ socket names, JSON fields and protocol identifiers retain their spellings.
   - Managed Nushell enables native `clip copy` and `clip paste`. Its interactive
     startup supplies `clc` and `clp` aliases for those commands; native user
     autoload may override the aliases afterward.
+  - So that an agent whose shell started Eon does not pass its session on,
+    Eon removes exactly these names from the environment of every terminal,
+    popup, Venus and quota reader the supervisor starts: `CLAUDECODE`,
+    `CLAUDE_PID`, `CLAUDE_EFFORT`, `CLAUDE_CODE_CHILD_SESSION`,
+    `CLAUDE_CODE_SESSION_ID`, `CLAUDE_CODE_SESSION_ATTENDED`,
+    `CLAUDE_CODE_ENTRYPOINT`, `CLAUDE_CODE_EXECPATH`,
+    `CLAUDE_CODE_MESSAGING_SOCKET`, `CLAUDE_CODE_MESSAGING_TOKEN`,
+    `CLAUDE_CODE_SESSION_ACCESS_TOKEN`, `CLAUDE_SESSION_INGRESS_TOKEN_FILE`,
+    `CLAUDE_CODE_REMOTE_SESSION_ID`, `CLAUDE_CODE_REMOTE_SESSION_UUID`,
+    `CLAUDE_CODE_CLOUD_SESSION_ID`, `CLAUDE_CODE_BRIDGE_SESSION_ID`,
+    `CLAUDE_CODE_HOST_SESSION_ID`, `AI_AGENT`, `CODEX_SESSION_ID`,
+    `CODEX_THREAD_ID`, `CODEX_TOOL_CALL_ID`, `CODEX_VERSION`,
+    `CODEX_PERMISSION_PROFILE`, `CODEX_CI`, `OPENCODE`, `OPENCODE_SESSION_ID`,
+    `OPENCODE_TERMINAL`, `PI_CODING_AGENT`, `PI_SESSION_ID`, `PI_SESSION_FILE`,
+    `PI_REASONING_LEVEL` and `GROK_SESSION_ID`. The list was checked against
+    Claude Code 2.1.303, Codex 0.166.0, OpenCode 2.0.32, Pi coding-agent 1.4.0
+    and Grok 1.0.62. Every other inherited name, agent settings such as
+    `CLAUDE_CONFIG_DIR`, `CLAUDE_CODE_FORCE_SESSION_PERSISTENCE` and API keys
+    included, keeps the treatment described above.
 - **Important failures:** Invalid or unreadable configuration, empty command,
   missing artifact, manifest mismatch, or shell launch fails explicitly without
   a replacement terminal. Optional integration failure warns without preventing
@@ -813,9 +833,9 @@ socket names, JSON fields and protocol identifiers retain their spellings.
 - **Boundary:** No global aliases, user-file mutation, prompt/completion schema,
   shell framework, automatic Direnv, mise installation or trust management,
   history/sync policy, plugin surface,
-  editor replacement, or remote/headless clipboard bridge. Arbitrary argv
-  remains unmanaged and `eon run -- COMMAND...` remains the explicit escape
-  hatch.
+  editor replacement, or remote/headless clipboard bridge. Apart from the
+  agent-session removal above, arbitrary argv remains unmanaged and
+  `eon run -- COMMAND...` remains the explicit escape hatch.
 - **Proof:** `795d735a8f61ef439c56d68e1cc4d3929af0dfcf`, `eon-monorepo-2oko.6`.
   - **Environment:** Automated tier on x86_64 Linux.
   - **Evidence:** The `shell-environment` and `managed-command-path` Nix checks
@@ -831,13 +851,25 @@ socket names, JSON fields and protocol identifiers retain their spellings.
     `mise = false`; Nushell's pre_prompt hook and its condition are evaluated
     outside a REPL. The bead records an installed observation of a real mise
     in an isolated Eon terminal.
+  - **Agent session:** `eon-geigu` adds
+    `children_drop_the_launching_agent_session_and_keep_agent_settings`
+    (every removed name, and kept settings and markers),
+    `orbit_uses_configured_argv_only_for_default_sessions` (default shells and
+    explicit commands), `venus_receives_workspace_endpoint_only_in_workspace_mode`
+    (both Venus modes) and `quota_reads_carry_no_terminal_or_agent_session`.
+    Installed observation, x86_64 Linux, private headless Sway in an isolated
+    root, twice: a supervisor started with ten removed names and three agent
+    settings in its environment; Venus, the default Nushell terminal, a CLI
+    pane, the Files and Commands popups and both quota readers carry none of
+    the removed names and all three settings with their values.
   - **Note:** `eon-8olu` removed the managed Zsh and Fish shells. The
     `shell-environment` check went with them; its Zsh and Fish evidence above
     no longer applies. The remaining checks cover Nushell and Bash launch
     and versions.
 - **Open proof:** Pending re-proof in this repository: interactive managed
   startup of each shell, and a native Wayland clipboard round trip through
-  `clip copy`, the aliases and `wl-paste`.
+  `clip copy`, the aliases and `wl-paste`. Agent session (`eon-geigu`): a
+  Claude Code started in such a terminal shows no transcript-saving warning.
 
 ## EON-C10 — Typed workspace control
 

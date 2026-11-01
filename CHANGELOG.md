@@ -5,6 +5,16 @@ installation, and proven contract changes.
 
 ## Unreleased
 
+- Fixed: when an agent's shell starts Eon, such as `eon` run by Claude Code,
+  Eon removes a fixed list of agent session, nesting-marker and credential
+  names from its terminals, popups, Venus and quota reader. Claude Code started
+  in such a terminal read the inherited `CLAUDE_CODE_CHILD_SESSION` and saved
+  no transcript, so `--continue` and `/resume` found nothing, and the launching
+  session's messaging token reached every process. EON-C9 lists exactly which
+  names Eon removes; agent settings such as `CLAUDE_CONFIG_DIR` and API keys
+  pass through. Only supervisors started after the update remove them; closing
+  and reopening a window, reattaching it, or recovering it keeps the old
+  environment (`eon-geigu`).
 - `eon quit` ends the window you are in without a window ID: run in any Eon
   terminal it stops that terminal's window, and outside Eon it stops the only
   running window, or lists them when several run. `eon quit --all` stops every
