@@ -427,10 +427,14 @@ lists it under its default key as overridden by the popup that holds it.
 CLI path `eon-agent-parity-a9g0.1` lands, a popup without a key cannot be
 opened from the window, except that Project still opens for a new tab's folder
 choice and the Eon Bar's workspace label still opens Workspaces.
-Two configured popups on one key fail at load. A popup shortcut on the key of a
+Two configured popups on one key fail at load, except on a key reserved for
+moving focus, where both load without a key. A popup shortcut on the key of a
 built-in Eon shortcut takes that key, and Alt+/ lists the built-in one as
 overridden.
-Alt+/ and Alt+0 through Alt+9 are reserved and cannot be bound.
+Alt+/ and Alt+0 through Alt+9 are reserved and cannot be bound. Alt+H, Alt+J,
+Alt+K and Alt+L are reserved for moving focus: a popup configured on one of
+them still loads but gets no key, and Eon logs a configuration warning naming
+the popup and the key.
 
 Set `EON_CONFIG_HOME` to select another configuration root and `EON_RUNTIME_DIR`
 to select another runtime root. Relative `EON_CONFIG_HOME` values resolve once

@@ -19,7 +19,9 @@ with terminal-only color and concise usage errors; child options remain forwarde
 
 Popup configuration rejects Alt+Slash, reserved for the shortcut viewer, and
 Alt+0 through Alt+9, reserved for tab positions, before creating workspace
-state. A popup on the key of any other native binding takes that key.
+state. A popup configured on Alt+H, Alt+J, Alt+K or Alt+L, reserved for moving
+focus, loads without a key and logs a configuration warning naming the popup
+and the key. A popup on the key of any other native binding takes that key.
 
 Runtime parses `[bar] widgets` against the assembly-supplied widget names when
 opening or reopening a workspace presentation and passes the list to Venus

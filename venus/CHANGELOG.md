@@ -2,6 +2,11 @@
 
 ## Unreleased
 
+- VEN-C20: Alt+H, Alt+J, Alt+K and Alt+L join Alt+Slash and Alt+0 through
+  Alt+9 as keys no popup takes, in dispatch, hints and the viewer; Eon loads a
+  popup configured on one of the four without a key (`eon-0gllz`). No wire
+  change.
+
 - Consume EONW v26, which adds EON-C35's and EON-C36's terminal reads and
   sends and their replies. Venus sends neither (`eon-agent-parity-a9g0.16`).
 

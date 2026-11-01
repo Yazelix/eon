@@ -5,6 +5,10 @@ installation, and proven contract changes.
 
 ## Unreleased
 
+- Alt+H, Alt+J, Alt+K and Alt+L are reserved for moving focus. A popup
+  configured on one of them still loads but gets no key, and Eon logs a
+  configuration warning naming the popup and the key, so an older
+  `config.toml` keeps starting Eon (`eon-0gllz`).
 - The bottom hints bar is shorter: one `focus` hint joins tab and pane focus
   and tab-by-position keys (`H/L · K/J · 1..9` under Alt), and create hints
   read `+pane`, `+column`, `+tab` and `+window`. Shortcuts and screen readers

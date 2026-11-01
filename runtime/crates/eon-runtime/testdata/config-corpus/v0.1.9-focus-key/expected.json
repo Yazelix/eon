@@ -1,0 +1,85 @@
+{
+  "resolved": {
+    "agents": {
+      "send_enter_delay_ms": 300,
+      "terminal_access": "window"
+    },
+    "anima": {
+      "duration_seconds": 2,
+      "enabled": true,
+      "style": "fixture-animation"
+    },
+    "bar": {
+      "cpu_average_seconds": 30,
+      "cpu_warning_percent": 90,
+      "disk_critical_percent": 95,
+      "disk_path": "~",
+      "disk_warning_percent": 85,
+      "ram_critical_percent": 90,
+      "ram_warning_percent": 80,
+      "widgets": [
+        "codex_quota",
+        "claude_quota",
+        "cpu",
+        "ram",
+        "disk",
+        "clock",
+        "version"
+      ]
+    },
+    "popups": {
+      "agent": {
+        "command": "auto",
+        "enabled": true,
+        "keep_alive": true,
+        "keybinding": "Alt+Shift+L",
+        "label": "Fixture agent"
+      },
+      "anima": {
+        "enabled": true,
+        "keybinding": "Alt+Shift+A",
+        "label": "Fixture anima"
+      },
+      "git": {
+        "command": [
+          "tig"
+        ],
+        "enabled": true,
+        "keep_alive": true,
+        "keybinding": "",
+        "label": "Tig"
+      },
+      "project": {
+        "keybinding": "Alt+Z",
+        "label": "Fixture project"
+      }
+    },
+    "shell": {
+      "atuin": true,
+      "carapace": true,
+      "command": [
+        "fixture-shell"
+      ],
+      "mise": true,
+      "starship": true,
+      "zoxide": true
+    },
+    "sidebar": {
+      "enabled": true
+    },
+    "terminal": {
+      "background_blur": true,
+      "background_opacity": 0.6,
+      "font_fallbacks": [],
+      "padding_color": "extend",
+      "pane_frames": true
+    },
+    "workspace": {
+      "animate_working_badge": true,
+      "warning_close_last_tab": true
+    }
+  },
+  "warnings": [
+    "eon: popups.git.keybinding Alt+K in config.toml is reserved for moving focus; popup git loads without a key"
+  ]
+}

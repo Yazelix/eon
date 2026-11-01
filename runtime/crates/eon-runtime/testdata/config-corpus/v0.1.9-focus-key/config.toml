@@ -1,0 +1,6 @@
+# A v0.1.9 popup on Alt+K, a key Eon later reserved for moving focus (eon-0gllz).
+
+[popups.git]
+command = ["tig"]
+label = "Tig"
+keybinding = "Alt+K"

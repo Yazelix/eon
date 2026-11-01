@@ -1156,7 +1156,8 @@ socket names, JSON fields and protocol identifiers retain their spellings.
   Eon ignores unknown fields with the warning described in EON-C9. It rejects
   malformed shortcuts, reserved shortcuts, two configured popups on one
   shortcut, unbounded values and unavailable executables before mutating
-  workspace state. It does
+  workspace state; a configured popup on Alt+H, Alt+J, Alt+K or Alt+L instead
+  loads without a key (EON-C20). It does
   not install providers, cache selection, interpret shell strings, or expose
   commands over EONW beyond a calling terminal's `pane create -- COMMAND` and
   `tab create --directory DIRECTORY -- COMMAND`. Bare executables resolve
@@ -1944,12 +1945,12 @@ socket names, JSON fields and protocol identifiers retain their spellings.
   scrolling, resizing, and closing the viewer change no workspace or Orbit
   terminal state. Title, subtitle and first group heading occupy separate
   readable vertical space at normal and compact window sizes. A configured
-  popup shortcut on the key of any other fixed binding takes that key; the
-  fixed binding is unbound while that configuration is active, and the viewer
-  lists it as overridden by the popup. A built-in popup whose default key a
-  configured popup holds is listed with that key as overridden by the
-  configured popup; a popup configured without a key has no row. The fixed
-  bindings include
+  popup shortcut on the key of any other fixed binding, except Alt+H, Alt+J,
+  Alt+K and Alt+L, takes that key; the fixed binding is unbound while that
+  configuration is active, and the viewer lists it as overridden by the popup.
+  A built-in popup whose default key a configured popup holds is listed with
+  that key as overridden by the configured popup; a popup configured without a
+  key has no row. The fixed bindings include
   Alt+Shift+D, listed as "Detach: close the window, keep terminals running",
   Alt+Shift+H, listed as "Show or hide the agent sidebar" (EON-C31,
   VEN-C30) and omitted while `sidebar` is `Off`, and Alt+G and Alt+Shift+G,
@@ -1959,7 +1960,10 @@ socket names, JSON fields and protocol identifiers retain their spellings.
   previous tab" (VEN-C8).
 - **Important failures:** Eon rejects configured popup shortcuts on Alt+Slash
   or positional Alt+0 through Alt+9, a reserved set no 1.x release enlarges,
-  before workspace mutation.
+  before workspace mutation. A configured popup shortcut on Alt+H, Alt+J,
+  Alt+K or Alt+L instead loads without a key, with a logged configuration
+  warning naming the popup and the key; no 1.x release enlarges this set
+  either.
   Invalid or stale component identity fails before profile activation. Profile
   refresh preserves running supervisors and terminals; they retain their older
   client until a normal restart.
@@ -1989,6 +1993,11 @@ socket names, JSON fields and protocol identifiers retain their spellings.
     Files popup configured on Alt+Shift+N: the key opened and hid the popup
     without a second window, and Alt+/ listed `Open new Eon window (overridden
     by Files)`.
+  - **Focus keys (`eon-0gllz`):** Runtime
+    `popup_configuration_owns_defaults_overrides_and_collisions` loads custom
+    and built-in popups on Alt+H/J/K/L without a key, one warning each, and
+    `configuration_corpus_loads_from_the_migration_floor` loads
+    `v0.1.9-focus-key`; proof record in the bead.
   - **Detach row (`eon-prove-close-and-detach-batch-bf8t`):** isolated
     installed dogfood (edge `22915af5dca41f87e706ad548c0506f79c17648f`,
     installed `eon` profile
@@ -2319,7 +2328,8 @@ socket names, JSON fields and protocol identifiers retain their spellings.
     key (`eon-igae.10` for fixed shortcuts and `eon-configurability-qkq8.1`
     for built-in popups, required before 1.0), except the reserved keys
     [EON-C20](#eon-c20--discoverable-native-shortcuts) names (Alt+Slash and
-    Alt+0 through Alt+9), which 1.x never enlarges.
+    Alt+0 through Alt+9, and Alt+H, Alt+J, Alt+K and Alt+L), which 1.x never
+    enlarges.
   - **Upgrades:** installing a later 1.x never stops live terminals. The new
     `eon` lists and stops every older 1.x generation through
     [EON-C11](#eon-c11--runtime-generations-and-presentation), with its own

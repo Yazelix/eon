@@ -1242,10 +1242,10 @@ re-proved when that platform or feature is next touched.
   enabled label and normalized physical shortcut from the current Eon
   snapshot; an entry the snapshot marks overridden is listed with its default
   shortcut as "<label> (overridden by <popup label>)", and an entry without a
-  shortcut otherwise has no row. A popup on the key of a fixed binding other than Alt+Slash and
-  Alt+0 through Alt+9 takes that key: dispatch invokes the popup, the footer
-  omits the fixed hint, and the viewer row reads "<action> (overridden by
-  <popup label>)". Wheel and navigation keys scroll bounded content. Opening,
+  shortcut otherwise has no row. A popup on the key of a fixed binding other than Alt+Slash,
+  Alt+0 through Alt+9, and Alt+H, Alt+J, Alt+K and Alt+L takes that key: dispatch invokes the
+  popup, the footer omits the fixed hint, and the viewer row reads "<action>
+  (overridden by <popup label>)". Wheel and navigation keys scroll bounded content. Opening,
   refreshing, scrolling, and closing send no terminal bytes or workspace
   action; matching releases remain captured and prior terminal/chrome focus is
   restored on dismissal. The title, subtitle, and first group heading occupy
@@ -1265,8 +1265,8 @@ re-proved when that platform or feature is next touched.
   workspace actions do not reach their normal targets.
 - **Owner:** Venus owns viewer state, fixed native binding descriptors, scene,
   rendering, input precedence, and AccessKit projection. Eon owns the enabled
-  popup catalog and its key resolution and must reserve Alt+Slash and Alt+0 through Alt+9 before
-  full-product delivery.
+  popup catalog and its key resolution and must reserve Alt+Slash, Alt+0 through Alt+9, and
+  Alt+H, Alt+J, Alt+K and Alt+L before full-product delivery.
 - **Consumes:** Canonical EONW through the in-tree `eon-workspace-protocol`
   0.1.0.
 - **Boundary:** No Orbit Session, Eon configuration parsing, child-application
@@ -1285,6 +1285,9 @@ re-proved when that platform or feature is next touched.
     Files popup configured on Alt+Shift+N: the key opened and hid the popup
     without a second window, and Alt+/ listed `Open new Eon window (overridden
     by Files)`.
+  - **Focus keys (`eon-0gllz`):**
+    `configured_popups_take_fixed_bindings_except_reserved_keys` keeps Alt+K
+    on focus under a popup entry bound to it; proof record in the bead.
   - **Detach row (`eon-prove-close-and-detach-batch-bf8t`):** isolated
     installed dogfood (edge `22915af5dca41f87e706ad548c0506f79c17648f`,
     installed `eon` profile

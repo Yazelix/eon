@@ -1083,7 +1083,12 @@ fn resolve_popup_entries(
                     entry.id
                 )
             })?;
-            if reserved_shortcut(&shortcut) {
+            // `config_warnings` names a configured popup on a focus key.
+            if pass && focus_shortcut(&shortcut) {
+                entry.shortcut = PopupKey::Unbound;
+                continue;
+            }
+            if reserved_shortcut(&shortcut) || focus_shortcut(&shortcut) {
                 return Err(format!(
                     "popups.{}.keybinding is reserved for an Eon shortcut",
                     entry.id
@@ -1111,8 +1116,9 @@ fn resolve_popup_entries(
     Ok(())
 }
 
-/// Alt+Slash and Alt+0 through Alt+9, which no 1.x release enlarges (EON-C20). A popup
-/// takes the key of any other fixed Venus binding.
+/// Alt+Slash and Alt+0 through Alt+9, which no 1.x release enlarges (EON-C20): a popup
+/// on one fails the load. A popup takes the key of any other fixed Venus binding but
+/// the focus keys.
 fn reserved_shortcut(shortcut: &Shortcut) -> bool {
     shortcut.modifiers == ALT
         && matches!(
@@ -1129,6 +1135,12 @@ fn reserved_shortcut(shortcut: &Shortcut) -> bool {
                 | "Digit9"
                 | "Slash"
         )
+}
+
+/// Alt+H, Alt+J, Alt+K and Alt+L, which move focus and which no 1.x release enlarges
+/// (EON-C20): a configured popup on one loads without a key, and a default on one fails.
+fn focus_shortcut(shortcut: &Shortcut) -> bool {
+    shortcut.modifiers == ALT && matches!(shortcut.key.as_str(), "KeyH" | "KeyJ" | "KeyK" | "KeyL")
 }
 
 pub(crate) fn prepare_popup_command(
@@ -1434,7 +1446,8 @@ fn read_config(
     Ok(config)
 }
 
-/// One warning per unknown or deprecated key of the configuration read from `path`.
+/// One warning per unknown or deprecated key of the configuration read from `path`,
+/// and per popup it configures on a focus key.
 fn config_warnings(config: &EonConfig, path: &Path) -> Vec<String> {
     let path = path.to_string_lossy();
     let path = path.escape_debug();
@@ -1457,7 +1470,19 @@ fn config_warnings(config: &EonConfig, path: &Path) -> Vec<String> {
             )
         }
     });
-    unknown.chain(deprecated).collect()
+    let focus = config.popups.iter().filter_map(|(id, settings)| {
+        let keybinding = settings.keybinding.as_deref()?;
+        (settings.enabled != Some(false)
+            && parse_shortcut("", keybinding).is_ok_and(|shortcut| focus_shortcut(&shortcut)))
+        .then(|| {
+            format!(
+                "eon: popups.{id}.keybinding {} in {path} is reserved for moving focus; popup {id} loads without a key",
+                keybinding.escape_debug(),
+                id = id.escape_debug()
+            )
+        })
+    });
+    unknown.chain(deprecated).chain(focus).collect()
 }
 
 /// Parses the configuration, reading deprecated keys as their replacements,
@@ -2481,6 +2506,39 @@ keep_alive = false
                     .iter()
                     .any(|entry| entry.id == "extra"),
                 "{keybinding} was rejected"
+            );
+        }
+
+        // A popup on a focus key loads without a key, with a warning naming it.
+        for keybinding in ["Alt+H", "alt+j", "Alt+K", "Alt+L"] {
+            fs::write(
+                root.join("config.toml"),
+                format!(
+                    "[popups.extra]\ncommand = [\"tool\"]\nkeybinding = \"{keybinding}\"\n[popups.project]\nkeybinding = \"{keybinding}\"\n"
+                ),
+            )
+            .unwrap();
+            let catalog = popup_catalog(&root, &inputs.defaults, None).unwrap();
+            for id in ["extra", "project"] {
+                assert_eq!(
+                    catalog
+                        .entries
+                        .iter()
+                        .find(|entry| entry.id == id)
+                        .unwrap()
+                        .shortcut,
+                    PopupKey::Unbound,
+                    "{keybinding}"
+                );
+            }
+            assert_eq!(
+                super::config_warnings(
+                    &super::parse_config(&root, &inputs.defaults).unwrap(),
+                    Path::new("config.toml"),
+                ),
+                ["extra", "project"].map(|id| format!(
+                    "eon: popups.{id}.keybinding {keybinding} in config.toml is reserved for moving focus; popup {id} loads without a key"
+                ))
             );
         }
 

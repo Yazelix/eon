@@ -422,8 +422,8 @@ impl NativeShortcut {
         }
     }
 
-    /// The configured popup that takes this binding's key. Eon reserves the viewer toggle
-    /// and tab positions, so no popup takes those.
+    /// The configured popup that takes this binding's key. Eon reserves the viewer toggle,
+    /// tab positions and focus keys, so no popup takes those.
     fn overriding_popup(
         self,
         platform: NativePlatform,
@@ -431,7 +431,10 @@ impl NativeShortcut {
     ) -> Option<&PopupEntry> {
         let (code, modifiers) = match self.trigger {
             NativeShortcutTrigger::Key(code, modifiers)
-                if self.action != NativeShortcutAction::ToggleViewer =>
+                if !matches!(
+                    self.action,
+                    NativeShortcutAction::ToggleViewer | NativeShortcutAction::Focus(_)
+                ) =>
             {
                 (code, modifiers)
             }
@@ -861,6 +864,11 @@ pub(super) fn popup_shortcut(
     snapshot: &Snapshot,
     terminal_focused: bool,
 ) -> Option<WorkspaceAction> {
+    // A popup opens only on a key no fixed binding keeps, so a reserved key keeps
+    // its binding even when a snapshot binds it (VEN-C20).
+    if native_key_shortcut(PhysicalKey::Code(code), modifiers, &snapshot.entries).is_some() {
+        return None;
+    }
     let entry = popup_entry(&snapshot.entries, code, modifiers)?;
     invoke_popup(snapshot, &entry.id, terminal_focused)
 }
@@ -1298,7 +1306,7 @@ mod tests {
             assert_eq!(focus[0].key, "H/L · K/J · 1..9");
             assert_eq!(focus[0].priority, 1);
             assert!(focus[0].accessible_label.contains("Focus tab by position"));
-            // A popup on Alt+K leaves J on its own axis.
+            // A popup entry on Alt+K, reserved for focus, leaves the hint whole.
             let alt_k = PopupEntry {
                 id: "k".into(),
                 label: "K tool".into(),
@@ -1312,7 +1320,7 @@ mod tests {
             assert!(
                 shortcut_hints_for(platform, WorkspaceFocus::Terminal, &[alt_k], Sidebar::Open)
                     .iter()
-                    .any(|hint| hint.label == "focus" && hint.key == "H/L · J · 1..9")
+                    .any(|hint| hint.label == "focus" && hint.key == "H/L · K/J · 1..9")
             );
             for label in ["+pane", "+column", "+tab", "+window"] {
                 assert_eq!(hints_labeled(label).len(), 1);
@@ -1415,6 +1423,7 @@ mod tests {
                 // Runtime rejects these; Venus still keeps the reserved bindings.
                 popup("viewer", ALT, "Slash"),
                 popup("third", ALT, "Digit3"),
+                popup("up", ALT, "KeyK"),
             ];
             assert_eq!(
                 native_key_shortcut_for(platform, new_window, ALT_SHIFT, &[])
@@ -1438,6 +1447,10 @@ mod tests {
             for (key, action) in [
                 (KeyCode::Slash, NativeShortcutAction::ToggleViewer),
                 (KeyCode::Digit3, NativeShortcutAction::FocusTabPosition),
+                (
+                    KeyCode::KeyK,
+                    NativeShortcutAction::Focus(WorkspaceDirection::Up),
+                ),
             ] {
                 assert_eq!(
                     native_key_shortcut_for(
@@ -1461,6 +1474,7 @@ mod tests {
                 "Copy selected text or focused link (overridden by Files)",
                 "Show or close shortcuts",
                 "Focus tab by position",
+                "Focus pane above",
                 "Paste",
                 "Jump to the next agent needing attention (overridden by Files)",
                 "Show the attention inbox (overridden by Files)",
@@ -1544,6 +1558,30 @@ mod tests {
             ),
             None
         );
+
+        // A popup entry on a focus key never dispatches; Alt+K still moves focus.
+        let entries = vec![popup("up", ALT, "KeyK")];
+        let snapshot = Snapshot {
+            entries: entries.clone(),
+            ..snapshot
+        };
+        assert_eq!(
+            popup_shortcut(KeyCode::KeyK, session::Modifiers::ALT, &snapshot, true),
+            None
+        );
+        assert!(matches!(
+            workspace_shortcut(
+                KeyCode::KeyK,
+                session::Modifiers::ALT,
+                &entries,
+                "t1",
+                Some("p1"),
+                Sidebar::Open
+            ),
+            Some(WorkspaceAction::Workspace(CommonAction::Focus(
+                WorkspaceDirection::Up
+            )))
+        ));
     }
 
     #[test]
