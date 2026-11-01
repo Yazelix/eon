@@ -9,8 +9,8 @@ edit generated files directly. Edit `.agent-protocols.local.md` or
 ## Protocol import record
 
 - Source: `https://github.com/Yazelix/starcompass`
-- Source commit: `cf812643711a2e233aeff38dbbde1ef55c8f244c`
-- Profiles: `regular`, `release`
+- Source commit: `825a93eeb803eaf9cab8871f76af210ce54b4e5c`
+- Profiles: `regular`, `release`, `milestones`
 - Manifest: `.agent-protocols.json` (schema 1)
 - Directory rules: `orbit/`, `runtime/`, `venus/`; read a directory's `AGENTS.md` before changing files under it.
 
@@ -33,6 +33,7 @@ edit generated files directly. Edit `.agent-protocols.local.md` or
 | `AP-CI-001` | 3 | `c7cb65a81ce8434d02f2d19306bf93358f3624d0b77886bc91d4de93f7a779ba` |
 | `AP-DELIVERY-001` | 3 | `b6b0944ba57587204fd5f8f42daf69f7ff46486281056c99f2b403e8278366ee` |
 | `AP-PROMOTION-001` | 2 | `07b53035fd705affe21ca1b0c07a2b766bc91fe45bc83c036c5c335577a08f93` |
+| `AP-MILESTONE-001` | 1 | `fcf02386c663bb1ebf7eb96187edfe9512b24fbe16e4f7a56d352490a27852a4` |
 
 ### Local exceptions
 
