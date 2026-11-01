@@ -761,7 +761,7 @@ mod dependency_direction {
         ("eon-workspace-protocol", &[]),
         ("yazelix-orbit", &["orbit-protocol"]),
         ("orbit-governance", &[]),
-        ("mac-proof", &[]),
+        ("mac-proof", &["orbit-protocol"]),
         ("yazelix-venus", PROTOCOLS),
         ("eon-runtime", PROTOCOLS),
         (

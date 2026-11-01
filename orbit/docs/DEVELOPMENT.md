@@ -128,10 +128,11 @@ checks every kind of direct declared dependency, not code semantics or crates
 reached through third-party packages. Every workspace member needs a rule.
 Beyond the root rule, the test lets `eon` depend on `eon-manifest`, limits Orbit
 to `orbit-protocol` and this tool to no workspace crate (chosen in
-`eon-monorepo-2oko.8`), keeps Eon's `mac-proof` harness off every workspace
-crate (`eon-mac-launch-kz4p.8`), and fails a new member until the test gives it
-one. Orbit must keep its direct `libghostty-vt` dependency, so renaming the
-engine crate fails the test instead of disabling the rule.
+`eon-monorepo-2oko.8`), limits Eon's `mac-proof` harness to `orbit-protocol`
+(`eon-mac-launch-kz4p.8`, `eon-mac-launch-kz4p.47`), and fails a new member
+until the test gives it one. Orbit must keep its direct `libghostty-vt`
+dependency, so renaming the engine crate fails the test instead of disabling
+the rule.
 
 ## Documentation map
 
