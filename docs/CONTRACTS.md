@@ -616,7 +616,7 @@ socket names, JSON fields and protocol identifiers retain their spellings.
 - **Owner:** Eon Runtime workspace topology, identity, focus, pruning and action
   enforcement; Eon supplies product defaults/policy. Orbit owns terminals and
   Venus owns native materialization.
-- **Consumes:** Current EONW v26 workspace/popup values, Orbit terminal
+- **Consumes:** Current EONW v27 workspace/popup values, Orbit terminal
   identities/endpoints and Venus `VEN-C8`.
 - **Boundary:** No arbitrary split tree, vertical splits, column resizing,
   arbitrary reorder target, cross-tab pane movement, picker relocation, durable layout
@@ -1058,7 +1058,7 @@ socket names, JSON fields and protocol identifiers retain their spellings.
 - **Owner:** Eon Runtime supervisor workspace/action state and CLI projection;
   its canonical EONW package owns types, codec and result ordering. Eon supplies
   validated component facts and product defaults.
-- **Consumes:** Current EONW v26 and accepted Orbit management operations.
+- **Consumes:** Current EONW v27 and accepted Orbit management operations.
 - **Boundary:** Additive lifecycle tags do not widen the pinned Venus workspace
   consumer. There is no event stream, subscription policy, remote transport,
   plugin/MCP API, authorization framework, durable restoration, terminal
@@ -1068,7 +1068,7 @@ socket names, JSON fields and protocol identifiers retain their spellings.
   child-protocol escape hatch.
 - **Package owner:** The canonical EONW crate lives in
   `runtime/crates/eon-workspace-protocol` with its accepted package/API and
-  v26 bytes. Venus, Eon Runtime and Eon consume it by path.
+  v27 bytes. Venus, Eon Runtime and Eon consume it by path.
   See [package selection](ARCHITECTURE.md#in-tree-package-selection).
 - **Runtime policy:** Project is required, defaults to Alt+Z, and uses Eon's
   existing transient chooser command. Git defaults to `eon-lazygit` on Alt+Shift+J;
@@ -1130,8 +1130,8 @@ socket names, JSON fields and protocol identifiers retain their spellings.
   fzf list of the popup's window's workspaces (EON-C33's picker); Commands >
   Switch workspace runs the same list in the Commands popup. Each row shows
   the workspace's name, or its `wN` when unnamed, its tab count, and
-  ` · needs input` when its EONW v26 `attention` is needs input. Rows run by
-  EONW v26 `recency`, most recently shown first, with the shown workspace last
+  ` · needs input` when its EONW v27 `attention` is needs input. Rows run by
+  EONW v27 `recency`, most recently shown first, with the shown workspace last
   and marked ` · shown`, and the query matches only that name or `wN`. Enter on the highlighted row,
   including on an empty query, runs `eon workspace switch wN` once the CLI
   has checked again that the `wN` is live; otherwise it changes nothing and
@@ -1978,7 +1978,7 @@ socket names, JSON fields and protocol identifiers retain their spellings.
   tutorial, telemetry, momentary mode, dependency, or platform expansion.
   Venus derives overrides from the popup catalog it already receives over
   EONW. Exceptions: the viewer reads `sidebar` and each popup entry's override
-  from EONW v26.
+  from EONW v27.
 - **Proof:** `795d735a8f61ef439c56d68e1cc4d3929af0dfcf`, `eon-monorepo-2oko.6`.
   - **Environment:** Automated tier; installed tier.
   - **Evidence:** `popup_configuration_owns_defaults_overrides_and_collisions`;
@@ -2056,13 +2056,13 @@ socket names, JSON fields and protocol identifiers retain their spellings.
 - **Owner:** Eon owns the exact graph, product policy, profile delivery and
   installed acceptance; Eon Runtime owns workspace identity/actions. Venus
   owns header geometry, rendering, input, native drag, tooltips, and accessibility.
-- **Consumes:** Venus VEN-C21, EONW v7 (v26 for the EON-C31 tab attention
+- **Consumes:** Venus VEN-C21, EONW v7 (v27 for the EON-C31 tab attention
   marker) and Orbit terminals.
 - **Boundary:** EON-C27 separately owns the optional quota projection. The core
   header adds no Eon-rendered chrome, second row, widget framework, agent status,
   polling, configuration, protocol change, inactive-tab close, native window
   controls, macOS claim or distribution expansion. The one exception is the
-  EON-C31 tab attention marker, which Venus reads from the EONW v26 snapshot it
+  EON-C31 tab attention marker, which Venus reads from the EONW v27 snapshot it
   already polls.
 - **Proof:** `795d735a8f61ef439c56d68e1cc4d3929af0dfcf`, `eon-monorepo-2oko.6`.
   - **Environment:** Automated tier; installed tier.
@@ -2215,12 +2215,23 @@ socket names, JSON fields and protocol identifiers retain their spellings.
   The native chips show every supplied supported window and remaining
   percentage, one chip per window for each provider
   ([Eon Bar](../venus/docs/PRESENTATION.md#eon-bar)), with provider periods,
-  optional resets and observation time.
+  optional resets and observation time. Claude's model-scoped weekly windows,
+  the CodexBar `extraRateWindows` entries whose `id` starts with
+  `claude-weekly-scoped-` and whose usage is known, are windows too, after the
+  unscoped ones, validated as the others are. Each carries its scope: the
+  entry's `title` without CodexBar's trailing ` only` (`Fable` for `Fable
+  only`), cut to at most 32 bytes at a character boundary. A scoped window
+  whose scope is empty or holds control characters, and any past the fourth,
+  is left out without failing the reading. A scope whose repeats differ is left
+  out the same way. Identical repeats count once, and a scoped window with an
+  invalid value or unsupported duration is left out without failing the
+  reading. Other extra windows are not read.
   Claude needs no status-line setup. No reset is invented for an idle window.
 - **Ownership:** Pinned CodexBar owns provider collection and credential access;
   Runtime owns bounded subprocesses, validation, freshness and the stored
   readings; canonical EONW permits absent resets; Venus consumes typed facts
-  through its existing chip owners. Eon owns exact Nix composition.
+  through its existing chip owners. Eon owns exact Nix composition. EONW v27
+  carries each window's scope and each provider's last failure.
 - **Failure policy:** Each read has a ten-second deadline and 64 KiB output cap.
   A failed read keeps retained data unchanged; age alone marks it old after one
   hour. Readings disappear after 24 hours and windows at their reset.
@@ -2231,6 +2242,15 @@ socket names, JSON fields and protocol identifiers retain their spellings.
   a provider that starts reading shows that stored reading until its own read
   succeeds. A stored reading that is unreadable, malformed, dated in the future
   or in another format version is ignored, never shown as zero usage.
+  While Runtime reads a provider, it keeps that provider's last failed read in
+  memory: its wall-clock end and one reason, `start` (CodexBar could not be
+  started or read), `deadline`, `output_limit`, `exit_status`, `malformed`
+  (not one result of the expected JSON shape), `provider_error` (another
+  provider or source, or a reported error), `estimated`, `observation_time`
+  (missing, invalid, future or over an hour old) or `invalid_window` (a window
+  value, duration, count or conflicting repeat). The next successful read,
+  including one that finds no quota, clears it, as unlisting the provider does.
+  It is never stored and carries no CodexBar output.
 - **Boundary:** One selected account per provider, Linux Wayland and Nix only.
   Explicit sources avoid browser fallback, interactive login and model turns.
   No credential, identity, raw output or billing data enters EONW, Eon logs or
@@ -2278,6 +2298,17 @@ socket names, JSON fields and protocol identifiers retain their spellings.
     whose every read fails with Claude's rate-limit error shows the Codex and
     Claude readings an earlier supervisor stored; that bead's commit is its
     revision.
+    Claude's scoped windows (`eon-wqkjc`) and the last failure
+    (`eon-d0kyj`) are proved by the extended
+    `actual_periods_optional_resets_and_missing_quota_are_preserved`,
+    `invalid_source_values_and_timestamps_never_become_fresh_usage`,
+    `workers_isolate_failure_and_bound_output_timeout_and_shutdown` and
+    `stored_readings_outlive_the_supervisor_and_bad_ones_are_ignored`, the
+    EONW v27 codec tests,
+    `cli_json_carries_the_full_attention_record_and_quotas_but_human_output_does_not`
+    and Venus's
+    `two_provider_chips_share_layout_without_losing_identity_or_freshness`;
+    those beads' commit is their revision.
 - **Open proof:** Pending re-proof in this repository: real installed Codex and
   Claude windows with reset details on hover; on an installed surface, a
   controlled source failure leaving a recent reading unchanged and a retained
@@ -2555,9 +2586,14 @@ socket names, JSON fields and protocol identifiers retain their spellings.
         is null while Runtime holds no reading for it, else `state`
         (`fresh`, `stale`, `blocked` or `unknown`; Claude only `fresh` or
         `stale`), `observed_at` and `windows`, each window with
-        `duration_minutes`, `remaining_percent` and `resets_at` (null when
-        the provider gives none). Both times are wall-clock Unix
-        milliseconds;
+        `duration_minutes`, `remaining_percent`, `resets_at` (null when
+        the provider gives none) and `scope` (null for an unscoped window,
+        else its EON-C27 scope, such as `Fable`). Both times are wall-clock
+        Unix milliseconds;
+      - `codex_quota_failure` and `claude_quota_failure` on the snapshot (EONW
+        v27): null unless the provider's last read failed (EON-C27), else
+        `{"at", "reason"}`, with `at` in wall-clock Unix milliseconds and
+        `reason` one of EON-C27's reasons;
       - `attention_queue` on the snapshot: the same entries in the same order, each
         `{"workspace", "tab", "target", "attention"}`, with `attention` the object panes and
         popups carry;
@@ -2675,7 +2711,7 @@ socket names, JSON fields and protocol identifiers retain their spellings.
     sidebar visibility and `[sidebar]` configuration.
   - **Orbit** owns the records, their neutral facts and the terminal title.
   - **Venus** owns presentation and hiding for width (VEN-C30).
-- **Consumes:** ORB-C15, ORB-C13 generation 4, EON-C8 topology, and EON-C10 (EONW v26, still
+- **Consumes:** ORB-C15, ORB-C13 generation 4, EON-C8 topology, and EON-C10 (EONW v27, still
   request and response, with no event stream).
 - **Boundary:**
   - no hooks and no edits to agent configuration;
@@ -3190,7 +3226,7 @@ socket names, JSON fields and protocol identifiers retain their spellings.
       (Orbit's `terminal-ended` and `terminal-unavailable` from a fake Orbit)
       and that a read changes no workspace state.
     - From `eon-agent-parity-a9g0.16`, the EONW v26 codec tests in
-      [`v26.rs`](../runtime/crates/eon-workspace-protocol/src/v26.rs), the
+      `runtime/crates/eon-workspace-protocol/src/v26.rs`, the
       lease tests in
       [`sessions.rs`](../runtime/crates/eon-runtime/src/sessions.rs) (one
       against a real Orbit), and the supervisor tests

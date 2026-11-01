@@ -1,5 +1,6 @@
-use eon_workspace_protocol::v26::{
-    ClaudeQuota, ClaudeQuotaState, CodexQuota, CodexQuotaState, QuotaWindow, Snapshot,
+use eon_workspace_protocol::v27::{
+    ClaudeQuota, ClaudeQuotaState, CodexQuota, CodexQuotaState, MAX_QUOTA_SCOPE_BYTES,
+    MAX_SCOPED_QUOTA_WINDOWS, QuotaFailure, QuotaFailureReason as Failure, QuotaWindow, Snapshot,
 };
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
@@ -25,6 +26,8 @@ const MAX_BYTES: usize = 64 * 1024;
 const STALE_AFTER: u64 = 3600;
 const EXPIRE_AFTER: u64 = 24 * 3600;
 const STORE_VERSION: u32 = 1;
+/// CodexBar names Claude's model-scoped weekly windows `claude-weekly-scoped-<model>`.
+const CLAUDE_SCOPED: &str = "claude-weekly-scoped-";
 
 fn timestamp(value: &Value) -> Result<u64, ()> {
     let value = value.as_str().ok_or(())?;
@@ -33,10 +36,71 @@ fn timestamp(value: &Value) -> Result<u64, ()> {
     u64::try_from(date.unix_timestamp()).map_err(|_| ())
 }
 
-fn normalize(bytes: &[u8], provider: &str, now: u64) -> Result<Option<CodexQuota>, ()> {
-    let value: Value = serde_json::from_slice(bytes).map_err(|_| ())?;
-    let [result] = value.as_array().ok_or(())?.as_slice() else {
-        return Err(());
+/// Whether `windows` is a set Runtime can hold for `provider`: at most two unscoped windows and,
+/// for Claude only, four scoped ones, no two of one duration and scope, each of a supported
+/// duration (EON-C27).
+fn valid_windows(provider: &str, windows: &[QuotaWindow]) -> bool {
+    let scoped = windows.iter().filter(|w| w.scope.is_some()).count();
+    (1..=2 + MAX_SCOPED_QUOTA_WINDOWS).contains(&windows.len())
+        && windows.len() - scoped <= 2
+        && scoped
+            <= if provider == "claude" {
+                MAX_SCOPED_QUOTA_WINDOWS
+            } else {
+                0
+            }
+        && windows.iter().enumerate().all(|(index, w)| {
+            w.duration_minutes > 0
+                && w.remaining_percent <= 100
+                && (provider != "claude" || matches!(w.duration_minutes, 300 | 10080))
+                && w.scope.as_deref().is_none_or(|scope| {
+                    !scope.is_empty()
+                        && scope.len() <= MAX_QUOTA_SCOPE_BYTES
+                        && !scope.chars().any(char::is_control)
+                })
+                && !windows[..index]
+                    .iter()
+                    .any(|o| o.duration_minutes == w.duration_minutes && o.scope == w.scope)
+        })
+}
+
+/// A supplied window's duration, used percentage and optional reset.
+type Supplied = (u32, f64, Option<u64>);
+
+fn supplied(value: &Value, provider: &str) -> Result<Supplied, Failure> {
+    let used = value["usedPercent"]
+        .as_f64()
+        .filter(|n| n.is_finite() && (0.0..=100.0).contains(n))
+        .ok_or(Failure::InvalidWindow)?;
+    let duration_minutes = value["windowMinutes"]
+        .as_u64()
+        .and_then(|n| u32::try_from(n).ok())
+        .filter(|n| *n > 0)
+        .ok_or(Failure::InvalidWindow)?;
+    if provider == "claude" && !matches!(duration_minutes, 300 | 10080) {
+        return Err(Failure::InvalidWindow);
+    }
+    let resets_at = (!value["resetsAt"].is_null())
+        .then(|| timestamp(&value["resetsAt"]))
+        .transpose()
+        .map_err(|()| Failure::InvalidWindow)?;
+    Ok((duration_minutes, used, resets_at))
+}
+
+/// CodexBar titles a scoped window `<model> only`; its scope is the model, cut to fit EONW.
+fn scope_of(title: &str) -> &str {
+    let scope = title.strip_suffix(" only").unwrap_or(title).trim();
+    let end = (0..=scope.len().min(MAX_QUOTA_SCOPE_BYTES))
+        .rev()
+        .find(|end| scope.is_char_boundary(*end))
+        .unwrap_or(0);
+    scope[..end].trim_end()
+}
+
+fn normalize(bytes: &[u8], provider: &str, now: u64) -> Result<Option<CodexQuota>, Failure> {
+    let value: Value = serde_json::from_slice(bytes).map_err(|_| Failure::Malformed)?;
+    let [result] = value.as_array().ok_or(Failure::Malformed)?.as_slice() else {
+        return Err(Failure::Malformed);
     };
     let source = if provider == "codex" {
         "codex-cli"
@@ -44,64 +108,94 @@ fn normalize(bytes: &[u8], provider: &str, now: u64) -> Result<Option<CodexQuota
         "oauth"
     };
     if result["provider"] != provider || result["source"] != source || !result["error"].is_null() {
-        return Err(());
+        return Err(Failure::ProviderError);
     }
     let usage = &result["usage"];
     if usage.is_null() {
         return Ok(None);
     }
     if !usage["dataConfidence"].is_null() && usage["dataConfidence"] != "authoritative" {
-        return Err(());
+        return Err(Failure::Estimated);
     }
-    let observed_at = timestamp(&usage["updatedAt"])?;
+    let observed_at = timestamp(&usage["updatedAt"]).map_err(|()| Failure::ObservationTime)?;
     if observed_at == 0 || observed_at > now || now - observed_at > STALE_AFTER {
-        return Err(());
+        return Err(Failure::ObservationTime);
     }
     // The selected providers have at most two windows; silently dropping another is incorrect.
     if !usage["tertiary"].is_null() {
-        return Err(());
+        return Err(Failure::InvalidWindow);
     }
-    let mut windows = Vec::new();
-    let mut seen = Vec::new();
-    for name in ["primary", "secondary"] {
-        let value = &usage[name];
+    let mut unscoped: Vec<Supplied> = Vec::new();
+    for value in [&usage["primary"], &usage["secondary"]] {
         if value.is_null() {
             continue;
         }
-        let used = value["usedPercent"]
-            .as_f64()
-            .filter(|n| n.is_finite() && (0.0..=100.0).contains(n))
-            .ok_or(())?;
-        let duration_minutes = value["windowMinutes"]
-            .as_u64()
-            .and_then(|n| u32::try_from(n).ok())
-            .filter(|n| *n > 0)
-            .ok_or(())?;
-        if provider == "claude" && !matches!(duration_minutes, 300 | 10080) {
-            return Err(());
-        }
-        let resets_at = (!value["resetsAt"].is_null())
-            .then(|| timestamp(&value["resetsAt"]))
-            .transpose()?;
+        let next = supplied(value, provider)?;
         // CodexBar repeats Claude's weekly window as primary when no five-hour window is
         // reported (eon-8jdmw); an exact repeat is one window, a differing one is invalid.
-        if let Some(&(_, first)) = seen.iter().find(|(d, _)| *d == duration_minutes) {
-            if first == (used, resets_at) {
+        match unscoped.iter().find(|first| first.0 == next.0) {
+            Some(first) if *first == next => {}
+            Some(_) => return Err(Failure::InvalidWindow),
+            None => unscoped.push(next),
+        }
+    }
+    let current = |(_, _, resets_at): &Supplied| resets_at.is_none_or(|reset| reset > now);
+    let window = |scope, (duration_minutes, used, resets_at): Supplied| QuotaWindow {
+        duration_minutes,
+        remaining_percent: (100.0 - used).floor() as u8,
+        resets_at,
+        scope,
+    };
+    let mut windows: Vec<_> = unscoped
+        .into_iter()
+        .filter(current)
+        .map(|supplied| window(None, supplied))
+        .collect();
+    // Claude's model-scoped weekly windows follow its unscoped ones (eon-wqkjc); other extra
+    // windows are not quota Eon shows. A scoped window never fails the reading: one with an
+    // unusable scope or value, a scope whose repeats differ, and any past the fourth are left out.
+    if provider == "claude"
+        && let Some(extras) = usage["extraRateWindows"].as_array()
+    {
+        let mut scoped: Vec<(&str, Option<Supplied>)> = Vec::new();
+        for extra in extras {
+            if !extra["id"]
+                .as_str()
+                .is_some_and(|id| id.starts_with(CLAUDE_SCOPED))
+                || extra["usageKnown"] == false
+            {
                 continue;
             }
-            return Err(());
+            let Some(scope) = extra["title"]
+                .as_str()
+                .map(scope_of)
+                .filter(|scope| !scope.is_empty() && !scope.chars().any(char::is_control))
+            else {
+                continue;
+            };
+            let next = supplied(&extra["window"], provider).ok();
+            match scoped.iter_mut().find(|(first, _)| *first == scope) {
+                Some((_, first)) if *first != next => *first = None,
+                Some(_) => {}
+                None => scoped.push((scope, next)),
+            }
         }
-        seen.push((duration_minutes, (used, resets_at)));
-        if resets_at.is_some_and(|reset| reset <= now) {
-            continue;
-        }
-        windows.push(QuotaWindow {
-            duration_minutes,
-            remaining_percent: (100.0 - used).floor() as u8,
-            resets_at,
-        });
+        windows.extend(
+            scoped
+                .into_iter()
+                .filter_map(|(scope, supplied)| Some((scope, supplied?)))
+                .filter(|(_, supplied)| current(supplied))
+                .take(MAX_SCOPED_QUOTA_WINDOWS)
+                .map(|(scope, supplied)| window(Some(scope.to_owned()), supplied)),
+        );
     }
-    Ok((!windows.is_empty()).then_some(CodexQuota {
+    if windows.is_empty() {
+        return Ok(None);
+    }
+    if !valid_windows(provider, &windows) {
+        return Err(Failure::InvalidWindow);
+    }
+    Ok(Some(CodexQuota {
         state: CodexQuotaState::Fresh,
         observed_at,
         windows,
@@ -139,6 +233,9 @@ struct StoredWindow {
     duration_minutes: u32,
     remaining_percent: u8,
     resets_at: Option<u64>,
+    // Omitted when unscoped, so a reading without scoped windows stays readable by older Eons.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    scope: Option<String>,
 }
 
 /// The stored reading, unless it is unreadable, malformed, of another version or from the future.
@@ -157,30 +254,23 @@ fn load(path: &Path, provider: &str, now: u64) -> Option<CodexQuota> {
         return None;
     }
     let stored: Stored = serde_json::from_slice(&bytes).ok()?;
-    let valid = stored.version == STORE_VERSION
+    let windows = stored
+        .windows
+        .into_iter()
+        .map(|w| QuotaWindow {
+            duration_minutes: w.duration_minutes,
+            remaining_percent: w.remaining_percent,
+            resets_at: w.resets_at,
+            scope: w.scope,
+        })
+        .collect::<Vec<_>>();
+    (stored.version == STORE_VERSION
         && (1..=now).contains(&stored.observed_at)
-        && match stored.windows.as_slice() {
-            [_] => true,
-            [a, b] => a.duration_minutes != b.duration_minutes,
-            _ => false,
-        }
-        && stored.windows.iter().all(|w| {
-            w.duration_minutes > 0
-                && w.remaining_percent <= 100
-                && (provider != "claude" || matches!(w.duration_minutes, 300 | 10080))
-        });
-    valid.then(|| CodexQuota {
+        && valid_windows(provider, &windows))
+    .then_some(CodexQuota {
         state: CodexQuotaState::Fresh,
         observed_at: stored.observed_at,
-        windows: stored
-            .windows
-            .into_iter()
-            .map(|w| QuotaWindow {
-                duration_minutes: w.duration_minutes,
-                remaining_percent: w.remaining_percent,
-                resets_at: w.resets_at,
-            })
-            .collect(),
+        windows,
     })
 }
 
@@ -203,6 +293,7 @@ fn save(path: &Path, quota: Option<&CodexQuota>) {
                 duration_minutes: w.duration_minutes,
                 remaining_percent: w.remaining_percent,
                 resets_at: w.resets_at,
+                scope: w.scope.clone(),
             })
             .collect(),
     };
@@ -237,6 +328,8 @@ fn epoch_seconds() -> Option<u64> {
 
 struct Provider {
     quota: Arc<Mutex<Option<CodexQuota>>>,
+    /// The last read's failure, until a read succeeds.
+    failure: Arc<Mutex<Option<QuotaFailure>>>,
     stop: mpsc::Sender<()>,
     worker: Option<thread::JoinHandle<()>>,
 }
@@ -252,6 +345,8 @@ impl Provider {
     ) -> Self {
         let quota = Arc::new(Mutex::new(None));
         let shared = Arc::clone(&quota);
+        let failure = Arc::new(Mutex::new(None));
+        let failed = Arc::clone(&failure);
         let (stop, stopped) = mpsc::channel();
         let worker = thread::Builder::new()
             .name(format!("eon-{provider}-quota"))
@@ -283,18 +378,30 @@ impl Provider {
                     let reading = match fetched {
                         Ok(None) => break,
                         Ok(Some(bytes)) => epoch_seconds()
-                            .ok_or(())
+                            .ok_or(Failure::ObservationTime)
                             .and_then(|now| normalize(&bytes, provider, now)),
-                        Err(()) => Err(()),
+                        Err(reason) => Err(reason),
                     };
                     // A failed read keeps the last good reading; its age alone marks it old.
-                    if let Ok(reading) = reading {
-                        if let Some(path) = &store {
-                            save(path, reading.as_ref());
+                    // Without a clock to date it, a failure leaves the previous one in place.
+                    let outcome = match reading {
+                        Ok(reading) => {
+                            if let Some(path) = &store {
+                                save(path, reading.as_ref());
+                            }
+                            if let Ok(mut current) = shared.lock() {
+                                *current = reading;
+                            }
+                            Some(None)
                         }
-                        if let Ok(mut current) = shared.lock() {
-                            *current = reading;
-                        }
+                        Err(reason) => epoch_seconds()
+                            .filter(|at| *at > 0)
+                            .map(|at| Some(QuotaFailure { at, reason })),
+                    };
+                    if let Some(outcome) = outcome
+                        && let Ok(mut last) = failed.lock()
+                    {
+                        *last = outcome;
                     }
                     if !matches!(
                         stopped.recv_timeout(interval),
@@ -307,6 +414,7 @@ impl Provider {
             .ok();
         Self {
             quota,
+            failure,
             stop,
             worker,
         }
@@ -314,6 +422,10 @@ impl Provider {
 
     fn snapshot(&self) -> Option<CodexQuota> {
         present_at(self.quota.lock().ok()?.clone()?, epoch_seconds()?)
+    }
+
+    fn failure(&self) -> Option<QuotaFailure> {
+        *self.failure.lock().ok()?
     }
 }
 
@@ -339,6 +451,10 @@ struct Slot {
 impl Slot {
     fn snapshot(&self) -> Option<CodexQuota> {
         self.worker.as_ref()?.snapshot()
+    }
+
+    fn failure(&self) -> Option<QuotaFailure> {
+        self.worker.as_ref()?.failure()
     }
 }
 
@@ -402,6 +518,8 @@ impl Quotas {
 
     pub(crate) fn apply(&self, snapshot: &mut Snapshot) {
         snapshot.codex_quota = self.codex.snapshot();
+        snapshot.codex_quota_failure = self.codex.failure();
+        snapshot.claude_quota_failure = self.claude.failure();
         snapshot.claude_quota = self.claude.snapshot().map(|quota| ClaudeQuota {
             state: if quota.state == CodexQuotaState::Stale {
                 ClaudeQuotaState::Stale
@@ -419,7 +537,7 @@ fn fetch(
     provider: &str,
     timeout: Duration,
     stop: &mpsc::Receiver<()>,
-) -> Result<Option<Vec<u8>>, ()> {
+) -> Result<Option<Vec<u8>>, Failure> {
     let mut child = Command::new(program)
         .env_remove(super::sessions::TERMINAL_VARIABLE)
         .env_remove(super::sessions::TAB_VARIABLE)
@@ -440,7 +558,7 @@ fn fetch(
         .stderr(Stdio::null())
         .process_group(0)
         .spawn()
-        .map_err(|_| ())?;
+        .map_err(|_| Failure::Start)?;
     let mut output = child.stdout.take().expect("piped quota output");
     let result = (|| {
         let fd = output.as_raw_fd();
@@ -448,7 +566,7 @@ fn fetch(
         let flags = unsafe { libc::fcntl(fd, libc::F_GETFL) };
         if flags == -1 || unsafe { libc::fcntl(fd, libc::F_SETFL, flags | libc::O_NONBLOCK) } == -1
         {
-            return Err(());
+            return Err(Failure::Start);
         }
         let deadline = Instant::now() + timeout;
         let mut bytes = Vec::new();
@@ -458,7 +576,7 @@ fn fetch(
                 return Ok(None);
             }
             if Instant::now() >= deadline {
-                return Err(());
+                return Err(Failure::Deadline);
             }
             let mut chunk = [0; 8192];
             match output.read(&mut chunk) {
@@ -466,18 +584,21 @@ fn fetch(
                 Ok(count) => {
                     bytes.extend_from_slice(&chunk[..count]);
                     if bytes.len() > MAX_BYTES {
-                        return Err(());
+                        return Err(Failure::OutputLimit);
                     }
                 }
                 Err(e)
                     if e.kind() == io::ErrorKind::WouldBlock
                         || e.kind() == io::ErrorKind::Interrupted => {}
-                Err(_) => return Err(()),
+                Err(_) => return Err(Failure::Start),
             }
-            if let Some(status) = child.try_wait().map_err(|_| ())?
+            if let Some(status) = child.try_wait().map_err(|_| Failure::Start)?
                 && eof
             {
-                return status.success().then_some(Some(bytes)).ok_or(());
+                return status
+                    .success()
+                    .then_some(Some(bytes))
+                    .ok_or(Failure::ExitStatus);
             }
             thread::sleep(Duration::from_millis(10));
         }
@@ -553,7 +674,8 @@ mod tests {
                 QuotaWindow {
                     duration_minutes: 300,
                     remaining_percent: 76,
-                    resets_at: None
+                    resets_at: None,
+                    scope: None,
                 }
             );
             assert_eq!(quota.windows[1].remaining_percent, 98);
@@ -574,7 +696,28 @@ mod tests {
             let repeated = normalize(&serde_json::to_vec(&repeated).unwrap(), provider, NOW)
                 .unwrap()
                 .unwrap();
-            assert_eq!(repeated.windows, quota.windows);
+            // Claude's model-scoped window follows as its own window (eon-wqkjc); Codex reads
+            // no extra windows.
+            let mut expected = quota.windows.clone();
+            if provider == "claude" {
+                expected.push(QuotaWindow {
+                    remaining_percent: 60,
+                    scope: Some("Fable".into()),
+                    ..quota.windows[0].clone()
+                });
+            }
+            assert_eq!(repeated.windows, expected);
+            // Other extra windows, and scoped ones without known usage, are not quota.
+            let mut extras = payload(provider);
+            extras[0]["usage"]["extraRateWindows"] = json!([
+                {"id":"claude-routines","title":"Daily Routines",
+                    "window":{"usedPercent":10,"windowMinutes":10080}},
+                {"id":"claude-weekly-scoped-fable","title":"Fable only","usageKnown":false,
+                    "window":{"usedPercent":0,"windowMinutes":10080}}]);
+            let extras = normalize(&serde_json::to_vec(&extras).unwrap(), provider, NOW)
+                .unwrap()
+                .unwrap();
+            assert_eq!(extras.windows.len(), 2);
             weekly[0]["usage"]["secondary"] = Value::Null;
             assert!(
                 normalize(&serde_json::to_vec(&weekly).unwrap(), provider, NOW)
@@ -605,15 +748,97 @@ mod tests {
         ] {
             let mut input = payload("claude");
             input[0]["usage"]["updatedAt"] = json!(bad);
-            assert!(normalize(&serde_json::to_vec(&input).unwrap(), "claude", NOW).is_err());
+            assert_eq!(
+                normalize(&serde_json::to_vec(&input).unwrap(), "claude", NOW),
+                Err(Failure::ObservationTime)
+            );
         }
-        for bytes in [
-            b"not json".as_slice(),
-            b"[]",
-            b"[{},{}]",
-            b"[{\"provider\":\"claude\",\"error\":{}}]",
+        for (bytes, reason) in [
+            (b"not json".as_slice(), Failure::Malformed),
+            (b"[]", Failure::Malformed),
+            (b"[{},{}]", Failure::Malformed),
+            (
+                b"[{\"provider\":\"claude\",\"error\":{}}]",
+                Failure::ProviderError,
+            ),
         ] {
-            assert!(normalize(bytes, "codex", NOW).is_err());
+            assert_eq!(normalize(bytes, "codex", NOW), Err(reason));
+        }
+        // A scoped window never fails the reading: one with an unusable scope or value, a scope
+        // whose repeats differ, and any past the fourth are left out; a long scope is cut.
+        let scoped = |title: &str, minutes: u32| {
+            json!({"id":format!("claude-weekly-scoped-{title}"),"title":title,
+                "window":{"usedPercent":40,"windowMinutes":minutes}})
+        };
+        let mut invalid = scoped("Bad", 10080);
+        invalid["window"]["usedPercent"] = json!(101);
+        let mut repeat = scoped("Fable only", 10080);
+        repeat["id"] = json!("claude-weekly-scoped-fable-2");
+        let mut differing = repeat.clone();
+        differing["window"]["usedPercent"] = json!(41);
+        let multibyte = format!("x{}", "é".repeat(16));
+        let mut expired = scoped("Old", 10080);
+        expired["window"]["resetsAt"] = json!("2026-10-01T00:00:00Z");
+        for (extras, scopes) in [
+            (json!({}), vec![]),
+            (json!([{"title":"Fable only"}]), vec![]),
+            (
+                json!([
+                    scoped(" only", 10080),
+                    scoped("a\u{7}", 10080),
+                    scoped("Fable", 60),
+                    invalid
+                ]),
+                vec![],
+            ),
+            (
+                json!([scoped(&"x".repeat(33), 10080)]),
+                vec!["x".repeat(32)],
+            ),
+            (
+                json!([scoped(&multibyte, 10080)]),
+                vec![format!("x{}", "é".repeat(15))],
+            ),
+            (
+                json!(["a", "b", "c", "d", "e"].map(|t| scoped(t, 10080))),
+                vec!["a".into(), "b".into(), "c".into(), "d".into()],
+            ),
+            // An expired window is not one of the four.
+            (
+                json!([
+                    expired,
+                    scoped("a", 10080),
+                    scoped("b", 10080),
+                    scoped("c", 10080),
+                    scoped("d", 10080)
+                ]),
+                vec!["a".into(), "b".into(), "c".into(), "d".into()],
+            ),
+            (
+                json!([scoped("Fable", 10080), repeat]),
+                vec!["Fable".into()],
+            ),
+            (
+                json!([
+                    scoped("Fable", 10080),
+                    scoped("Muse", 10080),
+                    differing,
+                    scoped("Fable", 10080)
+                ]),
+                vec!["Muse".into()],
+            ),
+        ] {
+            let mut input = payload("claude");
+            input[0]["usage"]["extraRateWindows"] = extras;
+            let quota = normalize(&serde_json::to_vec(&input).unwrap(), "claude", NOW)
+                .unwrap()
+                .unwrap();
+            assert!(quota.windows[..2].iter().all(|w| w.scope.is_none()));
+            let read: Vec<String> = quota.windows[2..]
+                .iter()
+                .map(|w| w.scope.clone().unwrap())
+                .collect();
+            assert_eq!(read, scopes);
         }
         for (field, other) in [
             ("usedPercent", json!(3)),
@@ -630,7 +855,10 @@ mod tests {
         assert!(normalize(&serde_json::to_vec(&input).unwrap(), "claude", NOW).is_err());
         input = payload("claude");
         input[0]["usage"]["dataConfidence"] = json!("estimated");
-        assert!(normalize(&serde_json::to_vec(&input).unwrap(), "claude", NOW).is_err());
+        assert_eq!(
+            normalize(&serde_json::to_vec(&input).unwrap(), "claude", NOW),
+            Err(Failure::Estimated)
+        );
     }
     #[test]
     fn retained_observations_age_and_expire_without_invented_resets() {
@@ -669,7 +897,10 @@ mod tests {
         );
         let (_stop, stopped) = mpsc::channel();
         let started = Instant::now();
-        assert!(fetch(&program, "claude", Duration::from_millis(50), &stopped).is_err());
+        assert_eq!(
+            fetch(&program, "claude", Duration::from_millis(50), &stopped),
+            Err(Failure::Deadline)
+        );
         assert!(started.elapsed() < Duration::from_secs(1));
         let quotas = Quotas::start_every(
             &program,
@@ -697,16 +928,98 @@ mod tests {
             Arc::default(),
             None,
         );
-        *provider.quota.lock().unwrap() = Some(quota);
-        // Several 20 ms intervals of failed reads leave a recent reading fresh.
+        *provider.quota.lock().unwrap() = Some(quota.clone());
+        // Several 20 ms intervals of failed reads leave a recent reading fresh, and say why.
         thread::sleep(Duration::from_millis(200));
         let retained = provider.snapshot().unwrap();
         assert_eq!(retained.state, CodexQuotaState::Fresh);
         assert_eq!(retained.windows[0].remaining_percent, 76);
+        let failure = provider.failure().unwrap();
+        assert_eq!(failure.reason, Failure::Start);
+        assert!(failure.at.abs_diff(epoch_seconds().unwrap()) < 5);
         drop(provider);
         let program = root.join("flood");
         script(&program, "while :; do printf '%01024d' 0; done");
-        assert!(fetch(&program, "codex", Duration::from_secs(1), &stopped).is_err());
+        assert_eq!(
+            fetch(&program, "codex", Duration::from_secs(1), &stopped),
+            Err(Failure::OutputLimit)
+        );
+        let program = root.join("exits");
+        script(&program, "exit 3");
+        assert_eq!(
+            fetch(&program, "codex", Duration::from_secs(1), &stopped),
+            Err(Failure::ExitStatus)
+        );
+        // A rejected reading records why and when, keeps the retained one, and a later good read
+        // clears it; each provider's failure reaches its own snapshot field (eon-d0kyj).
+        let mut rejected = fixture.clone();
+        rejected[0]["usage"]["dataConfidence"] = json!("estimated");
+        let program = root.join("rejects");
+        script(
+            &program,
+            &format!(
+                "[ \"$3\" = claude ] && exit 3
+                count=$(cat '{count}' 2>/dev/null || echo 0); echo $((count + 1)) > '{count}'
+                case $count in 0) printf '%s' '{good}';; 1) printf '%s' '{rejected}';;
+                *) until [ -e '{go}' ]; do sleep 0.01; done; printf '%s' '{good}';; esac",
+                count = root.join("count").display(),
+                go = root.join("go").display(),
+                good = serde_json::to_string(&fixture).unwrap(),
+                rejected = serde_json::to_string(&rejected).unwrap(),
+            ),
+        );
+        let quotas = Quotas::start_every(
+            &program,
+            Duration::from_millis(1),
+            None,
+            &["codex_quota", "claude_quota"],
+        );
+        let mut snapshot = Snapshot {
+            workspace: String::new(),
+            active_workspace: String::new(),
+            workspaces: vec![],
+            active_tab: String::new(),
+            geometry: eon_workspace_protocol::v27::PopupGeometry {
+                side_margin: 0.0,
+                vertical_margin: 0.0,
+            },
+            entries: vec![],
+            tabs: vec![],
+            codex_quota: None,
+            claude_quota: None,
+            codex_quota_failure: None,
+            claude_quota_failure: None,
+            sidebar: eon_workspace_protocol::v27::Sidebar::Off,
+            attention_queue: vec![],
+        };
+        let deadline = Instant::now() + Duration::from_secs(5);
+        while (snapshot.codex_quota_failure.is_none() || snapshot.claude_quota_failure.is_none())
+            && Instant::now() < deadline
+        {
+            thread::sleep(Duration::from_millis(5));
+            quotas.apply(&mut snapshot);
+        }
+        let failure = snapshot.codex_quota_failure.unwrap();
+        assert_eq!(failure.reason, Failure::Estimated);
+        assert!(failure.at.abs_diff(epoch_seconds().unwrap()) < 5);
+        assert_eq!(
+            snapshot.codex_quota.as_ref().unwrap().windows,
+            quota.windows
+        );
+        assert_eq!(
+            snapshot.claude_quota_failure.unwrap().reason,
+            Failure::ExitStatus
+        );
+        assert!(snapshot.claude_quota.is_none());
+        fs::write(root.join("go"), "").unwrap();
+        quotas.apply(&mut snapshot);
+        while snapshot.codex_quota_failure.is_some() && Instant::now() < deadline {
+            thread::sleep(Duration::from_millis(5));
+            quotas.apply(&mut snapshot);
+        }
+        assert!(snapshot.codex_quota_failure.is_none());
+        assert!(snapshot.codex_quota.is_some());
+        drop(quotas);
         fs::remove_dir_all(root).unwrap();
     }
 
@@ -896,6 +1209,18 @@ mod tests {
         assert!(!path.exists());
         assert!(quotas.codex.snapshot().is_none());
         drop(quotas);
+        // A scoped window keeps its scope; a reading without one stores no scope key.
+        let path = store.join("claude.json");
+        let mut scoped = stored.clone();
+        scoped.windows[0].duration_minutes = 10080;
+        save(&path, Some(&scoped));
+        assert!(!fs::read_to_string(&path).unwrap().contains("scope"));
+        scoped.windows.push(QuotaWindow {
+            scope: Some("Fable".into()),
+            ..scoped.windows[0].clone()
+        });
+        save(&path, Some(&scoped));
+        assert_eq!(load(&path, "claude", now).unwrap().windows, scoped.windows);
         fs::remove_dir_all(root).unwrap();
     }
 }

@@ -5,6 +5,15 @@ installation, and proven contract changes.
 
 ## Unreleased
 
+- Claude's model-scoped weekly window, such as CodexBar's `Fable only`, shows
+  as its own Claude chip after the unscoped ones, labelled with its scope
+  (`Fable 3d/7d 60%`); `[bar] widgets`' `claude_quota` covers it. `eon
+  workspace --json` carries each quota window's `scope` (null when unscoped)
+  and, as `codex_quota_failure` and `claude_quota_failure`, when and why the
+  provider's last quota read failed, until a read succeeds. EONW moves to v27
+  and Eon to 0.1.10, so after a profile refresh, windows started on v26 need a
+  restart before the CLI controls them. An older Eon ignores a stored Claude
+  reading that holds a scoped window until its own read succeeds.
 - Alt+H, Alt+J, Alt+K and Alt+L are reserved for moving focus. A popup
   configured on one of them still loads but gets no key, and Eon logs a
   configuration warning naming the popup and the key, so an older

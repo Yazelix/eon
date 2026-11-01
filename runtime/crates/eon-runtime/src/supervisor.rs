@@ -17,7 +17,7 @@ use super::{
     },
     workspace::{self, LaunchCommand, SessionEnd, SessionOperation, WorkspaceSet},
 };
-use eon_workspace_protocol::v26::{
+use eon_workspace_protocol::v27::{
     Action, Availability, Ended, Failure, LifecycleResponse, Request, Response, Runtime, Screen,
     Sent, Snapshot, Stopped, TerminalInput, TerminalText, VERSION, WorkspaceAction,
 };
@@ -590,7 +590,7 @@ impl PresentationProcess {
                 };
                 if let Some(snapshot) = snapshot {
                     let bytes =
-                        eon_workspace_protocol::v26::encode_response(&Response::Snapshot(snapshot))
+                        eon_workspace_protocol::v27::encode_response(&Response::Snapshot(snapshot))
                             .map_err(|error| format!("cannot encode startup workspace: {error}"))?;
                     let mut remaining = bytes.as_slice();
                     while !remaining.is_empty() {
@@ -2844,7 +2844,7 @@ mod tests {
 
     #[test]
     fn startup_snapshot_transfer_uses_the_admission_deadline() {
-        use eon_workspace_protocol::v26::{
+        use eon_workspace_protocol::v27::{
             Column, Pane, PopupGeometry, Response, Snapshot, Tab, encode_response,
         };
         use std::time::{Duration, Instant};
@@ -2853,7 +2853,7 @@ mod tests {
         let snapshot = Snapshot {
             workspace: "w1".into(),
             active_workspace: "w1".into(),
-            workspaces: vec![eon_workspace_protocol::v26::WorkspaceInfo {
+            workspaces: vec![eon_workspace_protocol::v27::WorkspaceInfo {
                 id: "w1".into(),
                 name: None,
                 tab_count: 64,
@@ -2891,7 +2891,9 @@ mod tests {
                 .collect(),
             codex_quota: None,
             claude_quota: None,
-            sidebar: eon_workspace_protocol::v26::Sidebar::Open,
+            codex_quota_failure: None,
+            claude_quota_failure: None,
+            sidebar: eon_workspace_protocol::v27::Sidebar::Open,
             attention_queue: Vec::new(),
         };
         let expected = encode_response(&Response::Snapshot(snapshot.clone())).unwrap();

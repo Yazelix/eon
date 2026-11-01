@@ -3,7 +3,7 @@ use crate::{
     model::{active_popup, focused_terminal, presented_panes},
     render::{CellMetrics, FALLBACK_CAP_HEIGHT_EM},
 };
-use eon_workspace_protocol::v26::{
+use eon_workspace_protocol::v27::{
     ALT, Attention, AttentionKind, AttentionState, ClaudeQuotaState, CodexQuotaState, PopupEntry,
     QuotaWindow, SHIFT, Sidebar, Snapshot, Tab,
 };
@@ -559,6 +559,8 @@ pub(crate) enum QuotaWindowIdentity {
         occurrence: u8,
     },
     Claude(u32),
+    /// Zero-based position among Claude's scoped windows in EONW order, before hiding.
+    ClaudeScoped(u8),
 }
 
 /// One read-only informational label in the workspace header.
@@ -2160,7 +2162,10 @@ fn quota_window_text(window: &QuotaWindow, observed_at: u64) -> String {
         Some(position) => format!("{position}/{duration}"),
         None => duration,
     };
-    format!("{label} {}%", window.remaining_percent)
+    match &window.scope {
+        Some(scope) => format!("{scope} {label} {}%", window.remaining_percent),
+        None => format!("{label} {}%", window.remaining_percent),
+    }
 }
 
 /// One provider chip's label with its pace, and its description.
@@ -2205,9 +2210,13 @@ fn quota_text(
     );
     if let Some(window) = window {
         let duration = quota_duration(window.duration_minutes);
+        let scope = window
+            .scope
+            .as_ref()
+            .map_or_else(String::new, |scope| format!(" {scope}-only"));
         let _ = write!(
             description,
-            " {duration} window: {}% remaining; ",
+            "{scope} {duration} window: {}% remaining; ",
             window.remaining_percent
         );
         if let Some(position) = quota_window_position(window, observed_at) {
@@ -2497,7 +2506,8 @@ impl WorkspaceScene {
                         )],
                     })
                     .collect::<Vec<_>>(),
-                // Claude gets one chip per window, five-hour then seven-day.
+                // Claude gets one chip per window, five-hour then seven-day, then its scoped
+                // windows in EONW order.
                 BarItem::ClaudeQuota => snapshot
                     .claude_quota
                     .iter()
@@ -2507,11 +2517,20 @@ impl WorkspaceScene {
                             ClaudeQuotaState::Stale => CodexQuotaState::Stale,
                         };
                         let mut windows = quota.windows.iter().collect::<Vec<_>>();
-                        windows.sort_by_key(|window| window.duration_minutes);
+                        windows.sort_by_key(|window| window.scope.is_some());
+                        windows[..quota.windows.iter().filter(|w| w.scope.is_none()).count()]
+                            .sort_by_key(|window| window.duration_minutes);
+                        let mut scoped = 0;
                         windows.into_iter().map(move |window| {
+                            let identity = if window.scope.is_some() {
+                                scoped += 1;
+                                QuotaWindowIdentity::ClaudeScoped(scoped - 1)
+                            } else {
+                                QuotaWindowIdentity::Claude(window.duration_minutes)
+                            };
                             (
                                 QuotaProvider::Claude,
-                                Some(QuotaWindowIdentity::Claude(window.duration_minutes)),
+                                Some(identity),
                                 quota_text(
                                     QuotaProvider::Claude,
                                     state,

@@ -43,6 +43,8 @@ const DISK: NodeId = NodeId(21);
 const WORKSPACE_NODE_START: u64 = 1 << 32;
 // Two IDs per u32 duration fit below links; workspace allocation stops before this range.
 const CODEX_QUOTA_NODE_START: u64 = 1 << 40;
+// Past every Codex ID and below links.
+const CLAUDE_SCOPED_QUOTA_NODE_START: u64 = CODEX_QUOTA_NODE_START + (1 << 34);
 const LINK_NODE_START: u64 = 1 << 48;
 const DIALOG_NODE_START: u64 = 1 << 56;
 const DIALOG_GROUP_STRIDE: u64 = 1 << 8;
@@ -1022,6 +1024,9 @@ fn quota_id(quota: &WorkspaceQuota) -> NodeId {
         }) => NodeId(CODEX_QUOTA_NODE_START + 2 * u64::from(duration) + u64::from(occurrence)),
         Some(QuotaWindowIdentity::Claude(10080)) => CLAUDE_SEVEN_DAY_QUOTA,
         Some(QuotaWindowIdentity::Claude(_)) => CLAUDE_FIVE_HOUR_QUOTA,
+        Some(QuotaWindowIdentity::ClaudeScoped(index)) => {
+            NodeId(CLAUDE_SCOPED_QUOTA_NODE_START + u64::from(index))
+        }
         None => QUOTA,
     }
 }
@@ -1086,7 +1091,7 @@ mod tests {
     use crate::{
         Color, DrawCell, DrawRow, DrawStyle, EonBar, SceneGraphics, ShortcutGroup, ShortcutRow,
     };
-    use eon_workspace_protocol::v26::{
+    use eon_workspace_protocol::v27::{
         ClaudeQuota, ClaudeQuotaState, CodexQuota, CodexQuotaState, CodexQuotaWindow, Pane, Popup,
         PopupEntry, PopupGeometry, PopupKey, Shortcut, Snapshot as WorkspaceSnapshot, Tab,
     };
@@ -1100,7 +1105,7 @@ mod tests {
             id: id.into(),
             directory: format!("/tmp/{id}").into_bytes(),
             selected_pane: Some(selected_pane.into()),
-            columns: vec![eon_workspace_protocol::v26::Column {
+            columns: vec![eon_workspace_protocol::v27::Column {
                 panes: panes
                     .iter()
                     .map(|id| Pane {
@@ -1124,7 +1129,7 @@ mod tests {
             &WorkspaceSnapshot {
                 workspace: "w1".into(),
                 active_workspace: "w1".into(),
-                workspaces: vec![eon_workspace_protocol::v26::WorkspaceInfo {
+                workspaces: vec![eon_workspace_protocol::v27::WorkspaceInfo {
                     id: "w1".into(),
                     name: None,
                     tab_count: tabs.len(),
@@ -1133,14 +1138,16 @@ mod tests {
                 }],
                 active_tab: active_tab.into(),
                 tabs,
-                geometry: eon_workspace_protocol::v26::PopupGeometry {
+                geometry: eon_workspace_protocol::v27::PopupGeometry {
                     side_margin: 8.0,
                     vertical_margin: 4.0,
                 },
                 entries: Vec::new(),
                 codex_quota: None,
                 claude_quota: None,
-                sidebar: eon_workspace_protocol::v26::Sidebar::Open,
+                codex_quota_failure: None,
+                claude_quota_failure: None,
+                sidebar: eon_workspace_protocol::v27::Sidebar::Open,
                 attention_queue: Vec::new(),
             },
             PhysicalSize::new(800, 600),
@@ -1208,7 +1215,7 @@ mod tests {
                         let snapshot = WorkspaceSnapshot {
                             workspace: "w1".into(),
                             active_workspace: "w1".into(),
-                            workspaces: vec![eon_workspace_protocol::v26::WorkspaceInfo {
+                            workspaces: vec![eon_workspace_protocol::v27::WorkspaceInfo {
                                 id: "w1".into(),
                                 name: None,
                                 tab_count,
@@ -1231,6 +1238,7 @@ mod tests {
                                     duration_minutes: 300,
                                     remaining_percent: 74,
                                     resets_at: None,
+                                    scope: None,
                                 }],
                             }),
                             claude_quota: (providers & 2 != 0).then_some(ClaudeQuota {
@@ -1240,10 +1248,13 @@ mod tests {
                                     duration_minutes: 300,
                                     remaining_percent: 74,
                                     resets_at: None,
+                                    scope: None,
                                 }],
                             }),
-                            sidebar: eon_workspace_protocol::v26::Sidebar::Open,
+                            sidebar: eon_workspace_protocol::v27::Sidebar::Open,
                             attention_queue: Vec::new(),
+                            codex_quota_failure: None,
+                            claude_quota_failure: None,
                         };
                         let size =
                             PhysicalSize::new((logical_width as f32 * metrics.scale) as u32, 600);
@@ -1400,7 +1411,7 @@ mod tests {
                 &WorkspaceSnapshot {
                     workspace: "w1".into(),
                     active_workspace: "w1".into(),
-                    workspaces: vec![eon_workspace_protocol::v26::WorkspaceInfo {
+                    workspaces: vec![eon_workspace_protocol::v27::WorkspaceInfo {
                         id: "w1".into(),
                         name: None,
                         tab_count: 1,
@@ -1416,7 +1427,9 @@ mod tests {
                     tabs: vec![workspace_tab("t1", &["p1"], "p1")],
                     codex_quota: None,
                     claude_quota: None,
-                    sidebar: eon_workspace_protocol::v26::Sidebar::Open,
+                    codex_quota_failure: None,
+                    claude_quota_failure: None,
+                    sidebar: eon_workspace_protocol::v27::Sidebar::Open,
                     attention_queue: Vec::new(),
                 },
                 EonBar {
@@ -1454,12 +1467,13 @@ mod tests {
                                 duration_minutes: 300,
                                 remaining_percent: 74,
                                 resets_at: None,
+                                scope: None,
                             }]
                         };
                         let snapshot = WorkspaceSnapshot {
                             workspace: "w1".into(),
                             active_workspace: "w1".into(),
-                            workspaces: vec![eon_workspace_protocol::v26::WorkspaceInfo {
+                            workspaces: vec![eon_workspace_protocol::v27::WorkspaceInfo {
                                 id: "w1".into(),
                                 name: None,
                                 tab_count,
@@ -1485,8 +1499,10 @@ mod tests {
                                 observed_at: 1,
                                 windows: window(),
                             }),
-                            sidebar: eon_workspace_protocol::v26::Sidebar::Open,
+                            sidebar: eon_workspace_protocol::v27::Sidebar::Open,
                             attention_queue: Vec::new(),
+                            codex_quota_failure: None,
+                            claude_quota_failure: None,
                         };
                         let project = |logical_width: u32, version, clock| {
                             WorkspaceScene::from_snapshot_with_bar(
@@ -1645,7 +1661,7 @@ mod tests {
         let snapshot = WorkspaceSnapshot {
             workspace: "w1".into(),
             active_workspace: "w1".into(),
-            workspaces: vec![eon_workspace_protocol::v26::WorkspaceInfo {
+            workspaces: vec![eon_workspace_protocol::v27::WorkspaceInfo {
                 id: "w1".into(),
                 name: None,
                 tab_count: 1,
@@ -1666,10 +1682,13 @@ mod tests {
                     duration_minutes: 300,
                     remaining_percent: 74,
                     resets_at: None,
+                    scope: None,
                 }],
             }),
             claude_quota: None,
-            sidebar: eon_workspace_protocol::v26::Sidebar::Open,
+            codex_quota_failure: None,
+            claude_quota_failure: None,
+            sidebar: eon_workspace_protocol::v27::Sidebar::Open,
             attention_queue: Vec::new(),
         };
         let project = |logical_width: u32, version, cpu, ram, disk, clock| {
@@ -1843,12 +1862,13 @@ mod tests {
                 duration_minutes: 300,
                 remaining_percent: 74,
                 resets_at: None,
+                scope: None,
             }]
         };
         let snapshot = WorkspaceSnapshot {
             workspace: "w1".into(),
             active_workspace: "w1".into(),
-            workspaces: vec![eon_workspace_protocol::v26::WorkspaceInfo {
+            workspaces: vec![eon_workspace_protocol::v27::WorkspaceInfo {
                 id: "w1".into(),
                 name: None,
                 tab_count: 1,
@@ -1872,8 +1892,10 @@ mod tests {
                 observed_at: 1,
                 windows: windows(),
             }),
-            sidebar: eon_workspace_protocol::v26::Sidebar::Open,
+            sidebar: eon_workspace_protocol::v27::Sidebar::Open,
             attention_queue: Vec::new(),
+            codex_quota_failure: None,
+            claude_quota_failure: None,
         };
         let metrics = CellMetrics::for_scale(1.0);
         let size = PhysicalSize::new(3000, 600);
@@ -1968,11 +1990,13 @@ mod tests {
                     duration_minutes: 5 * 60,
                     remaining_percent: 74,
                     resets_at: Some(1_789_752_461),
+                    scope: None,
                 },
                 CodexQuotaWindow {
                     duration_minutes: 7 * 24 * 60,
                     remaining_percent: 42,
                     resets_at: Some(1_789_814_936),
+                    scope: None,
                 },
             ]
         };
@@ -2029,6 +2053,7 @@ mod tests {
                             duration_minutes: 90,
                             remaining_percent: 50,
                             resets_at: Some(1_789_750_631),
+                            scope: None,
                         },
                     ],
                 ),
@@ -2090,7 +2115,7 @@ mod tests {
             let workspace_snapshot = WorkspaceSnapshot {
                 workspace: "w1".into(),
                 active_workspace: "w1".into(),
-                workspaces: vec![eon_workspace_protocol::v26::WorkspaceInfo {
+                workspaces: vec![eon_workspace_protocol::v27::WorkspaceInfo {
                     id: "w1".into(),
                     name: None,
                     tab_count: 1,
@@ -2106,7 +2131,9 @@ mod tests {
                 tabs: vec![workspace_tab("t1", &["p1"], "p1")],
                 codex_quota,
                 claude_quota: None,
-                sidebar: eon_workspace_protocol::v26::Sidebar::Open,
+                codex_quota_failure: None,
+                claude_quota_failure: None,
+                sidebar: eon_workspace_protocol::v27::Sidebar::Open,
                 attention_queue: Vec::new(),
             };
             let metrics = CellMetrics::for_scale(1.0);
@@ -2279,19 +2306,38 @@ mod tests {
 
     #[test]
     fn two_provider_chips_share_layout_without_losing_identity_or_freshness() {
-        use eon_workspace_protocol::v26::{ClaudeQuota, ClaudeQuotaState};
+        use eon_workspace_protocol::v27::{ClaudeQuota, ClaudeQuotaState};
         let five_hour = CodexQuotaWindow {
             duration_minutes: 300,
             remaining_percent: 98,
             resets_at: Some(4000),
+            scope: None,
         };
         let seven_day = CodexQuotaWindow {
             duration_minutes: 10080,
             remaining_percent: 100,
             resets_at: Some(100000),
+            scope: None,
         };
-        // EONW may carry Claude's windows in either order, or only one of them.
-        let claude_windows = [vec![seven_day.clone(), five_hour], vec![seven_day]];
+        let fable = CodexQuotaWindow {
+            remaining_percent: 60,
+            scope: Some("Fable".into()),
+            ..seven_day.clone()
+        };
+        let muse = CodexQuotaWindow {
+            remaining_percent: 30,
+            scope: Some("Muse".into()),
+            ..seven_day.clone()
+        };
+        // EONW may carry Claude's windows in either order, or only one of them; a scoped
+        // window follows the unscoped ones whatever its place.
+        let claude_windows = [
+            vec![seven_day.clone(), five_hour.clone()],
+            vec![seven_day.clone()],
+            vec![fable.clone(), five_hour.clone(), seven_day],
+            // Several scopes keep their EONW order and distinct identities.
+            vec![muse, five_hour, fable],
+        ];
         for state in [ClaudeQuotaState::Fresh, ClaudeQuotaState::Stale] {
             // Only fresh windows are judged for pace.
             let (suffix, freshness, pace) = match state {
@@ -2305,7 +2351,7 @@ mod tests {
                         let snapshot = WorkspaceSnapshot {
                             workspace: "w1".into(),
                             active_workspace: "w1".into(),
-                            workspaces: vec![eon_workspace_protocol::v26::WorkspaceInfo {
+                            workspaces: vec![eon_workspace_protocol::v27::WorkspaceInfo {
                                 id: "w1".into(),
                                 name: None,
                                 tab_count: 1,
@@ -2327,11 +2373,13 @@ mod tests {
                                         duration_minutes: 300,
                                         remaining_percent: 74,
                                         resets_at: Some(2000),
+                                        scope: None,
                                     },
                                     CodexQuotaWindow {
                                         duration_minutes: 10080,
                                         remaining_percent: 42,
                                         resets_at: Some(20000),
+                                        scope: None,
                                     },
                                 ],
                             }),
@@ -2340,8 +2388,10 @@ mod tests {
                                 observed_at: 1000,
                                 windows: windows.clone(),
                             }),
-                            sidebar: eon_workspace_protocol::v26::Sidebar::Closed,
+                            sidebar: eon_workspace_protocol::v27::Sidebar::Closed,
                             attention_queue: Vec::new(),
+                            codex_quota_failure: None,
+                            claude_quota_failure: None,
                         };
                         let project = |snapshot: &WorkspaceSnapshot, width| {
                             WorkspaceScene::from_snapshot(
@@ -2368,6 +2418,9 @@ mod tests {
                                         quota.window.map(|window| match window {
                                             QuotaWindowIdentity::Codex { duration, .. }
                                             | QuotaWindowIdentity::Claude(duration) => duration,
+                                            QuotaWindowIdentity::ClaudeScoped(index) => {
+                                                u32::MAX - u32::from(index)
+                                            }
                                         }),
                                     )
                                 })
@@ -2383,12 +2436,16 @@ mod tests {
                         }
                         if providers & 2 != 0 {
                             for minutes in [300, 10080] {
-                                if windows
-                                    .iter()
-                                    .any(|window| window.duration_minutes == minutes)
-                                {
+                                if windows.iter().any(|window| {
+                                    window.scope.is_none() && window.duration_minutes == minutes
+                                }) {
                                     expected.push((QuotaProvider::Claude, Some(minutes)));
                                 }
+                            }
+                            let scoped = windows.iter().filter(|window| window.scope.is_some());
+                            for (index, _) in scoped.enumerate() {
+                                expected
+                                    .push((QuotaProvider::Claude, Some(u32::MAX - index as u32)));
                             }
                         }
                         assert_eq!(identities(&project(&snapshot, 3600)), expected);
@@ -2415,6 +2472,7 @@ mod tests {
                             let mut children = vec![TAB_LIST, NEW_TAB];
                             for (index, quota) in workspace.quotas.iter().enumerate() {
                                 let id = quota_id(quota);
+                                assert!(!children.contains(&id), "quota node IDs are distinct");
                                 children.push(id);
                                 let node = node(&update, id);
                                 assert_eq!(node.value(), Some(quota.accessible_label.as_str()));
@@ -2439,20 +2497,34 @@ mod tests {
                                     continue;
                                 }
                                 // A Claude chip shows and describes only its own window.
-                                let (label, detail, other) =
-                                    if quota.window == Some(QuotaWindowIdentity::Claude(300)) {
-                                        (
-                                            "4h10m/5h 98%",
-                                            "5h window: 98% remaining; observed 4h10m into 5h.",
-                                            "7d",
-                                        )
-                                    } else {
-                                        (
-                                            "5d20h/7d 100%",
-                                            "7d window: 100% remaining; observed 5d20h into 7d.",
+                                let (label, detail, other) = match quota.window {
+                                    Some(QuotaWindowIdentity::Claude(300)) => (
+                                        "4h10m/5h 98%",
+                                        "5h window: 98% remaining; observed 4h10m into 5h.",
+                                        "7d",
+                                    ),
+                                    Some(QuotaWindowIdentity::ClaudeScoped(index)) => match windows
+                                        .iter()
+                                        .filter_map(|window| window.scope.as_deref())
+                                        .nth(usize::from(index))
+                                    {
+                                        Some("Fable") => (
+                                            "Fable 5d20h/7d 60%",
+                                            "Fable-only 7d window: 60% remaining; observed 5d20h into 7d.",
                                             "5h",
-                                        )
-                                    };
+                                        ),
+                                        _ => (
+                                            "Muse 5d20h/7d 30%",
+                                            "Muse-only 7d window: 30% remaining; observed 5d20h into 7d.",
+                                            "5h",
+                                        ),
+                                    },
+                                    _ => (
+                                        "5d20h/7d 100%",
+                                        "7d window: 100% remaining; observed 5d20h into 7d.",
+                                        "5h",
+                                    ),
+                                };
                                 assert_eq!(quota.label, format!("{label}{suffix}"));
                                 assert_eq!(
                                     quota.accessible_label,
@@ -2553,7 +2625,7 @@ mod tests {
     #[test]
     fn attention_inbox_names_filters_rows_and_highlight() {
         use crate::AttentionFilter;
-        use eon_workspace_protocol::v26::{
+        use eon_workspace_protocol::v27::{
             Attention, AttentionRecord, AttentionState, QueueEntry, Sidebar, WorkspaceInfo,
         };
         let size = PhysicalSize::new(1400, 700);
@@ -2588,6 +2660,8 @@ mod tests {
             entries: Vec::new(),
             codex_quota: None,
             claude_quota: None,
+            codex_quota_failure: None,
+            claude_quota_failure: None,
             sidebar: Sidebar::Open,
             attention_queue: vec![QueueEntry {
                 workspace: "w2".into(),
@@ -3236,7 +3310,7 @@ mod tests {
         let workspace_snapshot = WorkspaceSnapshot {
             workspace: "w1".into(),
             active_workspace: "w1".into(),
-            workspaces: vec![eon_workspace_protocol::v26::WorkspaceInfo {
+            workspaces: vec![eon_workspace_protocol::v27::WorkspaceInfo {
                 id: "w1".into(),
                 name: None,
                 tab_count: 1,
@@ -3253,14 +3327,16 @@ mod tests {
                 workspace_tab("t2", &["pane-7"], "pane-7"),
                 workspace_tab("t3", &["pane-8"], "pane-8"),
             ],
-            geometry: eon_workspace_protocol::v26::PopupGeometry {
+            geometry: eon_workspace_protocol::v27::PopupGeometry {
                 side_margin: 8.0,
                 vertical_margin: 4.0,
             },
             entries: Vec::new(),
             codex_quota: None,
             claude_quota: None,
-            sidebar: eon_workspace_protocol::v26::Sidebar::Open,
+            codex_quota_failure: None,
+            claude_quota_failure: None,
+            sidebar: eon_workspace_protocol::v27::Sidebar::Open,
             attention_queue: Vec::new(),
         };
         for scale in [1.0, 1.25, 1.5, 2.0] {
@@ -3371,12 +3447,12 @@ mod tests {
 
     #[test]
     fn agent_sidebar_region_follows_the_header_and_names_its_empty_state() {
-        use eon_workspace_protocol::v26::{AttentionState, Sidebar};
+        use eon_workspace_protocol::v27::{AttentionState, Sidebar};
 
         let mut workspace = WorkspaceSnapshot {
             workspace: "w1".into(),
             active_workspace: "w1".into(),
-            workspaces: vec![eon_workspace_protocol::v26::WorkspaceInfo {
+            workspaces: vec![eon_workspace_protocol::v27::WorkspaceInfo {
                 id: "w1".into(),
                 name: None,
                 tab_count: 1,
@@ -3392,6 +3468,8 @@ mod tests {
             entries: Vec::new(),
             codex_quota: None,
             claude_quota: None,
+            codex_quota_failure: None,
+            claude_quota_failure: None,
             sidebar: Sidebar::Open,
             attention_queue: Vec::new(),
         };
@@ -3429,9 +3507,9 @@ mod tests {
         // Attention replaces the empty state with each tab's heading and its rows, which are
         // named buttons that take focus and jump.
         workspace.tabs[0].columns[0].panes[0].attention =
-            Some(eon_workspace_protocol::v26::Attention {
+            Some(eon_workspace_protocol::v27::Attention {
                 state: AttentionState::NeedsInput,
-                record: Some(eon_workspace_protocol::v26::AttentionRecord {
+                record: Some(eon_workspace_protocol::v27::AttentionRecord {
                     kind: None,
                     progress: None,
                     app: "claude-code".into(),
@@ -3523,7 +3601,7 @@ mod tests {
         let workspace = WorkspaceSnapshot {
             workspace: "w1".into(),
             active_workspace: "w1".into(),
-            workspaces: vec![eon_workspace_protocol::v26::WorkspaceInfo {
+            workspaces: vec![eon_workspace_protocol::v27::WorkspaceInfo {
                 id: "w1".into(),
                 name: None,
                 tab_count: 1,
@@ -3539,7 +3617,9 @@ mod tests {
             entries: Vec::new(),
             codex_quota: None,
             claude_quota: None,
-            sidebar: eon_workspace_protocol::v26::Sidebar::Open,
+            codex_quota_failure: None,
+            claude_quota_failure: None,
+            sidebar: eon_workspace_protocol::v27::Sidebar::Open,
             attention_queue: Vec::new(),
         };
         let hint = crate::ShortcutHint {
@@ -3660,7 +3740,7 @@ mod tests {
             &WorkspaceSnapshot {
                 workspace: "w1".into(),
                 active_workspace: "w1".into(),
-                workspaces: vec![eon_workspace_protocol::v26::WorkspaceInfo {
+                workspaces: vec![eon_workspace_protocol::v27::WorkspaceInfo {
                     id: "w1".into(),
                     name: None,
                     tab_count: 1,
@@ -3677,14 +3757,16 @@ mod tests {
                     id: "files".into(),
                     label: "Files".into(),
                     shortcut: PopupKey::Bound(Shortcut {
-                        modifiers: eon_workspace_protocol::v26::ALT
-                            | eon_workspace_protocol::v26::SHIFT,
+                        modifiers: eon_workspace_protocol::v27::ALT
+                            | eon_workspace_protocol::v27::SHIFT,
                         key: "KeyT".into(),
                     }),
                 }],
                 codex_quota: None,
                 claude_quota: None,
-                sidebar: eon_workspace_protocol::v26::Sidebar::Open,
+                codex_quota_failure: None,
+                claude_quota_failure: None,
+                sidebar: eon_workspace_protocol::v27::Sidebar::Open,
                 attention_queue: Vec::new(),
             },
             PhysicalSize::new(800, 600),
@@ -3719,7 +3801,7 @@ mod tests {
             workspaces: names
                 .iter()
                 .enumerate()
-                .map(|(index, name)| eon_workspace_protocol::v26::WorkspaceInfo {
+                .map(|(index, name)| eon_workspace_protocol::v27::WorkspaceInfo {
                     id: format!("w{}", index + 1),
                     name: name.map(Into::into),
                     tab_count: 1,
@@ -3736,7 +3818,9 @@ mod tests {
             entries: Vec::new(),
             codex_quota: None,
             claude_quota: None,
-            sidebar: eon_workspace_protocol::v26::Sidebar::Open,
+            codex_quota_failure: None,
+            claude_quota_failure: None,
+            sidebar: eon_workspace_protocol::v27::Sidebar::Open,
             attention_queue: Vec::new(),
         };
         let picker = "Workspaces — Alt+Shift+S";
@@ -3817,18 +3901,18 @@ mod tests {
         // Another workspace that needs input badges the label's corner, with the sidebar open,
         // and moves neither the label nor the tabs; the shown one's own attention badges nothing.
         let mut own = two.clone();
-        own.workspaces[1].attention = Some(eon_workspace_protocol::v26::AttentionState::NeedsInput);
+        own.workspaces[1].attention = Some(eon_workspace_protocol::v27::AttentionState::NeedsInput);
         assert_eq!(project(&own, 1200, Some(picker), 0.0), scene);
         let mut waiting = two.clone();
         waiting.workspaces[0].attention =
-            Some(eon_workspace_protocol::v26::AttentionState::NeedsInput);
+            Some(eon_workspace_protocol::v27::AttentionState::NeedsInput);
         let badged = project(&waiting, 1200, Some(picker), 0.0);
         assert!(badged.sidebar().is_some());
         let badged_label = badged.workspace_label.as_ref().unwrap();
         let badge = badged_label.badge.unwrap();
         assert_eq!(
             badge.state,
-            eon_workspace_protocol::v26::AttentionState::NeedsInput
+            eon_workspace_protocol::v27::AttentionState::NeedsInput
         );
         assert!(badge.rect.right() > badged_label.rect.right() - badge.rect.width);
         assert_eq!(badged_label.rect, label.rect);
@@ -3889,6 +3973,7 @@ mod tests {
                 duration_minutes: 300,
                 remaining_percent: 74,
                 resets_at: None,
+                scope: None,
             }],
         });
         let (mut dropped, mut kept_over_quota) = (false, false);
@@ -3919,7 +4004,7 @@ mod tests {
             &WorkspaceSnapshot {
                 workspace: "w1".into(),
                 active_workspace: "w1".into(),
-                workspaces: vec![eon_workspace_protocol::v26::WorkspaceInfo {
+                workspaces: vec![eon_workspace_protocol::v27::WorkspaceInfo {
                     id: "w1".into(),
                     name: None,
                     tab_count: 1,
@@ -3935,7 +4020,7 @@ mod tests {
                         id: "t1".into(),
                         directory: b"/tmp/eon".to_vec(),
                         selected_pane: Some("p2".into()),
-                        columns: vec![eon_workspace_protocol::v26::Column {
+                        columns: vec![eon_workspace_protocol::v27::Column {
                             panes: vec![
                                 Pane {
                                     label: "p1  offline".into(),
@@ -3967,7 +4052,7 @@ mod tests {
                         id: "t2".into(),
                         directory: b"/tmp/nova".to_vec(),
                         selected_pane: Some("p3".into()),
-                        columns: vec![eon_workspace_protocol::v26::Column {
+                        columns: vec![eon_workspace_protocol::v27::Column {
                             panes: vec![Pane {
                                 label: "p3".into(),
                                 pinned_name: None,
@@ -3975,9 +4060,9 @@ mod tests {
                                 session: "session-3".into(),
                                 endpoint: b"/run/eon/three.sock".to_vec(),
                                 live: false,
-                                attention: Some(eon_workspace_protocol::v26::Attention {
-                                    state: eon_workspace_protocol::v26::AttentionState::Finished,
-                                    record: Some(eon_workspace_protocol::v26::AttentionRecord {
+                                attention: Some(eon_workspace_protocol::v27::Attention {
+                                    state: eon_workspace_protocol::v27::AttentionState::Finished,
+                                    record: Some(eon_workspace_protocol::v27::AttentionRecord {
                                         kind: None,
                                         progress: None,
                                         app: "claude-code".into(),
@@ -3993,18 +4078,20 @@ mod tests {
                             expanded: "p3".into(),
                         }],
                         attention_rollup: Some(
-                            eon_workspace_protocol::v26::AttentionState::Finished,
+                            eon_workspace_protocol::v27::AttentionState::Finished,
                         ),
                     },
                 ],
-                geometry: eon_workspace_protocol::v26::PopupGeometry {
+                geometry: eon_workspace_protocol::v27::PopupGeometry {
                     side_margin: 8.0,
                     vertical_margin: 4.0,
                 },
                 entries: Vec::new(),
                 codex_quota: None,
                 claude_quota: None,
-                sidebar: eon_workspace_protocol::v26::Sidebar::Open,
+                codex_quota_failure: None,
+                claude_quota_failure: None,
+                sidebar: eon_workspace_protocol::v27::Sidebar::Open,
                 attention_queue: Vec::new(),
             },
             EonBar::default(),
@@ -4070,7 +4157,7 @@ mod tests {
         let state = WorkspaceSnapshot {
             workspace: "w1".into(),
             active_workspace: "w1".into(),
-            workspaces: vec![eon_workspace_protocol::v26::WorkspaceInfo {
+            workspaces: vec![eon_workspace_protocol::v27::WorkspaceInfo {
                 id: "w1".into(),
                 name: None,
                 tab_count: 1,
@@ -4079,14 +4166,16 @@ mod tests {
             }],
             active_tab: "t1".into(),
             tabs: vec![tab],
-            geometry: eon_workspace_protocol::v26::PopupGeometry {
+            geometry: eon_workspace_protocol::v27::PopupGeometry {
                 side_margin: 8.0,
                 vertical_margin: 4.0,
             },
             entries: Vec::new(),
             codex_quota: None,
             claude_quota: None,
-            sidebar: eon_workspace_protocol::v26::Sidebar::Open,
+            codex_quota_failure: None,
+            claude_quota_failure: None,
+            sidebar: eon_workspace_protocol::v27::Sidebar::Open,
             attention_queue: Vec::new(),
         };
         let project = |zoom| {
@@ -4135,7 +4224,7 @@ mod tests {
         let mut state = WorkspaceSnapshot {
             workspace: "w1".into(),
             active_workspace: "w1".into(),
-            workspaces: vec![eon_workspace_protocol::v26::WorkspaceInfo {
+            workspaces: vec![eon_workspace_protocol::v27::WorkspaceInfo {
                 id: "w1".into(),
                 name: None,
                 tab_count: 1,
@@ -4151,7 +4240,7 @@ mod tests {
                 id: "project".into(),
                 label: "Project".into(),
                 shortcut: PopupKey::Bound(Shortcut {
-                    modifiers: eon_workspace_protocol::v26::ALT,
+                    modifiers: eon_workspace_protocol::v27::ALT,
                     key: "KeyZ".into(),
                 }),
             }],
@@ -4173,7 +4262,9 @@ mod tests {
             }],
             codex_quota: None,
             claude_quota: None,
-            sidebar: eon_workspace_protocol::v26::Sidebar::Open,
+            codex_quota_failure: None,
+            claude_quota_failure: None,
+            sidebar: eon_workspace_protocol::v27::Sidebar::Open,
             attention_queue: Vec::new(),
         };
         let workspace = WorkspaceScene::from_snapshot(

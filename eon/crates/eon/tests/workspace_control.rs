@@ -1,4 +1,4 @@
-use eon_workspace_protocol::v26::{
+use eon_workspace_protocol::v27::{
     Action as ProtocolAction, Availability, Column, Direction, Failure as ProtocolFailure,
     HEADER_BYTES, InvokeIntent, LifecycleResponse, MAX_SESSIONS, Pane, Popup, PopupGeometry,
     PopupTarget, Request, Response, Runtime, Screen, Sent, Snapshot, Stopped, Tab, TargetId,
@@ -1455,7 +1455,7 @@ printf '/selected-\377\n' > "$4"
     let response = encode_response(&Response::Snapshot(Snapshot {
         workspace: "w1".into(),
         active_workspace: "w1".into(),
-        workspaces: vec![eon_workspace_protocol::v26::WorkspaceInfo {
+        workspaces: vec![eon_workspace_protocol::v27::WorkspaceInfo {
             id: "w1".into(),
             name: None,
             tab_count: 1,
@@ -1491,7 +1491,9 @@ printf '/selected-\377\n' > "$4"
         }],
         codex_quota: None,
         claude_quota: None,
-        sidebar: eon_workspace_protocol::v26::Sidebar::Open,
+        codex_quota_failure: None,
+        claude_quota_failure: None,
+        sidebar: eon_workspace_protocol::v27::Sidebar::Open,
         attention_queue: Vec::new(),
     }))
     .unwrap();

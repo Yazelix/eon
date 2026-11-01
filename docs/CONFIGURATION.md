@@ -359,6 +359,8 @@ Eon does not change provider settings or manage accounts. CodexBar owns credenti
 selection and its local authentication/cache mechanisms.
 
 Codex and Claude show one chip per available window, five-hour then seven-day.
+Claude's model-scoped weekly windows, such as `Fable`, follow as their own
+chips; `claude_quota` covers them.
 Only reported windows appear; an idle Claude window can lack a reset time.
 Hover and accessible labels report that absence. Narrow windows hide quota
 chips one by one, the one closest to the tabs first, before tabs and controls.

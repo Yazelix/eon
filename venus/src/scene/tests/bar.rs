@@ -77,6 +77,7 @@ fn quota_without_reset_retains_percent_and_accessible_freshness() {
             duration_minutes: 300,
             remaining_percent: 100,
             resets_at: None,
+            scope: None,
         };
         let text = quota_text(QuotaProvider::Claude, state, 100, Some(&window));
         let suffix = if state == CodexQuotaState::Stale {
@@ -106,6 +107,7 @@ fn quota_shortfall_projects_linear_pace_with_a_basis_only() {
         duration_minutes: 300,
         remaining_percent: remaining,
         resets_at: Some(1000 + ((1.0 - elapsed) * 18_000.0).round() as u64),
+        scope: None,
     };
     let shortfall = |elapsed, remaining| quota_shortfall(&window(elapsed, remaining), 1000);
     for (elapsed, remaining, expected) in [
@@ -160,11 +162,13 @@ fn quota_pace_colors_fresh_windows_and_says_so_in_words() {
             duration_minutes: 300,
             remaining_percent: 50,
             resets_at: Some(observed_at + 9_000),
+            scope: None,
         },
         QuotaWindow {
             duration_minutes: 10_080,
             remaining_percent: 50,
             resets_at: Some(observed_at + 378_000),
+            scope: None,
         },
     ];
     for (window, label, shortfall, detail) in [
@@ -200,6 +204,7 @@ fn quota_pace_colors_fresh_windows_and_says_so_in_words() {
         duration_minutes: 300,
         remaining_percent: 0,
         resets_at: Some(observed_at + 17_000),
+        scope: None,
     };
     let text = quota_text(
         QuotaProvider::Claude,
@@ -218,6 +223,7 @@ fn quota_pace_colors_fresh_windows_and_says_so_in_words() {
         duration_minutes: 10_080,
         remaining_percent: 50,
         resets_at: Some(observed_at + 302_400 + 1_000),
+        scope: None,
     };
     let text = quota_text(
         QuotaProvider::Claude,
@@ -429,12 +435,12 @@ fn shortcut_hints_drop_whole_pairs_and_rebuild_modifier_headers() {
 
 #[test]
 fn eon_bar_keeps_tabs_controls_and_drag_hits_disjoint_under_pressure() {
-    use eon_workspace_protocol::v26::{Pane, PopupGeometry, Tab};
+    use eon_workspace_protocol::v27::{Pane, PopupGeometry, Tab};
 
     let snapshot = Snapshot {
         workspace: "w1".into(),
         active_workspace: "w1".into(),
-        workspaces: vec![eon_workspace_protocol::v26::WorkspaceInfo {
+        workspaces: vec![eon_workspace_protocol::v27::WorkspaceInfo {
             id: "w1".into(),
             name: None,
             tab_count: 1,
@@ -454,7 +460,7 @@ fn eon_bar_keeps_tabs_controls_and_drag_hits_disjoint_under_pressure() {
                 pending: false,
                 selected_pane: Some(format!("p{index}")),
                 selected_popup: None,
-                columns: vec![eon_workspace_protocol::v26::Column {
+                columns: vec![eon_workspace_protocol::v27::Column {
                     panes: vec![Pane {
                         label: format!("p{index}"),
                         pinned_name: None,
@@ -472,7 +478,9 @@ fn eon_bar_keeps_tabs_controls_and_drag_hits_disjoint_under_pressure() {
             .collect(),
         codex_quota: None,
         claude_quota: None,
-        sidebar: eon_workspace_protocol::v26::Sidebar::Open,
+        codex_quota_failure: None,
+        claude_quota_failure: None,
+        sidebar: eon_workspace_protocol::v27::Sidebar::Open,
         attention_queue: Vec::new(),
     };
     let metrics = CellMetrics::for_scale(1.0);
@@ -654,7 +662,7 @@ fn eon_bar_keeps_tabs_controls_and_drag_hits_disjoint_under_pressure() {
 
 #[test]
 fn attention_badges_mark_tab_corners_without_moving_tabs() {
-    use eon_workspace_protocol::v26::{
+    use eon_workspace_protocol::v27::{
         Attention, AttentionRecord, AttentionState as State, Column, Pane, PopupGeometry,
     };
 
@@ -689,7 +697,7 @@ fn attention_badges_mark_tab_corners_without_moving_tabs() {
     let mut snapshot = Snapshot {
         workspace: "w1".into(),
         active_workspace: "w1".into(),
-        workspaces: vec![eon_workspace_protocol::v26::WorkspaceInfo {
+        workspaces: vec![eon_workspace_protocol::v27::WorkspaceInfo {
             id: "w1".into(),
             name: None,
             tab_count: 1,
@@ -733,7 +741,9 @@ fn attention_badges_mark_tab_corners_without_moving_tabs() {
             .collect(),
         codex_quota: None,
         claude_quota: None,
-        sidebar: eon_workspace_protocol::v26::Sidebar::Closed,
+        codex_quota_failure: None,
+        claude_quota_failure: None,
+        sidebar: eon_workspace_protocol::v27::Sidebar::Closed,
         attention_queue: Vec::new(),
     };
     let metrics = CellMetrics::for_scale(1.0);
@@ -807,7 +817,7 @@ fn attention_badges_mark_tab_corners_without_moving_tabs() {
     );
     // While the sidebar shows, the tabs carry no badge or state; hidden for width, they do.
     let mut open = snapshot.clone();
-    open.sidebar = eon_workspace_protocol::v26::Sidebar::Open;
+    open.sidebar = eon_workspace_protocol::v27::Sidebar::Open;
     let beside = project(&open, 1600, 0.0);
     assert!(beside.sidebar().is_some());
     assert!(beside.tabs.iter().all(|tab| tab.badge.is_none()));
@@ -904,7 +914,7 @@ fn tab_directory_labels_use_current_position_and_bounded_path_context() {
 #[test]
 fn cpu_and_ram_chips_colour_under_load_and_say_so() {
     use crate::{CpuReadings, CpuTimes, Load, LoadLevels, RamUse};
-    use eon_workspace_protocol::v26::{Pane, PopupGeometry, Tab};
+    use eon_workspace_protocol::v27::{Pane, PopupGeometry, Tab};
     use std::time::{Duration, Instant};
 
     let levels = LoadLevels::default();
@@ -1083,7 +1093,7 @@ fn cpu_and_ram_chips_colour_under_load_and_say_so() {
     let snapshot = Snapshot {
         workspace: "w1".into(),
         active_workspace: "w1".into(),
-        workspaces: vec![eon_workspace_protocol::v26::WorkspaceInfo {
+        workspaces: vec![eon_workspace_protocol::v27::WorkspaceInfo {
             id: "w1".into(),
             name: None,
             tab_count: 1,
@@ -1102,7 +1112,7 @@ fn cpu_and_ram_chips_colour_under_load_and_say_so() {
             pending: false,
             selected_pane: Some("p1".into()),
             selected_popup: None,
-            columns: vec![eon_workspace_protocol::v26::Column {
+            columns: vec![eon_workspace_protocol::v27::Column {
                 panes: vec![Pane {
                     label: "p1".into(),
                     pinned_name: None,
@@ -1119,7 +1129,9 @@ fn cpu_and_ram_chips_colour_under_load_and_say_so() {
         }],
         codex_quota: None,
         claude_quota: None,
-        sidebar: eon_workspace_protocol::v26::Sidebar::Open,
+        codex_quota_failure: None,
+        claude_quota_failure: None,
+        sidebar: eon_workspace_protocol::v27::Sidebar::Open,
         attention_queue: Vec::new(),
     };
     let scene = WorkspaceScene::from_snapshot_with_bar(
@@ -1189,7 +1201,7 @@ fn a_failed_cpu_reading_restarts_the_average_window() {
 #[test]
 fn disk_chip_shows_filesystem_use_and_colours_only_when_filling_up() {
     use crate::{BarItem, DiskUse, Load, LoadLevels};
-    use eon_workspace_protocol::v26::{Pane, PopupGeometry, Tab};
+    use eon_workspace_protocol::v27::{Pane, PopupGeometry, Tab};
 
     let levels = LoadLevels::default();
     // A 1000 GiB filesystem with no root reserve, `percent` used.
@@ -1234,7 +1246,7 @@ fn disk_chip_shows_filesystem_use_and_colours_only_when_filling_up() {
     let snapshot = Snapshot {
         workspace: "w1".into(),
         active_workspace: "w1".into(),
-        workspaces: vec![eon_workspace_protocol::v26::WorkspaceInfo {
+        workspaces: vec![eon_workspace_protocol::v27::WorkspaceInfo {
             id: "w1".into(),
             name: None,
             tab_count: 1,
@@ -1253,7 +1265,7 @@ fn disk_chip_shows_filesystem_use_and_colours_only_when_filling_up() {
             pending: false,
             selected_pane: Some("p1".into()),
             selected_popup: None,
-            columns: vec![eon_workspace_protocol::v26::Column {
+            columns: vec![eon_workspace_protocol::v27::Column {
                 panes: vec![Pane {
                     label: "p1".into(),
                     pinned_name: None,
@@ -1270,7 +1282,9 @@ fn disk_chip_shows_filesystem_use_and_colours_only_when_filling_up() {
         }],
         codex_quota: None,
         claude_quota: None,
-        sidebar: eon_workspace_protocol::v26::Sidebar::Open,
+        codex_quota_failure: None,
+        claude_quota_failure: None,
+        sidebar: eon_workspace_protocol::v27::Sidebar::Open,
         attention_queue: Vec::new(),
     };
     let metrics = CellMetrics::for_scale(1.0);

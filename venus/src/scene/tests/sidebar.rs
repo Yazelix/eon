@@ -2,7 +2,7 @@ use super::*;
 
 #[test]
 fn agent_sidebar_pushes_columns_hides_for_width_and_shows_its_empty_state() {
-    use eon_workspace_protocol::v26::{
+    use eon_workspace_protocol::v27::{
         AttentionState, Column, Popup, PopupEntry, PopupGeometry, PopupKey, Shortcut,
     };
 
@@ -18,7 +18,7 @@ fn agent_sidebar_pushes_columns_hides_for_width_and_shows_its_empty_state() {
     let mut snapshot = Snapshot {
         workspace: "w1".into(),
         active_workspace: "w1".into(),
-        workspaces: vec![eon_workspace_protocol::v26::WorkspaceInfo {
+        workspaces: vec![eon_workspace_protocol::v27::WorkspaceInfo {
             id: "w1".into(),
             name: None,
             tab_count: 1,
@@ -61,6 +61,8 @@ fn agent_sidebar_pushes_columns_hides_for_width_and_shows_its_empty_state() {
         }],
         codex_quota: None,
         claude_quota: None,
+        codex_quota_failure: None,
+        claude_quota_failure: None,
         sidebar: Sidebar::Open,
         attention_queue: Vec::new(),
     };
@@ -138,7 +140,7 @@ fn agent_sidebar_pushes_columns_hides_for_width_and_shows_its_empty_state() {
 
     // Any attention replaces the empty state.
     snapshot.sidebar = Sidebar::Open;
-    snapshot.tabs[0].popups[0].attention = Some(eon_workspace_protocol::v26::Attention {
+    snapshot.tabs[0].popups[0].attention = Some(eon_workspace_protocol::v27::Attention {
         state: AttentionState::Unavailable,
         record: None,
     });
@@ -148,7 +150,7 @@ fn agent_sidebar_pushes_columns_hides_for_width_and_shows_its_empty_state() {
 
 #[test]
 fn agent_sidebar_rows_show_attention_in_tab_order_and_reveal_the_focused_row() {
-    use eon_workspace_protocol::v26::{
+    use eon_workspace_protocol::v27::{
         Attention, AttentionRecord, Column, Popup, PopupEntry, PopupGeometry, PopupKey, Shortcut,
     };
 
@@ -219,7 +221,7 @@ fn agent_sidebar_rows_show_attention_in_tab_order_and_reveal_the_focused_row() {
     let snapshot = Snapshot {
         workspace: "w1".into(),
         active_workspace: "w1".into(),
-        workspaces: vec![eon_workspace_protocol::v26::WorkspaceInfo {
+        workspaces: vec![eon_workspace_protocol::v27::WorkspaceInfo {
             id: "w1".into(),
             name: None,
             tab_count: 3,
@@ -267,6 +269,8 @@ fn agent_sidebar_rows_show_attention_in_tab_order_and_reveal_the_focused_row() {
         ],
         codex_quota: None,
         claude_quota: None,
+        codex_quota_failure: None,
+        claude_quota_failure: None,
         sidebar: Sidebar::Open,
         attention_queue: Vec::new(),
     };

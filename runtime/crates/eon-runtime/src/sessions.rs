@@ -9,7 +9,7 @@ use super::{
     },
     workspace::{is_directory_picker_endpoint, is_directory_picker_session},
 };
-use eon_workspace_protocol::v26::{
+use eon_workspace_protocol::v27::{
     Failure, MAX_PASTE_BYTES, MAX_SESSIONS, MAX_TERMINAL_METADATA_BYTES, MAX_TERMINAL_TEXT_BYTES,
 };
 use orbit_protocol::management::{
@@ -2956,7 +2956,7 @@ pub(crate) mod tests {
         let (mut session, peer, tombstone) =
             tombstoned_session(&root, 1, TerminationReason::NaturalExit);
         let code =
-            |result: Result<bool, eon_workspace_protocol::v26::Failure>| result.unwrap_err().code;
+            |result: Result<bool, eon_workspace_protocol::v27::Failure>| result.unwrap_err().code;
         let paste = || LeaseInput::Paste("hi".into());
 
         let orbit = answer(

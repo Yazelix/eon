@@ -28,7 +28,10 @@ order, selection, and popups; Venus draws the visible scene.
   its elapsed/total window position and remaining percentage. A window without
   a reset shows no position. Hover and accessibility name the provider and
   that window, and say how far into it the observation is, or that its reset
-  time is unavailable. Chips disappear one by one, the one closest to the tabs
+  time is unavailable. Claude's model-scoped weekly windows follow its
+  unscoped chips, one chip each in EONW order, with the scope before the
+  position (`Fable 3d/7d 60%`); hover and accessibility name it, as in
+  `Fable-only 7d window`. Chips disappear one by one, the one closest to the tabs
   first, before tabs, controls or dragging lose space. `old` stays visible on
   every stale chip; blocked and unknown Codex observations show one chip with
   their state. Missing facts and transport loss remove the affected chips.
@@ -215,7 +218,7 @@ Venus                   -> native presentation, interaction, client failure UX
 Orbit                   -> PTYs, terminal state, session lifetime, wire authority
 ```
 
-Venus consumes EONW v26 through the in-tree `eon-workspace-protocol` 0.1.0
+Venus consumes EONW v27 through the in-tree `eon-workspace-protocol` 0.1.0
 crate. Eon supplies popup definitions,
 commands and geometry defaults. The runtime validates configuration and owns
 live workspace and popup state, Session mappings, and provider quota collection

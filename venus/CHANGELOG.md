@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+- Consume EONW v27, which adds a scope to quota windows and each provider's
+  last failed quota read. Claude's scoped windows show as their own chips
+  after its unscoped chips (`eon-wqkjc`); Venus shows no failure.
+
 - VEN-C20: Alt+H, Alt+J, Alt+K and Alt+L join Alt+Slash and Alt+0 through
   Alt+9 as keys no popup takes, in dispatch, hints and the viewer; Eon loads a
   popup configured on one of the four without a key (`eon-0gllz`). No wire

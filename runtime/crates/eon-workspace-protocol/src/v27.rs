@@ -1,4 +1,4 @@
-//! Eon-owned values and bounded EONW v26 codec for local workspace clients.
+//! Eon-owned values and bounded EONW v27 codec for local workspace clients.
 //!
 //! Every message is a 12-byte header (`EONW`, little-endian version, kind,
 //! zero flags, little-endian payload length) followed by its payload.
@@ -7,7 +7,7 @@
 
 use std::{collections::HashSet, fmt, str};
 
-pub const VERSION: u16 = 26;
+pub const VERSION: u16 = 27;
 pub const HEADER_BYTES: usize = 12;
 const MAGIC: &[u8; 4] = b"EONW";
 const MAX_MESSAGE_BYTES: usize = 2 * 1024 * 1024;
@@ -31,6 +31,10 @@ pub const MAX_PANE_NAME_CHARS: usize = 80;
 pub const MAX_PANE_NAME_BYTES: usize = 320;
 pub const MAX_KEY_BYTES: usize = 16;
 pub const MAX_CODEX_QUOTA_WINDOWS: usize = 2;
+/// Claude's model-scoped weekly windows, after its unscoped five-hour and seven-day ones.
+pub const MAX_SCOPED_QUOTA_WINDOWS: usize = 4;
+pub const MAX_QUOTA_WINDOWS: usize = 2 + MAX_SCOPED_QUOTA_WINDOWS;
+pub const MAX_QUOTA_SCOPE_BYTES: usize = 32;
 pub const MAX_COMMAND_ARGUMENTS: usize = 256;
 pub const MAX_COMMAND_ARGUMENT_BYTES: usize = 32 * 1024;
 /// The bounds of a status record and the terminal title in Orbit's
@@ -471,6 +475,9 @@ pub struct CodexQuotaWindow {
     pub duration_minutes: u32,
     pub remaining_percent: u8,
     pub resets_at: Option<u64>,
+    /// The provider's name for what a scoped window limits, such as a model (`Fable`); none for
+    /// a window that limits all use.
+    pub scope: Option<String>,
 }
 
 pub use self::CodexQuotaWindow as QuotaWindow;
@@ -493,6 +500,32 @@ pub struct ClaudeQuota {
     pub state: ClaudeQuotaState,
     pub observed_at: u64,
     pub windows: Vec<QuotaWindow>,
+}
+
+/// Why a provider's last quota read failed (EON-C27).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum QuotaFailureReason {
+    /// CodexBar could not be started or its output could not be read.
+    Start,
+    Deadline,
+    OutputLimit,
+    ExitStatus,
+    /// The output is not one result of the expected JSON shape.
+    Malformed,
+    /// The result names another provider or source, or carries an error.
+    ProviderError,
+    Estimated,
+    /// The observation time is missing, invalid, in the future or over an hour old.
+    ObservationTime,
+    /// A window is invalid, unsupported, repeated with other values, or one too many.
+    InvalidWindow,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct QuotaFailure {
+    /// Wall-clock seconds at the end of the failed read.
+    pub at: u64,
+    pub reason: QuotaFailureReason,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -518,6 +551,9 @@ pub struct Snapshot {
     pub tabs: Vec<Tab>,
     pub codex_quota: Option<CodexQuota>,
     pub claude_quota: Option<ClaudeQuota>,
+    /// Each provider's last failed read, until a read succeeds (EON-C27).
+    pub codex_quota_failure: Option<QuotaFailure>,
+    pub claude_quota_failure: Option<QuotaFailure>,
     pub sidebar: Sidebar,
     /// The window-wide queue in EON-C31's total order; consumers never sort it.
     pub attention_queue: Vec<QueueEntry>,
@@ -1347,8 +1383,8 @@ impl From<&Tab> for WireTab {
 }
 
 /// A snapshot payload is the column layout, the workspace with flattened
-/// panes, then the Codex and Claude quotas, sidebar, workspace summaries and
-/// the window-wide attention queue.
+/// panes, then the Codex and Claude quotas and their last failures, sidebar,
+/// workspace summaries and the window-wide attention queue.
 pub fn encode_response(response: &Response) -> Result<Vec<u8>> {
     let mut payload = Encoder::default();
     let kind = match response {
@@ -1356,8 +1392,10 @@ pub fn encode_response(response: &Response) -> Result<Vec<u8>> {
             let tabs: Vec<_> = snapshot.tabs.iter().map(WireTab::from).collect();
             let claude = snapshot.claude_quota.as_ref().map(claude_as_codex);
             validate_workspace(snapshot, &tabs)?;
-            validate_quota(snapshot.codex_quota.as_ref())?;
+            validate_codex(snapshot.codex_quota.as_ref())?;
             validate_claude(claude.as_ref())?;
+            validate_failure(snapshot.codex_quota_failure)?;
+            validate_failure(snapshot.claude_quota_failure)?;
             payload.count(snapshot.tabs.len());
             for tab in &snapshot.tabs {
                 validate_columns(tab)?;
@@ -1375,6 +1413,8 @@ pub fn encode_response(response: &Response) -> Result<Vec<u8>> {
             encode_workspace(&mut payload, snapshot, &tabs);
             encode_quota(&mut payload, snapshot.codex_quota.as_ref());
             encode_quota(&mut payload, claude.as_ref());
+            encode_failure_record(&mut payload, snapshot.codex_quota_failure);
+            encode_failure_record(&mut payload, snapshot.claude_quota_failure);
             encode_sidebar(&mut payload, snapshot.sidebar);
             encode_workspace_set(&mut payload, snapshot);
             encode_attention_queue(&mut payload, &snapshot.attention_queue);
@@ -1595,6 +1635,8 @@ pub fn decode_response(bytes: &[u8]) -> Result<Response> {
     let (mut snapshot, wire_tabs) = decode_workspace(&mut decoder)?;
     snapshot.codex_quota = decode_quota(&mut decoder)?;
     let claude = decode_quota(&mut decoder)?;
+    snapshot.codex_quota_failure = decode_failure_record(&mut decoder)?;
+    snapshot.claude_quota_failure = decode_failure_record(&mut decoder)?;
     snapshot.sidebar = match decoder.byte()? {
         0 => Sidebar::Open,
         1 => Sidebar::Closed,
@@ -1630,8 +1672,10 @@ pub fn decode_response(bytes: &[u8]) -> Result<Response> {
         });
     }
     validate_workspace(&snapshot, &wire_tabs)?;
-    validate_quota(snapshot.codex_quota.as_ref())?;
+    validate_codex(snapshot.codex_quota.as_ref())?;
     validate_claude(claude.as_ref())?;
+    validate_failure(snapshot.codex_quota_failure)?;
+    validate_failure(snapshot.claude_quota_failure)?;
     snapshot.claude_quota = claude.map(|quota| ClaudeQuota {
         state: if quota.state == CodexQuotaState::Stale {
             ClaudeQuotaState::Stale
@@ -1819,6 +1863,8 @@ fn decode_workspace(decoder: &mut Decoder<'_>) -> Result<(Snapshot, Vec<WireTab>
         tabs: Vec::with_capacity(tabs.len()),
         codex_quota: None,
         claude_quota: None,
+        codex_quota_failure: None,
+        claude_quota_failure: None,
         sidebar: Sidebar::Off,
         attention_queue: Vec::new(),
     };
@@ -2147,7 +2193,7 @@ fn validate_quota(quota: Option<&CodexQuota>) -> Result<()> {
     let Some(quota) = quota else {
         return Ok(());
     };
-    if quota.observed_at == 0 || quota.windows.len() > MAX_CODEX_QUOTA_WINDOWS {
+    if quota.observed_at == 0 || quota.windows.len() > MAX_QUOTA_WINDOWS {
         return Err(Error::InvalidSnapshot {
             field: "Codex quota",
         });
@@ -2165,6 +2211,11 @@ fn validate_quota(quota: Option<&CodexQuota>) -> Result<()> {
             || window
                 .resets_at
                 .is_some_and(|reset| reset <= quota.observed_at)
+            || window.scope.as_deref().is_some_and(|scope| {
+                scope.is_empty()
+                    || scope.len() > MAX_QUOTA_SCOPE_BYTES
+                    || scope.chars().any(char::is_control)
+            })
         {
             return Err(Error::InvalidSnapshot {
                 field: "Codex quota window",
@@ -2174,15 +2225,32 @@ fn validate_quota(quota: Option<&CodexQuota>) -> Result<()> {
     Ok(())
 }
 
+fn validate_codex(quota: Option<&CodexQuota>) -> Result<()> {
+    validate_quota(quota)?;
+    if quota.is_some_and(|quota| {
+        quota.windows.len() > MAX_CODEX_QUOTA_WINDOWS
+            || quota.windows.iter().any(|w| w.scope.is_some())
+    }) {
+        return Err(Error::InvalidSnapshot {
+            field: "Codex quota",
+        });
+    }
+    Ok(())
+}
+
 fn validate_claude(quota: Option<&CodexQuota>) -> Result<()> {
     validate_quota(quota)?;
     let Some(quota) = quota else { return Ok(()) };
+    let scoped = quota.windows.iter().filter(|w| w.scope.is_some()).count();
     if !matches!(quota.state, CodexQuotaState::Fresh | CodexQuotaState::Stale)
+        || quota.windows.len() - scoped > 2
+        || scoped > MAX_SCOPED_QUOTA_WINDOWS
         || quota.windows.iter().enumerate().any(|(index, window)| {
             !matches!(window.duration_minutes, 300 | 10080)
-                || quota.windows[..index]
-                    .iter()
-                    .any(|previous| previous.duration_minutes == window.duration_minutes)
+                || quota.windows[..index].iter().any(|previous| {
+                    previous.duration_minutes == window.duration_minutes
+                        && previous.scope == window.scope
+                })
         })
     {
         return Err(Error::InvalidSnapshot {
@@ -2214,7 +2282,62 @@ fn encode_quota(encoder: &mut Encoder, quota: Option<&CodexQuota>) {
         if let Some(reset) = window.resets_at {
             encoder.bytes.extend_from_slice(&reset.to_le_bytes());
         }
+        encoder.byte(u8::from(window.scope.is_some()));
+        if let Some(scope) = &window.scope {
+            encoder.string(scope);
+        }
     }
+}
+
+fn validate_failure(failure: Option<QuotaFailure>) -> Result<()> {
+    if failure.is_some_and(|failure| failure.at == 0) {
+        return Err(Error::InvalidSnapshot {
+            field: "quota failure",
+        });
+    }
+    Ok(())
+}
+
+fn encode_failure_record(encoder: &mut Encoder, failure: Option<QuotaFailure>) {
+    encoder.byte(u8::from(failure.is_some()));
+    let Some(failure) = failure else { return };
+    encoder.bytes.extend_from_slice(&failure.at.to_le_bytes());
+    encoder.byte(match failure.reason {
+        QuotaFailureReason::Start => 0,
+        QuotaFailureReason::Deadline => 1,
+        QuotaFailureReason::OutputLimit => 2,
+        QuotaFailureReason::ExitStatus => 3,
+        QuotaFailureReason::Malformed => 4,
+        QuotaFailureReason::ProviderError => 5,
+        QuotaFailureReason::Estimated => 6,
+        QuotaFailureReason::ObservationTime => 7,
+        QuotaFailureReason::InvalidWindow => 8,
+    });
+}
+
+fn decode_failure_record(decoder: &mut Decoder<'_>) -> Result<Option<QuotaFailure>> {
+    if !decode_bool(decoder, "quota failure presence")? {
+        return Ok(None);
+    }
+    let at = decode_u64(decoder)?;
+    let reason = match decoder.byte()? {
+        0 => QuotaFailureReason::Start,
+        1 => QuotaFailureReason::Deadline,
+        2 => QuotaFailureReason::OutputLimit,
+        3 => QuotaFailureReason::ExitStatus,
+        4 => QuotaFailureReason::Malformed,
+        5 => QuotaFailureReason::ProviderError,
+        6 => QuotaFailureReason::Estimated,
+        7 => QuotaFailureReason::ObservationTime,
+        8 => QuotaFailureReason::InvalidWindow,
+        value => {
+            return Err(Error::InvalidTag {
+                field: "quota failure reason",
+                value,
+            });
+        }
+    };
+    Ok(Some(QuotaFailure { at, reason }))
 }
 
 fn decode_quota(decoder: &mut Decoder<'_>) -> Result<Option<CodexQuota>> {
@@ -2234,7 +2357,7 @@ fn decode_quota(decoder: &mut Decoder<'_>) -> Result<Option<CodexQuota>> {
         }
     };
     let observed_at = decode_u64(decoder)?;
-    let count = decoder.count("Codex quota windows", MAX_CODEX_QUOTA_WINDOWS)?;
+    let count = decoder.count("quota windows", MAX_QUOTA_WINDOWS)?;
     let mut windows = Vec::with_capacity(count);
     for _ in 0..count {
         windows.push(CodexQuotaWindow {
@@ -2242,6 +2365,9 @@ fn decode_quota(decoder: &mut Decoder<'_>) -> Result<Option<CodexQuota>> {
             remaining_percent: decoder.byte()?,
             resets_at: decode_bool(decoder, "Codex quota reset")?
                 .then(|| decode_u64(decoder))
+                .transpose()?,
+            scope: decode_bool(decoder, "quota scope")?
+                .then(|| decoder.string("quota scope", MAX_QUOTA_SCOPE_BYTES))
                 .transpose()?,
         });
     }
@@ -2856,6 +2982,7 @@ mod tests {
             duration_minutes,
             remaining_percent: 50,
             resets_at,
+            scope: None,
         }
     }
 
@@ -3097,7 +3224,19 @@ mod tests {
             claude_quota: Some(ClaudeQuota {
                 state: ClaudeQuotaState::Fresh,
                 observed_at: 100,
-                windows: vec![window(300, Some(200)), window(10080, None)],
+                windows: vec![
+                    window(300, Some(200)),
+                    window(10080, None),
+                    QuotaWindow {
+                        scope: Some("Fable".into()),
+                        ..window(10080, Some(200))
+                    },
+                ],
+            }),
+            codex_quota_failure: None,
+            claude_quota_failure: Some(QuotaFailure {
+                at: 120,
+                reason: QuotaFailureReason::InvalidWindow,
             }),
             sidebar: Sidebar::Closed,
             attention_queue: Vec::new(),
@@ -3121,6 +3260,8 @@ mod tests {
         encode_quota(&mut payload, snapshot.codex_quota.as_ref());
         let claude = snapshot.claude_quota.as_ref().map(claude_as_codex);
         encode_quota(&mut payload, claude.as_ref());
+        encode_failure_record(&mut payload, snapshot.codex_quota_failure);
+        encode_failure_record(&mut payload, snapshot.claude_quota_failure);
         encode_sidebar(&mut payload, snapshot.sidebar);
         encode_workspace_set(&mut payload, snapshot);
         encode_attention_queue(&mut payload, &snapshot.attention_queue);
@@ -3471,14 +3612,14 @@ mod tests {
         for (action, expected) in [
             (
                 Action::Workspace(WorkspaceAction::CloseTab { tab: "t1".into() }),
-                "454f4e571a0001000a00000002007231001202007431",
+                "454f4e571b0001000a00000002007231001202007431",
             ),
             (
                 Action::Workspace(WorkspaceAction::SetTabDirectory {
                     tab: "t1".into(),
                     directory: b"/tmp".to_vec(),
                 }),
-                "454f4e571a0001001000000002007231000c0200743104002f746d70",
+                "454f4e571b0001001000000002007231000c0200743104002f746d70",
             ),
             (
                 Action::InvokePopup {
@@ -3487,36 +3628,36 @@ mod tests {
                     expected_instance: Some("u1".into()),
                     intent: InvokeIntent::Focus,
                 },
-                "454f4e571a00010015000000020072310013020074310300676974010200753101",
+                "454f4e571b00010015000000020072310013020074310300676974010200753101",
             ),
             (
                 Action::CommitDirectory {
                     target,
                     directory: b"/tmp".to_vec(),
                 },
-                "454f4e571a00010014000000020072310015020074310200753104002f746d70",
+                "454f4e571b00010014000000020072310015020074310200753104002f746d70",
             ),
-            (Action::CreateColumn, "454f4e571a00010006000000020072310016"),
+            (Action::CreateColumn, "454f4e571b00010006000000020072310016"),
             (
                 Action::ClosePane { pane: "p2".into() },
-                "454f4e571a0001000a00000002007231001702007032",
+                "454f4e571b0001000a00000002007231001702007032",
             ),
             (
                 Action::MovePaneSideways(Side::Right),
-                "454f4e571a00010006000000020072310019",
+                "454f4e571b00010006000000020072310019",
             ),
             (
                 Action::Edit {
                     file: b"/tmp/a".to_vec(),
                 },
-                "454f4e571a0001000e00000002007231001a06002f746d702f61",
+                "454f4e571b0001000e00000002007231001a06002f746d702f61",
             ),
             (
                 Action::CreateCommandPane {
                     argv: vec![b"hx".to_vec(), b"a".to_vec()],
                     focus: false,
                 },
-                "454f4e571a0001001000000002007231001b00020002006878010061",
+                "454f4e571b0001001000000002007231001b00020002006878010061",
             ),
             (
                 Action::LaunchTab {
@@ -3524,7 +3665,7 @@ mod tests {
                     argv: vec![],
                     focus: true,
                 },
-                "454f4e571a0001000f00000002007231002504002f746d70000001",
+                "454f4e571b0001000f00000002007231002504002f746d70000001",
             ),
             (
                 Action::LaunchTab {
@@ -3532,47 +3673,47 @@ mod tests {
                     argv: vec![b"hx".to_vec(), b"a".to_vec()],
                     focus: false,
                 },
-                "454f4e571a0001001600000002007231002504002f746d7002000200687801006100",
+                "454f4e571b0001001600000002007231002504002f746d7002000200687801006100",
             ),
             (
                 Action::ToggleSidebar,
-                "454f4e571a0001000600000002007231001c",
+                "454f4e571b0001000600000002007231001c",
             ),
             (
                 Action::FocusAttention {
                     tab: "t1".into(),
                     target: "p2".into(),
                 },
-                "454f4e571a0001000e00000002007231001d0200743102007032",
+                "454f4e571b0001000e00000002007231001d0200743102007032",
             ),
             (
                 Action::NextAttention,
-                "454f4e571a0001000600000002007231001e",
+                "454f4e571b0001000600000002007231001e",
             ),
             (
                 Action::PreviousAttention,
-                "454f4e571a0001000600000002007231001f",
+                "454f4e571b0001000600000002007231001f",
             ),
             (
                 Action::ReadTerminal {
                     target: "p2".into(),
                 },
-                "454f4e571a0001000a00000002007231002602007032",
+                "454f4e571b0001000a00000002007231002602007032",
             ),
             (
                 Action::SendTerminal {
                     target: "p2".into(),
                     input: TerminalInput::Paste("hi".into()),
                 },
-                // v26's u32-length paste.
-                "454f4e571a000100110000000200723100270200703200020000006869",
+                // v27's u32-length paste.
+                "454f4e571b000100110000000200723100270200703200020000006869",
             ),
             (
                 Action::SendTerminal {
                     target: "u1".into(),
                     input: TerminalInput::Enter,
                 },
-                "454f4e571a0001000b0000000200723100270200753101",
+                "454f4e571b0001000b0000000200723100270200753101",
             ),
         ] {
             let request = Request {
@@ -3592,7 +3733,7 @@ mod tests {
         let bytes = encode_request(&request).unwrap();
         assert_eq!(
             hex(&bytes),
-            "454f4e571a0001001600000002007231010d0073657373696f6e2d322e392d310201",
+            "454f4e571b0001001600000002007231010d0073657373696f6e2d322e392d310201",
         );
         assert_eq!(decode_request(&bytes).unwrap(), request);
         for caller in ["", "session 2"] {
@@ -3668,16 +3809,31 @@ mod tests {
                     duration_minutes: 300,
                     remaining_percent: 42,
                     resets_at: Some(500),
+                    scope: None,
                 }],
             }),
             claude_quota: Some(ClaudeQuota {
                 state: ClaudeQuotaState::Stale,
                 observed_at: 90,
-                windows: vec![QuotaWindow {
-                    duration_minutes: 10080,
-                    remaining_percent: 7,
-                    resets_at: None,
-                }],
+                windows: vec![
+                    QuotaWindow {
+                        duration_minutes: 10080,
+                        remaining_percent: 7,
+                        resets_at: None,
+                        scope: None,
+                    },
+                    QuotaWindow {
+                        duration_minutes: 10080,
+                        remaining_percent: 60,
+                        resets_at: None,
+                        scope: Some("Fable".into()),
+                    },
+                ],
+            }),
+            codex_quota_failure: None,
+            claude_quota_failure: Some(QuotaFailure {
+                at: 95,
+                reason: QuotaFailureReason::Deadline,
             }),
             sidebar: Sidebar::Closed,
             attention_queue: Vec::new(),
@@ -3690,22 +3846,23 @@ mod tests {
             (
                 snapshot,
                 concat!(
-                    "454f4e571a008100ff0000000100020002000100010000000200743100000041",
+                    "454f4e571b0081001a0100000100020002000100010000000200743100000041",
                     "00008040010003006769740300476974000404004b6579470100020074310400",
                     "2f746d700001020070330102007531030002007031030073703103002f703101",
                     "02007031000002007032030073703203002f7032010200703200000200703303",
                     "0073703303002f70330102007033000102ff0500636f6465780600656f6e2d39",
                     "6101007401006d01000000000000000002000100020075310300676974030073",
                     "753103002f753100010100640000000000000001002c0100002a01f401000000",
-                    "00000001015a0000000000000001006027000007000102007731020077310100",
+                    "0000000001015a00000000000000020060270000070000602700003c00010500",
+                    "4661626c6500015f00000000000000010102007731020077310100",
                     // w1's tab count, then v22's needs-input rollup and shown rank 0.
                     "02007731000100",
                     "0100",
-                    // v26's empty attention queue.
+                    // v27's empty attention queue.
                     "0000",
                 ),
             ),
-            (failure, "454f4e571a0082000a00000004006275737902006e6f"),
+            (failure, "454f4e571b0082000a00000004006275737902006e6f"),
             (
                 Response::Text(TerminalText {
                     target: terminal_target(TargetId::Pane("p2".into()), "session-2"),
@@ -3720,7 +3877,7 @@ mod tests {
                     text: "a\nb".into(),
                 }),
                 concat!(
-                    "454f4e571a00860037000000",
+                    "454f4e571b00860037000000",
                     // Workspace, tab, pane p2 and its terminal; no caller.
                     "02007731020074310002007032090073657373696f6e2d3200",
                     // Revision, alternate screen, 24x80, title, directory,
@@ -3736,7 +3893,7 @@ mod tests {
                     enter_delay_ms: 300,
                 }),
                 concat!(
-                    "454f4e571a00870034000000",
+                    "454f4e571b00870034000000",
                     "02007731020074310002007032090073657373696f6e2d32",
                     "0102007731020074310102007531090073657373696f6e2d33",
                     "012c01",
@@ -3746,7 +3903,7 @@ mod tests {
                 Response::Ended(Ended {
                     generation: "g1".into(),
                 }),
-                "454f4e571a0085000400000002006731",
+                "454f4e571b0085000400000002006731",
             ),
         ] {
             let bytes = encode_response(&response).unwrap();
@@ -3772,7 +3929,7 @@ mod tests {
                     },
                 }),
                 concat!(
-                    "454f4e571a00830026000000020067310500302e392e301a0002006f6b010002",
+                    "454f4e571b00830026000000020067310500302e392e301b0002006f6b010002",
                     "007331010500726561647900040062757379",
                 ),
             ),
@@ -3781,7 +3938,7 @@ mod tests {
                     generation: "g1".into(),
                     sessions: vec![],
                 }),
-                "454f4e571a00840006000000020067310000",
+                "454f4e571b00840006000000020067310000",
             ),
         ] {
             let bytes = encode_lifecycle_response(&response).unwrap();
@@ -3840,6 +3997,8 @@ mod tests {
             }],
             codex_quota: None,
             claude_quota: None,
+            codex_quota_failure: None,
+            claude_quota_failure: None,
             sidebar: Sidebar::Off,
             attention_queue: vec![QueueEntry {
                 workspace: "w1".into(),
@@ -3852,9 +4011,9 @@ mod tests {
         assert_eq!(
             hex(&bytes),
             concat!(
-                "454f4e571a0081008600000001000100010000000100740000000000000000",
+                "454f4e571b0081008800000001000100010000000100740000000000000000",
                 "0000010001007401002f00010100700001000100700200737002002f700101007000",
-                "01012800000000000000000100000000000000000000000001000002",
+                "010128000000000000000001000000000000000000000000010000000002",
                 "02007731020077310100020077310001000100",
                 // u16 count, workspace, tab, target, then needs-input permission at 40%.
                 "01000200773101007401007001012800000000000000000100000000000000000000",
@@ -4398,7 +4557,7 @@ mod tests {
         let bytes = encode_response(&Response::Snapshot(state.clone())).unwrap();
         assert_eq!(forge(&state), bytes);
 
-        let valid: [fn(&mut Snapshot); 11] = [
+        let valid: [fn(&mut Snapshot); 12] = [
             |_| {},
             |s| s.sidebar = Sidebar::Off,
             // An entry may be keyless, or overridden by another listed entry.
@@ -4433,10 +4592,33 @@ mod tests {
                 s.codex_quota.as_mut().unwrap().state = CodexQuotaState::Stale;
                 s.claude_quota.as_mut().unwrap().state = ClaudeQuotaState::Stale;
             },
+            // A reading of scoped windows alone, the longest scope, and every failure reason.
+            |s| {
+                s.claude_quota.as_mut().unwrap().windows.drain(..2);
+                s.claude_quota.as_mut().unwrap().windows[0].scope =
+                    Some("x".repeat(MAX_QUOTA_SCOPE_BYTES));
+            },
         ];
         for change in valid {
             let mut candidate = snapshot();
             change(&mut candidate);
+            let response = Response::Snapshot(candidate);
+            let bytes = encode_response(&response).unwrap();
+            assert_eq!(decode_response(&bytes).unwrap(), response);
+        }
+        for reason in [
+            QuotaFailureReason::Start,
+            QuotaFailureReason::Deadline,
+            QuotaFailureReason::OutputLimit,
+            QuotaFailureReason::ExitStatus,
+            QuotaFailureReason::Malformed,
+            QuotaFailureReason::ProviderError,
+            QuotaFailureReason::Estimated,
+            QuotaFailureReason::ObservationTime,
+            QuotaFailureReason::InvalidWindow,
+        ] {
+            let mut candidate = snapshot();
+            candidate.codex_quota_failure = Some(QuotaFailure { at: 1, reason });
             let response = Response::Snapshot(candidate);
             let bytes = encode_response(&response).unwrap();
             assert_eq!(decode_response(&bytes).unwrap(), response);
@@ -4477,7 +4659,7 @@ mod tests {
             }
         }
         type Change = fn(&mut Snapshot);
-        let invalid: [(&str, &[Change]); 27] = [
+        let invalid: [(&str, &[Change]); 28] = [
             // Every tab, pane and popup owns its identity, session and endpoint.
             (
                 "surface identity",
@@ -4600,7 +4782,14 @@ mod tests {
                 "Codex quota",
                 &[
                     |s| codex(s).observed_at = 0,
-                    |s| codex(s).windows.push(window(60, None)),
+                    |s| {
+                        codex(s).windows = (0..=MAX_QUOTA_WINDOWS as u32)
+                            .map(|n| window(60 + n, None))
+                            .collect()
+                    },
+                    // Codex has two windows at most, and none scoped.
+                    |s| codex(s).windows.push(window(43200, None)),
+                    |s| codex(s).windows[0].scope = Some("Spark".into()),
                 ],
             ),
             (
@@ -4619,6 +4808,9 @@ mod tests {
                     |s| codex(s).windows[0].resets_at = Some(100),
                     |s| claude(s).windows[0].remaining_percent = 101,
                     |s| claude(s).windows[0].resets_at = Some(100),
+                    |s| claude(s).windows[2].scope = Some(String::new()),
+                    |s| claude(s).windows[2].scope = Some("x".repeat(MAX_QUOTA_SCOPE_BYTES + 1)),
+                    |s| claude(s).windows[2].scope = Some("Fable\n".into()),
                 ],
             ),
             (
@@ -4626,7 +4818,28 @@ mod tests {
                 &[
                     |s| claude(s).windows[0].duration_minutes = 60,
                     |s| claude(s).windows[1].duration_minutes = 300,
+                    // One scope has one window per duration.
+                    |s| claude(s).windows[1].scope = Some("Fable".into()),
+                    // At most four scoped windows.
+                    |s| {
+                        let scoped = claude(s).windows[2].clone();
+                        claude(s).windows = ["a", "b", "c", "d", "e"]
+                            .map(|scope| QuotaWindow {
+                                scope: Some(scope.into()),
+                                ..scoped.clone()
+                            })
+                            .to_vec()
+                    },
                 ],
+            ),
+            (
+                "quota failure",
+                &[|s| {
+                    s.codex_quota_failure = Some(QuotaFailure {
+                        at: 0,
+                        reason: QuotaFailureReason::Start,
+                    })
+                }],
             ),
             // Unavailable alone has no record, and only needs input a kind.
             (
@@ -4720,10 +4933,17 @@ mod tests {
     fn every_legal_snapshot_fits_the_frame_budget() {
         // Upper bound: every session takes the larger popup form, every tab
         // reserves both selections and the most columns, and both quotas carry
-        // every window with a reset.
+        // every window with a reset and the longest scope, and a failure.
         let id = 2 + MAX_ID_BYTES;
         let entry_id = 2 + MAX_ENTRY_ID_BYTES;
-        let quota = 1 + 1 + 8 + 2 + MAX_CODEX_QUOTA_WINDOWS * (4 + 1 + 1 + 8);
+        let quota = 1
+            + 1
+            + 8
+            + 2
+            + MAX_QUOTA_WINDOWS * (4 + 1 + 1 + 8 + 1 + 2 + MAX_QUOTA_SCOPE_BYTES)
+            + 1
+            + 8
+            + 1;
         let attention = 3
             + 2
             + MAX_APP_BYTES
