@@ -3,9 +3,9 @@ use eon_workspace_protocol::v27::{
     Action, Attention, AttentionKind, AttentionState, ClaudeQuotaState, CodexQuotaState,
     Column as SnapshotColumn, Direction, Failure, InvokeIntent, MAX_COLUMNS, MAX_DIRECTORY_BYTES,
     MAX_SESSIONS, MAX_TABS, Pane as SnapshotPane, Popup as SnapshotPopup,
-    PopupEntry as SnapshotEntry, PopupKey, PopupTarget, QuotaFailure, QuotaFailureReason,
-    QuotaWindow, Screen, Sent, Side, Sidebar, Snapshot, Tab as SnapshotTab, TargetId,
-    TerminalTarget, TerminalText, WorkspaceAction, check_popup_action,
+    PopupEntry as SnapshotEntry, PopupKey, PopupTarget, QuotaFailure, QuotaWindow, Screen, Sent,
+    Side, Sidebar, Snapshot, Tab as SnapshotTab, TargetId, TerminalTarget, TerminalText,
+    WorkspaceAction, check_popup_action,
 };
 use std::{
     collections::VecDeque,
@@ -2764,17 +2764,7 @@ fn json_quota_failure(output: &mut String, failure: Option<QuotaFailure>) {
         output.push_str("null");
         return;
     };
-    let reason = match failure.reason {
-        QuotaFailureReason::Start => "start",
-        QuotaFailureReason::Deadline => "deadline",
-        QuotaFailureReason::OutputLimit => "output_limit",
-        QuotaFailureReason::ExitStatus => "exit_status",
-        QuotaFailureReason::Malformed => "malformed",
-        QuotaFailureReason::ProviderError => "provider_error",
-        QuotaFailureReason::Estimated => "estimated",
-        QuotaFailureReason::ObservationTime => "observation_time",
-        QuotaFailureReason::InvalidWindow => "invalid_window",
-    };
+    let reason = super::quota::failure_reason(failure.reason);
     output.push_str(&format!(
         "{{\"at\":{},\"reason\":\"{reason}\"}}",
         quota_milliseconds(failure.at)
@@ -3010,7 +3000,7 @@ pub(crate) fn json_escape(value: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use eon_workspace_protocol::v27::{ALT, PopupGeometry, Shortcut};
+    use eon_workspace_protocol::v27::{ALT, PopupGeometry, QuotaFailureReason, Shortcut};
 
     fn two_workspace_set(
         mut operate: impl FnMut(SessionOperation) -> Result<(), String>,

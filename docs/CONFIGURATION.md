@@ -371,10 +371,16 @@ stored reading at once, if there is one, and otherwise appears after its
 provider's next read.
 
 Codex refreshes at least one minute apart and Claude at least five minutes
-apart, also after a failed read or a chip shown again. A failed read keeps the last good values; they become `old` once they are more than an hour old and
-disappear after 24 hours. Each supplied reset expires its own window. Missing
-facts do not mean zero usage. Sign-out is not detected; the last reading ages
-like any other and disappears after 24 hours.
+apart, also after a failed read or a chip shown again. Eon windows share one
+Claude read every five minutes when the shared schedule is usable; otherwise
+each keeps its own schedule. Older Eon versions still read on their own.
+After the provider refuses a Claude read (for example a rate limit), the next
+one waits 30 minutes, then an hour after a second refusal and two hours after
+each later one, until a read succeeds. A failed read keeps the last good
+values; they become `old` once they are more than an hour old and disappear
+after 24 hours. Each supplied reset expires its own window. Missing facts do
+not mean zero usage. Sign-out is not detected; the last reading ages like any
+other and disappears after 24 hours.
 
 Each provider's last good reading is also stored in `$XDG_STATE_HOME/eon/quota`
 (`~/.local/state/eon/quota` by default), shared by all your Eon windows, so a

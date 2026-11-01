@@ -2211,7 +2211,17 @@ socket names, JSON fields and protocol identifiers retain their spellings.
   any read in progress, and drops its last reading. Codex reads start at least
   one minute apart and Claude reads at least five minutes apart, including
   after a failed read and across a stop and restart; reads run off workspace
-  I/O.
+  I/O. Claude is read once for the user across all Eon supervisors and
+  windows: they share Claude's read schedule beside the stored readings, under
+  a file lock, and a supervisor whose turn has not come shows the stored
+  reading and the shared last failure instead of reading. After a read that
+  fails with `provider_error`, as a rate-limited read does, the next Claude
+  read waits 30 minutes, then one hour, then two hours for each further such
+  failure with no successful read between; a successful read restores the
+  five-minute spacing. A schedule that is unreadable, or set further ahead
+  than two hours, is ignored, and a supervisor that cannot read, lock or write
+  it keeps its own schedule. Codex reads stay per supervisor and never back
+  off.
   The native chips show every supplied supported window and remaining
   percentage, one chip per window for each provider
   ([Eon Bar](../venus/docs/PRESENTATION.md#eon-bar)), with provider periods,
@@ -2246,11 +2256,13 @@ socket names, JSON fields and protocol identifiers retain their spellings.
   memory: its wall-clock end and one reason, `start` (CodexBar could not be
   started or read), `deadline`, `output_limit`, `exit_status`, `malformed`
   (not one result of the expected JSON shape), `provider_error` (another
-  provider or source, or a reported error), `estimated`, `observation_time`
+  provider or source, or a reported error, also on a nonzero CodexBar exit
+  whose one result carries it), `estimated`, `observation_time`
   (missing, invalid, future or over an hour old) or `invalid_window` (a window
   value, duration, count or conflicting repeat). The next successful read,
   including one that finds no quota, clears it, as unlisting the provider does.
-  It is never stored and carries no CodexBar output.
+  It carries no CodexBar output and never enters the stored readings; Claude's
+  is shared with its read schedule.
 - **Boundary:** One selected account per provider, Linux Wayland and Nix only.
   Explicit sources avoid browser fallback, interactive login and model turns.
   No credential, identity, raw output or billing data enters EONW, Eon logs or
@@ -2259,7 +2271,8 @@ socket names, JSON fields and protocol identifiers retain their spellings.
   reading ages like any other (Lucca, 2026-10-16). Blocked/unknown labels are
   not guaranteed.
   CodexBar owns its local authentication/cache mechanisms. Eon does not rewrite
-  provider configuration.
+  provider configuration. Eon generations older than this schedule keep
+  reading Claude on their own.
 - **Source choice:** CodexBar v0.74.1, source
   `7c08c0ae783b72040b728757eb85a6cfe4fc2443`, MIT; upstream musl x86_64 release
   and resources are hash-pinned. This accepts its Swift binary size to remove
@@ -2308,7 +2321,16 @@ socket names, JSON fields and protocol identifiers retain their spellings.
     `cli_json_carries_the_full_attention_record_and_quotas_but_human_output_does_not`
     and Venus's
     `two_provider_chips_share_layout_without_losing_identity_or_freshness`;
-    those beads' commit is their revision.
+    those beads' commit is their revision. Reading Claude once per user with
+    backoff (`eon-agsni`) is proved by
+    `claude_is_read_once_across_supervisors_and_backs_off_after_provider_errors`,
+    `claude_peers_adopt_newer_readings_and_clear_only_successful_missing_quota`,
+    `invalid_claude_schedules_allow_an_immediate_read`,
+    `claude_schedule_preserves_reasons_bounds_and_backoff`,
+    `failed_schedule_rewrites_keep_the_in_memory_backoff`,
+    `claude_provider_errors_back_off_without_a_usable_schedule` and the
+    extended `workers_isolate_failure_and_bound_output_timeout_and_shutdown`;
+    that bead's commit is its revision.
 - **Open proof:** Pending re-proof in this repository: real installed Codex and
   Claude windows with reset details on hover; on an installed surface, a
   controlled source failure leaving a recent reading unchanged and a retained

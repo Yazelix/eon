@@ -5,6 +5,13 @@ installation, and proven contract changes.
 
 ## Unreleased
 
+- Fixed: Eon windows and generations from this release on share one Claude
+  quota read every five minutes when the shared schedule is usable; otherwise
+  each keeps its own schedule. After Claude's usage endpoint refuses a read (as
+  when Anthropic rate-limits it) Eon waits 30 minutes before trying again,
+  then one hour after a second refusal and two hours after each later one,
+  until a read succeeds; `claude_quota_failure` names such a refusal
+  `provider_error` instead of `exit_status` (`eon-agsni`).
 - Claude's model-scoped weekly window, such as CodexBar's `Fable only`, shows
   as its own Claude chip after the unscoped ones, labelled with its scope
   (`Fable 3d/7d 60%`); `[bar] widgets`' `claude_quota` covers it. `eon

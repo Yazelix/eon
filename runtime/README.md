@@ -62,6 +62,11 @@ CLI and Claude OAuth sources, with no browser fallback or inference. Each read
 has a ten-second deadline, 64 KiB output cap and process-group cleanup; Codex
 reads start at least one minute apart and Claude reads at least five minutes
 apart. Raw provider JSON and identities are discarded.
+Supervisors share one Claude read every five minutes through a locked schedule
+beside the stored readings; one that cannot use it keeps its own. After the
+provider refuses a Claude read (for example a rate limit), the next one waits
+30 minutes, then an hour after a second refusal and two hours after each later
+one, until a read succeeds.
 
 Runtime validates timestamps, actual periods and percentages, rounding remaining
 percentages down once. Failed reads keep last-good facts unchanged;

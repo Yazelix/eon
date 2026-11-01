@@ -6,7 +6,7 @@ use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use std::{
     fs,
-    io::{self, Read, Write},
+    io::{self, Read, Seek, SeekFrom, Write},
     os::{
         fd::AsRawFd,
         unix::{
@@ -326,6 +326,193 @@ fn epoch_seconds() -> Option<u64> {
         .map(|d| d.as_secs())
 }
 
+/// The CLI and shared schedule's failure reason (EON-C27).
+pub(crate) fn failure_reason(reason: Failure) -> &'static str {
+    match reason {
+        Failure::Start => "start",
+        Failure::Deadline => "deadline",
+        Failure::OutputLimit => "output_limit",
+        Failure::ExitStatus => "exit_status",
+        Failure::Malformed => "malformed",
+        Failure::ProviderError => "provider_error",
+        Failure::Estimated => "estimated",
+        Failure::ObservationTime => "observation_time",
+        Failure::InvalidWindow => "invalid_window",
+    }
+}
+
+#[derive(Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
+struct StoredFailure {
+    at: u64,
+    reason: String,
+}
+
+fn save_failure<S: serde::Serializer>(
+    failure: &Option<QuotaFailure>,
+    serializer: S,
+) -> Result<S::Ok, S::Error> {
+    failure
+        .map(|f| StoredFailure {
+            at: f.at,
+            reason: failure_reason(f.reason).to_owned(),
+        })
+        .serialize(serializer)
+}
+
+fn load_failure<'de, D: serde::Deserializer<'de>>(
+    deserializer: D,
+) -> Result<Option<QuotaFailure>, D::Error> {
+    Option::<StoredFailure>::deserialize(deserializer)?
+        .map(|f| {
+            Ok(QuotaFailure {
+                at: f.at,
+                reason: match f.reason.as_str() {
+                    "start" => Failure::Start,
+                    "deadline" => Failure::Deadline,
+                    "output_limit" => Failure::OutputLimit,
+                    "exit_status" => Failure::ExitStatus,
+                    "malformed" => Failure::Malformed,
+                    "provider_error" => Failure::ProviderError,
+                    "estimated" => Failure::Estimated,
+                    "observation_time" => Failure::ObservationTime,
+                    "invalid_window" => Failure::InvalidWindow,
+                    _ => return Err(serde::de::Error::custom("unknown quota failure")),
+                },
+            })
+        })
+        .transpose()
+}
+
+/// Claude's shared read schedule; Codex keeps its schedule in memory (EON-C27).
+#[derive(Clone, Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
+struct Schedule {
+    version: u32,
+    next_at: u64,
+    failures: u32,
+    #[serde(serialize_with = "save_failure", deserialize_with = "load_failure")]
+    failure: Option<QuotaFailure>,
+    #[serde(skip)]
+    write_failed: bool,
+}
+
+impl Default for Schedule {
+    fn default() -> Self {
+        Self {
+            version: STORE_VERSION,
+            next_at: 0,
+            failures: 0,
+            failure: None,
+            write_failed: false,
+        }
+    }
+}
+
+fn milliseconds(duration: Duration) -> u64 {
+    u64::try_from(duration.as_millis()).unwrap_or(u64::MAX)
+}
+
+/// Claude's wait in read intervals after consecutive provider errors: 30 min, 1 h, then 2 h.
+fn backoff(failures: u32) -> u32 {
+    match failures {
+        0 | 1 => 6,
+        2 => 12,
+        _ => 24,
+    }
+}
+
+fn open_schedule(path: &Path) -> io::Result<fs::File> {
+    fs::DirBuilder::new().recursive(true).mode(0o700).create(
+        path.parent()
+            .ok_or_else(|| io::Error::other("no quota directory"))?,
+    )?;
+    let file = fs::OpenOptions::new()
+        .read(true)
+        .write(true)
+        .create(true)
+        .truncate(false)
+        .mode(0o600)
+        .custom_flags(libc::O_NONBLOCK)
+        .open(path)?;
+    if !file.metadata()?.is_file() {
+        return Err(io::Error::other("not a quota schedule file"));
+    }
+    // Peers hold the lock only to rewrite this file; one that stays stopped holding it for a
+    // second leaves this worker on its in-memory schedule rather than blocked (EON-C27).
+    let deadline = Instant::now() + Duration::from_secs(1);
+    loop {
+        // SAFETY: flock locks this open file, and closing it releases the lock.
+        if unsafe { libc::flock(file.as_raw_fd(), libc::LOCK_EX | libc::LOCK_NB) } == 0 {
+            return Ok(file);
+        }
+        let error = io::Error::last_os_error();
+        if error.kind() != io::ErrorKind::WouldBlock || Instant::now() >= deadline {
+            return Err(error);
+        }
+        thread::sleep(Duration::from_millis(5));
+    }
+}
+
+fn load_schedule(file: &mut fs::File, now: u64, maximum: Duration) -> Option<Schedule> {
+    file.seek(SeekFrom::Start(0)).ok()?;
+    let mut bytes = Vec::new();
+    file.take(4097).read_to_end(&mut bytes).ok()?;
+    if bytes.len() > 4096 {
+        return None;
+    }
+    let schedule: Schedule = serde_json::from_slice(&bytes).ok()?;
+    (schedule.version == STORE_VERSION
+        && schedule.failure.is_none_or(|failure| failure.at > 0)
+        && schedule.next_at.saturating_sub(now) <= milliseconds(maximum))
+    .then_some(schedule)
+}
+
+fn write_schedule(file: &mut fs::File, schedule: &mut Schedule) -> io::Result<()> {
+    let written = (|| -> io::Result<()> {
+        let bytes = serde_json::to_vec(&*schedule)?;
+        file.set_len(0)?;
+        file.seek(SeekFrom::Start(0))?;
+        file.write_all(&bytes)
+    })();
+    // A failed rewrite can leave a partial file; keep this slot's in-memory backoff (EON-C27).
+    schedule.write_failed = written.is_err();
+    written
+}
+
+/// Reads and updates under one short lock, never held during collection (EON-C27).
+fn update_schedule(
+    memory: &Mutex<Schedule>,
+    path: Option<&Path>,
+    maximum: Duration,
+    update: impl FnOnce(&mut Schedule, u64) -> bool,
+) -> (Schedule, bool) {
+    let mut memory = memory.lock().expect("quota schedule");
+    let mut file = path.and_then(|path| open_schedule(path).ok());
+    let now = milliseconds(
+        SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap_or_default(),
+    );
+    // Without a usable file the in-memory schedule stands (EON-C27).
+    if let Some(file) = &mut file
+        && let Some(schedule) = load_schedule(file, now, maximum)
+    {
+        *memory = schedule;
+    }
+    // A clock set back never stops reads, with or without a file.
+    if memory.next_at.saturating_sub(now) > milliseconds(maximum) {
+        memory.next_at = now;
+    }
+    if (update(&mut memory, now) || memory.write_failed)
+        && let Some(locked) = &mut file
+        && write_schedule(locked, &mut memory).is_err()
+    {
+        file = None;
+    }
+    (memory.clone(), file.is_some())
+}
+
 struct Provider {
     quota: Arc<Mutex<Option<CodexQuota>>>,
     /// The last read's failure, until a read succeeds.
@@ -340,7 +527,7 @@ impl Provider {
         provider: &'static str,
         interval: Duration,
         timeout: Duration,
-        last_read: Arc<Mutex<Option<Instant>>>,
+        schedule_memory: Arc<Mutex<Schedule>>,
         store: Option<PathBuf>,
     ) -> Self {
         let quota = Arc::new(Mutex::new(None));
@@ -360,28 +547,84 @@ impl Provider {
                 {
                     *current = Some(stored);
                 }
-                // Reads are spaced from the end of the last one, also across a restarted worker.
-                let since = last_read.lock().ok().and_then(|last| *last);
-                if let Some(wait) = since.and_then(|since| interval.checked_sub(since.elapsed()))
-                    && !matches!(
-                        stopped.recv_timeout(wait),
-                        Err(mpsc::RecvTimeoutError::Timeout)
-                    )
-                {
-                    return;
-                }
+                let schedule_path = store
+                    .as_deref()
+                    .filter(|_| provider == "claude")
+                    .and_then(Path::parent)
+                    .map(|dir| dir.join("claude.schedule"));
+                // The longest backoff; a schedule further ahead is ignored (EON-C27).
+                let maximum = interval * backoff(u32::MAX);
                 loop {
-                    let fetched = fetch(&program, provider, timeout, &stopped);
-                    if let Ok(mut last) = last_read.lock() {
-                        *last = Some(Instant::now());
+                    let mut wait = Duration::ZERO;
+                    let (schedule, shared_schedule) = update_schedule(
+                        &schedule_memory,
+                        schedule_path.as_deref(),
+                        maximum,
+                        |schedule, now| {
+                            wait = Duration::from_millis(schedule.next_at.saturating_sub(now));
+                            if !wait.is_zero() {
+                                return false;
+                            }
+                            schedule.next_at = now.saturating_add(milliseconds(interval));
+                            true
+                        },
+                    );
+                    if !wait.is_zero() {
+                        if shared_schedule {
+                            if let Ok(mut last) = failed.lock() {
+                                *last = schedule.failure;
+                            }
+                            if let Some(path) = &store
+                                && let Some(now) = epoch_seconds()
+                                && let Ok(mut current) = shared.lock()
+                            {
+                                if let Some(stored) = load(path, provider, now) {
+                                    if current
+                                        .as_ref()
+                                        .is_none_or(|q| stored.observed_at > q.observed_at)
+                                    {
+                                        *current = Some(stored);
+                                    }
+                                } else if schedule.failure.is_none()
+                                    && fs::metadata(path)
+                                        .is_err_and(|e| e.kind() == io::ErrorKind::NotFound)
+                                {
+                                    *current = None;
+                                }
+                            }
+                            wait = wait.min(interval / 30);
+                        }
+                        if !matches!(
+                            stopped.recv_timeout(wait),
+                            Err(mpsc::RecvTimeoutError::Timeout)
+                        ) {
+                            break;
+                        }
+                        continue;
                     }
+                    let fetched = fetch(&program, provider, timeout, &stopped);
                     let reading = match fetched {
-                        Ok(None) => break,
+                        // A stopped read is spaced from its end, as a finished one is.
+                        Ok(None) => {
+                            update_schedule(
+                                &schedule_memory,
+                                schedule_path.as_deref(),
+                                maximum,
+                                |schedule, now| {
+                                    schedule.next_at = now.saturating_add(milliseconds(interval));
+                                    true
+                                },
+                            );
+                            break;
+                        }
                         Ok(Some(bytes)) => epoch_seconds()
                             .ok_or(Failure::ObservationTime)
                             .and_then(|now| normalize(&bytes, provider, now)),
                         Err(reason) => Err(reason),
                     };
+                    let success = reading.is_ok();
+                    let back_off =
+                        provider == "claude" && matches!(reading, Err(Failure::ProviderError));
                     // A failed read keeps the last good reading; its age alone marks it old.
                     // Without a clock to date it, a failure leaves the previous one in place.
                     let outcome = match reading {
@@ -403,12 +646,28 @@ impl Provider {
                     {
                         *last = outcome;
                     }
-                    if !matches!(
-                        stopped.recv_timeout(interval),
-                        Err(mpsc::RecvTimeoutError::Timeout)
-                    ) {
-                        break;
-                    }
+                    update_schedule(
+                        &schedule_memory,
+                        schedule_path.as_deref(),
+                        maximum,
+                        |schedule, now| {
+                            if let Some(outcome) = outcome {
+                                schedule.failure = outcome;
+                            }
+                            if success {
+                                schedule.failures = 0;
+                            } else if back_off {
+                                schedule.failures = schedule.failures.saturating_add(1);
+                            }
+                            let delay = if back_off {
+                                interval * backoff(schedule.failures)
+                            } else {
+                                interval
+                            };
+                            schedule.next_at = now.saturating_add(milliseconds(delay));
+                            true
+                        },
+                    );
                 }
             })
             .ok();
@@ -438,13 +697,12 @@ impl Drop for Provider {
     }
 }
 
-/// One provider's worker while its chip is shown, and the end of its last read, which outlives
-/// the worker.
+/// One provider's worker while its chip is shown, and its retained schedule (EON-C27).
 struct Slot {
     provider: &'static str,
     widget: &'static str,
     interval: Duration,
-    last_read: Arc<Mutex<Option<Instant>>>,
+    schedule_memory: Arc<Mutex<Schedule>>,
     worker: Option<Provider>,
 }
 
@@ -472,7 +730,7 @@ impl Quotas {
         Self::start_every(program, Duration::from_secs(1), store, widgets)
     }
 
-    /// Reads Codex every 60 units and Claude every 300, whatever the outcome (EON-C27).
+    /// Reads Codex every 60 units and Claude every 300, backing off refusals (EON-C27).
     fn start_every(
         program: &Path,
         unit: Duration,
@@ -483,7 +741,7 @@ impl Quotas {
             provider,
             widget,
             interval: unit * units,
-            last_read: Arc::default(),
+            schedule_memory: Arc::default(),
             worker: None,
         };
         let mut quotas = Self {
@@ -507,7 +765,7 @@ impl Quotas {
                     slot.provider,
                     slot.interval,
                     Duration::from_secs(10),
-                    Arc::clone(&slot.last_read),
+                    Arc::clone(&slot.schedule_memory),
                     self.store
                         .as_ref()
                         .map(|store| store.join(format!("{}.json", slot.provider))),
@@ -595,10 +853,17 @@ fn fetch(
             if let Some(status) = child.try_wait().map_err(|_| Failure::Start)?
                 && eof
             {
-                return status
-                    .success()
-                    .then_some(Some(bytes))
-                    .ok_or(Failure::ExitStatus);
+                if status.success() {
+                    return Ok(Some(bytes));
+                }
+                let reported_error = serde_json::from_slice::<Value>(&bytes).is_ok_and(|v| {
+                    matches!(v.as_array().map(Vec::as_slice), Some([result]) if !result["error"].is_null())
+                });
+                return Err(if reported_error {
+                    Failure::ProviderError
+                } else {
+                    Failure::ExitStatus
+                });
             }
             thread::sleep(Duration::from_millis(10));
         }
@@ -950,6 +1215,32 @@ mod tests {
             fetch(&program, "codex", Duration::from_secs(1), &stopped),
             Err(Failure::ExitStatus)
         );
+        let program = root.join("refused");
+        script(
+            &program,
+            "printf '%s' '[{\"provider\":\"claude\",\"source\":\"oauth\",\"error\":{\"code\":3,\"message\":\"Claude OAuth usage endpoint is rate limited by Anthropic right now.\",\"kind\":\"provider\"}}]'; exit 3",
+        );
+        assert_eq!(
+            fetch(&program, "claude", Duration::from_secs(1), &stopped),
+            Err(Failure::ProviderError)
+        );
+        for (index, (output, reason)) in [
+            ("not json", Failure::ExitStatus),
+            ("[null]", Failure::ExitStatus),
+            ("[{\"error\":null}]", Failure::ExitStatus),
+            ("[{\"error\":{}},{}]", Failure::ExitStatus),
+            ("[{\"error\":false}]", Failure::ProviderError),
+        ]
+        .into_iter()
+        .enumerate()
+        {
+            let program = root.join(format!("exit-shape-{index}"));
+            script(&program, &format!("printf '%s' '{output}'; exit 3"));
+            assert_eq!(
+                fetch(&program, "claude", Duration::from_secs(1), &stopped),
+                Err(reason)
+            );
+        }
         // A rejected reading records why and when, keeps the retained one, and a later good read
         // clears it; each provider's failure reaches its own snapshot field (eon-d0kyj).
         let mut rejected = fixture.clone();
@@ -1086,6 +1377,414 @@ mod tests {
                     .all(|gap| *gap >= unit * 60 && *gap < unit * 120),
             "Codex read gaps {codex:?}"
         );
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn claude_is_read_once_across_supervisors_and_backs_off_after_provider_errors() {
+        let root = super::super::supervisor::temporary_directory();
+        let program = root.join("backend");
+        let mode = root.join("mode");
+        let calls = root.join("calls");
+        let store = root.join("quota");
+        fs::write(&mode, "ok").unwrap();
+        let (fixture, _) = fresh("claude");
+        script(
+            &program,
+            &format!(
+                "[ \"$3\" = claude ] || exit 1\nmode=$(cat '{}')\n: > '{}'/\"$mode.$$\"\nprintf '%s %s\\n' \"$mode\" \"$$\" >> '{}'\nif [ \"$mode\" = error ]; then\nprintf '%s' '[{{\"provider\":\"claude\",\"source\":\"oauth\",\"error\":{{\"code\":3,\"message\":\"Claude OAuth usage endpoint is rate limited by Anthropic right now.\",\"kind\":\"provider\"}}}}]'\nexit 3\nfi\nprintf '%s' '{}'",
+                mode.display(),
+                root.display(),
+                calls.display(),
+                fixture
+            ),
+        );
+        let unit = Duration::from_millis(2);
+        let quotas = (0..3)
+            .map(|_| Quotas::start_every(&program, unit, Some(store.clone()), &["claude_quota"]))
+            .collect::<Vec<_>>();
+        let starts = || {
+            fs::read_to_string(&calls)
+                .unwrap_or_default()
+                .lines()
+                .map(|line| {
+                    let (mode, pid) = line.split_once(' ').unwrap();
+                    (
+                        mode.to_owned(),
+                        fs::metadata(root.join(format!("{mode}.{pid}")))
+                            .unwrap()
+                            .modified()
+                            .unwrap(),
+                    )
+                })
+                .collect::<Vec<_>>()
+        };
+        let wait = |condition: &dyn Fn() -> bool| {
+            let deadline = Instant::now() + Duration::from_secs(12);
+            while !condition() && Instant::now() < deadline {
+                thread::sleep(Duration::from_millis(5));
+            }
+            assert!(condition(), "calls: {:?}", starts());
+        };
+        wait(&|| !starts().is_empty());
+        thread::sleep(unit * 750);
+        assert!((2..=3).contains(&starts().len()), "calls: {:?}", starts());
+        wait(&|| quotas.iter().all(|q| q.claude.snapshot().is_some()));
+        fs::write(&mode, "error").unwrap();
+        wait(&|| {
+            quotas.iter().all(|q| {
+                q.claude
+                    .failure()
+                    .is_some_and(|f| f.reason == Failure::ProviderError)
+            })
+        });
+        wait(&|| starts().iter().filter(|(mode, _)| mode == "error").count() >= 2);
+        fs::write(&mode, "ok").unwrap();
+        wait(&|| {
+            let calls = starts();
+            calls.last().is_some_and(|(mode, _)| mode == "ok")
+                && quotas.iter().all(|q| q.claude.failure().is_none())
+        });
+        let calls = starts();
+        let errors = calls
+            .iter()
+            .enumerate()
+            .filter(|(_, (mode, _))| mode == "error")
+            .map(|(index, _)| index)
+            .collect::<Vec<_>>();
+        assert_eq!(errors.len(), 2, "{calls:?}");
+        assert!(
+            calls[errors[1]]
+                .1
+                .duration_since(calls[errors[0]].1)
+                .unwrap()
+                >= unit * 1800
+        );
+        let recovered = errors[1] + 1;
+        assert!(
+            calls[recovered]
+                .1
+                .duration_since(calls[errors[1]].1)
+                .unwrap()
+                >= unit * 3600
+        );
+        wait(&|| starts().len() > recovered + 1);
+        let calls = starts();
+        assert!(
+            calls
+                .windows(2)
+                .all(|pair| pair[1].1.duration_since(pair[0].1).unwrap() >= unit * 300),
+            "read starts: {calls:?}"
+        );
+        let gap = calls[recovered + 1]
+            .1
+            .duration_since(calls[recovered].1)
+            .unwrap();
+        assert!(
+            gap >= unit * 300 && gap < unit * 1800,
+            "recovered gap: {gap:?}"
+        );
+        assert!(quotas.iter().all(|q| q.claude.snapshot().is_some()));
+        drop(quotas);
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn invalid_claude_schedules_allow_an_immediate_read() {
+        let root = super::super::supervisor::temporary_directory();
+        let program = root.join("backend");
+        let store = root.join("quota");
+        fs::create_dir(&store).unwrap();
+        let (fixture, _) = fresh("claude");
+        script(&program, &format!("printf '%s' '{fixture}'"));
+        for invalid in [
+            "not json".to_owned(),
+            json!({"version":2,"next_at":epoch_seconds().unwrap() * 1000 + 300_000,
+                "failures":0,"failure":null})
+            .to_string(),
+            json!({"version":1,"next_at":u64::MAX,"failures":0,"failure":null}).to_string(),
+        ] {
+            fs::write(store.join("claude.schedule"), &invalid).unwrap();
+            let _ = fs::remove_file(store.join("claude.json"));
+            let quotas = Quotas::start_every(
+                &program,
+                Duration::from_secs(1),
+                Some(store.clone()),
+                &["claude_quota"],
+            );
+            let deadline = Instant::now() + Duration::from_secs(2);
+            while quotas.claude.snapshot().is_none() && Instant::now() < deadline {
+                thread::sleep(Duration::from_millis(5));
+            }
+            assert!(quotas.claude.snapshot().is_some(), "{invalid}");
+            drop(quotas);
+        }
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn claude_schedule_preserves_reasons_bounds_and_backoff() {
+        assert_eq!([1, 2, 3, 4, u32::MAX].map(backoff), [6, 12, 24, 24, 24]);
+        // A clock set back never stops reads, also without a schedule file.
+        let ahead = Mutex::new(Schedule {
+            next_at: u64::MAX,
+            ..Schedule::default()
+        });
+        let (bounded, _) = update_schedule(&ahead, None, Duration::from_secs(1), |_, _| false);
+        assert!(bounded.next_at < u64::MAX);
+        let root = super::super::supervisor::temporary_directory();
+        let path = root.join("schedule");
+        let mut file = open_schedule(&path).unwrap();
+        for reason in [
+            Failure::Start,
+            Failure::Deadline,
+            Failure::OutputLimit,
+            Failure::ExitStatus,
+            Failure::Malformed,
+            Failure::ProviderError,
+            Failure::Estimated,
+            Failure::ObservationTime,
+            Failure::InvalidWindow,
+        ] {
+            let schedule = Schedule {
+                failure: Some(QuotaFailure { at: NOW, reason }),
+                next_at: 7200,
+                ..Schedule::default()
+            };
+            file.set_len(0).unwrap();
+            file.seek(SeekFrom::Start(0)).unwrap();
+            file.write_all(&serde_json::to_vec(&schedule).unwrap())
+                .unwrap();
+            assert_eq!(
+                load_schedule(&mut file, 0, Duration::from_millis(7200))
+                    .unwrap()
+                    .failure,
+                schedule.failure
+            );
+            assert!(load_schedule(&mut file, 0, Duration::from_millis(7199)).is_none());
+        }
+        for invalid in [
+            json!({"version":1,"next_at":0,"failures":0,"failure":null,"other":0}).to_string(),
+            json!({"version":1,"next_at":0,"failures":0,"failure":{"at":0,"reason":"provider_error"}}).to_string(),
+            json!({"version":1,"next_at":0,"failures":0,"failure":{"at":NOW,"reason":"unknown"}}).to_string(),
+            json!({"version":1,"next_at":0,"failures":0,"failure":{"at":NOW,"reason":"start","message":"discard"}}).to_string(),
+            " ".repeat(4097),
+        ] {
+            file.set_len(0).unwrap();
+            file.seek(SeekFrom::Start(0)).unwrap();
+            file.write_all(invalid.as_bytes()).unwrap();
+            assert!(load_schedule(&mut file, 0, Duration::from_secs(7200)).is_none());
+        }
+        drop(file);
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn failed_schedule_rewrites_keep_the_in_memory_backoff() {
+        let root = super::super::supervisor::temporary_directory();
+        let path = root.join("claude.schedule");
+        fs::write(&path, "partial").unwrap();
+        let mut read_only = fs::File::open(&path).unwrap();
+        let failure = QuotaFailure {
+            at: NOW,
+            reason: Failure::ProviderError,
+        };
+        let next_at = epoch_seconds().unwrap() * 1000 + 3_600_000;
+        let mut schedule = Schedule {
+            next_at,
+            failures: 2,
+            failure: Some(failure),
+            ..Schedule::default()
+        };
+        assert!(write_schedule(&mut read_only, &mut schedule).is_err());
+        let memory = Mutex::new(schedule);
+        let (retained, shared) = update_schedule(
+            &memory,
+            Some(&path.join("unavailable")),
+            Duration::from_secs(7200),
+            |_, _| false,
+        );
+        assert!(!shared);
+        assert_eq!(retained.next_at, next_at);
+        assert_eq!(retained.failures, 2);
+        assert_eq!(retained.failure, Some(failure));
+        assert!(
+            !serde_json::to_string(&retained)
+                .unwrap()
+                .contains("write_failed")
+        );
+        let (repaired, shared) =
+            update_schedule(&memory, Some(&path), Duration::from_secs(7200), |_, _| {
+                false
+            });
+        assert!(shared);
+        assert_eq!(repaired.next_at, retained.next_at);
+        assert_eq!(repaired.failure, retained.failure);
+        assert!(!repaired.write_failed);
+        assert_eq!(
+            serde_json::from_slice::<Schedule>(&fs::read(&path).unwrap())
+                .unwrap()
+                .failures,
+            2
+        );
+        assert!(write_schedule(&mut read_only, &mut memory.lock().unwrap()).is_err());
+        let peer = Schedule {
+            next_at: 100,
+            ..Schedule::default()
+        };
+        fs::write(&path, serde_json::to_vec(&peer).unwrap()).unwrap();
+        let (adopted, shared) =
+            update_schedule(&memory, Some(&path), Duration::from_secs(7200), |_, _| {
+                false
+            });
+        assert!(shared);
+        assert_eq!(adopted.next_at, peer.next_at);
+        assert!(adopted.failure.is_none());
+        assert_eq!(adopted.failures, 0);
+        assert!(!adopted.write_failed);
+        // A corrupt file leaves the in-memory schedule in place rather than resetting it.
+        memory.lock().unwrap().failures = 3;
+        fs::write(&path, "partial").unwrap();
+        let (kept, shared) =
+            update_schedule(&memory, Some(&path), Duration::from_secs(7200), |_, _| {
+                false
+            });
+        assert!(shared);
+        assert_eq!(kept.failures, 3);
+        // A peer that keeps the lock leaves it on the in-memory schedule, not the file's.
+        fs::write(&path, serde_json::to_vec(&peer).unwrap()).unwrap();
+        let held = open_schedule(&path).unwrap();
+        let (locked_out, shared) =
+            update_schedule(&memory, Some(&path), Duration::from_secs(7200), |_, _| {
+                false
+            });
+        assert!(!shared);
+        assert_eq!(locked_out.failures, 3);
+        drop(held);
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn claude_peers_adopt_newer_readings_and_clear_only_successful_missing_quota() {
+        let root = super::super::supervisor::temporary_directory();
+        let store = root.join("quota");
+        let path = store.join("claude.json");
+        let schedule_path = store.join("claude.schedule");
+        let memory = Mutex::new(Schedule::default());
+        let maximum = Duration::from_secs(36);
+        let failure = QuotaFailure {
+            at: epoch_seconds().unwrap(),
+            reason: Failure::ProviderError,
+        };
+        update_schedule(&memory, Some(&schedule_path), maximum, |schedule, now| {
+            schedule.next_at = now + 20_000;
+            schedule.failure = Some(failure);
+            true
+        });
+        let (fixture, now) = fresh("claude");
+        let mut reading = normalize(&serde_json::to_vec(&fixture).unwrap(), "claude", now)
+            .unwrap()
+            .unwrap();
+        reading.observed_at -= 10;
+        save(&path, Some(&reading));
+        let quotas = (0..3)
+            .map(|_| {
+                Quotas::start_every(
+                    &root.join("never-read"),
+                    Duration::from_millis(5),
+                    Some(store.clone()),
+                    &["claude_quota"],
+                )
+            })
+            .collect::<Vec<_>>();
+        let wait = |condition: &dyn Fn() -> bool| {
+            let deadline = Instant::now() + Duration::from_secs(2);
+            while !condition() && Instant::now() < deadline {
+                thread::sleep(Duration::from_millis(5));
+            }
+            assert!(condition());
+        };
+        wait(&|| {
+            quotas
+                .iter()
+                .all(|q| q.claude.snapshot().is_some() && q.claude.failure() == Some(failure))
+        });
+        fs::write(&path, "not json").unwrap();
+        thread::sleep(Duration::from_millis(200));
+        assert!(quotas.iter().all(|q| q.claude.snapshot().is_some()));
+        reading.observed_at -= 10;
+        save(&path, Some(&reading));
+        thread::sleep(Duration::from_millis(200));
+        assert!(
+            quotas
+                .iter()
+                .all(|q| q.claude.snapshot().unwrap().observed_at == now - 10)
+        );
+        reading.observed_at = now;
+        save(&path, Some(&reading));
+        wait(&|| {
+            quotas
+                .iter()
+                .all(|q| q.claude.snapshot().unwrap().observed_at == now)
+        });
+        save(&path, None);
+        thread::sleep(Duration::from_millis(200));
+        assert!(quotas.iter().all(|q| q.claude.snapshot().is_some()));
+        update_schedule(&memory, Some(&schedule_path), maximum, |schedule, _| {
+            schedule.failure = None;
+            true
+        });
+        wait(&|| {
+            quotas
+                .iter()
+                .all(|q| q.claude.snapshot().is_none() && q.claude.failure().is_none())
+        });
+        drop(quotas);
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn claude_provider_errors_back_off_without_a_usable_schedule() {
+        let root = super::super::supervisor::temporary_directory();
+        let program = root.join("backend");
+        let calls = root.join("calls");
+        let blocked = root.join("not-a-directory");
+        fs::write(&blocked, "").unwrap();
+        script(
+            &program,
+            &format!(
+                "echo \"$3\" >> '{}'\nprintf '%s' '[{{\"error\":{{\"code\":3}}}}]'; exit 3",
+                calls.display()
+            ),
+        );
+        let widgets = ["codex_quota", "claude_quota"];
+        let reads = |provider| {
+            fs::read_to_string(&calls)
+                .unwrap_or_default()
+                .lines()
+                .filter(|line| *line == provider)
+                .count()
+        };
+        for store in [None, Some(blocked.clone())] {
+            let _ = fs::remove_file(&calls);
+            let mut quotas =
+                Quotas::start_every(&program, Duration::from_millis(1), store, &widgets);
+            let deadline = Instant::now() + Duration::from_secs(2);
+            while quotas.claude.failure().is_none() && Instant::now() < deadline {
+                thread::sleep(Duration::from_millis(5));
+            }
+            assert_eq!(
+                quotas.claude.failure().unwrap().reason,
+                Failure::ProviderError
+            );
+            quotas.show(&[]);
+            quotas.show(&widgets);
+            thread::sleep(Duration::from_millis(600));
+            assert_eq!(reads("claude"), 1);
+            // Codex keeps its 60-unit spacing after the same provider error.
+            assert!(reads("codex") >= 3, "codex reads: {}", reads("codex"));
+            drop(quotas);
+        }
         fs::remove_dir_all(root).unwrap();
     }
 
