@@ -62,6 +62,7 @@ fn normalize(bytes: &[u8], provider: &str, now: u64) -> Result<Option<CodexQuota
         return Err(());
     }
     let mut windows = Vec::new();
+    let mut seen = Vec::new();
     for name in ["primary", "secondary"] {
         let value = &usage[name];
         if value.is_null() {
@@ -79,15 +80,18 @@ fn normalize(bytes: &[u8], provider: &str, now: u64) -> Result<Option<CodexQuota
         if provider == "claude" && !matches!(duration_minutes, 300 | 10080) {
             return Err(());
         }
-        if windows
-            .iter()
-            .any(|w: &QuotaWindow| w.duration_minutes == duration_minutes)
-        {
-            return Err(());
-        }
         let resets_at = (!value["resetsAt"].is_null())
             .then(|| timestamp(&value["resetsAt"]))
             .transpose()?;
+        // CodexBar repeats Claude's weekly window as primary when no five-hour window is
+        // reported (eon-8jdmw); an exact repeat is one window, a differing one is invalid.
+        if let Some(&(_, first)) = seen.iter().find(|(d, _)| *d == duration_minutes) {
+            if first == (used, resets_at) {
+                continue;
+            }
+            return Err(());
+        }
+        seen.push((duration_minutes, (used, resets_at)));
         if resets_at.is_some_and(|reset| reset <= now) {
             continue;
         }
@@ -560,6 +564,17 @@ mod tests {
                 .unwrap();
             assert_eq!(quota.windows.len(), 1);
             assert_eq!(quota.windows[0].duration_minutes, 10080);
+            // CodexBar 0.74.1 repeats the weekly window as primary when Claude reports no
+            // five-hour one (eon-8jdmw).
+            let mut repeated = payload(provider);
+            repeated[0]["usage"]["primary"] = repeated[0]["usage"]["secondary"].clone();
+            repeated[0]["usage"]["extraRateWindows"] = json!([{"id":"claude-weekly-scoped-fable",
+                "title":"Fable only","window":{"usedPercent":40,"windowMinutes":10080,
+                    "resetsAt":"2026-10-19T20:59:59Z"}}]);
+            let repeated = normalize(&serde_json::to_vec(&repeated).unwrap(), provider, NOW)
+                .unwrap()
+                .unwrap();
+            assert_eq!(repeated.windows, quota.windows);
             weekly[0]["usage"]["secondary"] = Value::Null;
             assert!(
                 normalize(&serde_json::to_vec(&weekly).unwrap(), provider, NOW)
@@ -599,6 +614,16 @@ mod tests {
             b"[{\"provider\":\"claude\",\"error\":{}}]",
         ] {
             assert!(normalize(bytes, "codex", NOW).is_err());
+        }
+        for (field, other) in [
+            ("usedPercent", json!(3)),
+            ("resetsAt", json!("2026-10-19T21:59:59Z")),
+            ("resetsAt", Value::Null),
+        ] {
+            let mut input = payload("claude");
+            input[0]["usage"]["primary"] = input[0]["usage"]["secondary"].clone();
+            input[0]["usage"]["primary"][field] = other;
+            assert!(normalize(&serde_json::to_vec(&input).unwrap(), "claude", NOW).is_err());
         }
         let mut input = payload("claude");
         input[0]["source"] = json!("web");

@@ -5,6 +5,11 @@ installation, and proven contract changes.
 
 ## Unreleased
 
+- Fixed: the Claude quota chip stopped updating and showed its last reading as
+  `old` once Claude reported only a weekly limit, which CodexBar returns twice.
+  Eon now reads an exact repeat as one weekly window and still rejects two
+  differing windows of the same length (`eon-8jdmw`).
+
 - The Eon Bar shows `DISK 80%`, the used share of the filesystem holding your
   home directory, after RAM by default, refreshed every 30 seconds. Hover and
   accessibility give its size, mount point and free space. It turns orange from
