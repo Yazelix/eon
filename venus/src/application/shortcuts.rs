@@ -109,12 +109,6 @@ pub(super) const CTRL_SHIFT: session::Modifiers =
     session::Modifiers::CTRL.union(session::Modifiers::SHIFT);
 const CTRL_ALT_SHIFT: session::Modifiers = CTRL_ALT.union(session::Modifiers::SHIFT);
 pub(super) static FIXED_SHORTCUTS: &[NativeShortcut] = &[
-    NativeShortcut {
-        group: "Navigate",
-        label: "Focus tab by position",
-        trigger: NativeShortcutTrigger::AltDigits,
-        action: NativeShortcutAction::FocusTabPosition,
-    },
     NativeShortcut::key(
         "Navigate",
         "Focus next tab",
@@ -157,6 +151,13 @@ pub(super) static FIXED_SHORTCUTS: &[NativeShortcut] = &[
         session::Modifiers::ALT,
         NativeShortcutAction::Focus(WorkspaceDirection::Down),
     ),
+    // After the H/L/K/J focus keys, so the merged focus hint ends with 1..9.
+    NativeShortcut {
+        group: "Navigate",
+        label: "Focus tab by position",
+        trigger: NativeShortcutTrigger::AltDigits,
+        action: NativeShortcutAction::FocusTabPosition,
+    },
     NativeShortcut::key(
         "Navigate",
         "Jump to the next agent needing attention",
@@ -584,6 +585,8 @@ pub(super) fn shortcut_hints_for(
     sidebar: Sidebar,
 ) -> Vec<ShortcutHint> {
     let mut hints: Vec<ShortcutHint> = Vec::new();
+    // The key axis each fixed hint ended with: H/L, K/J or 1..9.
+    let mut axes = Vec::new();
     for shortcut in FIXED_SHORTCUTS {
         if !shortcut.bound(sidebar) || shortcut.overriding_popup(platform, entries).is_some() {
             continue;
@@ -597,24 +600,28 @@ pub(super) fn shortcut_hints_for(
             Action::ToggleSidebar => ("sidebar", 2),
             Action::NextAttention => ("next agent", 2),
             Action::PreviousAttention => ("previous agent", 3),
-            Action::Focus(Left | Right) => ("tabs", 1),
-            Action::Focus(Up | Down) => ("panes", 1),
-            Action::CreatePane => ("new pane", 1),
-            Action::CreateColumn => ("new column", 3),
-            Action::CreateTab => ("new tab", 1),
-            Action::FocusTabPosition => ("tab", 3),
+            Action::Focus(_) => ("focus", 1),
+            Action::FocusTabPosition => ("focus", 3),
+            Action::CreatePane => ("+pane", 1),
+            Action::CreateColumn => ("+column", 3),
+            Action::CreateTab => ("+tab", 1),
             Action::CloseTab => ("close tab", 3),
             Action::ClosePane => ("close pane", 3),
             Action::ToggleZoom => ("zoom", 3),
             Action::Move(Left | Right) => ("move tab", 3),
             Action::Move(Up | Down) | Action::MovePaneSideways(_) => ("move pane", 3),
-            Action::NewWindow => ("new window", 3),
+            Action::NewWindow => ("+window", 3),
             Action::Detach => ("detach", 2),
             Action::ReturnToTerminal if focus != WorkspaceFocus::Terminal => ("terminal", 0),
             Action::TraverseChrome(Left | Right) if focus == WorkspaceFocus::Tabs => ("tabs", 1),
             Action::TraverseChrome(Up | Down) if focus == WorkspaceFocus::Panes => ("panes", 1),
             Action::TraverseChrome(Up | Down) if focus == WorkspaceFocus::Sidebar => ("agents", 1),
             _ => continue,
+        };
+        let axis = match shortcut.action {
+            Action::Focus(Up | Down) | Action::Move(Up | Down) => 1,
+            Action::FocusTabPosition => 2,
+            _ => 0,
         };
         let (modifiers, key) = match shortcut.trigger {
             NativeShortcutTrigger::Key(code, modifiers) => {
@@ -630,20 +637,22 @@ pub(super) fn shortcut_hints_for(
             shortcut.trigger.display_label_for(platform),
             shortcut.label
         );
-        if let Some(hint) = hints
-            .iter_mut()
-            .find(|hint| hint.modifiers == modifiers && hint.label == label)
+        if let Some(index) = hints
+            .iter()
+            .position(|hint| hint.modifiers == modifiers && hint.label == label)
         {
+            let hint = &mut hints[index];
+            // A new key axis starts a dot-separated run: H/L · K/J · 1..9.
             hint.key
-                .push_str(if matches!(shortcut.action, Action::Move(Up)) {
-                    " · "
-                } else {
-                    "/"
-                });
+                .push_str(if axes[index] == axis { "/" } else { " · " });
+            axes[index] = axis;
             hint.key.push_str(key);
             hint.accessible_label.push_str("; ");
             hint.accessible_label.push_str(&accessible_label);
+            // A merged hint drops only when its most important part would.
+            hint.priority = hint.priority.min(priority);
         } else {
+            axes.push(axis);
             hints.push(ShortcutHint {
                 modifiers,
                 key: key.into(),
@@ -1268,25 +1277,50 @@ mod tests {
                     entry.label,
                 )
             );
-            let moves = |label| {
+            let hints_labeled = |label| {
                 terminal
                     .iter()
                     .filter(|hint| hint.label == label)
                     .collect::<Vec<_>>()
             };
-            let panes = moves("move pane");
+            let panes = hints_labeled("move pane");
             assert_eq!(panes.len(), 1);
             assert_eq!(panes[0].modifiers, "C-A");
             assert_eq!(panes[0].key, "H/L · K/J");
-            let tabs = moves("move tab");
+            let tabs = hints_labeled("move tab");
             assert_eq!(tabs.len(), 1);
             assert_eq!(tabs[0].modifiers, "C-A-S");
             assert_eq!(tabs[0].key, "H/L");
+            // One focus hint, kept as long as its most important part.
+            let focus = hints_labeled("focus");
+            assert_eq!(focus.len(), 1);
+            assert_eq!(focus[0].modifiers, "A");
+            assert_eq!(focus[0].key, "H/L · K/J · 1..9");
+            assert_eq!(focus[0].priority, 1);
+            assert!(focus[0].accessible_label.contains("Focus tab by position"));
+            // A popup on Alt+K leaves J on its own axis.
+            let alt_k = PopupEntry {
+                id: "k".into(),
+                label: "K tool".into(),
+                shortcut: eon_workspace_protocol::v26::PopupKey::Bound(
+                    eon_workspace_protocol::v26::Shortcut {
+                        modifiers: eon_workspace_protocol::v26::ALT,
+                        key: "KeyK".into(),
+                    },
+                ),
+            };
             assert!(
-                terminal
+                shortcut_hints_for(platform, WorkspaceFocus::Terminal, &[alt_k], Sidebar::Open)
                     .iter()
-                    .any(|hint| hint.key == "H/L" && hint.label == "tabs")
+                    .any(|hint| hint.label == "focus" && hint.key == "H/L · J · 1..9")
             );
+            for label in ["+pane", "+column", "+tab", "+window"] {
+                assert_eq!(hints_labeled(label).len(), 1);
+            }
+            let mut labels = terminal.iter().map(|hint| &hint.label).collect::<Vec<_>>();
+            labels.sort();
+            labels.dedup();
+            assert_eq!(labels.len(), terminal.len());
             assert!(terminal.iter().all(|hint| {
                 !hint
                     .accessible_label

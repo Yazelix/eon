@@ -5,6 +5,10 @@ installation, and proven contract changes.
 
 ## Unreleased
 
+- The bottom hints bar is shorter: one `focus` hint joins tab and pane focus
+  and tab-by-position keys (`H/L · K/J · 1..9` under Alt), and create hints
+  read `+pane`, `+column`, `+tab` and `+window`. Shortcuts and screen readers
+  keep the full action names.
 - Fixed: the Claude quota chip stopped updating and showed its last reading as
   `old` once Claude reported only a weekly limit, which CodexBar returns twice.
   Eon now reads an exact repeat as one weekly window and still rejects two

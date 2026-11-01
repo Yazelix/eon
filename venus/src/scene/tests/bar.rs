@@ -279,7 +279,7 @@ fn shortcut_hints_drop_whole_pairs_and_rebuild_modifier_headers() {
         ShortcutHint {
             modifiers: "Alt".into(),
             key: "M".into(),
-            label: "new pane".into(),
+            label: "+pane".into(),
             accessible_label: "Alt+M — New pane".into(),
             priority: 1,
         },
