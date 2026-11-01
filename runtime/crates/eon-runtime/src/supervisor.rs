@@ -48,6 +48,8 @@ use std::{
 pub(super) const SESSION_START_TIMEOUT: Duration = Duration::from_secs(5);
 /// Bounds Venus startup admission, which a busy machine can slow well past session start.
 pub(super) const PRESENTATION_ADMISSION_TIMEOUT: Duration = Duration::from_secs(30);
+/// How long an ending supervisor waits to close its detach notice (EON-C8).
+const NOTICE_CLOSE_TIMEOUT: Duration = Duration::from_millis(500);
 static NEXT_REQUEST: AtomicU64 = AtomicU64::new(0);
 
 pub(super) fn request_id() -> String {
@@ -1033,6 +1035,7 @@ fn supervise(
         attention,
         pane_labels: super::pane_labels::Labels::default(),
         agents,
+        notices: notification::Notices::default(),
         log: Arc::clone(log),
     };
     let presentation = match admitted {
@@ -1123,6 +1126,11 @@ fn supervise(
             } else {
                 state.pane_labels.reconcile(&[]);
             }
+            // Also while an incomplete Stop waits, so the notice's confirmed
+            // Quit retries it.
+            if answer_detach_notice(&mut state, runtime, mode) {
+                return Ok(state.initial_status.unwrap_or(0));
+            }
 
             let mut handled = false;
             if control_listener.accept(|request| {
@@ -1141,6 +1149,7 @@ fn supervise(
         drop(process);
     }
     let popup_cleanup = stop_transient_popups(&mut state);
+    state.notices.close_and_wait(NOTICE_CLOSE_TIMEOUT);
     remove_launcher(runtime);
     let _ = fs::remove_dir(runtime);
     match (status, popup_cleanup) {
@@ -1171,6 +1180,8 @@ struct SupervisorState {
     pane_labels: super::pane_labels::Labels,
     /// The window's `[agents]` settings, read when it started.
     agents: managed_environment::Agents,
+    /// The detach notice; full Eon only shows one (EON-C8).
+    notices: notification::Notices,
     log: Arc<DiagnosticLog>,
 }
 
@@ -1184,6 +1195,24 @@ impl SupervisorState {
     fn name_presentation(&mut self, wait: bool) {
         let venus = self.presentation_name();
         name_presentation(&mut self.sessions, venus, wait, &self.log);
+    }
+
+    /// This full-Eon window as EON-C23's `this` entry describes it.
+    fn this_window(&self) -> Option<WindowEntry> {
+        Some(WindowEntry {
+            window: self.window.clone(),
+            generation: self.component_generation.clone(),
+            name: Some(self.workspaces.as_ref()?.window_name()),
+            started_at: Some(self.started_at),
+            live_terminals: Some(live_sessions(&self.sessions).count() as u16),
+            state: WindowState::Live,
+        })
+    }
+
+    /// What this window's detach notice says (EON-C8).
+    fn notice_window(&self) -> Option<notification::NoticeWindow> {
+        self.this_window()
+            .map(|this| notification::NoticeWindow::new(&this))
     }
 
     /// The shown workspace with its quotas and attention.
@@ -1205,18 +1234,8 @@ impl SupervisorState {
                 Err(error)
             }
         })?;
-        if let Some(running) = &self.running {
-            running.apply(
-                &mut snapshot,
-                WindowEntry {
-                    window: self.window.clone(),
-                    generation: self.component_generation.clone(),
-                    name: Some(workspaces.window_name()),
-                    started_at: Some(self.started_at),
-                    live_terminals: Some(live_sessions(&self.sessions).count() as u16),
-                    state: WindowState::Live,
-                },
-            );
+        if let (Some(running), Some(this)) = (&self.running, self.this_window()) {
+            running.apply(&mut snapshot, this);
         }
         self.pane_labels.present(&mut snapshot, workspaces.home());
         if let Some(quotas) = &self.quotas {
@@ -1531,6 +1550,42 @@ fn closed_response(
     }))
 }
 
+/// Answers the detach notice's actions (EON-C8). Quit first asks through the
+/// notice's own "Quit NAME?" step; its confirmed Quit is the person's consent,
+/// so this runs Stop directly and never relies on `eon quit`'s prompt. True
+/// when the window stopped; a failed Stop says so in a notice that names
+/// the window's stop command for the retry, and keeps the supervisor for it,
+/// as an incomplete Stop does.
+fn answer_detach_notice(state: &mut SupervisorState, runtime: &Path, mode: LaunchMode) -> bool {
+    while let Some(event) = state.notices.next_event() {
+        let Some(window) = state.notice_window() else {
+            continue;
+        };
+        match event {
+            // A Quit chosen just before the window was attached again: the
+            // notice is closing, so no confirmation follows it on screen.
+            notification::Event::Confirm if state.venus.is_some() => {}
+            notification::Event::Confirm => state.notices.confirm(window),
+            notification::Event::Quit => {
+                state
+                    .log
+                    .note("Quitting this window from its detach notice.");
+                match stop_generation_sessions(state, runtime, mode) {
+                    Ok(_) => return true,
+                    Err(detail) => {
+                        state.log.note(&format!(
+                            "cannot quit this window from its detach notice: {detail}"
+                        ));
+                        state.notices.failure(window);
+                        return false;
+                    }
+                }
+            }
+        }
+    }
+    false
+}
+
 /// Stops every run of this generation, including runs no tab tracks, and
 /// names them. The supervisor refuses other requests from here on, and a
 /// complete stop leaves it no terminal.
@@ -1800,11 +1855,16 @@ fn reap_presentation(
     };
     state.venus = None;
     if !state.stopping {
-        // Full Eon's clean exit is a detach; a crash is not (EON-C8).
-        if state.workspaces.is_some() && status.success() {
-            notification::notify_first_detach(&state.application_id);
-        }
+        // Dismissing a pending picker can start its tab's first terminal.
         cancel_transient_popups(state, inputs, config)?;
+        // Full Eon's clean exit is a detach; a crash is not (EON-C8).
+        if status.success()
+            && let Some(window) = state.notice_window()
+        {
+            state
+                .notices
+                .show(window, &state.application_id, &state.log);
+        }
     }
     Ok(true)
 }
@@ -2041,7 +2101,10 @@ fn dispatch_control_request(
                 )?);
                 Ok(())
             });
-            match result.and_then(|()| runtime_status(inputs, generation, state, mode)) {
+            match result.and_then(|()| {
+                state.notices.close();
+                runtime_status(inputs, generation, state, mode)
+            }) {
                 Ok(runtime) => (
                     ControlResponse::Lifecycle(LifecycleResponse::Runtime(runtime)),
                     false,
@@ -2400,6 +2463,156 @@ mod tests {
         }
     }
 
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn attaching_an_already_presented_window_retries_notice_close() {
+        let root = temporary_directory();
+        let inputs = crate::fixtures::inputs();
+        let log = DiagnosticLog::open_in(Ok(root.join("logs")), "g1-test", "workspace");
+        let session = leased_orbit(&root, "exec sleep 30");
+        let workspace = WorkspaceSet::with_recovered_sessions(
+            root.clone(),
+            root.clone(),
+            None,
+            vec![(
+                1,
+                super::workspace::Session {
+                    id: session.id.clone(),
+                    endpoint: session.endpoint.clone(),
+                },
+            )],
+            inputs.defaults.popups.clone(),
+        )
+        .unwrap();
+        let mut command = Command::new("/bin/sh");
+        command.args(["-c", "exec cat >/dev/null"]);
+        let venus = super::PresentationProcess::start(
+            command,
+            false,
+            None,
+            super::PRESENTATION_ADMISSION_TIMEOUT,
+            &mut [],
+            &log,
+        )
+        .unwrap();
+        let (notices, take_close) = crate::notification::Notices::record_closes();
+        let mut state = SupervisorState {
+            started_at: 1,
+            window: None,
+            running: None,
+            component_generation: "component-1".into(),
+            application_id: String::new(),
+            decorations: false,
+            workspaces: Some(workspace),
+            sessions: vec![session],
+            venus: Some(venus),
+            initial_child: Vec::new(),
+            initial_status: None,
+            stopping: false,
+            quotas: None,
+            attention: None,
+            pane_labels: super::super::pane_labels::Labels::default(),
+            agents: window_agents(),
+            notices,
+            log,
+        };
+        let closes = (0..2)
+            .map(|attempt| {
+                let (response, ended) = super::dispatch_control_request(
+                    super::Request {
+                        id: format!("attach-{attempt}"),
+                        caller: None,
+                        action: Action::Workspace(WorkspaceAction::Present { workspace: true }),
+                    },
+                    &mut state,
+                    &inputs,
+                    &root,
+                    &root,
+                    "component-1",
+                );
+                assert!(!ended);
+                assert!(matches!(
+                    response,
+                    super::ControlResponse::Lifecycle(super::LifecycleResponse::Runtime(_))
+                ));
+                take_close()
+            })
+            .collect::<Vec<_>>();
+        stop_generation_sessions(&mut state, &root, LaunchMode::Workspace).unwrap();
+        drop(state);
+        fs::remove_dir_all(root).unwrap();
+        assert_eq!(closes, [true, true]);
+    }
+
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn detach_notice_counts_the_terminal_started_by_picker_cleanup() {
+        let root = temporary_directory();
+        fs::set_permissions(&root, fs::Permissions::from_mode(0o700)).unwrap();
+        let picker_root = temporary_directory();
+        let mut inputs = crate::fixtures::inputs();
+        inputs.orbit = std::env::var_os("ORBIT_BIN").unwrap().into();
+        let workspace = WorkspaceSet::pending(
+            root.clone(),
+            root.clone(),
+            Some(root.clone()),
+            inputs.defaults.popups.clone(),
+            |_, _| Ok(Vec::new()),
+            |_| Ok(()),
+        )
+        .unwrap();
+        let mut picker = leased_orbit(&picker_root, "exec sleep 30");
+        picker.id = "directory-picker-1".into();
+        let log = DiagnosticLog::open_in(Ok(root.join("logs")), "g1-test", "workspace");
+        let mut command = Command::new("/bin/sh");
+        command.args(["-c", "exit 0"]);
+        let mut venus = super::PresentationProcess::start(
+            command,
+            false,
+            None,
+            super::PRESENTATION_ADMISSION_TIMEOUT,
+            &mut [],
+            &log,
+        )
+        .unwrap();
+        venus.child.wait().unwrap();
+        let (notices, take_show) = crate::notification::Notices::record_shows();
+        let mut state = SupervisorState {
+            started_at: 1,
+            window: None,
+            running: None,
+            component_generation: "component-1".into(),
+            application_id: String::new(),
+            decorations: false,
+            workspaces: Some(workspace),
+            sessions: vec![picker],
+            venus: Some(venus),
+            initial_child: ["/bin/sh", "-c", "exec sleep 30"]
+                .into_iter()
+                .map(OsString::from)
+                .collect(),
+            initial_status: None,
+            stopping: false,
+            quotas: None,
+            attention: None,
+            pane_labels: super::super::pane_labels::Labels::default(),
+            agents: window_agents(),
+            notices,
+            log,
+        };
+        assert_eq!(state.this_window().unwrap().live_terminals, Some(0));
+        assert!(super::reap_presentation(&mut state, &inputs, &root).unwrap());
+        let shown = take_show();
+        let after = state.this_window().unwrap();
+        let expected = crate::notification::NoticeWindow::new(&after);
+        stop_generation_sessions(&mut state, &root, LaunchMode::Workspace).unwrap();
+        drop(state);
+        fs::remove_dir_all(root).unwrap();
+        fs::remove_dir_all(picker_root).unwrap();
+        assert_eq!(after.live_terminals, Some(1));
+        assert_eq!(shown, Some(expected));
+    }
+
     /// Kills a test-owned Orbit's worker, which sends Orbit down its failure
     /// path: it removes its Live record and exits without a result.
     fn kill_worker(session: &sessions::RunningSession) {
@@ -2520,6 +2733,7 @@ mod tests {
             attention: None,
             pane_labels: super::super::pane_labels::Labels::default(),
             agents: window_agents(),
+            notices: crate::notification::Notices::default(),
             log,
         };
         let inputs = crate::fixtures::inputs();
@@ -2605,6 +2819,7 @@ mod tests {
             attention: None,
             pane_labels: super::super::pane_labels::Labels::default(),
             agents: window_agents(),
+            notices: crate::notification::Notices::default(),
             log: DiagnosticLog::open_in(Ok(roots[0].join("logs")), "g1-test", "workspace"),
         };
         let inputs = crate::fixtures::inputs();
@@ -2725,6 +2940,7 @@ mod tests {
             attention: None,
             pane_labels: super::super::pane_labels::Labels::default(),
             agents: window_agents(),
+            notices: crate::notification::Notices::default(),
             log: DiagnosticLog::open_in(Ok(root.join("logs")), "g1-test", "workspace"),
         };
         let inputs = crate::fixtures::inputs();
@@ -2779,6 +2995,7 @@ mod tests {
             attention: None,
             pane_labels: super::super::pane_labels::Labels::default(),
             agents: window_agents(),
+            notices: crate::notification::Notices::default(),
             log: DiagnosticLog::open_in(Ok(root.join("logs")), "g1-test", "workspace"),
         };
 
@@ -2870,6 +3087,7 @@ mod tests {
             attention: None,
             pane_labels: super::super::pane_labels::Labels::default(),
             agents: window_agents(),
+            notices: crate::notification::Notices::default(),
             log: DiagnosticLog::open_in(Ok(roots[0].join("logs")), "g1-test", "workspace"),
         };
         let ids = |state: &SupervisorState| {

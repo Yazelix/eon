@@ -5,6 +5,12 @@ installation, and proven contract changes.
 
 ## Unreleased
 
+- On Linux, every time an Eon window detaches, by closing it or with
+  Alt+Shift+D, a desktop notification names the window, says how many
+  terminals still run and offers Quit, which asks once more and then stops
+  that window. Without notification buttons, it names the command that stops
+  that window from a shell outside Eon. It replaces the once-per-user notice
+  and never takes focus (`eon-7cf0y.2`).
 - Fixed: when an agent's shell starts Eon, such as `eon` run by Claude Code,
   Eon removes a fixed list of agent session, nesting-marker and credential
   names from its terminals, popups, Venus and quota reader. Claude Code started

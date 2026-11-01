@@ -561,13 +561,35 @@ socket names, JSON fields and protocol identifiers retain their spellings.
     Ctrl+W remains terminal input. Closing the window itself, or
     Alt+Shift+D, detaches every workspace together without asking; attach
     then shows the last shown workspace (EON-C11).
-    The first time any of the user's windows detaches this way, the
-    supervisor sends one non-activating desktop notification, titled "Eon is
-    still running in the background", with the body "Open Eon to return;
-    close the last tab or use Commands > Quit this window to stop it." A
-    marker in Eon's state directory makes it once per user. A missing or
-    failing notification service sends nothing, does not delay the detach,
-    and leaves the marker unset for a later detach. A Venus crash sends none.
+    Each time a full-Eon window detaches this way, its supervisor sends one
+    non-activating desktop notification titled "Eon window NAME is still
+    running", NAME being the window's EON-C23 name. Its body says how many
+    live terminals keep running, counted as EON-C23's `this` terminals, and
+    how to return: "Open Eon to return." in the default namespace, or "Run
+    `eon window attach ID` to return." in an independent window. When the
+    notification service advertises the `actions` capability, the
+    notification offers Quit; otherwise its body ends "Run `eon window stop
+    ID` to stop it." in an independent window, or "Run `eon stop GENERATION`
+    to stop it." in the default namespace, naming that window's generation.
+    A notification that offers actions carries the `resident` hint.
+    Quit shows a confirmation titled "Quit NAME?" that says how many
+    terminals stop and offers Quit and Keep running. The confirmation
+    replaces the notification in place, or arrives as a new notification
+    when the service removed the notification on the action. Quit stops the
+    window with the Stop that `eon quit` uses (EON-C11); a failed Stop says
+    so in a notification, and the window stays for a retried Stop (EON-C11).
+    Keep running closes the notification and stops nothing. Eon acts only on
+    actions sent by the bus connection that issued the notification, for
+    the notifications this supervisor sent; it replaces and closes a
+    notification only there, and forgets it when that connection gives up
+    the service's bus name. A later detach of the same window replaces its
+    notification, and attaching the window closes it; a close the service
+    fails is retried at the next attach or end, and a detach before then
+    replaces the notification. Ending the window closes it as a best effort,
+    waiting at most 500 ms. A missing or failing notification service sends
+    nothing and does not delay the detach, and a later detach tries again. A
+    Venus crash sends none. Linux only; on macOS a detach sends no
+    notification.
   - Closing a pane names a `pN` in the active tab, or in the calling
     terminal's tab under EON-C10. Eon stops that pane's
     terminal and prunes the confirmed end through the normal terminal-exit
@@ -624,7 +646,7 @@ socket names, JSON fields and protocol identifiers retain their spellings.
   active or calling tab, terminal
   content/history, provider state (except EON-C31's attention values), plugin
   surface, remote access, reconstructed terminal state, or notifications other
-  than the first-detach notice.
+  than the detach notice.
 - **Proof:** `795d735a8f61ef439c56d68e1cc4d3929af0dfcf`, `eon-monorepo-2oko.6`.
   - **Environment:** Automated tier; installed tier.
   - **Evidence:** Topology and pruning

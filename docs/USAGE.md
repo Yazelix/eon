@@ -53,9 +53,10 @@ tab quits the window and stops its terminals; in a window with several
 workspaces, it closes only that workspace. By default Eon asks first, listing the
 terminals that stop, and the question names the workspace while others remain.
 Closing the Eon window instead detaches the desktop without stopping its
-terminals or PTY commands. Alt+Shift+D does the same from the keyboard. The
-first time, Eon shows a desktop notification saying it is still running in the
-background. Reconnect with:
+terminals or PTY commands. Alt+Shift+D does the same from the keyboard. Each
+time, on Linux, Eon shows a desktop notification naming the window and how many
+terminals still run, with a Quit button where the desktop supports notification
+actions. Quit asks first and then stops them. Reconnect with:
 
 ```sh
 eon attach
@@ -770,7 +771,7 @@ composition.
   from this repository.
 - **A workspace command reports a missing supervisor:** run `eon`, then retry.
 - **The window closed but commands remain:** this is detach behavior. Use
-  `eon attach` to return or `eon stop GENERATION` to end them.
+  `eon attach` to return, or `eon quit` or the notification's Quit to end them.
 - **A window closed on its own:** each Eon or eonbase supervisor keeps a log
   in `$XDG_STATE_HOME/eon/logs` (`~/.local/state/eon/logs` by default), named
   `GENERATION-SECONDS-PID.log`. It records when the window started and how it

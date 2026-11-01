@@ -157,6 +157,16 @@ fn complete_scan(
     }
 }
 
+/// How text for a person names a running window: its EON-C23 name, else its
+/// window ID, else its generation.
+pub(super) fn window_label(entry: &WindowEntry) -> String {
+    entry
+        .name
+        .clone()
+        .or_else(|| entry.window.clone())
+        .unwrap_or_else(|| entry.generation.clone())
+}
+
 pub(super) struct Running {
     base: PathBuf,
     runtime: PathBuf,
@@ -323,6 +333,23 @@ mod tests {
         assert_eq!(roots.len(), 257);
         assert!(limited);
         fs::remove_dir_all(base).unwrap();
+    }
+
+    #[test]
+    fn window_label_prefers_name_then_window_then_generation() {
+        let mut entry = WindowEntry {
+            window: Some("0a1b2c3d".into()),
+            generation: "g1".into(),
+            name: Some("refs".into()),
+            started_at: None,
+            live_terminals: None,
+            state: WindowState::Unreachable,
+        };
+        assert_eq!(window_label(&entry), "refs");
+        entry.name = None;
+        assert_eq!(window_label(&entry), "0a1b2c3d");
+        entry.window = None;
+        assert_eq!(window_label(&entry), "g1");
     }
 
     #[test]
