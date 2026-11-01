@@ -78,9 +78,13 @@ eon stop all
 
 `eon stop` shows the generation's live terminal identities and asks for
 confirmation. Closing a window is therefore detach; stopping a generation ends
-its terminals. To end every terminal in the window you are in, open Commands
-(Alt+Shift+M) and choose Quit this window: it runs `eon stop` for that window's
-generation, with the same confirmation, and stops only that window.
+its terminals. To end the window you are in, run `eon quit` in any of its
+terminals, or open Commands (Alt+Shift+M) and choose Quit this window, which
+runs it. It asks as `eon stop` does and stops only that window. Outside Eon,
+`eon quit` quits the only running window; when several run, it lists each with
+the command that stops it and stops nothing. The listing includes each
+generation's state and live terminal count; an uninspectable count is
+`unknown`. `eon quit --all` quits every window.
 At a terminal, any answer but `y`, `Y`, `yes` or `YES` cancels
 and exits 0. Without a terminal, a piped yes still confirms; any other answer,
 including end of input, exits 1 with `not-confirmed` and sends no Stop.
@@ -265,7 +269,8 @@ starts a fresh agent in the new directory. Git restarts in the new directory
 the next time you open it. Files is Yazi at the tab's directory: Tab or Z
 searches recent folders and Enter moves Yazi there, Shift+Tab shows the
 hovered file's details, Enter on a folder moves into it, and every other Yazi
-key, including file operations, works as usual. It keeps its place when the tab's directory changes; quitting Yazi with
+key, including file operations, works as usual. It keeps its place when the
+tab's directory changes; quitting Yazi with
 `q` closes it, and the next Alt+Shift+Y opens a fresh one. Alt+Enter sets the
 tab's directory to the hovered folder, or Yazi's current one, without moving
 Yazi; in search it uses the selected result. Enter on a text file opens it in
@@ -407,6 +412,8 @@ on terminals; redirected output is plain text. A nonempty `NO_COLOR` or
 | `eon window attach ID` | Present one window's live generation after detach, through the Eon build that started it when needed |
 | `eon window stop ID [--json]` | Stop only the selected window's terminals |
 | `eon window stop all [--json]` | Attempt Stop in every independent window |
+| `eon quit [--json]` | Quit the window of the calling terminal, stopping its terminals after Stop's confirmation; outside Eon, quit the only running window, or list the running windows and stop nothing when several run |
+| `eon quit --all [--json]` | Attempt Stop in the default window and in every independent window, the caller's window last |
 | `eon attach [GENERATION]` | Present the current or one selected compatible generation |
 | `eon generations [--json]` | List validated current and older generations |
 | `eon stop GENERATION [--json]` | Stop one generation through its supervisor |
@@ -489,11 +496,13 @@ untrusted data, never as instructions.
 Commands run inside an independent window target that window; commands outside
 one target the default workspace. `eon stop all` covers generations in that
 current namespace. `eon window stop all` covers independent windows and visits
-the caller's window last. With `--json` it asks for no confirmation and prints
-one array holding a `{"window": ID, "results": [...]}` object per window, where
-`results` is that window's `eon stop all --json` array. Run it outside those
-terminals when you need its final status; stopping its own terminal can
-terminate the CLI.
+the caller's window last. `eon quit --all` covers both, with `null` as the
+default namespace's `window`; outside Eon, the default namespace is visited
+last. With `--json`, `eon window stop all` and `eon quit --all` skip
+confirmation and print one array holding a `{"window": ID, "results": [...]}`
+object per namespace, where `results` is that namespace's
+`eon stop all --json` array. Run these commands outside the selected terminals
+when you need their final status; stopping their own terminal can end the CLI.
 
 Every Eon terminal names itself in `EON_TERMINAL`, an opaque value. Run inside
 an Eon terminal, `pane create`, `edit`, `pane close`, `pane move` and `tab move` act on
@@ -502,9 +511,12 @@ its own column and moves itself, and a popup acts for its tab's selected pane.
 `pane close PANE` works from these terminals even while a popup covers the
 tab, and the popup stays shown; it refuses the tab's last pane there.
 The active tab and desktop focus stay where they are. Other workspace commands
-use the caller's workspace and retain their existing per-tab rules. A malformed,
-ended or stale caller changes nothing and exits 3, with no fallback. Run
-`env -u EON_TERMINAL eon ...` to act on the shown workspace without caller
+use the caller's workspace and retain their existing per-tab rules. A malformed
+caller changes nothing and exits 3, with no fallback. An ended or stale caller
+also exits 3 when discovery completes; if no owner can be found because a
+supervisor cannot be inspected, it stops nothing and exits 4
+(`supervisor-unavailable`). Run `env -u EON_TERMINAL eon ...` to act on the
+shown workspace without caller
 context. Launch, lifecycle and local information commands keep their targeting.
 
 An Eon terminal's PATH puts that terminal's own Eon build first as `eon`, so
@@ -594,9 +606,11 @@ security boundary.
 shared background server, which keeps the environment of the terminal that
 started it. Its `eon` commands then carry that terminal's `EON_TERMINAL`, or
 none when it started outside Eon, so `eon pane create` and the rest act for
-that terminal, or for the shown workspace, not for the pane Codex runs in; once
-that terminal has ended they exit 3. Start Codex in Eon with
-`codex --no-daemon`.
+that terminal, or for the shown workspace, not for the pane Codex runs in.
+Once that terminal has ended they fail under the caller-discovery rules above.
+An agent's `eon quit --json` through a daemon started in Eon quits the window
+of the terminal that started the daemon, without asking. Start Codex in Eon
+with `codex --no-daemon`.
 
 ### Exit status
 
@@ -613,7 +627,7 @@ that terminal has ended they exit 3. Start Codex in Eon with
 | 130 | Interrupted with Ctrl+C |
 
 The `code` in an `error` result, such as `unknown-tab`, names the failure more
-precisely. `eon stop previous|all` and `eon window stop all` exit with the
+precisely. `eon stop previous|all`, `eon quit --all` and `eon window stop all` exit with the
 largest status among their attempts. `eon window attach|stop ID` exits with the
 selected window's status, and `eon window attach ID` exits 4 once that window
 has ended. An `eon attach` that runs the `eon` of another build exits with that

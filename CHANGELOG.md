@@ -5,6 +5,12 @@ installation, and proven contract changes.
 
 ## Unreleased
 
+- `eon quit` ends the window you are in without a window ID: run in any Eon
+  terminal it stops that terminal's window, and outside Eon it stops the only
+  running window, or lists them when several run. `eon quit --all` stops every
+  window, the default one included. Commands > Quit this window runs `eon quit`
+  (`eon-7cf0y.1`).
+
 - Fixed: Eon windows and generations from this release on share one Claude
   quota read every five minutes when the shared schedule is usable; otherwise
   each keeps its own schedule. After Claude's usage endpoint refuses a read (as

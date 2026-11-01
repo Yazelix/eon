@@ -1,17 +1,20 @@
 use super::{
-    cli::Inputs,
-    control::{Error, failure, write_stdout},
+    cli::{Inputs, calling_terminal},
+    control::{Error, failure, report_failure, write_stdout},
     generation::{
-        current_generation, generation_directory, private_directory_exists, window_generation,
-        window_inventory,
+        GenerationRecord, WorkspaceTarget, current_generation, generation_directory,
+        private_directory_exists, resolve_workspace, running_generations, stop_generation,
+        window_generation, window_inventory,
     },
     platform::socket_path_fits,
+    sessions::TERMINAL_VARIABLE,
     supervisor::{
         LaunchMode, SESSION_START_TIMEOUT, base_runtime_directory, prepare_runtime,
         probe_supervisor, request_id, runtime_directory, validate_private_directory,
     },
     workspace::{failure_json, json_escape},
 };
+use eon_workspace_protocol::v27::Failure;
 use std::{
     collections::hash_map::RandomState,
     env,
@@ -100,6 +103,109 @@ fn window_command(root: &Path) -> Result<Command, String> {
     let mut command = Command::new(binary);
     command.env(WINDOW_RUNTIME, root);
     Ok(command)
+}
+
+fn namespace_command(id: Option<&str>, root: &Path) -> Result<Command, String> {
+    let mut command = window_command(root)?;
+    if id.is_none() {
+        command.env_remove(WINDOW_RUNTIME);
+    }
+    Ok(command)
+}
+
+fn namespaces(include_default: bool) -> Result<Vec<(Option<String>, PathBuf)>, String> {
+    let mut namespaces = Vec::new();
+    if include_default {
+        namespaces.push((None, base_runtime_directory("eon")));
+    }
+    namespaces.extend(
+        existing_windows()?
+            .into_iter()
+            .map(|(id, root)| (Some(id), root)),
+    );
+    Ok(namespaces)
+}
+
+fn candidates(inputs: &Inputs) -> Result<Vec<(Option<String>, PathBuf, GenerationRecord)>, String> {
+    let mut candidates = Vec::new();
+    for (id, root) in namespaces(true)? {
+        for generation in running_generations(inputs, &root)? {
+            candidates.push((id.clone(), root.clone(), generation));
+        }
+    }
+    Ok(candidates)
+}
+
+pub(super) fn quit(inputs: &Inputs, json: bool) -> Result<i32, Error> {
+    let caller = match calling_terminal() {
+        Ok(caller) => caller,
+        Err(error) => return Ok(report_failure(&error, json)?),
+    };
+    if let Some(caller) = caller {
+        let resolved = match resolve_workspace(inputs, WorkspaceTarget::default(), Some(&caller)) {
+            Ok(resolved) => resolved,
+            Err(error) => return Ok(report_failure(&error, json)?),
+        };
+        return Ok(stop_generation(inputs, &resolved.generation, json, "eon")?);
+    }
+    let candidates = candidates(inputs)?;
+    match candidates.as_slice() {
+        [] => Ok(report_failure(
+            &failure(
+                "missing-supervisor",
+                "no Eon window is running; run `eon` first",
+            ),
+            json,
+        )?),
+        [(id, root, generation)] => {
+            let mut command = namespace_command(id.as_deref(), root)?;
+            command.args(["stop", &generation.id]);
+            if json {
+                command.arg("--json");
+            }
+            Ok(command
+                .status()
+                .map_err(|error| format!("cannot run Eon window action: {error}"))?
+                .code()
+                .unwrap_or(1))
+        }
+        candidates => {
+            let mut detail = String::from("several Eon windows are running; select one to stop:\n");
+            for (id, _, generation) in candidates {
+                let generation_id = generation.id.escape_debug().to_string();
+                let command = match id {
+                    Some(id) => format!("eon window stop {id}"),
+                    None => format!("env -u EON_WINDOW_RUNTIME_DIR eon stop {generation_id}"),
+                };
+                let terminals = if generation.state == "live" {
+                    generation.sessions.len().to_string()
+                } else {
+                    "unknown".into()
+                };
+                detail.push_str(&format!(
+                    "window {} generation {} state={} terminals={terminals}; {command}\n",
+                    id.as_deref().unwrap_or("default"),
+                    generation_id,
+                    generation.state,
+                ));
+            }
+            detail.push_str("or run `eon quit --all` to stop every window");
+            if json {
+                // This CLI inventory is not an EONW message; retain every candidate.
+                Ok(report_failure(
+                    &Failure {
+                        code: "ambiguous-window".into(),
+                        detail,
+                    },
+                    true,
+                )?)
+            } else {
+                // Damaged generation IDs are escaped above; preserve the inventory's rows.
+                eprintln!("error ambiguous-window: {detail}");
+                Ok(1)
+            }
+        }
+    }
 }
 
 pub(super) fn new_window(inputs: &Inputs) -> Result<i32, String> {
@@ -204,9 +310,13 @@ fn run_in_window(root: &Path, arguments: &[&str]) -> Result<i32, Error> {
     Ok(status.code().unwrap_or(1))
 }
 
-pub(super) fn stop_all_windows(json: bool) -> Result<i32, Error> {
-    let current = runtime_directory("eon");
-    let mut windows = existing_windows()?;
+pub(super) fn stop_namespaces(include_default: bool, json: bool) -> Result<i32, Error> {
+    let current = if include_default && env::var_os(TERMINAL_VARIABLE).is_none() {
+        base_runtime_directory("eon")
+    } else {
+        runtime_directory("eon")
+    };
+    let mut windows = namespaces(include_default)?;
     windows.sort_by_key(|(_, root)| root == &current);
     if json {
         write_stdout("[")?;
@@ -214,16 +324,39 @@ pub(super) fn stop_all_windows(json: bool) -> Result<i32, Error> {
     let mut status = 0;
     for (index, (id, root)) in windows.into_iter().enumerate() {
         if json {
-            let (code, results) = stop_window_json(&root);
+            let (code, results) = match namespace_command(id.as_deref(), &root) {
+                Ok(command) => stop_window_json(command),
+                Err(error) => (
+                    1,
+                    format!(
+                        "[{}]",
+                        failure_json(&failure("stop-failed", error)).trim_end()
+                    ),
+                ),
+            };
             write_stdout(format!(
-                "{}{{\"window\":\"{}\",\"results\":{results}}}",
+                "{}{{\"window\":{},\"results\":{results}}}",
                 if index == 0 { "" } else { "," },
-                json_escape(&id)
+                id.as_ref()
+                    .map_or_else(|| "null".into(), |id| format!("\"{}\"", json_escape(id)))
             ))?;
             status = status.max(code);
         } else {
-            eprintln!("Stop Eon window {id}:");
-            status = status.max(stop_window(OsStr::new(&id), false)?);
+            match &id {
+                Some(id) => eprintln!("Stop Eon window {id}:"),
+                None => eprintln!("Stop the default Eon window:"),
+            }
+            let code = if let Some(id) = id {
+                stop_window(OsStr::new(&id), false)?
+            } else {
+                namespace_command(None, &root)?
+                    .args(["stop", "all"])
+                    .status()
+                    .map_err(|error| format!("cannot run Eon window action: {error}"))?
+                    .code()
+                    .unwrap_or(1)
+            };
+            status = status.max(code);
         }
     }
     if json {
@@ -234,15 +367,13 @@ pub(super) fn stop_all_windows(json: bool) -> Result<i32, Error> {
 
 /// Runs the window's `eon stop all --json` and returns its status and result
 /// array, or a `stop-failed` array when it yields none.
-fn stop_window_json(root: &Path) -> (i32, String) {
-    let output = window_command(root).and_then(|mut command| {
-        command
-            .args(["stop", "all", "--json"])
-            .stdin(Stdio::null())
-            .stderr(Stdio::inherit())
-            .output()
-            .map_err(|error| format!("cannot run Eon window action: {error}"))
-    });
+fn stop_window_json(mut command: Command) -> (i32, String) {
+    let output = command
+        .args(["stop", "all", "--json"])
+        .stdin(Stdio::null())
+        .stderr(Stdio::inherit())
+        .output()
+        .map_err(|error| format!("cannot run Eon window action: {error}"));
     let (code, detail) = match output {
         Ok(output) => {
             let code = output.status.code().unwrap_or(1);

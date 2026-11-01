@@ -106,8 +106,8 @@ enum RunnerOutput {
 
 /// The Commands popup's curated list. Each entry runs an existing `eon` command as the popup's
 /// caller, so the CLI keeps owning validation, targets and confirmations. `TAB` stands for the
-/// popup's own tab, `GENERATION` for its window's generation, `PANE` for its tab's selected pane
-/// and `WORKSPACE` for its own workspace. `NAME` is typed in a name box, where an empty name
+/// popup's own tab, `PANE` for its tab's selected pane and `WORKSPACE` for its own workspace.
+/// `NAME` is typed in a name box, where an empty name
 /// clears. `WS` is chosen in the Workspaces popup's picker, run inside Commands: a query that
 /// matches no workspace runs `workspace new --name QUERY` instead, and a cancel runs nothing.
 /// Pane moves are absent because Eon refuses them while a popup is open.
@@ -124,7 +124,7 @@ const RUNNER_COMMANDS: &[(&str, &[&str], RunnerOutput)] = {
         ),
         ("New window", &["window", "new"], Close),
         ("Close tab", &["tab", "close", "TAB"], Close),
-        ("Quit this window", &["stop", "GENERATION"], Close),
+        ("Quit this window", &["quit"], Close),
         ("Move tab left", &["tab", "move", "left"], Close),
         ("Move tab right", &["tab", "move", "right"], Close),
         ("Switch workspace", &["workspace", "switch", "WS"], Close),
@@ -145,24 +145,23 @@ const RUNNER_COMMANDS: &[(&str, &[&str], RunnerOutput)] = {
     ]
 };
 
-fn runner_arguments<'a>(arguments: &[&'a str], tab: &'a str, generation: &'a str) -> Vec<&'a str> {
+fn runner_arguments<'a>(arguments: &[&'a str], tab: &'a str) -> Vec<&'a str> {
     arguments
         .iter()
         .map(|argument| match *argument {
             "TAB" => tab,
-            "GENERATION" => generation,
             _ => argument,
         })
         .collect()
 }
 
 /// The picker's lines: index, label and the exact `eon` command each runs.
-fn runner_list(tab: &str, generation: &str) -> String {
+fn runner_list(tab: &str) -> String {
     RUNNER_COMMANDS
         .iter()
         .enumerate()
         .map(|(index, (label, arguments, _))| {
-            let command = runner_arguments(arguments, tab, generation).join(" ");
+            let command = runner_arguments(arguments, tab).join(" ");
             format!("{index}\t{label:<24}eon {command}\n")
         })
         .collect()
@@ -200,11 +199,10 @@ fn wait_for_enter() {
 
 fn pick_and_run_command(inputs: &Inputs) -> Result<(i32, RunnerOutput), String> {
     let tab = env::var(TAB_VARIABLE).map_err(|_| "runs only in an Eon popup".to_string())?;
-    let generation = current_generation(inputs)?;
     let Some(output) = run_picker(
         packaged_fzf("Command > ", "Enter Run · Esc/Ctrl+C Cancel")
             .args(["--delimiter=\t", "--with-nth=2.."]),
-        &runner_list(&tab, &generation),
+        &runner_list(&tab),
         "command",
     )?
     else {
@@ -216,7 +214,7 @@ fn pick_and_run_command(inputs: &Inputs) -> Result<(i32, RunnerOutput), String> 
         .and_then(|index| index.trim().parse::<usize>().ok())
         .and_then(|index| RUNNER_COMMANDS.get(index))
         .ok_or("command picker returned an invalid selection")?;
-    let mut arguments: Vec<OsString> = runner_arguments(arguments, &tab, &generation)
+    let mut arguments: Vec<OsString> = runner_arguments(arguments, &tab)
         .into_iter()
         .map(OsString::from)
         .collect();
@@ -686,9 +684,36 @@ fn launch_managed(
     Err(format!("cannot launch {program}: {error}"))
 }
 
+fn parse_quit_arguments(arguments: &[OsString]) -> Result<Option<(bool, bool)>, Error> {
+    let [command, flags @ ..] = arguments else {
+        return Ok(None);
+    };
+    if command != "quit" {
+        return Ok(None);
+    }
+    let (mut all, mut json) = (false, false);
+    for flag in flags {
+        if flag == "--all" && !all {
+            all = true;
+        } else if flag == "--json" && !json {
+            json = true;
+        } else {
+            return Err(Error::usage(EON_USAGE));
+        }
+    }
+    Ok(Some((all, json)))
+}
+
 fn execute(inputs: &Inputs, arguments: Vec<OsString>) -> Result<i32, Error> {
     if let Some(code) = lifecycle_command(inputs, &arguments, "eon")? {
         return Ok(code);
+    }
+    if let Some((all, json)) = parse_quit_arguments(&arguments)? {
+        return if all {
+            windows::stop_namespaces(true, json)
+        } else {
+            windows::quit(inputs, json)
+        };
     }
     let result = match arguments.as_slice() {
         [flag] if flag == "-h" || flag == "--help" => print_help(inputs),
@@ -698,12 +723,12 @@ fn execute(inputs: &Inputs, arguments: Vec<OsString>) -> Result<i32, Error> {
             Ok(windows::attach_window(inputs, id)?)
         }
         [command, action, all] if command == "window" && action == "stop" && all == "all" => {
-            Ok(windows::stop_all_windows(false)?)
+            Ok(windows::stop_namespaces(false, false)?)
         }
         [command, action, all, flag]
             if command == "window" && action == "stop" && all == "all" && flag == "--json" =>
         {
-            Ok(windows::stop_all_windows(true)?)
+            Ok(windows::stop_namespaces(false, true)?)
         }
         [command, action, id] if command == "window" && action == "stop" => {
             Ok(windows::stop_window(id, false)?)
@@ -819,6 +844,8 @@ fn help_text(version: &str, color: bool) -> String {
   {command}run [-- COMMAND...]{reset}                         Start a fresh workspace
 
 {heading}Windows{reset}
+  {command}quit [--json]{reset}                               End this window and its terminals
+  {command}quit --all [--json]{reset}                         End every window's terminals
   {command}window new{reset}                                  Open an independent window
   {command}window attach ID{reset}                            Reopen a window
   {command}window stop ID [--json]{reset}                     End that window's terminals
@@ -869,7 +896,7 @@ fn help_text(version: &str, color: bool) -> String {
   {command}eon windows --json{reset}                          Inspect windows as JSON
   {command}eon anima --help{reset}                            Browse animation styles/options
 
-Closing a window detaches. Stop ends its terminals.
+Closing a window detaches; eon quit ends it.
 Inside Eon, workspace commands use the calling terminal's supervisor/workspace.
 Tab move and pane commands retain their calling-tab rules.
 Workspace flags: --generation GENERATION / --window ID, before any --.
@@ -1428,7 +1455,7 @@ fn inspect(socket: &Path, caller: Option<&str>, generation: &str) -> Result<Snap
 }
 
 /// Workspace control always validates the exact terminal named by EON_TERMINAL.
-fn calling_terminal() -> Result<Option<String>, Failure> {
+pub(super) fn calling_terminal() -> Result<Option<String>, Failure> {
     let Some(caller) = env::var_os(TERMINAL_VARIABLE) else {
         return Ok(None);
     };
@@ -1996,20 +2023,41 @@ mod tests {
     }
 
     #[test]
+    fn quit_parser_takes_only_all_and_json_once() {
+        let parse = |args: &[&str]| {
+            parse_quit_arguments(&args.iter().map(OsString::from).collect::<Vec<_>>())
+        };
+        for (args, expected) in [
+            (vec!["quit"], (false, false)),
+            (vec!["quit", "--json"], (false, true)),
+            (vec!["quit", "--all"], (true, false)),
+            (vec!["quit", "--all", "--json"], (true, true)),
+            (vec!["quit", "--json", "--all"], (true, true)),
+        ] {
+            assert_eq!(parse(&args).unwrap(), Some(expected));
+        }
+        for args in [
+            vec!["quit", "x"],
+            vec!["quit", "--all", "--all"],
+            vec!["quit", "--json", "--json"],
+            vec!["quit", "--window", "12345678"],
+        ] {
+            assert_eq!(parse(&args).unwrap_err().status, 2);
+        }
+        assert_eq!(parse(&["windows"]).unwrap(), None);
+        assert_eq!(parse(&[]).unwrap(), None);
+    }
+
+    #[test]
     fn command_runner_workspace_entries_parse_as_eon_commands() {
-        let generation = "g1-0123456789abcdef0123456789abcdef";
         assert!(
-            runner_list("t2", generation)
+            runner_list("t2")
                 .lines()
-                .any(|line| line
-                    .ends_with(&format!("Quit this window        eon stop {generation}")))
+                .any(|line| line.ends_with("Quit this window        eon quit"))
         );
         for (label, arguments, _) in RUNNER_COMMANDS {
-            let arguments = runner_arguments(arguments, "t2", generation);
-            assert!(
-                !arguments.contains(&"TAB") && !arguments.contains(&"GENERATION"),
-                "{label}"
-            );
+            let arguments = runner_arguments(arguments, "t2");
+            assert!(!arguments.contains(&"TAB"), "{label}");
             // The rest stand for what the popup inspects, picks or reads, as the runner fills them.
             let arguments: Vec<OsString> = arguments
                 .into_iter()
@@ -2021,7 +2069,12 @@ mod tests {
                 })
                 .map(OsString::from)
                 .collect();
-            if ["workspace", "tab", "pane"].contains(&arguments[0].to_str().unwrap()) {
+            if arguments[0] == "quit" {
+                assert_eq!(
+                    parse_quit_arguments(&arguments).unwrap(),
+                    Some((false, false))
+                );
+            } else if ["workspace", "tab", "pane"].contains(&arguments[0].to_str().unwrap()) {
                 assert!(parse_control_arguments(&arguments).is_ok(), "{label}");
             }
         }

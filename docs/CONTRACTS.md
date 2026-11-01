@@ -873,8 +873,9 @@ socket names, JSON fields and protocol identifiers retain their spellings.
     `--json`. The CLI projection derives the status from the failure code.
     Multi-target Stop exits with its largest status; commands that run another
     program pass on its status.
-  - A CLI confirmation (`eon stop`, `eon window stop`, `eon workspace close`,
-    and the final close of `eon tab close` and `eon pane close`) proceeds only
+  - A CLI confirmation (`eon stop`, `eon quit`, `eon window stop`,
+    `eon workspace close`, and the final close of `eon tab close` and
+    `eon pane close`) proceeds only
     on a yes answer (`y`, `Y`, `yes` or `YES`). Any other answer changes
     nothing. At a terminal it prints the cancel note and exits 0. When stdin
     is not a terminal, it exits 1 with `not-confirmed`, end of input included,
@@ -1032,29 +1033,31 @@ socket names, JSON fields and protocol identifiers retain their spellings.
       workspace keeps the workspace and its remaining terminals, as a partial tab
       close does (EON-C8). Switching never moves desktop focus.
 
-- **Important failures:** A caller that names no live terminal of the
-  addressed supervisor (ended, closed, from another generation or window,
-  empty, or malformed) changes nothing and exits 3 (`unknown-caller`), with no fallback
-  to the active tab. Absence of this CLI build's supervisor does not prevent control of the caller's compatible
-  supervisor. Caller resolution uses the complete opaque terminal identity and never falls back to
-  another workspace. A malformed or stale caller exits 3; failed or ambiguous resolution changes
-  nothing. An unavailable or incompatible selected supervisor fails explicitly without starting,
-  presenting or restarting it. In a tab without panes, a popup caller's `pane move`
-  refuses, and so does its `pane create` without `--no-focus` when dismissing
-  that popup would end the tab's last terminal; both change nothing and
-  exit 1. While a popup covers the caller's tab, `pane close` naming that
-  tab's last pane changes nothing and exits 1, and so does a close sent
-  without a calling terminal, including Alt+W. An unavailable editor
-  changes nothing and exits 1. An empty COMMAND is a usage error (exit 2);
-  a command pane requested without a calling terminal, or whose program is
-  missing or not executable, changes nothing and exits 1.
-  Malformed, oversized, incompatible, unavailable,
-  rejected, timed-out, partially read, or response-lost operations fail within
-  the shared bound without reconstructing hidden state or reviving completed
-  Stop. Accepted Stop names affected live terminals, sends canonical Stop through
-  every validated management lease before waiting, and returns only after every
-  exact terminal record is complete.
-
+- **Important failures:** A caller that the addressed supervisor rejects as
+  naming no live terminal (ended, closed, from another generation or window,
+  empty, or malformed) changes nothing and exits 3 (`unknown-caller`), with no
+  fallback to the active tab. Absence of this CLI build's supervisor does not
+  prevent control of the caller's compatible supervisor. Caller resolution uses
+  the complete opaque terminal identity and never falls back to another
+  workspace. A malformed caller exits 3; a stale caller exits 3 when discovery
+  completes without validating it. When no owner can be found because discovery
+  cannot inspect a supervisor, it exits 4 (`supervisor-unavailable`). Failed or
+  ambiguous resolution changes nothing. An unavailable or incompatible selected
+  supervisor fails explicitly without starting, presenting or restarting it. In
+  a tab without panes, a popup caller's `pane move` refuses, and so does its
+  `pane create` without `--no-focus` when dismissing that popup would end the
+  tab's last terminal; both change nothing and exit 1. While a popup covers the
+  caller's tab, `pane close` naming that tab's last pane changes nothing and
+  exits 1, and so does a close sent without a calling terminal, including
+  Alt+W. An unavailable editor changes nothing and exits 1. An empty COMMAND is
+  a usage error (exit 2); a command pane requested without a calling terminal,
+  or whose program is missing or not executable, changes nothing and exits 1.
+  Malformed, oversized, incompatible, unavailable, rejected, timed-out,
+  partially read, or response-lost operations fail within the shared bound
+  without reconstructing hidden state or reviving completed Stop. Accepted Stop
+  names affected live terminals, sends canonical Stop through every validated
+  management lease before waiting, and returns only after every exact terminal
+  record is complete.
 - **Owner:** Eon Runtime supervisor workspace/action state and CLI projection;
   its canonical EONW package owns types, codec and result ordering. Eon supplies
   validated component facts and product defaults.
@@ -1118,11 +1121,10 @@ socket names, JSON fields and protocol identifiers retain their spellings.
   every command keeps the CLI's own validation, targets and Stop and
   final-close confirmations; it adds no EONW action. A successful action
   ends the popup; a listing, `stop previous`, or a failure reported while the
-  popup is still open, waits for Enter. "Quit this window" runs `eon stop <this
-  window's generation>` and keeps Stop's confirmation listing of live
-  terminals; it adds no EONW action. Runtime writes the exact generation into
-  the line, so the entry works in an independent window (EON-C23) and stops
-  only that window. New pane dismisses the popup before it
+  popup is still open, waits for Enter. "Quit this window" runs `eon quit`
+  (EON-C11) as the popup's terminal, so it stops only the popup's own window,
+  in an independent window too (EON-C23), with `eon quit`'s confirmation; it
+  adds no EONW action. New pane dismisses the popup before it
   starts the pane, as Alt+M does, so a failure after that dismissal is not
   shown. Esc, Ctrl+C or no match runs nothing. The Commands popup follows the
   popup catalog's key precedence below.
@@ -1321,8 +1323,8 @@ socket names, JSON fields and protocol identifiers retain their spellings.
   its window's terminals, proven by its amendment proof below.
 - **Consumer:** Eon and eonbase users launching or targeting a product generation.
 - **Trigger:** Launch current generation, inspect an older live generation,
-  present a compatible existing surface, stop one generation, or stop a selected
-  set of generations.
+  present a compatible existing surface, stop one generation, stop a selected
+  set of generations, or quit one window or every window.
 - **Result:**
   - Eon and eonbase use separate runtime namespaces. Launch and lifecycle defaults use their exact
     current generation; Eon workspace control follows EON-C10's caller and explicit-target rules.
@@ -1357,6 +1359,28 @@ socket names, JSON fields and protocol identifiers retain their spellings.
     nonzero if any Stop attempt fails. `all` stops current last so earlier
     targets can finish when invoked inside a current terminal.
     Neither command forcibly kills a process.
+  - `eon quit [--json]` stops one window with the existing validated Stop of
+    one generation, with Stop's confirmation and JSON result. Run from an Eon
+    terminal, it stops the generation whose supervisor validates that
+    terminal's `EON_TERMINAL` (EON-C10); when caller discovery completes and
+    no supervisor validates the caller, it fails with `unknown-caller` and
+    stops nothing; when no owner can be found because discovery cannot inspect
+    a supervisor, EON-C10's `supervisor-unavailable` failure is preserved and
+    nothing stops. Run without `EON_TERMINAL`, it considers every non-dead
+    generation of the default namespace and of every independent window
+    (EON-C23): it stops the only one; with none it
+    fails with `missing-supervisor`; with several it fails with
+    `ambiguous-window`, stops nothing, and names each one's window ID or the
+    default namespace, generation, state, live terminal count when inspectable
+    (otherwise unknown) and the `eon window stop ID` or
+    `env -u EON_WINDOW_RUNTIME_DIR eon stop GENERATION` command that stops it.
+    `eon quit --all [--json]` attempts `eon stop all` in the default namespace
+    and in every independent window, the caller's own namespace last; outside
+    Eon, the default namespace counts as the caller's. With `--json` it
+    prints one array holding one `{"window": ID, "results": [...]}` object per
+    namespace, with `window` null for the default namespace, and it exits with
+    the largest status. Neither form forcibly kills a process, and quitting the
+    caller's own window can end the CLI before it reports, as Stop can.
   - Implicit attach selects only a live supervisor reporting the exact current
     identity; otherwise Eon starts current without stopping older work. Explicit
     attach never substitutes another generation, and discovery distinguishes
@@ -2120,8 +2144,9 @@ socket names, JSON fields and protocol identifiers retain their spellings.
   no live supervisor as ended instead of as the current generation.
   `eon window stop all` covers independent windows and attempts the caller's
   own window last; existing `eon stop all` remains scoped to the caller's
-  current runtime namespace. Piped confirmations remain available to later
-  windows, one answer per prompt. With `--json`, `eon window stop all` asks for
+  current runtime namespace. `eon quit --all` covers both (EON-C11). Piped
+  confirmations remain available to later windows, one answer per prompt.
+  With `--json`, `eon window stop all` asks for
   no confirmation and prints one JSON array holding one
   `{"window": ID, "results": [...]}` object per window, in stop order with the
   caller's own window last; `results` is that window's `eon stop all --json`

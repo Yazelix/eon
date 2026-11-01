@@ -357,15 +357,15 @@ fn generation_candidates(root: &Path) -> Result<Vec<(OsString, PathBuf)>, String
     Ok(candidates)
 }
 #[derive(Debug)]
-struct GenerationRecord {
-    id: String,
+pub(super) struct GenerationRecord {
+    pub(super) id: String,
     kind: &'static str,
-    state: &'static str,
+    pub(super) state: &'static str,
     runtime: PathBuf,
     eon_version: Option<String>,
     workspace_protocol: Option<u16>,
     component_report: Option<String>,
-    sessions: Vec<String>,
+    pub(super) sessions: Vec<String>,
     attach: Availability,
     stop: Availability,
     detail: String,
@@ -778,7 +778,10 @@ pub(super) fn attach_generation(
 
 /// The generations of the window at `root` whose supervisor has not ended,
 /// current first.
-fn running_generations(inputs: &Inputs, root: &Path) -> Result<Vec<GenerationRecord>, String> {
+pub(super) fn running_generations(
+    inputs: &Inputs,
+    root: &Path,
+) -> Result<Vec<GenerationRecord>, String> {
     let mut records = discover_generations(inputs, root, &current_generation(inputs)?)?;
     records.retain(|record| record.state != "dead");
     Ok(records)
