@@ -1,7 +1,8 @@
 use orbit_protocol::management::{
-    self, ClientMessage, EndpointIdentity, Error, Failure, FailureCode, LeaseInput, LiveIdentity,
-    ObjectIdentity, ProcessOutcome, ProgramKind, ProgramRecord, ProgramState, ProgramStatus,
-    Record, Refusal, Screen, ServerMessage, TerminationReason, Tombstone, VisibleText,
+    self, ClientMessage, EndpointIdentity, Error, Failure, FailureCode, Foreground, LeaseInput,
+    LiveIdentity, ObjectIdentity, ProcessOutcome, ProgramKind, ProgramRecord, ProgramState,
+    ProgramStatus, Record, Refusal, Screen, ServerMessage, TerminationReason, Tombstone,
+    VisibleText,
 };
 
 fn program_record(id: &str, state: ProgramState) -> ProgramRecord {
@@ -114,6 +115,7 @@ fn management_messages_and_records_round_trip_canonically() {
         ServerMessage::ProgramStatus(ProgramStatus {
             count: 3,
             background: 2,
+            foreground: Foreground::Other,
             update: 9,
             terminal_title: "eon-9a 🪐".into(),
             omitted: vec![2],
@@ -249,8 +251,9 @@ fn management_codec_rejects_incompatible_or_noncanonical_bytes() {
 
 /// Orbit fills a reply by `PROGRAM_STATUS_HEADER_BYTES`, `program_record_len`
 /// and `PROGRAM_OMITTED_BYTES`, so they must match the encoding; at the
-/// reply's text bounds seven records fit in 4 KiB, and three beside the
-/// creation sequences of 253 more.
+/// reply's text bounds seven records fit in 4 KiB, beside the creation
+/// sequences of seven more with no byte to spare, and three beside the
+/// creation sequences of 253 more (ORB-C15).
 #[test]
 fn program_status_replies_keep_their_bounds() {
     let full = ProgramRecord {
@@ -265,6 +268,7 @@ fn program_status_replies_keep_their_bounds() {
         ServerMessage::ProgramStatus(ProgramStatus {
             count: (records.len() + omitted) as u16,
             background: u8::MAX,
+            foreground: Foreground::Child,
             update: 1,
             terminal_title: title.clone(),
             omitted: (0..omitted as u64).collect(),
@@ -280,6 +284,12 @@ fn program_status_replies_keep_their_bounds() {
     );
     assert!(matches!(
         management::encode_server_message(&reply(vec![full.clone(); 8], 0)),
+        Err(Error::PayloadTooLarge { .. })
+    ));
+    let fourteen = management::encode_server_message(&reply(vec![full.clone(); 7], 7)).unwrap();
+    assert_eq!(fourteen.len(), management::MAX_MESSAGE_BYTES);
+    assert!(matches!(
+        management::encode_server_message(&reply(vec![full.clone(); 7], 8)),
         Err(Error::PayloadTooLarge { .. })
     ));
     let three = reply(vec![full.clone(); 3], 253);
@@ -309,6 +319,7 @@ fn program_status_replies_keep_their_bounds() {
             refused(ProgramStatus {
                 count: 1,
                 background: 0,
+                foreground: Foreground::Child,
                 update: 1,
                 terminal_title: String::new(),
                 omitted: Vec::new(),
@@ -321,6 +332,7 @@ fn program_status_replies_keep_their_bounds() {
         refused(ProgramStatus {
             count: 2,
             background: 0,
+            foreground: Foreground::Child,
             update: 1,
             terminal_title: String::new(),
             omitted: Vec::new(),
@@ -332,6 +344,7 @@ fn program_status_replies_keep_their_bounds() {
         refused(ProgramStatus {
             count: 0,
             background: 0,
+            foreground: Foreground::Child,
             update: 1,
             terminal_title: "a".repeat(management::MAX_TERMINAL_TITLE_BYTES + 1),
             omitted: Vec::new(),
@@ -341,13 +354,13 @@ fn program_status_replies_keep_their_bounds() {
     ));
 }
 
-/// Management v4's new messages keep their exact bytes: the header's
-/// generation 4, each kind's tag, and its payload.
+/// Management v4's new messages keep their exact bytes under generation 5:
+/// the header's generation, each kind's tag, and its payload.
 #[test]
-fn management_v4_messages_have_canonical_bytes() {
-    assert_eq!(management::VERSION, 4);
+fn management_v5_messages_have_canonical_bytes() {
+    assert_eq!(management::VERSION, 5);
     let framed = |kind: u8, payload: &[u8]| {
-        let mut bytes = b"ORBM\x04\x00".to_vec();
+        let mut bytes = b"ORBM\x05\x00".to_vec();
         bytes.extend([kind, 0]);
         bytes.extend((payload.len() as u32).to_le_bytes());
         bytes.extend(payload);
@@ -412,6 +425,59 @@ fn management_v4_messages_have_canonical_bytes() {
         })),
         framed(72, &payload)
     );
+}
+
+/// A `ProgramStatus` reply carries the terminal's foreground as one byte
+/// after the background count (management v5): each value keeps its tag and
+/// round-trips, and a decoder refuses any other tag.
+#[test]
+fn program_status_carries_the_foreground() {
+    let status = |foreground| ProgramStatus {
+        count: 1,
+        background: 2,
+        foreground,
+        update: 9,
+        terminal_title: "t".into(),
+        omitted: vec![4],
+        records: Vec::new(),
+    };
+    let mut payload = 1u16.to_le_bytes().to_vec();
+    payload.push(2);
+    payload.push(2);
+    payload.extend(9u64.to_le_bytes());
+    payload.extend(1u16.to_le_bytes());
+    payload.push(b't');
+    payload.extend(1u16.to_le_bytes());
+    payload.extend(4u64.to_le_bytes());
+    let mut golden = b"ORBM\x05\x00".to_vec();
+    golden.extend([71, 0]);
+    golden.extend((payload.len() as u32).to_le_bytes());
+    golden.extend(&payload);
+    assert_eq!(
+        management::encode_server_message(&ServerMessage::ProgramStatus(status(Foreground::Other)))
+            .unwrap(),
+        golden
+    );
+
+    let at = management::HEADER_BYTES + 2 + 1;
+    for (foreground, tag) in [
+        (Foreground::Unknown, 0),
+        (Foreground::Child, 1),
+        (Foreground::Other, 2),
+    ] {
+        let message = ServerMessage::ProgramStatus(status(foreground));
+        let bytes = management::encode_server_message(&message).unwrap();
+        assert_eq!(bytes[at], tag);
+        assert_eq!(management::decode_server_message(&bytes).unwrap(), message);
+    }
+    golden[at] = 3;
+    assert!(matches!(
+        management::decode_server_message(&golden),
+        Err(Error::InvalidTag {
+            field: "foreground",
+            value: 3
+        })
+    ));
 }
 
 /// A paste is bounded at 64 KiB and a Visible reply's text at 1 MiB, each by

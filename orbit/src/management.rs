@@ -42,7 +42,7 @@ pub(crate) const NEGOTIATION_MS: u32 = 1000;
 
 static NEXT_ARTIFACT: AtomicU64 = AtomicU64::new(0);
 
-/// The identities `--management-v4` names.
+/// The identities `--management-v5` names.
 #[derive(Debug, PartialEq, Eq)]
 pub(crate) struct Launch {
     pub(crate) session_id: String,

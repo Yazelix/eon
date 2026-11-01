@@ -1779,7 +1779,7 @@ fn orbit_command(
     managed_environment::remove_agent_session(&mut orbit_command)
         .arg("serve")
         .arg(socket)
-        .arg("--management-v4")
+        .arg("--management-v5")
         .arg(session_id)
         .arg(run_id)
         .arg(component_generation)
@@ -3032,6 +3032,7 @@ pub(crate) mod tests {
         let status = management::ProgramStatus {
             count: 0,
             background: 0,
+            foreground: management::Foreground::Child,
             update: 7,
             terminal_title: String::new(),
             omitted: Vec::new(),
@@ -3362,6 +3363,7 @@ pub(crate) mod tests {
                 management::ProgramStatus {
                     count: 0,
                     background: 0,
+                    foreground: management::Foreground::Child,
                     update: 1,
                     terminal_title: String::new(),
                     omitted: Vec::new(),
@@ -3644,7 +3646,7 @@ pub(crate) mod tests {
             [
                 "serve",
                 "/runtime/orbit.sock",
-                "--management-v4",
+                "--management-v5",
                 "session-1",
                 "run-1",
                 "component-1",
@@ -3741,7 +3743,7 @@ pub(crate) mod tests {
             [
                 "serve",
                 "/runtime/orbit.sock",
-                "--management-v4",
+                "--management-v5",
                 "session-2",
                 "run-2",
                 "component-2",

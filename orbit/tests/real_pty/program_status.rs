@@ -2,7 +2,7 @@ use crate::management_lease::{Manager, Reply};
 use crate::management_record::suffixed;
 use crate::support::*;
 use orbit_protocol::management::{
-    ClientMessage, ProgramKind, ProgramState, ProgramStatus, ServerMessage,
+    ClientMessage, Foreground, ProgramKind, ProgramState, ProgramStatus, ServerMessage,
 };
 use std::{
     fs,
@@ -11,7 +11,7 @@ use std::{
     time::{Duration, Instant},
 };
 
-const MANAGED: [&str; 4] = ["--management-v4", "session-3", "run-3", "component-3"];
+const MANAGED: [&str; 4] = ["--management-v5", "session-3", "run-3", "component-3"];
 
 /// A managed run of a bash script, with `env` and a lease on its management
 /// socket.
@@ -132,6 +132,8 @@ fn prompt_marks_drop_in_stream_order() {
 
 /// Without prompt marks, the foreground's return to the child's group drops
 /// `working` records once: a report after the return survives later samples.
+/// Each reply carries the foreground it sampled: `other` while the job leads,
+/// `child` after it returns.
 fn foreground_returns_drop_once() {
     let directory = TempDir::new();
     let job = Gate::new(&directory, "job");
@@ -151,12 +153,14 @@ fn foreground_returns_drop_once() {
     let before = until_reported(&mut lease, "w");
     assert_eq!(records(&before), [("w", ProgramState::Working)]);
     assert_eq!(before.records[0].app, "make");
+    assert_eq!(before.foreground, Foreground::Other, "{before:?}");
 
     job.release();
     until_leads(server.child, true);
     let returned = status(&mut lease);
     assert_eq!((returned.count, returned.records.len()), (0, 0), "{returned:?}");
     assert_eq!(returned.update, before.update + 1, "the drop is an update");
+    assert_eq!(returned.foreground, Foreground::Child, "{returned:?}");
 
     back.release();
     until_reported(&mut lease, "v");

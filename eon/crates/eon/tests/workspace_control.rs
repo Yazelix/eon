@@ -735,7 +735,7 @@ fn managed_orbit_helper() {
     let presentation = PathBuf::from(&arguments[serve + 1]);
     let management_argument = arguments
         .iter()
-        .position(|argument| argument == OsStr::new("--management-v4"))
+        .position(|argument| argument == OsStr::new("--management-v5"))
         .unwrap();
     let session_id = arguments[management_argument + 1]
         .to_str()

@@ -55,7 +55,7 @@ blind to the schema.
 `yazelix-orbit` takes this command line:
 
 ```sh
-yazelix-orbit serve [SOCKET] [--management-v4 SESSION_ID RUN_ID COMPONENT_GENERATION]
+yazelix-orbit serve [SOCKET] [--management-v5 SESSION_ID RUN_ID COMPONENT_GENERATION]
                   [--ansi-palette-v1 RGB,...] [-- COMMAND ...]
 ```
 
@@ -123,7 +123,7 @@ same way.
 
 ## Management record
 
-`--management-v4` makes the run managed (ORB-C13).
+`--management-v5` makes the run managed (ORB-C13).
 Each identity has 1 to 128 UTF-8 bytes. Before the child starts, Rust opens a
 private management socket at `SOCKET.management`; at Ready it publishes an
 exact user-owned 0600 live record at `SOCKET.record` naming the three
@@ -1056,8 +1056,19 @@ is otherwise unproved (ORB-C14). The protocol test
 codec, and the one byte it adds to the header still leaves room for seven
 records at their bounds.
 
+Every reply also carries the terminal's foreground, sampled with `tcgetpgrp`
+on the PTY as the host builds it, records or not: `child` when the PTY's
+foreground process group is the child's own, `other` when it is another
+group, and `unknown` when there is none or the sample fails. It takes one
+byte after the background count (management v5). With it, seven records at
+their bounds beside seven omitted creation sequences and a 64-byte terminal
+title fill exactly 4096 bytes: `program_status_replies_keep_their_bounds`
+encodes that reply and refuses an eighth omitted sequence, and
+`program_status_carries_the_foreground` pins each value's byte, round-trips
+it and refuses any other tag. Orbit gives the foreground no status meaning.
+
 The real-PTY program-status check reads the records through a
-`--management-v4` lease:
+`--management-v5` lease:
 
 - One write carrying `working`, `blocked` and `done` reports, a prompt mark
   and a `working` report leaves the `done` record and the last report. The
@@ -1093,9 +1104,9 @@ The real-PTY program-status check reads the records through a
   and with each list reversed so the zombie comes last, ending the whole walk
   there made it fail with 1.
 - In a Bash with job control and no prompt marks, a request while a job leads
-  keeps a `working` record; the request after the job returns drops it and
-  advances the update sequence by one; a report after the return survives the
-  next request.
+  keeps a `working` record and reads the foreground `other`; the request
+  after the job returns drops it, advances the update sequence by one and
+  reads `child`; a report after the return survives the next request.
 - A job reports `blocked` and leaves a writer in its group that keeps the PTY
   full across the job's return, so the return lands inside a detached turn;
   the turn ends there, the job's report is dropped and the shell's report

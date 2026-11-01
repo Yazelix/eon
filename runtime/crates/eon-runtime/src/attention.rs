@@ -11,7 +11,9 @@ use eon_workspace_protocol::v28::{
     self as eonw, Action, AttentionKind, AttentionRecord, AttentionState as State, Sidebar,
     Snapshot,
 };
-use orbit_protocol::management::{ProgramKind, ProgramRecord, ProgramState, ProgramStatus};
+use orbit_protocol::management::{
+    Foreground, ProgramKind, ProgramRecord, ProgramState, ProgramStatus,
+};
 use std::{
     cmp::Reverse,
     time::{Duration, Instant, SystemTime, UNIX_EPOCH},
@@ -132,6 +134,12 @@ struct Terminal {
     count: u16,
     /// Its background process count (ORB-C15).
     background: u8,
+    /// Which process group led its PTY when Orbit built the reply (ORB-C15).
+    #[cfg_attr(
+        not(test),
+        expect(dead_code, reason = "eon-7cf0y.12's busy rule reads it")
+    )]
+    foreground: Foreground,
     /// The terminal title, which the attention carries as `name`.
     name: String,
     records: Vec<Record>,
@@ -357,6 +365,7 @@ impl Attention {
             update: status.update,
             count: status.count,
             background: status.background,
+            foreground: status.foreground,
             name: status.terminal_title,
             records: fresh,
             omitted,
@@ -686,6 +695,7 @@ mod tests {
         ProgramStatus {
             count: records.len() as u16,
             background: 0,
+            foreground: Foreground::Child,
             update,
             terminal_title: String::new(),
             omitted: Vec::new(),
@@ -1227,6 +1237,7 @@ mod tests {
         let crowded = ProgramStatus {
             count: 2,
             background: 0,
+            foreground: Foreground::Child,
             update: 7,
             terminal_title: String::new(),
             omitted: vec![5],
@@ -1258,6 +1269,7 @@ mod tests {
             let churning = ProgramStatus {
                 count: 2,
                 background: 0,
+                foreground: Foreground::Child,
                 update,
                 terminal_title: String::new(),
                 omitted: vec![5],
@@ -2162,5 +2174,34 @@ mod tests {
         for root in roots {
             fs::remove_dir_all(root).unwrap();
         }
+    }
+
+    /// Each reply's foreground reaches the terminal: `other` while a
+    /// job-control job leads the PTY, `child` once the shell has it back
+    /// (ORB-C15, management v5).
+    #[test]
+    fn the_poller_reads_a_real_foreground() {
+        let root = crate::supervisor::temporary_directory();
+        let mut sessions = vec![crate::sessions::tests::leased_orbit(
+            &root,
+            "set -m; sleep 4; exec sleep 30",
+        )];
+        let (targets, _) = targets(&[snapshot("t", vec![tab("t", &["session-1"], &[], None)])]);
+        let mut attention = Attention::new(true);
+        let foreground = |attention: &Attention| {
+            attention
+                .terminals
+                .iter()
+                .find(|terminal| terminal.session == "session-1")
+                .map(|terminal| terminal.foreground)
+        };
+        poll_until(&mut attention, &targets, &mut sessions, |attention| {
+            foreground(attention) == Some(Foreground::Other)
+        });
+        poll_until(&mut attention, &targets, &mut sessions, |attention| {
+            foreground(attention) == Some(Foreground::Child)
+        });
+        crate::sessions::stop_managed_sessions(&mut sessions, Duration::from_secs(5)).unwrap();
+        fs::remove_dir_all(root).unwrap();
     }
 }

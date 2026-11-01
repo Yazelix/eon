@@ -145,7 +145,7 @@ PTY pixel size rule needs no wire change.
     because its start identity differs.
 - **Owner:** Orbit's Bend admission policy and Rust socket transport with
   canonical `orbit-protocol` ORBS v7; the named process comes from management
-  v4 (ORB-C13), and the peer process ID and start identity come from Orbit's
+  v5 (ORB-C13), and the peer process ID and start identity come from Orbit's
   isolated Linux and Darwin peer-credential and process-start mechanics.
 - **Consumes:** Canonical ORBS v7 behavior, preserved through ORBS v14; Venus
   and Eon consume it in this repository.
@@ -282,7 +282,7 @@ PTY pixel size rule needs no wire change.
   selection policy for the pointer route, and its Rust host's libghostty input
   encoding.
 - **Consumes:** Canonical ORBS v9 semantic input, preserved through ORBS v14,
-  and management v4 lease input; Venus and Eon consume it in this repository.
+  and management v5 lease input; Venus and Eon consume it in this repository.
 - **Boundary:** Candidate-list IME and native input quality remain Venus-owned.
   Lease input carries no other keys, chords, mouse, focus or resize; raw bytes
   are never written.
@@ -848,7 +848,7 @@ PTY pixel size rule needs no wire change.
     PTY, presentation, child observation, or shutdown.
 - **Owner:** Orbit's private management owner and canonical protocol package;
   platform mechanics remain isolated, while Eon owns consumer policy.
-- **Consumes:** Canonical management v4, ORB-C12, ORB-C3, ORB-C5 and ORB-C17.
+- **Consumes:** Canonical management v5, ORB-C12, ORB-C3, ORB-C5 and ORB-C17.
 - **Boundary:**
   - The contract is per live Orbit run. Eon retains topology, enumeration,
     cleanup, and recovery policy.
@@ -862,7 +862,9 @@ PTY pixel size rule needs no wire change.
   for untrusted records and runtime directories, the
   `eon-agent-sidebar-yx8.5` commit for management v2, and the
   `eon-agent-parity-a9g0.15` commit (`9c90032`) for the management v4
-  requests, proved installed by the `eon-agent-parity-a9g0.19` commit
+  requests, proved installed by the `eon-agent-parity-a9g0.19` commit, and
+  the `eon-7cf0y.8` commit for management v5 (the `ProgramStatus`
+  foreground)
   - **Environment:** x86_64 Linux; `nix flake check -L` (`orbit-laws`,
     `orbit-boundary`, `orbit-terminfo`, every `orbit-<name>` real-PTY
     check); sandboxed `nix develop -c eon-test` (workspace and installer;
@@ -1067,6 +1069,15 @@ PTY pixel size rule needs no wire change.
     title: Orbit gives it no status meaning. A process that leaves the tree,
     such as a double fork that init adopts, is not counted. Linux reads
     `/proc`; macOS uses libproc, unproved until ORB-C14's native proof.
+  - **Foreground.** Each `ProgramStatus` reply also carries the terminal's
+    foreground: `child` when the PTY's foreground process group is the
+    child's own group, `other` when it is another group, and `unknown` when
+    the terminal has none or Orbit cannot read it. Orbit samples it
+    (`tcgetpgrp` on the PTY) when it builds the reply, whether or not it
+    holds records. It is a neutral terminal fact, like the terminal title and
+    the background count: Orbit gives it no status meaning, and Eon decides
+    what it means. It uses the same POSIX `tcgetpgrp` on Linux and macOS;
+    macOS is unproved until ORB-C14's native proof.
   - **Lifetime.** Orbit removes `working` and `blocked` records on any of
     these:
     - the child exits, which ends the run and every record with it;
@@ -1099,11 +1110,11 @@ PTY pixel size rule needs no wire change.
     heartbeat. The spec forbids requiring re-sends and leaves to the terminal
     when to stop showing `done` or `error`; EON-C31 decides that.
   - **ProgramStatus reply.** One request gets one reply of at most 4 KiB. It
-    carries the record count, the background process count, the terminal's
-    latest update sequence, the terminal title, the creation sequence of each
-    record omitted for size, and as many records as fit in a neutral fill
-    order: first `blocked`, `error` and `done`, most recent change first; then
-    every other record, most recent change first.
+    carries the record count, the background process count, the foreground,
+    the terminal's latest update sequence, the terminal title, the creation
+    sequence of each record omitted for size, and as many records as fit in a
+    neutral fill order: first `blocked`, `error` and `done`, most recent
+    change first; then every other record, most recent change first.
     Each record carries its full `id`, `state`, `kind`, `progress`, `app`
     (32 bytes or less), `title` (96 or less) and `msg` (256 or less), its
     update sequence, creation sequence, change sequence, previous state and
@@ -1128,8 +1139,8 @@ PTY pixel size rule needs no wire change.
   - The Rust host owns raw observation and mechanism
     ([HOST.md](HOST.md#what-rust-holds)): it parses reports through
     libghostty, stores records with their neutral facts, applies the spec's
-    eviction, and assembles reply content, the terminal title included, by
-    the fixed fill order.
+    eviction, and assembles reply content, the terminal title and foreground
+    included, by the fixed fill order.
   - The Bend worker decides from one-line numeric facts:
     - whether a prompt mark or foreground-group edge drops the `working` and
       `blocked` records;
@@ -1163,11 +1174,14 @@ PTY pixel size rule needs no wire change.
   `ProgramStatus` reply; `eon-agent-sidebar-yx8.11` adds the terminal title
   to the reply. Amended on 2026-10-27 (approved by Lucca, relayed by
   eon-overseer) by `eon-agent-background-work-yte0`: the reply counts
-  background processes. The `eon-agent-sidebar-yx8.5` commit, with the
-  `eon-agent-sidebar-yx8.4` commit for the records and their lifetime, the
+  background processes. Amended on 2026-11-01 (approved under eon-7cf0y's
+  approval mode, relayed by eon-overseer) by `eon-7cf0y.8`: the reply carries
+  the foreground (management v5). The `eon-agent-sidebar-yx8.5` commit, with
+  the `eon-agent-sidebar-yx8.4` commit for the records and their lifetime, the
   `eon-agent-sidebar-yx8.12` commit for creation sequences, the
-  `eon-agent-sidebar-yx8.11` commit for the terminal title and the
+  `eon-agent-sidebar-yx8.11` commit for the terminal title, the
   `eon-agent-background-work-yte0.1` commit for the background process count
+  and the `eon-7cf0y.8` commit for the foreground
   - **Environment:** x86_64 Linux; `nix flake check -L` (`orbit-laws`,
     `orbit-boundary`, every `orbit-<name>` real-PTY check); sandboxed
     `nix develop -c eon-test` (workspace and installer)
@@ -1222,6 +1236,11 @@ PTY pixel size rule needs no wire change.
       2.1.303 started a background `sleep 25` and reported `done`; through
       Eon's poll the reply counted it, so the pane read `background`, and it
       read `finished` after the sleep ended.
+    - Management v5 (`eon-7cf0y.8`): `orbit-program-status` reads `other`
+      while a job-control job leads and `child` after it returns; the
+      protocol round trip and canonical bytes cover each value
+      (`program_status_carries_the_foreground`); Eon Runtime's poller reads
+      both from a real Orbit (`the_poller_reads_a_real_foreground`).
 
 ## ORB-C16 — Static graphics resource plane
 
@@ -1496,7 +1515,7 @@ PTY pixel size rule needs no wire change.
     reply;
   - its Rust host, which extracts the text with libghostty's plain-text
     formatter;
-  - canonical `orbit-protocol` management v4.
+  - canonical `orbit-protocol` management v5.
 - **Consumes:** ORB-C13 (lease, validation, slow-peer rule), ORB-C4 (held
   updates), ORB-C3 (title and directory values).
 - **Boundary:**

@@ -216,11 +216,12 @@ sample, live in Bend ([src/status.bend](../src/status.bend)). A management
 `ProgramStatus` request arrives as fact `ProgramStatus` with a foreground
 sample taken when the host reads it; Bend leads its answer with that sample's
 `StatusLifetime`, then answers `ManageProgramStatus`, for which the host
-builds the reply from the records, the terminal title and, while it holds a
-record, the background process count it samples then, or `ManageRefuse`,
-for which it sends Busy and keeps the lease.
+builds the reply from the records, the terminal title, the foreground it
+samples then and, while it holds a record, the background process count it
+also samples then, or `ManageRefuse`, for which it sends Busy and keeps the
+lease.
 
-Management v4's other requests arrive as fact `Management`. The host reads at
+Management v5's other requests arrive as fact `Management`. The host reads at
 most one request at a time, within the largest request's bound (one lease
 paste). A request stays in flight until its answer is fully written, and one
 that arrives while another is in flight, while a read waits, before an answer

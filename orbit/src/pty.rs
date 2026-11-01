@@ -793,7 +793,13 @@ impl Orbit {
     /// Whether the direct child's own group leads the terminal's foreground,
     /// another group does, or none (ORB-C15).
     pub(crate) fn foreground(&self) -> Foreground {
-        match self.foreground_group() {
+        self.foreground_of(self.foreground_group())
+    }
+
+    /// What a foreground group sampled with `foreground_group` is to the
+    /// direct child: its own group, another group, or none.
+    pub(crate) fn foreground_of(&self, group: Option<platform::pid_t>) -> Foreground {
+        match group {
             None => Foreground::Unknown,
             Some(group) if u32::try_from(group) == Ok(self.pid) => Foreground::Child,
             Some(_) => Foreground::Other,

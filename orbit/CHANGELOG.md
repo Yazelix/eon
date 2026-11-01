@@ -6,6 +6,24 @@ remain canonical in `docs/CONTRACTS.md`, dependency decisions in
 
 ## Unreleased
 
+- Management moves to generation 5, a breaking change with no compatibility
+  window (`eon-7cf0y.8`). The `ProgramStatus` reply gains a one-byte
+  foreground after the background count, sampled with `tcgetpgrp` on the PTY
+  for every reply, records or not: `child` when the PTY's foreground process
+  group is the child's own, `other` when it is another group, and `unknown`
+  when there is none or Orbit cannot read it. Orbit gives it no status
+  meaning. A reply still holds 7 records at their bounds while the terminal
+  holds 14 or fewer, now with no byte to spare. ORBS and ORBF are unchanged.
+  `--management-v4` becomes `--management-v5`, and the live record and
+  tombstone are framed as generation 5, so Eon Runtime and Eon move to
+  generation 5 in the same change; Venus does not use management. A new Eon
+  Runtime cannot itself acquire or recover the management lease of an Orbit
+  run that an older build started: ORB-C13 fails it closed. A live window an
+  older build started stays stoppable as EON-C11 says, because its own
+  supervisor stops its Orbit runs through the leases it already holds; this
+  change leaves EONW unchanged, so the new `eon` still asks a window that
+  speaks the current EONW to stop. ORB-C15 gains the foreground.
+
 - ORB-C3's interactive admission is proved on Darwin: on a GitHub macOS
   runner, `orbit-attach-allow` passed natively, and on the installed Eon a
   `Hello` from a process other than Venus got `Busy` on hidden terminals and

@@ -5,8 +5,8 @@
 use crate::{
     Step, Timer,
     boundary::{
-        Decision, Direction, END, Effect, Fact, FirstMessage, Flags, ObserverLoss, Reason, SCHEMA,
-        Selected, SelectionKind, WheelInput,
+        Decision, Direction, END, Effect, Fact, FirstMessage, Flags, Foreground, ObserverLoss,
+        Reason, SCHEMA, Selected, SelectionKind, WheelInput,
     },
     cli::{self, Serve},
     errno,
@@ -22,7 +22,8 @@ use crate::{
     visible,
 };
 use orbit_protocol::management::{
-    FailureCode as ManagementFailure, Refusal as LeaseRefusal, TerminationReason,
+    self as management_protocol, FailureCode as ManagementFailure, Refusal as LeaseRefusal,
+    TerminationReason,
 };
 use orbit_protocol::session::{
     self, ClientMessage, ClipboardLocation, Failure, FailureCode, Modifiers, PreviewOutcome,
@@ -115,6 +116,16 @@ impl From<Direction> for VerticalDirection {
         match direction {
             Direction::Up => Self::Up,
             Direction::Down => Self::Down,
+        }
+    }
+}
+
+impl From<Foreground> for management_protocol::Foreground {
+    fn from(foreground: Foreground) -> Self {
+        match foreground {
+            Foreground::Unknown => Self::Unknown,
+            Foreground::Child => Self::Child,
+            Foreground::Other => Self::Other,
         }
     }
 }
@@ -1453,11 +1464,15 @@ impl Host {
                         .orbit
                         .status
                         .reply(title_and_directory(&self.orbit.terminal).0, Instant::now());
-                    // Counted only while the terminal holds records (ORB-C15).
+                    // One sample gives the foreground, reported for every
+                    // reply, and the group the background count starts from,
+                    // counted only while the terminal holds records (ORB-C15).
+                    let group = self.orbit.foreground_group();
+                    status.foreground = self.orbit.foreground_of(group).into();
                     if status.count > 0 && self.orbit.child.is_some() {
                         status.background = platform::background_processes(
                             self.orbit.pid as platform::pid_t,
-                            self.orbit.foreground_group(),
+                            group,
                         );
                     }
                     self.managed()?.program_status(status)?
