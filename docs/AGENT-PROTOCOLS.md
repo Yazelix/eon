@@ -201,6 +201,10 @@ force-push, rewrite published history, or create a branch without authority.
 Verify intended diff before commit and remote state after push. Roll back with a
 reviewed revert unless local policy says otherwise.
 
+A session's own worktree goes in the repository's git-ignored
+`.worktrees/<issue-id>`, on an authorized branch of that name; remove both
+after landing.
+
 ## AP-PERF-001 — Measured performance work
 
 Before redesigning for speed, fix a representative workload, record a
