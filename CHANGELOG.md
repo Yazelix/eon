@@ -5,6 +5,8 @@ installation, and proven contract changes.
 
 ## Unreleased
 
+- Bundle Helix's pinned cylc grammar source so its deleted upstream repository
+  cannot break fresh Nix installs (`eon-5y25o`).
 - On Linux, every time an Eon window detaches, by closing it or with
   Alt+Shift+D, a desktop notification names the window, says how many
   terminals still run and offers Quit, which asks once more and then stops
