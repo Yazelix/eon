@@ -583,7 +583,7 @@ fn defaults_table(
             "border_width" => "Use Venus's neutral outline width when omitted.",
             "focus_border_width" => "Use Venus's focus outline width when omitted.",
             "cursor_trail_color" => "Omission retains the workspace's random cursor colour.",
-            "cursor_trail_duration" => "Cursor tail duration multiplier.",
+            "cursor_trail_duration" => "Cursor tail duration multiplier; 0 turns the trail off.",
             "font_family" => "Let Venus choose the font family when omitted.",
             "font_fallbacks" => "Ordered fallback font families.",
             "font_size" => "Let Venus choose the font size when omitted.",
@@ -802,13 +802,16 @@ pub(crate) fn terminal_presentation(
             "terminal.background_opacity must be a finite number from 0.0 through 1.0".into(),
         );
     }
+    if terminal
+        .cursor_trail_duration
+        .is_some_and(|value| !value.is_finite() || (value != 0.0 && !(0.25..=4.0).contains(&value)))
+    {
+        return Err(
+            "terminal.cursor_trail_duration must be 0 (off) or a finite number from 0.25 through 4.0"
+                .into(),
+        );
+    }
     for (field, value, minimum, maximum) in [
-        (
-            "cursor_trail_duration",
-            terminal.cursor_trail_duration,
-            0.25,
-            4.0,
-        ),
         ("font_size", terminal.font_size, 6.0, 96.0),
         ("line_height", terminal.line_height, 1.0, 3.0),
     ] {
@@ -2347,6 +2350,46 @@ nested = { value = true }
                 startup_animation(&root, &inputs.defaults, None)
                     .unwrap_err()
                     .contains(field)
+            );
+        }
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn cursor_trail_duration_accepts_off_and_keeps_other_bounds() {
+        let root = crate::supervisor::temporary_directory();
+        let mut defaults = crate::fixtures::inputs().defaults;
+        defaults.terminal.cursor_trail_duration = Some(1.5);
+        assert_eq!(
+            terminal_presentation(&root, &defaults, None)
+                .unwrap()
+                .cursor_trail_duration,
+            Some(1.5)
+        );
+        for value in ["0", "0.0", "0.25", "4.0"] {
+            fs::write(
+                root.join("config.toml"),
+                format!("[terminal]\ncursor_trail_duration = {value}\n"),
+            )
+            .unwrap();
+            assert_eq!(
+                terminal_presentation(&root, &defaults, None)
+                    .unwrap()
+                    .cursor_trail_duration,
+                Some(value.parse().unwrap())
+            );
+        }
+        for value in ["-0.01", "0.24", "4.01", "nan", "inf", "'0'"] {
+            fs::write(
+                root.join("config.toml"),
+                format!("[terminal]\ncursor_trail_duration = {value}\n"),
+            )
+            .unwrap();
+            assert!(
+                terminal_presentation(&root, &defaults, None)
+                    .unwrap_err()
+                    .contains("cursor_trail_duration"),
+                "accepted {value}"
             );
         }
         fs::remove_dir_all(root).unwrap();

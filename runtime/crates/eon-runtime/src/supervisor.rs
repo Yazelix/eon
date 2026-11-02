@@ -3648,7 +3648,11 @@ rows = 30
             }
         }
 
-        for source in ["", "[terminal]\ncursor_trail_duration = 3.0\n"] {
+        for (source, expected) in [
+            ("", "2"),
+            ("[terminal]\ncursor_trail_duration = 3.0\n", "3"),
+            ("[terminal]\ncursor_trail_duration = 0\n", "0"),
+        ] {
             fs::write(root.join("config.toml"), source).unwrap();
             let mut defaults = crate::fixtures::inputs().defaults;
             defaults.terminal.cursor_trail_duration = Some(2.0);
@@ -3668,7 +3672,6 @@ rows = 30
                     true,
                 );
                 let args = command.get_args().collect::<Vec<_>>();
-                let expected = if source.is_empty() { "2" } else { "3" };
                 assert!(
                     args.windows(2)
                         .any(|pair| pair == ["--cursor-trail-duration-v1", expected])

@@ -78,7 +78,7 @@ background_opacity = 0.8 # Opacity of the terminal's default background.
 # border_width: unset. Use Venus's neutral outline width when omitted.
 # columns: unset. Let the window choose initial columns when omitted.
 # cursor_trail_color: unset. Omission retains the workspace's random cursor colour.
-cursor_trail_duration = 1.5 # Cursor tail duration multiplier.
+cursor_trail_duration = 1.5 # Cursor tail duration multiplier; 0 turns the trail off.
 # focus_border_width: unset. Use Venus's focus outline width when omitted.
 # focus_color: unset. Use Venus's focus colour when omitted.
 font_fallbacks = ["Symbols Nerd Font Mono", "Accelerando Terminal"] # Ordered fallback font families.
@@ -240,9 +240,12 @@ popups keep their outline. These settings apply to full-Eon workspace surfaces;
 eonbase receives neither override. The current agent row and F6 focus pills
 keep their one-physical-pixel outlines.
 
-`cursor_trail_duration` is a finite multiplier from `0.25` through `4.0`;
-its built-in value is listed above. Larger values keep the tail visible longer. Eon owns this
-setting for both products; no Venus or Orbit configuration is needed.
+`cursor_trail_duration` defaults to `1.5`. Set it to `0` (or `0.0`) to turn
+the trail off while keeping the cursor's color and contrasting edge. To enable
+the trail, use a finite multiplier from `0.25` through `4.0`; larger values
+keep it visible longer. It applies when an Eon or eonbase window next opens or
+reopens. Eon owns this setting for both products; no Venus or Orbit
+configuration is needed.
 
 With pane frames on, each column has one continuous terminal-background fill,
 from its first pane's rounded top edge down to the column's rounded bottom.

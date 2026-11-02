@@ -23,7 +23,7 @@ const CURSOR_COLOR_PRESETS: [(&str, Color); 8] = [
     ("nebula", rgb(0xa970ff)),
     ("bubblegum", rgb(0xff5da2)),
 ];
-const USAGE: &str = "usage: yazelix-venus [--application-id ID] [--no-decorations] [--pane-frames true|false] [--focus-color preset:NAME|custom:#RRGGBB] [--border-width 1..3] [--focus-border-width 1..3] [--warning-close-last-tab true|false] [--animate-working-badge true|false] [--eon-version VERSION] [--bar-items ITEM,...] [--ram-warning-percent 1..100] [--ram-critical-percent 1..100] [--cpu-warning-percent 1..100] [--cpu-average-seconds 2..600] [--disk-warning-percent 1..100] [--disk-critical-percent 1..100] [--disk-path ABSOLUTE_PATH] [--background-opacity VALUE] [--background-blur] [--padding-color extend|extend-always|background] [--cursor-trail-color random|preset:NAME|custom:#RRGGBB] [--cursor-effect-v1 none|tail] [--cursor-trail-color-v1 #RRGGBB] [--cursor-trail-duration-v1 0.25..4.0] [--font-family FAMILY] [--font-fallback FAMILY] [--font-size 6..96] [--line-height 1..3] [--columns N] [--rows N] [ORBIT_SOCKET | --workspace EON_WORKSPACE_SOCKET]";
+const USAGE: &str = "usage: yazelix-venus [--application-id ID] [--no-decorations] [--pane-frames true|false] [--focus-color preset:NAME|custom:#RRGGBB] [--border-width 1..3] [--focus-border-width 1..3] [--warning-close-last-tab true|false] [--animate-working-badge true|false] [--eon-version VERSION] [--bar-items ITEM,...] [--ram-warning-percent 1..100] [--ram-critical-percent 1..100] [--cpu-warning-percent 1..100] [--cpu-average-seconds 2..600] [--disk-warning-percent 1..100] [--disk-critical-percent 1..100] [--disk-path ABSOLUTE_PATH] [--background-opacity VALUE] [--background-blur] [--padding-color extend|extend-always|background] [--cursor-trail-color random|preset:NAME|custom:#RRGGBB] [--cursor-effect-v1 none|tail] [--cursor-trail-color-v1 #RRGGBB] [--cursor-trail-duration-v1 0|0.25..4.0] [--font-family FAMILY] [--font-fallback FAMILY] [--font-size 6..96] [--line-height 1..3] [--columns N] [--rows N] [ORBIT_SOCKET | --workspace EON_WORKSPACE_SOCKET]";
 
 #[derive(Debug)]
 pub(super) struct LaunchArguments {
@@ -269,7 +269,9 @@ pub(super) fn launch_arguments(
                 .next()
                 .and_then(|value| value.into_string().ok())
                 .and_then(|value| value.parse::<f32>().ok())
-                .filter(|value| value.is_finite() && (0.25..=4.0).contains(value));
+                .filter(|value| {
+                    value.is_finite() && (*value == 0.0 || (0.25..=4.0).contains(value))
+                });
             if cursor_trail_duration.is_none() {
                 return Err(USAGE.into());
             }
@@ -791,6 +793,32 @@ mod tests {
             }
             assert!(launch_arguments([flag.into(), OsString::from_vec(vec![0xff])], None).is_err());
         }
+    }
+
+    #[test]
+    fn zero_cursor_trail_duration_preserves_cursor_colors() {
+        let root =
+            env::temp_dir().join(format!("venus-zero-cursor-duration-{}", std::process::id()));
+        fs::create_dir(&root).unwrap();
+        let socket = root.join("eon.sock");
+        let _listener = std::os::unix::net::UnixListener::bind(&socket).unwrap();
+        let socket = socket.to_str().unwrap();
+        let parse = |args: &[&str]| launch_arguments(args.iter().map(OsString::from), None);
+        for color in [
+            None,
+            Some("random"),
+            Some("preset:ice"),
+            Some("custom:#12ABCF"),
+        ] {
+            let mut args = vec!["--workspace", socket];
+            if let Some(color) = color {
+                args.extend(["--cursor-trail-color", color]);
+            }
+            let (expected, _) = parse(&args).unwrap().cursor_tail.unwrap();
+            args.extend(["--cursor-trail-duration-v1", "0"]);
+            assert_eq!(parse(&args).unwrap().cursor_tail, Some((expected, 0.0)));
+        }
+        fs::remove_dir_all(root).unwrap();
     }
 
     #[test]

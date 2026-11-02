@@ -220,8 +220,9 @@ edge unless Orbit supplies an explicit cursor color; Orbit still owns its shape,
 visibility, and blink state.
 
 Pass `--cursor-trail-duration-v1 VALUE` to override the duration with any color
-choice, or omit the color choice to keep a random color. Values must be finite
-multipliers from `0.25` through `4.0`:
+choice, or omit the color choice to keep a random color. Zero disables motion
+while retaining the cursor's chosen color and contrasting edge. Otherwise,
+values must be finite multipliers from `0.25` through `4.0`:
 
 ```sh
 cargo run --locked -- --cursor-trail-color preset:ice \
@@ -229,8 +230,8 @@ cargo run --locked -- --cursor-trail-color preset:ice \
 ```
 
 Pass `--cursor-effect-v1 none` for a static cursor. The lower-level complete
-tail profile remains available for an exact color and a finite duration
-multiplier from `0.25` through `4.0`:
+tail profile remains available for an exact color and a duration of zero or a
+finite multiplier from `0.25` through `4.0`:
 
 ```sh
 cargo run --locked -- \

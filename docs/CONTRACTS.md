@@ -115,9 +115,11 @@ socket names, JSON fields and protocol identifiers retain their spellings.
     Child arguments, including Anima help, retain their existing forwarding.
   - Eon owns the cursor-tail duration default `1.5` and the optional
     `[terminal] cursor_trail_duration` multiplier in the same config file.
-    Finite values from `0.25` through `4.0` apply on new/reopened Eon and eonbase
-    surfaces. Invalid duration fails before children; live surfaces retain their
-    startup snapshot. Venus consumes the launch value and owns bounded motion,
+    Zero disables the trail while retaining the cursor color and contrasting
+    edge; finite values from `0.25` through `4.0` enable it. These values apply
+    on new/reopened Eon and eonbase surfaces. Invalid duration fails before
+    children; live surfaces retain their startup snapshot. Venus consumes the
+    launch value and owns bounded motion,
     including healthy pane/tab/layout continuity. No separate child configuration.
 - **Important failures:** Missing, malformed, incompatible, replaced, or
   non-ready components fail before publishing a usable workspace or terminal.

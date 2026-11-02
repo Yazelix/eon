@@ -209,9 +209,11 @@ re-proved when that platform or feature is next touched.
     fallback duration is `1.0`. Eon owns
     product defaults and user configuration. One selector accepts
     `random`, `preset:<name>`, or `custom:#RRGGBB`; `none` is static, and the
-    duration flag can override the default for any color choice. Durations must
-    be finite multipliers from `0.25` through `4.0`; the complete lower-level
-    `tail` profile supplies one validated color and duration.
+    duration flag can override the default for any color choice. Zero disables
+    motion and its animation scheduling while retaining the cursor's color and
+    edge; otherwise durations must be finite multipliers from `0.25` through
+    `4.0`. The complete lower-level `tail` profile supplies one validated color
+    and duration.
   - A bounded four-corner trail approaches Orbit's exact cursor destination.
     Healthy pane/tab switches and workspace layout changes retain window-local
     cosmetic motion toward the newly selected pane's fresh cursor. Attachment

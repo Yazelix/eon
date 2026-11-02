@@ -3,6 +3,73 @@ use crate::DrawCursor;
 use orbit_protocol::CursorShape;
 
 #[test]
+fn zero_cursor_trail_duration_draws_only_the_unchanged_cursor() {
+    let mut scene = padding_scene();
+    scene.cursor = Some(DrawCursor {
+        visible: true,
+        blinking: false,
+        password_input: false,
+        shape: CursorShape::Block,
+        column: 0,
+        row: 0,
+        at_wide_tail: false,
+        color: SceneColor { r: 1, g: 2, b: 3 },
+        explicit_color: false,
+    });
+    let metrics = CellMetrics::for_scale(1.0);
+    let viewport = SceneRect {
+        left: 0.0,
+        top: 0.0,
+        width: 100.0,
+        height: 100.0,
+    };
+    let trail = SceneColor {
+        r: 20,
+        g: 80,
+        b: 240,
+    };
+    let outline = cursor_outline(trail);
+    for explicit in [false, true] {
+        scene.cursor.as_mut().unwrap().explicit_color = explicit;
+        let mut animation = CursorAnimation::default();
+        for (column, row) in [(0, 0), (2, 1), (1, 0)] {
+            let cursor = scene.cursor.as_mut().unwrap();
+            cursor.column = column;
+            cursor.row = row;
+            let mut off = RectangleBatch::new(100, 100);
+            assert!(!build_tail_cursor(
+                &mut off,
+                &mut animation,
+                &scene,
+                true,
+                metrics,
+                viewport,
+                trail,
+                outline,
+                0.0,
+                0.016,
+            ));
+            assert!(!animation.is_active());
+            let mut stationary = RectangleBatch::new(100, 100);
+            assert!(!build_tail_cursor(
+                &mut stationary,
+                &mut CursorAnimation::default(),
+                &scene,
+                true,
+                metrics,
+                viewport,
+                trail,
+                outline,
+                1.5,
+                0.0,
+            ));
+            assert!(!off.bytes.is_empty());
+            assert_eq!(off.bytes, stationary.bytes);
+        }
+    }
+}
+
+#[test]
 fn tail_cursor_outlines_one_color_and_resets_when_hidden_or_blinking_off() {
     let style = plain_style();
     let mut scene = Scene {

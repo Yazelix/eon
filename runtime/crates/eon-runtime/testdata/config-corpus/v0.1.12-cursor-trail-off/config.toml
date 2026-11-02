@@ -1,0 +1,4 @@
+# Zero disables cursor motion without changing the configured colour.
+[terminal]
+cursor_trail_color = "custom:#ff8800"
+cursor_trail_duration = 0

@@ -2,6 +2,9 @@
 
 ## Unreleased
 
+- VEN-C1: accept a zero cursor-tail duration to disable motion while keeping
+  the cursor's color and contrasting edge (`eon-configurability-qkq8.6`).
+
 - Consume EONW v28, which carries the window's running-windows summary and
   supervisor name and start time (`eon-7cf0y.4`). This change supplies data only;
   running-window presentation remains separate.

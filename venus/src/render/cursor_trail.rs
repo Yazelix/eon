@@ -73,6 +73,7 @@ impl CursorAnimation {
         delta: f32,
         duration_scale: f32,
     ) -> bool {
+        // Zero disables motion while build_tail_cursor keeps drawing the coloured body.
         if !valid_rect(target)
             || !valid_rect(viewport)
             || !duration_scale.is_finite()
