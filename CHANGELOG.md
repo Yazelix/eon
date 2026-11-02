@@ -3,7 +3,7 @@
 This file records user-visible runtime, command, configuration, packaging,
 installation, and proven contract changes.
 
-## Unreleased
+## v0.1.12 (2026-11-02)
 
 - Set `[terminal] cursor_trail_duration = 0` to turn the cursor trail off in
   new or reopened Eon and eonbase windows. Cursor colors and outlines stay the
