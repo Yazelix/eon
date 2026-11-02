@@ -3,7 +3,7 @@
 This file records user-visible runtime, command, configuration, packaging,
 installation, and proven contract changes.
 
-## Unreleased
+## v0.1.11 (2026-11-02)
 
 - Bundle Helix's pinned cylc grammar source so its deleted upstream repository
   cannot break fresh Nix installs (`eon-5y25o`).

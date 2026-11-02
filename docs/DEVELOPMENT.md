@@ -243,7 +243,7 @@ Sources and compilation stay in the ordinary build directory.
 
 `nix build --no-link .#checks.x86_64-linux.helix-grammars` runs the pinned
 Helix source-delivery check. It rejects evaluation-time Codeberg and SourceHut
-fetches and compiles all ten bundled grammars through Helix's production builder.
+fetches and compiles all all bundled grammars through Helix's production builder.
 
 Every build loads the configuration corpus in
 `runtime/crates/eon-runtime/testdata/config-corpus`: `config.toml` fixtures from
