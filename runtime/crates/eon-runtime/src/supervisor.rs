@@ -2,11 +2,12 @@ use super::{
     attention::{self, Attention},
     cli::Inputs,
     control::{
-        ControlListener, ControlResponse, EndpointFailure, EndpointFailureKind, SocketIdentity,
-        connect_control, failure, probe_launch_mode, probe_presentable_runtime, send_action_on,
-        socket_identity,
+        Accepted, ControlListener, ControlResponse, Dispatched, EndpointFailure,
+        EndpointFailureKind, SocketIdentity, connect_control, failure, probe_launch_mode,
+        probe_presentable_runtime, send_action_on, socket_identity,
     },
     diagnostics::DiagnosticLog,
+    events::Projection,
     generation::{current_generation, generation_directory, record_launcher, remove_launcher},
     managed_environment::{self, TerminalAccess, nonempty_environment_path},
     notification, platform, quota,
@@ -16,6 +17,7 @@ use super::{
         acquire_generation_sessions, bound_io, name_presentation, recover_sessions,
         session_finished, start_orbit, stop_managed_sessions,
     },
+    subscriptions::{Subscriber, Subscribers},
     workspace::{self, LaunchCommand, SessionEnd, SessionOperation, WorkspaceSet},
 };
 use eon_workspace_protocol::v30::{
@@ -1040,6 +1042,7 @@ fn supervise(
         pane_labels: super::pane_labels::Labels::default(),
         agents,
         notices: notification::Notices::default(),
+        subscribers: Subscribers::new(generation),
         log: Arc::clone(log),
     };
     let presentation = match admitted {
@@ -1107,47 +1110,31 @@ fn supervise(
                 }
             }
 
-            if !state.stopping {
-                sessions::drain_given_up_requests(&mut state.sessions);
-                // The backstop for a naming that failed or came late.
-                state.name_presentation(false);
-                state.follow_attention();
-                if let Some(running) = &mut state.running {
-                    running.tick(Instant::now(), || {
-                        (
-                            state
-                                .workspaces
-                                .as_ref()
-                                .expect("full Eon has a workspace")
-                                .window_name(),
-                            live_sessions(&state.sessions).count() as u16,
-                        )
-                    });
-                }
-                if let Some(workspaces) = &state.workspaces {
-                    state.pane_labels.reconcile(&workspaces.pane_sessions());
-                }
-            } else {
-                state.pane_labels.reconcile(&[]);
-            }
+            state.tend(Instant::now());
             // Also while an incomplete Stop waits, so the notice's confirmed
             // Quit retries it.
             if answer_detach_notice(&mut state, runtime, mode) {
                 return Ok(state.initial_status.unwrap_or(0));
             }
 
-            let mut handled = false;
-            if control_listener.accept(|request| {
-                handled = true;
-                dispatch_control_request(request, &mut state, inputs, config, runtime, generation)
+            match control_listener.accept(|request| {
+                dispatch(request, &mut state, inputs, config, runtime, generation)
             })? {
-                return Ok(state.initial_status.unwrap_or(0));
-            }
-            if !handled {
-                thread::sleep(Duration::from_millis(25));
+                Accepted::None => thread::sleep(Duration::from_millis(25)),
+                Accepted::Replied { shutdown: true } => {
+                    return Ok(state.initial_status.unwrap_or(0));
+                }
+                Accepted::Replied { shutdown: false } => {}
+                Accepted::Subscribed(stream, subscriber) => {
+                    state
+                        .subscribers
+                        .attach(stream, *subscriber, Instant::now());
+                }
             }
         }
     })();
+    // Stop, quit and the window's final close end every subscription.
+    state.subscribers.end(generation);
     drop(control_listener);
     if let Some(process) = state.venus.take() {
         drop(process);
@@ -1186,6 +1173,8 @@ struct SupervisorState {
     agents: managed_environment::Agents,
     /// The detach notice; full Eon only shows one (EON-C8).
     notices: notification::Notices,
+    /// Event subscribers and the stream they read (EON-C39).
+    subscribers: Subscribers,
     log: Arc<DiagnosticLog>,
 }
 
@@ -1268,6 +1257,84 @@ impl SupervisorState {
             self.pane_labels.present(snapshot, workspaces.home());
         }
         Some(attention.busy(&snapshots, &self.sessions, exclude, Instant::now()))
+    }
+
+    /// The window now as EON-C39 projects it: every workspace prepared as
+    /// an inspection prepares it, with the same `attached`, so a subscriber
+    /// never makes a raise seen that Inspect would not, and every busy
+    /// terminal without EONW's bound. Eonbase has none.
+    fn projection(&mut self) -> Option<Projection> {
+        let workspaces = self.workspaces.as_ref()?;
+        let attached = self.venus.is_some();
+        let now = Instant::now();
+        let every = workspaces.snapshots();
+        let mut prepared = Vec::with_capacity(every.len());
+        for own in &every {
+            let mut snapshot = workspaces.snapshot_in(Some(&own.workspace)).ok()?;
+            if let (Some(running), Some(this)) = (&self.running, self.this_window()) {
+                running.apply(&mut snapshot, this);
+            }
+            self.pane_labels.present(&mut snapshot, workspaces.home());
+            if let Some(attention) = &mut self.attention {
+                attention.present(&mut snapshot, &every, attached, now);
+            }
+            prepared.push(snapshot);
+        }
+        let busy = match &self.attention {
+            Some(attention) => {
+                let mut labelled = every;
+                for snapshot in &mut labelled {
+                    self.pane_labels.present(snapshot, workspaces.home());
+                }
+                attention.busy_terminals(&labelled, &self.sessions, now)
+            }
+            None => Vec::new(),
+        };
+        Some(Projection::new(&prepared, busy))
+    }
+
+    /// The loop turn's work between control requests: follows the window's
+    /// terminals, focus and attention, then serves subscribers after the
+    /// poller, so attention it applied reaches them in this turn (EON-C39).
+    fn tend(&mut self, now: Instant) {
+        if !self.stopping {
+            sessions::drain_given_up_requests(&mut self.sessions);
+            // The backstop for a naming that failed or came late.
+            self.name_presentation(false);
+            self.follow_attention();
+            if let Some(running) = &mut self.running {
+                running.tick(now, || {
+                    (
+                        self.workspaces
+                            .as_ref()
+                            .expect("full Eon has a workspace")
+                            .window_name(),
+                        live_sessions(&self.sessions).count() as u16,
+                    )
+                });
+            }
+            if let Some(workspaces) = &self.workspaces {
+                self.pane_labels.reconcile(&workspaces.pane_sessions());
+            }
+        } else {
+            self.pane_labels.reconcile(&[]);
+        }
+        self.serve_subscribers(now);
+    }
+
+    /// Publishes this loop turn's changes to the subscribers and writes to
+    /// them without waiting; with none, it does nothing (EON-C39). While a
+    /// Stop is incomplete it publishes nothing but still writes, and ends
+    /// subscribers that hung up or went too slow.
+    fn serve_subscribers(&mut self, now: Instant) {
+        if self.stopping {
+            self.subscribers.maintain(now);
+        } else if !self.subscribers.is_empty()
+            && let Some(projection) = self.projection()
+        {
+            self.subscribers.turn(projection, now);
+        }
+        self.subscribers.idle();
     }
 
     /// Follows focus, then polls program status, between control requests
@@ -2006,6 +2073,57 @@ pub(super) fn try_lock_supervisor_lifecycle(path: &Path) -> Result<Option<fs::Fi
     }
 }
 
+/// Serves one control request: a `Subscribe` keeps its connection for the
+/// event stream (EON-C39), and every other request gets one reply.
+fn dispatch(
+    request: Request,
+    state: &mut SupervisorState,
+    inputs: &Inputs,
+    config: &Path,
+    runtime: &Path,
+    generation: &str,
+) -> Dispatched {
+    if matches!(request.action, Action::Subscribe { .. }) && !state.stopping {
+        return match subscribe(state, inputs, config, &request, generation) {
+            Ok(subscriber) => Dispatched::Subscribe(Box::new(subscriber)),
+            Err(error) => {
+                Dispatched::Reply(ControlResponse::Workspace(Response::Failure(error)), false)
+            }
+        };
+    }
+    dispatch_control_request(request, state, inputs, config, runtime, generation).into()
+}
+
+/// Accepts a subscription, which changes no selection, shown workspace or
+/// popup and never counts as an attached Venus (EON-C39).
+fn subscribe(
+    state: &mut SupervisorState,
+    inputs: &Inputs,
+    config: &Path,
+    request: &Request,
+    generation: &str,
+) -> Result<Subscriber, Failure> {
+    let Action::Subscribe { filter, after } = &request.action else {
+        unreachable!("only a Subscribe subscribes");
+    };
+    // Before the work below; the subscribers' own check follows their turn.
+    state.subscribers.room()?;
+    let caller = caller_session(state, inputs, config, request)?;
+    let projection = state
+        .projection()
+        .ok_or_else(|| failure("workspace-unavailable", "eonbase has no Eon workspace"))?;
+    let window = state.window.clone();
+    state.subscribers.subscribe(
+        projection,
+        filter,
+        after.as_ref(),
+        caller.as_deref(),
+        generation,
+        window,
+        Instant::now(),
+    )
+}
+
 fn dispatch_control_request(
     request: Request,
     state: &mut SupervisorState,
@@ -2520,10 +2638,10 @@ pub(super) fn status_code(status: ExitStatus) -> i32 {
 #[cfg(test)]
 mod tests {
     use super::{
-        Action, DiagnosticLog, LaunchMode, SupervisorState, WorkspaceAction, WorkspaceSet,
-        cancel_transient_popups, effective_uid, prepare_configuration, prepare_runtime,
-        reap_finished_sessions, stop_generation_sessions, stop_owned_session, temporary_directory,
-        venus_command, window_bar, xdg_path,
+        Action, DiagnosticLog, Dispatched, LaunchMode, SupervisorState, WorkspaceAction,
+        WorkspaceSet, cancel_transient_popups, effective_uid, prepare_configuration,
+        prepare_runtime, reap_finished_sessions, stop_generation_sessions, stop_owned_session,
+        temporary_directory, venus_command, window_bar, xdg_path,
     };
     use crate::sessions::{
         self,
@@ -2532,9 +2650,14 @@ mod tests {
     use std::{
         ffi::OsString,
         fs,
-        os::unix::fs::{MetadataExt, PermissionsExt},
+        io::Read,
+        os::unix::{
+            fs::{MetadataExt, PermissionsExt},
+            net::UnixStream,
+        },
         path::{Path, PathBuf},
         process::Command,
+        time::{Duration, Instant},
     };
 
     fn window_agents() -> crate::managed_environment::Agents {
@@ -2544,10 +2667,11 @@ mod tests {
         }
     }
 
-    /// Until eon-ciwn.7 serves subscriptions, a supervisor refuses one with
-    /// an ordinary failure reply, which EON-C39 allows, and keeps running.
+    /// A supervisor keeps a `Subscribe`'s connection for the stream, which
+    /// changes nothing in the window; it refuses one it cannot serve with
+    /// an ordinary failure reply (EON-C39).
     #[test]
-    fn subscriptions_are_refused_with_an_ordinary_failure() {
+    fn a_subscription_keeps_its_connection_and_changes_nothing() {
         let root = temporary_directory();
         let inputs = crate::fixtures::inputs();
         let workspace = WorkspaceSet::pending(
@@ -2577,15 +2701,16 @@ mod tests {
             pane_labels: super::super::pane_labels::Labels::default(),
             agents: window_agents(),
             notices: crate::notification::Notices::default(),
+            subscribers: crate::subscriptions::Subscribers::new("g1-test"),
             log: DiagnosticLog::open_in(Ok(root.join("logs")), "g1-test", "workspace"),
         };
-        let refusal = |state: &mut SupervisorState| {
-            let (response, ended) = super::dispatch_control_request(
+        let subscribe = |state: &mut SupervisorState, caller: Option<&str>, filter| {
+            super::dispatch(
                 super::Request {
                     id: "subscribe-1".into(),
-                    caller: None,
+                    caller: caller.map(Into::into),
                     action: Action::Subscribe {
-                        filter: Default::default(),
+                        filter,
                         after: None,
                     },
                 },
@@ -2594,19 +2719,223 @@ mod tests {
                 &root,
                 &root,
                 "component-1",
-            );
-            assert!(!ended);
-            match response {
-                super::ControlResponse::Workspace(super::Response::Failure(failure)) => {
-                    failure.code
-                }
-                _ => panic!("a subscription is refused"),
-            }
+            )
         };
-        assert_eq!(refusal(&mut state), "unavailable");
+        let refusal = |dispatched| match dispatched {
+            Dispatched::Reply(
+                super::ControlResponse::Workspace(super::Response::Failure(failure)),
+                false,
+            ) => failure.code,
+            _ => panic!("a subscription is refused"),
+        };
+        let before = state.workspace_snapshot_in(None).unwrap();
+        let Dispatched::Subscribe(subscriber) = subscribe(&mut state, None, Default::default())
+        else {
+            panic!("a subscription is served");
+        };
+        let (stream, mut peer) = UnixStream::pair().unwrap();
+        peer.set_read_timeout(Some(Duration::from_secs(2))).unwrap();
+        state
+            .subscribers
+            .attach(stream, *subscriber, Instant::now());
+        let mut message = vec![0; eon_workspace_protocol::v30::HEADER_BYTES];
+        peer.read_exact(&mut message).unwrap();
+        message.resize(
+            eon_workspace_protocol::v30::declared_message_len(&message).unwrap(),
+            0,
+        );
+        peer.read_exact(&mut message[eon_workspace_protocol::v30::HEADER_BYTES..])
+            .unwrap();
+        let eon_workspace_protocol::v30::SubscriptionMessage::Subscribed(subscribed) =
+            eon_workspace_protocol::v30::decode_subscription_message(&message).unwrap()
+        else {
+            panic!("no SUBSCRIBED");
+        };
+        assert_eq!(subscribed.generation, "component-1");
+        assert_eq!(
+            subscribed.snapshot.unwrap().workspaces[0].workspace.id,
+            before.workspace
+        );
+        // Serving turns changes no selection, shown workspace or popup.
+        for _ in 0..3 {
+            state.serve_subscribers(Instant::now());
+        }
+        assert_eq!(state.workspace_snapshot_in(None).unwrap(), before);
+        assert!(state.venus.is_none());
+
+        let missing = eon_workspace_protocol::v30::Filter {
+            workspaces: vec!["w9".into()],
+            ..Default::default()
+        };
+        assert_eq!(
+            refusal(subscribe(&mut state, None, missing)),
+            "unknown-workspace"
+        );
+        assert_eq!(
+            refusal(subscribe(&mut state, Some("orbit-9"), Default::default())),
+            "unknown-caller"
+        );
+        // While a Stop is incomplete, a subscriber that hung up still
+        // leaves.
+        let Dispatched::Subscribe(hung_up) = subscribe(&mut state, None, Default::default()) else {
+            panic!("a subscription is served");
+        };
+        let (stream, hung_up_peer) = UnixStream::pair().unwrap();
+        state.subscribers.attach(stream, *hung_up, Instant::now());
+        assert_eq!(state.subscribers.len(), 2);
+        state.stopping = true;
+        assert_eq!(
+            refusal(subscribe(&mut state, None, Default::default())),
+            "stop-incomplete"
+        );
+        crate::subscriptions::tests::hang_up(hung_up_peer);
+        state.serve_subscribers(Instant::now());
+        assert_eq!(state.subscribers.len(), 1);
+        state.stopping = false;
         // eonbase has no workspace to subscribe to.
         state.workspaces = None;
-        assert_eq!(refusal(&mut state), "workspace-unavailable");
+        assert_eq!(
+            refusal(subscribe(&mut state, None, Default::default())),
+            "workspace-unavailable"
+        );
+        // Stop, quit and the final close end the stream.
+        state.subscribers.end("component-1");
+        let mut rest = Vec::new();
+        peer.read_to_end(&mut rest).unwrap();
+        assert!(!rest.is_empty());
+        drop(state);
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    /// Every whole subscription message already written to `peer`.
+    #[cfg(target_os = "linux")]
+    fn subscription_messages(
+        peer: &mut UnixStream,
+    ) -> Vec<eon_workspace_protocol::v30::SubscriptionMessage> {
+        use eon_workspace_protocol::v30::{declared_message_len, decode_subscription_message};
+        peer.set_nonblocking(true).unwrap();
+        let mut bytes = Vec::new();
+        let mut buffer = [0; 65536];
+        loop {
+            match peer.read(&mut buffer) {
+                Ok(0) => break,
+                Ok(read) => bytes.extend_from_slice(&buffer[..read]),
+                Err(error) if error.kind() == std::io::ErrorKind::WouldBlock => break,
+                Err(error) => panic!("{error}"),
+            }
+        }
+        peer.set_nonblocking(false).unwrap();
+        let mut messages = Vec::new();
+        let mut rest = &bytes[..];
+        while !rest.is_empty() {
+            let length = declared_message_len(rest).unwrap();
+            messages.push(decode_subscription_message(&rest[..length]).unwrap());
+            rest = &rest[length..];
+        }
+        messages
+    }
+
+    /// EON-C39: attention the poller applies in a loop turn reaches
+    /// subscribers in that turn, as a real Orbit terminal reports it.
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn attention_reaches_subscribers_in_the_loop_turn_that_polls_it() {
+        use eon_workspace_protocol::v30::{AttentionState, Change, SubscriptionMessage};
+        let root = temporary_directory();
+        let inputs = crate::fixtures::inputs();
+        let session = leased_orbit(
+            &root,
+            "sleep 0.5; printf '\\033]7501;state=working:app=claude-code\\007'; sleep 1; \
+             printf '\\033]7501;state=done:app=claude-code\\007'; exec sleep 30",
+        );
+        let workspace = WorkspaceSet::with_recovered_sessions(
+            root.clone(),
+            root.clone(),
+            None,
+            vec![(
+                1,
+                super::workspace::Session {
+                    id: session.id.clone(),
+                    endpoint: session.endpoint.clone(),
+                },
+            )],
+            inputs.defaults.popups.clone(),
+        )
+        .unwrap();
+        let mut state = SupervisorState {
+            started_at: 1,
+            window: None,
+            running: None,
+            component_generation: "component-1".into(),
+            application_id: String::new(),
+            decorations: false,
+            workspaces: Some(workspace),
+            sessions: vec![session],
+            venus: None,
+            initial_child: Vec::new(),
+            initial_status: None,
+            stopping: false,
+            quotas: None,
+            attention: Some(crate::attention::Attention::new(true)),
+            pane_labels: super::super::pane_labels::Labels::default(),
+            agents: window_agents(),
+            notices: crate::notification::Notices::default(),
+            subscribers: crate::subscriptions::Subscribers::new("g1-test"),
+            log: DiagnosticLog::open_in(Ok(root.join("logs")), "g1-test", "workspace"),
+        };
+        let Dispatched::Subscribe(subscriber) = super::dispatch(
+            super::Request {
+                id: "subscribe-1".into(),
+                caller: None,
+                action: Action::Subscribe {
+                    filter: eon_workspace_protocol::v30::Filter {
+                        kinds: vec![eon_workspace_protocol::v30::EventKind::Attention],
+                        ..Default::default()
+                    },
+                    after: None,
+                },
+            },
+            &mut state,
+            &inputs,
+            &root,
+            &root,
+            "component-1",
+        ) else {
+            panic!("a subscription is served");
+        };
+        let (stream, mut peer) = UnixStream::pair().unwrap();
+        state
+            .subscribers
+            .attach(stream, *subscriber, Instant::now());
+        subscription_messages(&mut peer);
+
+        // After every turn, the subscriber has read what Inspect shows.
+        let deadline = Instant::now() + Duration::from_secs(20);
+        let mut read = None;
+        loop {
+            state.tend(Instant::now());
+            for message in subscription_messages(&mut peer) {
+                if let SubscriptionMessage::Event(event) = message
+                    && let Change::Attention { attention, .. } = event.change
+                {
+                    read = attention.map(|attention| attention.state);
+                }
+            }
+            let shown = state
+                .workspace_snapshot_in(None)
+                .unwrap()
+                .tabs
+                .iter()
+                .flat_map(|tab| tab.panes())
+                .find_map(|pane| pane.attention.as_ref().map(|attention| attention.state));
+            assert_eq!(read, shown, "Inspect shows what the turn did not send");
+            if shown == Some(AttentionState::Finished) {
+                break;
+            }
+            assert!(Instant::now() < deadline, "no finish within 20 s");
+            std::thread::sleep(Duration::from_millis(25));
+        }
+        stop_generation_sessions(&mut state, &root, LaunchMode::Workspace).unwrap();
         drop(state);
         fs::remove_dir_all(root).unwrap();
     }
@@ -2662,6 +2991,7 @@ mod tests {
             pane_labels: super::super::pane_labels::Labels::default(),
             agents: window_agents(),
             notices,
+            subscribers: crate::subscriptions::Subscribers::new("g1-test"),
             log,
         };
         let closes = (0..2)
@@ -2746,6 +3076,7 @@ mod tests {
             pane_labels: super::super::pane_labels::Labels::default(),
             agents: window_agents(),
             notices,
+            subscribers: crate::subscriptions::Subscribers::new("g1-test"),
             log,
         };
         assert_eq!(state.this_window().unwrap().live_terminals, Some(0));
@@ -2882,6 +3213,7 @@ mod tests {
             pane_labels: super::super::pane_labels::Labels::default(),
             agents: window_agents(),
             notices: crate::notification::Notices::default(),
+            subscribers: crate::subscriptions::Subscribers::new("g1-test"),
             log,
         };
         let inputs = crate::fixtures::inputs();
@@ -2968,6 +3300,7 @@ mod tests {
             pane_labels: super::super::pane_labels::Labels::default(),
             agents: window_agents(),
             notices: crate::notification::Notices::default(),
+            subscribers: crate::subscriptions::Subscribers::new("g1-test"),
             log: DiagnosticLog::open_in(Ok(roots[0].join("logs")), "g1-test", "workspace"),
         };
         let inputs = crate::fixtures::inputs();
@@ -3093,6 +3426,7 @@ mod tests {
             pane_labels: super::super::pane_labels::Labels::default(),
             agents: window_agents(),
             notices: crate::notification::Notices::default(),
+            subscribers: crate::subscriptions::Subscribers::new("g1-test"),
             log: DiagnosticLog::open_in(Ok(root.join("logs")), "g1-test", "workspace"),
         };
         let inputs = crate::fixtures::inputs();
@@ -3148,6 +3482,7 @@ mod tests {
             pane_labels: super::super::pane_labels::Labels::default(),
             agents: window_agents(),
             notices: crate::notification::Notices::default(),
+            subscribers: crate::subscriptions::Subscribers::new("g1-test"),
             log: DiagnosticLog::open_in(Ok(root.join("logs")), "g1-test", "workspace"),
         };
 
@@ -3240,6 +3575,7 @@ mod tests {
             pane_labels: super::super::pane_labels::Labels::default(),
             agents: window_agents(),
             notices: crate::notification::Notices::default(),
+            subscribers: crate::subscriptions::Subscribers::new("g1-test"),
             log: DiagnosticLog::open_in(Ok(roots[0].join("logs")), "g1-test", "workspace"),
         };
         let ids = |state: &SupervisorState| {

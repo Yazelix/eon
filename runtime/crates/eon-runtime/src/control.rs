@@ -1,5 +1,6 @@
 use super::{
     sessions::bound_io,
+    subscriptions::Subscriber,
     supervisor::{
         LaunchMode, PRESENTATION_ADMISSION_TIMEOUT, SESSION_START_TIMEOUT, effective_uid,
         request_id,
@@ -58,6 +59,39 @@ impl EndpointFailure {
 pub(super) enum ControlResponse {
     Workspace(Response),
     Lifecycle(LifecycleResponse),
+}
+
+/// What the supervisor does with a request: reply and close the connection,
+/// shutting down after a stopping reply, or keep the connection for an
+/// event subscription (EON-C39).
+#[allow(clippy::large_enum_variant)]
+pub(super) enum Dispatched {
+    Reply(ControlResponse, bool),
+    Subscribe(Box<Subscriber>),
+}
+
+impl From<(ControlResponse, bool)> for Dispatched {
+    fn from((response, shutdown): (ControlResponse, bool)) -> Self {
+        Self::Reply(response, shutdown)
+    }
+}
+
+/// A served control client.
+pub(super) enum Accepted {
+    /// No client was waiting.
+    None,
+    Replied {
+        shutdown: bool,
+    },
+    /// The subscriber's connection, now its own.
+    Subscribed(UnixStream, Box<Subscriber>),
+}
+
+#[cfg(test)]
+impl Accepted {
+    pub(super) fn shutdown(&self) -> bool {
+        matches!(self, Self::Replied { shutdown: true })
+    }
 }
 
 pub(super) fn send_action(
@@ -491,13 +525,13 @@ impl ControlListener {
         Ok(control)
     }
 
-    pub(super) fn accept(
+    pub(super) fn accept<D: Into<Dispatched>>(
         &self,
-        dispatch: impl FnOnce(Request) -> (ControlResponse, bool),
-    ) -> Result<bool, String> {
+        dispatch: impl FnOnce(Request) -> D,
+    ) -> Result<Accepted, String> {
         match self.listener.accept() {
             Ok((stream, _)) => Ok(handle_client(stream, dispatch)),
-            Err(error) if error.kind() == std::io::ErrorKind::WouldBlock => Ok(false),
+            Err(error) if error.kind() == std::io::ErrorKind::WouldBlock => Ok(Accepted::None),
             Err(error) => Err(format!("cannot accept Eon control client: {error}")),
         }
     }
@@ -516,22 +550,27 @@ impl Drop for ControlListener {
     }
 }
 
-fn handle_client(
+fn handle_client<D: Into<Dispatched>>(
     mut stream: UnixStream,
-    dispatch: impl FnOnce(Request) -> (ControlResponse, bool),
-) -> bool {
+    dispatch: impl FnOnce(Request) -> D,
+) -> Accepted {
+    let unserved = Accepted::Replied { shutdown: false };
     // Accepted sockets inherit the listener's nonblocking mode on macOS.
     if stream.set_nonblocking(false).is_err() {
-        return false;
+        return unserved;
     }
     let timeout = Some(Duration::from_millis(250));
     if bound_io(&stream, stream.set_read_timeout(timeout)).is_err()
         || bound_io(&stream, stream.set_write_timeout(timeout)).is_err()
     {
-        return false;
+        return unserved;
     }
-    let (response, shutdown) = match read_request(&mut stream) {
-        Ok(request) => dispatch(request),
+    let (response, shutdown) = match read_request(&mut stream)
+        .map(|request| dispatch(request).into())
+    {
+        Ok(Dispatched::Reply(response, shutdown)) => (response, shutdown),
+        // The supervisor writes to a subscriber without waiting.
+        Ok(Dispatched::Subscribe(subscriber)) => return Accepted::Subscribed(stream, subscriber),
         Err(error) => (ControlResponse::Workspace(Response::Failure(error)), false),
     };
     let encoded = match &response {
@@ -546,7 +585,7 @@ fn handle_client(
     }) {
         let _ = stream.write_all(&encoded);
     }
-    shutdown
+    Accepted::Replied { shutdown }
 }
 
 fn read_request(stream: &mut impl Read) -> Result<Request, Failure> {
@@ -716,15 +755,18 @@ mod tests {
             .unwrap();
         drop(peer);
 
-        assert!(super::handle_client(stream, |received| {
-            assert_eq!(received, request);
-            (
-                super::ControlResponse::Workspace(super::Response::Failure(super::failure(
-                    "stopped", "done",
-                ))),
-                true,
-            )
-        }));
+        assert!(
+            super::handle_client(stream, |received| {
+                assert_eq!(received, request);
+                (
+                    super::ControlResponse::Workspace(super::Response::Failure(super::failure(
+                        "stopped", "done",
+                    ))),
+                    true,
+                )
+            })
+            .shutdown()
+        );
     }
 
     #[test]
@@ -750,7 +792,8 @@ mod tests {
         let shutdown = super::handle_client(stream, |received| {
             assert_eq!(received, request);
             (super::ControlResponse::Workspace(response), true)
-        });
+        })
+        .shutdown();
         let peer_result = peer.join();
         assert!(shutdown, "delayed request was not dispatched");
         peer_result.unwrap();

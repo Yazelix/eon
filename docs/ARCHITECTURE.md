@@ -140,61 +140,59 @@ The pin is separate from terminal title and attention, follows the pane object,
 and is absent after supervisor recovery. Venus consumes the label without a
 second metadata observer or naming policy.
 
-EONW v30 is the current Eon source boundary. It adds the codec for the
-EON-C39 event subscription: a `Subscribe` request whose connection then
-carries a `SUBSCRIBED` reply, `TABS`, `EVENT` and `GAP` messages and a final
-`END`, with a snapshot's tabs split one workspace per `TABS` message so each
-fits the 2 MiB frame. Until `eon-ciwn.7`, a supervisor refuses `Subscribe`
-with an ordinary failure. v29 adds each window's busy terminals (EON-C11).
-v28 adds the running-windows summary and supervisor name and start time
-(EON-C23). v27 adds scoped quota windows and
+EONW v30 is the current Eon source boundary. It adds the codec for the EON-C39
+event subscription: a `Subscribe` request whose connection then carries a
+`SUBSCRIBED` reply, `TABS`, `EVENT` and `GAP` messages and a final `END`, with
+a snapshot's tabs split one workspace per `TABS` message so each fits the 2
+MiB frame. The supervisor keeps each subscription's connection and writes to
+it without waiting, so a slow subscriber never delays its loop. v29 adds each
+window's busy terminals (EON-C11). v28 adds the running-windows summary and
+supervisor name and start time (EON-C23). v27 adds scoped quota windows and
 each provider's last failed quota read (EON-C27). v26 adds `ReadTerminal` and
 `SendTerminal`, which read a pane's or popup's visible text and paste text or
 send Enter to it in any workspace of the window, with their `Text` and `Sent`
-replies (EON-C35, EON-C36). v25 adds the window-wide EON-C31
-`attention_queue` in Runtime's total order. v24 adds `LaunchTab`, which starts a
-non-pending tab at an explicit directory with the default pane or an exact argv
-from a calling terminal, optionally preserving focus (EON-C10). v23 adds the
-background attention state, for an agent that reported done or idle while
-processes it started still run, ranked between working and idle (EON-C31).
-v22 gives each workspace
-summary its attention rollup and its recency rank, which the Workspaces picker
-orders by and the Eon Bar label's badge reads (EON-C33). v21 gives each popup
-entry a shortcut, or none because the configuration unbound it or because another
-entry holds its default shortcut (EON-C10). v20 adds the window's ordered
-workspace summaries, shown identity and caller projection, and requests to
-create, switch, rename and close a workspace (EON-C33). v19 adds the attention
-`name`, the terminal title that tells agents apart in the sidebar (EON-C31). v18 adds
-EON-C31 agent attention: each pane and popup's normalized attention with its
-most urgent record, each tab's rollup, the window's sidebar visibility, and the
-`ToggleSidebar`, `FocusAttention`, `NextAttention` and `PreviousAttention`
-actions. v17 adds one
-reply, `Ended`, which answers a tab or pane close that stopped the window's last
-terminal, since a snapshot cannot carry an empty workspace. v16 adds a focus flag to both
-pane-create requests, so a pane can be added without selecting it or
-dismissing the tab's popup. v15 adds one request that runs an
-exact argv, with no shell, in a new pane, and the runtime accepts it only from a
-calling terminal; it is the one request that carries a command. v14 adds one
-request that opens an absolute file path in a new pane running the editor, which
-the runtime chooses. Since v13 each request may name its
-calling terminal, whose tab and pane replace the active selection for pane
-create, edit, move and close actions and tab moves; the CLI sends the terminal's
-`EON_TERMINAL`, Venus sends none, and the supervisor resolves it against its
-live Orbit runs. v12 adds one request that moves the selected pane into the
-neighbouring column; v11 adds one request that closes a pane by its stable
-identity. v10 arranges each tab's panes into up to four columns, each with
-one expanded pane, ahead of the unchanged v9 snapshot of the flattened panes. The current
+replies (EON-C35, EON-C36). v25 adds the window-wide EON-C31 `attention_queue`
+in Runtime's total order. v24 adds `LaunchTab`, which starts a non-pending tab
+at an explicit directory with the default pane or an exact argv from a calling
+terminal, optionally preserving focus (EON-C10). v23 adds the background
+attention state, for an agent that reported done or idle while processes it
+started still run, ranked between working and idle (EON-C31). v22 gives each
+workspace summary its attention rollup and its recency rank, which the
+Workspaces picker orders by and the Eon Bar label's badge reads (EON-C33). v21
+gives each popup entry a shortcut, or none because the configuration unbound
+it or because another entry holds its default shortcut (EON-C10). v20 adds the
+window's ordered workspace summaries, shown identity and caller projection,
+and requests to create, switch, rename and close a workspace (EON-C33). v19
+adds the attention `name`, the terminal title that tells agents apart in the
+sidebar (EON-C31). v18 adds EON-C31 agent attention: each pane and popup's
+normalized attention with its most urgent record, each tab's rollup, the
+window's sidebar visibility, and the `ToggleSidebar`, `FocusAttention`,
+`NextAttention` and `PreviousAttention` actions. v17 adds one reply, `Ended`,
+which answers a tab or pane close that stopped the window's last terminal,
+since a snapshot cannot carry an empty workspace. v16 adds a focus flag to
+both pane-create requests, so a pane can be added without selecting it or
+dismissing the tab's popup. v15 adds one request that runs an exact argv, with
+no shell, in a new pane, and the runtime accepts it only from a calling
+terminal; it is the one request that carries a command. v14 adds one request
+that opens an absolute file path in a new pane running the editor, which the
+runtime chooses. Since v13 each request may name its calling terminal, whose
+tab and pane replace the active selection for pane create, edit, move and
+close actions and tab moves; the CLI sends the terminal's `EON_TERMINAL`,
+Venus sends none, and the supervisor resolves it against its live Orbit runs.
+v12 adds one request that moves the selected pane into the neighbouring
+column; v11 adds one request that closes a pane by its stable identity. v10
+arranges each tab's panes into up to four columns, each with one expanded
+pane, ahead of the unchanged v9 snapshot of the flattened panes. The current
 snapshot retains v6's optional, bounded Codex quota field with fresh, stale,
-blocked, or unknown state and up to two
-normalized windows. Pinned CodexBar CLI owns Codex and Claude collection; Runtime validates and ages
-its readings, while Venus alone presents the optional chips. v9 permits absent
-provider resets.
-Credentials, account identity, provider payloads, and provider lifecycle stay
-out of EONW and Venus. v7 also permits distinct pending Project pickers in
-separate tabs. Eon provides no version negotiation layer. Existing live
-supervisors retain their generation until explicitly stopped; the updated
-executable starts a separate generation.
-Composed activation requires an exact v30 Venus consumer.
+blocked, or unknown state and up to two normalized windows. Pinned CodexBar
+CLI owns Codex and Claude collection; Runtime validates and ages its readings,
+while Venus alone presents the optional chips. v9 permits absent provider
+resets. Credentials, account identity, provider payloads, and provider
+lifecycle stay out of EONW and Venus. v7 also permits distinct pending Project
+pickers in separate tabs. Eon provides no version negotiation layer. Existing
+live supervisors retain their generation until explicitly stopped; the updated
+executable starts a separate generation. Composed activation requires an exact
+v30 Venus consumer.
 
 The optional Claude observation adds only bounded presentation facts. Under
 EON-C27, pinned CodexBar collects it; Runtime owns bounded subprocesses,

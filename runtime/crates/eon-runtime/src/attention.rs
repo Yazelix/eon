@@ -680,10 +680,6 @@ impl Attention {
     }
 
     /// Every busy terminal of `workspaces` in window order, unbounded.
-    #[cfg_attr(
-        not(test),
-        expect(dead_code, reason = "eon-ciwn.7 publishes event projections")
-    )]
     pub(super) fn busy_terminals(
         &self,
         workspaces: &[Snapshot],
@@ -2184,6 +2180,100 @@ mod tests {
             );
             thread::sleep(Duration::from_millis(25));
         }
+    }
+
+    /// EON-C39: a poll reply reaches a subscriber in the loop turn that
+    /// applies it, and so does a focus that sees the finish; a subscriber
+    /// alone never sees it.
+    #[test]
+    fn a_subscriber_reads_attention_in_the_turn_that_applies_it() {
+        use crate::{events::Projection, subscriptions::Subscribers};
+        use eon_workspace_protocol::v30::{
+            Change, EventKind, Filter, HEADER_BYTES, SubscriptionMessage, declared_message_len,
+            decode_subscription_message,
+        };
+        use std::{io::Read, os::unix::net::UnixStream};
+        let mut workspaces = [snapshot("t1", vec![tab("t1", &["session-1"], &[], None)])];
+        // The wire carries each terminal's endpoint.
+        workspaces[0].tabs[0].columns[0].panes[0].endpoint = b"/runtime/1.sock".to_vec();
+        let (targets, focus) = targets(&workspaces);
+        let mut attention = Attention::new(true);
+        // As the supervisor projects the window each turn.
+        let project = |attention: &mut Attention, attached| {
+            let now = Instant::now();
+            let mut presented = workspaces.clone();
+            for snapshot in &mut presented {
+                attention.present(snapshot, &workspaces, attached, now);
+            }
+            Projection::new(&presented, attention.busy_terminals(&workspaces, &[], now))
+        };
+        let read = |peer: &mut UnixStream| {
+            let mut message = vec![0; HEADER_BYTES];
+            peer.read_exact(&mut message).unwrap();
+            message.resize(declared_message_len(&message).unwrap(), 0);
+            peer.read_exact(&mut message[HEADER_BYTES..]).unwrap();
+            decode_subscription_message(&message).unwrap()
+        };
+        let state = |message| match message {
+            SubscriptionMessage::Event(event) => match event.change {
+                Change::Attention {
+                    previous,
+                    attention,
+                    ..
+                } => (previous, attention.map(|attention| attention.state)),
+                change => panic!("{change:?}"),
+            },
+            message => panic!("{message:?}"),
+        };
+
+        let mut subscribers = Subscribers::new("g1-test");
+        let subscriber = subscribers
+            .subscribe(
+                project(&mut attention, false),
+                &Filter {
+                    kinds: vec![EventKind::Attention],
+                    ..Filter::default()
+                },
+                None,
+                None,
+                "g1-test",
+                None,
+                Instant::now(),
+            )
+            .unwrap();
+        let (stream, mut peer) = UnixStream::pair().unwrap();
+        peer.set_read_timeout(Some(Duration::from_secs(2))).unwrap();
+        subscribers.attach(stream, subscriber, Instant::now());
+        assert!(matches!(
+            read(&mut peer),
+            SubscriptionMessage::Subscribed(_)
+        ));
+        assert!(matches!(read(&mut peer), SubscriptionMessage::Tabs(_)));
+
+        // The poller applies a finish; the same turn publishes it.
+        attention.apply(
+            &targets,
+            "session-1",
+            "run-1",
+            status(1, vec![record("a", Done, Some(Working), 1)]),
+            Instant::now(),
+        );
+        subscribers.turn(project(&mut attention, false), Instant::now());
+        assert_eq!(state(read(&mut peer)), (None, Some(State::Finished)));
+
+        // Unattached turns, as a subscriber alone sees the window, keep the
+        // finish unseen.
+        for _ in 0..3 {
+            attention.observe(focus.clone(), false);
+            subscribers.turn(project(&mut attention, false), Instant::now());
+        }
+        // A focus that sees it, with Venus attached, is the next event.
+        attention.observe(focus.clone(), true);
+        subscribers.turn(project(&mut attention, true), Instant::now());
+        assert_eq!(
+            state(read(&mut peer)),
+            (Some(State::Finished), Some(State::Idle))
+        );
     }
 
     #[test]

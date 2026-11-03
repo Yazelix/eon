@@ -13,6 +13,7 @@ mod platform;
 mod quota;
 mod running;
 mod sessions;
+mod subscriptions;
 mod supervisor;
 mod windows;
 mod workspace;

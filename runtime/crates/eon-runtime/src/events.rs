@@ -2,10 +2,6 @@
 //! projection, its difference as ordered events, the supervisor's event
 //! counter and retained events, and subscription filters. The supervisor
 //! publishes and serves subscribers; nothing here touches a connection.
-#![cfg_attr(
-    not(test),
-    expect(dead_code, reason = "eon-ciwn.7 serves subscriptions from it")
-)]
 
 use super::{supervisor::request_id, workspace::resolve_selector};
 use eon_workspace_protocol::v30::{
@@ -170,6 +166,8 @@ impl Event {
         }
     }
 
+    /// The event's EON-C39 name, which tests describe events by.
+    #[cfg(test)]
     pub(super) fn name(&self) -> &'static str {
         match self {
             Self::Workspace(change, _) => match change {
@@ -373,6 +371,14 @@ impl Projection {
                     .map(move |tab| (tab.id.as_str(), (workspace, tab)))
             })
             .collect()
+    }
+
+    /// The pane or popup that runs `session`, as `SUBSCRIBED` names its
+    /// caller.
+    pub(super) fn target(&self, session: &str) -> Option<TerminalTarget> {
+        self.terminals()
+            .find(|terminal| terminal.session() == session)
+            .map(|terminal| terminal.target())
     }
 
     /// Every pane and popup terminal in window order: workspace by
@@ -1112,38 +1118,42 @@ impl Events {
 }
 
 #[cfg(test)]
-mod tests {
+pub(super) mod tests {
     use super::*;
     use eon_workspace_protocol::v30::{
         AttentionRecord, BusyTerminal, Column, PopupGeometry, QueueEntry, Sidebar, WorkspaceInfo,
     };
     use std::collections::BTreeMap;
 
-    fn pane(id: &str, session: &str) -> eonw::Pane {
+    pub(crate) fn pane(id: &str, session: &str) -> eonw::Pane {
         eonw::Pane {
             id: id.into(),
             label: id.into(),
             pinned_name: None,
             session: session.into(),
-            endpoint: Vec::new(),
+            endpoint: format!("/runtime/{session}.sock").into_bytes(),
             live: true,
             attention: None,
         }
     }
 
-    fn popup(id: &str, entry: &str, session: &str) -> eonw::Popup {
+    pub(crate) fn popup(id: &str, entry: &str, session: &str) -> eonw::Popup {
         eonw::Popup {
             id: id.into(),
             entry: entry.into(),
             session: session.into(),
-            endpoint: Vec::new(),
+            endpoint: format!("/runtime/{session}.sock").into_bytes(),
             attention: None,
         }
     }
 
     /// A tab whose columns expand their first pane and whose first column's
     /// is selected.
-    fn tab(id: &str, columns: Vec<Vec<eonw::Pane>>, popups: Vec<eonw::Popup>) -> eonw::Tab {
+    pub(crate) fn tab(
+        id: &str,
+        columns: Vec<Vec<eonw::Pane>>,
+        popups: Vec<eonw::Popup>,
+    ) -> eonw::Tab {
         eonw::Tab {
             id: id.into(),
             directory: b"/home".to_vec(),
@@ -1162,7 +1172,7 @@ mod tests {
         }
     }
 
-    fn attention(state: State, stale: bool) -> eonw::Attention {
+    pub(crate) fn attention(state: State, stale: bool) -> eonw::Attention {
         eonw::Attention {
             state,
             record: Some(AttentionRecord {
@@ -1224,7 +1234,7 @@ mod tests {
 
     /// w1 "main" (shown): t1 with p1 and p2 stacked and the agent popup u1,
     /// and t2 with p3; w2 "side": t3 with p4. Terminal sN runs each.
-    fn base() -> Projection {
+    pub(crate) fn base() -> Projection {
         let snapshots = window(
             "w1",
             vec![
@@ -1259,7 +1269,7 @@ mod tests {
             .unwrap()
     }
 
-    fn tab_mut<'a>(projection: &'a mut Projection, id: &str) -> &'a mut eonw::Tab {
+    pub(crate) fn tab_mut<'a>(projection: &'a mut Projection, id: &str) -> &'a mut eonw::Tab {
         projection
             .workspaces
             .iter_mut()
@@ -1268,7 +1278,7 @@ mod tests {
             .unwrap()
     }
 
-    fn pane_mut<'a>(projection: &'a mut Projection, id: &str) -> &'a mut eonw::Pane {
+    pub(crate) fn pane_mut<'a>(projection: &'a mut Projection, id: &str) -> &'a mut eonw::Pane {
         projection
             .workspaces
             .iter_mut()

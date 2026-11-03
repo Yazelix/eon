@@ -80,9 +80,9 @@ owns product policy and installed acceptance.
 EONW v30 adds the codec for the EON-C39 event subscription: a `Subscribe`
 request with its filter and resume point, after which the connection carries
 a `SUBSCRIBED` reply, one `TABS` message per workspace with admitted tabs,
-then `EVENT` and `GAP` messages and a final `END`, each one frame. Until
-`eon-ciwn.7` serves subscriptions, the supervisor refuses `Subscribe` with an
-ordinary failure. v29 carries each window's busy terminals in its snapshot
+then `EVENT` and `GAP` messages and a final `END`, each one frame. The
+supervisor keeps each subscription's connection and writes to it without
+waiting. v29 carries each window's busy terminals in its snapshot
 and lifecycle inspection (EON-C11). v28 adds the running-windows summary and
 supervisor name and start time (EON-C23). v27 adds a scope to quota windows
 and each provider's last failed quota read (EON-C27). v26 adds terminal reads

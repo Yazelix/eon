@@ -3940,7 +3940,10 @@ socket names, JSON fields and protocol identifiers retain their spellings.
   `queue` event is also sent when an entry's state changes. Amended on
   2026-11-03 (approved by Lucca, relayed by eon-overseer) by `eon-ciwn.5`: a
   `--tab` stream does not rebuild workspace-wide values, and the text says
-  which kinds a stream admits for rebuilding.
+  which kinds a stream admits for rebuilding. Amended on 2026-11-03
+  (approved by Lucca, relayed by eon-overseer) by `eon-ciwn.7`: output has
+  moved when the subscriber has read at least one write unit of up to 4 KiB
+  since the last check.
 - **Consumer:** An agent or script running as the person's user, in an Eon
   terminal or outside one, that must notice workspace and attention changes
   without polling: an overseer answering its tab's questions (`eon-ciwn.4`),
@@ -4114,12 +4117,13 @@ socket names, JSON fields and protocol identifiers retain their spellings.
     - exit 3: a missing or stale workspace, tab, target, generation or
       window named when subscribing, and `unknown-caller` (EON-C10).
   - Exit 1 after subscribing:
-    - `too-slow`: when a subscriber's pending output
-      has not moved for 30 s, the Runtime drops its unsent whole frames,
-      writes what it can of any partly written frame and of an `end` with
-      reason `too-slow` without waiting further, and closes the
-      connection. The CLI exits 1 with `too-slow` when that `end` arrives
-      complete, and otherwise exits 4 as a lost connection;
+    - `too-slow`: when a subscriber's pending output has not moved for
+      30 s, the Runtime drops its unsent whole frames, writes what it can
+      of any partly written frame and of an `end` with reason `too-slow`
+      without waiting further, and closes the connection. Output has moved
+      when the subscriber has read at least one write unit of up to 4 KiB
+      since the last check. The CLI exits 1 with `too-slow` when that `end`
+      arrives complete, and otherwise exits 4 as a lost connection;
     - `wait-timeout`.
   - Exit 3 `target-gone`: `eon pane wait`'s target
     closes, its terminal ends, or the window ends before the predicate

@@ -1030,7 +1030,8 @@ impl Workspace {
                     "the supervisor reads and sends to terminals over their leases",
                 ));
             }
-            // eon-ciwn.7 serves subscriptions on their own connection.
+            // The supervisor serves subscriptions on their own connection
+            // (EON-C39), so none reaches the workspace owner.
             Action::Subscribe { .. } => {
                 return Err(action_error(
                     "unavailable",

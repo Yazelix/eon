@@ -1,9 +1,10 @@
 use eon_workspace_protocol::v30::{
-    Action as ProtocolAction, Availability, Column, Direction, Failure as ProtocolFailure,
-    HEADER_BYTES, InvokeIntent, LifecycleResponse, MAX_SESSIONS, Pane, Popup, PopupGeometry,
-    PopupTarget, Request, Response, Runtime, Screen, Sent, Snapshot, Stopped, Tab, TargetId,
-    TerminalInput, TerminalTarget, TerminalText, VERSION, WorkspaceAction as Action,
-    declared_message_len, decode_request, decode_response, encode_lifecycle_response,
+    Action as ProtocolAction, Availability, Change, Column, Direction, End,
+    Failure as ProtocolFailure, Filter, HEADER_BYTES, InvokeIntent, LifecycleResponse,
+    MAX_SESSIONS, Pane, Popup, PopupGeometry, PopupTarget, Request, Response, Runtime, Screen,
+    Sent, Snapshot, Stopped, SubscriptionMessage, Tab, TabChange, TargetId, TerminalInput,
+    TerminalTarget, TerminalText, VERSION, WorkspaceAction as Action, declared_message_len,
+    decode_request, decode_response, decode_subscription_message, encode_lifecycle_response,
     encode_request, encode_response,
 };
 use orbit_protocol::management::{
@@ -26,7 +27,7 @@ use std::{
     path::{Path, PathBuf},
     process::{Child, Command, ExitStatus, Output, Stdio},
     sync::{
-        OnceLock,
+        Arc, Mutex, OnceLock,
         atomic::{AtomicU64, Ordering},
     },
     thread,
@@ -2551,6 +2552,267 @@ fn stop_result_covers_queued_operation_and_managed_cleanup() {
     );
     assert!(stdout(&result).contains("session-1, session-2"));
     wait_for_successful_exit(&mut supervisor.child);
+    assert!(!generation.exists());
+    fs::remove_dir_all(root).unwrap();
+}
+
+/// Connects and subscribes to every event of the window behind `socket`.
+fn subscription(socket: &Path, id: &str) -> UnixStream {
+    let request = encode_request(&Request {
+        id: id.into(),
+        caller: None,
+        action: ProtocolAction::Subscribe {
+            filter: Filter::default(),
+            after: None,
+        },
+    })
+    .unwrap();
+    let mut stream = UnixStream::connect(socket).unwrap();
+    stream.write_all(&request).unwrap();
+    stream
+}
+
+/// Reads one whole subscription frame, or None at a clean end of stream.
+fn read_subscription_frame(stream: &mut UnixStream) -> Option<Vec<u8>> {
+    let mut frame = vec![0; HEADER_BYTES];
+    let mut filled = 0;
+    while filled < HEADER_BYTES {
+        match stream.read(&mut frame[filled..]) {
+            Ok(0) if filled == 0 => return None,
+            Ok(0) => panic!("subscription ended inside a frame header"),
+            Ok(read) => filled += read,
+            Err(error) if error.kind() == std::io::ErrorKind::Interrupted => {}
+            Err(error) => panic!("subscription read failed: {error}"),
+        }
+    }
+    let length = declared_message_len(&frame).unwrap();
+    frame.resize(length, 0);
+    stream
+        .read_exact(&mut frame[HEADER_BYTES..])
+        .unwrap_or_else(|error| panic!("subscription ended inside a frame: {error}"));
+    Some(frame)
+}
+
+#[test]
+fn a_stalled_subscriber_never_delays_requests_another_subscriber_or_stop() {
+    const ACTIONS: usize = 450;
+    const BOUND: Duration = Duration::from_secs(2);
+    let root = temporary_directory();
+    let runtime = root.join("runtime");
+    let config = root.join("config");
+    configure_mock_desktop(&config);
+    let stop = root.join("stop");
+    let orbit = root.join("orbit");
+    let venus = root.join("venus");
+    managed_orbit_executable(&orbit);
+    executable(&venus, "#!/bin/sh\ncat >/dev/null\n");
+    // Two directories named by about 4000 bytes each, so every directory
+    // event is large and a reader that stops reading fills its connection.
+    let directories = ["a", "b"].map(|name| {
+        let directory = root.join(name);
+        fs::create_dir(&directory).unwrap();
+        let mut bytes = directory.as_os_str().as_bytes().to_vec();
+        while bytes.len() + 2 <= 4000 {
+            bytes.extend_from_slice(b"/.");
+        }
+        bytes
+    });
+    let binary = Path::new(env!("CARGO_BIN_EXE_eon"));
+    let mut supervisor = TestProcess {
+        child: eon_command(binary)
+            .arg("run")
+            .env("EON_RUNTIME_DIR", &runtime)
+            .env("EON_CONFIG_HOME", &config)
+            .env("EON_ORBIT", &orbit)
+            .env("EON_VENUS", &venus)
+            .env("EON_TEST_STOP", &stop)
+            .stdout(Stdio::null())
+            .stderr(Stdio::null())
+            .spawn()
+            .unwrap(),
+        stop,
+    };
+    let generation = generation_runtime(&runtime);
+    let control = generation.join("eon.sock");
+    wait_for_connection(&control);
+    let id = generation.file_name().unwrap().to_str().unwrap().to_owned();
+    let deadline = Instant::now() + Duration::from_secs(10);
+    let tab = loop {
+        if let Response::Snapshot(snapshot) = workspace_action(&control, "ready", Action::Inspect)
+            && snapshot
+                .tabs
+                .iter()
+                .any(|tab| tab.id == snapshot.active_tab && !tab.pending)
+        {
+            break snapshot.active_tab;
+        }
+        assert!(
+            Instant::now() < deadline,
+            "the first tab was not established"
+        );
+        thread::sleep(Duration::from_millis(10));
+    };
+
+    // A subscribes and never reads; it keeps its connection open throughout.
+    let mut stalled = subscription(&control, "stalled");
+    // B reads every frame as it arrives.
+    let received = Arc::new(Mutex::new(Vec::<SubscriptionMessage>::new()));
+    let received_bytes = Arc::new(AtomicU64::new(0));
+    let reader = {
+        let mut stream = subscription(&control, "reading");
+        stream
+            .set_read_timeout(Some(Duration::from_secs(60)))
+            .unwrap();
+        let received = Arc::clone(&received);
+        let received_bytes = Arc::clone(&received_bytes);
+        thread::spawn(move || {
+            while let Some(frame) = read_subscription_frame(&mut stream) {
+                received_bytes.fetch_add(frame.len() as u64, Ordering::Relaxed);
+                let message = decode_subscription_message(&frame).unwrap();
+                received.lock().unwrap().push(message);
+            }
+        })
+    };
+    let deadline = Instant::now() + Duration::from_secs(5);
+    while !received
+        .lock()
+        .unwrap()
+        .iter()
+        .any(|message| matches!(message, SubscriptionMessage::Subscribed(_)))
+    {
+        assert!(
+            Instant::now() < deadline,
+            "the reading subscriber was not served"
+        );
+        thread::sleep(Duration::from_millis(10));
+    }
+
+    let mut slowest = Duration::ZERO;
+    let mut timed = |name: String, action: Action| {
+        let started = Instant::now();
+        let response = workspace_action(&control, &name, action);
+        let elapsed = started.elapsed();
+        assert!(
+            matches!(response, Response::Snapshot(_)),
+            "{name} failed: {response:?}"
+        );
+        assert!(
+            elapsed < BOUND,
+            "{name} took {elapsed:?} beside a stalled subscriber"
+        );
+        slowest = slowest.max(elapsed);
+    };
+    let started = Instant::now();
+    for index in 0..ACTIONS {
+        timed(
+            format!("directory-{index}"),
+            Action::SetTabDirectory {
+                tab: tab.clone(),
+                directory: directories[index % 2].clone(),
+            },
+        );
+        if index % 10 == 9 {
+            timed(format!("inspect-{index}"), Action::Inspect);
+        }
+    }
+    let driven = started.elapsed();
+
+    // B receives every directory change in order while A reads nothing.
+    let directory_events = |messages: &[SubscriptionMessage]| {
+        messages
+            .iter()
+            .filter_map(|message| match message {
+                SubscriptionMessage::Event(event) => match &event.change {
+                    Change::Tab {
+                        change: TabChange::Directory,
+                        tab: changed,
+                        ..
+                    } if changed.id == tab => Some(changed.directory.clone()),
+                    _ => None,
+                },
+                _ => None,
+            })
+            .collect::<Vec<_>>()
+    };
+    let deadline = Instant::now() + Duration::from_secs(10);
+    while directory_events(&received.lock().unwrap()).len() < ACTIONS {
+        assert!(
+            Instant::now() < deadline,
+            "the reading subscriber received {} of {ACTIONS} directory events",
+            directory_events(&received.lock().unwrap()).len()
+        );
+        thread::sleep(Duration::from_millis(10));
+    }
+
+    let stopping = Instant::now();
+    let stopped = invoke(binary, &runtime, &config, &["stop", &id, "--json"]);
+    let stop_took = stopping.elapsed();
+    assert!(stopped.status.success(), "{}", stdout(&stopped));
+    assert!(
+        stop_took < Duration::from_secs(5),
+        "Stop took {stop_took:?} beside a stalled subscriber"
+    );
+    wait_for_successful_exit(&mut supervisor.child);
+
+    // B's stream ends with ENDED for this generation, then end of stream.
+    reader.join().unwrap();
+    let messages = std::mem::take(&mut *received.lock().unwrap());
+    let SubscriptionMessage::Subscribed(subscribed) = &messages[0] else {
+        panic!("the stream did not open with SUBSCRIBED: {:?}", messages[0]);
+    };
+    assert_eq!(subscribed.generation, id);
+    assert_eq!(
+        messages.last(),
+        Some(&SubscriptionMessage::End(End::Ended {
+            generation: id.clone()
+        }))
+    );
+    assert!(
+        !messages
+            .iter()
+            .any(|message| matches!(message, SubscriptionMessage::Gap(_))),
+        "the reading subscriber fell behind"
+    );
+    let seqs = messages
+        .iter()
+        .filter_map(|message| match message {
+            SubscriptionMessage::Event(event) => Some(event.seq),
+            _ => None,
+        })
+        .collect::<Vec<_>>();
+    assert!(
+        seqs.windows(2).all(|pair| pair[0] < pair[1]),
+        "event seqs were not increasing"
+    );
+    assert!(seqs.first().is_some_and(|first| *first > subscribed.seq));
+    let expected = (0..ACTIONS)
+        .map(|index| directories[index % 2].clone())
+        .collect::<Vec<_>>();
+    assert_eq!(directory_events(&messages), expected);
+    let read_by_b = received_bytes.load(Ordering::Relaxed);
+
+    // A reaches end of stream, having been held to its connection's buffer.
+    stalled
+        .set_read_timeout(Some(Duration::from_secs(10)))
+        .unwrap();
+    let mut read_by_a = 0u64;
+    let mut buffer = vec![0; 64 * 1024];
+    loop {
+        match stalled.read(&mut buffer) {
+            Ok(0) => break,
+            Ok(read) => read_by_a += read as u64,
+            Err(error) if error.kind() == std::io::ErrorKind::Interrupted => {}
+            Err(error) => panic!("the stalled subscriber did not reach end of stream: {error}"),
+        }
+    }
+    assert!(
+        read_by_a < read_by_b / 2,
+        "the stalled subscriber read {read_by_a} of {read_by_b} bytes"
+    );
+    eprintln!(
+        "{ACTIONS} actions in {driven:?}, slowest round trip {slowest:?}, Stop {stop_took:?}, \
+         reader {read_by_b} bytes, stalled {read_by_a} bytes"
+    );
     assert!(!generation.exists());
     fs::remove_dir_all(root).unwrap();
 }
