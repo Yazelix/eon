@@ -63,9 +63,11 @@ navigation remains scoped to the window's host unless separately amended.
 
 ## Lifecycle and failure rules retained for their owning slices
 
-- Closing an Eon window or explicitly disconnecting releases only that client's
-  relevant connections. It stops no remote task and does not close the other
-  PC's connection. A parked window can still be closed locally without taking
+- Closing a remote Eon window or explicitly disconnecting releases only that
+  client's relevant connections. It stops no remote task and does not close the
+  other PC's connection; Quit (Alt+Shift+Q, `eon quit`) still stops the remote
+  terminals. A local window's close quits it instead (eon-7cf0y.16); that rule
+  does not apply to remote windows. A parked window can still be closed locally without taking
   over. Takeover transfers interactive presentation/input, not Orbit's
   supervisor lifecycle lease or process ownership.
 - Closing a pane stops its shared terminal; closing a tab stops its terminals.
@@ -214,7 +216,7 @@ The final history/network proof is needed before issue #1 is complete.
 | R2 | 2b | Supervisor crash and concurrent replacements | One supervisor/lifecycle ownership winner; no duplicate terminals or split lease |
 | R3 | 2b | Corrupt/unknown snapshot; missing/extra run | Honest blocked/partial recovery; missing slots stopped; no unsafe adoption, restart or Stop |
 | R4 | 2b/3 | PID reuse, wrong UID/start-time, replaced inode or stale lease | Refusal without signal, deletion or attachment to substituted owner |
-| L1 | 2b/3 | Close Venus, detach, reconnect repeatedly | Work survives; same persistent target and fresh authoritative display |
+| L1 | 2b/3 | Detach (Alt+Shift+D) a local window, or close or detach a remote window; reconnect repeatedly | Work survives; same persistent target and fresh authoritative display |
 | L2 | 3/Discovery | SSH loss; input/Stop while offline; reconnect | Disabled/rejected offline actions; no replay; process counter continues |
 | L3 | Lifecycle/Discovery | Stop workspace A while another host is open in another window | Only A stops; unrelated workspace/host tasks remain; final Stop retains empty window/picker |
 | L4 | Lifecycle | Partial Stop or lost acknowledgement | Remaining work retained; explicit partial/unknown outcome; query before further action on that target; unrelated work remains usable; no automatic replay |
