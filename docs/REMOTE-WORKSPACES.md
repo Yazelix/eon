@@ -1,188 +1,246 @@
-# Recoverable workspaces: contract proposal and acceptance plan
+# Recoverable workspaces: slice 2a contract review and acceptance plan
 
-**Slice 1 is docs only.** This is proposed text for Lucca's review, not a claim
-that remote or multi-client behavior is implemented or proved. It adds proposed
-EON-C38–42 to [the contract index](CONTRACTS.md#eon-c38--host-owned-persistent-workspace-identity-and-registry)
-and leaves existing approved contracts and their proof unchanged. No executable,
-wire schema, component version, configuration or package changes in this slice.
+This PR contains documentation only. The next contract to review is
+[EON-C38: persistent identity and the host registry](#eon-c38--persistent-workspace-identity-and-host-registry).
+Its exact text is not yet approved or indexed. Once Lucca approves it, it goes
+into [the contract index](CONTRACTS.md) as **Planned**, before implementation.
+The rest of this document is a plan and future acceptance matrix, not a batch
+of new contracts or a claim that any new behavior is already implemented.
 
-## Goal and requested approval
+Review tracking stays in `eon-remote-workspaces-52i4.4`. This PR does not change
+`.beads/issues.jsonl`; Lucca will record the proof/review notes there with `br`
+when the text lands. Existing approved contracts and proof remain unchanged.
 
-Work keeps running on a headless server. A user can leave the office PC
-connected, return home, and continue the **same workspace** on the home PC.
-Both PCs stay connected, receive output and remain able to operate it; neither
-requires the other to disconnect or surrender an exclusive control role. This
-is one person's cross-device continuity, not a new multi-user collaboration
-system. The server remains the sole workspace/terminal authority.
+## Office to home, with one active PC
 
-One window may also keep multiple explicitly selected hosts connected. Each
-workspace belongs to exactly one host. Host connections, workspace attachment,
-foreground focus and the terminal's process-lifecycle lease are distinct;
-connecting a host does not attach all its workspaces or transfer its lifecycle
-ownership. Per-device focus, scroll and selection are independent. Shared
-workspace structure is authoritative on the host.
+`homePC` stays connected to the server at the office. On arriving home, the
+user can continue the same workspace from `linglong` without disconnecting
+`homePC`. The [accepted flow](https://github.com/Yazelix/eon/pull/3#issuecomment-6596829642) follows
+[Lucca's simpler model](https://github.com/Yazelix/eon/pull/3#issuecomment-6595927531):
 
-### Delta from the accepted plan
+- Both PCs keep their connection, but a workspace has only one active client.
+  The active PC receives live terminal output, sends program input and supplies
+  terminal sizes. Orbit remains the sole terminal-state/PTY authority.
+- The other PC keeps its last view frozen and dimmed, with a notice naming the
+  active PC. It is not a live output monitor or a second input source.
+- A key or click in that inactive workspace requests takeover. That first
+  interaction only takes over; it is not sent to the program. After successful
+  takeover, redraw from current authoritative state at the new PC's sizes
+  before accepting subsequent program input. Returning to the office works
+  the same way, without an explicit detach/reattach step by the user.
+- Each PTY still has one size. Only the active client's sizes apply; a parked
+  client's resize, background output, hover, local scroll, reconnect or
+  automatic foreground restoration does not take control or resize a PTY.
+  Takeover can make a TUI reflow. The triggering key/click, including its
+  associated release/repeat or pointer phases, must not leak into the program.
+- Local focus, scroll and selection belong to the device. They may be restored
+  if their exact targets remain valid, but the frozen image is not current
+  state. Takeover must refresh first: a deleted pane or replaced target cannot
+  receive stale input. A paste or compound gesture used to activate cannot
+  leave residual input to be replayed after takeover.
 
-[Yu's October 28 plan](https://github.com/Yazelix/eon/pull/2#issuecomment-6468069685)
-and [Lucca's reply](https://github.com/Yazelix/eon/pull/2#issuecomment-6469026815)
-settled persistent IDs before SSH, split identity from original-layout recovery,
-exact wire-version compatibility, portable/managed hosting, remote identity
-checks, Nix resource lifetime and CLI parity.
+This replaces this PR's earlier simultaneous-live-client plan. The accepted
+current direction is one active client with connected, frozen inactive views;
+it is not described as a promise to add multiple simultaneous controllers.
+Takeover needs its own exact contract amendments and proof after SSH attach.
+Today's ORB-C3 still admits only one interactive peer and one limited metadata
+observer. That observer is not a frozen-window/takeover API or a live display
+subscription. Naming another process with `AttachAllow` does not itself end
+an existing attachment, so switching safely is not already implemented.
 
-That reply also explicitly required **one active client per workspace**, noting
-that the prototype already accepted multiple presentation streams. The
-multi-client direction above is a **requested change to that approved scope**,
-not an interpretation that the earlier rule meant only one writer. Please
-review this scope change along with its sizing/view and shared-close clauses
-before implementation. The prototype's streams alone prove none of those
-clauses. Existing ORB-C3 admits one interactive client plus one restricted
-metadata observer; that observer is not an existing general attention or
-multi-device display subscription API.
+## One host per window
 
-| Boundary | Previously approved/current baseline | Proposed behavior |
-| --- | --- | --- |
-| Same workspace on two PCs | One active client; conflicting presentation is busy | Both remain connected and interactive, with one authoritative server |
-| Multiple hosts in one window | Unified model/discovery; simultaneous attachment scope not settled | Keep explicit host connections; changing foreground does not implicitly detach others |
-| Device views and geometry | Existing one-client presentation | Independent device focus/scroll/selection; one size per PTY follows explicit active use |
-| Close and Stop | Workspace-targeted Stop; window close detaches | Pane close stops its terminal, tab close its terminals, all devices see the result; window close remains local detach |
+Yu also accepted [one machine per window](https://github.com/Yazelix/eon/pull/3#issuecomment-6596085306).
+Multiple machines use multiple windows; each workspace belongs to one host.
+A failed connection therefore affects its host's window, not part of a mixed
+window. There is no cross-host retargeting of an existing window in this plan.
 
-### Observable multi-client boundaries
+After SSH attach exists, the Workspaces picker may become one place to find
+workspaces on other machines. Choosing one would open or focus that machine's
+window. That later discovery slice does not introduce mixed-host tabs, a
+second SSH selector, or a new global attention ordering. Sidebar/attention
+navigation remains scoped to the window's host unless separately amended.
 
-- **Shared structure:** names, terminal identity and tab/pane membership belong
-  to the host. Accepted creation/removal is visible to all attached clients.
-  Each device keeps its current target if it survives. A removed target fails
-  explicitly; no stale input/action redirects by name or goes to an automatic
-  replacement. Server ordering is not collaborative shell-text editing.
-- **PTY sizing:** each terminal has its own size source. Explicit pane
-  activation immediately selects that device; actual key, paste and
-  application-directed mouse input can also select it. Passive output,
-  reconnect, automatic foreground restoration, local scroll/selection and
-  hover do not. Only the current source's resize applies. The server applies
-  the selected size before its accepted input and validates mouse coordinates
-  against the applicable state. Other displays adapt locally; a shared TUI may
-  still reflow. Disconnect retains the last size until explicit active use.
-- **Lifecycle:** pane/tab close stops precisely its shared terminals; workspace
-  Stop stops precisely the named workspace, across its observing devices.
-  Window close/disconnect only releases that client's relevant attachments and
-  connections. The last workspace Stop leaves an empty view/picker. Another
-  host or unrelated workspace is untouched. No device-local pane-hide feature
-  is implied. Existing confirmation/diagnostics must describe the shared scope.
-- **Failure:** an accepted server action is not cancelled by client loss. Lost
-  acknowledgement is unknown until queried. Offline input and Stop are never
-  queued/replayed, nor is a stale action reinterpreted as a new target. Host
-  failure is isolated; cached state is labelled. Remaining clients stay usable.
-- **Bounds and attention:** multiple clients require bounded per-client queues,
-  status work and resource cleanup, not unrestricted observers. The server
-  stays authoritative for structured agent evidence. Background connection or
-  output is not proof that the user saw an attention item. Exact cross-device
-  read-state/OS-notification routing is not added by this proposal.
+## Lifecycle and failure rules retained for their owning slices
 
-## Slices and approval gates
+- Closing an Eon window or explicitly disconnecting releases only that client's
+  relevant connections. It stops no remote task and does not close the other
+  PC's connection. A parked window can still be closed locally without taking
+  over. Takeover transfers interactive presentation/input, not Orbit's
+  supervisor lifecycle lease or process ownership.
+- Closing a pane stops its shared terminal; closing a tab stops its terminals.
+  Workspace Stop addresses one explicit host/workspace ID, not every workspace
+  in the window or on a previously visited host. Other clients see the same
+  lifecycle result when current state is presented. A parked terminal image
+  stays visibly stale; authoritative lifecycle/connection notices may change
+  without treating that frozen image as live. On takeover, ended targets are
+  reconciled before input. The final Stop leaves an empty view and picker.
+- A failed/partial Stop retains the remaining work. A request whose reply was
+  lost has an unknown outcome until inspected; losing a connection does not
+  cancel a server-accepted action. Offline input and Stop are not queued or
+  replayed. Forget requires authoritative confirmation that work has stopped;
+  an unreachable host or cached-stopped observation is insufficient.
+- Supervisor exit/crash recovery restores the original identities, membership
+  and layout around verified surviving Orbit runs. It does not replay commands
+  or claim to resurrect processes after Orbit death or host reboot. Missing
+  runs become explicit stopped slots; invalid/unknown snapshots preserve live
+  work and diagnostic state instead of fabricating success.
+- Build compatibility means equality of EONW, Orbit management, ORBS and ORBF
+  versions. A compatible build can reconnect; a mismatch fails clearly without
+  stopping, replacing or upgrading live work. Keep remote UID, PID/start-time,
+  socket inode and lease checks: forwarded socket credentials prove the SSH
+  hop, not the identity of the remote terminal owner.
+- Portable hosting must stand alone and have installed proof without a systemd
+  user service. Managed hosting is explicit opt-in, never inferred from systemd
+  being installed, and never silently falls back. Both use lock-and-recheck
+  bootstrap and the same recovery owner. Connecting installs nothing, enables
+  no linger and upgrades no live work. Changing hosting policy must not kill
+  or silently replace live work. Last-logout survival depends on the host's
+  process/runtime-directory policy and must be diagnosed honestly.
+- Nix/Home Manager is part of the initial remote feature, including a headless
+  server package without Venus or graphical resources. Managed services have
+  no graphical-session binding, and imperative setup never overwrites Home
+  Manager-owned units. Independent Orbit lifetimes survive supervisor service
+  cleanup; GC roots/profiles keep needed
+  store resources alive through GC, switch, rollback and compatible upgrades.
+  Runtime does not query or persist Nix store paths; retain one component graph.
+- Every new user action has an ID-targeted `eon` CLI path in its owning slice,
+  amending EON-C10 as needed. Cached remote state is labelled in both CLI and
+  presentation. A failed remote lookup never becomes local workspace creation.
+  Background connection/output is not proof that attention was seen; this plan
+  adds no cross-device OS-notification or global read-state scheme.
 
-| Slice | Deliverable / boundary |
+## EON-C38 — Persistent workspace identity and host registry
+
+**Text for Lucca's review for slice 2a only.** On approval, index this as
+EON-C38 with status Planned. It is not an implemented or proved guarantee.
+
+- **Status:** Awaiting exact-text approval; not in the canonical index.
+- **Consumer:** Local and remote Eon workspace clients and the host's
+  ID-targeted workspace operations.
+- **Trigger:** Create or rename a workspace, list/read its registration, resolve
+  a target, detach/reattach, or restart the workspace supervisor.
+- **Result:**
+  - The host owns a durable, opaque workspace ID and a versioned registry.
+    An ID identifies the same registered workspace across client and supervisor
+    lifetimes. A window's `wN` is a local handle, not durable identity. A remote
+    target includes its host and workspace ID; one window still uses one host.
+  - Names and directories are attributes. Renaming keeps the ID; names need
+    not be unique. Separate workspaces may use the same directory, and one
+    workspace may contain multiple directories. A stale/deleted ID is never
+    rebound to a different workspace merely because its name/path matches.
+  - Registry inspection can find registered identities independently of the
+    current window's members. Registration is metadata, not proof that any
+    terminal is running or that a recorded process may be signalled.
+  - Concurrent registry mutations are serialized. A successful durable mutation
+    is acknowledged only after atomic persistence; failure does not publish a
+    successful new identity or partly committed registration. IDs are not reused.
+    Version changes preserve the old durable file as the repository's durable
+    format policy requires; no unknown version is silently overwritten.
+- **Important failures:** Unknown/stale/ambiguous targets, corrupt or unknown
+  registry versions and persistence failures give explicit diagnostics rather
+  than guessed targets or a replacement with the same name. Malformed state
+  remains available for diagnosis. Registry failure authorizes no terminal
+  stop, destructive cleanup, duplicate process launch or fallback local creation.
+- **Owner:** Eon Runtime owns persistent IDs, registry state and target
+  resolution. Eon projects that authority through its existing command/picker
+  boundaries. Orbit remains the authority for terminal/run state and lifecycle.
+- **Boundary:** Identity and registry only. Slice 2a does not promise original
+  membership/layout recovery, SSH transport, takeover, terminal stop/Forget
+  behavior, reboot process restoration or moving live work across hosts. Any
+  CLI/schema changes introduced with 2a amend EON-C10 in that slice; this text
+  allocates no separate CLI contract. Existing window-local handles may remain
+  adapters, with an explicit mapping to persistent IDs.
+- **Proof:** Not run. Slice 2a requires I1–I3 in the acceptance matrix below.
+  Original groups/layout and verified run recovery belong to slice 2b and
+  amendments to EON-C15/C33, not this proof.
+
+## Order and contract routing
+
+The next implementation sequence is **2a → 2b → 3 (SSH attach) → takeover**.
+Only the next slice's contract text is brought for approval now. The remaining
+rows are a plan, not approved future contract text or implementation claims.
+
+| Phase | Scope and where its text belongs |
 | --- | --- |
-| 1 | Contract text, fresh IDs and this acceptance matrix; approval before code |
-| 2a | Persistent IDs and host registry, shared by local and remote; no original-layout recovery claim yet |
-| 2b | Local reconstruction of original groups/layout around surviving Orbit runs |
-| 3 | Minimal OpenSSH attachment and independently proved portable hosting; incorporate existing attach/supervision beads |
-| 4 | Explicit managed hosting and first-class Nix/Home Manager lifecycle/resource proof |
-| 5 | Unified fzf discovery, host/offline states, attention and all new ID-targeted CLI paths; incorporate existing host-label bead |
-| 6 | Incremental frames, bounded backpressure and authoritative resynchronization |
-| 7 | Bounded history with stable/invalidation semantics and final network-performance proof |
+| 2a | Persistent identity and host registry: new EON-C38, after exact-text approval; CLI changes amend EON-C10 |
+| 2b | Local original-group/layout recovery: amendments to EON-C15 and EON-C33 |
+| 3: SSH attach | OpenSSH, headless host and portable hosting: use reserved EON-C34; incorporate existing supervision/attach beads |
+| Takeover, after 3 | Connected frozen clients, single active client and safe switching: exact Eon/Orbit/Venus amendments approved in that slice |
+| Managed hosting | Explicit service ownership and Nix/Home Manager support/proof; part of the initial remote feature, not silently deferred away |
+| Discovery | Existing fzf picker/host-label work, host/offline states and ID-targeted CLI; other hosts open/focus their own windows |
+| Incremental | Canonical incremental frames, bounded backpressure and authoritative resynchronization |
+| History/performance | Bounded history, reading-anchor invalidation and measured end-to-end network proof |
 
-Multi-client behavior changes the previous attachment assumption. Its owning
-implementation slice and prerequisites must be agreed explicitly rather than
-silently making all of it a slice-3 prerequisite. The persistent-ID/local
-recovery foundation remains independently useful. Rows labelled expanded
-attachment below are requirements for the proposed multi-client behavior,
-not claims that an implementation slice is already approved or filed.
+Exact dependencies of the follow-ups stay with their owning slices. Existing
+`eon-remote-ssh-x7dr.2`, `eon-remote-workspaces-52i4.2` and `.3` are reused for
+supervision/attach and discovery/host-label work, not duplicated. Their old
+attach-first/exact-build wording is not the current plan. PR #2 remains a
+prototype/reference; its code or proof is not imported wholesale.
 
-Existing `eon-remote-ssh-x7dr.2`, `eon-remote-workspaces-52i4.2` and `.3` remain
-implementation material for slices 3/5, not competing tracks. Their earlier
-attach-first/exact-build descriptions are superseded by the epic's October 28
-accepted sequence, subject to this new scope review. Keep PR #2 as reference;
-do not rebase or import the whole prototype.
+C34 is reserved for SSH attachment and will be used for that feature. C38 is
+only the new identity/registry contract submitted for review here. Recovery,
+CLI, close and final-window behavior amend EON-C15, C33, C10 and C8 in their
+owning slices; attach/window/attention/platform boundaries are amended there
+as necessary. No other new contract IDs are allocated by this plan. Orbit
+retains input, admission, viewport/selection and frame/history ownership;
+Venus retains presentation. Old proof remains valid only for its recorded
+surface, not for these future changes.
 
-The baseline for this proposal is edge
-`3ee342294132c969f70d5cbece6a2b00b2378c95`. Its versions are EONW 28,
-Orbit management 5, ORBS 14 and ORBF 3; each implementation slice consumes the
-then-current authoritative schemas, not the prototype's numeric versions.
-C29 is used/retired and cannot be reused. C34 was already reserved in Beads
-for the previous SSH draft, even though not in the current index. C35–37 are
-occupied. C38–42 are fresh proposal IDs at this baseline.
+This revision was checked against edge
+`a92831765c0af35f112b3f17adcc01ecdddde2be`; EONW/management/ORBS/ORBF versions
+are 29/5/14/3. Implementation must use the then-current canonical schemas.
+The original PR base remains `3ee3422`; repairs append commits without rewriting
+published history. The existing slice-1 bead is `eon-remote-workspaces-52i4.4`.
 
 ## Acceptance matrix
 
-**All rows are future proof, NOT RUN.** Every accepted proof records exact
-source/component/wire identities, installed artifacts, platform, hosting mode,
-command or observation and result. Use independently identified siblings to
-prove target isolation. Process identity and advancing counters establish
-continuity; screenshots or a reconstructed layout alone do not. Existing
-prototype or unrelated-platform evidence does not transfer. Portable and
-managed hosting require separate installed proof. Orbit death/host reboot
-are outside original-process continuity. Issue #1 is not complete before the
-final bounded-history and network-performance proof.
+**All rows are future runtime proof, NOT RUN.** Every accepted proof records
+exact source/component/wire versions, artifacts, platform, hosting mode and
+commands/observations/results. Use independently identified sibling workspaces
+and hosts to prove isolation. Process identities and advancing counters prove
+continuity; screenshots or reconstructed layout alone do not. Portable and
+managed each need installed evidence. No prototype or unrelated platform proof
+transfers; Orbit death and reboot remain outside original-process continuity.
+The final history/network proof is needed before issue #1 is complete.
 
-| ID | Slice | Scenario / cheapest falsifier | Required outcome |
+| ID | Phase | Scenario / cheapest falsifier | Required outcome |
 | --- | --- | --- | --- |
-| I1 | 2a | Create two same-directory/duplicate-name workspaces; rename; reopen registry | Distinct stable IDs; exact target survives rename; directories remain attributes |
-| I2 | 2a | Concurrent registry mutation; interrupted write | Atomic valid state or explicit failure; no ID reuse/duplicate successful creation |
-| I3 | 2a | Corrupt/unknown registry or stale ID | No overwrite, guessed target, duplicate process or destructive cleanup |
-| I4 | 2a/5 | Forget live, confirmed-stopped, cached-stopped and unreachable targets | Only authoritative confirmed-stopped target can be forgotten |
-| R1 | 2b | Supervisor normal exit then replacement, with multiple workspace layouts/popups | Original IDs/groups/layout and verified live Orbit/PTY identities; counters advance |
-| R2 | 2b | Supervisor crash; concurrent replacement contenders | One ownership winner; same live runs; no duplicate terminals or split lease |
-| R3 | 2b | Corrupt/unknown snapshot; missing/extra run | Honest blocked/partial recovery; missing slots stopped; no unsafe adoption/restart/Stop |
-| R4 | 2b/3 | PID reuse, wrong UID/start time, socket inode replacement, stale lease | Fail closed without signal, deletion or successful attachment to substitute |
-| L1 | 2b/5 | Close Venus, detach and repeat reconnect | Work survives; same identity; fresh authoritative display |
-| L2 | 3/5 | SSH loss; type/input/Stop while offline; reconnect | Input disabled; no queued input/Stop replay; process counter continues |
-| L3 | 5 | Explicit Stop A after visiting B on another host | Only A stops; B remains running; last Stop retains window/picker |
-| L4 | 5 | Stop partially fails or acknowledgement is lost | Remaining work retained; partial/unknown outcome; query reconciliation, no auto-replay |
-| L5 | expanded attachment slice, requires approval | A/B both attach same workspace; alternate use without disconnecting either | Both stay interactive and receive authoritative output; no exclusive handoff; no duplicate Orbit/PTY |
-| M1 | expanded attachment | A/B on same PTY explicitly activate/input in server-accepted order | One PTY size; latest accepted qualifying interaction wins; corresponding size applied before input |
-| M2 | expanded attachment | A owns size; B scrolls/selects/hovers/resizes locally, reconnects or restores view | No size-source change; A/B local view state remains independent |
-| M3 | expanded attachment | Current size source resizes, then disconnects | Only its valid current resize applies; last size retained on disconnect; tasks continue |
-| M4 | expanded attachment | Different terminals have active devices A/B; application mouse input races resize | Each PTY source independent; stale coordinates fail explicitly; no misdirected input |
-| M5 | expanded attachment | A/B mutate shared structure concurrently or act on a removed terminal | Server-authoritative resulting structure; stale target rejected; no ID rebinding or automatic process recreation |
-| M6 | expanded attachment | Shared Stop/pane-close request succeeds, fails partially, or loses acknowledgement | Pane close stops only its shared terminal; tab close its terminals; workspace Stop its tasks; all clients see authoritative stopped/partial/unknown state |
-| M7 | 5 / multi-client | Background host or second device receives attention/output | No implicit focus/read acknowledgement or notification-owner takeover; host failure isolated |
-| M8 | expanded attachment | One device closes window/disconnects while another remains; repeated reconnects | Remaining client works; no remote Stop, stale input replay or leaked masters; bounded client resources |
-| S1 | 3 | Two configured hosts/jump host; remote Project/Git/Agent/panes | Venus local, work and directory selection remote; OpenSSH config respected |
-| S2 | 3 | Wrong host key / unavailable batch authentication / forwarding failure | Clear failure; no host-key bypass, remote mutation or unrelated master cleanup |
-| S3 | 3 | Different build/equal tuple; independently mismatch each of four versions | Equal tuple accepted subject to identity; every mismatch rejected; no live task stopped |
-| S4 | 3 | Concurrent cold bootstrap and readiness failure | Lock-recheck produces one server; failure cannot create hidden duplicate |
-| S5 | 3 | Repeated reconnect and failed partial startup (at least three rounds) | No accumulating SSH masters, leaked forwards or unintended process cleanup |
-| H1 | 3 | Installed portable host with no systemd user service | Attach/detach and supervisor exit/crash recovery pass independently |
-| H2 | 3/4 | End last login under permissive and kill/remove-runtime policies | Survival where supported; otherwise honest diagnosed requirement; no policy mutation |
-| H3 | 4 | Managed owner fails; systemd installed but portable explicitly selected | No fallback duplicate; explicit hosting choice respected |
-| H4 | 4 | Restart managed supervisor while Orbit/task counter runs | Surviving independent Orbit/PTY identity, recoverable original layout |
-| H5 | 4 | Nix GC, HM switch/rollback and compatible upgrade with live tasks | Required resources remain rooted; same tasks; runtime no Nix/store query or persisted store identity |
-| D1 | 5 | Unified fzf plus CLI list/inspect/actions by ID | Same targets/state/freshness; no second selector; every new action has CLI parity |
-| D2 | 5 | Remote lookup fails with unmatched query; select cached existing row | No local/replacement creation; cached explicitly labelled; reconnect exact ID |
-| D3 | 5 | Sidebar/attention navigation through remote offline states | Host/freshness visible; provider status preserved; no stale attention presented as live |
-| D4 | 5 | Background agent create/rename/Stop/Forget and explicit switch | View preserved except requested movement; typed failures preserve unrelated work |
-| P1 | 6 | Representative output and graphics/resources vs full-frame baseline | Same authoritative visible state; dropped/out-of-order updates resynchronize |
-| P2 | 6 | Slow/stalled receiver and reconnect | Bounded queue/memory; coherent full resync; no stale input effects |
-| P3 | 7 | Read anchors during output/pruning/reflow under RTT/bandwidth constraints | Stable reading or explicit invalidation; bounded paging; measured end-to-end baseline comparison |
-
-## Existing contracts affected
-
-- EON-C8/C33: durable identity mapping, original reconstruction, final stopped
-  view, and targeted Stop replace the identified old behavior only as the
-  owning implementation slices land. Preserve existing tab/pane protection.
-- EON-C10/C28: explicit durable targeting, CLI/JSON/failure and compatibility
-  surfaces; avoid claiming 1.x frozen schema already includes these fields.
-- EON-C11/C15/C23: remote attachment, build/protocol separation, supervisor
-  reconstruction, window/Stop distinction; preserve existing generation and
-  legacy eonbase behavior outside this feature.
-- EON-C7: the remote Linux host requires no display; no implied additional
-  architectures/platform proof. Local Mac work remains a separate proof.
-- ORB-C3/C5/C13 and owning viewport/selection/resource contracts: replace
-  current one-interactive-peer admission only after explicit approval;
-  preserve host/terminal authority, per-client validation, bounded queues,
-  independent local view behavior and trustworthy semantic input. Current
-  per-run management lifecycle lease is not an exclusive human-device lease.
-- EON-C31 and VEN-C8/C14/C21 boundaries: host/freshness/attachment presentation
-  and attention consume authoritative Runtime state; no new terminal owner.
-- EON-C2/C3 remain authoritative for one component graph and opaque component
-  inputs. No second Nix compatibility graph or runtime Nix-store inspector.
+| I1 | 2a | Two workspaces with one directory/duplicate names; rename; reopen registry and restart supervisor | Distinct persistent IDs; rename preserves ID; registrations survive; no claim of layout/process recovery |
+| I2 | 2a | Concurrent registry mutations; interrupted/failed durable write | Serialized atomic state or explicit failure; no reused ID or partly successful registration |
+| I3 | 2a | Corrupt/unknown registry version, stale/ambiguous ID/name | No overwrite, guessed/rebound target, destructive cleanup or duplicate launch |
+| I4 | Discovery/lifecycle | Forget live, confirmed-stopped, cached-stopped and unreachable workspaces | Only authoritative confirmed-stopped registration can be forgotten |
+| R1 | 2b | Normal supervisor exit and replacement with multiple layouts/popups | Original IDs/groups/layout and verified live Orbit/PTY identities; counters advance |
+| R2 | 2b | Supervisor crash and concurrent replacements | One supervisor/lifecycle ownership winner; no duplicate terminals or split lease |
+| R3 | 2b | Corrupt/unknown snapshot; missing/extra run | Honest blocked/partial recovery; missing slots stopped; no unsafe adoption, restart or Stop |
+| R4 | 2b/3 | PID reuse, wrong UID/start-time, replaced inode or stale lease | Refusal without signal, deletion or attachment to substituted owner |
+| L1 | 2b/3 | Close Venus, detach, reconnect repeatedly | Work survives; same persistent target and fresh authoritative display |
+| L2 | 3/Discovery | SSH loss; input/Stop while offline; reconnect | Disabled/rejected offline actions; no replay; process counter continues |
+| L3 | Lifecycle/Discovery | Stop workspace A while another host is open in another window | Only A stops; unrelated workspace/host tasks remain; final Stop retains empty window/picker |
+| L4 | Lifecycle | Partial Stop or lost acknowledgement | Remaining work retained; explicit partial/unknown outcome; query before further action on that target; unrelated work remains usable; no automatic replay |
+| L5 | 3, before takeover | Second interactive attachment without takeover support | Explicit busy result preserves the existing attachment and work; no silent takeover |
+| M1 | Takeover | A active, B connected/frozen; B presses a key or clicks, then A does likewise | Both stay connected; exactly one active; parked view dimmed/names active PC; triggering interaction consumed; new active view freshly redrawn at its size |
+| M2 | Takeover | Parked resize, hover/local scrolling, background output, reconnect or automatic restore | No takeover or PTY resize; terminal image remains frozen and labelled, not presented as live |
+| M3 | Takeover | Active PC resizes then disconnects | Only valid active resize applies; last PTY size remains until explicit activation; truthful disconnected/no-active status; no task Stop or unattended stale-input replay |
+| M4 | Takeover | Key press/release/repeat, paste and pointer sequence at activation, with resize | Entire activation interaction/residual phases consumed; no program input until activation/redraw coherent; stale mouse coordinates rejected |
+| M5 | Takeover | Competing takeover requests; old active sends late input; target deleted while parked | One authoritative active client, old input fenced; stale targets rejected before input; no ID rebinding or phantom terminal recreation |
+| M6 | Takeover/lifecycle | Pane/tab close or explicit workspace Stop succeeds, partially fails or loses reply | Exact shared target only; authoritative stopped/partial/unknown result; parked image not claimed current; reconcile before takeover input |
+| M7 | Discovery/Takeover | Parked device/control status and attention; other host disconnects in another window | No inferred read acknowledgement/notification-owner transfer; lifecycle notices truthful; other window/host remains isolated |
+| M8 | Takeover | Parked/active window closed or disconnected while the other connection remains; repeated returns | Local disconnect stops no remote task/other connection; explicit activation resumes usable current state; bounded clients/queues and no master leaks |
+| S1 | 3 | Configured hosts and ProxyJump, using separate host windows; remote Project/Git/Agent/panes | Venus local; directories/work remote; OpenSSH config respected; no mixed-host window |
+| S2 | 3 | Wrong host key, missing batch authentication or forwarding failure | Clear refusal; no host-key bypass, unintended remote mutation or unrelated-master cleanup |
+| S3 | 3 | Different build/equal tuple; mismatch each of four versions individually | Equal tuple accepted subject to identity; every mismatch refused without stopping live work |
+| S4 | 3 | Concurrent cold bootstrap and readiness failure | Lock-recheck yields one supervisor; no fallback duplicate or false readiness |
+| S5 | 3 | At least three reconnect rounds and partial-startup failures | No accumulating masters/forwards or unintended cleanup of another window |
+| H1 | 3 | Installed portable host without systemd user service | Attach/detach and supervisor exit/crash recovery independently pass |
+| H2 | 3/Managed | Last logout under permissive and kill/remove-runtime policies | Survival where supported; otherwise diagnosed requirement, no implicit policy change |
+| H3 | Managed | Managed service fails; systemd present but portable explicitly selected | No silent fallback; explicit selected startup owner respected; changing modes never kills/replaces live work |
+| H4 | Managed | Restart supervisor service while Orbit/task counter runs | Independent Orbit/PTY survives with original identity; layout recoverable |
+| H5 | Managed | Nix GC, HM switch/rollback and compatible upgrade with live tasks | Headless package excludes Venus/graphics; no graphical-session binding or overwrite of HM units; resources rooted and tasks preserved; runtime no Nix/store query or durable store identity |
+| D1 | Discovery | Fzf and ID-targeted CLI listing/inspection/actions | Same host/workspace targets, freshness and outcomes; each new action has CLI parity |
+| D2 | Discovery | Failed/offline host lookup with unmatched query; known cached row selected | No accidental local/replacement creation; cached explicit; exact ID resolved; other host opens/focuses its window |
+| D3 | Discovery | Sidebar/attention and navigation through host/offline/stopped states | Truthful host-scoped status; no cached attention shown as live or mixed-host attention queue inferred |
+| D4 | Discovery | Background agent create/rename/Stop/Forget and explicit window/workspace selection | Unrelated view/focus preserved; explicit movement only; typed failures affect no other target |
+| P1 | Incremental | Representative output/graphics/resources against full-frame baseline on active client | Same authoritative visible state; missing/out-of-order deltas resynchronize; no live frame fanout to parked PCs promised |
+| P2 | Incremental/Takeover | Slow/stalled active receiver and subsequent takeover/reconnect | Bounded queues/memory; coherent fresh resync; parked client cannot block owner or leak stale input |
+| P3 | History/performance | Read anchors under output/pruning/reflow and RTT/bandwidth constraints | Stable reading or explicit invalidation, bounded paging and measured bytes/CPU/latency/queue comparison |
