@@ -1022,7 +1022,9 @@ socket names, JSON fields and protocol identifiers retain their spellings.
 
 ## EON-C10 — Typed workspace control
 
-- **Status:** Proven
+- **Status:** Proven. Amended on 2026-11-03 (approved by Lucca, relayed by
+  eon-overseer) by `eon-ciwn.1`: EON-C39's planned event subscription is the
+  one connection that carries more than one response.
 - **Consumer:** One local CLI or approved composition controlling a live Eon
   supervisor.
 - **Trigger:** The client submits one versioned workspace or supervisor-lifecycle
@@ -1041,7 +1043,9 @@ socket names, JSON fields and protocol identifiers retain their spellings.
   - CLI JSON emits each directory and endpoint as a JSON string when its bytes
     are valid UTF-8, and otherwise as an ordered byte array, without changing
     EONW. Each connection carries one length-delimited request
-    and response and does not use EOF as framing.
+    and response, except an EON-C39 subscription, which carries one request
+    and then a sequence of length-delimited messages; no connection uses
+    EOF as framing.
   - The shared 2 MiB frame ceiling admits every snapshot valid at EONW's field
     and workspace-count bounds.
   - Harmless navigation no-ops return the unchanged Snapshot as success
@@ -1254,7 +1258,8 @@ socket names, JSON fields and protocol identifiers retain their spellings.
   validated component facts and product defaults.
 - **Consumes:** Current EONW v29 and accepted Orbit management operations.
 - **Boundary:** Additive lifecycle tags do not widen the pinned Venus workspace
-  consumer. There is no event stream, subscription policy, remote transport,
+  consumer. There is no event stream or subscription policy other than
+  EON-C39's event subscription, and no remote transport,
   plugin/MCP API, authorization framework, durable restoration, terminal
   content (except a program's own EON-C31 status report text and terminal
   title, EON-C35's read of visible text, title and working directory, and
@@ -2819,6 +2824,8 @@ socket names, JSON fields and protocol identifiers retain their spellings.
   `eon-ngwf.1`: the queue in order over EONW v25 and in CLI JSON.
   Amended on 2026-10-29 (approved by Lucca, relayed by eon-overseer) by
   `eon-ngwf.2`: `FocusAttention` across workspaces.
+  Amended on 2026-11-03 (approved by Lucca, relayed by eon-overseer) by
+  `eon-ciwn.1`: EON-C39 plans a stream of its changes.
 - **Consumer:** One person supervising coding agents across the tabs and workspaces (EON-C33)
   of one full-Eon window.
   eonbase has no poller and no sidebar; its `sidebar` is `Off`.
@@ -3091,8 +3098,8 @@ socket names, JSON fields and protocol identifiers retain their spellings.
     sidebar visibility and `[sidebar]` configuration.
   - **Orbit** owns the records, their neutral facts and the terminal title.
   - **Venus** owns presentation and hiding for width (VEN-C30).
-- **Consumes:** ORB-C15, ORB-C13 generation 5, EON-C8 topology, and EON-C10 (EONW v29, still
-  request and response, with no event stream).
+- **Consumes:** ORB-C15, ORB-C13 generation 5, EON-C8 topology, and EON-C10 (EONW v29, request
+  and response). EON-C39 plans a stream of its changes.
 - **Boundary:**
   - no hooks and no edits to agent configuration;
   - no provider parsing; the Runtime passes `app` and `name` through unchanged, and Venus maps
@@ -3848,3 +3855,203 @@ socket names, JSON fields and protocol identifiers retain their spellings.
   [`REMOTE-WORKSPACES.md`](REMOTE-WORKSPACES.md), run by slice 2a. Original
   groups/layout and verified run recovery belong to slice 2b and amendments
   to EON-C15/C33, not this proof.
+
+## EON-C39 — Workspace events from the CLI
+
+- **Status:** Planned (`eon-ciwn.1`, approved by Lucca 2026-11-03, relayed by
+  eon-overseer). `eon-ciwn.5` builds the Runtime event projection,
+  `eon-ciwn.6` the EONW v30 codec, `eon-ciwn.7` the supervisor
+  subscriptions, `eon-ciwn.8` `eon events` and `eon-ciwn.9` `eon pane wait`.
+- **Consumer:** An agent or script running as the person's user, in an Eon
+  terminal or outside one, that must notice workspace and attention changes
+  without polling: an overseer answering its tab's questions (`eon-ciwn.4`),
+  `eon pane wait`, and a person's own notifier (`eon-sixj`).
+- **Trigger:**
+  - `eon events [--json]`, with:
+    - EON-C10's `--window` and `--generation` selection and `EON_TERMINAL`
+      validation;
+    - the filters `--workspace WS`, `--tab TAB`, `--target ID`,
+      `--kind KIND` (`workspace`, `tab`, `pane`, `popup`, `attention`,
+      `queue` or `busy`) and `--state STATE` (an EON-C31 state as the CLI
+      spells it), each repeatable;
+    - `--after STREAM:SEQ`;
+  - `eon pane wait TARGET --until done|needs-input|attention|ended
+    [--timeout SECONDS] [--json]`.
+- **Result:**
+  - **One subscription.** The CLI sends one EONW v30 `Subscribe` request.
+    The supervisor either refuses it with an ordinary EONW `Failure` reply
+    and closes the connection, or answers `SUBSCRIBED` and keeps the
+    connection open for `EVENT`, `GAP` and `END` messages. Every message is
+    one length-delimited EONW frame; EOF never frames a message.
+  - **Snapshot, then events.** The first JSON line is
+    `{"type":"snapshot","stream","seq","resumed","generation","window",
+    "caller","workspaces","tabs","attention_queue","busy"}`. It covers every
+    workspace of the window that the filters admit:
+    - `workspaces` holds each workspace as `eon workspaces --json` lists it,
+      plus its `active_tab`;
+    - `tabs` holds each tab as `eon workspace --json` writes it, with its
+      panes, popups and attention objects, plus its `workspace`;
+    - `attention_queue` holds the window's queue in its EON-C31 order, each
+      entry `{workspace, tab, target, state}`;
+    - `busy` holds the window's EON-C11 busy terminals as
+      `eon workspace --json` writes them, without the calling terminal.
+
+    `active_tab`, the tab's `workspace` and the queue entry's `state` in
+    place of its `attention` are the only differences from those commands'
+    objects. Each later line is `{"type":"event","seq","kind","event",...}`
+    with the event's payload. `seq` is the supervisor's event counter and
+    rises by one per event before filtering, so a filtered stream skips
+    numbers without losing events.
+  - **Applying events.** Applying a stream's events in order to its
+    snapshot gives the Runtime's state, after the last event, for the kinds
+    the stream admits; a stream without `pane`, for example, never sees
+    `pane-closed`. The tab `attention_rollup` and the workspace `attention`
+    and `recency` are derived values that no event names; a consumer
+    recomputes them or reads `eon workspaces`. Changes within one supervisor
+    loop turn coalesce, and EON-C31 already coalesces attention between
+    polls.
+  - **Events.**
+    - `workspace`: `workspace-created`, `workspace-renamed`,
+      `workspace-closed` and `workspace-shown`, each with the workspace as
+      the snapshot lists it.
+    - `tab`: `tab-created`, `tab-moved`, `tab-directory`, `tab-closed` and
+      `tab-activated`, each with its `workspace` and the tab.
+    - `pane`: `pane-created`, `pane-moved`, `pane-renamed`, `pane-ended`,
+      `pane-closed` and `pane-selected`, each with its `workspace`, `tab`
+      and the pane.
+    - `popup`: `popup-created`, `popup-shown`, `popup-hidden` and
+      `popup-closed`, each with its `workspace`, `tab` and the popup.
+    - `attention`: the terminal's `workspace`, `tab`, `pane` or `popup` (the
+      other null), `terminal`, `previous` state (null when it had none) and
+      its full EON-C31 `attention` object (null when it has none). It is
+      sent at most once per terminal per supervisor loop turn, when any
+      field of that object changes: a poll reply, a focus or attaching
+      Venus that sees a raise, and the stale threshold passing each change
+      it in their own loop turn.
+    - `queue`: the whole queue, as the snapshot carries it, when its order
+      or membership changes.
+    - `busy`: a terminal's EON-C11 busy state, with its `workspace`, `tab`,
+      `pane` or `popup`, `terminal` and `busy`. The calling terminal is
+      never reported, as EON-C11 excludes it.
+  - **Latency.** An event is written within one supervisor loop turn of the
+    Runtime state change it reports. An attention change reported by a
+    program is a Runtime state change when the poller receives it (at most
+    2 Hz, EON-C31).
+  - **Filters.** The Runtime applies them. Different flags combine with
+    AND; repeats of one flag combine with OR. Without filters the stream
+    covers the whole window.
+    - `--workspace WS` resolves once, when subscribing, as EON-C33
+      resolves WS: an exact `wN` first, then an exact name.
+    - `--target ID` follows the terminal that ID names when subscribing,
+      so an Agent popup parked into a pane (EON-C10) stays admitted as that
+      pane. A followed target is gone when its terminal ends or its pane or
+      popup closes, whichever comes first.
+    - An `attention` event passes `--state` when its new or its previous
+      state is listed.
+    - `workspace` and `queue` events pass a `--tab` or `--target` filter
+      only when `--kind` names them.
+    - When every workspace, tab and target that the filters name is gone,
+      the stream ends with `{"type":"end","reason":"targets-gone"}`.
+  - **Gaps.** A subscriber may hold 1 MiB of pending event output; snapshot
+    and gap frames do not count against it. When pending events pass that
+    bound, the Runtime drops them. Once the subscriber reads again, the
+    Runtime sends one `{"type":"gap","seq","reason":"overflow",
+    "snapshot":{...}}`, with `seq` the current event counter and the
+    snapshot holding the `workspaces`, `tabs`, `attention_queue` and `busy`
+    that a non-resumed snapshot line carries, then live events. Events are never
+    skipped silently.
+  - **Resume.** `--after STREAM:SEQ` resumes when STREAM names this
+    supervisor process, SEQ is not above its current event counter, and its
+    last 1024 events still hold every event after SEQ. The snapshot line
+    then carries `"resumed":true`, `seq` equal to SEQ and no state, and the
+    matching events after SEQ follow. Otherwise the first line is a full
+    snapshot with `"resumed":false`. STREAM identifies one supervisor
+    process, so a supervisor restarted or recovered under the same
+    generation (EON-C15) is a new STREAM.
+  - **End.** The stream ends with `{"type":"end","reason",...}` and EOF.
+    Its reasons are:
+    - `ended`, with `generation`: Stop, quit or the window's final close;
+      the CLI exits 0;
+    - `targets-gone`: under Filters; the CLI exits 0;
+    - `too-slow`: under Important failures; the CLI exits 1.
+  - **Human output.** One line per message:
+    - an event prints `seq`, the event name and its identities, and for
+      `attention` its `state`, `app` and `name` only, as EON-C31's human
+      projection;
+    - a snapshot or gap line prints `seq`, the stream and its counts of
+      workspaces, tabs and terminals;
+    - an end line prints its reason.
+  - **`eon pane wait`.** It subscribes filtered to TARGET, a pane or popup
+    ID that it follows as `--target` does, and tests its predicate on the
+    snapshot, on each gap's snapshot and on each event:
+    - `done`: the target's attention state is needs input, error, finished
+      or idle, or its terminal ended while the window still runs; no
+      attention, `working`, `background` and `unavailable` are not done, so
+      a wait started before the agent's first report does not return at
+      once, and the window ending is never done but `target-gone`;
+    - `needs-input`: its attention state is needs input;
+    - `attention`: its attention state is needs input, error or finished,
+      the states the attention queue holds;
+    - `ended`: its terminal ended, its pane or popup closed, or the window
+      ended.
+
+    It exits 0 with the target's last attention object (JSON) or state
+    (human). Without `--timeout` it waits until the predicate holds or the
+    target is gone.
+  - **Side effects.** Subscribing and waiting change no workspace, tab, pane
+    or popup selection, shown workspace or popup, or desktop focus, and
+    never count as an attached Venus, so they never make a raise seen.
+- **Important failures:**
+  - Refusals come as an EONW `Failure` reply before any snapshot:
+    - exit 1: `subscriber-limit` (a 33rd subscriber of one supervisor),
+      and `ambiguous-workspace` (EON-C33);
+    - exit 3: a missing or stale workspace, tab, target, generation or
+      window named when subscribing, and `unknown-caller` (EON-C10).
+  - Exit 1 after subscribing:
+    - `too-slow`: when a subscriber's pending output
+      has not moved for 30 s, the Runtime drops its unsent whole frames,
+      writes what it can of any partly written frame and of an `end` with
+      reason `too-slow` without waiting further, and closes the
+      connection. The CLI exits 1 with `too-slow` when that `end` arrives
+      complete, and otherwise exits 4 as a lost connection;
+    - `wait-timeout`.
+  - Exit 3 `target-gone`: `eon pane wait`'s target
+    closes, its terminal ends, or the window ends before the predicate
+    holds, except under `--until ended`, which then succeeds. It is distinct
+    from a target missing when subscribing, which is EON-C10's missing or
+    stale failure.
+  - Exit 2: invalid arguments, including a malformed `--after`.
+  - Exit 4: a missing or unreachable supervisor, one that speaks another
+    EONW version, and a connection lost without a complete `end`.
+  - Exit 130: interrupt. A closed standard output ends the CLI quietly with
+    exit 0.
+  - A slow or stalled subscriber never delays a request, another
+    subscriber, the attention poller or Stop.
+- **Owner:** Eon Runtime: the event projection, sequence, retained events,
+  filters, subscriber bounds and CLI projection. Its canonical EONW package
+  owns the v30 `Subscribe` action and the `SUBSCRIBED`, `EVENT`, `GAP` and
+  `END` messages.
+- **Consumes:** EON-C10 (EONW v30 from `eon-ciwn.6`, targeting, exit codes),
+  EON-C31 (attention records, the queue and its CLI visibility), EON-C11
+  (busy terminals, generations), EON-C23 (window and supervisor start time)
+  and EON-C33 (workspaces).
+- **Boundary:** None of the following:
+  - terminal content beyond what `eon workspace --json` already carries
+    (EON-C10's listed exceptions): no screen content (EON-C35 owns reads)
+    and no input (EON-C36);
+  - an agent's menu options: OSC 7501 (ORB-C15) does not carry them, and a
+    consumer reads them with `eon pane read`;
+  - quotas or sidebar visibility;
+  - Venus presentation, which keeps polling `Inspect`;
+  - events across a supervisor restart (a new STREAM starts with a
+    snapshot);
+  - remote or MCP exposure (`eon-ciwn.3`);
+  - per-subscriber authorization: the socket stays private to the user, and
+    `[agents] terminal_access` does not apply because no screen content or
+    input crosses;
+  - action discovery (`eon-cli-action-discovery-ogzi`), whose later `wait`
+    consumes this subscription.
+- **Proof:** None yet.
+- **Open proof:** `eon-ciwn.8` proves `eon events` on the installed product
+  with a real Claude Code question in a filtered tab; `eon-ciwn.9` proves
+  `eon pane wait` with a real agent pane.
