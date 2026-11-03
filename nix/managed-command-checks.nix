@@ -23,20 +23,43 @@ let
   '';
 in
 pkgs.runCommand "eon-managed-command-path-check" { } ''
+  fail() {
+    echo "managed-command-path: $*" >&2
+    exit 1
+  }
   export HOME="$TMPDIR" EON_CONFIG_HOME="$TMPDIR/config" PATH=${eonPackage}/libexec/eon/bin
-  test "$(${pkgs.coreutils}/bin/readlink -f "$(command -v eon)")" = "$(${pkgs.coreutils}/bin/readlink -f ${eonPackage}/bin/eon)"
+  # Interactive Bash reads the host's /etc/bashrc before eon.bashrc, and
+  # macOS builds have no sandbox to hide it. The user's ~/.bashrc, which
+  # eon.bashrc sources before its integrations, undoes what a host file
+  # may change: PATH, PROMPT_COMMAND, and integrations already set up.
+  printf '%s\n' \
+    'PATH=$EON_CHECK_PATH' \
+    'unset PROMPT_COMMAND' \
+    'unset -f starship_precmd __zoxide_hook __atuin_history _carapace_completer _mise_hook' \
+    > "$HOME/.bashrc"
+  # Runs COMMAND in managed Bash with PATH set to SEARCH_PATH.
+  managed_bash() {
+    EON_CHECK_PATH=$1 PATH=$1 eon-bash -i -c "$2"
+  }
+  test "$(${pkgs.coreutils}/bin/readlink -f "$(command -v eon)")" = "$(${pkgs.coreutils}/bin/readlink -f ${eonPackage}/bin/eon)" \
+    || fail "eon on the managed PATH is not the package's eon"
   for command in nu bash; do
-    version_output=$("$command" --version)
-    test -n "$version_output" && test "$("eon-$command" --version)" = "$version_output"
+    version_output=$("$command" --version) || fail "$command --version failed"
+    test -n "$version_output" && test "$("eon-$command" --version)" = "$version_output" \
+      || fail "eon-$command --version differs from $command --version"
   done
-  eon-nu -c 'help clip copy | ignore; help clip paste | ignore'
-  test "$(eon-nu --config ${eonPackage}/libexec/eon/shell/nu/0/eon.nu -c 'scope aliases | where name == "clc" | get expansion.0')" = 'clip copy'
-  test "$(eon-nu --config ${eonPackage}/libexec/eon/shell/nu/0/eon.nu -c 'scope aliases | where name == "clp" | get expansion.0')" = 'clip paste'
-  eon-bash -i -c 'for tool in starship zoxide atuin carapace; do name=_eon_$tool; test -x "''${!name}" || exit 1; done'
+  eon-nu -c 'help clip copy | ignore; help clip paste | ignore' \
+    || fail "Nushell lacks clip copy or clip paste"
+  test "$(eon-nu --config ${eonPackage}/libexec/eon/shell/nu/0/eon.nu -c 'scope aliases | where name == "clc" | get expansion.0')" = 'clip copy' \
+    || fail "Nushell alias clc is not clip copy"
+  test "$(eon-nu --config ${eonPackage}/libexec/eon/shell/nu/0/eon.nu -c 'scope aliases | where name == "clp" | get expansion.0')" = 'clip paste' \
+    || fail "Nushell alias clp is not clip paste"
+  managed_bash "$PATH" 'for tool in starship zoxide atuin carapace; do name=_eon_$tool; test -x "''${!name}" || exit 1; done' \
+    || fail "managed Bash did not set up Starship, Zoxide, Atuin and Carapace"
   if ${pkgs.gnugrep}/bin/grep -rl ${builtins.storeDir} ${eonPackage}/libexec/eon/shell; then
-    exit 1
+    fail "the shell tree names store paths"
   elif test $? != 1; then
-    exit 1
+    fail "cannot search the shell tree"
   fi
 
   # Each managed shell activates the host's mise, and starts without it
@@ -46,30 +69,39 @@ pkgs.runCommand "eon-managed-command-path-check" { } ''
   mise_hooks() {
     eon-nu --config "$eon_nu" -c '$env.config.hooks.pre_prompt? | default [] | length'
   }
-  no_mise_hooks=$(mise_hooks)
-  eon-bash -i -c 'test -z "''${EON_MISE_PROBE-}"'
-  PATH="$PATH:${fakeMise}/bin" eon-bash -i -c 'test "$EON_MISE_PROBE" = bash'
+  no_mise_hooks=$(mise_hooks) || fail "Nushell cannot load eon.nu"
+  managed_bash "$PATH" 'test -z "''${EON_MISE_PROBE-}"' \
+    || fail "managed Bash activated mise with none on PATH"
+  managed_bash "$PATH:${fakeMise}/bin" 'test "$EON_MISE_PROBE" = bash' \
+    || fail "managed Bash did not activate the mise on PATH"
   # The hook is due before activation. Its condition turns false once
   # the hook's own `use mise` defines the command mise, or once a
   # sourced activation defines mise_hook.
   PATH="$PATH:${fakeMise}/bin" eon-nu --config "$eon_nu" -c '
     let hook = $env.config.hooks.pre_prompt | first
     if not (do $hook.condition) { exit 1 }
-    $hook.code | save mise-hook.nu'
+    $hook.code | save mise-hook.nu' \
+    || fail "Nushell's mise hook is not due before activation"
   test "$(PATH="$PATH:${fakeMise}/bin" eon-nu --config "$eon_nu" -c '
     source mise-hook.nu
     if (do ($env.config.hooks.pre_prompt | first | get condition)) { exit 1 }
-    print $"($env.EON_MISE_PROBE) ($env.EON_MISE_HOOK)"')" = 'nu ran'
+    print $"($env.EON_MISE_PROBE) ($env.EON_MISE_HOOK)"')" = 'nu ran' \
+    || fail "Nushell's mise hook did not activate mise, or stayed due after it"
   PATH="$PATH:${fakeMise}/bin" eon-nu --config "$eon_nu" -c '
     def --env mise_hook [] {}
-    if (do ($env.config.hooks.pre_prompt | first | get condition)) { exit 1 }'
+    if (do ($env.config.hooks.pre_prompt | first | get condition)) { exit 1 }' \
+    || fail "Nushell's mise hook stays due after a sourced activation"
   export FAKE_MISE_FAIL=1
-  PATH="$PATH:${fakeMise}/bin" eon-bash -i -c 'test -z "''${EON_MISE_PROBE-}"'
-  test "$(PATH="$PATH:${fakeMise}/bin" mise_hooks)" = "$no_mise_hooks"
+  managed_bash "$PATH:${fakeMise}/bin" 'test -z "''${EON_MISE_PROBE-}"' \
+    || fail "managed Bash kept a failed mise activation"
+  test "$(PATH="$PATH:${fakeMise}/bin" mise_hooks)" = "$no_mise_hooks" \
+    || fail "Nushell added a mise hook when mise fails"
   unset FAKE_MISE_FAIL
   ${pkgs.coreutils}/bin/mkdir -p "$EON_CONFIG_HOME"
   printf '[shell]\nmise = false\n' > "$EON_CONFIG_HOME/config.toml"
-  PATH="$PATH:${fakeMise}/bin" eon-bash -i -c 'test -z "''${EON_MISE_PROBE-}"'
-  test "$(PATH="$PATH:${fakeMise}/bin" mise_hooks)" = "$no_mise_hooks"
+  managed_bash "$PATH:${fakeMise}/bin" 'test -z "''${EON_MISE_PROBE-}"' \
+    || fail "managed Bash activated mise with [shell] mise = false"
+  test "$(PATH="$PATH:${fakeMise}/bin" mise_hooks)" = "$no_mise_hooks" \
+    || fail "Nushell added a mise hook with [shell] mise = false"
   ${pkgs.coreutils}/bin/touch "$out"
 ''
