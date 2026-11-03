@@ -1208,6 +1208,9 @@ fn popup_executable(
         }))
 }
 
+/// The settings file in the configuration root.
+pub(super) const CONFIG_FILE: &str = "config.toml";
+
 /// Session identity, nesting markers and session credentials that agents export to
 /// the commands they run, checked against Claude Code 2.1.303, Codex 0.166.0,
 /// OpenCode 2.0.32, Pi coding-agent 1.4.0 and Grok 1.0.62. When Eon starts from an
@@ -1495,7 +1498,7 @@ fn read_config(
     log: Option<&DiagnosticLog>,
 ) -> Result<EonConfig, String> {
     let config = parse_config(root, defaults)?;
-    for warning in config_warnings(&config, &root.join("config.toml")) {
+    for warning in config_warnings(&config, &root.join(CONFIG_FILE)) {
         if let Some(log) = log {
             log.note_once(&warning);
         } else {
@@ -1547,7 +1550,7 @@ fn config_warnings(config: &EonConfig, path: &Path) -> Vec<String> {
 /// Parses the configuration, reading deprecated keys as their replacements,
 /// without warning about unknown or deprecated keys.
 fn parse_config(root: &Path, defaults: &Defaults) -> Result<EonConfig, String> {
-    let path = root.join("config.toml");
+    let path = root.join(CONFIG_FILE);
     let source = match fs::read_to_string(&path) {
         Ok(source) => source,
         Err(error) if error.kind() == std::io::ErrorKind::NotFound => {

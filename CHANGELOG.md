@@ -9,6 +9,10 @@ installation, and proven contract changes.
   and `previous agent` hints are gone (Alt+G and Alt+Shift+G still work and
   stay in the Shortcuts viewer), the move hints read `mv tab` and `mv pane`,
   and the column hint reads `+col` (`eon-x0edg`).
+- `eon config-path --file` creates the configuration root and prints the full
+  path of its settings file, `config.toml`, whether or not the file exists yet.
+  `eon --help` names `config.toml` beside `config-path` and `config defaults`;
+  plain `eon config-path` still prints only the root (`eon-wt5v8`).
 
 ## v0.1.12 (2026-11-02)
 

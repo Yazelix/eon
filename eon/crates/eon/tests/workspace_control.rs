@@ -280,6 +280,14 @@ fn help_is_readable_and_does_not_start_or_prepare_a_workspace() {
         ] {
             assert!(help.contains(command), "missing {command}");
         }
+        for command in ["config-path --file", "config defaults"] {
+            assert!(
+                help.lines()
+                    .any(|line| line.trim_start().starts_with(command)
+                        && line.contains("config.toml")),
+                "{command} must name config.toml"
+            );
+        }
         assert!(!runtime.exists());
         assert!(!absent_config.exists());
         assert_eq!(fs::read_dir(&config).unwrap().count(), 1);
@@ -2369,22 +2377,31 @@ fn stop_result_covers_queued_operation_and_managed_cleanup() {
 
 #[test]
 fn closed_stdout_pipe_is_not_a_panic() {
-    let (reader, writer) = std::io::pipe().unwrap();
-    drop(reader);
-    let output = eon_command(Path::new(env!("CARGO_BIN_EXE_eon")))
-        .arg("versions")
-        .stdout(writer)
-        .stderr(Stdio::piped())
-        .output()
-        .unwrap();
+    let root = temporary_directory();
+    for arguments in [
+        &["config-path"][..],
+        &["config-path", "--file"],
+        &["versions"],
+    ] {
+        let (reader, writer) = std::io::pipe().unwrap();
+        drop(reader);
+        let output = eon_command(Path::new(env!("CARGO_BIN_EXE_eon")))
+            .args(arguments)
+            .env("EON_CONFIG_HOME", root.join("config"))
+            .stdout(writer)
+            .stderr(Stdio::piped())
+            .output()
+            .unwrap();
 
-    assert!(
-        output.status.success(),
-        "status={} stderr={}",
-        output.status,
-        String::from_utf8_lossy(&output.stderr)
-    );
-    assert!(output.stderr.is_empty());
+        assert!(
+            output.status.success(),
+            "{arguments:?}: status={} stderr={}",
+            output.status,
+            String::from_utf8_lossy(&output.stderr)
+        );
+        assert!(output.stderr.is_empty(), "{arguments:?}");
+    }
+    fs::remove_dir_all(root).unwrap();
 }
 
 #[test]
@@ -2408,6 +2425,46 @@ fn relative_configuration_root_is_resolved_once() {
     );
     assert_eq!(stdout(&output), format!("{}\n", config.display()));
     assert!(config.is_dir());
+    fs::remove_dir_all(root).unwrap();
+}
+
+#[test]
+fn config_path_file_prints_the_settings_file_without_creating_it() {
+    let root = temporary_directory();
+    let config = root.join("config");
+    let run = |arguments: &[&str]| {
+        eon_command(Path::new(env!("CARGO_BIN_EXE_eon")))
+            .args(arguments)
+            .env("EON_CONFIG_HOME", &config)
+            .output()
+            .unwrap()
+    };
+
+    let output = run(&["config-path", "--file"]);
+    assert!(
+        output.status.success(),
+        "stdout={} stderr={}",
+        stdout(&output),
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert!(output.stderr.is_empty());
+    assert_eq!(
+        stdout(&output),
+        format!("{}\n", config.join("config.toml").display())
+    );
+    assert!(config.is_dir());
+    assert!(!config.join("config.toml").exists());
+
+    let output = run(&["config-path"]);
+    assert!(output.status.success());
+    assert_eq!(stdout(&output), format!("{}\n", config.display()));
+
+    for arguments in [
+        &["config-path", "--json"][..],
+        &["config-path", "--file", "--file"],
+    ] {
+        assert_eq!(run(arguments).status.code(), Some(2), "{arguments:?}");
+    }
     fs::remove_dir_all(root).unwrap();
 }
 

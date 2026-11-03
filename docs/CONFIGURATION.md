@@ -1,7 +1,8 @@
 # Configuration
 
 `eon config-path` prints the configuration root, normally
-`~/.config/eon`. Settings live in `config.toml`. This example chooses a font,
+`~/.config/eon`. Settings live in `config.toml` there; `eon config-path --file`
+prints that file's full path. This example chooses a font,
 cursor preset and 100x30 grid; it is not the empty-configuration default:
 
 ```toml

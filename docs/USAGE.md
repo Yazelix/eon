@@ -441,6 +441,7 @@ on terminals; redirected output is plain text. A nonempty `NO_COLOR` or
 | `eon focus ID\|left\|right\|up\|down [--json]` | Focus a stable identity or traverse the workspace |
 | `eon versions` | Print Eon, protocol, and component identities |
 | `eon config-path` | Create and print the configuration root |
+| `eon config-path --file` | Create the configuration root and print the full path of its settings file, `config.toml`, which need not exist yet |
 | `eon config defaults [--json]` | Print built-in defaults as commented TOML or a nested JSON object, without reading user configuration |
 
 A window holds one or more workspaces and shows one at a time; hidden
