@@ -65,6 +65,19 @@ installation, and proven contract changes.
   `busy`, and human output prints one `busy` line per terminal.
   EONW moves to v29 and Eon to 0.1.13 (`eon-7cf0y.12`); older windows remain
   attachable and stoppable through the recorded `eon` that started them.
+- Fixed: an Eon started from a Claude Code or Codex shell no longer gives its
+  terminals that agent's command settings. A bare `git commit` there got
+  Claude Code's `GIT_EDITOR=true` and an empty message, and Codex's
+  `NO_COLOR`, `PAGER=cat` and the like turned off colour and paging. Eon
+  removes each only with the agent's exact value and marker, so a different
+  value you set yourself passes through; the same value set on purpose is
+  removed too, so set it in your shell configuration or the command. Codex's
+  forced `C.UTF-8` locale gives way to your desktop session's `LANG`,
+  `LC_CTYPE` and `LC_ALL` from the systemd user manager, or, without one,
+  keeps `LANG=C.UTF-8`. Eon also removes Claude Code's
+  `CLAUDE_CODE_HOST_WORKTREE` pair, as it removes the other session names.
+  EON-C9 lists them. Only supervisors started after the update remove them
+  (`eon-yxo2y`).
 
 ## v0.1.12 (2026-11-02)
 

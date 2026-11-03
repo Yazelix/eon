@@ -5,10 +5,16 @@ use std::{
     env,
     ffi::{OsStr, OsString},
     fs,
-    io::{self, Write},
-    os::unix::fs::PermissionsExt,
+    io::{self, Read, Write},
+    os::{
+        fd::AsRawFd,
+        unix::{fs::PermissionsExt, process::CommandExt},
+    },
     path::{Path, PathBuf},
-    process::Command,
+    process::{Command, Stdio},
+    sync::OnceLock,
+    thread,
+    time::{Duration, Instant},
 };
 
 use eon_workspace_protocol::v29::{
@@ -1237,6 +1243,8 @@ const AGENT_SESSION_VARIABLES: &[&str] = &[
     "CLAUDE_CODE_CLOUD_SESSION_ID",
     "CLAUDE_CODE_BRIDGE_SESSION_ID",
     "CLAUDE_CODE_HOST_SESSION_ID",
+    "CLAUDE_CODE_HOST_WORKTREE",
+    "CLAUDE_CODE_HOST_WORKTREE_FENCE",
     // Claude Code and OpenCode.
     "AI_AGENT",
     // Codex.
@@ -1259,12 +1267,153 @@ const AGENT_SESSION_VARIABLES: &[&str] = &[
     "GROK_SESSION_ID",
 ];
 
-/// Keeps the launching agent's session out of a child the supervisor starts.
+/// Generic settings an agent's tool runner gives every command it runs, with the
+/// exact value it sets, under the marker that runner sets beside them (always `1`).
+/// A child loses one only when the supervisor inherited both the marker and that
+/// exact value (EON-C9); a person's own different value passes through. Claude Code
+/// 2.1.303's Bash tool sets `GIT_EDITOR`, which leaves a bare `git commit` with an
+/// empty message, and its process sets `COREPACK_ENABLE_AUTO_PIN`. Codex 0.166.0's
+/// unified exec also sets `TERM` and `COLORTERM`, which Orbit sets for each
+/// terminal, and the locale in `CODEX_LOCALE`.
+const AGENT_TOOL_SETTINGS: &[(&str, &[(&str, &str)])] = &[
+    (
+        "CLAUDECODE",
+        &[("GIT_EDITOR", "true"), ("COREPACK_ENABLE_AUTO_PIN", "0")],
+    ),
+    (
+        "CODEX_CI",
+        &[
+            ("NO_COLOR", "1"),
+            ("PAGER", "cat"),
+            ("GIT_PAGER", "cat"),
+            ("GH_PAGER", "cat"),
+        ],
+    ),
+];
+
+/// The locale names Codex 0.166.0's unified exec sets to `C.UTF-8` under `CODEX_CI`,
+/// replacing the person's. A child gets the desktop session's value back; without
+/// one it loses the name, except `LANG`, which stays so the locale remains UTF-8.
+const CODEX_LOCALE: &[&str] = &["LANG", "LC_CTYPE", "LC_ALL"];
+
+/// Keeps the launching agent's session, and the settings its tool runner adds, out of
+/// a child the supervisor starts.
 pub(crate) fn remove_agent_session(command: &mut Command) -> &mut Command {
+    remove_agent_environment(command, |name| env::var_os(name), desktop_locale)
+}
+
+fn remove_agent_environment(
+    command: &mut Command,
+    inherited: impl Fn(&str) -> Option<OsString>,
+    desktop: impl Fn(&str) -> Option<OsString>,
+) -> &mut Command {
+    let set = |name: &str, value: &str| inherited(name).is_some_and(|inherited| inherited == value);
+    for (marker, settings) in AGENT_TOOL_SETTINGS {
+        if set(marker, "1") {
+            for (name, value) in *settings {
+                if set(name, value) {
+                    command.env_remove(name);
+                }
+            }
+        }
+    }
+    if set("CODEX_CI", "1") {
+        for name in CODEX_LOCALE {
+            if set(name, "C.UTF-8") {
+                match desktop(name) {
+                    Some(value) => {
+                        command.env(name, value);
+                    }
+                    None if *name != "LANG" => {
+                        command.env_remove(name);
+                    }
+                    None => {}
+                }
+            }
+        }
+    }
     for name in AGENT_SESSION_VARIABLES {
         command.env_remove(name);
     }
     command
+}
+
+/// The desktop session's value of a locale name: the systemd user manager's
+/// environment, read once per supervisor and only when a child needs it. Best effort;
+/// without systemd, or without its answer within a second, there is none.
+fn desktop_locale(name: &str) -> Option<OsString> {
+    static ENVIRONMENT: OnceLock<String> = OnceLock::new();
+    ENVIRONMENT
+        .get_or_init(|| {
+            user_manager_environment(OsStr::new("systemctl"), Duration::from_secs(1))
+                .unwrap_or_default()
+        })
+        .lines()
+        .find_map(|line| line.strip_prefix(name)?.strip_prefix('='))
+        .map(OsString::from)
+}
+
+/// The most `systemctl --user show-environment` may print, far above a real user
+/// manager's environment.
+const MAX_USER_MANAGER_BYTES: usize = 4 << 20;
+
+/// Runs `systemctl --user show-environment` in its own process group, draining its
+/// output as it comes. The group is killed and reaped by the deadline whether or not it
+/// answered, so a stalled bus leaves no process, thread or socket behind; output past
+/// `MAX_USER_MANAGER_BYTES` counts as no answer.
+fn user_manager_environment(program: &OsStr, timeout: Duration) -> Option<String> {
+    let mut child = Command::new(program)
+        .args(["--user", "--no-pager", "show-environment"])
+        .stdin(Stdio::null())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::null())
+        .process_group(0)
+        .spawn()
+        .ok()?;
+    let mut output = child.stdout.take().expect("piped user manager output");
+    let answer = (|| {
+        let fd = output.as_raw_fd();
+        // SAFETY: fcntl changes only the flags of this live pipe.
+        let flags = unsafe { libc::fcntl(fd, libc::F_GETFL) };
+        if flags == -1 || unsafe { libc::fcntl(fd, libc::F_SETFL, flags | libc::O_NONBLOCK) } == -1
+        {
+            return None;
+        }
+        let deadline = Instant::now() + timeout;
+        let mut bytes = Vec::new();
+        let mut eof = false;
+        while Instant::now() < deadline {
+            let mut chunk = [0; 8192];
+            match output.read(&mut chunk) {
+                Ok(0) => eof = true,
+                Ok(count) => {
+                    bytes.extend_from_slice(&chunk[..count]);
+                    if bytes.len() > MAX_USER_MANAGER_BYTES {
+                        return None;
+                    }
+                    continue;
+                }
+                Err(error)
+                    if error.kind() == io::ErrorKind::WouldBlock
+                        || error.kind() == io::ErrorKind::Interrupted => {}
+                Err(_) => return None,
+            }
+            if eof && let Some(status) = child.try_wait().ok()? {
+                return status
+                    .success()
+                    .then(|| String::from_utf8_lossy(&bytes).into_owned());
+            }
+            thread::sleep(Duration::from_millis(5));
+        }
+        None
+    })();
+    // SAFETY: only the process group created above is targeted, including any helper
+    // still holding the pipe.
+    unsafe {
+        libc::kill(-(child.id() as i32), libc::SIGKILL);
+    }
+    let _ = child.wait();
+    answer
 }
 
 pub(crate) fn session_path(prefix: &Path) -> Result<OsString, String> {
@@ -1605,8 +1754,8 @@ mod tests {
         ALT, ManagedPrograms, PopupCommand, PopupDefinition, PopupKey, SHIFT, Shortcut, Tool,
         animate_working_badge, command as managed_command, disk_path, integration_mask,
         popup_catalog, prepare_popup_command, prepend_path, read_shell_config,
-        remove_agent_session, sidebar_enabled, startup_animation, terminal_presentation, tool,
-        warning_close_last_tab,
+        remove_agent_environment, remove_agent_session, sidebar_enabled, startup_animation,
+        terminal_presentation, tool, user_manager_environment, warning_close_last_tab,
     };
     use std::{
         ffi::{OsStr, OsString},
@@ -1614,6 +1763,8 @@ mod tests {
         os::unix::{ffi::OsStrExt, fs::PermissionsExt},
         path::{Path, PathBuf},
         process::Command,
+        thread,
+        time::{Duration, Instant},
     };
 
     #[test]
@@ -3032,6 +3183,8 @@ keep_alive = false
             "CLAUDE_CODE_CLOUD_SESSION_ID",
             "CLAUDE_CODE_BRIDGE_SESSION_ID",
             "CLAUDE_CODE_HOST_SESSION_ID",
+            "CLAUDE_CODE_HOST_WORKTREE",
+            "CLAUDE_CODE_HOST_WORKTREE_FENCE",
             "AI_AGENT",
             "CODEX_SESSION_ID",
             "CODEX_THREAD_ID",
@@ -3087,5 +3240,223 @@ keep_alive = false
                 "{name} is removed"
             );
         }
+    }
+
+    #[test]
+    fn children_drop_an_agents_tool_settings_only_under_its_marker() {
+        // What Claude Code 2.1.303's Bash tool and Codex 0.166.0's unified exec give
+        // every command they run besides its session (eon-yxo2y). Each is removed only
+        // with its exact value and its own runner's marker inherited, and Codex's
+        // locale is replaced by the desktop session's; a person's other value, or the
+        // same value without the marker, passes through.
+        let claude = [("GIT_EDITOR", "true"), ("COREPACK_ENABLE_AUTO_PIN", "0")];
+        let codex = [
+            ("NO_COLOR", "1"),
+            ("PAGER", "cat"),
+            ("GIT_PAGER", "cat"),
+            ("GH_PAGER", "cat"),
+        ];
+        let locale = [
+            ("LANG", "C.UTF-8"),
+            ("LC_CTYPE", "C.UTF-8"),
+            ("LC_ALL", "C.UTF-8"),
+        ];
+        let kept = [("EDITOR", "hx"), ("LC_TIME", "pt_BR.UTF-8")];
+        let launched = |inherited: &[(&'static str, &'static str)],
+                        desktop: &[(&'static str, &'static str)]| {
+            let lookup = |pairs: &[(&'static str, &'static str)], name: &str| {
+                pairs
+                    .iter()
+                    .find(|(variable, _)| *variable == name)
+                    .map(|(_, value)| OsString::from(value))
+            };
+            let inherited = [inherited, kept.as_slice()].concat();
+            let mut command = Command::new("/managed/orbit");
+            remove_agent_environment(
+                &mut command,
+                |name| lookup(&inherited, name),
+                |name| lookup(desktop, name),
+            );
+            command
+        };
+        let child = |command: &Command, name: &str| {
+            command
+                .get_envs()
+                .find(|(variable, _)| *variable == name)
+                .map(|(_, value)| value.map(OsStr::to_owned))
+        };
+        let removed = |command: &Command, name: &str| child(command, name) == Some(None);
+        let untouched = |command: &Command, name: &str| child(command, name).is_none();
+        let all = [claude.as_slice(), codex.as_slice(), locale.as_slice()].concat();
+        let desktop = [("LANG", "pt_BR.UTF-8"), ("LC_MESSAGES", "en_US.UTF-8")];
+
+        // Fails when a runner's settings need the other runner's marker too.
+        let claude_alone = launched(&[[("CLAUDECODE", "1")].as_slice(), &all].concat(), &desktop);
+        for (name, _) in claude {
+            assert!(
+                removed(&claude_alone, name),
+                "Claude: {name} reaches the child"
+            );
+        }
+        for (name, _) in codex.iter().chain(&locale) {
+            assert!(untouched(&claude_alone, name), "Claude: {name} is changed");
+        }
+        let codex_alone = launched(&[[("CODEX_CI", "1")].as_slice(), &all].concat(), &desktop);
+        for (name, _) in codex.iter().chain(&locale[1..]) {
+            assert!(
+                removed(&codex_alone, name),
+                "Codex: {name} reaches the child"
+            );
+        }
+        // Fails when Codex's forced locale survives a desktop session that has its own.
+        assert_eq!(
+            child(&codex_alone, "LANG"),
+            Some(Some(OsString::from("pt_BR.UTF-8")))
+        );
+        for (name, _) in claude {
+            assert!(untouched(&codex_alone, name), "Codex: {name} is changed");
+        }
+        let both = launched(
+            &[[("CLAUDECODE", "1"), ("CODEX_CI", "1")].as_slice(), &all].concat(),
+            &desktop,
+        );
+        for (name, _) in claude.iter().chain(&codex).chain(&locale[1..]) {
+            assert!(removed(&both, name), "both: {name} reaches the child");
+        }
+        for command in [&claude_alone, &codex_alone, &both] {
+            for (name, _) in kept {
+                assert!(untouched(command, name), "{name} is changed");
+            }
+            assert!(untouched(command, "LC_MESSAGES"));
+        }
+
+        // Without a desktop locale, LANG stays UTF-8 and the overrides go.
+        let headless = launched(&[[("CODEX_CI", "1")].as_slice(), &locale].concat(), &[]);
+        assert!(untouched(&headless, "LANG"));
+        assert!(removed(&headless, "LC_CTYPE"));
+        assert!(removed(&headless, "LC_ALL"));
+
+        // Fails when a setting is removed without its marker, or when a person's
+        // other value is taken for the agent's.
+        let unmarked = launched(&all, &desktop);
+        let own = launched(
+            &[
+                ("CLAUDECODE", "1"),
+                ("CODEX_CI", "1"),
+                ("GIT_EDITOR", "hx"),
+                ("NO_COLOR", ""),
+                ("LANG", "pt_BR.UTF-8"),
+                ("LC_ALL", "pt_BR.UTF-8"),
+                ("PAGER", "less"),
+            ],
+            &[("LANG", "en_US.UTF-8")],
+        );
+        for (command, case) in [(&unmarked, "no marker"), (&own, "a person's own values")] {
+            for (name, _) in &all {
+                assert!(untouched(command, name), "{case}: {name} is changed");
+            }
+        }
+    }
+
+    #[test]
+    fn the_user_manager_read_drains_its_output_and_leaves_nothing_by_its_deadline() {
+        // Fails when the desktop-locale read only stops waiting (eon-yxo2y): a
+        // systemctl stalled on a bus that accepts and never answers, and a helper it
+        // started, must both be gone by the deadline, and the launch goes on without a
+        // desktop locale.
+        let root = crate::supervisor::temporary_directory();
+        let program = root.join("systemctl");
+        let pids = root.join("pids");
+        let script = |body: &str| {
+            fs::write(&program, format!("#!/bin/sh\n{body}\n")).unwrap();
+            fs::set_permissions(&program, fs::Permissions::from_mode(0o755)).unwrap();
+        };
+        script(&format!(
+            "sleep 30 &\necho \"$$ $!\" > '{}'\nwait",
+            pids.display()
+        ));
+        let started = Instant::now();
+        assert_eq!(
+            user_manager_environment(program.as_os_str(), Duration::from_secs(1)),
+            None
+        );
+        assert!(started.elapsed() < Duration::from_secs(3));
+        let pids = fs::read_to_string(&pids).unwrap();
+        let [child, helper] = pids.split_whitespace().collect::<Vec<_>>()[..] else {
+            panic!("pids: {pids}");
+        };
+        // Fails when the read leaves its own child unreaped.
+        assert!(
+            !Path::new(&format!("/proc/{child}")).exists(),
+            "{child} outlives the read"
+        );
+        // The killed helper may remain a zombie, holding nothing, until its new parent
+        // reaps it.
+        let gone = |pid: &str| {
+            let deadline = Instant::now() + Duration::from_secs(2);
+            loop {
+                let state = fs::read_to_string(format!("/proc/{pid}/stat"))
+                    .ok()
+                    .and_then(|stat| {
+                        Some(
+                            stat.rsplit(')')
+                                .next()?
+                                .split_whitespace()
+                                .next()?
+                                .to_owned(),
+                        )
+                    });
+                if state.as_deref().is_none_or(|state| state == "Z") {
+                    return true;
+                }
+                if Instant::now() >= deadline {
+                    return false;
+                }
+                thread::sleep(Duration::from_millis(10));
+            }
+        };
+        assert!(gone(helper), "{helper} outlives the read");
+
+        // Fails when output is read only after the child exits: past the pipe's
+        // capacity, the child blocks until the deadline and the locale is lost.
+        script(&format!(
+            "yes FILLER={} | head -n 20000\necho LANG=pt_BR.UTF-8",
+            "x".repeat(64)
+        ));
+        let large = user_manager_environment(program.as_os_str(), Duration::from_secs(5)).unwrap();
+        assert!(large.len() > 1 << 20);
+        assert_eq!(large.lines().last(), Some("LANG=pt_BR.UTF-8"));
+        // Fails without the cap: finite output past it, from a child that exits
+        // successfully within the deadline, gives no answer.
+        script(&format!(
+            "yes FILLER=x | head -c {}\necho LANG=pt_BR.UTF-8",
+            (4 << 20) + 1
+        ));
+        assert_eq!(
+            user_manager_environment(program.as_os_str(), Duration::from_secs(5)),
+            None
+        );
+        // Output without end stops at the cap and gives no answer.
+        script("yes FILLER=x");
+        assert_eq!(
+            user_manager_environment(program.as_os_str(), Duration::from_secs(5)),
+            None
+        );
+
+        script("printf 'HOME=/home/person\\nLANG=pt_BR.UTF-8\\n'");
+        assert_eq!(
+            user_manager_environment(program.as_os_str(), Duration::from_secs(5)).as_deref(),
+            Some("HOME=/home/person\nLANG=pt_BR.UTF-8\n")
+        );
+        script("echo LANG=pt_BR.UTF-8; exit 1");
+        assert_eq!(
+            user_manager_environment(program.as_os_str(), Duration::from_secs(5)),
+            None
+        );
+        assert_eq!(
+            user_manager_environment(root.join("missing").as_os_str(), Duration::from_secs(5)),
+            None
+        );
+        fs::remove_dir_all(root).unwrap();
     }
 }

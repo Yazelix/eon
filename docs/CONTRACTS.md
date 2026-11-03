@@ -895,15 +895,33 @@ socket names, JSON fields and protocol identifiers retain their spellings.
     `CLAUDE_CODE_SESSION_ACCESS_TOKEN`, `CLAUDE_SESSION_INGRESS_TOKEN_FILE`,
     `CLAUDE_CODE_REMOTE_SESSION_ID`, `CLAUDE_CODE_REMOTE_SESSION_UUID`,
     `CLAUDE_CODE_CLOUD_SESSION_ID`, `CLAUDE_CODE_BRIDGE_SESSION_ID`,
-    `CLAUDE_CODE_HOST_SESSION_ID`, `AI_AGENT`, `CODEX_SESSION_ID`,
+    `CLAUDE_CODE_HOST_SESSION_ID`, `CLAUDE_CODE_HOST_WORKTREE`,
+    `CLAUDE_CODE_HOST_WORKTREE_FENCE`, `AI_AGENT`, `CODEX_SESSION_ID`,
     `CODEX_THREAD_ID`, `CODEX_TOOL_CALL_ID`, `CODEX_VERSION`,
     `CODEX_PERMISSION_PROFILE`, `CODEX_CI`, `OPENCODE`, `OPENCODE_SESSION_ID`,
     `OPENCODE_TERMINAL`, `PI_CODING_AGENT`, `PI_SESSION_ID`, `PI_SESSION_FILE`,
     `PI_REASONING_LEVEL` and `GROK_SESSION_ID`. The list was checked against
     Claude Code 2.1.303, Codex 0.166.0, OpenCode 2.0.32, Pi coding-agent 1.4.0
-    and Grok 1.0.62. Every other inherited name, agent settings such as
-    `CLAUDE_CONFIG_DIR`, `CLAUDE_CODE_FORCE_SESSION_PERSISTENCE` and API keys
-    included, keeps the treatment described above.
+    and Grok 1.0.62. The same children also lose the generic settings an
+    agent's tool runner gives every command it runs, but only a name that
+    arrived with exactly the runner's value while that runner's marker also
+    arrived as `1`: under `CLAUDECODE`, `GIT_EDITOR=true` and
+    `COREPACK_ENABLE_AUTO_PIN=0` (Claude Code 2.1.303); under `CODEX_CI`,
+    `NO_COLOR=1`, `PAGER=cat`, `GIT_PAGER=cat` and `GH_PAGER=cat` (Codex
+    0.166.0). Under `CODEX_CI`, each of `LANG`, `LC_CTYPE` and `LC_ALL` that
+    arrived as `C.UTF-8` takes the desktop session's value instead, read
+    once per supervisor through `systemctl --user show-environment`, whose
+    output Eon drains up to 4 MiB and whose process group it kills and reaps
+    after one second at most; without one, `LC_CTYPE` and `LC_ALL` are
+    removed and `LANG` stays `C.UTF-8` so the locale remains UTF-8. Any other
+    value, or the same value without the marker, passes through. Eon cannot
+    tell a person's own identical value from the runner's: a person who sets
+    one of these on purpose, such as `PAGER=cat`, and starts Eon from such an
+    agent shell loses it in command panes, popups and the Editor unless their
+    shell configuration or the command itself sets it. Every other inherited
+    name, agent settings such as `CLAUDE_CONFIG_DIR`,
+    `CLAUDE_CODE_FORCE_SESSION_PERSISTENCE` and API keys included, keeps the
+    treatment described above.
 - **Important failures:** Invalid or unreadable configuration, empty command,
   missing artifact, manifest mismatch, or shell launch fails explicitly without
   a replacement terminal. Optional integration failure warns without preventing
@@ -923,8 +941,8 @@ socket names, JSON fields and protocol identifiers retain their spellings.
   shell framework, automatic Direnv, mise installation or trust management,
   history/sync policy, plugin surface,
   editor replacement, or remote/headless clipboard bridge. Apart from the
-  agent-session removal above, arbitrary argv remains unmanaged and
-  `eon run -- COMMAND...` remains the explicit escape hatch.
+  agent-session and tool-runner removal above, arbitrary argv remains
+  unmanaged and `eon run -- COMMAND...` remains the explicit escape hatch.
 - **Proof:** `795d735a8f61ef439c56d68e1cc4d3929af0dfcf`, `eon-monorepo-2oko.6`.
   - **Environment:** Automated tier on x86_64 Linux.
   - **Evidence:** The `shell-environment` and `managed-command-path` Nix checks
@@ -951,6 +969,22 @@ socket names, JSON fields and protocol identifiers retain their spellings.
     settings in its environment; Venus, the default Nushell terminal, a CLI
     pane, the Files and Commands popups and both quota readers carry none of
     the removed names and all three settings with their values.
+  - **Tool runner:** `eon-yxo2y` adds
+    `children_drop_an_agents_tool_settings_only_under_its_marker` (each
+    runner's settings under its own marker alone and under both; a desktop
+    `LANG=pt_BR.UTF-8` replacing Codex's; `LANG` kept UTF-8 without a desktop
+    session; nothing changed without the marker or with a person's other
+    value; `EDITOR` and `LC_TIME` kept),
+    `terminals_drop_the_launching_agents_tool_settings` (a real supervisor
+    started with both markers and their values, beside a stand-in
+    `systemctl` whose desktop session has `LANG=pt_BR.UTF-8`, gives its first
+    terminal none of them, that `LANG` and the person's `EDITOR`),
+    `the_user_manager_read_drains_its_output_and_leaves_nothing_by_its_deadline`
+    (a `systemctl` that never answers is reaped and a helper it started is
+    gone by the deadline; over 1 MiB of output still yields its `LANG`;
+    output past 4 MiB, endless, failing and missing ones give no locale), and
+    the `CLAUDE_CODE_HOST_WORKTREE` pair to
+    `children_drop_the_launching_agent_session_and_keep_agent_settings`.
   - **Config path:** `eon-wt5v8` and `eon-hb4zp` add
     `config_path_prints_the_settings_file_and_config_dir_the_root`
     (`config-path` and `config-dir` output, root created, file not created,

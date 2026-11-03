@@ -4996,6 +4996,90 @@ fn launch_directory_can_disappear_after_the_initial_session_starts() {
 }
 
 #[test]
+fn terminals_drop_the_launching_agents_tool_settings() {
+    // Fails when the supervisor's terminal launch stops removing what Claude Code's
+    // and Codex's tool runners give the commands they run (eon-yxo2y, EON-C9).
+    let root = temporary_directory();
+    let runtime = root.join("runtime");
+    let config = root.join("config");
+    configure_mock_desktop(&config);
+    let stop = root.join("stop");
+    let orbit = root.join("orbit");
+    let venus = root.join("venus");
+    managed_orbit_executable(&orbit);
+    executable(&venus, "#!/bin/sh\ncat >/dev/null\n");
+    // A stand-in systemd user manager, first on the supervisor's PATH, whose desktop
+    // session has its own locale.
+    let desktop = root.join("desktop");
+    fs::create_dir(&desktop).unwrap();
+    executable(
+        &desktop.join("systemctl"),
+        "#!/bin/sh\n[ \"$*\" = '--user --no-pager show-environment' ] || exit 1\necho LANG=pt_BR.UTF-8\n",
+    );
+
+    let binary = PathBuf::from(env!("CARGO_BIN_EXE_eon"));
+    let mut command = eon_command(&binary);
+    let path = command
+        .get_envs()
+        .find_map(|(name, value)| (name == "PATH").then_some(value))
+        .flatten()
+        .unwrap()
+        .to_owned();
+    let path = std::iter::once(desktop).chain(std::env::split_paths(&path));
+    let child = command
+        .env("PATH", std::env::join_paths(path).unwrap())
+        .arg("run")
+        .env("EON_RUNTIME_DIR", &runtime)
+        .env("EON_CONFIG_HOME", &config)
+        .env("EON_ORBIT", &orbit)
+        .env("EON_VENUS", &venus)
+        .env("EON_TEST_STOP", &stop)
+        .envs([
+            ("CLAUDECODE", "1"),
+            ("GIT_EDITOR", "true"),
+            ("CODEX_CI", "1"),
+            ("PAGER", "cat"),
+            ("LANG", "C.UTF-8"),
+            ("LC_ALL", "C.UTF-8"),
+            ("EDITOR", "hx"),
+        ])
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
+        .spawn()
+        .unwrap();
+    let mut supervisor = TestProcess {
+        child,
+        stop: stop.clone(),
+    };
+    let generation = generation_runtime(&runtime);
+    wait_for_connection(&generation.join("eon.sock"));
+    assert!(
+        invoke(&binary, &runtime, &config, &["workspace", "--json"])
+            .status
+            .success()
+    );
+    let first = generation.join("orbit.sock");
+
+    let environment = process::environ(live_identity(&first).process_id);
+    let value = |name: &str| {
+        environment
+            .split(|byte| *byte == 0)
+            .find_map(|entry| entry.strip_prefix(format!("{name}=").as_bytes()))
+            .map(|value| String::from_utf8(value.to_vec()).unwrap())
+    };
+    for name in ["CLAUDECODE", "GIT_EDITOR", "CODEX_CI", "PAGER", "LC_ALL"] {
+        assert_eq!(value(name), None, "{name} reaches the terminal");
+    }
+    // Fails when Codex's forced locale survives a desktop session that has its own.
+    assert_eq!(value("LANG").as_deref(), Some("pt_BR.UTF-8"));
+    assert_eq!(value("EDITOR").as_deref(), Some("hx"));
+
+    fs::write(&stop, "").unwrap();
+    wait_for_successful_exit(&mut supervisor.child);
+    fs::remove_dir_all(root).unwrap();
+}
+
+#[test]
 fn tab_directory_retargets_future_sessions_without_crossing_tabs() {
     let root = temporary_directory();
     let first = root.join("first");

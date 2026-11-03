@@ -769,11 +769,23 @@ terminals, popups, Venus and quota reader. A Claude Code started in an Eon
 terminal then saves its transcripts, and the launching session's messaging
 token stays with that session. EON-C9 in
 [`CONTRACTS.md`](CONTRACTS.md#eon-c9--managed-shell-environment) lists exactly
-which names. Other variables the agent's shell set, such as `CLAUDE_CONFIG_DIR`,
-API keys, or a `GIT_EDITOR` the agent set for its own commands, still reach Eon
-terminals. Only a supervisor started after you update Eon removes these names;
-closing and reopening a window, reattaching it, or recovering it keeps the
-old environment.
+which names. Eon also removes the settings Claude Code and Codex give the
+commands they run, such as Claude Code's `GIT_EDITOR=true`, which leaves a
+bare `git commit` with an empty message, and Codex's `NO_COLOR=1` and
+`PAGER=cat`, but only with the agent's exact value while its marker
+(`CLAUDECODE` or `CODEX_CI`) also arrived; any other value passes through.
+Codex also forces the locale to `C.UTF-8`; Eon gives terminals your desktop
+session's `LANG`, `LC_CTYPE` and `LC_ALL` back from the systemd user manager,
+and where there is none (such as on macOS) it keeps `LANG=C.UTF-8` so
+terminals stay UTF-8. Eon cannot tell your own identical value from the
+agent's: if you set `PAGER=cat` or `NO_COLOR=1` yourself and start Eon from
+such an agent shell, command panes, popups and the Editor lose it. Set it in
+your shell configuration, or in the command itself (`env PAGER=cat COMMAND`),
+to keep it. Other variables the agent's shell set, such as
+`CLAUDE_CONFIG_DIR` and API keys, still reach Eon terminals. Only a
+supervisor started after you update Eon removes these names; closing and
+reopening a window, reattaching it, or recovering it keeps the old
+environment.
 
 ### Accelerando glyphs
 
