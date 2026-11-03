@@ -3,6 +3,13 @@
 This file records user-visible runtime, command, configuration, packaging,
 installation, and proven contract changes.
 
+## Unreleased
+
+- The bottom hints bar leaves more room on narrow windows: the `next agent`
+  and `previous agent` hints are gone (Alt+G and Alt+Shift+G still work and
+  stay in the Shortcuts viewer), the move hints read `mv tab` and `mv pane`,
+  and the column hint reads `+col` (`eon-x0edg`).
+
 ## v0.1.12 (2026-11-02)
 
 - Set `[terminal] cursor_trail_duration = 0` to turn the cursor trail off in

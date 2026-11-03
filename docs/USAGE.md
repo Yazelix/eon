@@ -209,13 +209,12 @@ once; repeats and releases never reach the terminal, and toggling keeps focus
 and the selected tab and pane. Hidden hints leave no accessible footer; visible
 hints are read-only text, with no extra focus stops or announcements. The
 initial window adds the footer's space, so configured `rows` stay terminal
-rows. Hints follow the current bindings,
-enabled popup catalog and native focus; narrow windows omit whole hints, keeping
-the help and hints-toggle hints longest. Alt+Shift+D shows `detach`, Alt+Shift+H
-shows `sidebar` unless the sidebar is turned off, and Alt+G and Alt+Shift+G show
-`next agent` and `previous agent`. F6, Ctrl+Tab and Ctrl+Shift+Tab, and Project
-(Alt+Z) have no hint but stay in full help. Hints that create something name the
-tab, pane, column or window. Compact groups spread across the bar with
+rows. Hints follow the current bindings, enabled popup catalog and native
+focus; narrow windows omit whole hints, keeping the help and hints-toggle hints
+longest. Alt+Shift+D shows `detach`, and Alt+Shift+H shows `sidebar` unless the
+sidebar is turned off. Alt+G and Alt+Shift+G, F6, Ctrl+Tab and Ctrl+Shift+Tab,
+and Project (Alt+Z) have no hint but stay in full help. Hints that create
+something name the tab, pane, column or window. Compact groups spread across the bar with
 equal gaps and the outer groups near its edges; a lone group stays centered. Hint spacing stays compact.
 Only modifier headers have padded rounded backgrounds. Each pane is its own
 rounded card, stacked without gaps in its column's allocated card area. Even
@@ -252,9 +251,9 @@ Steel-blue modifier badges use plain aliases, such as A-S, before mint keys and 
 labels. The compact tab range is 1..9; Alt+0 still selects the tenth tab.
 Copy/Paste and Open link stay in full help, without footer hints.
 Each group uses C for Ctrl, A for Alt, and S for Shift, joined by hyphens.
-The move pane hint groups H/L and K/J under C-A; the move tab hint shows H/L
-under C-A-S. One focus hint shows H/L · K/J · 1..9 under A, and create hints
-read +pane, +column, +tab and +window. Full help and
+The `mv pane` hint groups H/L and K/J under C-A; the `mv tab` hint shows H/L
+under C-A-S. One `focus` hint shows H/L · K/J · 1..9 under A, and create hints
+read `+pane`, `+col`, `+tab` and `+window`. Full help and
 screen-reader labels keep complete chords and action names. The header `?` disappears when all applicable hints
 fit in the visible bar, unless that button has keyboard focus. Alt+/ always
 opens the complete Shortcuts viewer, including the hints toggle. Eon has no

@@ -176,10 +176,11 @@ strips across the window below the bar, including the sidebar and footer.
 
 Steel-blue modifier badges use plain aliases, such as C-A, before mint keys and gray
 labels. The compact tab range is 1..9; Alt+0 still selects
-the tenth tab. The move pane hint groups H/L and K/J under C-A; the move tab
-hint shows H/L under C-A-S. One focus hint shows H/L · K/J · 1..9 under A,
-and create hints read +pane, +column, +tab and +window.
-Copy/Paste and Open link stay in full Shortcuts, without footer hints.
+the tenth tab. The `mv pane` hint groups H/L and K/J under C-A; the `mv tab`
+hint shows H/L under C-A-S. One `focus` hint shows H/L · K/J · 1..9 under A,
+and create hints read `+pane`, `+col`, `+tab` and `+window`.
+Copy/Paste, Open link, and the Alt+G and Alt+Shift+G agent jumps stay in full
+Shortcuts, without footer hints.
 Full Shortcuts and screen-reader labels retain complete chords and action
 names. Narrow windows drop whole hints, keeping help and the visibility toggle
 longest; Alt+/ always opens the complete viewer.

@@ -601,18 +601,16 @@ pub(super) fn shortcut_hints_for(
             Action::ToggleInbox => ("inbox", 2),
             Action::ToggleHints => ("hints", 0),
             Action::ToggleSidebar => ("sidebar", 2),
-            Action::NextAttention => ("next agent", 2),
-            Action::PreviousAttention => ("previous agent", 3),
             Action::Focus(_) => ("focus", 1),
             Action::FocusTabPosition => ("focus", 3),
             Action::CreatePane => ("+pane", 1),
-            Action::CreateColumn => ("+column", 3),
+            Action::CreateColumn => ("+col", 3),
             Action::CreateTab => ("+tab", 1),
             Action::CloseTab => ("close tab", 3),
             Action::ClosePane => ("close pane", 3),
             Action::ToggleZoom => ("zoom", 3),
-            Action::Move(Left | Right) => ("move tab", 3),
-            Action::Move(Up | Down) | Action::MovePaneSideways(_) => ("move pane", 3),
+            Action::Move(Left | Right) => ("mv tab", 3),
+            Action::Move(Up | Down) | Action::MovePaneSideways(_) => ("mv pane", 3),
             Action::NewWindow => ("+window", 3),
             Action::Detach => ("detach", 2),
             Action::ReturnToTerminal if focus != WorkspaceFocus::Terminal => ("terminal", 0),
@@ -1202,13 +1200,11 @@ mod tests {
                         ),
                     bound
                 );
+                // The agent jumps stay in the viewer but leave the footer to save width.
                 for (label, short) in [
-                    ("Show the attention inbox", "inbox"),
-                    ("Jump to the next agent needing attention", "next agent"),
-                    (
-                        "Jump to the previous agent needing attention",
-                        "previous agent",
-                    ),
+                    ("Show the attention inbox", Some("inbox")),
+                    ("Jump to the next agent needing attention", None),
+                    ("Jump to the previous agent needing attention", None),
                 ] {
                     assert!(
                         shortcut_groups_for(platform, &entries, sidebar)
@@ -1216,13 +1212,11 @@ mod tests {
                             .flat_map(|group| &group.rows)
                             .any(|row| row.action == label)
                     );
-                    assert!(
+                    let hint =
                         shortcut_hints_for(platform, WorkspaceFocus::Terminal, &entries, sidebar)
-                            .iter()
-                            .any(
-                                |hint| hint.label == short && hint.accessible_label.contains(label)
-                            )
-                    );
+                            .into_iter()
+                            .find(|hint| hint.accessible_label.contains(label));
+                    assert_eq!(hint.map(|hint| hint.label), short.map(String::from));
                 }
             }
             for action in [
@@ -1291,11 +1285,11 @@ mod tests {
                     .filter(|hint| hint.label == label)
                     .collect::<Vec<_>>()
             };
-            let panes = hints_labeled("move pane");
+            let panes = hints_labeled("mv pane");
             assert_eq!(panes.len(), 1);
             assert_eq!(panes[0].modifiers, "C-A");
             assert_eq!(panes[0].key, "H/L · K/J");
-            let tabs = hints_labeled("move tab");
+            let tabs = hints_labeled("mv tab");
             assert_eq!(tabs.len(), 1);
             assert_eq!(tabs[0].modifiers, "C-A-S");
             assert_eq!(tabs[0].key, "H/L");
@@ -1322,7 +1316,7 @@ mod tests {
                     .iter()
                     .any(|hint| hint.label == "focus" && hint.key == "H/L · K/J · 1..9")
             );
-            for label in ["+pane", "+column", "+tab", "+window"] {
+            for label in ["+pane", "+col", "+tab", "+window"] {
                 assert_eq!(hints_labeled(label).len(), 1);
             }
             let mut labels = terminal.iter().map(|hint| &hint.label).collect::<Vec<_>>();
@@ -1384,6 +1378,8 @@ mod tests {
                         | NativeShortcutAction::Copy
                         | NativeShortcutAction::Paste
                         | NativeShortcutAction::OpenLink
+                        | NativeShortcutAction::NextAttention
+                        | NativeShortcutAction::PreviousAttention
                 )
             }) {
                 let chord = shortcut.trigger.display_label_for(platform);
@@ -1420,6 +1416,8 @@ mod tests {
                 popup("git", ALT, "KeyG"),
                 popup("inbox", ALT, "KeyQ"),
                 popup("next", CTRL, "Tab"),
+                // Takes Alt+D only; Alt+Shift+D still detaches.
+                popup("dir", ALT, "KeyD"),
                 // Runtime rejects these; Venus still keeps the reserved bindings.
                 popup("viewer", ALT, "Slash"),
                 popup("third", ALT, "Digit3"),
@@ -1490,7 +1488,6 @@ mod tests {
                 "Show the attention inbox",
                 "Open new Eon window",
                 "Show or hide shortcut hints",
-                "Jump to the next agent needing attention",
             ] {
                 assert!(
                     hints
@@ -1500,7 +1497,7 @@ mod tests {
             }
             for kept in [
                 "Show or close shortcuts",
-                "Jump to the previous agent needing attention",
+                "Detach: close the window, keep terminals running",
             ] {
                 assert!(
                     hints
