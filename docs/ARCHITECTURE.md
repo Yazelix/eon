@@ -39,8 +39,9 @@ terminal product as **eonbase**. Their only command spellings are `eon` and
 panes around a launch directory and arranges them in up to four side-by-side
 **columns**, each a vertical stack with one expanded pane; a pane is a view of
 a persistent **terminal**.
-Orbit owns that terminal's process, PTY and terminal state. Closing its window
-detaches the view; explicitly stopping it ends the terminal.
+Orbit owns that terminal's process, PTY and terminal state. Detaching its window
+(Alt+Shift+D) keeps the terminal; closing the window or explicitly stopping it
+ends the terminal.
 Under planned [EON-C33](CONTRACTS.md#eon-c33--several-workspaces-in-one-window),
 an Eon **window** holds one or more workspaces and shows one at a time;
 switching the shown workspace keeps every terminal running. A workspace may

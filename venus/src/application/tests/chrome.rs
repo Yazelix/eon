@@ -950,3 +950,16 @@ fn a_second_enter_reaches_nothing_while_a_stop_is_in_flight() {
     assert!(!input.consumes_shortcut(enter, ElementState::Pressed, false, held(quit)));
     assert!(!input.consumes_shortcut(enter, ElementState::Released, false, held(quit)));
 }
+
+#[test]
+fn a_close_request_quits_where_alt_shift_q_does() {
+    let snapshot = quit_snapshot();
+    assert_eq!(close_request(Some(&snapshot), false), CloseRequest::Quit);
+    // An unavailable workspace cannot answer a Stop, so the close detaches.
+    assert_eq!(close_request(Some(&snapshot), true), CloseRequest::Detach);
+    // eonbase has no Quit, and a window without a snapshot cannot quit: both detach.
+    let mut eonbase = snapshot;
+    eonbase.running = None;
+    assert_eq!(close_request(Some(&eonbase), false), CloseRequest::Detach);
+    assert_eq!(close_request(None, false), CloseRequest::Detach);
+}

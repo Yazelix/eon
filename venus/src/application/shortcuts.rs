@@ -315,7 +315,7 @@ pub(super) static FIXED_SHORTCUTS: &[NativeShortcut] = &[
     ),
     NativeShortcut::key(
         "Host",
-        "Detach: close the window, keep terminals running",
+        "Detach: hide the window, keep terminals running",
         KeyCode::KeyD,
         ALT_SHIFT,
         NativeShortcutAction::Detach,
@@ -1541,7 +1541,7 @@ mod tests {
             }
             for kept in [
                 "Show or close shortcuts",
-                "Detach: close the window, keep terminals running",
+                "Detach: hide the window, keep terminals running",
             ] {
                 assert!(
                     hints

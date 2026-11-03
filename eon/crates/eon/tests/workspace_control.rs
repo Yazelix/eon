@@ -5460,8 +5460,7 @@ fn a_workspace_final_close_shows_the_recent_one_and_attach_keeps_it() {
     let orbit = root.join("orbit");
     let venus = root.join("venus");
     managed_orbit_executable(&orbit);
-    // Each Venus keeps its input. Told to detach, it exits 0, as Venus does when its window
-    // closes.
+    // Each Venus keeps its input. Told to detach, it exits 0, as Venus does on Alt+Shift+D.
     executable(
         &venus,
         "#!/bin/sh\nprintf '%s\\n' \"$$\" >> \"$EON_TEST_VENUS_PIDS\"\nexec 3<&0\n(cat <&3 > \"$EON_TEST_VENUS_INPUT.$$\"; touch \"$EON_TEST_VENUS_INPUT.$$.eof\") &\nprintf ready-v1\nwhile test ! -e \"$EON_TEST_VENUS_INPUT.$$.detach\" && test ! -e \"$EON_TEST_VENUS_INPUT.$$.eof\"; do sleep 0.01; done\n",

@@ -1109,7 +1109,7 @@ fn help_text(version: &str, color: bool) -> String {
 {sections}
 {heading}Examples{reset}
 {examples}
-Closing a window detaches; eon quit ends it.
+Alt+Shift+D detaches a window; closing it or eon quit ends it.
 Inside Eon, workspace commands use the calling terminal's supervisor/workspace.
 Tab move and pane commands retain their calling-tab rules.
 Workspace flags: --generation GENERATION / --window ID, before any --.

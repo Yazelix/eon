@@ -734,10 +734,12 @@ re-proved when that platform or feature is next touched.
     description "Press Enter to close it" where it otherwise reads "Press
     Enter to quit". Runtime decides whether the sent close ends the window or
     removes the workspace. When the argument is false, the close is sent at
-    once. Alt+Shift+D is a
-    non-repeating key that detaches by the same path as a compositor close
-    request (VEN-C14). Alt+Shift+Q is a non-repeating key that quits the
-    window under EON-C8 while the snapshot carries a running-windows summary.
+    once. Alt+Shift+D is a non-repeating key that detaches (VEN-C14).
+    Alt+Shift+Q is a non-repeating key that quits the window under EON-C8
+    while the snapshot carries a running-windows summary. A compositor close
+    request acts as Alt+Shift+Q, and detaches without a running-windows
+    summary, while the workspace is unavailable, and while it refuses refreshes
+    after a failed Stop.
     While the snapshot's `busy` lists a terminal, or is absent, Venus first
     shows the EON-C8 quit prompt, which shares the final-close prompt's owner,
     key answers, scrolling, Alt+Shift+D mapping, self-closing on workspace
@@ -1011,8 +1013,10 @@ re-proved when that platform or feature is next touched.
 - **Result:** Present preserves process and terminal attachment while requesting
   presentation of the existing native window; control loss exits through the
   native event loop, releases attachments, and leaves Orbit live; replacement
-  may retry transient Busy while the old client releases. Alt+Shift+D and the
-  compositor close request both detach; an EONW `Ended` reply, which answers a
+  may retry transient Busy while the old client releases. Alt+Shift+D
+  detaches, and a compositor close request quits under VEN-C8, including one
+  a desktop sends to each window at logout; an EONW `Ended` reply, which
+  answers a
   close that stopped the window's last terminal, and the `Stopped` reply to
   its Quit each exit like control loss,
   leaving no Orbit terminal of that generation.
@@ -1301,7 +1305,7 @@ re-proved when that platform or feature is next touched.
   action; matching releases remain captured and prior terminal/chrome focus is
   restored on dismissal. The title, subtitle, and first group heading occupy
   separate readable vertical space. The fixed bindings include Alt+Shift+D,
-  listed as "Detach: close the window, keep terminals running", and
+  listed as "Detach: hide the window, keep terminals running", and
   Alt+Shift+Q, listed as "Quit: close the window, stop its terminals" and
   omitted without a running-windows summary, and
   Alt+Shift+H, listed as "Show or hide the agent sidebar" (VEN-C30) and

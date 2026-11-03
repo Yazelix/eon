@@ -72,7 +72,7 @@ the workspace, by name or `wN`, and its footer reads `Enter Close`.
 | Alt+W | Close the selected pane; the final tab's last pane quits the window, or closes the workspace while others remain |
 | Alt+Shift+W | Close the active tab; closing the final tab quits the window, or closes the workspace while others remain |
 | Alt+Shift+N | Open an independent Eon window when supervised by Eon |
-| Alt+Shift+D | Detach: close the window, keep terminals running |
+| Alt+Shift+D | Detach: hide the window, keep terminals running |
 | Alt+Shift+Q | Quit: close the window, stop its terminals; asks first while a terminal is busy, and is absent without Eon's running-windows summary |
 | Alt+Z | Open Project; Eon supplies other popup shortcuts |
 | Alt+/ | Open or close Shortcuts |
@@ -80,6 +80,16 @@ the workspace, by name or `wN`, and its footer reads `Enter Close`.
 | Alt+Shift+H | Show or hide the agent sidebar, unless Eon turned it off |
 | Alt+Q | Open or close the attention inbox under every sidebar setting |
 | Alt+G / Alt+Shift+G | Send `NextAttention` or `PreviousAttention`, even with the sidebar off |
+
+A compositor close request (the desktop's close-window key or the window's
+close button) acts as Alt+Shift+Q, prompt included; another close request while
+the quit prompt or the final-close prompt is open leaves that prompt to answer.
+The quit prompt takes the place of an open attention inbox or Shortcuts viewer.
+Without Eon's running-windows summary, while Eon is unreachable, or while it
+refuses refreshes after a failed Stop, a close request detaches as Alt+Shift+D
+does. A close request carries no reason, so a desktop that closes each window
+at logout, such as KDE Plasma, gets the same quit; Alt+Shift+D before logging
+out keeps the terminals there.
 
 In the attention inbox, Left/Right cycle All, Needs input, Error and Finished;
 Up/Down highlight a row. Enter, Space or a row click sends that row's

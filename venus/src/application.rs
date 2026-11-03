@@ -617,6 +617,29 @@ fn quit_asks(snapshot: &eon_workspace_protocol::v29::Snapshot) -> bool {
         .is_none_or(|busy| !busy.terminals.is_empty() || busy.omitted > 0)
 }
 
+/// What a compositor close request does (EON-C8).
+#[derive(Debug, PartialEq)]
+enum CloseRequest {
+    /// Quit this window as Alt+Shift+Q does, prompt included.
+    Quit,
+    /// Detach as Alt+Shift+D does.
+    Detach,
+}
+
+/// The one place a close request chooses between quitting and detaching: a window that can
+/// quit does, and one without a running-windows summary (eonbase), without a snapshot yet, or
+/// while the workspace is unavailable, detaches.
+fn close_request(
+    snapshot: Option<&eon_workspace_protocol::v29::Snapshot>,
+    unavailable: bool,
+) -> CloseRequest {
+    if !unavailable && snapshot.is_some_and(|snapshot| snapshot.running.is_some()) {
+        CloseRequest::Quit
+    } else {
+        CloseRequest::Detach
+    }
+}
+
 /// Whether an open quit prompt words `next` differently from `current`.
 fn quit_prompt_changed(
     current: &eon_workspace_protocol::v29::Snapshot,
@@ -1603,7 +1626,7 @@ impl Application {
         self.refresh_client_view();
     }
 
-    /// Alt+Shift+D detaches from any workspace state, as a compositor close request does.
+    /// Alt+Shift+D detaches from any workspace state (VEN-C14).
     fn handle_detach_key(&mut self, event_loop: &ActiveEventLoop, event: &ShortcutKey) -> bool {
         let detaches = self.workspace_model.snapshot().is_some()
             && native_key_shortcut(
@@ -1692,7 +1715,16 @@ impl Application {
 
     fn take_quit_step(&mut self, step: Option<QuitStep>) {
         match step {
+            // A close request, or a pending quit's snapshot, can arrive while the attention inbox
+            // or Shortcuts is open; the prompt takes their place in one dialog change, so it is
+            // the dialog shown and the one that answers keys, and the terminal keeps no focus.
             Some(QuitStep::Ask) if self.close_prompt.is_none() => self.change_dialog(|app| {
+                if app.attention_inbox.open {
+                    app.attention_inbox = AttentionInboxState::default();
+                    app.presentation.invalidate();
+                }
+                app.shortcut_viewer.open = false;
+                app.shortcut_viewer.scroll = 0.0;
                 app.close_prompt = Some(ClosePrompt {
                     target: PromptTarget::QuitWindow,
                     scroll: 0.0,
@@ -4325,7 +4357,16 @@ impl ApplicationHandler<UserEvent> for Application {
         state.adapter.process_event(&state.window, &event);
 
         match event {
-            WindowEvent::CloseRequested | WindowEvent::Destroyed => event_loop.exit(),
+            WindowEvent::CloseRequested => match close_request(
+                self.workspace_model.snapshot(),
+                self.workspace_model.unavailable(),
+            ) {
+                // An open prompt owns the answer: Enter, Esc or Alt+Shift+D.
+                CloseRequest::Quit if self.close_prompt.is_some() => {}
+                CloseRequest::Quit => self.begin_quit(),
+                CloseRequest::Detach => event_loop.exit(),
+            },
+            WindowEvent::Destroyed => event_loop.exit(),
             WindowEvent::Resized(size) => {
                 self.next_animation = None;
                 self.input.reset_scroll();

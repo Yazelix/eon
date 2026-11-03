@@ -54,11 +54,20 @@ A terminal starts after choosing a directory or dismissing the picker. Closing t
 tab quits the window and stops its terminals; in a window with several
 workspaces, it closes only that workspace. By default Eon asks first, listing the
 terminals that stop, and the question names the workspace while others remain.
-Closing the Eon window instead detaches the desktop without stopping its
-terminals or PTY commands. Alt+Shift+D does the same from the keyboard. Each
-time, on Linux, Eon shows a desktop notification naming the window and how many
-terminals still run, with a Quit button where the desktop supports notification
-actions. Quit asks first and then stops them. Reconnect with:
+Closing the Eon window, with the desktop's close-window key or the window's
+close button, quits it as Alt+Shift+Q does (see
+[Stop terminals](#stop-terminals)). To leave its terminals and PTY commands
+running instead, press Alt+Shift+D: it detaches the desktop without asking. Each time, on Linux, Eon shows a desktop
+notification naming the window and how many terminals still run, with a Quit
+button where the desktop supports notification actions. Quit asks first and
+then stops them. An eonbase window has no Quit, so closing it detaches; so does
+closing a window whose supervisor does not answer, or that failed to stop.
+Logging out detaches the window on a desktop that ends the session without
+closing windows first, such as GNOME or COSMIC. A desktop that closes each
+window at logout, such as KDE Plasma, quits an idle Eon window instead and
+shows the prompt on a busy one; there, press Alt+Shift+D before logging out to
+keep its terminals.
+Reconnect with:
 
 ```sh
 eon attach
@@ -80,15 +89,17 @@ eon stop all
 ```
 
 `eon stop` shows the generation's live terminal identities and asks for
-confirmation. Closing a window is therefore detach; stopping a generation ends
-its terminals. To end the window you are in, run `eon quit` in any of its
-terminals, press Alt+Shift+Q, or open Commands (Alt+Shift+M) and choose Quit
-this window, which runs it. It stops only that window. It asks first only
+confirmation. Detaching a window keeps its terminals; stopping a generation
+ends them. To end the window you are in, run `eon quit` in any of its
+terminals, press Alt+Shift+Q or close the window, or open Commands
+(Alt+Shift+M) and choose Quit this window, which runs it. It stops only that
+window. It asks first only
 while another of its terminals runs something other than its idle shell, and
 names those terminals, as in `Quit this window? It stops 3 terminals; 1 still
 running: p2  cargo build. [y/N]`; while nothing runs it quits without asking.
-Alt+Shift+Q follows the same rule with a prompt in the window that names the
-busy terminals: Enter quits, Esc cancels, and Alt+Shift+D detaches instead. A
+Alt+Shift+Q and closing the window follow the same rule with a prompt in the
+window that names the busy terminals: Enter quits, Esc cancels, and
+Alt+Shift+D detaches instead; closing again leaves the prompt open. A
 terminal started for an explicit command, such as `pane create -- COMMAND`,
 counts as running, and so does the Agent popup; the Files and Git popups
 never do. Eon does not see a shell builtin or a background job of an idle
@@ -165,7 +176,7 @@ one, and clicking another column's terminal selects it.
 | Alt+W | Close the selected pane, stopping its terminal; the final tab's last pane quits the window, or closes the workspace while others remain |
 | Alt+Shift+W | Close the active tab; closing the final tab quits the window, or closes the workspace while others remain |
 | Alt+Shift+N | Open an independent Eon window (also the desktop launcher's **New Eon Window** action) |
-| Alt+Shift+D | Detach: close the window, keep terminals running |
+| Alt+Shift+D | Detach: hide the window, keep terminals running |
 | Alt+Shift+Q | Quit this window, stopping its terminals; asks first while one runs something |
 | Alt+Z | Open the tab's Project directory picker |
 | Alt+Shift+J | Open or hide the tab's Git popup |
@@ -783,9 +794,8 @@ such an agent shell, command panes, popups and the Editor lose it. Set it in
 your shell configuration, or in the command itself (`env PAGER=cat COMMAND`),
 to keep it. Other variables the agent's shell set, such as
 `CLAUDE_CONFIG_DIR` and API keys, still reach Eon terminals. Only a
-supervisor started after you update Eon removes these names; closing and
-reopening a window, reattaching it, or recovering it keeps the old
-environment.
+supervisor started after you update Eon removes these names; detaching and
+reattaching a window, or recovering it, keeps the old environment.
 
 ### Accelerando glyphs
 
@@ -827,8 +837,9 @@ composition.
   fetches only external inputs; Orbit, Venus and Eon Runtime build
   from this repository.
 - **A workspace command reports a missing supervisor:** run `eon`, then retry.
-- **The window closed but commands remain:** this is detach behavior. Use
-  `eon attach` to return, or `eon quit` or the notification's Quit to end them.
+- **The window closed but commands remain:** this is detach behavior
+  (Alt+Shift+D, an eonbase window's close, or a lost window). Use `eon attach`
+  to return, or `eon quit` or the notification's Quit to end them.
 - **A window closed on its own:** each Eon or eonbase supervisor keeps a log
   in `$XDG_STATE_HOME/eon/logs` (`~/.local/state/eon/logs` by default), named
   `GENERATION-SECONDS-PID.log`. It records when the window started and how it

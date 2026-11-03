@@ -1549,107 +1549,314 @@ fn orbit_focus_requires_window_and_terminal_focus() {
 #[cfg(target_os = "linux")]
 #[ignore = "requires an isolated native Wayland display and Vulkan renderer"]
 fn quit_prompt_refreshes_and_a_stop_in_flight_holds_enter() {
+    use eon_workspace_protocol::v29::{self as workspace, BusyTerminals};
+    use winit::keyboard::ModifiersState;
+
+    run_quit_probe("quit", |app, event_loop, busy, actions, _| {
+        let described = |app: &Application| app.window.as_ref().unwrap().accessibility.dialog();
+        // Alt+Shift+Q opens the quit prompt while p1 is busy.
+        app.input
+            .set_modifiers(ModifiersState::ALT | ModifiersState::SHIFT);
+        assert!(press_shortcut(app, event_loop, KeyCode::KeyQ));
+        assert!(release_shortcut(app, event_loop, KeyCode::KeyQ));
+        app.input.set_modifiers(ModifiersState::empty());
+        assert!(quit_prompt_open(app));
+        let asked = described(app);
+        assert_eq!(asked, app.dialog_scene());
+
+        // p1's command ends: only `busy` changes, and the prompt is drawn and described again.
+        let generation = app.presentation.generation;
+        let mut idle = busy.clone();
+        idle.busy = Some(BusyTerminals {
+            terminals: vec![],
+            omitted: 0,
+        });
+        app.handle_workspace(WorkspaceEvent::Response(workspace::Response::Snapshot(
+            idle,
+        )));
+        assert!(
+            app.presentation.generation > generation,
+            "the prompt is redrawn"
+        );
+        assert_ne!(described(app), asked);
+        assert_eq!(
+            described(app),
+            app.dialog_scene(),
+            "AccessKit reads the new prompt"
+        );
+
+        // Enter sends one Stop for this generation.
+        assert!(press_shortcut(app, event_loop, KeyCode::Enter));
+        assert!(release_shortcut(app, event_loop, KeyCode::Enter));
+        assert!(app.close_prompt.is_none());
+        let QuitProgress::Stopping(ticket) = app.quit else {
+            panic!("Enter queues the Stop");
+        };
+        assert_eq!(actions.recv_timeout(Duration::from_secs(5)), Ok(stop_g7()));
+        // While it is in flight, another Enter is taken by the shortcut chain, so it reaches
+        // no terminal, and sends no second Stop.
+        assert!(press_shortcut(app, event_loop, KeyCode::Enter));
+        assert!(release_shortcut(app, event_loop, KeyCode::Enter));
+        assert_eq!(app.quit, QuitProgress::Stopping(ticket));
+        assert!(actions.recv_timeout(Duration::from_millis(750)).is_err());
+        // Alt+Shift+D still detaches.
+        app.input
+            .set_modifiers(ModifiersState::ALT | ModifiersState::SHIFT);
+        assert!(press_shortcut(app, event_loop, KeyCode::KeyD));
+        assert!(event_loop.exiting());
+    });
+}
+
+#[test]
+#[cfg(target_os = "linux")]
+#[ignore = "requires an isolated native Wayland display and Vulkan renderer"]
+fn a_close_request_quits_as_alt_shift_q_does() {
+    use eon_workspace_protocol::v29::{self as workspace, BusyTerminals};
+
+    run_quit_probe("close", |app, event_loop, busy, actions, terminal| {
+        let id = app.window.as_ref().unwrap().window.id();
+        let close = |app: &mut Application| {
+            app.window_event(event_loop, id, WindowEvent::CloseRequested);
+        };
+        let show = |app: &mut Application, snapshot: &workspace::Snapshot| {
+            app.handle_workspace(WorkspaceEvent::Response(workspace::Response::Snapshot(
+                snapshot.clone(),
+            )));
+        };
+
+        let escape = |app: &mut Application| {
+            assert!(press_shortcut(app, event_loop, KeyCode::Escape));
+            assert!(release_shortcut(app, event_loop, KeyCode::Escape));
+        };
+        let mut idle = busy.clone();
+        idle.busy = Some(BusyTerminals {
+            terminals: vec![],
+            omitted: 0,
+        });
+
+        // While p1 is busy, a close request opens the quit prompt and the window stays.
+        close(app);
+        assert!(quit_prompt_shown(app));
+        assert!(!event_loop.exiting());
+        // A second close request leaves the prompt open.
+        close(app);
+        assert!(quit_prompt_shown(app));
+        // p1's command ends while the prompt is open: the prompt still owns the answer, so
+        // another close and the snapshots after it send no Stop without Enter.
+        show(app, &idle);
+        close(app);
+        show(app, &idle);
+        assert!(quit_prompt_shown(app));
+        assert_eq!(app.quit, QuitProgress::Idle);
+        assert!(actions.recv_timeout(Duration::from_millis(750)).is_err());
+        assert!(!event_loop.exiting());
+        // Esc cancels, stopping nothing.
+        escape(app);
+        assert!(app.close_prompt.is_none());
+        assert_eq!(app.dialog_scene(), None);
+        assert!(actions.recv_timeout(Duration::from_millis(750)).is_err());
+
+        // A close request over the attention inbox or Shortcuts shows the quit prompt in its
+        // place, and Esc answers the prompt. The dialog changes once, so the attached terminal
+        // never regains focus in between.
+        show(app, &busy);
+        app.handle_transport(TransportEvent::Server(ServerMessage::Attached));
+        app.window_event(event_loop, id, WindowEvent::Focused(true));
+        terminal_focus(terminal);
+        app.set_attention_inbox(true);
+        assert_eq!(terminal_focus(terminal), [session::FocusEvent::Lost]);
+        close(app);
+        assert!(!app.attention_inbox.open);
+        assert!(quit_prompt_shown(app));
+        assert!(terminal_focus(terminal).is_empty(), "no focus-in between");
+        escape(app);
+        assert_eq!(app.dialog_scene(), None);
+        assert_eq!(terminal_focus(terminal), [session::FocusEvent::Gained]);
+        app.set_shortcut_viewer(true);
+        close(app);
+        assert!(!app.shortcut_viewer.open);
+        assert!(quit_prompt_shown(app));
+        escape(app);
+        assert_eq!(app.dialog_scene(), None);
+        assert!(actions.recv_timeout(Duration::from_millis(750)).is_err());
+
+        // While every terminal is idle, a close request quits without asking once the next
+        // snapshot confirms it, and the window stays until the Stop is answered.
+        show(app, &idle);
+        close(app);
+        assert_eq!(app.quit, QuitProgress::Pending);
+        show(app, &idle);
+        assert!(app.close_prompt.is_none());
+        let QuitProgress::Stopping(ticket) = app.quit else {
+            panic!("the close request queues the Stop");
+        };
+        assert_eq!(actions.recv_timeout(Duration::from_secs(5)), Ok(stop_g7()));
+        assert!(!event_loop.exiting());
+
+        // The Stop fails; without a running-windows summary (eonbase) a close request detaches.
+        app.handle_workspace(WorkspaceEvent::Answered {
+            ticket,
+            accepted: false,
+        });
+        let mut eonbase = idle;
+        eonbase.running = None;
+        show(app, &eonbase);
+        close(app);
+        assert!(event_loop.exiting());
+        assert!(actions.recv_timeout(Duration::from_millis(750)).is_err());
+    });
+}
+
+#[test]
+#[cfg(target_os = "linux")]
+#[ignore = "requires an isolated native Wayland display and Vulkan renderer"]
+fn a_close_request_detaches_while_the_workspace_is_unavailable() {
+    run_quit_probe("unavailable", |app, event_loop, _, actions, _| {
+        let id = app.window.as_ref().unwrap().window.id();
+        app.handle_workspace(WorkspaceEvent::Unavailable("gone".into()));
+        app.window_event(event_loop, id, WindowEvent::CloseRequested);
+        assert!(event_loop.exiting());
+        assert!(app.close_prompt.is_none());
+        assert!(actions.recv_timeout(Duration::from_millis(750)).is_err());
+    });
+}
+
+#[test]
+#[cfg(target_os = "linux")]
+#[ignore = "requires an isolated native Wayland display and Vulkan renderer"]
+fn a_close_request_detaches_after_a_failed_stop() {
+    use eon_workspace_protocol::v29::{self as workspace, BusyTerminals};
+
+    run_quit_probe("failed-stop", |app, event_loop, busy, actions, _| {
+        let id = app.window.as_ref().unwrap().window.id();
+        let mut idle = busy;
+        idle.busy = Some(BusyTerminals {
+            terminals: vec![],
+            omitted: 0,
+        });
+        let show = |app: &mut Application, response: workspace::Response| {
+            app.handle_workspace(WorkspaceEvent::Response(response));
+        };
+        show(app, workspace::Response::Snapshot(idle.clone()));
+        app.window_event(event_loop, id, WindowEvent::CloseRequested);
+        show(app, workspace::Response::Snapshot(idle));
+        let QuitProgress::Stopping(ticket) = app.quit else {
+            panic!("the close request queues the Stop");
+        };
+        assert_eq!(actions.recv_timeout(Duration::from_secs(5)), Ok(stop_g7()));
+        // The Stop fails, and Eon refuses every refresh until a Stop completes: another close
+        // detaches instead of sending the failing Stop again.
+        app.handle_workspace(WorkspaceEvent::Answered {
+            ticket,
+            accepted: false,
+        });
+        show(
+            app,
+            workspace::Response::Failure(workspace::Failure {
+                code: "stop-incomplete".into(),
+                detail: "generation cleanup is incomplete; retry Stop".into(),
+            }),
+        );
+        assert!(!event_loop.exiting());
+        app.window_event(event_loop, id, WindowEvent::CloseRequested);
+        assert!(event_loop.exiting());
+        assert!(actions.recv_timeout(Duration::from_millis(750)).is_err());
+    });
+}
+
+/// The focus changes Venus reported to the attached terminal since the last call.
+#[cfg(target_os = "linux")]
+fn terminal_focus(terminal: &std::sync::mpsc::Receiver<ClientMessage>) -> Vec<session::FocusEvent> {
+    std::iter::from_fn(|| terminal.recv_timeout(Duration::from_millis(300)).ok())
+        .filter_map(|message| match message {
+            ClientMessage::Focus(event) => Some(event),
+            _ => None,
+        })
+        .collect()
+}
+
+#[cfg(target_os = "linux")]
+fn stop_g7() -> WorkspaceAction {
+    WorkspaceAction::Workspace(CommonAction::Stop {
+        generation: "g7".into(),
+    })
+}
+
+/// Whether the quit prompt is the dialog shown, and AccessKit describes it. The attention inbox
+/// draws over every other dialog and has filter chips; the prompt draws over Shortcuts.
+#[cfg(target_os = "linux")]
+fn quit_prompt_shown(app: &Application) -> bool {
+    let shown = app.dialog_scene();
+    quit_prompt_open(app)
+        && !app.attention_inbox.open
+        && shown
+            .as_ref()
+            .is_some_and(|dialog| dialog.filters.is_empty())
+        && app.window.as_ref().unwrap().accessibility.dialog() == shown
+}
+
+#[cfg(target_os = "linux")]
+fn quit_prompt_open(app: &Application) -> bool {
+    app.close_prompt
+        .as_ref()
+        .is_some_and(|prompt| matches!(prompt.target, PromptTarget::QuitWindow))
+}
+
+/// Drives the production shortcut chain, as winit's key events do.
+#[cfg(target_os = "linux")]
+fn press_shortcut(app: &mut Application, event_loop: &ActiveEventLoop, code: KeyCode) -> bool {
+    app.handle_shortcut_key(
+        event_loop,
+        &ShortcutKey {
+            physical_key: PhysicalKey::Code(code),
+            state: ElementState::Pressed,
+            repeat: false,
+        },
+    )
+}
+
+#[cfg(target_os = "linux")]
+fn release_shortcut(app: &mut Application, event_loop: &ActiveEventLoop, code: KeyCode) -> bool {
+    app.handle_shortcut_key(
+        event_loop,
+        &ShortcutKey {
+            physical_key: PhysicalKey::Code(code),
+            state: ElementState::Released,
+            repeat: false,
+        },
+    )
+}
+
+/// What a quit probe checks once the window is presented with the busy snapshot: the app,
+/// its event loop, that snapshot, every action but Inspect that Venus sent, and every message
+/// Venus sent its Orbit attachment.
+#[cfg(target_os = "linux")]
+type QuitCheck = fn(
+    &mut Application,
+    &ActiveEventLoop,
+    eon_workspace_protocol::v29::Snapshot,
+    &std::sync::mpsc::Receiver<WorkspaceAction>,
+    &std::sync::mpsc::Receiver<ClientMessage>,
+);
+
+/// Opens a native window on a recorded workspace whose snapshot has running window g7, with
+/// p1 busy, and runs `check` once the window is presented. The check must end the event loop.
+#[cfg(target_os = "linux")]
+fn run_quit_probe(name: &str, check: QuitCheck) {
     use eon_workspace_protocol::v29::{
         self as workspace, BusyTerminal, BusyTerminals, RunningWindows, TargetId, TerminalTarget,
         WindowEntry, WindowState,
     };
     use std::{os::unix::net::UnixListener, sync::mpsc};
-    use winit::{keyboard::ModifiersState, platform::wayland::EventLoopBuilderExtWayland};
+    use winit::platform::wayland::EventLoopBuilderExtWayland;
 
     struct Probe {
         app: Application,
         busy: workspace::Snapshot,
         actions: mpsc::Receiver<WorkspaceAction>,
+        terminal: mpsc::Receiver<ClientMessage>,
+        check: QuitCheck,
         checked: bool,
-    }
-    impl Probe {
-        /// Drives the production shortcut chain and workspace handling, as winit's key and
-        /// workspace events do.
-        fn check(&mut self, event_loop: &ActiveEventLoop) {
-            let app = &mut self.app;
-            let key = |code, state| ShortcutKey {
-                physical_key: PhysicalKey::Code(code),
-                state,
-                repeat: false,
-            };
-            let press = |app: &mut Application, code| {
-                app.handle_shortcut_key(event_loop, &key(code, ElementState::Pressed))
-            };
-            let release = |app: &mut Application, code| {
-                app.handle_shortcut_key(event_loop, &key(code, ElementState::Released))
-            };
-            let described = |app: &Application| app.window.as_ref().unwrap().accessibility.dialog();
-            app.handle_workspace(WorkspaceEvent::Response(workspace::Response::Snapshot(
-                self.busy.clone(),
-            )));
-            app.render();
-            assert!(app.presentation.has_presented_geometry());
-
-            // Alt+Shift+Q opens the quit prompt while p1 is busy.
-            app.input
-                .set_modifiers(ModifiersState::ALT | ModifiersState::SHIFT);
-            assert!(press(app, KeyCode::KeyQ));
-            assert!(release(app, KeyCode::KeyQ));
-            app.input.set_modifiers(ModifiersState::empty());
-            assert!(
-                app.close_prompt
-                    .as_ref()
-                    .is_some_and(|prompt| matches!(prompt.target, PromptTarget::QuitWindow))
-            );
-            let asked = described(app);
-            assert_eq!(asked, app.dialog_scene());
-
-            // p1's command ends: only `busy` changes, and the prompt is drawn and described
-            // again.
-            let generation = app.presentation.generation;
-            let mut idle = self.busy.clone();
-            idle.busy = Some(BusyTerminals {
-                terminals: vec![],
-                omitted: 0,
-            });
-            app.handle_workspace(WorkspaceEvent::Response(workspace::Response::Snapshot(
-                idle,
-            )));
-            assert!(
-                app.presentation.generation > generation,
-                "the prompt is redrawn"
-            );
-            assert_ne!(described(app), asked);
-            assert_eq!(
-                described(app),
-                app.dialog_scene(),
-                "AccessKit reads the new prompt"
-            );
-
-            // Enter sends one Stop for this generation.
-            assert!(press(app, KeyCode::Enter));
-            assert!(release(app, KeyCode::Enter));
-            assert!(app.close_prompt.is_none());
-            let QuitProgress::Stopping(ticket) = app.quit else {
-                panic!("Enter queues the Stop");
-            };
-            assert_eq!(
-                self.actions.recv_timeout(Duration::from_secs(5)),
-                Ok(WorkspaceAction::Workspace(CommonAction::Stop {
-                    generation: "g7".into()
-                }))
-            );
-            // While it is in flight, another Enter is taken by the shortcut chain, so it
-            // reaches no terminal, and sends no second Stop.
-            assert!(press(app, KeyCode::Enter));
-            assert!(release(app, KeyCode::Enter));
-            assert_eq!(app.quit, QuitProgress::Stopping(ticket));
-            assert!(
-                self.actions
-                    .recv_timeout(Duration::from_millis(750))
-                    .is_err()
-            );
-            // Alt+Shift+D still detaches.
-            app.input
-                .set_modifiers(ModifiersState::ALT | ModifiersState::SHIFT);
-            assert!(press(app, KeyCode::KeyD));
-            self.checked = true;
-        }
     }
     impl ApplicationHandler<UserEvent> for Probe {
         fn resumed(&mut self, event_loop: &ActiveEventLoop) {
@@ -1668,12 +1875,25 @@ fn quit_prompt_refreshes_and_a_stop_in_flight_holds_enter() {
         fn about_to_wait(&mut self, event_loop: &ActiveEventLoop) {
             self.app.about_to_wait(event_loop);
             if !self.checked && !self.app.initial_scale_pending && self.app.window.is_some() {
-                self.check(event_loop);
+                let app = &mut self.app;
+                app.handle_workspace(WorkspaceEvent::Response(workspace::Response::Snapshot(
+                    self.busy.clone(),
+                )));
+                app.render();
+                assert!(app.presentation.has_presented_geometry());
+                (self.check)(
+                    app,
+                    event_loop,
+                    self.busy.clone(),
+                    &self.actions,
+                    &self.terminal,
+                );
+                self.checked = true;
             }
         }
     }
 
-    let root = std::env::temp_dir().join(format!("venus-quit-{}", std::process::id()));
+    let root = std::env::temp_dir().join(format!("venus-{name}-{}", std::process::id()));
     std::fs::create_dir_all(&root).unwrap();
     let workspace_socket = root.join("workspace.sock");
     let listener = UnixListener::bind(&workspace_socket).unwrap();
@@ -1702,6 +1922,39 @@ fn quit_prompt_refreshes_and_a_stop_in_flight_holds_enter() {
             {
                 return;
             }
+        }
+    });
+    // The busy snapshot's p1 endpoint, which Venus attaches to; its messages are recorded.
+    let orbit = UnixListener::bind(root.join("p1.sock")).unwrap();
+    let (terminal_sender, terminal) = mpsc::channel();
+    thread::spawn(move || {
+        for stream in orbit.incoming() {
+            let Ok(mut stream) = stream else { return };
+            let sender = terminal_sender.clone();
+            thread::spawn(move || {
+                loop {
+                    let mut header = [0; session::HEADER_BYTES];
+                    if stream.read_exact(&mut header).is_err() {
+                        return;
+                    }
+                    let Ok(Some(len)) = session::client_message_len(&header) else {
+                        return;
+                    };
+                    let mut bytes = Vec::from(header);
+                    bytes.resize(len, 0);
+                    if stream
+                        .read_exact(&mut bytes[session::HEADER_BYTES..])
+                        .is_err()
+                    {
+                        return;
+                    }
+                    if let Ok(message) = session::decode_client_message(&bytes)
+                        && sender.send(message).is_err()
+                    {
+                        return;
+                    }
+                }
+            });
         }
     });
     let busy = workspace::Snapshot {
@@ -1793,6 +2046,8 @@ fn quit_prompt_refreshes_and_a_stop_in_flight_holds_enter() {
         app,
         busy,
         actions,
+        terminal,
+        check,
         checked: false,
     };
     let proxy = event_loop.create_proxy();

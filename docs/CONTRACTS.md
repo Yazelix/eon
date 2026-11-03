@@ -564,9 +564,17 @@ socket names, JSON fields and protocol identifiers retain their spellings.
     stays. When the setting is false, a final close happens at once.
     Venus receives the setting as a launch argument (VEN-C8).
     Venus maps Alt+Shift+W directly to this stable-target action; lowercase
-    Ctrl+W remains terminal input. Closing the window itself, or
-    Alt+Shift+D, detaches every workspace together without asking; attach
-    then shows the last shown workspace (EON-C11).
+    Ctrl+W remains terminal input. Alt+Shift+D detaches every workspace
+    together without asking; attach then shows the last shown workspace
+    (EON-C11). Closing the window itself quits it as Alt+Shift+Q does, prompt
+    included, and a close request while the quit prompt is open leaves it
+    open; where there is no Quit key (eonbase), while the workspace is
+    unavailable, or while it refuses refreshes after a failed Stop, closing the
+    window detaches as Alt+Shift+D does. A close request carries no reason, so
+    a desktop that closes each window at logout, such as KDE Plasma, quits an
+    idle window and shows the prompt on a busy one; there, Alt+Shift+D before
+    logging out keeps the terminals. A desktop that ends the session without
+    closing windows first detaches the window as control loss does (VEN-C14).
     Each time a full-Eon window detaches this way, its supervisor sends one
     non-activating desktop notification titled "Eon window NAME is still
     running", NAME being the window's EON-C23 name. Its body says how many
@@ -594,8 +602,8 @@ socket names, JSON fields and protocol identifiers retain their spellings.
     replaces the notification. Ending the window closes it as a best effort,
     waiting at most 500 ms. A missing or failing notification service sends
     nothing and does not delay the detach, and a later detach tries again. A
-    Venus crash sends none. Linux only; on macOS a detach sends no
-    notification.
+    Venus crash sends none, nor does a detach while the supervisor is
+    stopping. Linux only; on macOS a detach sends no notification.
     Alt+Shift+Q quits the window: Venus sends the Stop that `eon quit` uses
     (EON-C11) for the window's generation, which ends every workspace, and
     exits once it is confirmed. While the snapshot lists a busy terminal
@@ -2259,7 +2267,7 @@ socket names, JSON fields and protocol identifiers retain their spellings.
   A built-in popup whose default key a configured popup holds is listed with
   that key as overridden by the configured popup; a popup configured without a
   key has no row. The fixed bindings include
-  Alt+Shift+D, listed as "Detach: close the window, keep terminals running",
+  Alt+Shift+D, listed as "Detach: hide the window, keep terminals running",
   Alt+Shift+Q, listed as "Quit: close the window, stop its terminals" (EON-C8)
   and omitted in eonbase,
   Alt+Shift+H, listed as "Show or hide the agent sidebar" (EON-C31,
@@ -3410,12 +3418,12 @@ socket names, JSON fields and protocol identifiers retain their spellings.
     is shown, under EON-C31's rules. The sidebar lists the shown workspace's
     terminals only. Implemented on EONW v22, whose `WorkspaceInfo` carries
     each workspace's rollup as `attention` (`eon-workspace-switching-shn4.8`).
-  - **Detach, attach and recovery.** Closing the window, or Alt+Shift+D,
-    detaches every workspace together, and attach shows the last shown
-    workspace. `eon stop` and Commands > Quit this window stop every workspace
-    of the window. Same-boot recovery projects every recovered run into one
-    workspace `w1`, as EON-C8 projects them into `t1`; names and membership
-    are not recovered.
+  - **Detach, attach and recovery.** Alt+Shift+D detaches every workspace
+    together, and attach shows the last shown workspace; closing the window
+    follows EON-C8's close rule. `eon stop` and Commands > Quit this window
+    stop every workspace of the window. Same-boot recovery projects every
+    recovered run into one workspace `w1`, as EON-C8 projects them into `t1`;
+    names and membership are not recovered.
 - **Important failures:** These leave every workspace unchanged and return
   EON-C10's typed failure: an unknown or stale `wN` or a name that matches
   nothing (exit 3); a name that matches more than one workspace
@@ -3512,7 +3520,8 @@ socket names, JSON fields and protocol identifiers retain their spellings.
         notes, stopped its terminal and showed build, the most recently
         shown survivor. With one workspace left, the prompt read "This quits
         the window".
-      - Closing the window from the compositor, and later Alt+Shift+D, ended
+      - Closing the window from the compositor (superseded by `eon-7cf0y.16`:
+        a close now follows EON-C8's close rule), and later Alt+Shift+D, ended
         Venus and kept the Orbit hosts and every workspace. `eon attach`
         showed build, the last shown workspace, and main's scrollback was
         intact.

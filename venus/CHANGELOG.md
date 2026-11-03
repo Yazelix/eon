@@ -2,6 +2,14 @@
 
 ## Unreleased
 
+- VEN-C8, VEN-C14 and VEN-C20: a compositor close request quits as Alt+Shift+Q
+  does, prompt included, including one a desktop sends to each window at
+  logout, and a close request while the quit prompt is open leaves it open. It
+  still detaches without a running-windows summary, while the workspace is
+  unavailable, and while it refuses refreshes after a failed Stop.
+  Alt+Shift+D alone detaches, listed as "Detach: hide the window, keep
+  terminals running" (`eon-7cf0y.16`). No wire change.
+
 - VEN-C8, VEN-C14 and VEN-C20: Alt+Shift+Q quits an Eon window with the EONW
   Stop that `eon quit` sends, behind the final-close prompt's owner while the
   snapshot lists a busy terminal; Venus reads Stop's lifecycle reply, so

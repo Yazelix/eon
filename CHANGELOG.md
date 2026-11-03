@@ -5,6 +5,19 @@ installation, and proven contract changes.
 
 ## Unreleased
 
+- Closing the Eon window, with the desktop's close-window key or the window's
+  close button, quits it as Alt+Shift+Q does instead of detaching: an idle
+  window quits at once, and while a terminal runs something the quit prompt
+  asks first; closing again leaves the prompt open. Alt+Shift+D is the way to
+  keep terminals running, and the Shortcuts viewer now lists it as "Detach:
+  hide the window, keep terminals running". eonbase windows still detach on
+  close, and so does a window whose supervisor does not answer or that failed
+  to stop. A Venus crash, a lost connection or the compositor exiting still
+  keeps every terminal, and so does logging out of a desktop that ends the
+  session without closing windows first, such as GNOME or COSMIC. A desktop
+  that closes each window at logout, such as KDE Plasma, quits an idle Eon
+  window and shows the prompt on a busy one; there, press Alt+Shift+D before
+  logging out to keep its terminals (`eon-7cf0y.16`).
 - A newer `eon` stops and quits windows that an Eon build with another EONW
   started, through the `eon` that build recorded; `eon quit` lists only stop
   commands that work. Human-mode errors, `eon generations` and `eon windows`

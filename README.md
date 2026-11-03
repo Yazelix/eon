@@ -8,8 +8,9 @@ Website: [eonterm.com](https://eonterm.com)
 
 Eon is the terminal for humans and agents to work together: a native Wayland
 workspace for long-running work such as coding agents, builds, servers and
-editors. Its **terminals keep running after you close the window**.
-Run `eon attach` and every tab, pane and terminal is where you left it.
+editors. Its **terminals keep running after you detach the window** with
+Alt+Shift+D. Run `eon attach` and every tab, pane and terminal is where you
+left it.
 
 ## Demo
 
@@ -17,10 +18,10 @@ Run `eon attach` and every tab, pane and terminal is where you left it.
 
 ## Why Eon
 
-- **Close the window, keep the work.** [Orbit](orbit/README.md) runs each
-  terminal's process and state apart from the window. Closing Eon detaches;
-  `eon attach` returns to the same terminals, and `eon stop` ends them when you
-  choose.
+- **Detach the window, keep the work.** [Orbit](orbit/README.md) runs each
+  terminal's process and state apart from the window. Alt+Shift+D detaches;
+  `eon attach` returns to the same terminals. Closing the window quits it, and
+  `eon stop` ends a detached window's terminals when you choose.
 - **Made for coding agents.** Each tab has an Agent popup (**Alt+Shift+L**) that
   starts the first installed of Codex, Grok, OpenCode, Pi or Claude and keeps
   its session while hidden. When you're signed in, Codex and Claude quota appear
@@ -59,9 +60,10 @@ Enter for a Zoxide match or Tab to browse with Yazi. A terminal opens there.
 | Alt+Shift+Y | Files popup (Yazi) |
 | Alt+Shift+M | Commands popup: search and run Eon commands |
 | Alt+Shift+S | Workspaces: switch or create a workspace in this window |
-| Alt+Shift+Q | Quit this window |
+| Alt+Shift+D | Detach: hide the window, keep terminals running |
+| Alt+Shift+Q | Quit this window; closing the window does the same |
 
-Close the window whenever you like. To come back or end work:
+Detach whenever you like. To come back or end work:
 
 ```sh
 eon attach               # return to your terminals

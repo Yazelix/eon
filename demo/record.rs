@@ -155,7 +155,7 @@ if $count == 1 {
     )?;
     fs::write(
         demo.join("notes.md"),
-        "Sessions keep running when the window closes.\n",
+        "Sessions keep running when the window detaches.\n",
     )?;
     fs::write(
         demo.join("docs/guide.md"),
@@ -186,7 +186,7 @@ if $count == 1 {
     r.exec(&mut git)?;
     fs::write(
         demo.join("notes.md"),
-        "Sessions keep running when the window closes.\nTabs and panes organize the work.\n",
+        "Sessions keep running when the window detaches.\nTabs and panes organize the work.\n",
     )?;
     let mut history = isolated(&zoxide, &home);
     history.arg("add").arg(&demo);
@@ -442,6 +442,13 @@ fn wait_window(r: &mut Recorder, app_id: &str, shown: bool) -> Result<()> {
     }
 }
 
+/// Detaches the focused Eon window with Alt+Shift+D, then waits until it is gone. Closing it
+/// would quit it instead (EON-C8).
+fn detach_window(r: &mut Recorder) -> Result<()> {
+    r.key("Alt+Shift+d", Duration::from_millis(300))?;
+    wait_window(r, "eon", false)
+}
+
 /// Asks the window to close as a user would, then waits until it is gone.
 fn close_window(r: &mut Recorder, app_id: &str) -> Result<()> {
     r.exec(
@@ -654,7 +661,7 @@ fn features(r: &mut Recorder) -> Result<()> {
     let poster = file("detach-reattach.png");
     r.record(&clip, |r| {
         r.sleep(Duration::from_millis(1500))?;
-        close_window(r, "eon")?;
+        detach_window(r)?;
         // With the window gone, the supervisor still reporting every pane shows the terminals
         // outlived it.
         wait_for(
@@ -732,7 +739,7 @@ fn features(r: &mut Recorder) -> Result<()> {
     r.key("Escape", Duration::from_millis(600))?;
     assets.push(shortcuts);
 
-    close_window(r, "eon")?;
+    detach_window(r)?;
     let still = file("eonbase.png");
     // eonbase stops by generation, so name the one its terminal will start in.
     let mut generations = isolated(&eonbase, &home);

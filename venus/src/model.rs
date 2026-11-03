@@ -258,6 +258,9 @@ pub struct WorkspaceModel {
     notice: Option<WorkspaceNotice>,
     /// Counts new notices, so a newer notice can outrank older client notices.
     notice_serial: u64,
+    /// Whether Eon was last unreachable, or refused every refresh after a failed Stop; a
+    /// snapshot clears it.
+    unavailable: bool,
 }
 
 #[derive(Debug, PartialEq, Eq)]
@@ -427,27 +430,33 @@ impl WorkspaceModel {
                         }))
                     && self.notice.take().is_some();
                 self.snapshot = Some(snapshot);
+                self.unavailable = false;
                 (snapshot_changed || notice_cleared, workspace_changed)
             }
-            WorkspaceResponse::Failure(failure) => (
-                self.set_notice(
-                    if failure.code == "no-attention" {
-                        WorkspaceNotice::NoAttention(bounded(failure.detail))
-                    } else {
-                        WorkspaceNotice::Action(bounded(format!(
-                            "Eon workspace {}: {}",
-                            failure.code, failure.detail
-                        )))
-                    },
-                    false,
-                ),
-                false,
-            ),
+            WorkspaceResponse::Failure(failure) => {
+                // After a failed Stop, Eon refuses every refresh until a Stop completes.
+                self.unavailable |= failure.code == "stop-incomplete";
+                let notice = if failure.code == "no-attention" {
+                    WorkspaceNotice::NoAttention(bounded(failure.detail))
+                } else {
+                    WorkspaceNotice::Action(bounded(format!(
+                        "Eon workspace {}: {}",
+                        failure.code, failure.detail
+                    )))
+                };
+                (self.set_notice(notice, false), false)
+            }
             // The client exits on an ended generation before applying it.
             WorkspaceResponse::Ended(_) => (false, false),
             // Venus never reads or sends to a terminal over EONW.
             WorkspaceResponse::Text(_) | WorkspaceResponse::Sent(_) => (false, false),
         }
+    }
+
+    /// Whether Eon was last unreachable, or refused every refresh after a failed Stop.
+    #[must_use]
+    pub fn unavailable(&self) -> bool {
+        self.unavailable
     }
 
     #[must_use]
@@ -475,6 +484,7 @@ impl WorkspaceModel {
 
     /// Mark Eon unavailable; `answers_action` when the failure itself answers a user action.
     pub fn mark_unavailable(&mut self, detail: impl Into<String>, answers_action: bool) -> bool {
+        self.unavailable = true;
         let expired_quota = self.snapshot.as_mut().is_some_and(|snapshot| {
             let codex = snapshot.codex_quota.take().is_some();
             let claude = snapshot.claude_quota.take().is_some();
@@ -1071,6 +1081,29 @@ mod tests {
     }
 
     #[test]
+    fn unavailable_follows_lost_connections_and_refused_refreshes() {
+        let failure = |code: &str| {
+            WorkspaceResponse::Failure(Failure {
+                code: code.into(),
+                detail: "failed".into(),
+            })
+        };
+        let mut model = WorkspaceModel::default();
+        model.apply(failure("edge"));
+        assert!(!model.unavailable(), "a refused action says nothing of Eon");
+        model.mark_unavailable("gone", false);
+        assert!(model.unavailable());
+        model.reject_action("refused");
+        assert!(model.unavailable(), "a later notice keeps Eon unavailable");
+        let mut model = WorkspaceModel::default();
+        model.apply(failure("stop-incomplete"));
+        assert!(
+            model.unavailable(),
+            "after a failed Stop, Eon refuses every refresh"
+        );
+    }
+
+    #[test]
     fn quota_refresh_and_workspace_failures_preserve_structure() {
         let snapshot = Snapshot {
             workspace: "w1".into(),
@@ -1422,6 +1455,7 @@ mod tests {
         );
 
         assert!(model.mark_unavailable("Cannot connect to Eon", false));
+        assert!(model.unavailable());
         assert!(model.snapshot().unwrap().codex_quota.is_none());
         assert!(model.snapshot().unwrap().claude_quota.is_none());
         assert!(!model.mark_unavailable("Cannot connect to Eon", false));
@@ -1435,6 +1469,7 @@ mod tests {
             None,
             "an identical snapshot proves reconnection"
         );
+        assert!(!model.unavailable());
 
         let mut offline = snapshot.clone();
         offline.tabs[0].columns[0].panes[0].live = false;
