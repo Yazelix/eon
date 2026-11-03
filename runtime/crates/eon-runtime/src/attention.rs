@@ -89,6 +89,38 @@ pub(super) fn targets(workspaces: &[Snapshot]) -> (Vec<Target>, Option<String>) 
     (targets, focus)
 }
 
+/// `target` as EON-C11 names a busy terminal: by a pane's label or a
+/// popup's entry label.
+fn busy_terminal(workspaces: &[Snapshot], target: &Target) -> eonw::BusyTerminal {
+    let workspace = &workspaces[target.workspace];
+    let tab = &workspace.tabs[target.tab];
+    let (id, name) = match &target.entry {
+        None => (
+            eonw::TargetId::Pane(target.id.clone()),
+            tab.panes()
+                .find(|pane| pane.id == target.id)
+                .map_or_else(|| target.id.clone(), |pane| pane.label.clone()),
+        ),
+        Some(entry) => (
+            eonw::TargetId::Popup(target.id.clone()),
+            workspace
+                .entries
+                .iter()
+                .find(|candidate| &candidate.id == entry)
+                .map_or_else(|| entry.clone(), |entry| entry.label.clone()),
+        ),
+    };
+    eonw::BusyTerminal {
+        target: eonw::TerminalTarget {
+            workspace: workspace.workspace.clone(),
+            tab: tab.id.clone(),
+            id,
+            terminal: target.session.clone(),
+        },
+        name,
+    }
+}
+
 /// Record text without control characters, which Orbit already rejects
 /// (ORB-C15) and EONW refuses to carry.
 fn plain(text: &str) -> String {
@@ -620,10 +652,8 @@ impl Attention {
     }
 
     /// EON-C11's busy terminals of `workspaces`, whose pane labels are
-    /// presented, in window order and without `exclude`. A live terminal is
-    /// idle only while it runs the default shell and its last good reply,
-    /// younger than the stale bound, found the shell's own group leading;
-    /// the Files and Git popups are never busy.
+    /// presented, in window order, without `exclude` and bounded as EONW
+    /// carries them: the first 32 named, the rest counted.
     pub(super) fn busy(
         &self,
         workspaces: &[Snapshot],
@@ -632,14 +662,56 @@ impl Attention {
         now: Instant,
     ) -> eonw::BusyTerminals {
         let (targets, _) = targets(workspaces);
-        let mut terminals = Vec::new();
-        let mut omitted = 0u16;
-        for target in &targets {
+        let mut busy = eonw::BusyTerminals {
+            terminals: Vec::new(),
+            omitted: 0,
+        };
+        for target in self.busy_targets(&targets, sessions, now) {
+            if exclude == Some(target.session.as_str()) {
+                continue;
+            }
+            if busy.terminals.len() == eonw::MAX_BUSY_TERMINALS {
+                busy.omitted += 1;
+            } else {
+                busy.terminals.push(busy_terminal(workspaces, target));
+            }
+        }
+        busy
+    }
+
+    /// Every busy terminal of `workspaces` in window order, unbounded.
+    #[cfg_attr(
+        not(test),
+        expect(dead_code, reason = "eon-ciwn.7 publishes event projections")
+    )]
+    pub(super) fn busy_terminals(
+        &self,
+        workspaces: &[Snapshot],
+        sessions: &[RunningSession],
+        now: Instant,
+    ) -> Vec<eonw::BusyTerminal> {
+        let (targets, _) = targets(workspaces);
+        self.busy_targets(&targets, sessions, now)
+            .map(|target| busy_terminal(workspaces, target))
+            .collect()
+    }
+
+    /// The busy ones of `targets`. A live terminal is idle only while it
+    /// runs the default shell and its last good reply, younger than the
+    /// stale bound, found the shell's own group leading; the Files and Git
+    /// popups are never busy.
+    fn busy_targets<'a>(
+        &'a self,
+        targets: &'a [Target],
+        sessions: &'a [RunningSession],
+        now: Instant,
+    ) -> impl Iterator<Item = &'a Target> {
+        targets.iter().filter(move |target| {
             let Some(session) = sessions
                 .iter()
                 .find(|session| session.id == target.session && !session.is_finished())
             else {
-                continue;
+                return false;
             };
             let idle_shell = session.default_shell
                 && self.terminals.iter().any(|terminal| {
@@ -648,48 +720,12 @@ impl Attention {
                         && terminal.foreground == Foreground::Child
                         && now.duration_since(terminal.replied) < STALE_AFTER
                 });
-            if exclude == Some(target.session.as_str())
-                || idle_shell
-                || target
+            !idle_shell
+                && !target
                     .entry
                     .as_deref()
                     .is_some_and(|entry| IDLE_ENTRIES.contains(&entry))
-            {
-                continue;
-            }
-            if terminals.len() == eonw::MAX_BUSY_TERMINALS {
-                omitted += 1;
-                continue;
-            }
-            let workspace = &workspaces[target.workspace];
-            let tab = &workspace.tabs[target.tab];
-            let (id, name) = match &target.entry {
-                None => (
-                    eonw::TargetId::Pane(target.id.clone()),
-                    tab.panes()
-                        .find(|pane| pane.id == target.id)
-                        .map_or_else(|| target.id.clone(), |pane| pane.label.clone()),
-                ),
-                Some(entry) => (
-                    eonw::TargetId::Popup(target.id.clone()),
-                    workspace
-                        .entries
-                        .iter()
-                        .find(|candidate| &candidate.id == entry)
-                        .map_or_else(|| entry.clone(), |entry| entry.label.clone()),
-                ),
-            };
-            terminals.push(eonw::BusyTerminal {
-                target: eonw::TerminalTarget {
-                    workspace: workspace.workspace.clone(),
-                    tab: tab.id.clone(),
-                    id,
-                    terminal: target.session.clone(),
-                },
-                name,
-            });
-        }
-        eonw::BusyTerminals { terminals, omitted }
+        })
     }
 
     fn attention(&self, target: &Target, now: Instant) -> Option<eonw::Attention> {
@@ -2409,10 +2445,15 @@ mod tests {
             })
             .chain(sessions)
             .collect();
-        let busy = Attention::new(true).busy(&crowded, &sessions, None, start);
+        let attention = Attention::new(true);
+        let busy = attention.busy(&crowded, &sessions, None, start);
         assert_eq!(busy.terminals.len(), eonw::MAX_BUSY_TERMINALS);
         assert_eq!(busy.terminals[0].name, "pane-session-1");
         assert_eq!(busy.omitted, 1);
+        // Events see every busy terminal (EON-C39).
+        let every = attention.busy_terminals(&crowded, &sessions, start);
+        assert_eq!(every.len(), eonw::MAX_BUSY_TERMINALS + 1);
+        assert_eq!(every[..eonw::MAX_BUSY_TERMINALS], busy.terminals);
         fs::remove_dir_all(root).unwrap();
     }
 

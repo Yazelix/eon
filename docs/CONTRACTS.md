@@ -3880,7 +3880,13 @@ socket names, JSON fields and protocol identifiers retain their spellings.
   (approved by Lucca, relayed by eon-overseer) from `eon-ciwn.5`: the
   workspace tab count is derived, the stream's busy list is uncapped and
   busy events carry `name`, and attention and busy events follow a terminal
-  between popup and pane.
+  between popup and pane. Amended on 2026-11-03 (approved by Lucca, relayed
+  by eon-overseer) by `eon-ciwn.5`: applying events rebuilds state only for
+  streams without filters or filtered only by `--tab` or `--kind`, and the
+  `queue` event is also sent when an entry's state changes. Amended on
+  2026-11-03 (approved by Lucca, relayed by eon-overseer) by `eon-ciwn.5`: a
+  `--tab` stream does not rebuild workspace-wide values, and the text says
+  which kinds a stream admits for rebuilding.
 - **Consumer:** An agent or script running as the person's user, in an Eon
   terminal or outside one, that must notice workspace and attention changes
   without polling: an overseer answering its tab's questions (`eon-ciwn.4`),
@@ -3928,15 +3934,26 @@ socket names, JSON fields and protocol identifiers retain their spellings.
     with the event's payload. `seq` is the supervisor's event counter and
     rises by one per event before filtering, so a filtered stream skips
     numbers without losing events.
-  - **Applying events.** Applying a stream's events in order to its
-    snapshot gives the Runtime's state, after the last event, for the kinds
-    the stream admits; a stream without `pane`, for example, never sees
-    `pane-closed`. The tab `attention_rollup` and the workspace `attention`,
-    `recency` and `tabs` are derived values that no event names; a consumer
-    recomputes them or reads `eon workspaces`. A workspace's `active_tab`
-    follows `tab-activated`. Changes within one supervisor
-    loop turn coalesce, and EON-C31 already coalesces attention between
-    polls.
+  - **Applying events.** For a stream without filters, or filtered only by
+    `--tab` or `--kind`, applying its events in order to its snapshot gives
+    the Runtime's state, after the last event, for the kinds the stream
+    admits; a stream without `pane`, for example, never sees `pane-closed`.
+    A pane's or popup's `attention` field belongs to the `attention` kind,
+    and the window order of the busy list and of the tab groups stays current
+    only when `workspace`, `tab`, `pane` and `popup` are all admitted. Under
+    `--tab` or `--target`, `workspace` and `queue` count as admitted only
+    when `--kind` names them. In a `--tab` stream the named tabs and their
+    panes and popups stay current, but workspace-wide values are not
+    rebuilt: a workspace's `active_tab`, the order of other tabs, the queue
+    and the busy list's window order; a consumer reads `eon workspace --json`
+    for them. Under `--workspace`, `--target` or `--state` the stream is a
+    change feed for the objects it admits, and a consumer reads
+    `eon workspace --json` for full state. The tab `attention_rollup` and the
+    workspace `attention`, `recency` and `tabs` are derived values that no
+    event names; a consumer recomputes them or reads `eon workspaces`. A
+    workspace's `active_tab` follows `tab-activated`. Changes within one
+    supervisor loop turn coalesce, and EON-C31 already coalesces attention
+    between polls.
   - **Events.**
     - `workspace`: `workspace-created`, `workspace-renamed`,
       `workspace-closed` and `workspace-shown`, each with the workspace as
@@ -3961,8 +3978,8 @@ socket names, JSON fields and protocol identifiers retain their spellings.
       it in their own loop turn. It is also sent, with `previous` equal to
       its state, when its terminal's pane or popup changes, as when an Agent
       popup is parked into a pane.
-    - `queue`: the whole queue, as the snapshot carries it, when its order
-      or membership changes.
+    - `queue`: the whole queue, as the snapshot carries it, when any entry
+      changes: its order, its membership or an entry's state.
     - `busy`: a terminal's EON-C11 busy state, with its `workspace`, `tab`,
       `pane` or `popup`, `terminal`, `busy` and, while busy, its `name`. It
       is sent when the terminal becomes busy or idle, and while it stays busy

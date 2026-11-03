@@ -4,6 +4,7 @@ mod attention;
 mod cli;
 mod control;
 mod diagnostics;
+mod events;
 mod generation;
 mod managed_environment;
 mod notification;
