@@ -207,7 +207,7 @@ The final history/network proof is needed before issue #1 is complete.
 | ID | Phase | Scenario / cheapest falsifier | Required outcome |
 | --- | --- | --- | --- |
 | I1 | 2a | Two workspaces with one directory/duplicate names; rename; reopen registry and restart supervisor | Distinct persistent IDs; rename preserves ID; registrations survive; no claim of layout/process recovery |
-| I2 | 2a | Concurrent registry mutations; interrupted/failed durable write | Serialized atomic state or explicit failure; no reused ID or partly successful registration |
+| I2 | 2a | Concurrent registry mutations; interrupted/failed durable write; creation commits but its reply is lost at a request/reply boundary | Serialized atomic state or explicit failure; no reused ID or partly successful registration. A missing reply does not imply rollback. If the committed result cannot be reliably identified, report uncertainty without guessing from possibly duplicate names; do not automatically reissue an uncertain creation as a new request |
 | I3 | 2a | Corrupt/unknown registry version, stale/ambiguous ID/name | No overwrite, guessed/rebound target, destructive cleanup or duplicate launch |
 | I4 | Discovery/lifecycle | Forget live, confirmed-stopped, cached-stopped and unreachable workspaces | Only authoritative confirmed-stopped registration can be forgotten |
 | R1 | 2b | Normal supervisor exit and replacement with multiple layouts/popups | Original IDs/groups/layout and verified live Orbit/PTY identities; counters advance |
