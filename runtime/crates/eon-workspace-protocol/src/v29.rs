@@ -1,4 +1,4 @@
-//! Eon-owned values and bounded EONW v28 codec for local workspace clients.
+//! Eon-owned values and bounded EONW v29 codec for local workspace clients.
 //!
 //! Every message is a 12-byte header (`EONW`, little-endian version, kind,
 //! zero flags, little-endian payload length) followed by its payload.
@@ -7,7 +7,7 @@
 
 use std::{collections::HashSet, fmt, str};
 
-pub const VERSION: u16 = 28;
+pub const VERSION: u16 = 29;
 pub const HEADER_BYTES: usize = 12;
 const MAGIC: &[u8; 4] = b"EONW";
 const MAX_MESSAGE_BYTES: usize = 2 * 1024 * 1024;
@@ -21,6 +21,7 @@ pub const MAX_WORKSPACES: usize = 32;
 pub const MAX_RUNNING_WINDOWS: usize = 32;
 pub const MAX_WINDOW_NAME_CHARS: usize = 64;
 const MAX_WINDOW_NAME_BYTES: usize = MAX_WINDOW_NAME_CHARS * 4;
+pub const MAX_BUSY_TERMINALS: usize = 32;
 pub const MAX_WORKSPACE_NAME_CHARS: usize = 64;
 const MAX_WORKSPACE_NAME_BYTES: usize = MAX_WORKSPACE_NAME_CHARS * 4;
 pub const MAX_SESSIONS: usize = 256;
@@ -569,6 +570,22 @@ pub struct RunningWindows {
     pub omitted: u16,
 }
 
+/// A terminal that runs something other than its idle default shell (EON-C11).
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct BusyTerminal {
+    pub target: TerminalTarget,
+    /// What the person sees: a pane's label or a popup's entry label.
+    pub name: String,
+}
+
+/// A window's busy terminals in window order, at most 32 named.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct BusyTerminals {
+    pub terminals: Vec<BusyTerminal>,
+    /// Busy terminals past the named ones.
+    pub omitted: u16,
+}
+
 #[derive(Clone, Debug, PartialEq)]
 pub struct Snapshot {
     /// The workspace described by tabs/active_tab; caller replies may project a hidden one.
@@ -588,6 +605,9 @@ pub struct Snapshot {
     /// The window-wide queue in EON-C31's total order; consumers never sort it.
     pub attention_queue: Vec<QueueEntry>,
     pub running: Option<RunningWindows>,
+    /// Window-wide; None in eonbase, which consumers read as every live
+    /// terminal busy.
+    pub busy: Option<BusyTerminals>,
 }
 
 // Snapshot payloads are already heap-owned; keep the direct value API.
@@ -687,6 +707,9 @@ pub struct Runtime {
     pub sessions: Vec<String>,
     pub attach: Availability,
     pub stop: Availability,
+    /// The snapshot's list, without the caller of an inspection that names
+    /// one; None in eonbase.
+    pub busy: Option<BusyTerminals>,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -1426,6 +1449,7 @@ pub fn encode_response(response: &Response) -> Result<Vec<u8>> {
             let claude = snapshot.claude_quota.as_ref().map(claude_as_codex);
             validate_workspace(snapshot, &tabs)?;
             validate_running(snapshot.running.as_ref())?;
+            validate_busy(snapshot.busy.as_ref())?;
             validate_codex(snapshot.codex_quota.as_ref())?;
             validate_claude(claude.as_ref())?;
             validate_failure(snapshot.codex_quota_failure)?;
@@ -1453,6 +1477,7 @@ pub fn encode_response(response: &Response) -> Result<Vec<u8>> {
             encode_workspace_set(&mut payload, snapshot);
             encode_attention_queue(&mut payload, &snapshot.attention_queue);
             encode_running(&mut payload, snapshot.running.as_ref());
+            encode_busy(&mut payload, snapshot.busy.as_ref());
             SNAPSHOT
         }
         Response::Failure(failure) => {
@@ -1708,6 +1733,8 @@ pub fn decode_response(bytes: &[u8]) -> Result<Response> {
     }
     snapshot.running = decode_running(&mut decoder)?;
     validate_running(snapshot.running.as_ref())?;
+    snapshot.busy = decode_busy(&mut decoder)?;
+    validate_busy(snapshot.busy.as_ref())?;
     validate_workspace(&snapshot, &wire_tabs)?;
     validate_codex(snapshot.codex_quota.as_ref())?;
     validate_claude(claude.as_ref())?;
@@ -1905,6 +1932,7 @@ fn decode_workspace(decoder: &mut Decoder<'_>) -> Result<(Snapshot, Vec<WireTab>
         sidebar: Sidebar::Off,
         attention_queue: Vec::new(),
         running: None,
+        busy: None,
     };
     Ok((snapshot, tabs))
 }
@@ -2718,6 +2746,67 @@ fn decode_running(decoder: &mut Decoder<'_>) -> Result<Option<RunningWindows>> {
     }))
 }
 
+fn validate_busy(busy: Option<&BusyTerminals>) -> Result<()> {
+    let Some(busy) = busy else {
+        return Ok(());
+    };
+    let invalid = Error::InvalidValue {
+        field: "busy terminals",
+    };
+    if busy.terminals.len() > MAX_BUSY_TERMINALS
+        || (busy.omitted > 0 && busy.terminals.len() < MAX_BUSY_TERMINALS)
+        || busy.terminals.len() + usize::from(busy.omitted) > MAX_SESSIONS
+    {
+        return Err(invalid);
+    }
+    for (index, busy_terminal) in busy.terminals.iter().enumerate() {
+        validate_target(&busy_terminal.target)?;
+        nonempty("busy name", &busy_terminal.name, MAX_PANE_LABEL_BYTES)?;
+        // Pane labels and popup entry labels both hold no control character.
+        if busy_terminal.name.chars().any(char::is_control) {
+            return Err(Error::InvalidValue { field: "busy name" });
+        }
+        if busy.terminals[..index]
+            .iter()
+            .any(|earlier| earlier.target.terminal == busy_terminal.target.terminal)
+        {
+            return Err(invalid);
+        }
+    }
+    Ok(())
+}
+
+fn encode_busy(encoder: &mut Encoder, busy: Option<&BusyTerminals>) {
+    encoder.byte(u8::from(busy.is_some()));
+    if let Some(busy) = busy {
+        encoder.count(busy.terminals.len());
+        for busy_terminal in &busy.terminals {
+            encode_target(encoder, &busy_terminal.target);
+            encoder.string(&busy_terminal.name);
+        }
+        encoder.number(busy.omitted);
+    }
+}
+
+fn decode_busy(decoder: &mut Decoder<'_>) -> Result<Option<BusyTerminals>> {
+    if !decode_bool(decoder, "busy terminals")? {
+        return Ok(None);
+    }
+    let count = decoder.count("busy terminals", MAX_BUSY_TERMINALS)?;
+    let terminals = (0..count)
+        .map(|_| {
+            Ok(BusyTerminal {
+                target: decode_target(decoder)?,
+                name: decoder.string("busy name", MAX_PANE_LABEL_BYTES)?,
+            })
+        })
+        .collect::<Result<Vec<_>>>()?;
+    Ok(Some(BusyTerminals {
+        terminals,
+        omitted: decoder.number()?,
+    }))
+}
+
 pub fn encode_lifecycle_response(response: &LifecycleResponse) -> Result<Vec<u8>> {
     let mut payload = Encoder::default();
     let kind = match response {
@@ -2734,6 +2823,7 @@ pub fn encode_lifecycle_response(response: &LifecycleResponse) -> Result<Vec<u8>
             payload
                 .bytes
                 .extend_from_slice(&runtime.started_at.to_le_bytes());
+            encode_busy(&mut payload, runtime.busy.as_ref());
             RUNTIME
         }
         LifecycleResponse::Stopped(stopped) => {
@@ -2766,6 +2856,7 @@ pub fn decode_lifecycle_response(bytes: &[u8]) -> Result<LifecycleResponse> {
                 stop: decode_availability(&mut decoder, "stop reason")?,
                 name: decode_window_name(&mut decoder)?,
                 started_at: decode_u64(&mut decoder)?,
+                busy: decode_busy(&mut decoder)?,
             };
             validate_runtime(&runtime)?;
             LifecycleResponse::Runtime(runtime)
@@ -2788,6 +2879,7 @@ pub fn decode_lifecycle_response(bytes: &[u8]) -> Result<LifecycleResponse> {
 
 fn validate_runtime(runtime: &Runtime) -> Result<()> {
     validate_window_name(runtime.name.as_deref())?;
+    validate_busy(runtime.busy.as_ref())?;
     identity("generation", &runtime.generation)?;
     nonempty("Eon version", &runtime.eon_version, MAX_VERSION_BYTES)?;
     if runtime.workspace_protocol == 0 {
@@ -3450,6 +3542,7 @@ mod tests {
             sidebar: Sidebar::Closed,
             attention_queue: Vec::new(),
             running: None,
+            busy: None,
         }
     }
 
@@ -3476,6 +3569,7 @@ mod tests {
         encode_workspace_set(&mut payload, snapshot);
         encode_attention_queue(&mut payload, &snapshot.attention_queue);
         encode_running(&mut payload, snapshot.running.as_ref());
+        encode_busy(&mut payload, snapshot.busy.as_ref());
         frame(SNAPSHOT, payload.bytes).unwrap()
     }
 
@@ -3488,6 +3582,124 @@ mod tests {
             live_terminals: Some(MAX_SESSIONS as u16),
             state: WindowState::Live,
         }
+    }
+
+    fn busy_terminal(n: usize) -> BusyTerminal {
+        BusyTerminal {
+            target: terminal_target(TargetId::Pane(format!("p{n}")), &format!("s{n}")),
+            name: format!("p{n}  🦀"),
+        }
+    }
+
+    #[test]
+    fn busy_terminals_round_trip_and_reject_forged_bounds() {
+        let mut state = snapshot();
+        let runtime = Runtime {
+            generation: "g1".into(),
+            name: None,
+            started_at: 1,
+            eon_version: "0.1.13".into(),
+            workspace_protocol: VERSION,
+            component_report: "ok".into(),
+            sessions: vec![],
+            attach: Availability {
+                available: true,
+                reason: "ready".into(),
+            },
+            stop: Availability {
+                available: true,
+                reason: "ready".into(),
+            },
+            busy: None,
+        };
+        let full: Vec<_> = (0..MAX_BUSY_TERMINALS).map(busy_terminal).collect();
+        for busy in [
+            None,
+            Some(BusyTerminals {
+                terminals: vec![],
+                omitted: 0,
+            }),
+            Some(BusyTerminals {
+                terminals: vec![BusyTerminal {
+                    target: terminal_target(TargetId::Popup("u1".into()), "s1"),
+                    name: "x".repeat(MAX_PANE_LABEL_BYTES),
+                }],
+                omitted: 0,
+            }),
+            Some(BusyTerminals {
+                terminals: full.clone(),
+                omitted: (MAX_SESSIONS - MAX_BUSY_TERMINALS) as u16,
+            }),
+        ] {
+            state.busy = busy.clone();
+            let response = Response::Snapshot(state.clone());
+            assert_eq!(
+                decode_response(&encode_response(&response).unwrap()).unwrap(),
+                response
+            );
+            let response = LifecycleResponse::Runtime(Runtime {
+                busy,
+                ..runtime.clone()
+            });
+            assert_eq!(
+                decode_lifecycle_response(&encode_lifecycle_response(&response).unwrap()).unwrap(),
+                response
+            );
+        }
+        for index in 0..8 {
+            let mut busy = BusyTerminals {
+                terminals: vec![busy_terminal(1), busy_terminal(2)],
+                omitted: 0,
+            };
+            match index {
+                0 => busy.terminals = (0..=MAX_BUSY_TERMINALS).map(busy_terminal).collect(),
+                1 => busy.terminals[1].target.terminal = "s1".into(),
+                2 => busy.terminals[0].name.clear(),
+                3 => busy.terminals[0].name = "p1  \u{1b}[31m".into(),
+                4 => busy.terminals[0].name = "x".repeat(MAX_PANE_LABEL_BYTES + 1),
+                5 => busy.terminals[0].target.tab = "t 1".into(),
+                // Only a full list leaves terminals out, and never more than
+                // the window holds.
+                6 => busy.omitted = 1,
+                7 => {
+                    busy.terminals = full.clone();
+                    busy.omitted = (MAX_SESSIONS - MAX_BUSY_TERMINALS + 1) as u16;
+                }
+                _ => unreachable!(),
+            }
+            state.busy = Some(busy.clone());
+            assert!(
+                encode_response(&Response::Snapshot(state.clone())).is_err(),
+                "case {index}"
+            );
+            assert!(decode_response(&forge(&state)).is_err(), "case {index}");
+            let response = LifecycleResponse::Runtime(Runtime {
+                busy: Some(busy),
+                ..runtime.clone()
+            });
+            assert!(
+                encode_lifecycle_response(&response).is_err(),
+                "case {index}"
+            );
+            // Forge the lifecycle reply by swapping the valid list's bytes.
+            let valid = Runtime {
+                busy: None,
+                ..runtime.clone()
+            };
+            let mut bytes = encode_lifecycle_response(&LifecycleResponse::Runtime(valid)).unwrap();
+            bytes.pop();
+            let mut list = Encoder::default();
+            encode_busy(&mut list, state.busy.as_ref());
+            bytes.extend_from_slice(&list.bytes);
+            let length = (bytes.len() - HEADER_BYTES) as u32;
+            bytes[8..12].copy_from_slice(&length.to_le_bytes());
+            assert!(decode_lifecycle_response(&bytes).is_err(), "case {index}");
+        }
+        // An unknown option tag fails before consumers see it.
+        state.busy = None;
+        let mut bytes = encode_response(&Response::Snapshot(state)).unwrap();
+        *bytes.last_mut().unwrap() = 2;
+        assert!(decode_response(&bytes).is_err());
     }
 
     #[test]
@@ -3572,14 +3784,15 @@ mod tests {
             omitted: 0,
         });
         let bytes = encode_response(&Response::Snapshot(state.clone())).unwrap();
+        // The running option byte precedes the trailing absent busy list.
         let offset = encode_response(&Response::Snapshot(Snapshot {
             running: None,
             ..state.clone()
         }))
         .unwrap()
         .len()
-            - 1;
-        for (offset, tag) in [(offset, 2), (bytes.len() - 4, 3)] {
+            - 2;
+        for (offset, tag) in [(offset, 2), (bytes.len() - 5, 3)] {
             let mut forged = bytes.clone();
             forged[offset] = tag;
             assert!(decode_response(&forged).is_err());
@@ -3600,6 +3813,7 @@ mod tests {
                 available: true,
                 reason: "ready".into(),
             },
+            busy: None,
         };
         let response = LifecycleResponse::Runtime(runtime.clone());
         assert_eq!(
@@ -3608,9 +3822,12 @@ mod tests {
         );
         // An ASCII name can exceed the character bound without exceeding the byte bound.
         let mut forged = encode_lifecycle_response(&response).unwrap();
-        let name_offset = forged.len() - 8 - 256 - 2;
+        let name_offset = forged.len() - 1 - 8 - 256 - 2;
         forged[name_offset..name_offset + 2].copy_from_slice(&65u16.to_le_bytes());
-        forged.splice(name_offset + 2..forged.len() - 8, "a".repeat(65).bytes());
+        forged.splice(
+            name_offset + 2..forged.len() - 1 - 8,
+            "a".repeat(65).bytes(),
+        );
         let length = (forged.len() - HEADER_BYTES) as u32;
         forged[8..12].copy_from_slice(&length.to_le_bytes());
         assert!(decode_lifecycle_response(&forged).is_err());
@@ -3965,14 +4182,14 @@ mod tests {
         for (action, expected) in [
             (
                 Action::Workspace(WorkspaceAction::CloseTab { tab: "t1".into() }),
-                "454f4e571c0001000a00000002007231001202007431",
+                "454f4e571d0001000a00000002007231001202007431",
             ),
             (
                 Action::Workspace(WorkspaceAction::SetTabDirectory {
                     tab: "t1".into(),
                     directory: b"/tmp".to_vec(),
                 }),
-                "454f4e571c0001001000000002007231000c0200743104002f746d70",
+                "454f4e571d0001001000000002007231000c0200743104002f746d70",
             ),
             (
                 Action::InvokePopup {
@@ -3981,36 +4198,36 @@ mod tests {
                     expected_instance: Some("u1".into()),
                     intent: InvokeIntent::Focus,
                 },
-                "454f4e571c00010015000000020072310013020074310300676974010200753101",
+                "454f4e571d00010015000000020072310013020074310300676974010200753101",
             ),
             (
                 Action::CommitDirectory {
                     target,
                     directory: b"/tmp".to_vec(),
                 },
-                "454f4e571c00010014000000020072310015020074310200753104002f746d70",
+                "454f4e571d00010014000000020072310015020074310200753104002f746d70",
             ),
-            (Action::CreateColumn, "454f4e571c00010006000000020072310016"),
+            (Action::CreateColumn, "454f4e571d00010006000000020072310016"),
             (
                 Action::ClosePane { pane: "p2".into() },
-                "454f4e571c0001000a00000002007231001702007032",
+                "454f4e571d0001000a00000002007231001702007032",
             ),
             (
                 Action::MovePaneSideways(Side::Right),
-                "454f4e571c00010006000000020072310019",
+                "454f4e571d00010006000000020072310019",
             ),
             (
                 Action::Edit {
                     file: b"/tmp/a".to_vec(),
                 },
-                "454f4e571c0001000e00000002007231001a06002f746d702f61",
+                "454f4e571d0001000e00000002007231001a06002f746d702f61",
             ),
             (
                 Action::CreateCommandPane {
                     argv: vec![b"hx".to_vec(), b"a".to_vec()],
                     focus: false,
                 },
-                "454f4e571c0001001000000002007231001b00020002006878010061",
+                "454f4e571d0001001000000002007231001b00020002006878010061",
             ),
             (
                 Action::LaunchTab {
@@ -4018,7 +4235,7 @@ mod tests {
                     argv: vec![],
                     focus: true,
                 },
-                "454f4e571c0001000f00000002007231002504002f746d70000001",
+                "454f4e571d0001000f00000002007231002504002f746d70000001",
             ),
             (
                 Action::LaunchTab {
@@ -4026,32 +4243,32 @@ mod tests {
                     argv: vec![b"hx".to_vec(), b"a".to_vec()],
                     focus: false,
                 },
-                "454f4e571c0001001600000002007231002504002f746d7002000200687801006100",
+                "454f4e571d0001001600000002007231002504002f746d7002000200687801006100",
             ),
             (
                 Action::ToggleSidebar,
-                "454f4e571c0001000600000002007231001c",
+                "454f4e571d0001000600000002007231001c",
             ),
             (
                 Action::FocusAttention {
                     tab: "t1".into(),
                     target: "p2".into(),
                 },
-                "454f4e571c0001000e00000002007231001d0200743102007032",
+                "454f4e571d0001000e00000002007231001d0200743102007032",
             ),
             (
                 Action::NextAttention,
-                "454f4e571c0001000600000002007231001e",
+                "454f4e571d0001000600000002007231001e",
             ),
             (
                 Action::PreviousAttention,
-                "454f4e571c0001000600000002007231001f",
+                "454f4e571d0001000600000002007231001f",
             ),
             (
                 Action::ReadTerminal {
                     target: "p2".into(),
                 },
-                "454f4e571c0001000a00000002007231002602007032",
+                "454f4e571d0001000a00000002007231002602007032",
             ),
             (
                 Action::SendTerminal {
@@ -4059,14 +4276,14 @@ mod tests {
                     input: TerminalInput::Paste("hi".into()),
                 },
                 // v27's u32-length paste.
-                "454f4e571c000100110000000200723100270200703200020000006869",
+                "454f4e571d000100110000000200723100270200703200020000006869",
             ),
             (
                 Action::SendTerminal {
                     target: "u1".into(),
                     input: TerminalInput::Enter,
                 },
-                "454f4e571c0001000b0000000200723100270200753101",
+                "454f4e571d0001000b0000000200723100270200753101",
             ),
         ] {
             let request = Request {
@@ -4086,7 +4303,7 @@ mod tests {
         let bytes = encode_request(&request).unwrap();
         assert_eq!(
             hex(&bytes),
-            "454f4e571c0001001600000002007231010d0073657373696f6e2d322e392d310201",
+            "454f4e571d0001001600000002007231010d0073657373696f6e2d322e392d310201",
         );
         assert_eq!(decode_request(&bytes).unwrap(), request);
         for caller in ["", "session 2"] {
@@ -4191,6 +4408,7 @@ mod tests {
             sidebar: Sidebar::Closed,
             attention_queue: Vec::new(),
             running: None,
+            busy: None,
         });
         let failure = Response::Failure(Failure {
             code: "busy".into(),
@@ -4200,7 +4418,7 @@ mod tests {
             (
                 snapshot,
                 concat!(
-                    "454f4e571c0081001b0100000100020002000100010000000200743100000041",
+                    "454f4e571d0081001c0100000100020002000100010000000200743100000041",
                     "00008040010003006769740300476974000404004b6579470100020074310400",
                     "2f746d700001020070330102007531030002007031030073703103002f703101",
                     "02007031000002007032030073703203002f7032010200703200000200703303",
@@ -4212,11 +4430,12 @@ mod tests {
                     // w1's tab count, then v22's needs-input rollup and shown rank 0.
                     "02007731000100",
                     "0100",
-                    // v27's empty attention queue, then v28's absent running summary.
-                    "000000",
+                    // v27's empty attention queue, v28's absent running summary,
+                    // then v29's absent busy list.
+                    "00000000",
                 ),
             ),
-            (failure, "454f4e571c0082000a00000004006275737902006e6f"),
+            (failure, "454f4e571d0082000a00000004006275737902006e6f"),
             (
                 Response::Text(TerminalText {
                     target: terminal_target(TargetId::Pane("p2".into()), "session-2"),
@@ -4231,7 +4450,7 @@ mod tests {
                     text: "a\nb".into(),
                 }),
                 concat!(
-                    "454f4e571c00860037000000",
+                    "454f4e571d00860037000000",
                     // Workspace, tab, pane p2 and its terminal; no caller.
                     "02007731020074310002007032090073657373696f6e2d3200",
                     // Revision, alternate screen, 24x80, title, directory,
@@ -4247,7 +4466,7 @@ mod tests {
                     enter_delay_ms: 300,
                 }),
                 concat!(
-                    "454f4e571c00870034000000",
+                    "454f4e571d00870034000000",
                     "02007731020074310002007032090073657373696f6e2d32",
                     "0102007731020074310102007531090073657373696f6e2d33",
                     "012c01",
@@ -4257,7 +4476,7 @@ mod tests {
                 Response::Ended(Ended {
                     generation: "g1".into(),
                 }),
-                "454f4e571c0085000400000002006731",
+                "454f4e571d0085000400000002006731",
             ),
         ] {
             let bytes = encode_response(&response).unwrap();
@@ -4283,12 +4502,15 @@ mod tests {
                         available: false,
                         reason: "busy".into(),
                     },
+                    busy: None,
                 }),
                 concat!(
-                    "454f4e571c0083002f000000020067310500302e392e301c0002006f6b010002",
+                    "454f4e571d00830030000000020067310500302e392e301d0002006f6b010002",
                     "007331010500726561647900040062757379",
                     // v28: absent name, supervisor start in Unix milliseconds.
                     "000000000000000000",
+                    // v29: absent busy list.
+                    "00",
                 ),
             ),
             (
@@ -4296,7 +4518,7 @@ mod tests {
                     generation: "g1".into(),
                     sessions: vec![],
                 }),
-                "454f4e571c00840006000000020067310000",
+                "454f4e571d00840006000000020067310000",
             ),
         ] {
             let bytes = encode_lifecycle_response(&response).unwrap();
@@ -4364,6 +4586,7 @@ mod tests {
                 attention,
             }],
             running: None,
+            busy: None,
         }
     }
 
@@ -4374,12 +4597,14 @@ mod tests {
         assert_eq!(
             hex(&bytes),
             concat!(
-                "454f4e571c0081008900000001000100010000000100740000000000000000",
+                "454f4e571d0081008a00000001000100010000000100740000000000000000",
                 "0000010001007401002f00010100700001000100700200737002002f700101007000",
                 "010128000000000000000001000000000000000000000000010000000002",
                 "02007731020077310100020077310001000100",
                 // u16 count, workspace, tab, target, then needs-input permission at 40%.
                 "0100020077310100740100700101280000000000000000010000000000000000000000",
+                // v29's absent busy list.
+                "00",
             ),
         );
         assert_eq!(decode_response(&bytes).unwrap(), snapshot);
@@ -4412,16 +4637,86 @@ mod tests {
         assert_eq!(
             hex(&bytes),
             concat!(
-                "454f4e571c008100ba0000000100010001000000010074000000000000000000",
+                "454f4e571d008100bb0000000100010001000000010074000000000000000000",
                 "00010001007401002f00010100700001000100700200737002002f7001010070",
                 "0001012800000000000000000100000000000000000000000001000000000202",
                 "0077310200773101000200773100010001000100020077310100740100700101",
                 "2800000000000000000100000000000000000000010108003132333461626364",
                 "0200673101040068657265012a00000000000000010300000101000002006732",
                 "000000010700",
+                // v29's absent busy list.
+                "00",
             )
         );
         assert_eq!(decode_response(&bytes).unwrap(), response);
+    }
+
+    #[test]
+    fn busy_terminals_keep_their_wire_bytes() {
+        let busy = BusyTerminals {
+            terminals: vec![
+                BusyTerminal {
+                    target: terminal_target(TargetId::Pane("p2".into()), "s2"),
+                    name: "p2  vim".into(),
+                },
+                BusyTerminal {
+                    target: terminal_target(TargetId::Popup("u1".into()), "s3"),
+                    name: "Agent".into(),
+                },
+            ],
+            omitted: 0,
+        };
+        let busy_bytes = concat!(
+            // Present, two terminals: workspace, tab, pane or popup, terminal,
+            // name; then none omitted.
+            "010200",
+            "020077310200743100020070320200733207007032202076696d",
+            "020077310200743101020075310200733305004167656e74",
+            "0000",
+        );
+        let mut snapshot = attention_queue_snapshot();
+        snapshot.busy = Some(busy.clone());
+        let response = Response::Snapshot(snapshot.clone());
+        let bytes = encode_response(&response).unwrap();
+        snapshot.busy = None;
+        let without = hex(&encode_response(&Response::Snapshot(snapshot)).unwrap());
+        // The list replaces the absent byte at the snapshot's end.
+        assert_eq!(
+            &hex(&bytes)[24..],
+            format!("{}{busy_bytes}", &without[24..without.len() - 2])
+        );
+        assert_eq!(decode_response(&bytes).unwrap(), response);
+
+        let runtime = LifecycleResponse::Runtime(Runtime {
+            generation: "g1".into(),
+            name: None,
+            started_at: 0,
+            eon_version: "0.9.0".into(),
+            workspace_protocol: VERSION,
+            component_report: "ok".into(),
+            sessions: vec![],
+            attach: Availability {
+                available: true,
+                reason: "ready".into(),
+            },
+            stop: Availability {
+                available: true,
+                reason: "ready".into(),
+            },
+            busy: Some(busy),
+        });
+        let bytes = encode_lifecycle_response(&runtime).unwrap();
+        assert_eq!(
+            hex(&bytes),
+            concat!(
+                "454f4e571d00830063000000020067310500302e392e301d0002006f6b0000",
+                "01050072656164790105007265616479",
+                "000000000000000000",
+            )
+            .to_owned()
+                + busy_bytes
+        );
+        assert_eq!(decode_lifecycle_response(&bytes).unwrap(), runtime);
     }
 
     #[test]
@@ -5391,6 +5686,10 @@ mod tests {
             + (1 + MAX_RUNNING_WINDOWS) * (1 + 2 + 8 + id + 1 + 2 + 256 + 1 + 8 + 1 + 2 + 1)
             + 1
             + 2
+            + 2
+            + 1
+            + 2
+            + MAX_BUSY_TERMINALS * (4 * id + 1 + 2 + MAX_PANE_LABEL_BYTES)
             + 2;
         assert!(upper_bound <= MAX_MESSAGE_BYTES, "{upper_bound}");
 
@@ -5521,6 +5820,20 @@ mod tests {
                     .collect(),
             ),
             omitted: u16::MAX,
+        });
+        state.busy = Some(BusyTerminals {
+            terminals: (0..MAX_BUSY_TERMINALS)
+                .map(|n| BusyTerminal {
+                    target: TerminalTarget {
+                        workspace: "w".repeat(MAX_ID_BYTES),
+                        tab: "t".repeat(MAX_ID_BYTES),
+                        id: TargetId::Popup("u".repeat(MAX_ID_BYTES)),
+                        terminal: name("s", n, MAX_ID_BYTES),
+                    },
+                    name: "🦀".repeat(MAX_PANE_LABEL_BYTES / 4),
+                })
+                .collect(),
+            omitted: (MAX_SESSIONS - MAX_BUSY_TERMINALS) as u16,
         });
         let response = Response::Snapshot(state.clone());
         let bytes = encode_response(&response).unwrap();

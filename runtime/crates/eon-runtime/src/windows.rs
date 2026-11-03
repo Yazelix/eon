@@ -2,9 +2,9 @@ use super::{
     cli::{Inputs, calling_terminal},
     control::{Error, failure, report_failure, write_stdout},
     generation::{
-        GenerationRecord, WorkspaceTarget, current_generation, generation_directory,
+        Ask, GenerationRecord, WorkspaceTarget, current_generation, generation_directory,
         private_directory_exists, resolve_workspace, running_generations, stop_generation,
-        window_generation, window_inventory,
+        stop_generations, window_generation, window_inventory,
     },
     platform::socket_path_fits,
     sessions::TERMINAL_VARIABLE,
@@ -14,7 +14,7 @@ use super::{
     },
     workspace::{failure_json, json_escape},
 };
-use eon_workspace_protocol::v28::Failure;
+use eon_workspace_protocol::v29::Failure;
 use std::{
     collections::hash_map::RandomState,
     env,
@@ -146,7 +146,16 @@ pub(super) fn quit(inputs: &Inputs, json: bool) -> Result<i32, Error> {
             Ok(resolved) => resolved,
             Err(error) => return Ok(report_failure(&error, json)?),
         };
-        return Ok(stop_generation(inputs, &resolved.generation, json, "eon")?);
+        return Ok(stop_generation(
+            inputs,
+            &runtime_directory("eon"),
+            &resolved.generation,
+            json,
+            &Ask::Quit {
+                caller: Some(caller),
+                this_window: true,
+            },
+        )?);
     }
     let candidates = candidates(inputs)?;
     match candidates.as_slice() {
@@ -157,18 +166,16 @@ pub(super) fn quit(inputs: &Inputs, json: bool) -> Result<i32, Error> {
             ),
             json,
         )?),
-        [(id, root, generation)] => {
-            let mut command = namespace_command(id.as_deref(), root)?;
-            command.args(["stop", &generation.id]);
-            if json {
-                command.arg("--json");
-            }
-            Ok(command
-                .status()
-                .map_err(|error| format!("cannot run Eon window action: {error}"))?
-                .code()
-                .unwrap_or(1))
-        }
+        [(_, root, generation)] => Ok(stop_generation(
+            inputs,
+            root,
+            &generation.id,
+            json,
+            &Ask::Quit {
+                caller: None,
+                this_window: false,
+            },
+        )?),
         candidates => {
             let mut detail = String::from("several Eon windows are running; select one to stop:\n");
             for (id, _, generation) in candidates {
@@ -310,7 +317,8 @@ fn run_in_window(root: &Path, arguments: &[&str]) -> Result<i32, Error> {
     Ok(status.code().unwrap_or(1))
 }
 
-pub(super) fn stop_namespaces(include_default: bool, json: bool) -> Result<i32, Error> {
+/// The namespaces, the caller's own last.
+fn ordered_namespaces(include_default: bool) -> Result<Vec<(Option<String>, PathBuf)>, String> {
     let current = if include_default && env::var_os(TERMINAL_VARIABLE).is_none() {
         base_runtime_directory("eon")
     } else {
@@ -318,6 +326,39 @@ pub(super) fn stop_namespaces(include_default: bool, json: bool) -> Result<i32, 
     };
     let mut windows = namespaces(include_default)?;
     windows.sort_by_key(|(_, root)| root == &current);
+    Ok(windows)
+}
+
+/// `eon quit --all`: in human mode, asks for each window as `eon quit` does,
+/// passing the calling terminal to every supervisor; only its owner leaves
+/// it out (EON-C11).
+pub(super) fn quit_all(inputs: &Inputs, json: bool) -> Result<i32, Error> {
+    if json {
+        return stop_namespaces(true, true);
+    }
+    // As with `--json`, a caller that names no terminal excludes nothing.
+    let caller = calling_terminal().ok().flatten();
+    let ask = Ask::Quit {
+        caller,
+        this_window: false,
+    };
+    let mut status = 0;
+    for (id, root) in ordered_namespaces(true)? {
+        match &id {
+            Some(id) => eprintln!("Quit Eon window {id}:"),
+            None => eprintln!("Quit the default Eon window:"),
+        }
+        let code = match stop_generations(inputs, &root, true, false, &ask) {
+            Ok(code) => code,
+            Err(error) => report_failure(&failure("stop-failed", error), false)?,
+        };
+        status = status.max(code);
+    }
+    Ok(status)
+}
+
+pub(super) fn stop_namespaces(include_default: bool, json: bool) -> Result<i32, Error> {
+    let windows = ordered_namespaces(include_default)?;
     if json {
         write_stdout("[")?;
     }

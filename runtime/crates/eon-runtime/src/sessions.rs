@@ -9,7 +9,7 @@ use super::{
     },
     workspace::{is_directory_picker_endpoint, is_directory_picker_session},
 };
-use eon_workspace_protocol::v28::{
+use eon_workspace_protocol::v29::{
     Failure, MAX_PASTE_BYTES, MAX_SESSIONS, MAX_TERMINAL_METADATA_BYTES, MAX_TERMINAL_TEXT_BYTES,
 };
 use orbit_protocol::management::{
@@ -549,6 +549,7 @@ fn acquire_management(
         naming: None,
         stop_sent: false,
         reap_failure_reported: false,
+        default_shell: false,
         child: None,
         finished: None,
     })
@@ -813,6 +814,9 @@ pub(super) struct RunningSession {
     /// The supervisor reported that this terminal cannot be reconciled yet;
     /// later reaps retry without waiting.
     pub(super) reap_failure_reported: bool,
+    /// This Runtime started it with the window's default shell; a recovered
+    /// run's start is unknown (EON-C11 busy terminals).
+    pub(super) default_shell: bool,
     child: Option<Child>,
     finished: Option<SessionEnd>,
 }
@@ -1623,7 +1627,11 @@ pub(super) fn start_orbit(
                         },
                         None,
                         deadline,
-                    );
+                    )
+                    .map(|session| RunningSession {
+                        default_shell: child.is_empty(),
+                        ..session
+                    });
                 }
                 Some(RecordSnapshot {
                     record: ManagementRecord::Tombstone(tombstone),
@@ -2252,6 +2260,7 @@ pub(crate) mod tests {
             naming: None,
             stop_sent: false,
             reap_failure_reported: false,
+            default_shell: false,
             child: None,
             finished: None,
         };
@@ -2575,7 +2584,7 @@ pub(crate) mod tests {
 
     /// A leased run of `session-<number>` whose tombstone for `reason` is
     /// already recorded, with the lease's other end as Orbit's.
-    fn tombstoned_session(
+    pub(crate) fn tombstoned_session(
         root: &Path,
         number: usize,
         reason: TerminationReason,
@@ -2642,6 +2651,7 @@ pub(crate) mod tests {
             naming: None,
             stop_sent: false,
             reap_failure_reported: false,
+            default_shell: false,
             child: None,
             finished: None,
         };
@@ -2790,6 +2800,11 @@ pub(crate) mod tests {
     /// The run record of a leased Orbit this test started.
     pub(crate) fn record(session: &RunningSession) -> &Path {
         &session.record
+    }
+
+    /// Marks a run ended before the supervisor reaps it.
+    pub(crate) fn finish(session: &mut RunningSession) {
+        session.finished = Some(super::SessionEnd::OwnerLost);
     }
 
     /// Shuts the lease's read side, so the Runtime reads it as closed.
@@ -2956,7 +2971,7 @@ pub(crate) mod tests {
         let (mut session, peer, tombstone) =
             tombstoned_session(&root, 1, TerminationReason::NaturalExit);
         let code =
-            |result: Result<bool, eon_workspace_protocol::v28::Failure>| result.unwrap_err().code;
+            |result: Result<bool, eon_workspace_protocol::v29::Failure>| result.unwrap_err().code;
         let paste = || LeaseInput::Paste("hi".into());
 
         let orbit = answer(

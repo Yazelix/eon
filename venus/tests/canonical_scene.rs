@@ -1,4 +1,4 @@
-use eon_workspace_protocol::v28::{Pane, Snapshot, Tab};
+use eon_workspace_protocol::v29::{Pane, Snapshot, Tab};
 use orbit_protocol::{
     Capabilities, Cell, CellStyle, CellWidth, Colors, Cursor, CursorShape, CursorViewport,
     Dimensions, Frame, Graphics, ImageLayer, Placement, PlacementState, Rgb, Row, Screen,
@@ -18,12 +18,12 @@ use yazelix_venus::{
 
 #[test]
 fn shared_popup_projection_keeps_hidden_work_and_one_input_surface() {
-    use eon_workspace_protocol::v28 as wire;
+    use eon_workspace_protocol::v29 as wire;
     use yazelix_venus::WorkspaceModel;
     let mut snapshot = wire::Snapshot {
         workspace: "w1".into(),
         active_workspace: "w1".into(),
-        workspaces: vec![eon_workspace_protocol::v28::WorkspaceInfo {
+        workspaces: vec![eon_workspace_protocol::v29::WorkspaceInfo {
             id: "w1".into(),
             name: None,
             tab_count: 1,
@@ -64,7 +64,8 @@ fn shared_popup_projection_keeps_hidden_work_and_one_input_surface() {
         codex_quota_failure: None,
         claude_quota_failure: None,
         running: None,
-        sidebar: eon_workspace_protocol::v28::Sidebar::Open,
+        busy: None,
+        sidebar: eon_workspace_protocol::v29::Sidebar::Open,
         attention_queue: Vec::new(),
     };
     let mut model = WorkspaceModel::default();
@@ -209,7 +210,7 @@ fn eon_workspace_becomes_one_bounded_native_accordion() {
     let snapshot = Snapshot {
         workspace: "w1".into(),
         active_workspace: "w1".into(),
-        workspaces: vec![eon_workspace_protocol::v28::WorkspaceInfo {
+        workspaces: vec![eon_workspace_protocol::v29::WorkspaceInfo {
             id: "w1".into(),
             name: None,
             tab_count: 2,
@@ -225,7 +226,7 @@ fn eon_workspace_becomes_one_bounded_native_accordion() {
                 id: "t1".into(),
                 directory: b"/tmp/eon".to_vec(),
                 selected_pane: Some("pane-2".into()),
-                columns: vec![eon_workspace_protocol::v28::Column {
+                columns: vec![eon_workspace_protocol::v29::Column {
                     panes: vec![
                         Pane {
                             label: "pane-1".into(),
@@ -257,7 +258,7 @@ fn eon_workspace_becomes_one_bounded_native_accordion() {
                 id: "t2".into(),
                 directory: b"/tmp/nova".to_vec(),
                 selected_pane: Some("pane-3".into()),
-                columns: vec![eon_workspace_protocol::v28::Column {
+                columns: vec![eon_workspace_protocol::v29::Column {
                     panes: vec![Pane {
                         label: "pane-3".into(),
                         pinned_name: None,
@@ -272,7 +273,7 @@ fn eon_workspace_becomes_one_bounded_native_accordion() {
                 attention_rollup: None,
             },
         ],
-        geometry: eon_workspace_protocol::v28::PopupGeometry {
+        geometry: eon_workspace_protocol::v29::PopupGeometry {
             side_margin: 8.0,
             vertical_margin: 4.0,
         },
@@ -282,7 +283,8 @@ fn eon_workspace_becomes_one_bounded_native_accordion() {
         codex_quota_failure: None,
         claude_quota_failure: None,
         running: None,
-        sidebar: eon_workspace_protocol::v28::Sidebar::Open,
+        busy: None,
+        sidebar: eon_workspace_protocol::v29::Sidebar::Open,
         attention_queue: Vec::new(),
     };
     let size = PhysicalSize::new(800, 600);
@@ -1574,7 +1576,7 @@ fn columns_sit_side_by_side_and_zoom_only_the_selected_pane() {
     let snapshot = Snapshot {
         workspace: "w1".into(),
         active_workspace: "w1".into(),
-        workspaces: vec![eon_workspace_protocol::v28::WorkspaceInfo {
+        workspaces: vec![eon_workspace_protocol::v29::WorkspaceInfo {
             id: "w1".into(),
             name: None,
             tab_count: 1,
@@ -1590,22 +1592,22 @@ fn columns_sit_side_by_side_and_zoom_only_the_selected_pane() {
             directory: b"/tmp/eon".to_vec(),
             selected_pane: Some("p3".into()),
             columns: vec![
-                eon_workspace_protocol::v28::Column {
+                eon_workspace_protocol::v29::Column {
                     panes: vec![pane("p1"), pane("p2")],
                     expanded: "p2".into(),
                 },
-                eon_workspace_protocol::v28::Column {
+                eon_workspace_protocol::v29::Column {
                     panes: vec![pane("p3")],
                     expanded: "p3".into(),
                 },
-                eon_workspace_protocol::v28::Column {
+                eon_workspace_protocol::v29::Column {
                     panes: vec![pane("p4")],
                     expanded: "p4".into(),
                 },
             ],
             attention_rollup: None,
         }],
-        geometry: eon_workspace_protocol::v28::PopupGeometry {
+        geometry: eon_workspace_protocol::v29::PopupGeometry {
             side_margin: 8.0,
             vertical_margin: 4.0,
         },
@@ -1615,7 +1617,8 @@ fn columns_sit_side_by_side_and_zoom_only_the_selected_pane() {
         codex_quota_failure: None,
         claude_quota_failure: None,
         running: None,
-        sidebar: eon_workspace_protocol::v28::Sidebar::Open,
+        busy: None,
+        sidebar: eon_workspace_protocol::v29::Sidebar::Open,
         attention_queue: Vec::new(),
     };
     let size = PhysicalSize::new(901, 600);
@@ -1860,19 +1863,19 @@ fn columns_sit_side_by_side_and_zoom_only_the_selected_pane() {
         .retain(|pane| pane.id == "p3");
     assert!(zoomed(&single).zoomed_pane().is_none());
     let mut popup = snapshot.clone();
-    popup.entries.push(eon_workspace_protocol::v28::PopupEntry {
+    popup.entries.push(eon_workspace_protocol::v29::PopupEntry {
         id: "git".into(),
         label: "Git".into(),
-        shortcut: eon_workspace_protocol::v28::PopupKey::Bound(
-            eon_workspace_protocol::v28::Shortcut {
-                modifiers: eon_workspace_protocol::v28::ALT,
+        shortcut: eon_workspace_protocol::v29::PopupKey::Bound(
+            eon_workspace_protocol::v29::Shortcut {
+                modifiers: eon_workspace_protocol::v29::ALT,
                 key: "KeyG".into(),
             },
         ),
     });
     popup.tabs[0]
         .popups
-        .push(eon_workspace_protocol::v28::Popup {
+        .push(eon_workspace_protocol::v29::Popup {
             id: "u1".into(),
             entry: "git".into(),
             session: "session-git".into(),

@@ -8,6 +8,9 @@
   the pane's columns (`eon-5uw0`). Outside the window this is proved on
   Wayland only. No wire change.
 
+- Consume EONW v29, which adds the window's busy terminals (`eon-7cf0y.12`).
+  This change supplies data only; Venus presents nothing new.
+
 - VEN-C1: accept a zero cursor-tail duration to disable motion while keeping
   the cursor's color and contrasting edge (`eon-configurability-qkq8.6`).
 

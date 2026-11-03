@@ -83,11 +83,19 @@ eon stop all
 confirmation. Closing a window is therefore detach; stopping a generation ends
 its terminals. To end the window you are in, run `eon quit` in any of its
 terminals, or open Commands (Alt+Shift+M) and choose Quit this window, which
-runs it. It asks as `eon stop` does and stops only that window. Outside Eon,
-`eon quit` quits the only running window; when several run, it lists each with
-the command that stops it and stops nothing. The listing includes each
+runs it. It stops only that window. It asks first only while another of its
+terminals runs something other than its idle shell, and names those
+terminals, as in `Quit this window? It stops 3 terminals; 1 still running:
+p2  cargo build. [y/N]`; while nothing runs it quits without asking. A
+terminal started for an explicit command, such as `pane create -- COMMAND`,
+counts as running, and so does the Agent popup; the Files and Git popups
+never do. Eon does not see a shell builtin or a background job of an idle
+shell. Outside Eon, `eon quit` quits the only running window, asking the same
+way with `Quit window NAME?`; when several run, it lists each with the
+command that stops it and stops nothing. The listing includes each
 generation's state and live terminal count; an uninspectable count is
-`unknown`. `eon quit --all` quits every window.
+`unknown`. `eon quit --all` quits every window, asking for each as `eon quit`
+does.
 At a terminal, any answer but `y`, `Y`, `yes` or `YES` cancels
 and exits 0. Without a terminal, a piped yes still confirms; any other answer,
 including end of input, exits 1 with `not-confirmed` and sends no Stop.
@@ -411,19 +419,19 @@ on terminals; redirected output is plain text. A nonempty `NO_COLOR` or
 | `eon anima [STYLE] [CHILD OPTIONS...]` | Run pinned Anima in the caller's terminal without starting a workspace; `--help` lists styles and options |
 | `eon run [-- COMMAND...]` | Start a fresh workspace picker, optionally for an exact first command |
 | `eon window new` | Open an independent Eon window and print its window ID |
-| `eon windows [--json]` | List independent windows and their running generations, or that a window has ended, with each live generation's name and start time |
+| `eon windows [--json]` | List independent windows and their running generations, or that a window has ended, with each live generation's name, start time and busy terminals (`busy` in JSON) |
 | `eon window attach ID` | Present one window's live generation after detach, through the Eon build that started it when needed |
 | `eon window stop ID [--json]` | Stop only the selected window's terminals |
 | `eon window stop all [--json]` | Attempt Stop in every independent window |
-| `eon quit [--json]` | Quit the window of the calling terminal, stopping its terminals after Stop's confirmation; outside Eon, quit the only running window, or list the running windows and stop nothing when several run |
-| `eon quit --all [--json]` | Attempt Stop in the default window and in every independent window, the caller's window last |
+| `eon quit [--json]` | Quit the window of the calling terminal, stopping its terminals; it asks first only while another terminal of the window runs something other than its idle shell, and names those terminals (the Files and Git popups never count; the Agent popup does); outside Eon, quit the only running window, or list the running windows and stop nothing when several run |
+| `eon quit --all [--json]` | Attempt Stop in the default window and in every independent window, the caller's window last, asking for each window as `eon quit` does |
 | `eon attach [GENERATION]` | Present the current or one selected compatible generation |
-| `eon generations [--json]` | List validated current and older generations, with each live one's window name and start time |
+| `eon generations [--json]` | List validated current and older generations, with each live one's window name, start time and busy terminals (`busy` in JSON) |
 | `eon stop GENERATION [--json]` | Stop one generation through its supervisor |
 | `eon stop previous [--json]` | Attempt every other non-dead generation |
 | `eon stop all [--json]` | Attempt every non-dead generation, including current |
 | `eon workspaces [--json]` | List the window's workspaces in order, with each one's ID, name, whether it is shown, its tab count, its most urgent agent attention state, and its recency (0 for the shown one, then 1 for the one shown before it, and so on, the Workspaces picker's order) |
-| `eon workspace [--json]` | Inspect the live tab, pane, popup, and terminal mapping, with each terminal's agent attention state, app and name; JSON includes each terminal's full agent attention record and the Codex and Claude quota readings, and the calling terminal in `caller` (null without `EON_TERMINAL`; a `caller` line in human output only when present); JSON `running` holds this window and the other running Eon windows, each with its ID, generation, name, start time and live terminal count |
+| `eon workspace [--json]` | Inspect the live tab, pane, popup, and terminal mapping, with each terminal's agent attention state, app and name; JSON includes each terminal's full agent attention record and the Codex and Claude quota readings, and the calling terminal in `caller` (null without `EON_TERMINAL`; a `caller` line in human output only when present); JSON `running` holds this window and the other running Eon windows, each with its ID, generation, name, start time and live terminal count; JSON `busy` lists the window's busy terminals, each with its workspace, tab, pane or popup, terminal and name, and `omitted` counts those past 32, with one `busy` line per terminal in human output |
 | `eon workspace new [--name NAME] [--no-focus] [--json]` | Add a workspace after the shown one, with one tab and its directory picker, and show it; with `--no-focus` the shown workspace stays. The reply names the new workspace's ID in `created` (`created wN` in human output) |
 | `eon workspace switch WS [--json]` | Show workspace WS, with its tabs, panes and popups as it left them |
 | `eon workspace rename [WS] NAME [--json]` | Name workspace WS, or the caller's workspace; an empty NAME clears the name |

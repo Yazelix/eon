@@ -19,6 +19,17 @@ installation, and proven contract changes.
   above, keeps extending the selection into history, as it already did with
   the pointer in the top row. On Wayland this also holds with the pointer
   outside the window; macOS is not yet checked (`eon-5uw0`).
+- `eon quit` asks first only while a terminal of the window, other than the
+  one running it, runs something other than its idle shell, and names those
+  terminals in window language: `Quit this window? It stops 3 terminals; 1
+  still running: p2  cargo build. [y/N]`, or `Quit window NAME?` outside Eon.
+  While nothing runs it quits without asking. The Files and Git popups never
+  count; the Agent popup does. Eon does not see a shell builtin or a background
+  job of an idle shell. `eon workspace --json`, `eon generations --json` and
+  the generation inventory in `eon windows --json` carry the busy terminals as
+  `busy`, and human output prints one `busy` line per terminal.
+  EONW moves to v29 and Eon to 0.1.13 (`eon-7cf0y.12`); older windows remain
+  attachable and stoppable through the recorded `eon` that started them.
 
 ## v0.1.12 (2026-11-02)
 

@@ -7,7 +7,7 @@ use super::{
     sessions::{self, ProgramStatusRead, RunningSession},
     workspace::is_directory_picker_session,
 };
-use eon_workspace_protocol::v28::{
+use eon_workspace_protocol::v29::{
     self as eonw, Action, AttentionKind, AttentionRecord, AttentionState as State, Sidebar,
     Snapshot,
 };
@@ -24,6 +24,8 @@ const POLL_INTERVAL: Duration = Duration::from_millis(500);
 const POLL_DEADLINE: Duration = Duration::from_millis(250);
 const STALE_AFTER: Duration = Duration::from_secs(3);
 const AGENT_ENTRY: &str = "agent";
+/// Popups whose work is short and rare, so they never count busy (EON-C11).
+const IDLE_ENTRIES: [&str; 2] = ["files", "git"];
 
 /// A pane or popup terminal, in window order: workspace by workspace, tab by
 /// tab, panes column by column, then popups.
@@ -34,7 +36,14 @@ pub(super) struct Target {
     /// The pane id, or the popup instance.
     id: String,
     session: String,
-    agent: bool,
+    /// A popup's entry; None for a pane.
+    entry: Option<String>,
+}
+
+impl Target {
+    fn agent(&self) -> bool {
+        self.entry.as_deref() == Some(AGENT_ENTRY)
+    }
 }
 
 /// The pane and popup terminals of every workspace, given in window order,
@@ -51,19 +60,14 @@ pub(super) fn targets(workspaces: &[Snapshot]) -> (Vec<Target>, Option<String>) 
             let panes = tab.panes().map(|pane| {
                 let focused =
                     tab.selected_popup.is_none() && tab.selected_pane.as_ref() == Some(&pane.id);
-                (&pane.id, &pane.session, false, focused)
+                (&pane.id, &pane.session, None, focused)
             });
             let popups = tab.popups.iter().map(|popup| {
                 let focused = tab.selected_popup.as_ref() == Some(&popup.id);
-                (
-                    &popup.id,
-                    &popup.session,
-                    popup.entry == AGENT_ENTRY,
-                    focused,
-                )
+                (&popup.id, &popup.session, Some(&popup.entry), focused)
             });
             let mut position = 0;
-            for (id, session, agent, focused) in panes.chain(popups) {
+            for (id, session, entry, focused) in panes.chain(popups) {
                 if active && focused {
                     focus = Some(session.clone());
                 }
@@ -76,7 +80,7 @@ pub(super) fn targets(workspaces: &[Snapshot]) -> (Vec<Target>, Option<String>) 
                     position,
                     id: id.clone(),
                     session: session.clone(),
-                    agent,
+                    entry: entry.cloned(),
                 });
                 position += 1;
             }
@@ -135,10 +139,6 @@ struct Terminal {
     /// Its background process count (ORB-C15).
     background: u8,
     /// Which process group led its PTY when Orbit built the reply (ORB-C15).
-    #[cfg_attr(
-        not(test),
-        expect(dead_code, reason = "eon-7cf0y.12's busy rule reads it")
-    )]
     foreground: Foreground,
     /// The terminal title, which the attention carries as `name`.
     name: String,
@@ -471,7 +471,7 @@ impl Attention {
                 stale: now.duration_since(terminal.replied) > STALE_AFTER,
                 others: terminal.count.saturating_sub(1),
             }),
-            None => target.agent.then_some(Shown {
+            None => target.agent().then_some(Shown {
                 state: State::Unavailable,
                 name: "",
                 record: None,
@@ -619,6 +619,79 @@ impl Attention {
             .collect();
     }
 
+    /// EON-C11's busy terminals of `workspaces`, whose pane labels are
+    /// presented, in window order and without `exclude`. A live terminal is
+    /// idle only while it runs the default shell and its last good reply,
+    /// younger than the stale bound, found the shell's own group leading;
+    /// the Files and Git popups are never busy.
+    pub(super) fn busy(
+        &self,
+        workspaces: &[Snapshot],
+        sessions: &[RunningSession],
+        exclude: Option<&str>,
+        now: Instant,
+    ) -> eonw::BusyTerminals {
+        let (targets, _) = targets(workspaces);
+        let mut terminals = Vec::new();
+        let mut omitted = 0u16;
+        for target in &targets {
+            let Some(session) = sessions
+                .iter()
+                .find(|session| session.id == target.session && !session.is_finished())
+            else {
+                continue;
+            };
+            let idle_shell = session.default_shell
+                && self.terminals.iter().any(|terminal| {
+                    terminal.session == session.id
+                        && terminal.run == session.run_id()
+                        && terminal.foreground == Foreground::Child
+                        && now.duration_since(terminal.replied) < STALE_AFTER
+                });
+            if exclude == Some(target.session.as_str())
+                || idle_shell
+                || target
+                    .entry
+                    .as_deref()
+                    .is_some_and(|entry| IDLE_ENTRIES.contains(&entry))
+            {
+                continue;
+            }
+            if terminals.len() == eonw::MAX_BUSY_TERMINALS {
+                omitted += 1;
+                continue;
+            }
+            let workspace = &workspaces[target.workspace];
+            let tab = &workspace.tabs[target.tab];
+            let (id, name) = match &target.entry {
+                None => (
+                    eonw::TargetId::Pane(target.id.clone()),
+                    tab.panes()
+                        .find(|pane| pane.id == target.id)
+                        .map_or_else(|| target.id.clone(), |pane| pane.label.clone()),
+                ),
+                Some(entry) => (
+                    eonw::TargetId::Popup(target.id.clone()),
+                    workspace
+                        .entries
+                        .iter()
+                        .find(|candidate| &candidate.id == entry)
+                        .map_or_else(|| entry.clone(), |entry| entry.label.clone()),
+                ),
+            };
+            terminals.push(eonw::BusyTerminal {
+                target: eonw::TerminalTarget {
+                    workspace: workspace.workspace.clone(),
+                    tab: tab.id.clone(),
+                    id,
+                    terminal: target.session.clone(),
+                },
+                name,
+            });
+        }
+        eonw::BusyTerminals { terminals, omitted }
+    }
+
     fn attention(&self, target: &Target, now: Instant) -> Option<eonw::Attention> {
         let shown = self.shown(target, now)?;
         Some(eonw::Attention {
@@ -664,7 +737,7 @@ impl Attention {
 mod tests {
     use super::*;
     use ProgramState::{Blocked, Done, Error, Idle, Working};
-    use eon_workspace_protocol::v28::{Column, Pane, Popup, PopupGeometry, Tab};
+    use eon_workspace_protocol::v29::{Column, Pane, Popup, PopupGeometry, Tab};
     use std::{fs, slice, thread};
 
     /// A record created at its change `changed`.
@@ -745,7 +818,7 @@ mod tests {
         Snapshot {
             workspace: "w1".into(),
             active_workspace: "w1".into(),
-            workspaces: vec![eon_workspace_protocol::v28::WorkspaceInfo {
+            workspaces: vec![eon_workspace_protocol::v29::WorkspaceInfo {
                 id: "w1".into(),
                 name: None,
                 tab_count: tabs.len(),
@@ -764,6 +837,7 @@ mod tests {
             codex_quota_failure: None,
             claude_quota_failure: None,
             running: None,
+            busy: None,
             sidebar: Sidebar::Off,
             attention_queue: Vec::new(),
         }
@@ -812,7 +886,7 @@ mod tests {
                     target.tab,
                     target.position,
                     target.id.as_str(),
-                    target.agent,
+                    target.agent(),
                 )
             })
             .collect();
@@ -1623,7 +1697,7 @@ mod tests {
             managed_environment::{PopupCatalog, PopupCommand, PopupDefinition},
             workspace::{Session, SessionEnd, WorkspaceSet},
         };
-        use eon_workspace_protocol::v28::{PopupKey, WorkspaceAction};
+        use eon_workspace_protocol::v29::{PopupKey, WorkspaceAction};
         let mut window = WorkspaceSet::with_recovered_sessions(
             "/runtime".into(),
             "/".into(),
@@ -1834,7 +1908,7 @@ mod tests {
         // carries its own rollup.
         let mut reply = before[1].clone();
         reply.workspaces = ["w1", "w2"]
-            .map(|id| eon_workspace_protocol::v28::WorkspaceInfo {
+            .map(|id| eon_workspace_protocol::v29::WorkspaceInfo {
                 id: id.into(),
                 ..reply.workspaces[0].clone()
             })
@@ -2176,6 +2250,172 @@ mod tests {
         }
     }
 
+    #[test]
+    fn busy_needs_the_default_shell_a_child_foreground_and_a_fresh_reply() {
+        use eon_workspace_protocol::v29::{PopupEntry, PopupKey, TargetId};
+        let root = crate::supervisor::temporary_directory();
+        let mut sessions: Vec<_> = (1..=12)
+            .map(|number| {
+                let (mut session, _, _) = crate::sessions::tests::tombstoned_session(
+                    &root,
+                    number,
+                    orbit_protocol::management::TerminationReason::ExplicitStop,
+                );
+                // session-4 and the popups run an explicit command;
+                // session-12 has not replied.
+                session.default_shell = ![4, 6, 7, 8, 9].contains(&number);
+                session
+            })
+            .collect();
+        let mut shown = snapshot(
+            "t1",
+            vec![tab(
+                "t1",
+                &[
+                    "session-1",
+                    "session-2",
+                    "session-3",
+                    "session-4",
+                    "session-5",
+                ],
+                &[
+                    ("agent", "session-6"),
+                    ("files", "session-7"),
+                    ("git", "session-8"),
+                    ("commands", "session-9"),
+                    ("project", "directory-picker-1"),
+                ],
+                None,
+            )],
+        );
+        shown.entries = vec![PopupEntry {
+            id: "agent".into(),
+            label: "Agent".into(),
+            shortcut: PopupKey::Unbound,
+        }];
+        let mut hidden = snapshot(
+            "t2",
+            vec![tab(
+                "t2",
+                &["session-10", "session-11", "session-12"],
+                &[],
+                None,
+            )],
+        );
+        hidden.workspace = "w2".into();
+        let workspaces = [shown, hidden];
+        let (targets, _) = targets(&workspaces);
+        let start = Instant::now();
+        let mut attention = Attention::new(true);
+        for (session, foreground, at) in [
+            ("session-1", Foreground::Child, start),
+            ("session-2", Foreground::Other, start),
+            ("session-3", Foreground::Unknown, start),
+            ("session-4", Foreground::Child, start),
+            ("session-5", Foreground::Child, start - STALE_AFTER),
+            ("session-6", Foreground::Child, start),
+            ("session-9", Foreground::Child, start),
+            ("session-10", Foreground::Child, start),
+            // A reply of a replaced run says nothing about the current one.
+            ("session-11", Foreground::Child, start),
+        ] {
+            let run = sessions
+                .iter()
+                .find(|candidate| candidate.id == session)
+                .unwrap()
+                .run_id()
+                .to_owned();
+            let run = if session == "session-11" { "old" } else { &run };
+            attention.apply(
+                &targets,
+                session,
+                run,
+                ProgramStatus {
+                    foreground,
+                    ..status(1, Vec::new())
+                },
+                at,
+            );
+        }
+        let names = |busy: &eonw::BusyTerminals| {
+            busy.terminals
+                .iter()
+                .map(|busy| busy.name.clone())
+                .collect::<Vec<_>>()
+        };
+        let busy = attention.busy(&workspaces, &sessions, None, start);
+        assert_eq!(
+            names(&busy),
+            [
+                "pane-session-2",
+                "pane-session-3",
+                "pane-session-4",
+                "pane-session-5",
+                "Agent",
+                "commands",
+                "pane-session-11",
+                "pane-session-12",
+            ]
+        );
+        assert_eq!(busy.omitted, 0);
+        assert_eq!(
+            busy.terminals[4].target,
+            eonw::TerminalTarget {
+                workspace: "w1".into(),
+                tab: "t1".into(),
+                id: TargetId::Popup("popup-session-6".into()),
+                terminal: "session-6".into(),
+            }
+        );
+        assert_eq!(
+            busy.terminals[6].target,
+            eonw::TerminalTarget {
+                workspace: "w2".into(),
+                tab: "t2".into(),
+                id: TargetId::Pane("pane-session-11".into()),
+                terminal: "session-11".into(),
+            }
+        );
+
+        // The caller's own terminal is left out, and an idle shell goes stale.
+        let later = start + STALE_AFTER;
+        let busy = attention.busy(&workspaces, &sessions, Some("session-2"), later);
+        assert_eq!(names(&busy)[..2], ["pane-session-1", "pane-session-3"]);
+
+        // A terminal that ended, though not yet reaped, is not live, so it is
+        // not busy.
+        crate::sessions::tests::finish(
+            sessions
+                .iter_mut()
+                .find(|session| session.id == "session-3")
+                .unwrap(),
+        );
+        let busy = attention.busy(&workspaces, &sessions, None, start);
+        assert_eq!(names(&busy)[..2], ["pane-session-2", "pane-session-4"]);
+
+        // Past 32, busy terminals are counted, not named.
+        let many: Vec<String> = (1..=34).map(|number| format!("session-{number}")).collect();
+        let many: Vec<&str> = many.iter().map(String::as_str).collect();
+        let crowded = [snapshot("t1", vec![tab("t1", &many, &[], None)])];
+        let sessions: Vec<_> = (13..=34)
+            .map(|number| {
+                let (mut session, _, _) = crate::sessions::tests::tombstoned_session(
+                    &root,
+                    number,
+                    orbit_protocol::management::TerminationReason::ExplicitStop,
+                );
+                session.default_shell = true;
+                session
+            })
+            .chain(sessions)
+            .collect();
+        let busy = Attention::new(true).busy(&crowded, &sessions, None, start);
+        assert_eq!(busy.terminals.len(), eonw::MAX_BUSY_TERMINALS);
+        assert_eq!(busy.terminals[0].name, "pane-session-1");
+        assert_eq!(busy.omitted, 1);
+        fs::remove_dir_all(root).unwrap();
+    }
+
     /// Each reply's foreground reaches the terminal: `other` while a
     /// job-control job leads the PTY, `child` once the shell has it back
     /// (ORB-C15, management v5).
@@ -2186,6 +2426,8 @@ mod tests {
             &root,
             "set -m; sleep 4; exec sleep 30",
         )];
+        // An explicit command is never the default shell.
+        assert!(!sessions[0].default_shell);
         let (targets, _) = targets(&[snapshot("t", vec![tab("t", &["session-1"], &[], None)])]);
         let mut attention = Attention::new(true);
         let foreground = |attention: &Attention| {

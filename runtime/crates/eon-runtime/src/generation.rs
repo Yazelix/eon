@@ -1,18 +1,18 @@
 use super::cli::Inputs;
 use super::control::{
     CONTROL_TIMEOUT, ControlResponse, EndpointFailure, EndpointFailureKind, Error, connect_control,
-    failure, probe_generation_runtime, probe_generation_runtime_until, remove_socket_if_identity,
-    report_failure, send_action_from_until, send_action_on, socket_identity, socket_identity_from,
-    write_stdout,
+    failure, probe_generation_runtime, probe_generation_runtime_from,
+    probe_generation_runtime_until, remove_socket_if_identity, report_failure,
+    send_action_from_until, send_action_on, socket_identity, socket_identity_from, write_stdout,
 };
 use super::supervisor::{
     effective_uid, present_at, probe_supervisor, runtime_directory, supervisor_lock_path,
     try_lock_supervisor_lifecycle, validate_private_directory,
 };
 use super::workspace::json_escape;
-use eon_workspace_protocol::v28::{
-    Action, Availability, Failure, LifecycleResponse, MAX_RUNNING_WINDOWS, Response, Stopped,
-    WindowEntry, WindowState, WorkspaceAction,
+use eon_workspace_protocol::v29::{
+    Action, Availability, BusyTerminals, Failure, LifecycleResponse, MAX_RUNNING_WINDOWS, Response,
+    Stopped, WindowEntry, WindowState, WorkspaceAction,
 };
 use std::{
     env,
@@ -370,6 +370,8 @@ pub(super) struct GenerationRecord {
     workspace_protocol: Option<u16>,
     component_report: Option<String>,
     pub(super) sessions: Vec<String>,
+    /// Its busy terminals (EON-C11), known for a live full-Eon window.
+    busy: Option<BusyTerminals>,
     attach: Availability,
     stop: Availability,
     detail: String,
@@ -644,6 +646,7 @@ fn inspect_generation(
                 workspace_protocol: Some(info.workspace_protocol),
                 component_report: Some(info.component_report),
                 sessions: info.sessions,
+                busy: info.busy,
                 attach: info.attach,
                 stop: info.stop,
                 detail: "live supervisor validated its generation identity".into(),
@@ -723,6 +726,7 @@ fn failed_generation(
         workspace_protocol: None,
         component_report: None,
         sessions: Vec::new(),
+        busy: None,
         attach: Availability {
             available: false,
             reason: error.detail.clone(),
@@ -821,6 +825,9 @@ fn generations_human(records: &[GenerationRecord]) -> String {
         for session in &record.sessions {
             output.push_str(&format!("  terminal {session}\n"));
         }
+        for line in super::workspace::human_busy(record.busy.as_ref()).lines() {
+            output.push_str(&format!("  {line}\n"));
+        }
         if let Some(report) = &record.component_report {
             for line in report.lines() {
                 output.push_str(&format!("  component {}\n", line.escape_debug()));
@@ -860,8 +867,10 @@ fn generations_json(records: &[GenerationRecord]) -> String {
             }
             output.push_str(&format!("\"{}\"", json_escape(session)));
         }
+        output.push_str("],\"busy\":");
+        super::workspace::json_busy(&mut output, record.busy.as_ref());
         output.push_str(&format!(
-            "],\"attach\":{{\"available\":{},\"reason\":\"{}\"}},\"stop\":{{\"available\":{},\"reason\":\"{}\"}},\"detail\":\"{}\"}}",
+            ",\"attach\":{{\"available\":{},\"reason\":\"{}\"}},\"stop\":{{\"available\":{},\"reason\":\"{}\"}},\"detail\":\"{}\"}}",
             record.attach.available,
             json_escape(&record.attach.reason),
             record.stop.available,
@@ -985,17 +994,70 @@ pub(super) fn window_inventory(
     }))
 }
 
+/// How a human-mode Stop asks first.
+pub(super) enum Ask {
+    /// Always, naming the generation and its terminals.
+    Stop,
+    /// Only while a terminal other than `caller`, the terminal running the
+    /// command, is busy (EON-C11), naming the window: "this window" when
+    /// `this_window`, else its name.
+    Quit {
+        caller: Option<String>,
+        this_window: bool,
+    },
+}
+
+/// Quit's question and its decline, or none while nothing is busy. A
+/// window whose busy terminals are unknown names every live terminal.
+fn quit_question(
+    record: &GenerationRecord,
+    sessions: &[String],
+    busy: Option<&BusyTerminals>,
+    this_window: bool,
+) -> Option<(String, String)> {
+    let (names, omitted) = match busy {
+        Some(busy) if busy.terminals.is_empty() && busy.omitted == 0 => return None,
+        Some(busy) => (
+            busy.terminals
+                .iter()
+                .map(|terminal| terminal.name.clone())
+                .collect::<Vec<_>>(),
+            usize::from(busy.omitted),
+        ),
+        None => (sessions.to_vec(), 0),
+    };
+    let window = if this_window {
+        "this window".to_owned()
+    } else {
+        // EONW carries names without control characters.
+        format!("window {}", record.name.as_deref().unwrap_or(&record.id))
+    };
+    let plural = |count: usize| if count == 1 { "" } else { "s" };
+    let running = names.len() + omitted;
+    let mut question = format!(
+        "Quit {window}? It stops {} terminal{}; {running} still running: {}",
+        sessions.len(),
+        plural(sessions.len()),
+        names.join(", ")
+    );
+    if omitted > 0 {
+        question.push_str(&format!(" and {omitted} more"));
+    }
+    question.push_str(". [y/N] ");
+    Some((question, format!("cancelled; {window} keeps running\n")))
+}
+
 pub(super) fn stop_generation(
     inputs: &Inputs,
+    root: &Path,
     target: &str,
     json: bool,
-    product: &str,
+    ask: &Ask,
 ) -> Result<i32, String> {
-    let root = runtime_directory(product);
     let current = current_generation(inputs)?;
-    let control = generation_directory(&root, target).join("eon.sock");
+    let control = generation_directory(root, target).join("eon.sock");
     let observed_supervisor = socket_identity(&control);
-    let Some(record) = inspect_selected_generation(inputs, &root, &current, target)? else {
+    let Some(record) = inspect_selected_generation(inputs, root, &current, target)? else {
         return report_failure(
             &failure(
                 "unknown-generation",
@@ -1029,16 +1091,34 @@ pub(super) fn stop_generation(
             );
         }
     };
-    if !json
-        && let Some(status) = confirm(
-            &format!(
+    let question = match ask {
+        _ if json => None,
+        Ask::Stop => Some((
+            format!(
                 "Stop generation {target} and {} live terminal{} [{}]? [y/N] ",
                 record.sessions.len(),
                 if record.sessions.len() == 1 { "" } else { "s" },
                 record.sessions.join(", ")
             ),
-            &format!("cancelled; no Stop sent for generation {target}\n"),
-        )?
+            format!("cancelled; no Stop sent for generation {target}\n"),
+        )),
+        Ask::Quit {
+            caller,
+            this_window,
+        } => {
+            // Inspect again as the caller, whose own terminal is not one to
+            // ask about; a failed inspection leaves every terminal busy.
+            let runtime = probe_generation_runtime_from(&control, caller.clone())
+                .ok()
+                .filter(|runtime| runtime.generation == target);
+            let (sessions, busy) = runtime.map_or((record.sessions.clone(), None), |runtime| {
+                (runtime.sessions, runtime.busy)
+            });
+            quit_question(&record, &sessions, busy.as_ref(), *this_window)
+        }
+    };
+    if let Some((question, cancelled)) = question
+        && let Some(status) = confirm(&question, &cancelled)?
     {
         return Ok(status);
     }
@@ -1151,15 +1231,12 @@ fn confirmation_status(answer: &[u8], terminal: bool) -> Confirmation {
 
 pub(super) fn stop_generations(
     inputs: &Inputs,
+    root: &Path,
     include_current: bool,
     json: bool,
-    product: &str,
+    ask: &Ask,
 ) -> Result<i32, String> {
-    let mut records = discover_generations(
-        inputs,
-        &runtime_directory(product),
-        &current_generation(inputs)?,
-    )?;
+    let mut records = discover_generations(inputs, root, &current_generation(inputs)?)?;
     // The CLI may itself be running inside current; stop that generation last.
     records.sort_by_key(|record| record.kind == "current");
     if json {
@@ -1175,7 +1252,7 @@ pub(super) fn stop_generations(
             write_stdout(separator)?;
             separator = ",";
         }
-        let result = match stop_generation(inputs, &record.id, json, product) {
+        let result = match stop_generation(inputs, root, &record.id, json, ask) {
             Ok(code) => code,
             Err(error) => report_failure(
                 &failure("stop-failed", format!("generation {}: {error}", record.id)),
@@ -1208,7 +1285,7 @@ fn stopped_json(stopped: &Stopped) -> String {
 #[cfg(test)]
 mod tests {
     use super::{
-        Confirmation, confirmation_status, current_generation, discover_generations,
+        BusyTerminals, Confirmation, confirmation_status, current_generation, discover_generations,
         generation_directory, generation_id, valid_generation,
     };
     use crate::supervisor::{lock_supervisor_lifecycle, supervisor_lock_path, temporary_directory};
@@ -1292,7 +1369,7 @@ mod tests {
 
     #[test]
     fn read_only_discovery_excludes_terminal_only_supervisors() {
-        use eon_workspace_protocol::v28::{
+        use eon_workspace_protocol::v29::{
             Availability, HEADER_BYTES, LifecycleResponse, Runtime, declared_message_len,
             encode_lifecycle_response,
         };
@@ -1324,11 +1401,12 @@ mod tests {
                 name: None,
                 started_at: 123,
                 eon_version: "fixture".into(),
-                workspace_protocol: eon_workspace_protocol::v28::VERSION,
+                workspace_protocol: eon_workspace_protocol::v29::VERSION,
                 component_report: "fixture".into(),
                 sessions: vec!["session-1".into()],
                 attach: available.clone(),
                 stop: available,
+                busy: None,
             });
             stream
                 .write_all(&encode_lifecycle_response(&response).unwrap())
@@ -1409,10 +1487,78 @@ mod tests {
         record.state = "live";
         record.name = Some("quoted \"name\"".into());
         record.started_at = Some(123);
+        record.busy = Some(BusyTerminals {
+            terminals: Vec::new(),
+            omitted: 0,
+        });
         let value: serde_json::Value =
-            serde_json::from_str(&super::generations_json(&[record])).unwrap();
+            serde_json::from_str(&super::generations_json(std::slice::from_ref(&record))).unwrap();
         assert_eq!(value["generations"][0]["name"], "quoted \"name\"");
         assert_eq!(value["generations"][0]["started_at"], 123);
+        assert_eq!(
+            value["generations"][0]["busy"],
+            serde_json::json!({"terminals": [], "omitted": 0})
+        );
+        record.busy = None;
+        let value: serde_json::Value =
+            serde_json::from_str(&super::generations_json(&[record])).unwrap();
+        assert!(value["generations"][0]["busy"].is_null());
+    }
+
+    #[test]
+    fn quit_asks_only_while_busy_in_window_language() {
+        use eon_workspace_protocol::v29::{BusyTerminal, TargetId, TerminalTarget};
+        let mut record = super::dead_generation("g1", "current", "/runtime".into(), "ended");
+        let sessions = ["session-1".to_owned(), "session-2".to_owned()];
+        let busy = |names: &[&str], omitted| BusyTerminals {
+            terminals: names
+                .iter()
+                .enumerate()
+                .map(|(index, name)| BusyTerminal {
+                    target: TerminalTarget {
+                        workspace: "w1".into(),
+                        tab: "t1".into(),
+                        id: TargetId::Pane(format!("p{index}")),
+                        terminal: format!("session-{index}"),
+                    },
+                    name: (*name).into(),
+                })
+                .collect(),
+            omitted,
+        };
+        assert_eq!(
+            super::quit_question(&record, &sessions, Some(&busy(&[], 0)), true),
+            None
+        );
+        assert_eq!(
+            super::quit_question(
+                &record,
+                &sessions,
+                Some(&busy(&["p2  vim", "Files"], 0)),
+                true
+            ),
+            Some((
+                "Quit this window? It stops 2 terminals; 2 still running: p2  vim, Files. [y/N] "
+                    .into(),
+                "cancelled; this window keeps running\n".into(),
+            ))
+        );
+        // Unknown busy terminals name every live one; outside Eon the
+        // question names the window, else its generation.
+        assert_eq!(
+            super::quit_question(&record, &sessions[..1], None, false),
+            Some((
+                "Quit window g1? It stops 1 terminal; 1 still running: session-1. [y/N] ".into(),
+                "cancelled; window g1 keeps running\n".into(),
+            ))
+        );
+        record.name = Some("eon".into());
+        assert_eq!(
+            super::quit_question(&record, &sessions, Some(&busy(&["Agent"], 4)), false)
+                .unwrap()
+                .0,
+            "Quit window eon? It stops 2 terminals; 5 still running: Agent and 4 more. [y/N] "
+        );
     }
 
     #[test]

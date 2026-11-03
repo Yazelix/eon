@@ -6,7 +6,7 @@ use super::{
     },
     workspace,
 };
-use eon_workspace_protocol::v28::{
+use eon_workspace_protocol::v29::{
     Action, Error as ProtocolError, Failure, HEADER_BYTES, LifecycleResponse, MAX_DETAIL_BYTES,
     Request, Response, Runtime, VERSION, WorkspaceAction, declared_message_len,
     decode_lifecycle_response, decode_request, decode_response, encode_lifecycle_response,
@@ -344,6 +344,19 @@ fn runtime_response(response: ControlResponse) -> Result<Runtime, EndpointFailur
 
 pub(super) fn probe_generation_runtime(socket: &Path) -> Result<Runtime, EndpointFailure> {
     validated_runtime(probe_presentable_runtime(socket)?)
+}
+
+/// Inspects one generation for `caller`, the terminal running the command,
+/// which its busy terminals then leave out (EON-C11).
+pub(super) fn probe_generation_runtime_from(
+    socket: &Path,
+    caller: Option<String>,
+) -> Result<Runtime, EndpointFailure> {
+    validated_runtime(runtime_response(send_action_from(
+        Ok(socket),
+        caller,
+        Action::Workspace(WorkspaceAction::InspectRuntime),
+    )?)?)
 }
 
 pub(super) fn probe_generation_runtime_until(

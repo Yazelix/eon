@@ -1,4 +1,4 @@
-use eon_workspace_protocol::v28::{
+use eon_workspace_protocol::v29::{
     Action as ProtocolAction, Availability, Column, Direction, Failure as ProtocolFailure,
     HEADER_BYTES, InvokeIntent, LifecycleResponse, MAX_SESSIONS, Pane, Popup, PopupGeometry,
     PopupTarget, Request, Response, Runtime, Screen, Sent, Snapshot, Stopped, Tab, TargetId,
@@ -8,8 +8,8 @@ use eon_workspace_protocol::v28::{
 };
 use orbit_protocol::management::{
     self as management, ClientMessage as ManagementClientMessage, EndpointIdentity, Failure,
-    FailureCode, LeaseInput, LiveIdentity, ObjectIdentity, ProcessOutcome,
-    Record as ManagementRecord, Refusal, Screen as OrbitScreen,
+    FailureCode, Foreground, LeaseInput, LiveIdentity, ObjectIdentity, ProcessOutcome,
+    ProgramStatus, Record as ManagementRecord, Refusal, Screen as OrbitScreen,
     ServerMessage as ManagementServerMessage, TerminationReason, Tombstone, VisibleText,
 };
 use std::{
@@ -730,6 +730,15 @@ fn finish_managed_orbit(
     }
 }
 
+fn test_foreground() -> Option<Foreground> {
+    let path = std::env::var_os("EON_TEST_ORBIT_FOREGROUND")?;
+    match fs::read_to_string(path).ok()?.trim() {
+        "child" => Some(Foreground::Child),
+        "other" => Some(Foreground::Other),
+        _ => None,
+    }
+}
+
 #[test]
 fn managed_orbit_helper() {
     if std::env::var_os("EON_TEST_MANAGED_ORBIT").is_none() {
@@ -893,6 +902,9 @@ fn managed_orbit_helper() {
                             )),
                             _ => None,
                         };
+                        let foreground = matches!(request, ManagementClientMessage::ProgramStatus)
+                            .then(test_foreground)
+                            .flatten();
                         match request {
                             _ if *leased && scripted.is_some() => {
                                 write_management(stream, scripted.unwrap());
@@ -912,6 +924,26 @@ fn managed_orbit_helper() {
                                 stream,
                                 ManagementServerMessage::Status(identity.clone()),
                             ),
+                            // A test scripts the terminal's foreground by
+                            // writing `child` or `other` to the file
+                            // EON_TEST_ORBIT_FOREGROUND names; otherwise
+                            // Program status fails, so every terminal is busy.
+                            ManagementClientMessage::ProgramStatus
+                                if *leased && foreground.is_some() =>
+                            {
+                                write_management(
+                                    stream,
+                                    ManagementServerMessage::ProgramStatus(ProgramStatus {
+                                        count: 0,
+                                        background: 0,
+                                        foreground: foreground.unwrap(),
+                                        update: 0,
+                                        terminal_title: String::new(),
+                                        omitted: Vec::new(),
+                                        records: Vec::new(),
+                                    }),
+                                )
+                            }
                             ManagementClientMessage::Stop if *leased => stop = true,
                             ManagementClientMessage::AttachAllow {
                                 process_id,
@@ -1465,7 +1497,7 @@ printf '/selected-\377\n' > "$4"
     let response = encode_response(&Response::Snapshot(Snapshot {
         workspace: "w1".into(),
         active_workspace: "w1".into(),
-        workspaces: vec![eon_workspace_protocol::v28::WorkspaceInfo {
+        workspaces: vec![eon_workspace_protocol::v29::WorkspaceInfo {
             id: "w1".into(),
             name: None,
             tab_count: 1,
@@ -1504,7 +1536,8 @@ printf '/selected-\377\n' > "$4"
         codex_quota_failure: None,
         claude_quota_failure: None,
         running: None,
-        sidebar: eon_workspace_protocol::v28::Sidebar::Open,
+        busy: None,
+        sidebar: eon_workspace_protocol::v29::Sidebar::Open,
         attention_queue: Vec::new(),
     }))
     .unwrap();
@@ -2169,7 +2202,8 @@ fn stdout(output: &Output) -> &str {
     std::str::from_utf8(&output.stdout).unwrap()
 }
 
-// Lifecycle assertions exclude labels, which change independently as metadata arrives.
+// Lifecycle assertions exclude labels, and the busy names made of them, which
+// change independently as metadata arrives.
 fn stable_tabs(tabs: &[Tab]) -> Vec<Tab> {
     let mut tabs = tabs.to_vec();
     for tab in &mut tabs {
@@ -2188,6 +2222,13 @@ fn stable_workspace_json(output: &Output) -> serde_json::Value {
         for pane in tab["panes"].as_array_mut().unwrap() {
             pane.as_object_mut().unwrap().remove("label");
         }
+    }
+    for terminal in value["busy"]["terminals"]
+        .as_array_mut()
+        .into_iter()
+        .flatten()
+    {
+        terminal.as_object_mut().unwrap().remove("name");
     }
     value
 }
@@ -4429,6 +4470,13 @@ fn commands_from_a_terminal_target_its_column_and_stale_callers_change_nothing()
     let inspect = |id: &str| match workspace_action(&control, id, Action::Inspect) {
         Response::Snapshot(mut snapshot) => {
             snapshot.tabs = stable_tabs(&snapshot.tabs);
+            for terminal in snapshot
+                .busy
+                .iter_mut()
+                .flat_map(|busy| &mut busy.terminals)
+            {
+                terminal.name.clear();
+            }
             snapshot
         }
         response => panic!("cannot inspect workspace: {response:?}"),
@@ -4703,7 +4751,9 @@ fn delayed_second_cli_receives_committed_workspace_and_controls_three_sessions()
     assert!(human.status.success());
     assert!(stdout(&human).contains("active t1\n"));
     assert_eq!(stdout(&human).matches("  pane ").count(), 3);
-    assert_eq!(stdout(&human).matches(" terminal=session-").count(), 3);
+    // Each pane names its terminal, and so does each busy line.
+    assert_eq!(stdout(&human).matches("\nbusy ").count(), 3);
+    assert_eq!(stdout(&human).matches(" terminal=session-").count(), 6);
 
     let mut incompatible = encode_request(&Request {
         id: "incompatible-1".into(),
@@ -6349,9 +6399,37 @@ fn quit_command(root: &Path) -> Command {
         .env("EON_ORBIT", root.join("orbit"))
         .env("EON_VENUS", root.join("venus"))
         .env("EON_TEST_STOP", root.join("stop"))
+        .env("EON_TEST_ORBIT_FOREGROUND", root.join("foreground"))
         .env_remove("EON_WINDOW_RUNTIME_DIR")
         .env_remove("EON_TERMINAL");
     command
+}
+
+/// Waits until the busy terminals of the window at `window`, else of the
+/// default window, are exactly `panes`.
+fn wait_for_busy_panes(root: &Path, window: Option<&Path>, panes: &[&str]) {
+    let deadline = Instant::now() + Duration::from_secs(10);
+    loop {
+        let mut command = quit_command(root);
+        if let Some(window) = window {
+            command.env("EON_WINDOW_RUNTIME_DIR", window);
+        }
+        let output = command.args(["workspace", "--json"]).output().unwrap();
+        assert!(output.status.success(), "{output:?}");
+        let value: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
+        let busy = &value["busy"];
+        let shown = busy["terminals"].as_array().map(|terminals| {
+            terminals
+                .iter()
+                .map(|terminal| terminal["pane"].as_str().unwrap_or("popup"))
+                .collect::<Vec<_>>()
+        });
+        if shown.is_some_and(|shown| shown == panes) && busy["omitted"] == 0 {
+            return;
+        }
+        assert!(Instant::now() < deadline, "busy terminals stay {busy}");
+        thread::sleep(Duration::from_millis(50));
+    }
 }
 
 fn quit_workspace() -> (PathBuf, TestProcess) {
@@ -6794,6 +6872,17 @@ fn quit_all_stops_the_default_namespace_and_every_window_caller_last() {
     let caller_root = runtime.join("w").join(&caller);
     let caller_generation = generation_runtime(&caller_root);
     let other_generation = generation_runtime(&runtime.join("w").join(&other));
+    // The caller's window asks only for a terminal besides the caller.
+    let created = quit_command(&root)
+        .env("EON_WINDOW_RUNTIME_DIR", &caller_root)
+        .env(
+            "EON_TERMINAL",
+            OsStr::from_bytes(&quit_caller(&caller_root)),
+        )
+        .args(["pane", "create", "--no-focus", "--json"])
+        .output()
+        .unwrap();
+    assert!(created.status.success(), "{created:?}");
     let output = quit_with_answers(
         quit_command(&root)
             .env("EON_WINDOW_RUNTIME_DIR", &caller_root)
@@ -6808,12 +6897,16 @@ fn quit_all_stops_the_default_namespace_and_every_window_caller_last() {
     assert_eq!(stdout(&output).matches("stopped generation").count(), 2);
     let prompts = String::from_utf8_lossy(&output.stderr);
     assert!(
-        prompts.find("Stop the default Eon window:").unwrap()
-            < prompts.find(&format!("Stop Eon window {other}:")).unwrap()
+        prompts.find("Quit the default Eon window:").unwrap()
+            < prompts.find(&format!("Quit Eon window {other}:")).unwrap()
     );
     assert!(
-        prompts.find(&format!("Stop Eon window {other}:")).unwrap()
-            < prompts.find(&format!("Stop Eon window {caller}:")).unwrap()
+        prompts.find(&format!("Quit Eon window {other}:")).unwrap()
+            < prompts.find(&format!("Quit Eon window {caller}:")).unwrap()
+    );
+    assert!(
+        prompts.contains("It stops 2 terminals; 1 still running: p2"),
+        "{prompts}"
     );
     assert!(prompts.contains("not-confirmed"));
     wait_for_generation_removal(&other_generation);
@@ -6994,6 +7087,204 @@ exit 130
 }
 
 #[test]
+fn quit_without_a_busy_terminal_stops_without_asking() {
+    let (root, mut default) = quit_workspace();
+    let generation = generation_runtime(&root.join("r"));
+    fs::write(root.join("foreground"), "child").unwrap();
+    wait_for_busy_panes(&root, None, &[]);
+    let output = quit_command(&root)
+        .arg("quit")
+        .stdin(Stdio::null())
+        .output()
+        .unwrap();
+    assert_eq!(output.status.code(), Some(0), "{output:?}");
+    assert!(stdout(&output).contains("stopped generation"), "{output:?}");
+    assert!(!String::from_utf8_lossy(&output.stderr).contains("[y/N]"));
+    wait_for_successful_exit(&mut default.child);
+    wait_for_generation_removal(&generation);
+    fs::remove_dir_all(root).unwrap();
+}
+
+#[test]
+fn quit_asks_in_window_language_and_names_busy_terminals() {
+    let (root, mut default) = quit_workspace();
+    let runtime = root.join("r");
+    let generation = generation_runtime(&runtime);
+    fs::write(root.join("foreground"), "other").unwrap();
+    let caller = quit_caller(&runtime);
+    let created = quit_command(&root)
+        .env("EON_TERMINAL", OsStr::from_bytes(&caller))
+        .args([
+            "pane",
+            "create",
+            "--no-focus",
+            "--json",
+            "--",
+            "sleep",
+            "300",
+        ])
+        .output()
+        .unwrap();
+    assert!(created.status.success(), "{created:?}");
+    // The window's list names the caller too; only its own quit leaves it out.
+    wait_for_busy_panes(&root, None, &["p1", "p2"]);
+    let quit = || {
+        let mut command = quit_command(&root);
+        command
+            .env("EON_TERMINAL", OsStr::from_bytes(&caller))
+            .arg("quit");
+        command
+    };
+    let declined = quit_with_answers(&mut quit(), b"n\n");
+    assert_eq!(declined.status.code(), Some(1), "{declined:?}");
+    let prompt = String::from_utf8_lossy(&declined.stderr);
+    assert!(
+        prompt.starts_with("Quit this window? It stops 2 terminals; 1 still running: p2"),
+        "{prompt}"
+    );
+    assert!(!prompt.contains("p1"), "{prompt}");
+    assert!(
+        prompt.contains("error not-confirmed: this window keeps running;"),
+        "{prompt}"
+    );
+    assert!(generation.exists());
+    assert!(default.child.try_wait().unwrap().is_none());
+    let confirmed = quit_with_answers(&mut quit(), b"y\n");
+    assert_eq!(confirmed.status.code(), Some(0), "{confirmed:?}");
+    assert!(stdout(&confirmed).contains("stopped generation"));
+    wait_for_successful_exit(&mut default.child);
+    wait_for_generation_removal(&generation);
+    fs::remove_dir_all(root).unwrap();
+}
+
+#[test]
+fn quit_counts_a_silent_terminal_busy_after_3_s() {
+    let (root, mut default) = quit_workspace();
+    let generation = generation_runtime(&root.join("r"));
+    fs::write(root.join("foreground"), "child").unwrap();
+    wait_for_busy_panes(&root, None, &[]);
+    fs::write(root.join("foreground"), "silent").unwrap();
+    thread::sleep(Duration::from_millis(3500));
+    let asked = quit_command(&root)
+        .arg("quit")
+        .stdin(Stdio::null())
+        .output()
+        .unwrap();
+    assert_eq!(asked.status.code(), Some(1), "{asked:?}");
+    let prompt = String::from_utf8_lossy(&asked.stderr);
+    assert!(prompt.starts_with("Quit window "), "{prompt}");
+    assert!(
+        prompt.contains("It stops 1 terminal; 1 still running: p1"),
+        "{prompt}"
+    );
+    assert!(prompt.contains("error not-confirmed:"), "{prompt}");
+    assert!(default.child.try_wait().unwrap().is_none());
+    let stopped = quit_command(&root)
+        .args([
+            "stop",
+            generation.file_name().unwrap().to_str().unwrap(),
+            "--json",
+        ])
+        .output()
+        .unwrap();
+    assert!(stopped.status.success(), "{stopped:?}");
+    wait_for_successful_exit(&mut default.child);
+    fs::remove_dir_all(root).unwrap();
+}
+
+#[test]
+fn stop_keeps_its_always_ask_question() {
+    let (root, mut default) = quit_workspace();
+    let generation = generation_runtime(&root.join("r"));
+    let id = generation.file_name().unwrap().to_str().unwrap().to_owned();
+    fs::write(root.join("foreground"), "child").unwrap();
+    wait_for_busy_panes(&root, None, &[]);
+    let declined = quit_command(&root)
+        .args(["stop", &id])
+        .stdin(Stdio::null())
+        .output()
+        .unwrap();
+    assert_eq!(declined.status.code(), Some(1), "{declined:?}");
+    let prompt = String::from_utf8_lossy(&declined.stderr);
+    assert!(
+        prompt.starts_with(&format!(
+            "Stop generation {id} and 1 live terminal [session-1]? [y/N] "
+        )),
+        "{prompt}"
+    );
+    assert!(
+        prompt.contains(&format!(
+            "error not-confirmed: no Stop sent for generation {id};"
+        )),
+        "{prompt}"
+    );
+    assert!(default.child.try_wait().unwrap().is_none());
+    let stopped = quit_command(&root)
+        .args(["stop", &id, "--json"])
+        .output()
+        .unwrap();
+    assert!(stopped.status.success(), "{stopped:?}");
+    wait_for_successful_exit(&mut default.child);
+    fs::remove_dir_all(root).unwrap();
+}
+
+#[test]
+fn quit_all_asks_only_busy_windows() {
+    let (root, mut default) = quit_workspace();
+    let runtime = root.join("r");
+    fs::write(root.join("foreground"), "child").unwrap();
+    let window = open_quit_window(&root);
+    let window_root = runtime.join("w").join(&window);
+    let generations = [
+        generation_runtime(&runtime),
+        generation_runtime(&window_root),
+    ];
+    // A pane that runs its own command is busy beside an idle shell.
+    let created = quit_command(&root)
+        .env("EON_WINDOW_RUNTIME_DIR", &window_root)
+        .env(
+            "EON_TERMINAL",
+            OsStr::from_bytes(&quit_caller(&window_root)),
+        )
+        .args([
+            "pane",
+            "create",
+            "--no-focus",
+            "--json",
+            "--",
+            "sleep",
+            "300",
+        ])
+        .output()
+        .unwrap();
+    assert!(created.status.success(), "{created:?}");
+    wait_for_busy_panes(&root, None, &[]);
+    wait_for_busy_panes(&root, Some(&window_root), &["p2"]);
+    let output = quit_with_answers(quit_command(&root).args(["quit", "--all"]), b"y\n");
+    assert_eq!(output.status.code(), Some(0), "{output:?}");
+    assert_eq!(stdout(&output).matches("stopped generation").count(), 2);
+    let prompts = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        prompts.contains("Quit the default Eon window:"),
+        "{prompts}"
+    );
+    assert!(
+        prompts.contains(&format!("Quit Eon window {window}:")),
+        "{prompts}"
+    );
+    assert_eq!(prompts.matches("Quit window ").count(), 1, "{prompts}");
+    assert!(
+        prompts.contains("It stops 2 terminals; 1 still running: p2"),
+        "{prompts}"
+    );
+    for generation in generations {
+        wait_for_generation_removal(&generation);
+    }
+    wait_for_successful_exit(&mut default.child);
+    fs::remove_dir_all(root).unwrap();
+}
+
+#[test]
 fn running_windows_name_each_other_and_refresh_on_start_and_end() {
     let root = (0_u32..)
         .map(|n| std::env::temp_dir().join(format!("er{n:x}")))
@@ -7099,7 +7390,7 @@ fn running_windows_name_each_other_and_refresh_on_start_and_end() {
         stream.set_read_timeout(Some(remaining)).unwrap();
         let response = read_request(&mut stream);
         assert!(matches!(
-            eon_workspace_protocol::v28::decode_lifecycle_response(&response).unwrap(),
+            eon_workspace_protocol::v29::decode_lifecycle_response(&response).unwrap(),
             LifecycleResponse::Runtime(_)
         ));
     }
@@ -7562,6 +7853,7 @@ fn previous_supervisor(runtime: &Path, id: &str) -> thread::JoinHandle<()> {
                                 available: true,
                                 reason: "supervisor owns these Sessions".into(),
                             },
+                            busy: None,
                         }),
                         false,
                     )

@@ -1,7 +1,7 @@
 use super::*;
 use crate::launch;
 #[cfg(target_os = "linux")]
-use eon_workspace_protocol::v28::{Pane, Tab};
+use eon_workspace_protocol::v29::{Pane, Tab};
 
 #[test]
 #[cfg(target_os = "linux")]
@@ -15,10 +15,10 @@ fn typography_without_grid_waits_for_and_validates_workspace_geometry() {
             assert!(self.0.window.is_none(), "wait for workspace geometry");
             self.0
                 .workspace_model
-                .apply(eon_workspace_protocol::v28::Response::Snapshot(Snapshot {
+                .apply(eon_workspace_protocol::v29::Response::Snapshot(Snapshot {
                     workspace: "w1".into(),
                     active_workspace: "w1".into(),
-                    workspaces: vec![eon_workspace_protocol::v28::WorkspaceInfo {
+                    workspaces: vec![eon_workspace_protocol::v29::WorkspaceInfo {
                         id: "w1".into(),
                         name: None,
                         tab_count: 1,
@@ -26,7 +26,7 @@ fn typography_without_grid_waits_for_and_validates_workspace_geometry() {
                         recency: 0,
                     }],
                     active_tab: "t1".into(),
-                    geometry: eon_workspace_protocol::v28::PopupGeometry {
+                    geometry: eon_workspace_protocol::v29::PopupGeometry {
                         side_margin: 8.0,
                         vertical_margin: 4.0,
                     },
@@ -38,7 +38,7 @@ fn typography_without_grid_waits_for_and_validates_workspace_geometry() {
                         id: "t1".into(),
                         directory: b"/tmp".to_vec(),
                         selected_pane: Some("p1".into()),
-                        columns: vec![eon_workspace_protocol::v28::Column {
+                        columns: vec![eon_workspace_protocol::v29::Column {
                             panes: vec![Pane {
                                 label: "p1".into(),
                                 pinned_name: None,
@@ -57,7 +57,8 @@ fn typography_without_grid_waits_for_and_validates_workspace_geometry() {
                     codex_quota_failure: None,
                     claude_quota_failure: None,
                     running: None,
-                    sidebar: eon_workspace_protocol::v28::Sidebar::Open,
+                    busy: None,
+                    sidebar: eon_workspace_protocol::v29::Sidebar::Open,
                     attention_queue: Vec::new(),
                 }));
             self.0.resumed(event_loop);
@@ -211,7 +212,7 @@ fn native_startup(explicit_grid: bool) {
 #[cfg(target_os = "linux")]
 #[ignore = "requires an isolated native Wayland display and Vulkan renderer"]
 fn live_output_keeps_application_input_admitted_before_repaint() {
-    use eon_workspace_protocol::v28 as workspace;
+    use eon_workspace_protocol::v29 as workspace;
     use orbit_protocol::{
         Capabilities, Colors, Cursor, CursorShape, Dimensions, Frame, Rgb, Screen,
     };
@@ -1191,7 +1192,7 @@ fn live_output_keeps_application_input_admitted_before_repaint() {
             empty.tabs[0].selected_pane = None;
             empty.tabs[0].selected_popup = None;
             app.handle_workspace(WorkspaceEvent::Response(
-                eon_workspace_protocol::v28::Response::Snapshot(empty),
+                eon_workspace_protocol::v29::Response::Snapshot(empty),
             ));
             assert!(app.terminal.transport.is_none());
             assert!(app.terminal.model.scene().is_none());
@@ -1217,7 +1218,7 @@ fn live_output_keeps_application_input_admitted_before_repaint() {
     let snapshot = Snapshot {
         workspace: "w1".into(),
         active_workspace: "w1".into(),
-        workspaces: vec![eon_workspace_protocol::v28::WorkspaceInfo {
+        workspaces: vec![eon_workspace_protocol::v29::WorkspaceInfo {
             id: "w1".into(),
             name: None,
             tab_count: 2,
@@ -1225,7 +1226,7 @@ fn live_output_keeps_application_input_admitted_before_repaint() {
             recency: 0,
         }],
         active_tab: "t1".into(),
-        geometry: eon_workspace_protocol::v28::PopupGeometry {
+        geometry: eon_workspace_protocol::v29::PopupGeometry {
             side_margin: 8.0,
             vertical_margin: 4.0,
         },
@@ -1238,7 +1239,7 @@ fn live_output_keeps_application_input_admitted_before_repaint() {
                 id: format!("t{index}"),
                 directory: b"/tmp".to_vec(),
                 selected_pane: Some(format!("p{index}")),
-                columns: vec![eon_workspace_protocol::v28::Column {
+                columns: vec![eon_workspace_protocol::v29::Column {
                     panes: vec![Pane {
                         label: format!("p{index}"),
                         pinned_name: None,
@@ -1261,7 +1262,8 @@ fn live_output_keeps_application_input_admitted_before_repaint() {
         codex_quota_failure: None,
         claude_quota_failure: None,
         running: None,
-        sidebar: eon_workspace_protocol::v28::Sidebar::Open,
+        busy: None,
+        sidebar: eon_workspace_protocol::v29::Sidebar::Open,
         attention_queue: Vec::new(),
     };
     let response = workspace::Response::Snapshot(snapshot.clone());

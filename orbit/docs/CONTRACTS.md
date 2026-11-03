@@ -1076,8 +1076,8 @@ PTY pixel size rule needs no wire change.
     (`tcgetpgrp` on the PTY) when it builds the reply, whether or not it
     holds records. It is a neutral terminal fact, like the terminal title and
     the background count: Orbit gives it no status meaning, and Eon decides
-    what it means. It uses the same POSIX `tcgetpgrp` on Linux and macOS;
-    macOS is unproved until ORB-C14's native proof.
+    what it means (EON-C11). It uses the same POSIX `tcgetpgrp` on Linux and
+    macOS; macOS is unproved until ORB-C14's native proof.
   - **Lifetime.** Orbit removes `working` and `blocked` records on any of
     these:
     - the child exits, which ends the run and every record with it;
@@ -1180,8 +1180,9 @@ PTY pixel size rule needs no wire change.
   the `eon-agent-sidebar-yx8.4` commit for the records and their lifetime, the
   `eon-agent-sidebar-yx8.12` commit for creation sequences, the
   `eon-agent-sidebar-yx8.11` commit for the terminal title, the
-  `eon-agent-background-work-yte0.1` commit for the background process count
-  and the `eon-7cf0y.8` commit for the foreground
+  `eon-agent-background-work-yte0.1` commit for the background process count,
+  the `eon-7cf0y.8` commit for the foreground and the `eon-7cf0y.12` commit
+  for the installed check
   - **Environment:** x86_64 Linux; `nix flake check -L` (`orbit-laws`,
     `orbit-boundary`, every `orbit-<name>` real-PTY check); sandboxed
     `nix develop -c eon-test` (workspace and installer)
@@ -1241,6 +1242,13 @@ PTY pixel size rule needs no wire change.
       protocol round trip and canonical bytes cover each value
       (`program_status_carries_the_foreground`); Eon Runtime's poller reads
       both from a real Orbit (`the_poller_reads_a_real_foreground`).
+      Installed (`eon-7cf0y.12`, see EON-C11): in an isolated installed Eon
+      0.1.13 on x86_64 Linux
+      (`/nix/store/rzx4c0kf162zv2k32rjh09iz7dpikf3d-eon-0.1.13`, private
+      headless Sway), eon-nu's external `^sleep` made its default-shell
+      terminal busy within about 1 s, inside the 3 s stale bound, so the
+      reply no longer read `child`; the terminal read idle again when the
+      command returned, and a Nushell builtin left it idle.
 
 ## ORB-C16 — Static graphics resource plane
 

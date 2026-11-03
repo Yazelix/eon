@@ -18,10 +18,10 @@ use super::{
     },
     workspace::{self, LaunchCommand, SessionEnd, SessionOperation, WorkspaceSet},
 };
-use eon_workspace_protocol::v28::{
-    Action, Availability, Ended, Failure, LifecycleResponse, Request, Response, Runtime, Screen,
-    Sent, Snapshot, Stopped, TerminalInput, TerminalText, VERSION, WindowEntry, WindowState,
-    WorkspaceAction,
+use eon_workspace_protocol::v29::{
+    Action, Availability, BusyTerminals, Ended, Failure, LifecycleResponse, Request, Response,
+    Runtime, Screen, Sent, Snapshot, Stopped, TerminalInput, TerminalText, VERSION, WindowEntry,
+    WindowState, WorkspaceAction,
 };
 use orbit_protocol::management::{LeaseInput, Screen as OrbitScreen};
 use std::{
@@ -594,7 +594,7 @@ impl PresentationProcess {
                 };
                 if let Some(snapshot) = snapshot {
                     let bytes =
-                        eon_workspace_protocol::v28::encode_response(&Response::Snapshot(snapshot))
+                        eon_workspace_protocol::v29::encode_response(&Response::Snapshot(snapshot))
                             .map_err(|error| format!("cannot encode startup workspace: {error}"))?;
                     let mut remaining = bytes.as_slice();
                     while !remaining.is_empty() {
@@ -1249,7 +1249,21 @@ impl SupervisorState {
                 Instant::now(),
             );
         }
+        snapshot.busy = self.busy(None);
         Ok(snapshot)
+    }
+
+    /// The window's busy terminals without `exclude`, derived from the
+    /// poller's cached replies; eonbase has none (EON-C11).
+    fn busy(&self, exclude: Option<&str>) -> Option<BusyTerminals> {
+        let (Some(attention), Some(workspaces)) = (&self.attention, &self.workspaces) else {
+            return None;
+        };
+        let mut snapshots = workspaces.snapshots();
+        for snapshot in &mut snapshots {
+            self.pane_labels.present(snapshot, workspaces.home());
+        }
+        Some(attention.busy(&snapshots, &self.sessions, exclude, Instant::now()))
     }
 
     /// Follows focus, then polls program status, between control requests
@@ -1997,28 +2011,39 @@ fn dispatch_control_request(
                 Action::Workspace(
                     WorkspaceAction::InspectRuntime | WorkspaceAction::InspectPresentation,
                 ),
+            caller,
             ..
-        } => match runtime_status(inputs, generation, state, mode) {
-            Ok(mut runtime) => {
-                if state.stopping {
-                    runtime.attach = Availability {
-                        available: false,
-                        reason: "generation cleanup is incomplete; retry Stop".into(),
-                    };
+        } => {
+            // The terminal running the inspection is not one it asks about.
+            let exclude = caller.and_then(|caller| {
+                state
+                    .sessions
+                    .iter()
+                    .find(|session| session.is_terminal(&caller))
+                    .map(|session| session.id.clone())
+            });
+            match runtime_status(inputs, generation, state, mode, exclude.as_deref()) {
+                Ok(mut runtime) => {
+                    if state.stopping {
+                        runtime.attach = Availability {
+                            available: false,
+                            reason: "generation cleanup is incomplete; retry Stop".into(),
+                        };
+                    }
+                    (
+                        ControlResponse::Lifecycle(LifecycleResponse::Runtime(runtime)),
+                        false,
+                    )
                 }
-                (
-                    ControlResponse::Lifecycle(LifecycleResponse::Runtime(runtime)),
+                Err(detail) => (
+                    ControlResponse::Lifecycle(LifecycleResponse::Failure(failure(
+                        "unrepresentable-state",
+                        detail,
+                    ))),
                     false,
-                )
+                ),
             }
-            Err(detail) => (
-                ControlResponse::Lifecycle(LifecycleResponse::Failure(failure(
-                    "unrepresentable-state",
-                    detail,
-                ))),
-                false,
-            ),
-        },
+        }
         Request {
             action:
                 Action::Workspace(WorkspaceAction::Present {
@@ -2108,7 +2133,7 @@ fn dispatch_control_request(
             });
             match result.and_then(|()| {
                 state.notices.close();
-                runtime_status(inputs, generation, state, mode)
+                runtime_status(inputs, generation, state, mode, None)
             }) {
                 Ok(runtime) => (
                     ControlResponse::Lifecycle(LifecycleResponse::Runtime(runtime)),
@@ -2401,6 +2426,7 @@ fn runtime_status(
     generation: &str,
     state: &SupervisorState,
     mode: LaunchMode,
+    exclude: Option<&str>,
 ) -> Result<Runtime, String> {
     if mode == LaunchMode::Terminal && state.sessions.is_empty() {
         return Err("supervisor has no live terminals".into());
@@ -2427,6 +2453,7 @@ fn runtime_status(
             available: true,
             reason: "generation-aware supervisor owns these terminals".into(),
         },
+        busy: state.busy(exclude),
     })
 }
 
@@ -3156,7 +3183,7 @@ mod tests {
 
     #[test]
     fn startup_snapshot_transfer_uses_the_admission_deadline() {
-        use eon_workspace_protocol::v28::{
+        use eon_workspace_protocol::v29::{
             Column, Pane, PopupGeometry, Response, Snapshot, Tab, encode_response,
         };
         use std::time::{Duration, Instant};
@@ -3165,7 +3192,7 @@ mod tests {
         let snapshot = Snapshot {
             workspace: "w1".into(),
             active_workspace: "w1".into(),
-            workspaces: vec![eon_workspace_protocol::v28::WorkspaceInfo {
+            workspaces: vec![eon_workspace_protocol::v29::WorkspaceInfo {
                 id: "w1".into(),
                 name: None,
                 tab_count: 64,
@@ -3206,7 +3233,8 @@ mod tests {
             codex_quota_failure: None,
             claude_quota_failure: None,
             running: None,
-            sidebar: eon_workspace_protocol::v28::Sidebar::Open,
+            busy: None,
+            sidebar: eon_workspace_protocol::v29::Sidebar::Open,
             attention_queue: Vec::new(),
         };
         let expected = encode_response(&Response::Snapshot(snapshot.clone())).unwrap();

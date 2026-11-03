@@ -640,7 +640,7 @@ socket names, JSON fields and protocol identifiers retain their spellings.
 - **Owner:** Eon Runtime workspace topology, identity, focus, pruning and action
   enforcement; Eon supplies product defaults/policy. Orbit owns terminals and
   Venus owns native materialization.
-- **Consumes:** Current EONW v28 workspace/popup values, Orbit terminal
+- **Consumes:** Current EONW v29 workspace/popup values, Orbit terminal
   identities/endpoints and Venus `VEN-C8`.
 - **Boundary:** No arbitrary split tree, vertical splits, column resizing,
   arbitrary reorder target, cross-tab pane movement, picker relocation, durable layout
@@ -926,8 +926,9 @@ socket names, JSON fields and protocol identifiers retain their spellings.
   - Workspace results carry ordered tab, pane, and terminal identities, active
     and selected identities, liveness, exact raw tab launch-directory bytes,
     and exact opaque Orbit endpoint bytes. Lifecycle results carry generation,
-    component/protocol identity, live terminals, the window's name and supervisor
-    start time (EON-C23), and owner-authored attach/stop availability.
+    component/protocol identity, live terminals, busy terminals (EON-C11), the
+    window's name and supervisor start time (EON-C23), and owner-authored
+    attach/stop availability.
   - CLI JSON emits each directory and endpoint as a JSON string when its bytes
     are valid UTF-8, and otherwise as an ordered byte array, without changing
     EONW. Each connection carries one length-delimited request
@@ -1046,6 +1047,10 @@ socket names, JSON fields and protocol identifiers retain their spellings.
     `omitted`; each window holds `window`, `generation`, `name`, `started_at` and
     `live_terminals`, and each of `others` also `state` (`live`, `incompatible` or
     `unreachable`). The human projection prints one `running` line per window.
+    It also carries the window's busy terminals (EON-C11) as `busy`, with
+    `terminals` and `omitted`; each terminal holds `workspace`, `tab`, `pane`
+    or `popup` (the other null), `terminal` and `name`. The human projection
+    prints one `busy` line per terminal.
     The human projection carries each terminal's attention state, `app` and
     `name` only, and no queue or quotas.
   - **Several workspaces in one window** (EON-C33):
@@ -1138,7 +1143,7 @@ socket names, JSON fields and protocol identifiers retain their spellings.
 - **Owner:** Eon Runtime supervisor workspace/action state and CLI projection;
   its canonical EONW package owns types, codec and result ordering. Eon supplies
   validated component facts and product defaults.
-- **Consumes:** Current EONW v28 and accepted Orbit management operations.
+- **Consumes:** Current EONW v29 and accepted Orbit management operations.
 - **Boundary:** Additive lifecycle tags do not widen the pinned Venus workspace
   consumer. There is no event stream, subscription policy, remote transport,
   plugin/MCP API, authorization framework, durable restoration, terminal
@@ -1148,7 +1153,7 @@ socket names, JSON fields and protocol identifiers retain their spellings.
   child-protocol escape hatch.
 - **Package owner:** The canonical EONW crate lives in
   `runtime/crates/eon-workspace-protocol` with its accepted package/API and
-  v28 bytes. Venus, Eon Runtime and Eon consume it by path.
+  v29 bytes. Venus, Eon Runtime and Eon consume it by path.
   See [package selection](ARCHITECTURE.md#in-tree-package-selection).
 - **Runtime policy:** Project is required, defaults to Alt+Z, and uses Eon's
   existing transient chooser command. Git defaults to `eon-lazygit` on Alt+Shift+J;
@@ -1209,8 +1214,8 @@ socket names, JSON fields and protocol identifiers retain their spellings.
   fzf list of the popup's window's workspaces (EON-C33's picker); Commands >
   Switch workspace runs the same list in the Commands popup. Each row shows
   the workspace's name, or its `wN` when unnamed, its tab count, and
-  ` · needs input` when its EONW v28 `attention` is needs input. Rows run by
-  EONW v28 `recency`, most recently shown first, with the shown workspace last
+  ` · needs input` when its EONW v29 `attention` is needs input. Rows run by
+  EONW v29 `recency`, most recently shown first, with the shown workspace last
   and marked ` · shown`, and the query matches only that name or `wN`. Enter on the highlighted row,
   including on an empty query, runs `eon workspace switch wN` once the CLI
   has checked again that the `wN` is live; otherwise it changes nothing and
@@ -1397,7 +1402,11 @@ socket names, JSON fields and protocol identifiers retain their spellings.
 - **Status:** Proven on x86_64 Linux native Wayland. Amended on 2026-10-30
   (approved by Lucca, relayed by eon-overseer) by
   `eon-agent-parity-a9g0.15`: only the Venus a supervisor starts attaches to
-  its window's terminals, proven by its amendment proof below.
+  its window's terminals, proven by its amendment proof below. Amended on
+  2026-11-03 (approved under eon-7cf0y's approval mode, relayed by
+  eon-overseer) by `eon-7cf0y.12`: `eon quit` asks only while a terminal is
+  busy, and runtime results and workspace snapshots carry the busy terminals,
+  proven by its amendment proof below.
 - **Consumer:** Eon and eonbase users launching or targeting a product generation.
 - **Trigger:** Launch current generation, inspect an older live generation,
   present a compatible existing surface, stop one generation, stop a selected
@@ -1437,7 +1446,17 @@ socket names, JSON fields and protocol identifiers retain their spellings.
     targets can finish when invoked inside a current terminal.
     Neither command forcibly kills a process.
   - `eon quit [--json]` stops one window with the existing validated Stop of
-    one generation, with Stop's confirmation and JSON result. Run from an Eon
+    one generation and Stop's JSON result. In human mode it asks first only
+    while a terminal of that window other than the calling terminal is busy
+    (below). The question is `Quit this window? It stops N terminals; M still
+    running: NAME, NAME and K more. [y/N]`, where N counts the live terminals
+    Stop ends and each NAME is a busy terminal's name; outside Eon it says
+    `Quit window WINDOW?` with the window's name (EON-C23), else its
+    generation. A decline prints `cancelled; this window keeps running` (or
+    `window WINDOW`) and stops nothing; EON-C10's confirmation rules apply.
+    While no terminal is busy it stops without asking. When it cannot inspect
+    the window's busy terminals, it asks and names every live terminal of the
+    window by its session ID, the calling terminal included. Run from an Eon
     terminal, it stops the generation whose supervisor validates that
     terminal's `EON_TERMINAL` (EON-C10); when caller discovery completes and
     no supervisor validates the caller, it fails with `unknown-caller` and
@@ -1451,20 +1470,45 @@ socket names, JSON fields and protocol identifiers retain their spellings.
     default namespace, generation, state, live terminal count when inspectable
     (otherwise unknown) and the `eon window stop ID` or
     `env -u EON_WINDOW_RUNTIME_DIR eon stop GENERATION` command that stops it.
-    `eon quit --all [--json]` attempts `eon stop all` in the default namespace
-    and in every independent window, the caller's own namespace last; outside
-    Eon, the default namespace counts as the caller's. With `--json` it
+    `eon quit --all [--json]` attempts Stop of every non-dead generation in the
+    default namespace and in every independent window, in `eon stop all`'s
+    order, the caller's own namespace last, asking for each window as
+    `eon quit` does, except that every question, the caller's own window's
+    included, says `Quit window WINDOW?`; outside Eon, the default namespace
+    counts as the caller's. With `--json` it
     prints one array holding one `{"window": ID, "results": [...]}` object per
     namespace, with `window` null for the default namespace, and it exits with
     the largest status. Neither form forcibly kills a process, and quitting the
     caller's own window can end the CLI before it reports, as Stop can.
+  - **Busy terminals.** A window's pane or popup terminal, directory pickers
+    excepted, is idle only while all of these hold: Eon started it with the
+    window's default shell (`[shell] command`), not an explicit command
+    (`pane create -- COMMAND`, `tab create … -- COMMAND`,
+    `eon run -- COMMAND`, or a popup); its last good Orbit `ProgramStatus`
+    reply (ORB-C15) found the child's own group in the terminal's foreground;
+    and that reply is less than 3 s old, EON-C31's stale bound. The Files and
+    Git popups count as idle whatever they run, because their operations are
+    short and rare and counting them would make every quit ask once Files was
+    opened. Every other live terminal is busy, including a terminal
+    recovered under EON-C15, whose start Eon does not know, and one whose
+    foreground Orbit could not read. Eon does not see a program that runs in
+    the shell's own process group, such as a shell builtin or any command
+    under a shell without job control, nor a background job of an idle shell.
+    The supervisor derives the list from EON-C31's cached replies and never
+    waits on a terminal for it. Each runtime result (a lifecycle inspection
+    or Present) and each workspace snapshot of a full-Eon window carries its busy terminals in window order,
+    at most 32, each with its workspace, tab, pane or popup, terminal and name
+    (a pane's label, a popup's entry label), and how many more are busy; a
+    lifecycle inspection whose request names a live terminal of the window
+    leaves that terminal out. eonbase carries none.
   - Implicit attach selects only a live supervisor reporting the exact current
     identity; otherwise Eon starts current without stopping older work. Explicit
     attach never substitutes another generation, and discovery distinguishes
     current, previous, dead, incompatible, and corrupt candidates. A live full-Eon
     candidate also reports its window name and the Unix millisecond time its
     supervisor started (EON-C23); `eon generations --json` and `eon windows --json`
-    print them as `name` and `started_at`, null for any other candidate.
+    print them as `name` and `started_at`, and its busy terminals as `busy`,
+    null for any other candidate.
   - One per-generation lifecycle lock covers listener and runtime teardown so a
     replacement cannot overlap cleanup; concurrent launch converges on one
     supervisor and terminal set.
@@ -1500,7 +1544,8 @@ socket names, JSON fields and protocol identifiers retain their spellings.
 - **Owner:** Eon Runtime generation identity/selection, namespaces, discovery,
   Present, explicit Stop and exact owned residue; Eon supplies immutable
   assembly/default/validator/graph/Cargo/Nix-generated inputs.
-- **Consumes:** Orbit management v5, `ORB-C3` admission, and Venus `VEN-C14`.
+- **Consumes:** Orbit management v5 (`ORB-C15` foreground), `ORB-C3`
+  admission, EON-C31 polling, and Venus `VEN-C14`.
 - **Boundary:** No manager daemon, persisted topology, machine-restart recovery,
   PTY handoff, old-generation backport, updater, Nix evaluation, package-channel
   identity, presentation compatibility window, remote runtime, plugin API, service-manager
@@ -1553,6 +1598,34 @@ socket names, JSON fields and protocol identifiers retain their spellings.
   key. `eon-ahzkt`'s ORBS probe got `Busy`, so its command was never sent, on a
   hidden tab's and a hidden popup's terminal, and on the shown tab's terminal
   while the window was detached.
+- **Amendment proof (`eon-7cf0y.12`, busy terminals):** the `eon-7cf0y.12`
+  commit.
+  - **Environment:** x86_64 Linux; sandboxed `nix develop -c eon-test`; the
+    installed package `/nix/store/rzx4c0kf162zv2k32rjh09iz7dpikf3d-eon-0.1.13`
+    in an isolated private headless Sway.
+  - **Evidence:**
+    - Runtime: `busy_needs_the_default_shell_a_child_foreground_and_a_fresh_reply`,
+      `quit_asks_only_while_busy_in_window_language` and
+      `cli_json_carries_busy_terminals`.
+    - EONW v29: `busy_terminals_round_trip_and_reject_forged_bounds` and
+      `busy_terminals_keep_their_wire_bytes`.
+    - Integration in `eon/crates/eon/tests/workspace_control.rs`:
+      `quit_without_a_busy_terminal_stops_without_asking`,
+      `quit_asks_in_window_language_and_names_busy_terminals`,
+      `quit_counts_a_silent_terminal_busy_after_3_s` (whose
+      `eon stop GENERATION --json` on a busy window also covers the Stop path
+      the close notice shares), `stop_keeps_its_always_ask_question` and
+      `quit_all_asks_only_busy_windows`.
+    - Installed observation: an idle default shell is not busy; a Nushell
+      external command (`^sleep`) makes it busy within about 1 s, and a
+      builtin (`sleep 8sec`) does not; an explicit-command pane and the Agent
+      popup are busy, and the Files popup is not; a terminal whose Orbit was
+      stopped turns busy once its last reply is 3 s old; `eon quit` from a
+      terminal asks `Quit this window? It stops 3 terminals; 1 still running:
+      p2. [y/N]`, naming neither itself nor Files, and quits without asking
+      once nothing is busy, inside and outside Eon.
+  - **Gap:** the close notice's Quit is covered by construction only
+    (`eon-7cf0y.14`); macOS is unproved.
 - **Open proof:** Pending re-proof in this repository: native Present of a live
   surface and launch with `/sys/fs/cgroup` hidden.
 
@@ -2082,7 +2155,7 @@ socket names, JSON fields and protocol identifiers retain their spellings.
   tutorial, telemetry, momentary mode, dependency, or platform expansion.
   Venus derives overrides from the popup catalog it already receives over
   EONW. Exceptions: the viewer reads `sidebar` and each popup entry's override
-  from EONW v28.
+  from EONW v29.
 - **Proof:** `795d735a8f61ef439c56d68e1cc4d3929af0dfcf`, `eon-monorepo-2oko.6`.
   - **Environment:** Automated tier; installed tier.
   - **Evidence:** `popup_configuration_owns_defaults_overrides_and_collisions`;
@@ -2160,13 +2233,13 @@ socket names, JSON fields and protocol identifiers retain their spellings.
 - **Owner:** Eon owns the exact graph, product policy, profile delivery and
   installed acceptance; Eon Runtime owns workspace identity/actions. Venus
   owns header geometry, rendering, input, native drag, tooltips, and accessibility.
-- **Consumes:** Venus VEN-C21, EONW v7 (v28 for the EON-C31 tab attention
+- **Consumes:** Venus VEN-C21, EONW v7 (v29 for the EON-C31 tab attention
   marker) and Orbit terminals.
 - **Boundary:** EON-C27 separately owns the optional quota projection. The core
   header adds no Eon-rendered chrome, second row, widget framework, agent status,
   polling, configuration, protocol change, inactive-tab close, native window
   controls, macOS claim or distribution expansion. The one exception is the
-  EON-C31 tab attention marker, which Venus reads from the EONW v28 snapshot it
+  EON-C31 tab attention marker, which Venus reads from the EONW v29 snapshot it
   already polls.
 - **Proof:** `795d735a8f61ef439c56d68e1cc4d3929af0dfcf`, `eon-monorepo-2oko.6`.
   - **Environment:** Automated tier; installed tier.
@@ -2250,7 +2323,7 @@ socket names, JSON fields and protocol identifiers retain their spellings.
   completed inspection. Keeping it current wakes no idle process and sends
   nothing to another supervisor while nothing changes, and background
   inspection never removes another generation's files. Venus receives the
-  summary in every EONW v28 snapshot; the CLI prints it as `running`
+  summary in every EONW v29 snapshot; the CLI prints it as `running`
   (EON-C10).
   `eon window stop all` covers independent windows and attempts the caller's
   own window last; existing `eon stop all` remains scoped to the caller's
@@ -2375,7 +2448,7 @@ socket names, JSON fields and protocol identifiers retain their spellings.
 - **Ownership:** Pinned CodexBar owns provider collection and credential access;
   Runtime owns bounded subprocesses, validation, freshness and the stored
   readings; canonical EONW permits absent resets; Venus consumes typed facts
-  through its existing chip owners. Eon owns exact Nix composition. EONW v28
+  through its existing chip owners. Eon owns exact Nix composition. EONW v29
   carries each window's scope and each provider's last failure.
 - **Failure policy:** Each read has a ten-second deadline and 64 KiB output cap.
   A failed read keeps retained data unchanged; age alone marks it old after one
@@ -2868,7 +2941,7 @@ socket names, JSON fields and protocol identifiers retain their spellings.
     sidebar visibility and `[sidebar]` configuration.
   - **Orbit** owns the records, their neutral facts and the terminal title.
   - **Venus** owns presentation and hiding for width (VEN-C30).
-- **Consumes:** ORB-C15, ORB-C13 generation 5, EON-C8 topology, and EON-C10 (EONW v28, still
+- **Consumes:** ORB-C15, ORB-C13 generation 5, EON-C8 topology, and EON-C10 (EONW v29, still
   request and response, with no event stream).
 - **Boundary:**
   - no hooks and no edits to agent configuration;

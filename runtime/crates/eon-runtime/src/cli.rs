@@ -4,20 +4,23 @@ use super::{
         send_action, send_action_from, send_action_from_until, validate_action, write_stdout,
     },
     generation::{
-        WorkspaceTarget, attach_generation, confirm, current_generation, generations_command,
+        Ask, WorkspaceTarget, attach_generation, confirm, current_generation, generations_command,
         resolve_workspace, stop_generation, stop_generations, valid_generation,
     },
     managed_environment,
     running::running_notice,
     sessions::{TAB_VARIABLE, TERMINAL_VARIABLE, terminal_session},
-    supervisor::{LaunchMode, configuration_directory, launch_current, prepare_configuration},
+    supervisor::{
+        LaunchMode, configuration_directory, launch_current, prepare_configuration,
+        runtime_directory,
+    },
     windows,
     workspace::{
         caller_output, failure_human, human as human_output, json as json_output, json_escape,
         list_human, list_json, resolve_selector, terminal_sent_json, terminal_text_json,
     },
 };
-use eon_workspace_protocol::v28::{
+use eon_workspace_protocol::v29::{
     Action, AttentionState, Direction, Failure, MAX_PASTE_BYTES, PopupTarget, Response, Side,
     Snapshot, TerminalInput, VERSION, WorkspaceAction, WorkspaceInfo, valid_caller, validate_paste,
 };
@@ -749,7 +752,7 @@ fn execute(inputs: &Inputs, arguments: Vec<OsString>) -> Result<i32, Error> {
     }
     if let Some((all, json)) = parse_quit_arguments(&arguments)? {
         return if all {
-            windows::stop_namespaces(true, json)
+            windows::quit_all(inputs, json)
         } else {
             windows::quit(inputs, json)
         };
@@ -1059,10 +1062,19 @@ fn stop_argument(
     json: bool,
     product: &str,
 ) -> Result<i32, Error> {
+    let root = runtime_directory(product);
     Ok(match argument.to_str() {
-        Some("previous") if product == "eon" => stop_generations(inputs, false, json, product)?,
-        Some("all") if product == "eon" => stop_generations(inputs, true, json, product)?,
-        _ => stop_generation(inputs, generation_argument(argument)?, json, product)?,
+        Some("previous") if product == "eon" => {
+            stop_generations(inputs, &root, false, json, &Ask::Stop)?
+        }
+        Some("all") if product == "eon" => stop_generations(inputs, &root, true, json, &Ask::Stop)?,
+        _ => stop_generation(
+            inputs,
+            &root,
+            generation_argument(argument)?,
+            json,
+            &Ask::Stop,
+        )?,
     })
 }
 
@@ -1122,7 +1134,7 @@ fn control(
     // by Runtime's rule; a WS that resolves to none or several fails unasked.
     // After a yes it checks again that the wN is live before closing it, since
     // Runtime would read a departed wN as another workspace's name; the check
-    // and the close are not atomic. v28 lists only
+    // and the close are not atomic. v29 lists only
     // the caller's or shown workspace's terminals, so the prompt names none.
     if let Action::Workspace(WorkspaceAction::CloseWorkspace { workspace }) = &mut action
         && !json
@@ -1717,7 +1729,7 @@ fn parse_pane_rename_arguments(arguments: &[OsString]) -> Result<(Action, bool),
         _ => return Err(Error::usage(EON_USAGE)),
     };
     if let Some(name) = name {
-        eon_workspace_protocol::v28::validate_pane_name(name)
+        eon_workspace_protocol::v29::validate_pane_name(name)
             .map_err(|error| Error::usage(error.to_string()))?;
     }
     Ok((
