@@ -18,7 +18,7 @@ use super::{
     },
     workspace::{self, LaunchCommand, SessionEnd, SessionOperation, WorkspaceSet},
 };
-use eon_workspace_protocol::v29::{
+use eon_workspace_protocol::v30::{
     Action, Availability, BusyTerminals, Ended, Failure, LifecycleResponse, Request, Response,
     Runtime, Screen, Sent, Snapshot, Stopped, TerminalInput, TerminalText, VERSION, WindowEntry,
     WindowState, WorkspaceAction,
@@ -594,7 +594,7 @@ impl PresentationProcess {
                 };
                 if let Some(snapshot) = snapshot {
                     let bytes =
-                        eon_workspace_protocol::v29::encode_response(&Response::Snapshot(snapshot))
+                        eon_workspace_protocol::v30::encode_response(&Response::Snapshot(snapshot))
                             .map_err(|error| format!("cannot encode startup workspace: {error}"))?;
                     let mut remaining = bytes.as_slice();
                     while !remaining.is_empty() {
@@ -2495,6 +2495,73 @@ mod tests {
         }
     }
 
+    /// Until eon-ciwn.7 serves subscriptions, a supervisor refuses one with
+    /// an ordinary failure reply, which EON-C39 allows, and keeps running.
+    #[test]
+    fn subscriptions_are_refused_with_an_ordinary_failure() {
+        let root = temporary_directory();
+        let inputs = crate::fixtures::inputs();
+        let workspace = WorkspaceSet::pending(
+            root.clone(),
+            root.clone(),
+            Some(root.clone()),
+            inputs.defaults.popups.clone(),
+            |_, _| Ok(Vec::new()),
+            |_| Ok(()),
+        )
+        .unwrap();
+        let mut state = SupervisorState {
+            started_at: 1,
+            window: None,
+            running: None,
+            component_generation: "component-1".into(),
+            application_id: String::new(),
+            decorations: false,
+            workspaces: Some(workspace),
+            sessions: Vec::new(),
+            venus: None,
+            initial_child: Vec::new(),
+            initial_status: None,
+            stopping: false,
+            quotas: None,
+            attention: None,
+            pane_labels: super::super::pane_labels::Labels::default(),
+            agents: window_agents(),
+            notices: crate::notification::Notices::default(),
+            log: DiagnosticLog::open_in(Ok(root.join("logs")), "g1-test", "workspace"),
+        };
+        let refusal = |state: &mut SupervisorState| {
+            let (response, ended) = super::dispatch_control_request(
+                super::Request {
+                    id: "subscribe-1".into(),
+                    caller: None,
+                    action: Action::Subscribe {
+                        filter: Default::default(),
+                        after: None,
+                    },
+                },
+                state,
+                &inputs,
+                &root,
+                &root,
+                "component-1",
+            );
+            assert!(!ended);
+            match response {
+                super::ControlResponse::Workspace(super::Response::Failure(failure)) => {
+                    failure.code
+                }
+                _ => panic!("a subscription is refused"),
+            }
+        };
+        assert_eq!(refusal(&mut state), "unavailable");
+        // eonbase has no workspace to subscribe to.
+        state.workspaces = None;
+        assert_eq!(refusal(&mut state), "workspace-unavailable");
+        drop(state);
+        fs::remove_dir_all(root).unwrap();
+    }
+
     #[cfg(target_os = "linux")]
     #[test]
     fn attaching_an_already_presented_window_retries_notice_close() {
@@ -3187,7 +3254,7 @@ mod tests {
 
     #[test]
     fn startup_snapshot_transfer_uses_the_admission_deadline() {
-        use eon_workspace_protocol::v29::{
+        use eon_workspace_protocol::v30::{
             Column, Pane, PopupGeometry, Response, Snapshot, Tab, encode_response,
         };
         use std::time::{Duration, Instant};
@@ -3196,7 +3263,7 @@ mod tests {
         let snapshot = Snapshot {
             workspace: "w1".into(),
             active_workspace: "w1".into(),
-            workspaces: vec![eon_workspace_protocol::v29::WorkspaceInfo {
+            workspaces: vec![eon_workspace_protocol::v30::WorkspaceInfo {
                 id: "w1".into(),
                 name: None,
                 tab_count: 64,
@@ -3238,7 +3305,7 @@ mod tests {
             claude_quota_failure: None,
             running: None,
             busy: None,
-            sidebar: eon_workspace_protocol::v29::Sidebar::Open,
+            sidebar: eon_workspace_protocol::v30::Sidebar::Open,
             attention_queue: Vec::new(),
         };
         let expected = encode_response(&Response::Snapshot(snapshot.clone())).unwrap();

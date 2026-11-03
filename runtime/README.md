@@ -6,7 +6,7 @@ Both crates build and test without the Eon crates.
 | Package | Owns | Version |
 |---|---|---|
 | `eon-runtime` | Invocation, terminal lifecycle, workspace state, configuration parsing and generation identity | `0.1.0` |
-| `eon-workspace-protocol` | EONW v29 types and bounded codec | `0.1.0` |
+| `eon-workspace-protocol` | EONW v30 types and bounded codec | `0.1.0` |
 
 ## Consumer boundary
 
@@ -77,12 +77,18 @@ Successful missing quota clears prior facts.
 Eon's [EON-C27](../docs/CONTRACTS.md#eon-c27--codexbar-quota-collection)
 owns product policy and installed acceptance.
 
-EONW v29 carries each window's busy terminals in its snapshot and lifecycle
-inspection (EON-C11). v28 adds the running-windows summary and supervisor name
-and start time (EON-C23). v27 adds a scope to quota windows and each provider's last failed quota
-read (EON-C27). v26 adds terminal reads and sends for EON-C35 and EON-C36: a request that
-reads a pane's or popup's visible text in any workspace of the window, one that
-pastes text or sends Enter to it, and their replies. v25 adds the window-wide
+EONW v30 adds the codec for the EON-C39 event subscription: a `Subscribe`
+request with its filter and resume point, after which the connection carries
+a `SUBSCRIBED` reply, one `TABS` message per workspace with admitted tabs,
+then `EVENT` and `GAP` messages and a final `END`, each one frame. Until
+`eon-ciwn.7` serves subscriptions, the supervisor refuses `Subscribe` with an
+ordinary failure. v29 carries each window's busy terminals in its snapshot
+and lifecycle inspection (EON-C11). v28 adds the running-windows summary and
+supervisor name and start time (EON-C23). v27 adds a scope to quota windows
+and each provider's last failed quota read (EON-C27). v26 adds terminal reads
+and sends for EON-C35 and EON-C36: a request that reads a pane's or popup's
+visible text in any workspace of the window, one that pastes text or sends
+Enter to it, and their replies. v25 adds the window-wide
 EON-C31 `attention_queue` in Runtime's total order; consumers never sort it.
 v24 adds a directory-based tab launch request,
 optionally carrying an exact argv from a calling terminal. v23 adds the background attention state, ranked
@@ -106,7 +112,7 @@ its calling terminal; v12 adds a request that
 moves the selected pane into the neighbouring column; v11 adds a request that
 closes one pane by its stable identity; v10 arranges each tab's panes into up
 to four columns; v9 permits genuinely absent provider resets, including stale
-observations. Only v29 remains: the CLI
+observations. Only v30 remains: the CLI
 inspects and stops supervisors that use it, lists any other as incompatible,
 and presentation remains bound to the original exact executable.
 
@@ -115,9 +121,9 @@ and presentation remains bound to the original exact executable.
 Runtime and codec have separate package manifests and version owners. Runtime
 depends on the in-tree Orbit protocol crate.
 
-EONW's complete package is its Cargo manifest, `src/lib.rs` and
-`src/v29.rs`. It has no external dependencies, feature declarations,
-build script or workspace-inherited settings.
+EONW's complete package is its Cargo manifest, `src/lib.rs`, `src/v30.rs`
+and its `src/v30/subscription.rs` module. It has no external dependencies,
+feature declarations, build script or workspace-inherited settings.
 
 Runtime evolution has one owner here; Eon owns product composition and
 installed-product proof.

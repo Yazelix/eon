@@ -10,7 +10,7 @@
 #![cfg_attr(not(target_os = "linux"), allow(dead_code))]
 
 use super::running::window_label;
-use eon_workspace_protocol::v29::WindowEntry;
+use eon_workspace_protocol::v30::WindowEntry;
 
 /// The notification service's well-known bus name.
 const SERVICE: &str = "org.freedesktop.Notifications";
@@ -882,7 +882,7 @@ mod tests {
             generation: "g1-0123456789abcdef0123456789abcdef".into(),
             started_at: None,
             live_terminals: Some(terminals),
-            state: eon_workspace_protocol::v29::WindowState::Live,
+            state: eon_workspace_protocol::v30::WindowState::Live,
         })
     }
 

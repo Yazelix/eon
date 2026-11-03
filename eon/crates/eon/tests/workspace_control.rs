@@ -1,4 +1,4 @@
-use eon_workspace_protocol::v29::{
+use eon_workspace_protocol::v30::{
     Action as ProtocolAction, Availability, Column, Direction, Failure as ProtocolFailure,
     HEADER_BYTES, InvokeIntent, LifecycleResponse, MAX_SESSIONS, Pane, Popup, PopupGeometry,
     PopupTarget, Request, Response, Runtime, Screen, Sent, Snapshot, Stopped, Tab, TargetId,
@@ -1634,7 +1634,7 @@ printf '/selected-\377\n' > "$4"
     let response = encode_response(&Response::Snapshot(Snapshot {
         workspace: "w1".into(),
         active_workspace: "w1".into(),
-        workspaces: vec![eon_workspace_protocol::v29::WorkspaceInfo {
+        workspaces: vec![eon_workspace_protocol::v30::WorkspaceInfo {
             id: "w1".into(),
             name: None,
             tab_count: 1,
@@ -1674,7 +1674,7 @@ printf '/selected-\377\n' > "$4"
         claude_quota_failure: None,
         running: None,
         busy: None,
-        sidebar: eon_workspace_protocol::v29::Sidebar::Open,
+        sidebar: eon_workspace_protocol::v30::Sidebar::Open,
         attention_queue: Vec::new(),
     }))
     .unwrap();
@@ -7637,7 +7637,7 @@ fn running_windows_name_each_other_and_refresh_on_start_and_end() {
         }
         let response = read_request(&mut stream);
         assert!(matches!(
-            eon_workspace_protocol::v29::decode_lifecycle_response(&response).unwrap(),
+            eon_workspace_protocol::v30::decode_lifecycle_response(&response).unwrap(),
             LifecycleResponse::Runtime(_)
         ));
     }

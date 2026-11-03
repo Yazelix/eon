@@ -5,6 +5,13 @@ installation, and proven contract changes.
 
 ## Unreleased
 
+- EONW moves to v30 and Eon to 0.1.14 (`eon-ciwn.6`). v30 carries the
+  workspace event subscription that `eon events` will use (EON-C39); no
+  command uses it yet, and a supervisor refuses it until `eon-ciwn.7`. As
+  with every EONW change, this `eon` lists a window started by an earlier Eon
+  as incompatible and refuses its workspace commands with the usual
+  other-version failure; older windows remain attachable and stoppable
+  through the recorded `eon` that started them.
 - `eon --skill` prints the `eon` agent skill that this build ships, so an
   agent in an Eon terminal can learn the CLI with no setup, and `eon --help`
   lists it and ends with `Agent? Run eon --skill to learn how to work in Eon.`

@@ -2,6 +2,9 @@
 
 ## Unreleased
 
+- Consume EONW v30, which adds the EON-C39 event subscription messages
+  (`eon-ciwn.6`). Venus keeps polling `Inspect` and presents nothing new.
+
 - VEN-C8, VEN-C14 and VEN-C20: a compositor close request quits as Alt+Shift+Q
   does, prompt included, including one a desktop sends to each window at
   logout, and a close request while the quit prompt is open leaves it open. It

@@ -1,4 +1,4 @@
-//! Eon-owned values and bounded EONW v29 codec for local workspace clients.
+//! Eon-owned values and bounded EONW v30 codec for local workspace clients.
 //!
 //! Every message is a 12-byte header (`EONW`, little-endian version, kind,
 //! zero flags, little-endian payload length) followed by its payload.
@@ -7,7 +7,16 @@
 
 use std::{collections::HashSet, fmt, str};
 
-pub const VERSION: u16 = 29;
+mod subscription;
+
+pub use subscription::{
+    Change, ColumnOrder, End, Event, EventKind, Filter, Gap, GapReason, MAX_FILTER_TABS,
+    MAX_FILTER_TARGETS, PaneChange, PopupChange, QueueItem, Resume, Subscribed,
+    SubscriptionMessage, TabChange, Tabs, WindowSnapshot, WorkspaceChange, WorkspaceEntry,
+    decode_subscription_message, encode_subscription_message,
+};
+
+pub const VERSION: u16 = 30;
 pub const HEADER_BYTES: usize = 12;
 const MAGIC: &[u8; 4] = b"EONW";
 const MAX_MESSAGE_BYTES: usize = 2 * 1024 * 1024;
@@ -231,6 +240,12 @@ pub enum Action {
     SendTerminal {
         target: String,
         input: TerminalInput,
+    },
+    /// Subscribe to the window's events (EON-C39). The connection then
+    /// carries [`SubscriptionMessage`]s instead of one [`Response`].
+    Subscribe {
+        filter: Filter,
+        after: Option<Resume>,
     },
 }
 
@@ -941,6 +956,10 @@ pub fn encode_request(request: &Request) -> Result<Vec<u8>> {
                 TerminalInput::Enter => payload.byte(1),
             }
         }
+        Action::Subscribe { filter, after } => {
+            subscription::validate_subscribe(filter, after.as_ref())?;
+            subscription::encode_subscribe(&mut payload, filter, after.as_ref());
+        }
     }
     frame(REQUEST, payload.bytes)
 }
@@ -1094,6 +1113,10 @@ pub fn decode_request(bytes: &[u8]) -> Result<Request> {
                 }
             },
         }),
+        subscription::SUBSCRIBE => {
+            let (filter, after) = subscription::decode_subscribe(&mut decoder)?;
+            Some(Action::Subscribe { filter, after })
+        }
         _ => None,
     };
     if let Some(action) = action {
@@ -1127,6 +1150,9 @@ pub fn decode_request(bytes: &[u8]) -> Result<Request> {
                 if let TerminalInput::Paste(text) = input {
                     validate_paste(text)?;
                 }
+            }
+            Action::Subscribe { filter, after } => {
+                subscription::validate_subscribe(filter, after.as_ref())?
             }
             _ => (),
         }
@@ -1384,7 +1410,8 @@ fn validate_popup_action(action: &Action) -> Result<()> {
         | Action::NextAttention
         | Action::PreviousAttention
         | Action::ReadTerminal { .. }
-        | Action::SendTerminal { .. } => (),
+        | Action::SendTerminal { .. }
+        | Action::Subscribe { .. } => (),
     }
     Ok(())
 }
@@ -1456,17 +1483,7 @@ pub fn encode_response(response: &Response) -> Result<Vec<u8>> {
             validate_failure(snapshot.claude_quota_failure)?;
             payload.count(snapshot.tabs.len());
             for tab in &snapshot.tabs {
-                validate_columns(tab)?;
-                payload.count(tab.columns.len());
-                for column in &tab.columns {
-                    payload.count(column.panes.len());
-                    let expanded = column
-                        .panes
-                        .iter()
-                        .position(|pane| pane.id == column.expanded)
-                        .expect("validated expanded pane");
-                    payload.count(expanded);
-                }
+                encode_layout(&mut payload, tab)?;
             }
             encode_workspace(&mut payload, snapshot, &tabs);
             encode_quota(&mut payload, snapshot.codex_quota.as_ref());
@@ -1682,16 +1699,9 @@ pub fn decode_response(bytes: &[u8]) -> Result<Response> {
         return Err(Error::InvalidKind { value: kind });
     }
     let tab_count = decoder.count("tabs", MAX_TABS)?;
-    let mut layouts = Vec::with_capacity(tab_count);
-    for _ in 0..tab_count {
-        let columns = decoder.count("columns", MAX_COLUMNS)?;
-        let mut layout = Vec::with_capacity(columns);
-        for _ in 0..columns {
-            let panes = decoder.count("column panes", MAX_SESSIONS)?;
-            layout.push((panes, decoder.count("expanded pane", MAX_SESSIONS)?));
-        }
-        layouts.push(layout);
-    }
+    let layouts = (0..tab_count)
+        .map(|_| decode_layout(&mut decoder))
+        .collect::<Result<Vec<_>>>()?;
     let (mut snapshot, wire_tabs) = decode_workspace(&mut decoder)?;
     snapshot.codex_quota = decode_quota(&mut decoder)?;
     let claude = decode_quota(&mut decoder)?;
@@ -1755,35 +1765,7 @@ pub fn decode_response(bytes: &[u8]) -> Result<Response> {
         return Err(Error::InvalidSnapshot { field: "columns" });
     }
     for (tab, layout) in wire_tabs.into_iter().zip(layouts) {
-        if layout.iter().map(|(panes, _)| panes).sum::<usize>() != tab.panes.len() {
-            return Err(Error::InvalidSnapshot { field: "columns" });
-        }
-        let mut panes = tab.panes.into_iter();
-        let mut columns = Vec::with_capacity(layout.len());
-        for (count, expanded) in layout {
-            let panes: Vec<_> = panes.by_ref().take(count).collect();
-            let Some(pane) = panes.get(expanded) else {
-                return Err(Error::InvalidSnapshot {
-                    field: "expanded pane",
-                });
-            };
-            columns.push(Column {
-                expanded: pane.id.clone(),
-                panes,
-            });
-        }
-        let tab = Tab {
-            id: tab.id,
-            directory: tab.directory,
-            pending: tab.pending,
-            selected_pane: tab.selected_pane,
-            selected_popup: tab.selected_popup,
-            columns,
-            popups: tab.popups,
-            attention_rollup: tab.attention_rollup,
-        };
-        validate_columns(&tab)?;
-        snapshot.tabs.push(tab);
+        snapshot.tabs.push(assemble_tab(tab, layout)?);
     }
     Ok(Response::Snapshot(snapshot))
 }
@@ -1827,31 +1809,105 @@ fn encode_workspace(encoder: &mut Encoder, snapshot: &Snapshot, tabs: &[WireTab]
     }
     encoder.count(tabs.len());
     for tab in tabs {
-        encoder.string(&tab.id);
-        encoder.raw(&tab.directory);
-        encoder.byte(u8::from(tab.pending));
-        encode_optional(encoder, &tab.selected_pane);
-        encode_optional(encoder, &tab.selected_popup);
-        encoder.count(tab.panes.len());
-        for pane in &tab.panes {
-            encoder.string(&pane.id);
-            encoder.string(&pane.session);
-            encoder.raw(&pane.endpoint);
-            encoder.byte(u8::from(pane.live));
-            encoder.string(&pane.label);
-            encode_optional(encoder, &pane.pinned_name);
-            encode_attention(encoder, pane.attention.as_ref());
-        }
-        encoder.count(tab.popups.len());
-        for popup in &tab.popups {
-            encoder.string(&popup.id);
-            encoder.string(&popup.entry);
-            encoder.string(&popup.session);
-            encoder.raw(&popup.endpoint);
-            encode_attention(encoder, popup.attention.as_ref());
-        }
-        encode_state(encoder, tab.attention_rollup);
+        encode_wire_tab(encoder, tab);
     }
+}
+
+fn encode_wire_tab(encoder: &mut Encoder, tab: &WireTab) {
+    encoder.string(&tab.id);
+    encoder.raw(&tab.directory);
+    encoder.byte(u8::from(tab.pending));
+    encode_optional(encoder, &tab.selected_pane);
+    encode_optional(encoder, &tab.selected_popup);
+    encoder.count(tab.panes.len());
+    for pane in &tab.panes {
+        encode_pane(encoder, pane);
+    }
+    encoder.count(tab.popups.len());
+    for popup in &tab.popups {
+        encode_popup(encoder, popup);
+    }
+    encode_state(encoder, tab.attention_rollup);
+}
+
+fn encode_pane(encoder: &mut Encoder, pane: &Pane) {
+    encoder.string(&pane.id);
+    encoder.string(&pane.session);
+    encoder.raw(&pane.endpoint);
+    encoder.byte(u8::from(pane.live));
+    encoder.string(&pane.label);
+    encode_optional(encoder, &pane.pinned_name);
+    encode_attention(encoder, pane.attention.as_ref());
+}
+
+fn encode_popup(encoder: &mut Encoder, popup: &Popup) {
+    encoder.string(&popup.id);
+    encoder.string(&popup.entry);
+    encoder.string(&popup.session);
+    encoder.raw(&popup.endpoint);
+    encode_attention(encoder, popup.attention.as_ref());
+}
+
+/// A tab's column layout: the column count, then each column's pane count
+/// and expanded pane index.
+fn encode_layout(encoder: &mut Encoder, tab: &Tab) -> Result<()> {
+    validate_columns(tab)?;
+    encoder.count(tab.columns.len());
+    for column in &tab.columns {
+        encoder.count(column.panes.len());
+        let expanded = column
+            .panes
+            .iter()
+            .position(|pane| pane.id == column.expanded)
+            .expect("validated expanded pane");
+        encoder.count(expanded);
+    }
+    Ok(())
+}
+
+type Layout = Vec<(usize, usize)>;
+
+fn decode_layout(decoder: &mut Decoder<'_>) -> Result<Layout> {
+    let columns = decoder.count("columns", MAX_COLUMNS)?;
+    let mut layout = Vec::with_capacity(columns);
+    for _ in 0..columns {
+        let panes = decoder.count("column panes", MAX_SESSIONS)?;
+        layout.push((panes, decoder.count("expanded pane", MAX_SESSIONS)?));
+    }
+    Ok(layout)
+}
+
+/// Rebuilds a carried tab's columns from its layout.
+fn assemble_tab(tab: WireTab, layout: Layout) -> Result<Tab> {
+    if layout.iter().map(|(panes, _)| panes).sum::<usize>() != tab.panes.len() {
+        return Err(Error::InvalidSnapshot { field: "columns" });
+    }
+    let mut panes = tab.panes.into_iter();
+    let mut columns = Vec::with_capacity(layout.len());
+    for (count, expanded) in layout {
+        let panes: Vec<_> = panes.by_ref().take(count).collect();
+        let Some(pane) = panes.get(expanded) else {
+            return Err(Error::InvalidSnapshot {
+                field: "expanded pane",
+            });
+        };
+        columns.push(Column {
+            expanded: pane.id.clone(),
+            panes,
+        });
+    }
+    let tab = Tab {
+        id: tab.id,
+        directory: tab.directory,
+        pending: tab.pending,
+        selected_pane: tab.selected_pane,
+        selected_popup: tab.selected_popup,
+        columns,
+        popups: tab.popups,
+        attention_rollup: tab.attention_rollup,
+    };
+    validate_columns(&tab)?;
+    Ok(tab)
 }
 
 /// Returns the snapshot without tabs or quotas, and its tabs as carried.
@@ -1874,48 +1930,7 @@ fn decode_workspace(decoder: &mut Decoder<'_>) -> Result<(Snapshot, Vec<WireTab>
     let mut tabs = Vec::with_capacity(count);
     let mut sessions = 0;
     for _ in 0..count {
-        let id = decoder.string("tab id", MAX_ID_BYTES)?;
-        let directory = decoder.raw("directory", MAX_DIRECTORY_BYTES)?.to_vec();
-        let pending = decode_bool(decoder, "pending tab")?;
-        let selected_pane = decode_optional(decoder, "selected pane")?;
-        let selected_popup = decode_optional(decoder, "selected popup")?;
-        let count = decoder.count("sessions", MAX_SESSIONS - sessions)?;
-        sessions += count;
-        let mut panes = Vec::with_capacity(count);
-        for _ in 0..count {
-            panes.push(Pane {
-                id: decoder.string("pane id", MAX_ID_BYTES)?,
-                session: decoder.string("session id", MAX_ID_BYTES)?,
-                endpoint: decoder.raw("endpoint", MAX_ENDPOINT_BYTES)?.to_vec(),
-                live: decode_bool(decoder, "liveness")?,
-                label: decoder.string("pane label", MAX_PANE_LABEL_BYTES)?,
-                pinned_name: decode_pane_name(decoder)?,
-                attention: decode_attention(decoder)?,
-            });
-        }
-        let count = decoder.count("sessions", (MAX_SESSIONS - sessions).min(MAX_ENTRIES))?;
-        sessions += count;
-        let mut popups = Vec::with_capacity(count);
-        for _ in 0..count {
-            popups.push(Popup {
-                id: decoder.string("popup id", MAX_ID_BYTES)?,
-                entry: decoder.string("entry id", MAX_ENTRY_ID_BYTES)?,
-                session: decoder.string("session id", MAX_ID_BYTES)?,
-                endpoint: decoder.raw("endpoint", MAX_ENDPOINT_BYTES)?.to_vec(),
-                attention: decode_attention(decoder)?,
-            });
-        }
-        let attention_rollup = decode_state(decoder, "attention rollup")?;
-        tabs.push(WireTab {
-            id,
-            directory,
-            pending,
-            selected_pane,
-            selected_popup,
-            panes,
-            popups,
-            attention_rollup,
-        });
+        tabs.push(decode_wire_tab(decoder, &mut sessions)?);
     }
     let snapshot = Snapshot {
         workspace: String::new(),
@@ -1935,6 +1950,60 @@ fn decode_workspace(decoder: &mut Decoder<'_>) -> Result<(Snapshot, Vec<WireTab>
         busy: None,
     };
     Ok((snapshot, tabs))
+}
+
+/// Decodes one carried tab; `sessions` counts the terminals already decoded
+/// against the shared session bound.
+fn decode_wire_tab(decoder: &mut Decoder<'_>, sessions: &mut usize) -> Result<WireTab> {
+    let id = decoder.string("tab id", MAX_ID_BYTES)?;
+    let directory = decoder.raw("directory", MAX_DIRECTORY_BYTES)?.to_vec();
+    let pending = decode_bool(decoder, "pending tab")?;
+    let selected_pane = decode_optional(decoder, "selected pane")?;
+    let selected_popup = decode_optional(decoder, "selected popup")?;
+    let count = decoder.count("sessions", MAX_SESSIONS - *sessions)?;
+    *sessions += count;
+    let mut panes = Vec::with_capacity(count);
+    for _ in 0..count {
+        panes.push(decode_pane(decoder)?);
+    }
+    let count = decoder.count("sessions", (MAX_SESSIONS - *sessions).min(MAX_ENTRIES))?;
+    *sessions += count;
+    let mut popups = Vec::with_capacity(count);
+    for _ in 0..count {
+        popups.push(decode_popup(decoder)?);
+    }
+    Ok(WireTab {
+        id,
+        directory,
+        pending,
+        selected_pane,
+        selected_popup,
+        panes,
+        popups,
+        attention_rollup: decode_state(decoder, "attention rollup")?,
+    })
+}
+
+fn decode_pane(decoder: &mut Decoder<'_>) -> Result<Pane> {
+    Ok(Pane {
+        id: decoder.string("pane id", MAX_ID_BYTES)?,
+        session: decoder.string("session id", MAX_ID_BYTES)?,
+        endpoint: decoder.raw("endpoint", MAX_ENDPOINT_BYTES)?.to_vec(),
+        live: decode_bool(decoder, "liveness")?,
+        label: decoder.string("pane label", MAX_PANE_LABEL_BYTES)?,
+        pinned_name: decode_pane_name(decoder)?,
+        attention: decode_attention(decoder)?,
+    })
+}
+
+fn decode_popup(decoder: &mut Decoder<'_>) -> Result<Popup> {
+    Ok(Popup {
+        id: decoder.string("popup id", MAX_ID_BYTES)?,
+        entry: decoder.string("entry id", MAX_ENTRY_ID_BYTES)?,
+        session: decoder.string("session id", MAX_ID_BYTES)?,
+        endpoint: decoder.raw("endpoint", MAX_ENDPOINT_BYTES)?.to_vec(),
+        attention: decode_attention(decoder)?,
+    })
 }
 
 /// A tag (0 bound, 1 unbound, 2 overridden), then a bound or default
@@ -2035,97 +2104,7 @@ fn validate_workspace(snapshot: &Snapshot, tabs: &[WireTab]) -> Result<()> {
             return Err(Error::InvalidSnapshot { field: "entries" });
         }
     }
-    let mut identities = HashSet::new();
-    let mut sessions = HashSet::new();
-    let mut endpoints = HashSet::new();
-    for tab in tabs {
-        identity("tab id", &tab.id)?;
-        validate_directory(&tab.directory)?;
-        if !identities.insert(tab.id.as_str()) {
-            return Err(Error::InvalidSnapshot { field: "tab id" });
-        }
-        if tab.panes.is_empty() && tab.popups.is_empty() {
-            return Err(Error::InvalidSnapshot { field: "empty tab" });
-        }
-        if tab
-            .selected_pane
-            .as_ref()
-            .is_some_and(|id| !tab.panes.iter().any(|pane| pane.id == *id))
-            || (tab.selected_pane.is_none() && !tab.panes.is_empty())
-        {
-            return Err(Error::InvalidSnapshot {
-                field: "selected pane",
-            });
-        }
-        if tab
-            .selected_popup
-            .as_ref()
-            .is_some_and(|id| !tab.popups.iter().any(|popup| popup.id == *id))
-        {
-            return Err(Error::InvalidSnapshot {
-                field: "selected popup",
-            });
-        }
-        if tab.pending
-            && (!tab.panes.is_empty()
-                || tab.popups.len() != 1
-                || tab.popups[0].entry != PROJECT_ENTRY
-                || tab.selected_popup.as_ref() != Some(&tab.popups[0].id))
-        {
-            return Err(Error::InvalidSnapshot {
-                field: "pending tab",
-            });
-        }
-        let mut tab_entries = HashSet::new();
-        for popup in &tab.popups {
-            if !entries.contains(popup.entry.as_str()) || !tab_entries.insert(popup.entry.as_str())
-            {
-                return Err(Error::InvalidSnapshot {
-                    field: "popup entry",
-                });
-            }
-        }
-        let surfaces = tab
-            .panes
-            .iter()
-            .map(|p| (&p.id, &p.session, &p.endpoint, &p.attention))
-            .chain(
-                tab.popups
-                    .iter()
-                    .map(|p| (&p.id, &p.session, &p.endpoint, &p.attention)),
-            );
-        let mut rollup = None;
-        for (id, session, endpoint, attention) in surfaces {
-            identity("surface id", id)?;
-            identity("session id", session)?;
-            validate_endpoint(endpoint)?;
-            if let Some(attention) = attention {
-                validate_attention(attention)?;
-                rollup = Some(rollup.map_or(attention.state, |state: AttentionState| {
-                    state.min(attention.state)
-                }));
-            }
-            if !identities.insert(id.as_str())
-                || !sessions.insert(session.as_str())
-                || !endpoints.insert(endpoint.as_slice())
-            {
-                return Err(Error::InvalidSnapshot {
-                    field: "surface identity",
-                });
-            }
-            if sessions.len() > MAX_SESSIONS {
-                return Err(Error::InvalidSnapshot { field: "sessions" });
-            }
-        }
-        if tab.attention_rollup != rollup {
-            return Err(Error::InvalidSnapshot {
-                field: "attention rollup",
-            });
-        }
-    }
-    for pane in tabs.iter().flat_map(|tab| &tab.panes) {
-        validate_pane_label(pane)?;
-    }
+    validate_tabs(tabs, Some(&entries))?;
     if !tabs.iter().any(|tab| tab.id == snapshot.active_tab) {
         return Err(Error::InvalidSnapshot {
             field: "active tab",
@@ -2138,26 +2117,10 @@ fn validate_workspace(snapshot: &Snapshot, tabs: &[WireTab]) -> Result<()> {
     }
     let mut workspace_ids = HashSet::new();
     for workspace in &snapshot.workspaces {
-        let number = workspace.id.strip_prefix('w').unwrap_or("");
-        if number.starts_with('0')
-            || !number.bytes().all(|byte| byte.is_ascii_digit())
-            || number
-                .parse::<u64>()
-                .ok()
-                .filter(|number| *number > 0)
-                .is_none()
-            || !workspace_ids.insert(workspace.id.as_str())
-        {
+        validate_workspace_info(workspace)?;
+        if !workspace_ids.insert(workspace.id.as_str()) {
             return Err(Error::InvalidSnapshot {
                 field: "workspace id",
-            });
-        }
-        if let Some(name) = &workspace.name {
-            validate_workspace_name(name)?;
-        }
-        if workspace.tab_count == 0 || workspace.tab_count > MAX_TABS {
-            return Err(Error::InvalidSnapshot {
-                field: "workspace tabs",
             });
         }
     }
@@ -2204,10 +2167,7 @@ fn validate_workspace(snapshot: &Snapshot, tabs: &[WireTab]) -> Result<()> {
         identity("queue tab", &entry.tab)?;
         identity("queue target", &entry.target)?;
         if !workspace_ids.contains(entry.workspace.as_str())
-            || !matches!(
-                entry.attention.state,
-                AttentionState::NeedsInput | AttentionState::Error | AttentionState::Finished
-            )
+            || !queued(entry.attention.state)
             || entry.attention.record.is_none()
         {
             return Err(Error::InvalidSnapshot {
@@ -2215,6 +2175,151 @@ fn validate_workspace(snapshot: &Snapshot, tabs: &[WireTab]) -> Result<()> {
             });
         }
         validate_attention(&entry.attention)?;
+    }
+    Ok(())
+}
+
+/// The states EON-C31's attention queue holds.
+fn queued(state: AttentionState) -> bool {
+    matches!(
+        state,
+        AttentionState::NeedsInput | AttentionState::Error | AttentionState::Finished
+    )
+}
+
+/// A workspace id is `w` and a positive number without leading zeros.
+fn validate_workspace_id(id: &str) -> Result<()> {
+    let number = id.strip_prefix('w').unwrap_or("");
+    if number.starts_with('0')
+        || !number.bytes().all(|byte| byte.is_ascii_digit())
+        || number
+            .parse::<u64>()
+            .ok()
+            .filter(|number| *number > 0)
+            .is_none()
+    {
+        return Err(Error::InvalidSnapshot {
+            field: "workspace id",
+        });
+    }
+    Ok(())
+}
+
+/// Checks one workspace summary on its own; set rules stay with the caller.
+fn validate_workspace_info(workspace: &WorkspaceInfo) -> Result<()> {
+    validate_workspace_id(&workspace.id)?;
+    if let Some(name) = &workspace.name {
+        validate_workspace_name(name)?;
+    }
+    if workspace.tab_count == 0 || workspace.tab_count > MAX_TABS {
+        return Err(Error::InvalidSnapshot {
+            field: "workspace tabs",
+        });
+    }
+    Ok(())
+}
+
+/// Checks a run of one workspace's tabs as carried: identities, selections,
+/// surfaces, rollups and pane labels. `entries` is the popup catalog when the
+/// message carries one.
+fn validate_tabs(tabs: &[WireTab], entries: Option<&HashSet<&str>>) -> Result<()> {
+    let mut identities = HashSet::new();
+    let mut sessions = HashSet::new();
+    let mut endpoints = HashSet::new();
+    for tab in tabs {
+        identity("tab id", &tab.id)?;
+        validate_directory(&tab.directory)?;
+        if !identities.insert(tab.id.as_str()) {
+            return Err(Error::InvalidSnapshot { field: "tab id" });
+        }
+        if tab.panes.is_empty() && tab.popups.is_empty() {
+            return Err(Error::InvalidSnapshot { field: "empty tab" });
+        }
+        if tab.popups.len() > MAX_ENTRIES {
+            return Err(Error::InvalidSnapshot { field: "sessions" });
+        }
+        if tab
+            .selected_pane
+            .as_ref()
+            .is_some_and(|id| !tab.panes.iter().any(|pane| pane.id == *id))
+            || (tab.selected_pane.is_none() && !tab.panes.is_empty())
+        {
+            return Err(Error::InvalidSnapshot {
+                field: "selected pane",
+            });
+        }
+        if tab
+            .selected_popup
+            .as_ref()
+            .is_some_and(|id| !tab.popups.iter().any(|popup| popup.id == *id))
+        {
+            return Err(Error::InvalidSnapshot {
+                field: "selected popup",
+            });
+        }
+        if tab.pending
+            && (!tab.panes.is_empty()
+                || tab.popups.len() != 1
+                || tab.popups[0].entry != PROJECT_ENTRY
+                || tab.selected_popup.as_ref() != Some(&tab.popups[0].id))
+        {
+            return Err(Error::InvalidSnapshot {
+                field: "pending tab",
+            });
+        }
+        let mut tab_entries = HashSet::new();
+        for popup in &tab.popups {
+            if entries.is_none() {
+                entry_id(&popup.entry)?;
+            }
+            if entries.is_some_and(|entries| !entries.contains(popup.entry.as_str()))
+                || !tab_entries.insert(popup.entry.as_str())
+            {
+                return Err(Error::InvalidSnapshot {
+                    field: "popup entry",
+                });
+            }
+        }
+        let surfaces = tab
+            .panes
+            .iter()
+            .map(|p| (&p.id, &p.session, &p.endpoint, &p.attention))
+            .chain(
+                tab.popups
+                    .iter()
+                    .map(|p| (&p.id, &p.session, &p.endpoint, &p.attention)),
+            );
+        let mut rollup = None;
+        for (id, session, endpoint, attention) in surfaces {
+            identity("surface id", id)?;
+            identity("session id", session)?;
+            validate_endpoint(endpoint)?;
+            if let Some(attention) = attention {
+                validate_attention(attention)?;
+                rollup = Some(rollup.map_or(attention.state, |state: AttentionState| {
+                    state.min(attention.state)
+                }));
+            }
+            if !identities.insert(id.as_str())
+                || !sessions.insert(session.as_str())
+                || !endpoints.insert(endpoint.as_slice())
+            {
+                return Err(Error::InvalidSnapshot {
+                    field: "surface identity",
+                });
+            }
+            if sessions.len() > MAX_SESSIONS {
+                return Err(Error::InvalidSnapshot { field: "sessions" });
+            }
+        }
+        if tab.attention_rollup != rollup {
+            return Err(Error::InvalidSnapshot {
+                field: "attention rollup",
+            });
+        }
+    }
+    for pane in tabs.iter().flat_map(|tab| &tab.panes) {
+        validate_pane_label(pane)?;
     }
     Ok(())
 }
@@ -2593,8 +2698,10 @@ fn validate_window_name(name: Option<&str>) -> Result<()> {
     Ok(())
 }
 
-fn validate_window(entry: &WindowEntry) -> Result<()> {
-    if entry.window.as_ref().is_some_and(|id| {
+/// A window id is eight lowercase hex digits; none names the default
+/// namespace.
+fn validate_window_id(window: Option<&str>) -> Result<()> {
+    if window.is_some_and(|id| {
         id.len() != 8
             || !id
                 .bytes()
@@ -2602,6 +2709,11 @@ fn validate_window(entry: &WindowEntry) -> Result<()> {
     }) {
         return Err(Error::InvalidValue { field: "window id" });
     }
+    Ok(())
+}
+
+fn validate_window(entry: &WindowEntry) -> Result<()> {
+    validate_window_id(entry.window.as_deref())?;
     identity("generation", &entry.generation)?;
     validate_window_name(entry.name.as_deref())?;
     if entry
@@ -2760,18 +2872,23 @@ fn validate_busy(busy: Option<&BusyTerminals>) -> Result<()> {
         return Err(invalid);
     }
     for (index, busy_terminal) in busy.terminals.iter().enumerate() {
-        validate_target(&busy_terminal.target)?;
-        nonempty("busy name", &busy_terminal.name, MAX_PANE_LABEL_BYTES)?;
-        // Pane labels and popup entry labels both hold no control character.
-        if busy_terminal.name.chars().any(char::is_control) {
-            return Err(Error::InvalidValue { field: "busy name" });
-        }
+        validate_busy_terminal(&busy_terminal.target, &busy_terminal.name)?;
         if busy.terminals[..index]
             .iter()
             .any(|earlier| earlier.target.terminal == busy_terminal.target.terminal)
         {
             return Err(invalid);
         }
+    }
+    Ok(())
+}
+
+fn validate_busy_terminal(target: &TerminalTarget, name: &str) -> Result<()> {
+    validate_target(target)?;
+    nonempty("busy name", name, MAX_PANE_LABEL_BYTES)?;
+    // Pane labels and popup entry labels both hold no control character.
+    if name.chars().any(char::is_control) {
+        return Err(Error::InvalidValue { field: "busy name" });
     }
     Ok(())
 }
@@ -4182,14 +4299,14 @@ mod tests {
         for (action, expected) in [
             (
                 Action::Workspace(WorkspaceAction::CloseTab { tab: "t1".into() }),
-                "454f4e571d0001000a00000002007231001202007431",
+                "454f4e571e0001000a00000002007231001202007431",
             ),
             (
                 Action::Workspace(WorkspaceAction::SetTabDirectory {
                     tab: "t1".into(),
                     directory: b"/tmp".to_vec(),
                 }),
-                "454f4e571d0001001000000002007231000c0200743104002f746d70",
+                "454f4e571e0001001000000002007231000c0200743104002f746d70",
             ),
             (
                 Action::InvokePopup {
@@ -4198,36 +4315,36 @@ mod tests {
                     expected_instance: Some("u1".into()),
                     intent: InvokeIntent::Focus,
                 },
-                "454f4e571d00010015000000020072310013020074310300676974010200753101",
+                "454f4e571e00010015000000020072310013020074310300676974010200753101",
             ),
             (
                 Action::CommitDirectory {
                     target,
                     directory: b"/tmp".to_vec(),
                 },
-                "454f4e571d00010014000000020072310015020074310200753104002f746d70",
+                "454f4e571e00010014000000020072310015020074310200753104002f746d70",
             ),
-            (Action::CreateColumn, "454f4e571d00010006000000020072310016"),
+            (Action::CreateColumn, "454f4e571e00010006000000020072310016"),
             (
                 Action::ClosePane { pane: "p2".into() },
-                "454f4e571d0001000a00000002007231001702007032",
+                "454f4e571e0001000a00000002007231001702007032",
             ),
             (
                 Action::MovePaneSideways(Side::Right),
-                "454f4e571d00010006000000020072310019",
+                "454f4e571e00010006000000020072310019",
             ),
             (
                 Action::Edit {
                     file: b"/tmp/a".to_vec(),
                 },
-                "454f4e571d0001000e00000002007231001a06002f746d702f61",
+                "454f4e571e0001000e00000002007231001a06002f746d702f61",
             ),
             (
                 Action::CreateCommandPane {
                     argv: vec![b"hx".to_vec(), b"a".to_vec()],
                     focus: false,
                 },
-                "454f4e571d0001001000000002007231001b00020002006878010061",
+                "454f4e571e0001001000000002007231001b00020002006878010061",
             ),
             (
                 Action::LaunchTab {
@@ -4235,7 +4352,7 @@ mod tests {
                     argv: vec![],
                     focus: true,
                 },
-                "454f4e571d0001000f00000002007231002504002f746d70000001",
+                "454f4e571e0001000f00000002007231002504002f746d70000001",
             ),
             (
                 Action::LaunchTab {
@@ -4243,32 +4360,32 @@ mod tests {
                     argv: vec![b"hx".to_vec(), b"a".to_vec()],
                     focus: false,
                 },
-                "454f4e571d0001001600000002007231002504002f746d7002000200687801006100",
+                "454f4e571e0001001600000002007231002504002f746d7002000200687801006100",
             ),
             (
                 Action::ToggleSidebar,
-                "454f4e571d0001000600000002007231001c",
+                "454f4e571e0001000600000002007231001c",
             ),
             (
                 Action::FocusAttention {
                     tab: "t1".into(),
                     target: "p2".into(),
                 },
-                "454f4e571d0001000e00000002007231001d0200743102007032",
+                "454f4e571e0001000e00000002007231001d0200743102007032",
             ),
             (
                 Action::NextAttention,
-                "454f4e571d0001000600000002007231001e",
+                "454f4e571e0001000600000002007231001e",
             ),
             (
                 Action::PreviousAttention,
-                "454f4e571d0001000600000002007231001f",
+                "454f4e571e0001000600000002007231001f",
             ),
             (
                 Action::ReadTerminal {
                     target: "p2".into(),
                 },
-                "454f4e571d0001000a00000002007231002602007032",
+                "454f4e571e0001000a00000002007231002602007032",
             ),
             (
                 Action::SendTerminal {
@@ -4276,14 +4393,14 @@ mod tests {
                     input: TerminalInput::Paste("hi".into()),
                 },
                 // v27's u32-length paste.
-                "454f4e571d000100110000000200723100270200703200020000006869",
+                "454f4e571e000100110000000200723100270200703200020000006869",
             ),
             (
                 Action::SendTerminal {
                     target: "u1".into(),
                     input: TerminalInput::Enter,
                 },
-                "454f4e571d0001000b0000000200723100270200753101",
+                "454f4e571e0001000b0000000200723100270200753101",
             ),
         ] {
             let request = Request {
@@ -4303,7 +4420,7 @@ mod tests {
         let bytes = encode_request(&request).unwrap();
         assert_eq!(
             hex(&bytes),
-            "454f4e571d0001001600000002007231010d0073657373696f6e2d322e392d310201",
+            "454f4e571e0001001600000002007231010d0073657373696f6e2d322e392d310201",
         );
         assert_eq!(decode_request(&bytes).unwrap(), request);
         for caller in ["", "session 2"] {
@@ -4418,7 +4535,7 @@ mod tests {
             (
                 snapshot,
                 concat!(
-                    "454f4e571d0081001c0100000100020002000100010000000200743100000041",
+                    "454f4e571e0081001c0100000100020002000100010000000200743100000041",
                     "00008040010003006769740300476974000404004b6579470100020074310400",
                     "2f746d700001020070330102007531030002007031030073703103002f703101",
                     "02007031000002007032030073703203002f7032010200703200000200703303",
@@ -4435,7 +4552,7 @@ mod tests {
                     "00000000",
                 ),
             ),
-            (failure, "454f4e571d0082000a00000004006275737902006e6f"),
+            (failure, "454f4e571e0082000a00000004006275737902006e6f"),
             (
                 Response::Text(TerminalText {
                     target: terminal_target(TargetId::Pane("p2".into()), "session-2"),
@@ -4450,7 +4567,7 @@ mod tests {
                     text: "a\nb".into(),
                 }),
                 concat!(
-                    "454f4e571d00860037000000",
+                    "454f4e571e00860037000000",
                     // Workspace, tab, pane p2 and its terminal; no caller.
                     "02007731020074310002007032090073657373696f6e2d3200",
                     // Revision, alternate screen, 24x80, title, directory,
@@ -4466,7 +4583,7 @@ mod tests {
                     enter_delay_ms: 300,
                 }),
                 concat!(
-                    "454f4e571d00870034000000",
+                    "454f4e571e00870034000000",
                     "02007731020074310002007032090073657373696f6e2d32",
                     "0102007731020074310102007531090073657373696f6e2d33",
                     "012c01",
@@ -4476,7 +4593,7 @@ mod tests {
                 Response::Ended(Ended {
                     generation: "g1".into(),
                 }),
-                "454f4e571d0085000400000002006731",
+                "454f4e571e0085000400000002006731",
             ),
         ] {
             let bytes = encode_response(&response).unwrap();
@@ -4505,7 +4622,7 @@ mod tests {
                     busy: None,
                 }),
                 concat!(
-                    "454f4e571d00830030000000020067310500302e392e301d0002006f6b010002",
+                    "454f4e571e00830030000000020067310500302e392e301e0002006f6b010002",
                     "007331010500726561647900040062757379",
                     // v28: absent name, supervisor start in Unix milliseconds.
                     "000000000000000000",
@@ -4518,7 +4635,7 @@ mod tests {
                     generation: "g1".into(),
                     sessions: vec![],
                 }),
-                "454f4e571d00840006000000020067310000",
+                "454f4e571e00840006000000020067310000",
             ),
         ] {
             let bytes = encode_lifecycle_response(&response).unwrap();
@@ -4597,7 +4714,7 @@ mod tests {
         assert_eq!(
             hex(&bytes),
             concat!(
-                "454f4e571d0081008a00000001000100010000000100740000000000000000",
+                "454f4e571e0081008a00000001000100010000000100740000000000000000",
                 "0000010001007401002f00010100700001000100700200737002002f700101007000",
                 "010128000000000000000001000000000000000000000000010000000002",
                 "02007731020077310100020077310001000100",
@@ -4637,7 +4754,7 @@ mod tests {
         assert_eq!(
             hex(&bytes),
             concat!(
-                "454f4e571d008100bb0000000100010001000000010074000000000000000000",
+                "454f4e571e008100bb0000000100010001000000010074000000000000000000",
                 "00010001007401002f00010100700001000100700200737002002f7001010070",
                 "0001012800000000000000000100000000000000000000000001000000000202",
                 "0077310200773101000200773100010001000100020077310100740100700101",
@@ -4709,7 +4826,7 @@ mod tests {
         assert_eq!(
             hex(&bytes),
             concat!(
-                "454f4e571d00830063000000020067310500302e392e301d0002006f6b0000",
+                "454f4e571e00830063000000020067310500302e392e301e0002006f6b0000",
                 "01050072656164790105007265616479",
                 "000000000000000000",
             )
@@ -5039,10 +5156,10 @@ mod tests {
                 },
             ),
             (
-                &[40],
+                &[41],
                 Error::InvalidTag {
                     field: "action",
-                    value: 40,
+                    value: 41,
                 },
             ),
             (

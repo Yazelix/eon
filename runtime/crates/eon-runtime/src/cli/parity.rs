@@ -4,7 +4,7 @@
 //! in the test too.
 
 use super::*;
-use eon_workspace_protocol::v29::{InvokeIntent, TerminalInput};
+use eon_workspace_protocol::v30::{Filter, InvokeIntent, TerminalInput};
 
 enum CliPath {
     /// These arguments parse to exactly this action.
@@ -95,6 +95,9 @@ fn cli_path(action: &Action) -> CliPath {
             return Exception(
                 "eon-agent-parity-a9g0.6 adds column, sidebar and attention commands",
             );
+        }
+        Action::Subscribe { .. } => {
+            return Exception("eon-ciwn.8 adds `eon events` and eon-ciwn.9 `eon pane wait`");
         }
         Action::ReadTerminal { target } => words(&["pane", "read", target]),
         Action::SendTerminal { target, input } => {
@@ -259,6 +262,10 @@ fn every_eonw_action_has_a_cli_path_or_a_named_exception() {
         Action::SendTerminal {
             target: text("p1"),
             input: TerminalInput::Enter,
+        },
+        Action::Subscribe {
+            filter: Filter::default(),
+            after: None,
         },
     ]);
     let help = help_text("0", false);
