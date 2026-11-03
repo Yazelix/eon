@@ -51,21 +51,23 @@ impl Manager {
     /// Connects to the run's management socket.
     pub fn connect(&mut self) {
         let path = OsStr::from_bytes(&self.identity.management.path);
-        let stream = UnixStream::connect(path).expect("connected");
-        stream
-            .set_read_timeout(Some(Duration::from_secs(3)))
-            .expect("timeout");
-        self.stream = Some(stream);
+        self.stream = Some(UnixStream::connect(path).expect("connected"));
         self.unread.clear();
+        self.set_timeout(3.0);
     }
 
-    /// Sets how long a read waits for an answer.
+    /// Sets how long a read waits for an answer. macOS refuses socket
+    /// options once Orbit has closed the connection, as after Busy, and
+    /// reads then end at once, so that refusal is ignored.
     pub fn set_timeout(&mut self, seconds: f64) {
-        self.stream
+        if let Err(error) = self
+            .stream
             .as_ref()
             .expect("connected")
             .set_read_timeout(Some(Duration::from_secs_f64(seconds)))
-            .expect("timeout");
+        {
+            assert_eq!(error.raw_os_error(), Some(libc::EINVAL), "timeout: {error}");
+        }
     }
 
     /// Reads one whole management message, or reports the connection closed;

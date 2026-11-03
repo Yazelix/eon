@@ -1482,6 +1482,11 @@ printf '/selected-\377\n' > "$4"
     let deadline = Instant::now() + Duration::from_secs(5);
     let mut stream = loop {
         if let Ok((stream, _)) = listener.accept() {
+            // macOS hands out accepted streams nonblocking like their listener.
+            stream.set_nonblocking(false).unwrap();
+            stream
+                .set_read_timeout(Some(Duration::from_secs(5)))
+                .unwrap();
             break stream;
         }
         assert!(
@@ -1606,6 +1611,8 @@ printf '/selected-\377\n' > "$4"
         let mut submitted = false;
         let finished = loop {
             if let Ok((mut stream, _)) = listener.accept() {
+                // macOS hands out accepted streams nonblocking like their listener.
+                stream.set_nonblocking(false).unwrap();
                 stream
                     .set_read_timeout(Some(Duration::from_secs(1)))
                     .unwrap();
@@ -7417,14 +7424,23 @@ fn running_windows_name_each_other_and_refresh_on_start_and_end() {
     for mut stream in clients {
         let remaining = deadline
             .checked_duration_since(Instant::now())
+            .filter(|left| !left.is_zero())
             .expect("queued inspections exceeded one second");
-        stream.set_read_timeout(Some(remaining)).unwrap();
+        // macOS refuses socket options once the supervisor has answered and
+        // closed; the read then ends at once, without the timeout.
+        if let Err(error) = stream.set_read_timeout(Some(remaining)) {
+            assert_eq!(error.raw_os_error(), Some(libc::EINVAL), "{error}");
+        }
         let response = read_request(&mut stream);
         assert!(matches!(
             eon_workspace_protocol::v29::decode_lifecycle_response(&response).unwrap(),
             LifecycleResponse::Runtime(_)
         ));
     }
+    assert!(
+        Instant::now() <= deadline,
+        "queued inspections exceeded one second"
+    );
     let output = command().args(["window", "new"]).output().unwrap();
     assert!(
         output.status.success(),
@@ -7944,6 +7960,11 @@ fn generations_from_another_eonw_are_incompatible_and_not_stopped() {
                 }
                 Err(error) => panic!("{error}"),
             };
+            // macOS hands out accepted streams nonblocking like their listener.
+            stream.set_nonblocking(false).unwrap();
+            stream
+                .set_read_timeout(Some(Duration::from_secs(5)))
+                .unwrap();
             assert!(matches!(
                 decode_request(&read_request(&mut stream)).unwrap().action,
                 ProtocolAction::Workspace(Action::InspectPresentation | Action::InspectRuntime)

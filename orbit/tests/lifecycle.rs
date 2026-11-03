@@ -483,8 +483,18 @@ fn acquire_management(
         identity.management.path.clone(),
     ));
     let mut stream = connect_bounded(&management_path, Instant::now() + Duration::from_secs(5))?;
-    stream.set_read_timeout(Some(Duration::from_secs(2)))?;
-    stream.set_write_timeout(Some(Duration::from_secs(2)))?;
+    // macOS refuses socket options once Orbit has answered Busy and closed,
+    // and the read then ends at once, so that refusal is ignored.
+    for set in [
+        stream.set_read_timeout(Some(Duration::from_secs(2))),
+        stream.set_write_timeout(Some(Duration::from_secs(2))),
+    ] {
+        if let Err(error) = set
+            && error.raw_os_error() != Some(libc::EINVAL)
+        {
+            return Err(error.into());
+        }
+    }
     let write = stream.write_all(&management::encode_client_message(
         &ManagementClientMessage::Acquire {
             expected: identity.clone(),
