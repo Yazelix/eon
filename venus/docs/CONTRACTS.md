@@ -443,8 +443,8 @@ re-proved when that platform or feature is next touched.
   `VEN-C16`.
 - **Consumer:** One presented Venus terminal surface.
 - **Trigger:** Native wheel or touchpad movement, one left-pointer sequence
-  including a held drag in the top visible row, explicit copy, or activation of
-  the visible scrollback pill.
+  including a held drag in or above the top visible row, explicit copy, or
+  activation of the visible scrollback pill.
 - **Result:**
   - While away from live output, Venus displays `↓ N rows` (`↓ 1 row` for one)
     from the accepted frame's authoritative wrapped display-row distance. Live
@@ -492,10 +492,12 @@ re-proved when that platform or feature is next touched.
     three clicks, and logical lines at four or later clicks. Orbit preserves
     native repeat timing, distance and drag behavior, terminal mouse capture,
     and Shift as a host-selection override.
-  - While a held host selection stays in the top visible row, Venus sends one
-    upward selection tick at a time. Orbit moves at most one history row per
-    tick and extends the same gesture; Venus waits for the accepted frame
-    before the next tick and stops at the oldest edge or on release.
+  - While a held host selection's pointer is in or above the top visible row,
+    Venus sends one upward selection tick at a time, with the pointer's column
+    clamped to the pane and its row clamped to the top row. Orbit moves at
+    most one history row per tick and extends the same gesture; Venus waits
+    for the accepted frame before the next tick and stops at the oldest edge
+    or on release.
   - Pointer phases and explicit copy that arrive before Orbit completes the
     preceding sequence retain their order. Venus resumes them only after
     presenting the authoritative completion revision reported by Orbit.
@@ -523,8 +525,9 @@ re-proved when that platform or feature is next touched.
   public physics tuning, presentation feedback, unreleased winit, GPU-layer
   translation, and additional platform support are outside this contract.
   Apple Silicon physical trackpad gesture quality remains unaccepted.
-- **Proof:** `795d735a8f61ef439c56d68e1cc4d3929af0dfcf`
-  - **Environment:** Automated.
+- **Proof:** `795d735a8f61ef439c56d68e1cc4d3929af0dfcf`, with the `eon-5uw0`
+  commit for held drags in or above the top visible row
+  - **Environment:** Automated and installed.
   - **Evidence:** `terminal_scroll_keeps_fractional_input_and_elapsed_time_physics`,
     `terminal_scroll_coalesces_one_signed_batch_without_losing_distance`,
     `scrollback_pill_activates_only_a_complete_left_click`,
@@ -542,12 +545,22 @@ re-proved when that platform or feature is next touched.
     `canonical_scroll_outcomes_reuse_the_existing_result_and_frame_owners`,
     `scrollback_label_follows_only_current_authoritative_frames`, and
     `scrollback_is_a_terminal_description_without_live_alerts` in the
-    workspace suite.
+    workspace suite; for held drags in or above the top visible row,
+    `selection_above_the_top_row_clamps_to_the_top_row` and
+    `scrollback_pill_leaves_a_held_selection_its_pointer` in the Venus suite,
+    and an installed observation of tree
+    `6060880f25d91d837c56f2ffe9b8238d098052c2`
+    (`/nix/store/jvi7q34m2mzv8v3v0qk3kk1l5qf8ds10-eon-0.1.12`) on x86_64
+    Linux, private headless Sway 1.12 with wdotool 0.5.3: a drag held over the
+    Eon Bar, outside the window, over the selected pane's scrollback pill
+    (still and moving by one pixel), and in the lower pane of a split over the
+    upper pane's header extended the selection to the start of history, and
+    the pill still returned to live output on a click without a selection.
 - **Open proof:** Pending re-proof in this repository: installed scrollback,
-  ReturnToLive, click-selection ladder and copy (dogfood item 9), held-drag
-  selection across real history, primary-selection delivery, kinetic flings under
-  continuous output. Screen-reader acceptance remains separate. Apple Silicon
-  trackpad gesture quality stays open.
+  ReturnToLive, click-selection ladder and copy (dogfood item 9),
+  primary-selection delivery, kinetic flings under continuous output. A held
+  drag outside the window remains unproved on macOS. Screen-reader acceptance
+  remains separate. Apple Silicon trackpad gesture quality stays open.
 
 ## VEN-C8 — Eon workspace presentation
 

@@ -2,6 +2,12 @@
 
 ## Unreleased
 
+- VEN-C7: a held selection keeps scrolling into history while its pointer is
+  above the pane's top row, including over the Eon Bar, a pane above, or the
+  header's scrollback pill, with the tick position clamped to the top row and
+  the pane's columns (`eon-5uw0`). Outside the window this is proved on
+  Wayland only. No wire change.
+
 - VEN-C1: accept a zero cursor-tail duration to disable motion while keeping
   the cursor's color and contrasting edge (`eon-configurability-qkq8.6`).
 

@@ -15,6 +15,10 @@ installation, and proven contract changes.
   plain `eon config-path` still prints only the root (`eon-wt5v8`).
 - A new window's first directory picker says when other Eon windows still run,
   naming them (`eon-7cf0y.7`).
+- Holding a drag selection above a pane's top row, over the Eon Bar or a pane
+  above, keeps extending the selection into history, as it already did with
+  the pointer in the top row. On Wayland this also holds with the pointer
+  outside the window; macOS is not yet checked (`eon-5uw0`).
 
 ## v0.1.12 (2026-11-02)
 

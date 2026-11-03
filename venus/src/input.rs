@@ -462,8 +462,10 @@ impl InputState {
         if !self.is_selecting() {
             return None;
         }
-        let position = selection_position(self.cursor, size, false)?;
-        (position.y < size.padding_top as f32 + size.cell_height as f32).then_some(position)
+        // VEN-C7: a pointer in or above the top row, including one held
+        // outside the pane or window, ticks from the clamped top-row position.
+        let position = selection_position(self.cursor, size, true)?;
+        (self.cursor.1 < size.padding_top as f32 + size.cell_height as f32).then_some(position)
     }
 
     #[must_use]
@@ -1421,6 +1423,61 @@ mod tests {
     }
 
     #[test]
+    fn selection_above_the_top_row_clamps_to_the_top_row() {
+        let mut input = InputState::default();
+        let size = SurfaceSize {
+            cols: 4,
+            rows: 3,
+            screen_width: 50,
+            screen_height: 70,
+            cell_width: 10,
+            cell_height: 20,
+            padding_top: 5,
+            padding_bottom: 5,
+            padding_left: 5,
+            padding_right: 5,
+        };
+        input.move_pointer(16.0, 46.0).unwrap();
+        assert!(input.selection_at_top(size).is_none());
+        let begin = input
+            .selection_button(
+                ElementState::Pressed,
+                WinitMouseButton::Left,
+                size,
+                Some(1),
+                0,
+            )
+            .unwrap();
+        input.commit_selection(&begin);
+
+        for (x, y, expected) in [
+            (16.0, 6.0, (16.0, 6.0)),
+            (16.0, 2.0, (16.0, 5.0)),
+            (16.0, -15.0, (16.0, 5.0)),
+            (16.0, -100.0, (16.0, 5.0)),
+            (-30.0, 10.0, (5.0, 10.0)),
+            (900.0, -5000.0, (44.5, 5.0)),
+        ] {
+            input.move_pointer(x, y).unwrap();
+            assert_eq!(
+                input.selection_at_top(size),
+                Some(SelectionPosition {
+                    x: expected.0,
+                    y: expected.1,
+                }),
+                "pointer at ({x}, {y})"
+            );
+        }
+        for (x, y) in [(16.0, 25.0), (16.0, 46.0), (900.0, 5000.0)] {
+            input.move_pointer(x, y).unwrap();
+            assert!(
+                input.selection_at_top(size).is_none(),
+                "pointer at ({x}, {y})"
+            );
+        }
+    }
+
+    #[test]
     fn left_drag_and_copy_are_explicit_revision_bound_actions() {
         let mut input = InputState::default();
         let size = SurfaceSize {
@@ -1489,7 +1546,10 @@ mod tests {
         input.move_pointer(-1.0, -1.0).unwrap();
         let update = input.selection_motion(size).unwrap();
         assert_eq!(update, expected_update(5.0, 5.0));
-        assert!(input.selection_at_top(size).is_none());
+        assert_eq!(
+            input.selection_at_top(size),
+            Some(SelectionPosition { x: 5.0, y: 5.0 })
+        );
 
         input.move_pointer(16.0, 6.0).unwrap();
         assert_eq!(

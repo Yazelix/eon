@@ -359,6 +359,28 @@ fn workspace_chrome_preserves_terminal_release_pairing() {
 }
 
 #[test]
+fn scrollback_pill_leaves_a_held_selection_its_pointer() {
+    let pill = Some(SceneRect {
+        left: 100.0,
+        top: 10.0,
+        width: 50.0,
+        height: 20.0,
+    });
+    for (pill, x, y, selecting, expected) in [
+        (pill, 120.0, 20.0, false, true),
+        (pill, 120.0, 20.0, true, false),
+        (pill, 20.0, 20.0, false, false),
+        (None, 120.0, 20.0, false, false),
+    ] {
+        assert_eq!(
+            pill_takes_pointer(pill, PhysicalPosition::new(x, y), selecting),
+            expected,
+            "pointer at ({x}, {y}), selecting {selecting}"
+        );
+    }
+}
+
+#[test]
 fn scrollback_pill_activates_only_a_complete_left_click() {
     use ElementState::{Pressed, Released};
     let mut pressed = None;

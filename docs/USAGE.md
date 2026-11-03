@@ -381,7 +381,8 @@ return there.
 Two clicks select a word, three select a
 space/tab-delimited span, and four or more select the logical line across soft
 wraps. Dragging extends that granularity; a delayed single click returns to
-cell selection. Release copies to both Wayland clipboard destinations, and
+cell selection. Hold a drag in or above the pane's top row to keep extending
+the selection into history. Release copies to both Wayland clipboard destinations, and
 Ctrl+Shift+C copies the frozen selection even after output changes.
 
 The directory picker starts with Zoxide and fzf. Tab switches to Yazi, Shift+Z

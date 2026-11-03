@@ -3471,10 +3471,12 @@ impl Application {
         state.window.set_cursor(
             if dialog.is_none()
                 && (self.links.focus.is_some()
-                    || scrollback_rect.is_some_and(|rect| {
-                        self.links.pointer_inside
-                            && rect.contains(self.cursor.x as f32, self.cursor.y as f32)
-                    }))
+                    || self.links.pointer_inside
+                        && pill_takes_pointer(
+                            scrollback_rect,
+                            self.cursor,
+                            self.input.is_selecting(),
+                        ))
             {
                 CursorIcon::Pointer
             } else {
@@ -4229,10 +4231,9 @@ impl ApplicationHandler<UserEvent> for Application {
                 {
                     state.window.request_redraw();
                 }
-                let was_scrollback = scrollback_rect
-                    .is_some_and(|rect| rect.contains(self.cursor.x as f32, self.cursor.y as f32));
-                let over_scrollback = scrollback_rect
-                    .is_some_and(|rect| rect.contains(position.x as f32, position.y as f32));
+                let selecting = self.input.is_selecting();
+                let was_scrollback = pill_takes_pointer(scrollback_rect, self.cursor, selecting);
+                let over_scrollback = pill_takes_pointer(scrollback_rect, position, selecting);
                 self.cursor = position;
                 self.links.pointer_inside = true;
                 if over_scrollback {
@@ -4269,13 +4270,7 @@ impl ApplicationHandler<UserEvent> for Application {
                         self.send_or_defer_selection(message, presentation_current);
                     }
                     self.terminal.selection_scroll.edge(
-                        workspace.as_ref().is_none_or(|workspace| {
-                            matches!(
-                                workspace.hit_test(position.x as f32, position.y as f32),
-                                Some(WorkspaceHit::Terminal)
-                            )
-                        }) && size
-                            .and_then(|size| self.input.selection_at_top(size))
+                        size.and_then(|size| self.input.selection_at_top(size))
                             .is_some(),
                         Instant::now(),
                         self.terminal.pending_viewport,
@@ -5174,6 +5169,16 @@ fn move_terminal_pointer(
         )
     });
     input.move_pointer(x, y)
+}
+
+/// Whether the scrollback pill takes pointer motion at `position`. A held
+/// selection keeps extending over the header's pill (VEN-C7).
+fn pill_takes_pointer(
+    pill: Option<SceneRect>,
+    position: PhysicalPosition<f64>,
+    selecting: bool,
+) -> bool {
+    !selecting && pill.is_some_and(|rect| rect.contains(position.x as f32, position.y as f32))
 }
 
 fn button_reaches_terminal(
