@@ -959,7 +959,7 @@ impl Renderer {
         }
         let key_cells = match viewer.kind {
             DialogKind::Shortcuts | DialogKind::AttentionInbox => 15.0,
-            DialogKind::CloseLastTab { .. } => 6.0,
+            DialogKind::CloseLastTab { .. } | DialogKind::QuitWindow { .. } => 6.0,
         };
         let key_width = (self.metrics.font_size * key_cells).min(viewer.content.width * 0.4);
         let gap = padding.min(self.metrics.width);

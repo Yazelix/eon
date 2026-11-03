@@ -2,6 +2,12 @@
 
 ## Unreleased
 
+- VEN-C8, VEN-C14 and VEN-C20: Alt+Shift+Q quits an Eon window with the EONW
+  Stop that `eon quit` sends, behind the final-close prompt's owner while the
+  snapshot lists a busy terminal; Venus reads Stop's lifecycle reply, so
+  `Stopped` exits as `Ended` does and `Failure` shows as a refused action's
+  notice (`eon-7cf0y.3`). No wire change.
+
 - VEN-C7: a held selection keeps scrolling into history while its pointer is
   above the pane's top row, including over the Eon Bar, a pane above, or the
   header's scrollback pill, with the tick position clamped to the top row and

@@ -415,7 +415,7 @@ socket names, JSON fields and protocol identifiers retain their spellings.
 - **Consumer:** One local Eon workspace user.
 - **Trigger:** Launch, create or close a tab, create, close or rename a pane, create a column, traverse focus,
   reorder the active tab or selected pane, move the selected pane into a neighbouring column, zoom the
-  selected pane, receive terminal exit, or recover accepted same-boot runs.
+  selected pane, receive terminal exit, quit the window, or recover accepted same-boot runs.
 - **Result:**
   - A workspace contains horizontal tabs. Each established tab with panes
     holds an ordered row of one to four columns (pending and popup-only tabs
@@ -596,6 +596,24 @@ socket names, JSON fields and protocol identifiers retain their spellings.
     nothing and does not delay the detach, and a later detach tries again. A
     Venus crash sends none. Linux only; on macOS a detach sends no
     notification.
+    Alt+Shift+Q quits the window: Venus sends the Stop that `eon quit` uses
+    (EON-C11) for the window's generation, which ends every workspace, and
+    exits once it is confirmed. While the snapshot lists a busy terminal
+    (EON-C11), Venus first shows a prompt in the final-close prompt's style:
+    "Quit this window?", "This stops N terminals; M still running." (the
+    second part is left out while nothing is busy), the busy terminals by name
+    from the current snapshot and how many more are busy, then "Enter Quit ·
+    Esc Cancel" and the hint line "Alt+Shift+D keeps it running instead",
+    which is left out while a popup takes Alt+Shift+D (EON-C20); Alt+Shift+D
+    works while the prompt is open. N counts the window's live terminals
+    (EON-C23); without that count the subtitle reads "This stops every
+    terminal of this window.". While no terminal is busy it quits without
+    asking, as `eon quit` does, deciding on the next snapshot so that a
+    command started since the last one still asks;
+    `[workspace] warning_close_last_tab` does not apply. While a Stop is in
+    flight, Alt+Shift+Q and Enter do nothing. A failed Stop keeps the window
+    and shows the failure, and Alt+Shift+Q then tries again.
+    eonbase has no Quit key.
   - Closing a pane names a `pN` in the active tab, or in the calling
     terminal's tab under EON-C10. Eon stops that pane's
     terminal and prunes the confirmed end through the normal terminal-exit
@@ -706,6 +724,36 @@ socket names, JSON fields and protocol identifiers retain their spellings.
     independent window, Commands > Quit this window asked to stop that
     window's terminals and, confirmed, ended only that window; the default
     window kept its terminal and its Orbit process.
+  - **Quit key (`eon-7cf0y.3`):** the busy rule, the Stop, its retry after
+    `stop-incomplete` and the Enter hold by `quit_asks_only_while_busy`,
+    `quit_progress_follows_workspace_events` and
+    `a_second_enter_reaches_nothing_while_a_stop_is_in_flight`; the prompt's
+    wording and rows by `quit_prompt_words_counts_and_lists_busy_terminals`
+    and its AccessKit alert by
+    `shortcut_viewer_replaces_terminal_tree_with_a_focused_dialog`; Stop's
+    lifecycle reply by `workspace_worker_reads_stop_as_a_lifecycle_reply`;
+    the ignored native regression
+    `quit_prompt_refreshes_and_a_stop_in_flight_holds_enter` on a private
+    headless Sway. On code tree
+    `bceda181484faa57079edec69284981de748d7e0` (edge `6908903`),
+    `eon-test -p yazelix-venus` passed 170 + 75 + 21. Full `eon-test` passed
+    every target across two runs at load 25 to 31: two timing-bound tests
+    outside this change, `bound_io_accepts_einval_only_after_peer_hangup` and
+    `concurrent_launches_converge_and_generation_stop_is_owner_routed`, each
+    failed in one run and passed in the other and alone. Clippy and the
+    Darwin clippy of `yazelix-venus` were clean. Installed proof: that tree's
+    `nix build` gave
+    `/nix/store/n907id3sg8sramk8sd2bb1qgaqqsvi44-eon-0.1.13`, x86_64 Linux,
+    private headless Sway at 1280x720. On an idle window Alt+Shift+Q ended
+    the window with no prompt. With p1 running `sleep 600` it showed "Quit
+    this window?", "This stops 1 terminal; 1 still running." and
+    `Pane  p1  ~/w> ^sleep`, and Escape kept the window. With the Agent
+    popup busy too the prompt read "This stops 2 terminals; 2 still
+    running.", re-worded to "1 still running" when p1's command ended, and
+    Alt+Shift+D detached with the terminals live. After `eon attach`,
+    Alt+Shift+Q and Enter ended the window. The session had no notification
+    daemon, so whether quitting sends a desktop notification was not
+    observed.
 - **Open proof:** Columns (`eon-splits-opwv`): runtime topology and EONW v10
   are covered by `columns_hold_accordions_traverse_into_tabs_and_collapse_on_exit`,
   `create_column_in_a_popup_only_tab_never_overfills_a_neighbor`,
@@ -2134,6 +2182,8 @@ socket names, JSON fields and protocol identifiers retain their spellings.
   that key as overridden by the configured popup; a popup configured without a
   key has no row. The fixed bindings include
   Alt+Shift+D, listed as "Detach: close the window, keep terminals running",
+  Alt+Shift+Q, listed as "Quit: close the window, stop its terminals" (EON-C8)
+  and omitted in eonbase,
   Alt+Shift+H, listed as "Show or hide the agent sidebar" (EON-C31,
   VEN-C30) and omitted while `sidebar` is `Off`, and Alt+G and Alt+Shift+G,
   listed as "Jump to the next agent needing attention" and "Jump to the
@@ -2204,6 +2254,15 @@ socket names, JSON fields and protocol identifiers retain their spellings.
     private headless Sway, 1280x720):
     Alt+/ listed `Ctrl+Tab` `Focus next tab` and `Ctrl+Shift+Tab` `Focus
     previous tab` under Navigate.
+  - **Quit row (`eon-7cf0y.3`):** `quit_key_lists_hints_and_yields_to_a_popup`
+    and the installed check recorded under EON-C8 (code tree
+    `bceda181484faa57079edec69284981de748d7e0`, whose `nix build` gave
+    `/nix/store/n907id3sg8sramk8sd2bb1qgaqqsvi44-eon-0.1.13`, x86_64 Linux,
+    private headless Sway, 1280x720): Alt+/ listed
+    `Alt+Shift+Q` `Quit: close the window, stop its terminals` under Host
+    after Detach; the hints bar showed `Q quit` at 1280 px and dropped it at
+    640 px; with `[popups.monitor] keybinding = "Alt+Shift+Q"` the key opened
+    Monitor and the row read "(overridden by Monitor)".
 - **Open proof:** Pending re-proof in this repository: header spacing at
   compact sizes, rebound and disabled popup rows, and AT-SPI projection on an
   installed surface. No eonbase, fractional-scale, screen-reader workflow,

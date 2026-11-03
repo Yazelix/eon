@@ -73,6 +73,7 @@ the workspace, by name or `wN`, and its footer reads `Enter Close`.
 | Alt+Shift+W | Close the active tab; closing the final tab quits the window, or closes the workspace while others remain |
 | Alt+Shift+N | Open an independent Eon window when supervised by Eon |
 | Alt+Shift+D | Detach: close the window, keep terminals running |
+| Alt+Shift+Q | Quit: close the window, stop its terminals; asks first while a terminal is busy, and is absent without Eon's running-windows summary |
 | Alt+Z | Open Project; Eon supplies other popup shortcuts |
 | Alt+/ | Open or close Shortcuts |
 | Alt+Shift+B | Show or hide the bottom shortcut hints |

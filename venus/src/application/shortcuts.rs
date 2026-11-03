@@ -31,6 +31,7 @@ pub(super) enum NativeShortcutAction {
     ToggleZoom,
     NewWindow,
     Detach,
+    Quit,
     FocusTabPosition,
     NextTab,
     PreviousTab,
@@ -321,6 +322,13 @@ pub(super) static FIXED_SHORTCUTS: &[NativeShortcut] = &[
     ),
     NativeShortcut::key(
         "Host",
+        "Quit: close the window, stop its terminals",
+        KeyCode::KeyQ,
+        ALT_SHIFT,
+        NativeShortcutAction::Quit,
+    ),
+    NativeShortcut::key(
+        "Host",
         "Show or close shortcuts",
         KeyCode::Slash,
         session::Modifiers::ALT,
@@ -376,9 +384,14 @@ impl NativeShortcut {
         }
     }
 
-    /// Whether the binding exists: `[sidebar] enabled = false` unbinds the sidebar toggle.
-    fn bound(self, sidebar: Sidebar) -> bool {
-        self.action != NativeShortcutAction::ToggleSidebar || sidebar != Sidebar::Off
+    /// Whether the binding exists: `[sidebar] enabled = false` unbinds the sidebar toggle, and
+    /// a window without a running-windows summary (eonbase) has no Quit.
+    pub(super) fn bound(self, sidebar: Sidebar, running: bool) -> bool {
+        match self.action {
+            NativeShortcutAction::ToggleSidebar => sidebar != Sidebar::Off,
+            NativeShortcutAction::Quit => running,
+            _ => true,
+        }
     }
 
     fn matches_key(
@@ -522,14 +535,19 @@ pub(super) fn native_pointer_shortcut_for(
         .find(|shortcut| shortcut.matches_pointer(platform, button, modifiers))
 }
 
-pub(super) fn shortcut_groups(entries: &[PopupEntry], sidebar: Sidebar) -> Vec<ShortcutGroup> {
-    shortcut_groups_for(NATIVE_PLATFORM, entries, sidebar)
+pub(super) fn shortcut_groups(
+    entries: &[PopupEntry],
+    sidebar: Sidebar,
+    running: bool,
+) -> Vec<ShortcutGroup> {
+    shortcut_groups_for(NATIVE_PLATFORM, entries, sidebar, running)
 }
 
 pub(super) fn shortcut_groups_for(
     platform: NativePlatform,
     entries: &[PopupEntry],
     sidebar: Sidebar,
+    running: bool,
 ) -> Vec<ShortcutGroup> {
     let mut groups = ["Navigate", "Tabs and panes", "Host"]
         .into_iter()
@@ -538,7 +556,7 @@ pub(super) fn shortcut_groups_for(
                 title,
                 FIXED_SHORTCUTS
                     .iter()
-                    .filter(|shortcut| shortcut.group == title && shortcut.bound(sidebar))
+                    .filter(|shortcut| shortcut.group == title && shortcut.bound(sidebar, running))
                     .map(|shortcut| {
                         ShortcutRow::new(
                             shortcut.trigger.display_label_for(platform),
@@ -586,12 +604,15 @@ pub(super) fn shortcut_hints_for(
     focus: WorkspaceFocus,
     entries: &[PopupEntry],
     sidebar: Sidebar,
+    running: bool,
 ) -> Vec<ShortcutHint> {
     let mut hints: Vec<ShortcutHint> = Vec::new();
     // The key axis each fixed hint ended with: H/L, K/J or 1..9.
     let mut axes = Vec::new();
     for shortcut in FIXED_SHORTCUTS {
-        if !shortcut.bound(sidebar) || shortcut.overriding_popup(platform, entries).is_some() {
+        if !shortcut.bound(sidebar, running)
+            || shortcut.overriding_popup(platform, entries).is_some()
+        {
             continue;
         }
         use NativeShortcutAction as Action;
@@ -613,6 +634,7 @@ pub(super) fn shortcut_hints_for(
             Action::Move(Up | Down) | Action::MovePaneSideways(_) => ("mv pane", 3),
             Action::NewWindow => ("+window", 3),
             Action::Detach => ("detach", 2),
+            Action::Quit => ("quit", 2),
             Action::ReturnToTerminal if focus != WorkspaceFocus::Terminal => ("terminal", 0),
             Action::TraverseChrome(Left | Right) if focus == WorkspaceFocus::Tabs => ("tabs", 1),
             Action::TraverseChrome(Up | Down) if focus == WorkspaceFocus::Panes => ("panes", 1),
@@ -768,8 +790,9 @@ pub(super) fn workspace_shortcut(
     selected_pane: Option<&str>,
     sidebar: Sidebar,
 ) -> Option<WorkspaceAction> {
+    // Quit is no workspace action, so its binding does not matter here.
     let shortcut = native_key_shortcut(PhysicalKey::Code(code), modifiers, entries)
-        .filter(|shortcut| shortcut.bound(sidebar))?;
+        .filter(|shortcut| shortcut.bound(sidebar, false))?;
     let action = match shortcut.action {
         NativeShortcutAction::Focus(direction) => CommonAction::Focus(direction),
         NativeShortcutAction::Move(direction) => CommonAction::Move(direction),
@@ -1097,7 +1120,7 @@ mod tests {
                     .iter()
                     .find(|shortcut| shortcut.action == NativeShortcutAction::ToggleInbox)
                     .unwrap()
-                    .bound(sidebar)
+                    .bound(sidebar, true)
             );
             // Alt+G and Alt+Shift+G walk the attention queue under every `sidebar`, `Off` too.
             for (modifiers, action) in [
@@ -1178,22 +1201,27 @@ mod tests {
         };
         let entries = [entry.clone(), project.clone()];
         for platform in [NativePlatform::Linux, NativePlatform::Macos] {
-            let terminal =
-                shortcut_hints_for(platform, WorkspaceFocus::Terminal, &entries, Sidebar::Open);
+            let terminal = shortcut_hints_for(
+                platform,
+                WorkspaceFocus::Terminal,
+                &entries,
+                Sidebar::Open,
+                true,
+            );
             assert!(terminal.iter().all(|hint| hint.label != project.label));
             // The viewer and hints list the sidebar toggle unless `[sidebar]` turned it off.
             for sidebar in [Sidebar::Open, Sidebar::Closed, Sidebar::Off] {
                 let label = "Show or hide the agent sidebar";
                 let bound = sidebar != Sidebar::Off;
                 assert_eq!(
-                    shortcut_groups_for(platform, &entries, sidebar)
+                    shortcut_groups_for(platform, &entries, sidebar, true)
                         .iter()
                         .flat_map(|group| &group.rows)
                         .any(|row| row.action == label),
                     bound
                 );
                 assert_eq!(
-                    shortcut_hints_for(platform, WorkspaceFocus::Terminal, &entries, sidebar)
+                    shortcut_hints_for(platform, WorkspaceFocus::Terminal, &entries, sidebar, true)
                         .iter()
                         .any(
                             |hint| hint.label == "sidebar" && hint.accessible_label.contains(label)
@@ -1207,15 +1235,20 @@ mod tests {
                     ("Jump to the previous agent needing attention", None),
                 ] {
                     assert!(
-                        shortcut_groups_for(platform, &entries, sidebar)
+                        shortcut_groups_for(platform, &entries, sidebar, true)
                             .iter()
                             .flat_map(|group| &group.rows)
                             .any(|row| row.action == label)
                     );
-                    let hint =
-                        shortcut_hints_for(platform, WorkspaceFocus::Terminal, &entries, sidebar)
-                            .into_iter()
-                            .find(|hint| hint.accessible_label.contains(label));
+                    let hint = shortcut_hints_for(
+                        platform,
+                        WorkspaceFocus::Terminal,
+                        &entries,
+                        sidebar,
+                        true,
+                    )
+                    .into_iter()
+                    .find(|hint| hint.accessible_label.contains(label));
                     assert_eq!(hint.map(|hint| hint.label), short.map(String::from));
                 }
             }
@@ -1234,7 +1267,7 @@ mod tests {
                         .all(|hint| !hint.accessible_label.contains(shortcut.label))
                 );
                 assert!(
-                    shortcut_groups_for(platform, &entries, Sidebar::Open)
+                    shortcut_groups_for(platform, &entries, Sidebar::Open, true)
                         .iter()
                         .flat_map(|group| &group.rows)
                         .any(|row| {
@@ -1244,7 +1277,7 @@ mod tests {
                 );
             }
             assert!(
-                shortcut_groups_for(platform, &entries, Sidebar::Open)
+                shortcut_groups_for(platform, &entries, Sidebar::Open, true)
                     .iter()
                     .flat_map(|group| &group.rows)
                     .any(|row| row.action == project.label
@@ -1312,9 +1345,15 @@ mod tests {
                 ),
             };
             assert!(
-                shortcut_hints_for(platform, WorkspaceFocus::Terminal, &[alt_k], Sidebar::Open)
-                    .iter()
-                    .any(|hint| hint.label == "focus" && hint.key == "H/L · K/J · 1..9")
+                shortcut_hints_for(
+                    platform,
+                    WorkspaceFocus::Terminal,
+                    &[alt_k],
+                    Sidebar::Open,
+                    true
+                )
+                .iter()
+                .any(|hint| hint.label == "focus" && hint.key == "H/L · K/J · 1..9")
             );
             for label in ["+pane", "+col", "+tab", "+window"] {
                 assert_eq!(hints_labeled(label).len(), 1);
@@ -1330,7 +1369,7 @@ mod tests {
                     && !hint.key.contains("Left")
             }));
             assert!(
-                shortcut_hints_for(platform, WorkspaceFocus::Terminal, &[], Sidebar::Open)
+                shortcut_hints_for(platform, WorkspaceFocus::Terminal, &[], Sidebar::Open, true)
                     .iter()
                     .all(|hint| hint.label != entry.label)
             );
@@ -1339,7 +1378,7 @@ mod tests {
                 WorkspaceFocus::Panes,
                 WorkspaceFocus::Sidebar,
             ] {
-                let chrome = shortcut_hints_for(platform, focus, &[], Sidebar::Open);
+                let chrome = shortcut_hints_for(platform, focus, &[], Sidebar::Open, true);
                 assert!(
                     chrome
                         .iter()
@@ -1462,7 +1501,7 @@ mod tests {
                 );
             }
 
-            let rows = shortcut_groups_for(platform, &entries, Sidebar::Open)
+            let rows = shortcut_groups_for(platform, &entries, Sidebar::Open, true)
                 .into_iter()
                 .flat_map(|group| group.rows)
                 .map(|row| row.action)
@@ -1482,8 +1521,13 @@ mod tests {
             ] {
                 assert!(rows.iter().any(|row| row == action), "missing {action}");
             }
-            let hints =
-                shortcut_hints_for(platform, WorkspaceFocus::Terminal, &entries, Sidebar::Open);
+            let hints = shortcut_hints_for(
+                platform,
+                WorkspaceFocus::Terminal,
+                &entries,
+                Sidebar::Open,
+                true,
+            );
             for taken in [
                 "Show the attention inbox",
                 "Open new Eon window",
@@ -1620,7 +1664,7 @@ mod tests {
         for platform in [NativePlatform::Linux, NativePlatform::Macos] {
             let label = physical_shortcut_label_for(platform, ALT | SHIFT, "KeyM");
             let tools = |entries| {
-                shortcut_groups_for(platform, entries, Sidebar::Open)
+                shortcut_groups_for(platform, entries, Sidebar::Open, true)
                     .into_iter()
                     .find(|group| group.title == "Projects and tools")
                     .map(|group| group.rows)
@@ -1634,8 +1678,13 @@ mod tests {
             );
             // An unbound entry has no row, so it alone leaves no group.
             assert_eq!(tools(&keyless[1..]), None);
-            let hints =
-                shortcut_hints_for(platform, WorkspaceFocus::Terminal, &entries, Sidebar::Open);
+            let hints = shortcut_hints_for(
+                platform,
+                WorkspaceFocus::Terminal,
+                &entries,
+                Sidebar::Open,
+                true,
+            );
             assert!(hints.iter().any(|hint| hint.label == "Editor"));
             assert!(
                 hints

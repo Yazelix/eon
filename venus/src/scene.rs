@@ -4,8 +4,8 @@ use crate::{
     render::{CellMetrics, FALLBACK_CAP_HEIGHT_EM},
 };
 use eon_workspace_protocol::v29::{
-    ALT, Attention, AttentionKind, AttentionState, ClaudeQuotaState, CodexQuotaState, PopupEntry,
-    QuotaWindow, SHIFT, Sidebar, Snapshot, Tab,
+    ALT, Attention, AttentionKind, AttentionState, BusyTerminals, ClaudeQuotaState,
+    CodexQuotaState, PopupEntry, QuotaWindow, SHIFT, Sidebar, Snapshot, Tab, TargetId,
 };
 use orbit_protocol::{
     Cell, CellStyle, CellWidth, CursorShape, Frame, PlacementState, Rgb, Row, Screen, SourceRect,
@@ -1039,6 +1039,13 @@ pub enum DialogKind {
         detach: Option<String>,
         workspace: Option<String>,
     },
+    /// The quit prompt (EON-C8): the window's live terminals when known, how many of them are
+    /// still running something, and the detach chord unless a popup takes it.
+    QuitWindow {
+        terminals: Option<u16>,
+        running: usize,
+        detach: Option<String>,
+    },
 }
 
 impl DialogKind {
@@ -1048,6 +1055,7 @@ impl DialogKind {
             Self::Shortcuts => "Shortcuts",
             Self::AttentionInbox => "Attention inbox",
             Self::CloseLastTab { .. } => "Close the last tab?",
+            Self::QuitWindow { .. } => "Quit this window?",
         }
     }
 
@@ -1069,6 +1077,23 @@ impl DialogKind {
                 if *terminals == 1 { "" } else { "s" }
             )
             .into(),
+            Self::QuitWindow {
+                terminals: None, ..
+            } => "This stops every terminal of this window.".into(),
+            Self::QuitWindow {
+                terminals: Some(terminals),
+                running,
+                ..
+            } => format!(
+                "This stops {terminals} terminal{}{}.",
+                if *terminals == 1 { "" } else { "s" },
+                if *running == 0 {
+                    String::new()
+                } else {
+                    format!("; {running} still running")
+                }
+            )
+            .into(),
         }
     }
 
@@ -1083,10 +1108,14 @@ impl DialogKind {
                     .collect::<Vec<_>>()
                     .join(" · "),
             ],
-            Self::CloseLastTab {
-                detach, workspace, ..
-            } => std::iter::once(
-                if workspace.is_some() {
+            Self::CloseLastTab { detach, .. } | Self::QuitWindow { detach, .. } => std::iter::once(
+                if matches!(
+                    self,
+                    Self::CloseLastTab {
+                        workspace: Some(_),
+                        ..
+                    }
+                ) {
                     "Enter Close · Esc Cancel"
                 } else {
                     "Enter Quit · Esc Cancel"
@@ -1150,11 +1179,13 @@ impl DialogScene {
         let padding_for = |width: f32| metrics.padding.min(width / 8.0);
         let dialog_height = match kind {
             DialogKind::Shortcuts | DialogKind::AttentionInbox => available,
-            DialogKind::CloseLastTab { .. } => (padding_for(dialog_width)
-                + metrics.height * 3.0
-                + content_height
-                + metrics.height * (footer_lines + 0.75))
-                .min(available),
+            DialogKind::CloseLastTab { .. } | DialogKind::QuitWindow { .. } => {
+                (padding_for(dialog_width)
+                    + metrics.height * 3.0
+                    + content_height
+                    + metrics.height * (footer_lines + 0.75))
+                    .min(available)
+            }
         };
         let bounds = SceneRect {
             left: ((width - dialog_width) / 2.0).max(0.0),
@@ -1441,6 +1472,54 @@ impl DialogScene {
                 terminals: rows.len(),
                 detach,
                 workspace,
+            },
+            vec![ShortcutGroup::new("", rows)],
+            size,
+            metrics,
+            scroll,
+        )
+    }
+
+    /// The quit prompt: the busy terminals in window order, as `Pane` or `Popup` with the name
+    /// the person sees, then how many more are busy. `terminals` is the window's live count.
+    #[must_use]
+    pub fn quit_window(
+        terminals: Option<u16>,
+        busy: Option<&BusyTerminals>,
+        detach: Option<String>,
+        size: PhysicalSize<u32>,
+        metrics: CellMetrics,
+        scroll: f32,
+    ) -> Self {
+        let rows = busy
+            .into_iter()
+            .flat_map(|busy| {
+                busy.terminals
+                    .iter()
+                    .map(|terminal| {
+                        ShortcutRow::new(
+                            match terminal.target.id {
+                                TargetId::Pane(_) => "Pane",
+                                TargetId::Popup(_) => "Popup",
+                            },
+                            terminal.name.as_str(),
+                        )
+                    })
+                    .chain(
+                        (busy.omitted > 0)
+                            .then(|| ShortcutRow::new("…", format!("{} more", busy.omitted))),
+                    )
+            })
+            .collect::<Vec<_>>();
+        // Without a busy list every live terminal counts as running (EON-C11).
+        let running = busy.map_or(usize::from(terminals.unwrap_or(0)), |busy| {
+            busy.terminals.len() + usize::from(busy.omitted)
+        });
+        Self::new(
+            DialogKind::QuitWindow {
+                terminals,
+                running,
+                detach,
             },
             vec![ShortcutGroup::new("", rows)],
             size,

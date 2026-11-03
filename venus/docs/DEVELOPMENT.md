@@ -26,6 +26,15 @@ disposable proof storage, then run:
 timeout 30s cargo test --locked --bin yazelix-venus live_output_keeps_application_input_admitted_before_repaint -- --ignored
 ```
 
+The quit regression runs the same way. It drives the shortcut chain and workspace
+handling: the quit prompt is redrawn and described again when only the busy list
+changes, Enter queues one Stop, and a second Enter while it is in flight reaches
+no terminal and queues nothing:
+
+```sh
+timeout 30s cargo test --locked --bin yazelix-venus quit_prompt_refreshes_and_a_stop_in_flight_holds_enter -- --ignored
+```
+
 The image regression runs the same way. It checks that oversize image uploads are
 refused without failing the renderer, then shows a test image beside a refused image's
 marker in a pane, in a popup and under a notice for 2.5 seconds each, so a capture of

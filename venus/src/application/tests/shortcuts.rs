@@ -21,7 +21,8 @@ fn new_window_shortcut_invokes_the_supplied_eon_command() {
         shortcut_groups_for(
             NativePlatform::Linux,
             &[],
-            eon_workspace_protocol::v29::Sidebar::Open
+            eon_workspace_protocol::v29::Sidebar::Open,
+            true
         )
         .iter()
         .flat_map(|group| &group.rows)
@@ -84,6 +85,7 @@ fn shortcut_viewer_uses_live_rows_and_captures_its_local_sequence() {
         NativePlatform::Linux,
         &entries,
         eon_workspace_protocol::v29::Sidebar::Open,
+        true,
     );
     let key_shortcut = |key, modifiers| {
         native_key_shortcut_for(NativePlatform::Linux, key, modifiers, &[]).unwrap()
@@ -164,7 +166,8 @@ fn shortcut_viewer_uses_live_rows_and_captures_its_local_sequence() {
         shortcut_groups_for(
             NativePlatform::Linux,
             &[],
-            eon_workspace_protocol::v29::Sidebar::Open
+            eon_workspace_protocol::v29::Sidebar::Open,
+            true
         )
         .iter()
         .flat_map(|group| &group.rows)
@@ -251,6 +254,7 @@ fn macos_uses_command_for_standard_host_actions_only() {
         NativePlatform::Macos,
         &[],
         eon_workspace_protocol::v29::Sidebar::Open,
+        true,
     )
     .into_iter()
     .flat_map(|group| group.rows)
@@ -407,7 +411,7 @@ fn structural_shortcuts_do_not_repeat_and_popup_focus_is_explicit() {
 fn attention_inbox_binding_opens_under_every_sidebar() {
     for sidebar in [Sidebar::Open, Sidebar::Closed, Sidebar::Off] {
         assert!(
-            shortcut_groups_for(NativePlatform::Linux, &[], sidebar)
+            shortcut_groups_for(NativePlatform::Linux, &[], sidebar, true)
                 .iter()
                 .flat_map(|group| &group.rows)
                 .any(|row| row.shortcut == "Alt+Q" && row.action == "Show the attention inbox"),
@@ -649,4 +653,78 @@ fn attention_inbox_keeps_the_queue_filter_and_entry_across_refreshes() {
         assert!(input.consumes_shortcut(key, ElementState::Pressed, true, false));
         assert!(input.consumes_shortcut(key, ElementState::Released, false, false));
     }
+}
+
+#[test]
+fn quit_key_lists_hints_and_yields_to_a_popup() {
+    let quit = PhysicalKey::Code(KeyCode::KeyQ);
+    let action = |entries: &[PopupEntry]| {
+        native_key_shortcut_for(NativePlatform::Linux, quit, ALT_SHIFT, entries)
+            .map(|shortcut| shortcut.action)
+    };
+    assert_eq!(action(&[]), Some(NativeShortcutAction::Quit));
+    assert_eq!(
+        native_key_shortcut_for(
+            NativePlatform::Linux,
+            quit,
+            orbit_protocol::session::Modifiers::ALT,
+            &[]
+        )
+        .map(|shortcut| shortcut.action),
+        Some(NativeShortcutAction::ToggleInbox)
+    );
+    let label = "Quit: close the window, stop its terminals";
+    let rows = |platform, entries: &[PopupEntry], running| {
+        shortcut_groups_for(platform, entries, Sidebar::Open, running)
+            .into_iter()
+            .filter(|group| group.title == "Host")
+            .flat_map(|group| group.rows)
+            .filter(|row| row.action.starts_with(label))
+            .map(|row| (row.shortcut, row.action))
+            .collect::<Vec<_>>()
+    };
+    let hints = |entries: &[PopupEntry], running| {
+        shortcut_hints_for(
+            NativePlatform::Linux,
+            WorkspaceFocus::Terminal,
+            entries,
+            Sidebar::Open,
+            running,
+        )
+        .into_iter()
+        .filter(|hint| hint.label == "quit")
+        .map(|hint| (hint.modifiers, hint.key, hint.priority))
+        .collect::<Vec<_>>()
+    };
+    assert_eq!(
+        rows(NativePlatform::Linux, &[], true),
+        [("Alt+Shift+Q".into(), label.into())]
+    );
+    assert_eq!(
+        rows(NativePlatform::Macos, &[], true),
+        [("Option+Shift+Q".into(), label.into())]
+    );
+    // Detach's tier, so the two host exits drop together.
+    assert_eq!(hints(&[], true), [("A-S".into(), "Q".into(), 2)]);
+    // A popup on Alt+Shift+Q takes the key and its hint.
+    let monitor = [PopupEntry {
+        id: "monitor".into(),
+        label: "Monitor".into(),
+        shortcut: PopupKey::Bound(eon_workspace_protocol::v29::Shortcut {
+            modifiers: eon_workspace_protocol::v29::ALT | eon_workspace_protocol::v29::SHIFT,
+            key: "KeyQ".into(),
+        }),
+    }];
+    assert_eq!(action(&monitor), None);
+    assert_eq!(
+        rows(NativePlatform::Linux, &monitor, true),
+        [(
+            "Alt+Shift+Q".into(),
+            format!("{label} (overridden by Monitor)")
+        )]
+    );
+    assert!(hints(&monitor, true).is_empty());
+    // Without a running-windows summary (eonbase) there is no Quit.
+    assert!(rows(NativePlatform::Linux, &[], false).is_empty());
+    assert!(hints(&[], false).is_empty());
 }

@@ -209,6 +209,24 @@ fn run_workspace(
 /// terminal start does not read as workspace loss; an action queued behind other slow work, or one
 /// that stops a terminal before starting another, can still exceed it.
 const WORKSPACE_EXCHANGE_TIMEOUT: Duration = Duration::from_secs(6);
+/// Stop waits as `eon quit` does: Eon's 36-second control bound for one in-flight operation,
+/// then five seconds for the Stop itself.
+const STOP_EXCHANGE_TIMEOUT: Duration = Duration::from_secs(41);
+
+fn exchange_timeout(action: &WorkspaceAction) -> Duration {
+    if is_stop(action) {
+        STOP_EXCHANGE_TIMEOUT
+    } else {
+        WORKSPACE_EXCHANGE_TIMEOUT
+    }
+}
+
+fn is_stop(action: &WorkspaceAction) -> bool {
+    matches!(
+        action,
+        WorkspaceAction::Workspace(workspace::WorkspaceAction::Stop { .. })
+    )
+}
 
 fn workspace_exchange(
     socket: &Path,
@@ -216,6 +234,8 @@ fn workspace_exchange(
     counter: usize,
     action: WorkspaceAction,
 ) -> Result<WorkspaceResponse, String> {
+    let timeout = Some(exchange_timeout(&action));
+    let stop = is_stop(&action);
     let request = WorkspaceRequest {
         id: format!("venus-{}-{nonce}-{counter}", std::process::id()),
         caller: None,
@@ -229,7 +249,6 @@ fn workspace_exchange(
             socket.display()
         )
     })?;
-    let timeout = Some(WORKSPACE_EXCHANGE_TIMEOUT);
     stream
         .set_read_timeout(timeout)
         .and_then(|()| stream.set_write_timeout(timeout))
@@ -238,11 +257,34 @@ fn workspace_exchange(
         .write_all(&encoded)
         .map_err(|error| format!("Cannot send Eon workspace action: {error}"))?;
 
-    read_workspace_response(&mut stream)
+    if !stop {
+        return read_workspace_response(&mut stream);
+    }
+    // Stop answers with a lifecycle reply: `Stopped` ends the generation as `Ended` does.
+    let response = read_workspace_message(&mut stream)?;
+    match workspace::decode_lifecycle_response(&response)
+        .map_err(|error| format!("Eon sent an invalid workspace response: {error}"))?
+    {
+        workspace::LifecycleResponse::Stopped(stopped) => {
+            Ok(WorkspaceResponse::Ended(workspace::Ended {
+                generation: stopped.generation,
+            }))
+        }
+        workspace::LifecycleResponse::Failure(failure) => Ok(WorkspaceResponse::Failure(failure)),
+        workspace::LifecycleResponse::Runtime(_) => {
+            Err("Eon answered Stop with a runtime report".into())
+        }
+    }
 }
 
 /// Read one bounded canonical response, leaving subsequent control bytes unread.
 pub fn read_workspace_response(stream: &mut impl Read) -> Result<WorkspaceResponse, String> {
+    let response = read_workspace_message(stream)?;
+    workspace::decode_response(&response)
+        .map_err(|error| format!("Eon sent an invalid workspace response: {error}"))
+}
+
+fn read_workspace_message(stream: &mut impl Read) -> Result<Vec<u8>, String> {
     let mut response = vec![0; workspace::HEADER_BYTES];
     stream
         .read_exact(&mut response)
@@ -253,8 +295,7 @@ pub fn read_workspace_response(stream: &mut impl Read) -> Result<WorkspaceRespon
     stream
         .read_exact(&mut response[workspace::HEADER_BYTES..])
         .map_err(|error| format!("Cannot read complete Eon workspace response: {error}"))?;
-    workspace::decode_response(&response)
-        .map_err(|error| format!("Eon sent an invalid workspace response: {error}"))
+    Ok(response)
 }
 
 impl Transport {
@@ -1254,6 +1295,57 @@ mod tests {
 
         assert_eq!(result, Ok(snapshot));
         server.join().unwrap();
+    }
+
+    #[test]
+    fn workspace_worker_reads_stop_as_a_lifecycle_reply() {
+        let stop = || {
+            WorkspaceAction::Workspace(workspace::WorkspaceAction::Stop {
+                generation: "g7".into(),
+            })
+        };
+        let failure = workspace::Failure {
+            code: "stop-failed".into(),
+            detail: "an Orbit host refused".into(),
+        };
+        let replies = [
+            workspace::LifecycleResponse::Stopped(workspace::Stopped {
+                generation: "g7".into(),
+                sessions: vec!["session-p1".into()],
+            }),
+            workspace::LifecycleResponse::Failure(failure.clone()),
+        ];
+        let socket = TestSocket::new();
+        let listener = UnixListener::bind(&socket.path).unwrap();
+        let server = thread::spawn(move || {
+            for reply in replies {
+                let (mut stream, action) = accept_workspace_action(&listener);
+                assert_eq!(action, stop());
+                stream
+                    .write_all(&workspace::encode_lifecycle_response(&reply).unwrap())
+                    .unwrap();
+            }
+        });
+
+        assert_eq!(
+            workspace_exchange(&socket.path, 1, 0, stop()),
+            Ok(WorkspaceResponse::Ended(workspace::Ended {
+                generation: "g7".into()
+            }))
+        );
+        assert_eq!(
+            workspace_exchange(&socket.path, 1, 1, stop()),
+            Ok(WorkspaceResponse::Failure(failure))
+        );
+        server.join().unwrap();
+        // Stop waits as long as `eon quit` does: one in-flight operation, then the Stop.
+        assert_eq!(exchange_timeout(&stop()), Duration::from_secs(41));
+        assert_eq!(
+            exchange_timeout(&WorkspaceAction::Workspace(
+                workspace::WorkspaceAction::Inspect
+            )),
+            WORKSPACE_EXCHANGE_TIMEOUT
+        );
     }
 
     fn read_client(stream: &mut UnixStream) -> ClientMessage {

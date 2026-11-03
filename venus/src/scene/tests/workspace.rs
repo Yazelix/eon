@@ -945,3 +945,87 @@ fn shortcut_viewer_clamps_scroll_and_keeps_fixed_dismissal_space() {
     assert_eq!(crowded.scroll, crowded.max_scroll);
     assert!(crowded.bounds.bottom() <= 180.0);
 }
+
+#[test]
+fn quit_prompt_words_counts_and_lists_busy_terminals() {
+    use eon_workspace_protocol::v29::{BusyTerminal, BusyTerminals, TargetId, TerminalTarget};
+
+    let busy = |id: TargetId, name: &str| BusyTerminal {
+        target: TerminalTarget {
+            workspace: "w1".into(),
+            tab: "t1".into(),
+            id,
+            terminal: "session".into(),
+        },
+        name: name.into(),
+    };
+    let metrics = CellMetrics::for_scale(1.0);
+    let size = PhysicalSize::new(960, 600);
+    let one = BusyTerminals {
+        terminals: vec![busy(TargetId::Pane("p1".into()), "p1")],
+        omitted: 0,
+    };
+    let prompt = |terminals, busy: Option<&BusyTerminals>, detach: Option<&str>| {
+        DialogScene::quit_window(terminals, busy, detach.map(Into::into), size, metrics, 0.0)
+    };
+    let single = prompt(Some(1), Some(&one), Some("Alt+Shift+D"));
+    assert_eq!(single.kind.title(), "Quit this window?");
+    assert_eq!(
+        single.kind.subtitle(),
+        "This stops 1 terminal; 1 still running."
+    );
+    assert_eq!(
+        single.kind.footer(),
+        [
+            "Enter Quit · Esc Cancel",
+            "Alt+Shift+D keeps it running instead"
+        ]
+    );
+    let rows = |scene: &DialogScene| {
+        scene.groups[0]
+            .rows
+            .iter()
+            .map(|row| (row.shortcut.clone(), row.action.clone()))
+            .collect::<Vec<_>>()
+    };
+    assert_eq!(rows(&single), [("Pane".into(), "p1".into())]);
+    assert_eq!(single.max_scroll, 0.0);
+    assert!(single.bounds.height < size.height as f32 / 2.0);
+
+    // Named terminals in window order, then how many more are busy.
+    let many = BusyTerminals {
+        terminals: vec![
+            busy(TargetId::Pane("p2".into()), "p2 cargo build"),
+            busy(TargetId::Popup("u1".into()), "Agent"),
+        ],
+        omitted: 2,
+    };
+    let plural = prompt(Some(6), Some(&many), None);
+    assert_eq!(
+        plural.kind.subtitle(),
+        "This stops 6 terminals; 4 still running."
+    );
+    assert_eq!(
+        rows(&plural),
+        [
+            ("Pane".into(), "p2 cargo build".into()),
+            ("Popup".into(), "Agent".into()),
+            ("…".into(), "2 more".into()),
+        ]
+    );
+    // A popup on the detach chord drops the hint line.
+    assert_eq!(plural.kind.footer(), ["Enter Quit · Esc Cancel"]);
+
+    let idle = BusyTerminals {
+        terminals: vec![],
+        omitted: 0,
+    };
+    assert_eq!(
+        prompt(Some(2), Some(&idle), None).kind.subtitle(),
+        "This stops 2 terminals."
+    );
+    assert_eq!(
+        prompt(None, Some(&one), None).kind.subtitle(),
+        "This stops every terminal of this window."
+    );
+}

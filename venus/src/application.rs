@@ -564,25 +564,202 @@ struct AttentionJump {
     ticket: u64,
 }
 
-/// A final close the prompt holds until Enter sends it.
+/// A final close, or a quit, that the prompt holds until Enter sends it.
 #[derive(Debug)]
 struct ClosePrompt {
-    tab: String,
-    action: WorkspaceAction,
+    target: PromptTarget,
     scroll: f32,
 }
 
+#[derive(Debug)]
+enum PromptTarget {
+    CloseTab {
+        tab: String,
+        action: WorkspaceAction,
+    },
+    /// Quit this window: Stop for the generation the current snapshot names (EON-C8).
+    QuitWindow,
+}
+
 impl ClosePrompt {
-    /// Whether the snapshot still holds the tab, and the pane, that the close names.
+    /// Whether the snapshot still holds what the prompt names: the tab and pane of a close, or
+    /// the running window of a quit.
     fn names_live_target(&self, snapshot: &eon_workspace_protocol::v29::Snapshot) -> bool {
-        snapshot
-            .tabs
-            .iter()
-            .find(|tab| tab.id == self.tab)
-            .is_some_and(|tab| match &self.action {
-                WorkspaceAction::ClosePane { pane } => tab.panes().any(|live| live.id == *pane),
-                _ => true,
+        match &self.target {
+            PromptTarget::CloseTab { tab, action } => snapshot
+                .tabs
+                .iter()
+                .find(|live| live.id == *tab)
+                .is_some_and(|tab| match action {
+                    WorkspaceAction::ClosePane { pane } => tab.panes().any(|live| live.id == *pane),
+                    _ => true,
+                }),
+            PromptTarget::QuitWindow => snapshot.running.is_some(),
+        }
+    }
+}
+
+/// The Stop `eon quit` sends for the snapshot's window; None without a running-windows
+/// summary (eonbase).
+fn quit_action(snapshot: &eon_workspace_protocol::v29::Snapshot) -> Option<WorkspaceAction> {
+    let running = snapshot.running.as_ref()?;
+    Some(WorkspaceAction::Workspace(CommonAction::Stop {
+        generation: running.this.generation.clone(),
+    }))
+}
+
+/// Whether quitting asks first. An absent busy list reads as every terminal busy; an empty one
+/// quits without asking, as `eon quit` does (EON-C11).
+fn quit_asks(snapshot: &eon_workspace_protocol::v29::Snapshot) -> bool {
+    snapshot
+        .busy
+        .as_ref()
+        .is_none_or(|busy| !busy.terminals.is_empty() || busy.omitted > 0)
+}
+
+/// Whether an open quit prompt words `next` differently from `current`.
+fn quit_prompt_changed(
+    current: &eon_workspace_protocol::v29::Snapshot,
+    next: &eon_workspace_protocol::v29::Snapshot,
+) -> bool {
+    let inputs = |snapshot: &eon_workspace_protocol::v29::Snapshot| {
+        (
+            snapshot
+                .running
+                .as_ref()
+                .map(|running| running.this.live_terminals),
+            snapshot.busy.clone(),
+        )
+    };
+    inputs(current) != inputs(next)
+}
+
+/// Where Quit this window stands (EON-C8).
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+enum QuitProgress {
+    #[default]
+    Idle,
+    /// The last snapshot was idle; the next workspace response decides, so a command started
+    /// since still asks.
+    Pending,
+    /// A Stop is in flight under this ticket; quitting again does nothing until it is answered.
+    Stopping(u64),
+}
+
+/// What Venus's shortcut handlers read of a key event.
+#[derive(Clone, Copy, Debug)]
+struct ShortcutKey {
+    physical_key: PhysicalKey,
+    state: ElementState,
+    repeat: bool,
+}
+
+impl ShortcutKey {
+    fn of(event: &winit::event::KeyEvent) -> Self {
+        Self {
+            physical_key: event.physical_key,
+            state: event.state,
+            repeat: event.repeat,
+        }
+    }
+}
+
+/// What Quit this window does next: open its prompt, or send this Stop.
+#[derive(Debug, PartialEq)]
+enum QuitStep {
+    Ask,
+    Stop(WorkspaceAction),
+}
+
+/// What a workspace event asks of Quit this window.
+#[derive(Debug, Default, PartialEq)]
+struct QuitEffects {
+    /// An open quit prompt is worded differently, though no other view changed.
+    refresh: bool,
+    step: Option<QuitStep>,
+}
+
+impl QuitProgress {
+    /// Alt+Shift+Q, or another way to quit: a busy snapshot asks at once; an idle one waits for
+    /// the next workspace response. Nothing happens without a running window or while a quit is
+    /// already under way.
+    fn begin(
+        &mut self,
+        snapshot: Option<&eon_workspace_protocol::v29::Snapshot>,
+    ) -> Option<QuitStep> {
+        let snapshot = snapshot.filter(|snapshot| snapshot.running.is_some())?;
+        if *self != Self::Idle {
+            return None;
+        }
+        if quit_asks(snapshot) {
+            Some(QuitStep::Ask)
+        } else {
+            *self = Self::Pending;
+            None
+        }
+    }
+
+    /// Takes a workspace event before the model applies it. `current` is the snapshot the
+    /// model holds and `quit_prompt` whether the quit prompt is open.
+    fn on_workspace(
+        &mut self,
+        current: Option<&eon_workspace_protocol::v29::Snapshot>,
+        quit_prompt: bool,
+        event: &WorkspaceEvent,
+    ) -> QuitEffects {
+        use eon_workspace_protocol::v29::Response;
+        let (decides_on, refresh) = match event {
+            WorkspaceEvent::Response(Response::Snapshot(snapshot)) => (
+                Some(snapshot),
+                quit_prompt
+                    && current.is_some_and(|current| quit_prompt_changed(current, snapshot)),
+            ),
+            // After a failed Stop the supervisor refuses every refresh, so a pending quit
+            // decides on the snapshot it keeps. Another failure says nothing about what runs,
+            // so the quit waits for a snapshot.
+            WorkspaceEvent::Response(Response::Failure(failure))
+                if failure.code == "stop-incomplete" =>
+            {
+                (current, false)
+            }
+            WorkspaceEvent::Answered { ticket, .. } => {
+                // An answer that reaches here did not end the window, so quitting may retry.
+                if *self == Self::Stopping(*ticket) {
+                    *self = Self::Idle;
+                }
+                return QuitEffects::default();
+            }
+            WorkspaceEvent::Unavailable(_) => {
+                if *self == Self::Pending {
+                    *self = Self::Idle;
+                }
+                return QuitEffects::default();
+            }
+            WorkspaceEvent::Response(_) => return QuitEffects::default(),
+        };
+        let step = if *self == Self::Pending {
+            *self = Self::Idle;
+            decides_on.and_then(|snapshot| {
+                if quit_asks(snapshot) {
+                    Some(QuitStep::Ask)
+                } else {
+                    quit_action(snapshot).map(QuitStep::Stop)
+                }
             })
+        } else {
+            None
+        };
+        QuitEffects { refresh, step }
+    }
+
+    /// Whether a Stop may be sent; one in flight holds the next.
+    fn may_stop(self) -> bool {
+        !matches!(self, Self::Stopping(_))
+    }
+
+    /// While a Stop is in flight, the quit prompt's Enter does nothing (VEN-C8).
+    fn holds_key(self, code: KeyCode, modifiers: session::Modifiers) -> bool {
+        !self.may_stop() && close_prompt_answer(code, modifiers) == Some(true)
     }
 }
 
@@ -838,6 +1015,7 @@ struct Application {
     attention_inbox: AttentionInboxState,
     warning_close_last_tab: bool,
     close_prompt: Option<ClosePrompt>,
+    quit: QuitProgress,
     hints_visible: bool,
     hints: Option<ShortcutHintsScene>,
     zoom: Option<ZoomTarget>,
@@ -945,6 +1123,7 @@ impl Application {
             attention_inbox: AttentionInboxState::default(),
             warning_close_last_tab,
             close_prompt: None,
+            quit: QuitProgress::Idle,
             hints_visible: true,
             hints: None,
             zoom: None,
@@ -1252,7 +1431,21 @@ impl Application {
         };
         let state = self.window.as_ref()?;
         let snapshot = self.workspace_model.snapshot()?;
-        let tab = snapshot.tabs.iter().find(|tab| tab.id == prompt.tab)?;
+        let tab = match &prompt.target {
+            PromptTarget::CloseTab { tab, .. } => tab,
+            // Worded from the current snapshot, so an open prompt follows the busy list.
+            PromptTarget::QuitWindow => {
+                return Some(DialogScene::quit_window(
+                    snapshot.running.as_ref()?.this.live_terminals,
+                    snapshot.busy.as_ref(),
+                    detach_chord(&snapshot.entries),
+                    state.renderer.size(),
+                    state.renderer.metrics(),
+                    prompt.scroll,
+                ));
+            }
+        };
+        let tab = snapshot.tabs.iter().find(|live| live.id == *tab)?;
         // Worded from the current snapshot, so an open prompt follows the workspace count.
         Some(DialogScene::close_last_tab(
             tab,
@@ -1275,6 +1468,9 @@ impl Application {
                     self.workspace_model
                         .snapshot()
                         .map_or(Sidebar::Off, |snapshot| snapshot.sidebar),
+                    self.workspace_model
+                        .snapshot()
+                        .is_some_and(|snapshot| snapshot.running.is_some()),
                 ),
                 state.renderer.size(),
                 state.renderer.metrics(),
@@ -1338,7 +1534,7 @@ impl Application {
         self.focus_attention(tab, target);
     }
 
-    fn handle_attention_inbox_key(&mut self, event: &winit::event::KeyEvent) -> bool {
+    fn handle_attention_inbox_key(&mut self, event: &ShortcutKey) -> bool {
         if !self.attention_inbox.open && self.dialog_open() {
             return false;
         }
@@ -1408,11 +1604,7 @@ impl Application {
     }
 
     /// Alt+Shift+D detaches from any workspace state, as a compositor close request does.
-    fn handle_detach_key(
-        &mut self,
-        event_loop: &ActiveEventLoop,
-        event: &winit::event::KeyEvent,
-    ) -> bool {
+    fn handle_detach_key(&mut self, event_loop: &ActiveEventLoop, event: &ShortcutKey) -> bool {
         let detaches = self.workspace_model.snapshot().is_some()
             && native_key_shortcut(
                 event.physical_key,
@@ -1436,7 +1628,7 @@ impl Application {
 
     /// While the close prompt is open, Enter sends its close, Escape dismisses it, the
     /// viewer's navigation keys scroll it, and other keys reach nothing.
-    fn handle_close_prompt_key(&mut self, event: &winit::event::KeyEvent) -> bool {
+    fn handle_close_prompt_key(&mut self, event: &ShortcutKey) -> bool {
         if self.close_prompt.is_none()
             || !self
                 .input
@@ -1469,23 +1661,88 @@ impl Application {
         true
     }
 
-    /// Sends the prompt's close. A tab created meanwhile is active, and Eon closes only in
-    /// the active tab, so the named tab is focused first.
+    /// Sends the prompt's close or quit. A tab created meanwhile is active, and Eon closes
+    /// only in the active tab, so the named tab is focused first.
     fn send_close(&mut self, prompt: ClosePrompt) {
+        let (tab, action) = match prompt.target {
+            PromptTarget::CloseTab { tab, action } => (tab, action),
+            PromptTarget::QuitWindow => {
+                if let Some(action) = self.workspace_model.snapshot().and_then(quit_action) {
+                    self.send_stop(action);
+                }
+                return;
+            }
+        };
         let inactive = self
             .workspace_model
             .snapshot()
-            .is_some_and(|snapshot| snapshot.active_tab != prompt.tab);
-        if !inactive
-            || self.queue_workspace(WorkspaceAction::Workspace(CommonAction::FocusId(
-                prompt.tab,
-            )))
+            .is_some_and(|snapshot| snapshot.active_tab != tab);
+        if !inactive || self.queue_workspace(WorkspaceAction::Workspace(CommonAction::FocusId(tab)))
         {
-            self.queue_workspace(prompt.action);
+            self.queue_workspace(action);
         }
     }
 
-    fn handle_shortcut_viewer_key(&mut self, event: &winit::event::KeyEvent) -> bool {
+    /// Quit this window (EON-C8): the prompt while a terminal is busy, else Stop once the next
+    /// workspace response confirms that none is.
+    fn begin_quit(&mut self) {
+        let step = self.quit.begin(self.workspace_model.snapshot());
+        self.take_quit_step(step);
+    }
+
+    fn take_quit_step(&mut self, step: Option<QuitStep>) {
+        match step {
+            Some(QuitStep::Ask) if self.close_prompt.is_none() => self.change_dialog(|app| {
+                app.close_prompt = Some(ClosePrompt {
+                    target: PromptTarget::QuitWindow,
+                    scroll: 0.0,
+                })
+            }),
+            Some(QuitStep::Stop(action)) => self.send_stop(action),
+            _ => {}
+        }
+    }
+
+    /// The Stop `eon quit` sends; its `Stopped` reply exits as `Ended` does (VEN-C14).
+    fn send_stop(&mut self, action: WorkspaceAction) {
+        if !self.quit.may_stop() {
+            return;
+        }
+        if let Some(ticket) = self.queue_workspace_ticket(action) {
+            self.quit = QuitProgress::Stopping(ticket);
+        }
+    }
+
+    /// Offers a key to Venus's own shortcuts in precedence order; true when one took it, so
+    /// it reaches no terminal.
+    fn handle_shortcut_key(&mut self, event_loop: &ActiveEventLoop, event: &ShortcutKey) -> bool {
+        self.input
+            .suppresses_retired_key(event.physical_key, event.state, event.repeat)
+            || self.handle_attention_inbox_key(event)
+            || self.handle_detach_key(event_loop, event)
+            || self.handle_quit_hold_key(event)
+            || self.handle_close_prompt_key(event)
+            || self.handle_shortcut_viewer_key(event)
+            || self.handle_link_copy(event.physical_key, event.state, event.repeat)
+            || self.handle_workspace_key(event)
+    }
+
+    /// While a Stop is in flight, Enter's press and its matching release reach nothing.
+    fn handle_quit_hold_key(&mut self, event: &ShortcutKey) -> bool {
+        let PhysicalKey::Code(code) = event.physical_key else {
+            return false;
+        };
+        // Only Enter: a release of another key belongs to the handler that captured its press.
+        close_prompt_answer(code, session::Modifiers::empty()) == Some(true)
+            && self.input.consumes_shortcut(
+                event.physical_key,
+                event.state,
+                event.repeat,
+                self.quit.holds_key(code, self.input.modifiers()),
+            )
+    }
+
+    fn handle_shortcut_viewer_key(&mut self, event: &ShortcutKey) -> bool {
         if !self.shortcut_viewer.open && self.workspace_model.snapshot().is_none() {
             return false;
         }
@@ -1673,6 +1930,7 @@ impl Application {
                         self.workspace_focus,
                         &snapshot.entries,
                         snapshot.sidebar,
+                        snapshot.running.is_some(),
                     )
                 },
                 state.renderer.size(),
@@ -2366,6 +2624,13 @@ impl Application {
     }
 
     fn handle_workspace(&mut self, event: WorkspaceEvent) {
+        let quit = self.quit.on_workspace(
+            self.workspace_model.snapshot(),
+            self.close_prompt
+                .as_ref()
+                .is_some_and(|prompt| matches!(prompt.target, PromptTarget::QuitWindow)),
+            &event,
+        );
         if let WorkspaceEvent::Answered { ticket, accepted } = event {
             // A refused action's notice is new even when it repeats a poll's or an earlier one.
             let renewed = !accepted && self.workspace_model.renew_notice();
@@ -2507,9 +2772,15 @@ impl Application {
         {
             self.set_workspace_focus(WorkspaceFocus::Tabs);
         }
-        if view_changed {
+        // The quit prompt is worded from the snapshot's busy list and terminal count, which
+        // change no other view.
+        if quit.refresh {
+            self.presentation.content_changed();
+        }
+        if view_changed || quit.refresh {
             self.refresh_client_view();
         }
+        self.take_quit_step(quit.step);
     }
 
     /// Closes the prompt with its target or the workspace connection. Closing it refreshes the
@@ -2594,8 +2865,7 @@ impl Application {
         {
             self.change_dialog(|app| {
                 app.close_prompt = Some(ClosePrompt {
-                    tab,
-                    action,
+                    target: PromptTarget::CloseTab { tab, action },
                     scroll: 0.0,
                 })
             });
@@ -2683,7 +2953,7 @@ impl Application {
         }
     }
 
-    fn handle_workspace_key(&mut self, event: &winit::event::KeyEvent) -> bool {
+    fn handle_workspace_key(&mut self, event: &ShortcutKey) -> bool {
         let Some(snapshot) = self.workspace_model.snapshot() else {
             return false;
         };
@@ -2699,6 +2969,10 @@ impl Application {
             fixed.is_some_and(|shortcut| shortcut.action == NativeShortcutAction::CycleFocus);
         let opens_window =
             fixed.is_some_and(|shortcut| shortcut.action == NativeShortcutAction::NewWindow);
+        let quits = fixed.is_some_and(|shortcut| {
+            shortcut.action == NativeShortcutAction::Quit
+                && shortcut.bound(snapshot.sidebar, snapshot.running.is_some())
+        });
         let toggles_hints =
             fixed.is_some_and(|shortcut| shortcut.action == NativeShortcutAction::ToggleHints);
         let toggles_zoom =
@@ -2750,6 +3024,7 @@ impl Application {
             event.state,
             event.repeat,
             opens_window
+                || quits
                 || toggles_hints
                 || toggles_zoom
                 || cycles_focus
@@ -2761,6 +3036,10 @@ impl Application {
             if event.state == ElementState::Pressed {
                 if opens_window && !event.repeat {
                     self.open_new_window();
+                } else if quits && !event.repeat {
+                    if self.presentation.has_presented_geometry() {
+                        self.begin_quit();
+                    }
                 } else if toggles_hints && !event.repeat {
                     self.toggle_hints();
                 } else if toggles_zoom && !event.repeat {
@@ -4130,16 +4409,7 @@ impl ApplicationHandler<UserEvent> for Application {
                 let copies =
                     native_key_shortcut(event.physical_key, modifiers, self.popup_entries())
                         .is_some_and(|shortcut| shortcut.action == NativeShortcutAction::Copy);
-                if self
-                    .input
-                    .suppresses_retired_key(event.physical_key, event.state, event.repeat)
-                    || self.handle_attention_inbox_key(&event)
-                    || self.handle_detach_key(event_loop, &event)
-                    || self.handle_close_prompt_key(&event)
-                    || self.handle_shortcut_viewer_key(&event)
-                    || self.handle_link_copy(event.physical_key, event.state, event.repeat)
-                    || self.handle_workspace_key(&event)
-                {
+                if self.handle_shortcut_key(event_loop, &ShortcutKey::of(&event)) {
                 } else if self.input.consumes_shortcut(
                     event.physical_key,
                     event.state,

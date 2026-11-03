@@ -117,8 +117,10 @@ fn close_prompt_asks_for_a_final_close() {
 
     // The prompt keeps its close while the named tab and pane live, even when a tab appears.
     let prompt = |action| ClosePrompt {
-        tab: "t1".into(),
-        action,
+        target: PromptTarget::CloseTab {
+            tab: "t1".into(),
+            action,
+        },
         scroll: 0.0,
     };
     assert!(prompt(close_tab("t1")).names_live_target(&two));
@@ -691,4 +693,260 @@ fn eon_bar_controls_reuse_existing_actions_and_local_viewer() {
         cycle_header_focus(label, true, true, true),
         Some(WorkspaceFocus::Tabs)
     );
+}
+
+/// A running window, generation g7, with three live terminals and none busy.
+fn quit_snapshot() -> Snapshot {
+    use eon_workspace_protocol::v29::{BusyTerminals, RunningWindows, WindowEntry, WindowState};
+
+    Snapshot {
+        workspace: "w1".into(),
+        active_workspace: "w1".into(),
+        workspaces: vec![],
+        active_tab: "t1".into(),
+        geometry: eon_workspace_protocol::v29::PopupGeometry {
+            side_margin: 8.0,
+            vertical_margin: 4.0,
+        },
+        entries: vec![],
+        tabs: vec![],
+        codex_quota: None,
+        claude_quota: None,
+        codex_quota_failure: None,
+        claude_quota_failure: None,
+        running: Some(RunningWindows {
+            this: WindowEntry {
+                window: None,
+                generation: "g7".into(),
+                name: None,
+                started_at: None,
+                live_terminals: Some(3),
+                state: WindowState::Live,
+            },
+            others: None,
+            omitted: 0,
+        }),
+        busy: Some(BusyTerminals {
+            terminals: vec![],
+            omitted: 0,
+        }),
+        sidebar: eon_workspace_protocol::v29::Sidebar::Open,
+        attention_queue: Vec::new(),
+    }
+}
+
+/// p1 runs a command.
+fn busy_p1() -> eon_workspace_protocol::v29::BusyTerminals {
+    use eon_workspace_protocol::v29::{BusyTerminal, BusyTerminals, TargetId, TerminalTarget};
+
+    BusyTerminals {
+        terminals: vec![BusyTerminal {
+            target: TerminalTarget {
+                workspace: "w1".into(),
+                tab: "t1".into(),
+                id: TargetId::Pane("p1".into()),
+                terminal: "session-p1".into(),
+            },
+            name: "p1".into(),
+        }],
+        omitted: 0,
+    }
+}
+
+fn stop_g7() -> WorkspaceAction {
+    WorkspaceAction::Workspace(CommonAction::Stop {
+        generation: "g7".into(),
+    })
+}
+
+#[test]
+fn quit_asks_only_while_busy() {
+    let mut snapshot = quit_snapshot();
+    let stop = Some(stop_g7());
+    // An all-idle window quits without asking, as `eon quit` does.
+    assert_eq!(quit_action(&snapshot), stop);
+    assert!(!quit_asks(&snapshot));
+    snapshot.busy.as_mut().unwrap().omitted = 1;
+    assert!(quit_asks(&snapshot));
+    snapshot.busy = Some(busy_p1());
+    assert!(quit_asks(&snapshot));
+    assert_eq!(quit_action(&snapshot), stop);
+    // An absent busy list reads as every terminal busy.
+    let busy = snapshot.busy.take();
+    assert!(quit_asks(&snapshot));
+
+    // An open prompt is worded again when only the busy list or the terminal count changes.
+    let mut next = snapshot.clone();
+    assert!(!quit_prompt_changed(&snapshot, &next));
+    next.busy.clone_from(&busy);
+    assert!(quit_prompt_changed(&snapshot, &next));
+    snapshot.busy = busy;
+    assert!(!quit_prompt_changed(&snapshot, &next));
+    next.busy.as_mut().unwrap().terminals.clear();
+    assert!(quit_prompt_changed(&snapshot, &next));
+    next.busy.clone_from(&snapshot.busy);
+    next.running.as_mut().unwrap().this.live_terminals = Some(2);
+    assert!(quit_prompt_changed(&snapshot, &next));
+    next.running.clone_from(&snapshot.running);
+    next.active_tab = "t2".into();
+    assert!(!quit_prompt_changed(&snapshot, &next));
+
+    let prompt = ClosePrompt {
+        target: PromptTarget::QuitWindow,
+        scroll: 0.0,
+    };
+    assert!(prompt.names_live_target(&snapshot));
+    // eonbase has no running-windows summary, so nothing quits and an open prompt closes.
+    snapshot.running = None;
+    assert_eq!(quit_action(&snapshot), None);
+    assert!(!prompt.names_live_target(&snapshot));
+}
+
+#[test]
+fn quit_progress_follows_workspace_events() {
+    use eon_workspace_protocol::v29::{Failure, Response};
+
+    let idle = quit_snapshot();
+    let mut busy = idle.clone();
+    busy.busy = Some(busy_p1());
+    let snapshot =
+        |snapshot: &Snapshot| WorkspaceEvent::Response(Response::Snapshot(snapshot.clone()));
+    let failure = || {
+        WorkspaceEvent::Response(Response::Failure(Failure {
+            code: "stop-incomplete".into(),
+            detail: "generation cleanup is incomplete; retry Stop".into(),
+        }))
+    };
+    let effects = |refresh, step| QuitEffects { refresh, step };
+
+    // An open quit prompt is refreshed by a busy-only or count-only change, and by nothing else.
+    let mut quit = QuitProgress::Idle;
+    assert_eq!(
+        quit.on_workspace(Some(&busy), true, &snapshot(&idle)),
+        effects(true, None)
+    );
+    let mut fewer = busy.clone();
+    fewer.running.as_mut().unwrap().this.live_terminals = Some(2);
+    assert_eq!(
+        quit.on_workspace(Some(&busy), true, &snapshot(&fewer)),
+        effects(true, None)
+    );
+    assert_eq!(
+        quit.on_workspace(Some(&busy), false, &snapshot(&idle)),
+        effects(false, None)
+    );
+    let mut moved = busy.clone();
+    moved.active_tab = "t2".into();
+    assert_eq!(
+        quit.on_workspace(Some(&busy), true, &snapshot(&moved)),
+        effects(false, None)
+    );
+    assert_eq!(quit, QuitProgress::Idle);
+
+    // A busy window asks at once.
+    assert_eq!(quit.begin(Some(&busy)), Some(QuitStep::Ask));
+    assert_eq!(quit, QuitProgress::Idle);
+    // An idle one waits, and the next snapshot decides: a command started since asks.
+    assert_eq!(quit.begin(Some(&idle)), None);
+    assert_eq!(quit, QuitProgress::Pending);
+    assert_eq!(quit.begin(Some(&idle)), None);
+    assert_eq!(
+        quit.on_workspace(Some(&idle), false, &snapshot(&busy)),
+        effects(false, Some(QuitStep::Ask))
+    );
+    assert_eq!(quit, QuitProgress::Idle);
+    // Still idle: Stop for this generation.
+    quit.begin(Some(&idle));
+    assert_eq!(
+        quit.on_workspace(Some(&idle), false, &snapshot(&idle)),
+        effects(false, Some(QuitStep::Stop(stop_g7())))
+    );
+
+    // While that Stop is in flight, quitting does nothing and Enter is held.
+    quit = QuitProgress::Stopping(5);
+    assert!(!quit.may_stop());
+    assert_eq!(quit.begin(Some(&idle)), None);
+    assert!(quit.holds_key(KeyCode::Enter, session::Modifiers::empty()));
+    assert!(!quit.holds_key(KeyCode::Escape, session::Modifiers::empty()));
+    assert_eq!(
+        quit.on_workspace(Some(&idle), false, &failure()),
+        effects(false, None)
+    );
+    let answered = |ticket| WorkspaceEvent::Answered {
+        ticket,
+        accepted: false,
+    };
+    assert_eq!(
+        quit.on_workspace(Some(&idle), false, &answered(4)),
+        effects(false, None)
+    );
+    assert_eq!(quit, QuitProgress::Stopping(5));
+    // Its failure answer allows a retry, though every refresh now fails: the pending quit
+    // decides on the snapshot Venus keeps and sends another Stop.
+    quit.on_workspace(Some(&idle), false, &answered(5));
+    assert_eq!(quit, QuitProgress::Idle);
+    assert!(quit.may_stop());
+    assert!(!quit.holds_key(KeyCode::Enter, session::Modifiers::empty()));
+    assert_eq!(quit.begin(Some(&idle)), None);
+    assert_eq!(
+        quit.on_workspace(Some(&idle), false, &failure()),
+        effects(false, Some(QuitStep::Stop(stop_g7())))
+    );
+
+    // Any other failure, such as an attention jump's no-attention answer, says nothing about
+    // what runs: the quit waits for a snapshot, and a command started since still asks.
+    assert_eq!(quit.begin(Some(&idle)), None);
+    let no_attention = WorkspaceEvent::Response(Response::Failure(Failure {
+        code: "no-attention".into(),
+        detail: "no agent needs attention".into(),
+    }));
+    assert_eq!(
+        quit.on_workspace(Some(&idle), false, &no_attention),
+        effects(false, None)
+    );
+    assert_eq!(quit, QuitProgress::Pending);
+    assert_eq!(
+        quit.on_workspace(Some(&idle), false, &snapshot(&busy)),
+        effects(false, Some(QuitStep::Ask))
+    );
+
+    // Losing the workspace drops a pending quit; a later snapshot decides nothing.
+    quit.begin(Some(&idle));
+    assert_eq!(
+        quit.on_workspace(
+            Some(&idle),
+            false,
+            &WorkspaceEvent::Unavailable("gone".into())
+        ),
+        effects(false, None)
+    );
+    assert_eq!(quit, QuitProgress::Idle);
+    assert_eq!(
+        quit.on_workspace(Some(&idle), false, &snapshot(&idle)),
+        effects(false, None)
+    );
+    // eonbase has no running window to quit.
+    let mut eonbase = idle.clone();
+    eonbase.running = None;
+    assert_eq!(quit.begin(Some(&eonbase)), None);
+    assert_eq!(quit, QuitProgress::Idle);
+}
+
+#[test]
+fn a_second_enter_reaches_nothing_while_a_stop_is_in_flight() {
+    let enter = PhysicalKey::Code(KeyCode::Enter);
+    let held = |quit: QuitProgress| quit.holds_key(KeyCode::Enter, session::Modifiers::empty());
+    let mut input = InputState::default();
+    // While a Stop is in flight, Enter's press and its release are consumed, so neither reaches
+    // the terminal, and no second Stop may be sent.
+    let mut quit = QuitProgress::Stopping(5);
+    assert!(input.consumes_shortcut(enter, ElementState::Pressed, false, held(quit)));
+    assert!(!quit.may_stop());
+    // The Stop's answer may come between the press and its release; the release is still
+    // consumed.
+    quit = QuitProgress::Idle;
+    assert!(input.consumes_shortcut(enter, ElementState::Released, false, held(quit)));
+    // Without a Stop in flight, Enter reaches the terminal.
+    assert!(!input.consumes_shortcut(enter, ElementState::Pressed, false, held(quit)));
+    assert!(!input.consumes_shortcut(enter, ElementState::Released, false, held(quit)));
 }

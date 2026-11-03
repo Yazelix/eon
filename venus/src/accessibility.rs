@@ -254,13 +254,17 @@ impl Snapshot {
                     );
                     dialog
                 }
-                DialogKind::CloseLastTab {
-                    detach, workspace, ..
-                } => {
+                DialogKind::CloseLastTab { detach, .. } | DialogKind::QuitWindow { detach, .. } => {
                     let mut dialog = Node::new(Role::AlertDialog);
                     dialog.set_label(viewer.kind.title());
                     let subtitle = viewer.kind.subtitle();
-                    let enter = if workspace.is_some() {
+                    let enter = if matches!(
+                        viewer.kind,
+                        DialogKind::CloseLastTab {
+                            workspace: Some(_),
+                            ..
+                        }
+                    ) {
                         "close it"
                     } else {
                         "quit"
@@ -341,7 +345,7 @@ impl Snapshot {
                         DialogKind::Shortcuts | DialogKind::AttentionInbox => {
                             format!("{} — {}", row.shortcut, row.action)
                         }
-                        DialogKind::CloseLastTab { .. } => {
+                        DialogKind::CloseLastTab { .. } | DialogKind::QuitWindow { .. } => {
                             format!("{} {}", row.shortcut, row.action)
                         }
                     });
@@ -850,6 +854,12 @@ impl Accessibility {
         Self {
             snapshot: Arc::new(Mutex::new(Snapshot::new(size))),
         }
+    }
+
+    /// The dialog the tree last described.
+    #[must_use]
+    pub fn dialog(&self) -> Option<DialogScene> {
+        lock(&self.snapshot).dialog.clone()
     }
 
     #[must_use]
@@ -2998,6 +3008,30 @@ mod tests {
                  or Escape to cancel."
             )
         );
+        // The quit prompt is the same alert, naming the busy terminals.
+        snapshot.dialog = Some(DialogScene::new(
+            DialogKind::QuitWindow {
+                terminals: Some(2),
+                running: 1,
+                detach: Some("Alt+Shift+D".into()),
+            },
+            vec![ShortcutGroup::new("", vec![ShortcutRow::new("Pane", "p1")])],
+            size,
+            CellMetrics::for_scale(1.0),
+            0.0,
+        ));
+        let update = snapshot.tree();
+        let prompt = node(&update, DIALOG);
+        assert_eq!(prompt.role(), Role::AlertDialog);
+        assert_eq!(prompt.label(), Some("Quit this window?"));
+        assert_eq!(
+            prompt.description(),
+            Some(
+                "This stops 2 terminals; 1 still running. Press Enter to quit, \
+                 Escape to cancel, or Alt+Shift+D to keep it running instead."
+            )
+        );
+        assert_eq!(node(&update, prompt.children()[0]).value(), Some("Pane p1"));
     }
 
     #[test]

@@ -82,11 +82,13 @@ eon stop all
 `eon stop` shows the generation's live terminal identities and asks for
 confirmation. Closing a window is therefore detach; stopping a generation ends
 its terminals. To end the window you are in, run `eon quit` in any of its
-terminals, or open Commands (Alt+Shift+M) and choose Quit this window, which
-runs it. It stops only that window. It asks first only while another of its
-terminals runs something other than its idle shell, and names those
-terminals, as in `Quit this window? It stops 3 terminals; 1 still running:
-p2  cargo build. [y/N]`; while nothing runs it quits without asking. A
+terminals, press Alt+Shift+Q, or open Commands (Alt+Shift+M) and choose Quit
+this window, which runs it. It stops only that window. It asks first only
+while another of its terminals runs something other than its idle shell, and
+names those terminals, as in `Quit this window? It stops 3 terminals; 1 still
+running: p2  cargo build. [y/N]`; while nothing runs it quits without asking.
+Alt+Shift+Q follows the same rule with a prompt in the window that names the
+busy terminals: Enter quits, Esc cancels, and Alt+Shift+D detaches instead. A
 terminal started for an explicit command, such as `pane create -- COMMAND`,
 counts as running, and so does the Agent popup; the Files and Git popups
 never do. Eon does not see a shell builtin or a background job of an idle
@@ -156,6 +158,7 @@ one, and clicking another column's terminal selects it.
 | Alt+Shift+W | Close the active tab; closing the final tab quits the window, or closes the workspace while others remain |
 | Alt+Shift+N | Open an independent Eon window (also the desktop launcher's **New Eon Window** action) |
 | Alt+Shift+D | Detach: close the window, keep terminals running |
+| Alt+Shift+Q | Quit this window, stopping its terminals; asks first while one runs something |
 | Alt+Z | Open the tab's Project directory picker |
 | Alt+Shift+J | Open or hide the tab's Git popup |
 | Alt+Shift+L | Open or hide the tab's Agent popup |
@@ -221,7 +224,8 @@ hints are read-only text, with no extra focus stops or announcements. The
 initial window adds the footer's space, so configured `rows` stay terminal
 rows. Hints follow the current bindings, enabled popup catalog and native
 focus; narrow windows omit whole hints, keeping the help and hints-toggle hints
-longest. Alt+Shift+D shows `detach`, and Alt+Shift+H shows `sidebar` unless the
+longest. Alt+Shift+D shows `detach`, Alt+Shift+Q `quit`, and Alt+Shift+H
+shows `sidebar` unless the
 sidebar is turned off. Alt+G and Alt+Shift+G, F6, Ctrl+Tab and Ctrl+Shift+Tab,
 and Project (Alt+Z) have no hint but stay in full help. Hints that create
 something name the tab, pane, column or window. Compact groups spread across the bar with

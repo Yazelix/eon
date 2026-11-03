@@ -21,6 +21,11 @@ installation, and proven contract changes.
   and `eon anima --help` still shows Anima's own help. A name or text that is
   itself `--help` goes after `--`, as in `eon workspace rename -- --help`
   (`eon-xubt`).
+- Alt+Shift+Q quits the window, asking first while a terminal runs something:
+  the prompt names the busy terminals, Enter quits, Esc cancels and
+  Alt+Shift+D detaches instead. The Shortcuts viewer lists it as "Quit: close
+  the window, stop its terminals" and the hints bar shows `quit`
+  (`eon-7cf0y.3`).
 - The bottom hints bar leaves more room on narrow windows: the `next agent`
   and `previous agent` hints are gone (Alt+G and Alt+Shift+G still work and
   stay in the Shortcuts viewer), the move hints read `mv tab` and `mv pane`,

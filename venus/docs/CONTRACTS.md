@@ -736,7 +736,23 @@ re-proved when that platform or feature is next touched.
     removes the workspace. When the argument is false, the close is sent at
     once. Alt+Shift+D is a
     non-repeating key that detaches by the same path as a compositor close
-    request (VEN-C14). Venus consumes
+    request (VEN-C14). Alt+Shift+Q is a non-repeating key that quits the
+    window under EON-C8 while the snapshot carries a running-windows summary.
+    While the snapshot's `busy` lists a terminal, or is absent, Venus first
+    shows the EON-C8 quit prompt, which shares the final-close prompt's owner,
+    key answers, scrolling, Alt+Shift+D mapping, self-closing on workspace
+    loss and AccessKit alert dialog, and is worded from the current snapshot,
+    again whenever only `busy` or `running.this` changes. While `busy` is empty,
+    Venus decides on the next workspace response, then asks or sends Stop as
+    that response's snapshot says; a `stop-incomplete` failure leaves the
+    retained snapshot to decide, because the supervisor refuses refreshes
+    after a failed Stop, and any other failure leaves the decision to the
+    next snapshot. Enter sends EONW Stop for `running.this.generation`; Venus
+    reads its lifecycle reply: `Stopped` exits as `Ended` does (VEN-C14), and
+    `Failure` shows as a refused action's notice. Until the Stop is answered,
+    Alt+Shift+Q does nothing, and Venus consumes each unmodified Enter press
+    and its matching release without forwarding either to the selected
+    terminal; Alt+Shift+D still detaches. Venus consumes
     each exact press and matching release without forwarding either to the
     selected terminal. Ctrl+T, Ctrl+Shift+W, and lowercase Ctrl+W remain terminal
     input, and none of these shortcuts enters a mode.
@@ -826,6 +842,24 @@ re-proved when that platform or feature is next touched.
     and the installed dogfood recorded under VEN-C30: the sidebar pushed the
     columns, Alt+Shift+H gave its width back, and at 1000x720 it hid for
     width.
+  - **Quit prompt (`eon-7cf0y.3`):** the key and its popup override by
+    `quit_key_lists_hints_and_yields_to_a_popup`; the ask, next-response and
+    `stop-incomplete` rules and the Enter hold by `quit_asks_only_while_busy`,
+    `quit_progress_follows_workspace_events` and
+    `a_second_enter_reaches_nothing_while_a_stop_is_in_flight`; the scene and
+    AccessKit alert by `quit_prompt_words_counts_and_lists_busy_terminals` and
+    `shortcut_viewer_replaces_terminal_tree_with_a_focused_dialog`; the
+    lifecycle reply by `workspace_worker_reads_stop_as_a_lifecycle_reply`.
+    The ignored native regression
+    `quit_prompt_refreshes_and_a_stop_in_flight_holds_enter`, run as
+    `docs/DEVELOPMENT.md` says on a private headless Sway, drove the shortcut
+    chain and workspace handling: a busy-only snapshot redrew the prompt and
+    changed its AccessKit dialog, Enter queued one Stop for the generation,
+    and a second Enter reached no terminal and queued nothing. On code tree
+    `bceda181484faa57079edec69284981de748d7e0` (edge `6908903`),
+    `eon-test -p yazelix-venus` passed 170 + 75 + 21, and clippy and the
+    Darwin clippy were clean. Installed proof as recorded under EON-C8
+    (`/nix/store/n907id3sg8sramk8sd2bb1qgaqqsvi44-eon-0.1.13`).
 - **Open proof:** Columns (`eon-splits-opwv`): layout, column attachments and
   the 40-column threshold are covered by
   `columns_sit_side_by_side_and_keep_the_selected_column_primary`,
@@ -972,13 +1006,15 @@ re-proved when that platform or feature is next touched.
 - **Status:** Proved
 - **Consumer:** One Eon-supervised Venus process.
 - **Trigger:** A complete private Present command, control EOF, terminal read
-  failure, Alt+Shift+D, a compositor close request, or an EONW `Ended` reply.
+  failure, Alt+Shift+D, a compositor close request, an EONW `Ended` reply, or
+  the `Stopped` reply to its own Quit (VEN-C8).
 - **Result:** Present preserves process and terminal attachment while requesting
   presentation of the existing native window; control loss exits through the
   native event loop, releases attachments, and leaves Orbit live; replacement
   may retry transient Busy while the old client releases. Alt+Shift+D and the
   compositor close request both detach; an EONW `Ended` reply, which answers a
-  close that stopped the window's last terminal, exits like control loss,
+  close that stopped the window's last terminal, and the `Stopped` reply to
+  its Quit each exit like control loss,
   leaving no Orbit terminal of that generation.
 - **Important failures:** Malformed or partial commands do not present; standalone
   Busy remains terminal; Present followed by EOF preserves exact Present-then-
@@ -1266,6 +1302,8 @@ re-proved when that platform or feature is next touched.
   restored on dismissal. The title, subtitle, and first group heading occupy
   separate readable vertical space. The fixed bindings include Alt+Shift+D,
   listed as "Detach: close the window, keep terminals running", and
+  Alt+Shift+Q, listed as "Quit: close the window, stop its terminals" and
+  omitted without a running-windows summary, and
   Alt+Shift+H, listed as "Show or hide the agent sidebar" (VEN-C30) and
   omitted while the EONW snapshot's `sidebar` is `Off`, and Alt+G and
   Alt+Shift+G, listed as "Jump to the next agent needing attention" and "Jump
@@ -1322,6 +1360,12 @@ re-proved when that platform or feature is next touched.
   - **Tab-cycling rows (`eon-ctrl-tab-next-tab-q6vj`):** the installed
     dogfood recorded under VEN-C8: the viewer listed `Ctrl+Tab` `Focus next
     tab` and `Ctrl+Shift+Tab` `Focus previous tab` under Navigate.
+  - **Quit row (`eon-7cf0y.3`):** `quit_key_lists_hints_and_yields_to_a_popup`
+    (the row, the hint tier, the popup override and no row without a
+    running-windows summary) and the installed check recorded under EON-C8:
+    the viewer listed `Alt+Shift+Q` `Quit: close the window, stop its
+    terminals` under Host, and "(overridden by Monitor)" while a popup took
+    the key.
 - **Open proof:** Pending re-proof in this repository: AT-SPI dialog traversal
   and tiny-surface clipping.
 

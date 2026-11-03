@@ -1544,3 +1544,268 @@ fn orbit_focus_requires_window_and_terminal_focus() {
     assert!(!terminal_focused(true, WorkspaceFocus::Tabs));
     assert!(!terminal_focused(true, WorkspaceFocus::Panes));
 }
+
+#[test]
+#[cfg(target_os = "linux")]
+#[ignore = "requires an isolated native Wayland display and Vulkan renderer"]
+fn quit_prompt_refreshes_and_a_stop_in_flight_holds_enter() {
+    use eon_workspace_protocol::v29::{
+        self as workspace, BusyTerminal, BusyTerminals, RunningWindows, TargetId, TerminalTarget,
+        WindowEntry, WindowState,
+    };
+    use std::{os::unix::net::UnixListener, sync::mpsc};
+    use winit::{keyboard::ModifiersState, platform::wayland::EventLoopBuilderExtWayland};
+
+    struct Probe {
+        app: Application,
+        busy: workspace::Snapshot,
+        actions: mpsc::Receiver<WorkspaceAction>,
+        checked: bool,
+    }
+    impl Probe {
+        /// Drives the production shortcut chain and workspace handling, as winit's key and
+        /// workspace events do.
+        fn check(&mut self, event_loop: &ActiveEventLoop) {
+            let app = &mut self.app;
+            let key = |code, state| ShortcutKey {
+                physical_key: PhysicalKey::Code(code),
+                state,
+                repeat: false,
+            };
+            let press = |app: &mut Application, code| {
+                app.handle_shortcut_key(event_loop, &key(code, ElementState::Pressed))
+            };
+            let release = |app: &mut Application, code| {
+                app.handle_shortcut_key(event_loop, &key(code, ElementState::Released))
+            };
+            let described = |app: &Application| app.window.as_ref().unwrap().accessibility.dialog();
+            app.handle_workspace(WorkspaceEvent::Response(workspace::Response::Snapshot(
+                self.busy.clone(),
+            )));
+            app.render();
+            assert!(app.presentation.has_presented_geometry());
+
+            // Alt+Shift+Q opens the quit prompt while p1 is busy.
+            app.input
+                .set_modifiers(ModifiersState::ALT | ModifiersState::SHIFT);
+            assert!(press(app, KeyCode::KeyQ));
+            assert!(release(app, KeyCode::KeyQ));
+            app.input.set_modifiers(ModifiersState::empty());
+            assert!(
+                app.close_prompt
+                    .as_ref()
+                    .is_some_and(|prompt| matches!(prompt.target, PromptTarget::QuitWindow))
+            );
+            let asked = described(app);
+            assert_eq!(asked, app.dialog_scene());
+
+            // p1's command ends: only `busy` changes, and the prompt is drawn and described
+            // again.
+            let generation = app.presentation.generation;
+            let mut idle = self.busy.clone();
+            idle.busy = Some(BusyTerminals {
+                terminals: vec![],
+                omitted: 0,
+            });
+            app.handle_workspace(WorkspaceEvent::Response(workspace::Response::Snapshot(
+                idle,
+            )));
+            assert!(
+                app.presentation.generation > generation,
+                "the prompt is redrawn"
+            );
+            assert_ne!(described(app), asked);
+            assert_eq!(
+                described(app),
+                app.dialog_scene(),
+                "AccessKit reads the new prompt"
+            );
+
+            // Enter sends one Stop for this generation.
+            assert!(press(app, KeyCode::Enter));
+            assert!(release(app, KeyCode::Enter));
+            assert!(app.close_prompt.is_none());
+            let QuitProgress::Stopping(ticket) = app.quit else {
+                panic!("Enter queues the Stop");
+            };
+            assert_eq!(
+                self.actions.recv_timeout(Duration::from_secs(5)),
+                Ok(WorkspaceAction::Workspace(CommonAction::Stop {
+                    generation: "g7".into()
+                }))
+            );
+            // While it is in flight, another Enter is taken by the shortcut chain, so it
+            // reaches no terminal, and sends no second Stop.
+            assert!(press(app, KeyCode::Enter));
+            assert!(release(app, KeyCode::Enter));
+            assert_eq!(app.quit, QuitProgress::Stopping(ticket));
+            assert!(
+                self.actions
+                    .recv_timeout(Duration::from_millis(750))
+                    .is_err()
+            );
+            // Alt+Shift+D still detaches.
+            app.input
+                .set_modifiers(ModifiersState::ALT | ModifiersState::SHIFT);
+            assert!(press(app, KeyCode::KeyD));
+            self.checked = true;
+        }
+    }
+    impl ApplicationHandler<UserEvent> for Probe {
+        fn resumed(&mut self, event_loop: &ActiveEventLoop) {
+            self.app.resumed(event_loop);
+        }
+        fn user_event(&mut self, event_loop: &ActiveEventLoop, event: UserEvent) {
+            if matches!(event, UserEvent::Exit) {
+                event_loop.exit();
+                return;
+            }
+            self.app.user_event(event_loop, event);
+        }
+        fn window_event(&mut self, event_loop: &ActiveEventLoop, id: WindowId, event: WindowEvent) {
+            self.app.window_event(event_loop, id, event);
+        }
+        fn about_to_wait(&mut self, event_loop: &ActiveEventLoop) {
+            self.app.about_to_wait(event_loop);
+            if !self.checked && !self.app.initial_scale_pending && self.app.window.is_some() {
+                self.check(event_loop);
+            }
+        }
+    }
+
+    let root = std::env::temp_dir().join(format!("venus-quit-{}", std::process::id()));
+    std::fs::create_dir_all(&root).unwrap();
+    let workspace_socket = root.join("workspace.sock");
+    let listener = UnixListener::bind(&workspace_socket).unwrap();
+    let (sender, actions) = mpsc::channel();
+    // Answers refreshes and records every other action; nothing drains the answers.
+    thread::spawn(move || {
+        let failure = workspace::Response::Failure(workspace::Failure {
+            code: "test".into(),
+            detail: "recorded".into(),
+        });
+        for stream in listener.incoming() {
+            let Ok(mut stream) = stream else { return };
+            let mut header = [0; workspace::HEADER_BYTES];
+            if stream.read_exact(&mut header).is_err() {
+                continue;
+            }
+            let mut bytes = Vec::from(header);
+            bytes.resize(workspace::declared_message_len(&header).unwrap(), 0);
+            stream
+                .read_exact(&mut bytes[workspace::HEADER_BYTES..])
+                .unwrap();
+            let action = workspace::decode_request(&bytes).unwrap().action;
+            let _ = stream.write_all(&workspace::encode_response(&failure).unwrap());
+            if action != WorkspaceAction::Workspace(CommonAction::Inspect)
+                && sender.send(action).is_err()
+            {
+                return;
+            }
+        }
+    });
+    let busy = workspace::Snapshot {
+        workspace: "w1".into(),
+        active_workspace: "w1".into(),
+        workspaces: vec![workspace::WorkspaceInfo {
+            id: "w1".into(),
+            name: None,
+            tab_count: 1,
+            attention: None,
+            recency: 0,
+        }],
+        active_tab: "t1".into(),
+        geometry: workspace::PopupGeometry {
+            side_margin: 8.0,
+            vertical_margin: 4.0,
+        },
+        entries: vec![],
+        tabs: vec![Tab {
+            id: "t1".into(),
+            directory: b"/tmp".to_vec(),
+            pending: false,
+            selected_pane: Some("p1".into()),
+            selected_popup: None,
+            columns: vec![workspace::Column {
+                panes: vec![Pane {
+                    label: "p1".into(),
+                    pinned_name: None,
+                    id: "p1".into(),
+                    session: "s1".into(),
+                    endpoint: root.join("p1.sock").into_os_string().into_vec(),
+                    live: true,
+                    attention: None,
+                }],
+                expanded: "p1".into(),
+            }],
+            popups: vec![],
+            attention_rollup: None,
+        }],
+        codex_quota: None,
+        claude_quota: None,
+        codex_quota_failure: None,
+        claude_quota_failure: None,
+        running: Some(RunningWindows {
+            this: WindowEntry {
+                window: None,
+                generation: "g7".into(),
+                name: None,
+                started_at: None,
+                live_terminals: Some(3),
+                state: WindowState::Live,
+            },
+            others: None,
+            omitted: 0,
+        }),
+        busy: Some(BusyTerminals {
+            terminals: vec![BusyTerminal {
+                target: TerminalTarget {
+                    workspace: "w1".into(),
+                    tab: "t1".into(),
+                    id: TargetId::Pane("p1".into()),
+                    terminal: "s1".into(),
+                },
+                name: "p1".into(),
+            }],
+            omitted: 0,
+        }),
+        sidebar: workspace::Sidebar::Open,
+        attention_queue: Vec::new(),
+    };
+    let event_loop = EventLoop::<UserEvent>::with_user_event()
+        .with_wayland()
+        .with_any_thread(true)
+        .build()
+        .unwrap();
+    let mut app = Application::new(
+        launch::launch_arguments(
+            ["--font-family", "DejaVu Sans Mono", "--font-size", "20"]
+                .into_iter()
+                .map(OsString::from)
+                .chain([root.join("orbit.sock").into_os_string()]),
+            None,
+        )
+        .unwrap(),
+        event_loop.create_proxy(),
+    );
+    app.workspace_transport = Some(WorkspaceTransport::start(workspace_socket, || {}));
+    let mut probe = Probe {
+        app,
+        busy,
+        actions,
+        checked: false,
+    };
+    let proxy = event_loop.create_proxy();
+    let (stop, stopped) = mpsc::channel::<()>();
+    let watchdog = thread::spawn(move || {
+        if stopped.recv_timeout(Duration::from_secs(20)) == Err(mpsc::RecvTimeoutError::Timeout) {
+            let _ = proxy.send_event(UserEvent::Exit);
+        }
+    });
+    event_loop.run_app(&mut probe).unwrap();
+    let _ = stop.send(());
+    watchdog.join().unwrap();
+    assert!(probe.checked);
+    drop(probe);
+    std::fs::remove_dir_all(root).unwrap();
+}
