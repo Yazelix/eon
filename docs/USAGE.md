@@ -42,8 +42,10 @@ each exact external component revision; Orbit, Venus and Eon Runtime report
 Fresh workspaces first show a three-second random Anima animation after the
 window is ready. Press any key other than the style-browsing keys to dismiss it;
 set `[anima].enabled = false` in `config.toml` to skip it. The directory picker
-then opens. Press Enter to use a Zoxide history
-match, or Tab to browse folders with Yazi. In the browser, Enter chooses the
+then opens. When other Eon windows still run, a new window's first picker says
+how many above its results, names up to three, and says how to see and quit
+them; `eon workspace` lists them (JSON `running.others`). Press Enter to use a
+Zoxide history match, or Tab to browse folders with Yazi. In the browser, Enter chooses the
 highlighted folder and F1 shows its keys. New tabs start in your home directory. Escape dismisses the picker and opens
 a terminal there, keeping the tab. Close the tab with Alt+Shift+W if you no
 longer want it. The initial workspace uses the directory where Eon was launched.

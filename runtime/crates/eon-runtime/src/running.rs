@@ -7,7 +7,9 @@ use super::{
     supervisor::{effective_uid, supervisor_lock_path},
     windows::valid_window_id,
 };
-use eon_workspace_protocol::v28::{MAX_RUNNING_WINDOWS, RunningWindows, Snapshot, WindowEntry};
+use eon_workspace_protocol::v28::{
+    MAX_RUNNING_WINDOWS, RunningWindows, Snapshot, WindowEntry, WindowState,
+};
 use std::{
     fs,
     os::unix::fs::{MetadataExt, OpenOptionsExt},
@@ -167,6 +169,46 @@ pub(super) fn window_label(entry: &WindowEntry) -> String {
         .unwrap_or_else(|| entry.generation.clone())
 }
 
+pub(super) fn running_notice(others: &[WindowEntry], omitted: u16) -> Option<String> {
+    let count = others.len() + usize::from(omitted);
+    if count == 0 {
+        return None;
+    }
+    let mut labels = others
+        .iter()
+        .take(3)
+        .map(|entry| match (&entry.name, entry.state) {
+            (Some(name), _) => {
+                let mut chars = name.chars();
+                let mut label: String = chars.by_ref().take(24).collect();
+                if chars.next().is_some() {
+                    label.push('…');
+                }
+                label
+            }
+            (None, WindowState::Incompatible) => "another Eon build".into(),
+            (None, WindowState::Unreachable) => "not answering".into(),
+            (None, _) => window_label(entry),
+        })
+        .collect::<Vec<_>>()
+        .join(", ");
+    let more = count - others.len().min(3);
+    if more != 0 {
+        if !labels.is_empty() {
+            labels.push(' ');
+        }
+        labels.push_str(&format!("and {more} more"));
+    }
+    let windows = if count == 1 {
+        "window is"
+    } else {
+        "windows are"
+    };
+    Some(format!(
+        "{count} other Eon {windows} still running: {labels}\nSee them: eon workspace · Quit one: attach to it, then Commands > Quit this window"
+    ))
+}
+
 pub(super) struct Running {
     base: PathBuf,
     runtime: PathBuf,
@@ -294,7 +336,6 @@ impl Running {
 mod tests {
     use super::*;
     use crate::supervisor::{lock_supervisor_lifecycle, temporary_directory};
-    use eon_workspace_protocol::v28::WindowState;
     use std::os::unix::fs::{DirBuilderExt, PermissionsExt};
 
     #[test]
@@ -333,6 +374,63 @@ mod tests {
         assert_eq!(roots.len(), 257);
         assert!(limited);
         fs::remove_dir_all(base).unwrap();
+    }
+
+    #[test]
+    fn running_notice_counts_labels_and_bounds() {
+        let entry = WindowEntry {
+            window: Some("0a1b2c3d".into()),
+            generation: "g1".into(),
+            name: Some("refs".into()),
+            started_at: None,
+            live_terminals: None,
+            state: WindowState::Live,
+        };
+        let hint =
+            "See them: eon workspace · Quit one: attach to it, then Commands > Quit this window";
+        assert_eq!(running_notice(&[], 0), None);
+        assert_eq!(
+            running_notice(std::slice::from_ref(&entry), 0).unwrap(),
+            format!("1 other Eon window is still running: refs\n{hint}")
+        );
+        let incompatible = WindowEntry {
+            name: None,
+            state: WindowState::Incompatible,
+            ..entry.clone()
+        };
+        let unreachable = WindowEntry {
+            state: WindowState::Unreachable,
+            ..incompatible.clone()
+        };
+        assert_eq!(
+            running_notice(&[entry.clone(), incompatible, unreachable], 0).unwrap(),
+            format!(
+                "3 other Eon windows are still running: refs, another Eon build, not answering\n{hint}"
+            )
+        );
+        let long = WindowEntry {
+            name: Some("é".repeat(25)),
+            ..entry.clone()
+        };
+        assert_eq!(
+            running_notice(&[long, entry.clone(), entry.clone(), entry.clone()], 2).unwrap(),
+            format!(
+                "6 other Eon windows are still running: {}…, refs, refs and 3 more\n{hint}",
+                "é".repeat(24)
+            )
+        );
+        let fallback = WindowEntry {
+            name: None,
+            ..entry
+        };
+        assert_eq!(
+            running_notice(&[fallback], 0).unwrap(),
+            format!("1 other Eon window is still running: 0a1b2c3d\n{hint}")
+        );
+        assert_eq!(
+            running_notice(&[], 2).unwrap(),
+            format!("2 other Eon windows are still running: and 2 more\n{hint}")
+        );
     }
 
     #[test]

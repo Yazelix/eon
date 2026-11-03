@@ -13,6 +13,8 @@ installation, and proven contract changes.
   path of its settings file, `config.toml`, whether or not the file exists yet.
   `eon --help` names `config.toml` beside `config-path` and `config defaults`;
   plain `eon config-path` still prints only the root (`eon-wt5v8`).
+- A new window's first directory picker says when other Eon windows still run,
+  naming them (`eon-7cf0y.7`).
 
 ## v0.1.12 (2026-11-02)
 

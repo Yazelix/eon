@@ -1,13 +1,14 @@
 use super::{
     control::{
         ControlResponse, EndpointFailure, EndpointFailureKind, Error, failure, report_failure,
-        send_action, send_action_from, validate_action, write_stdout,
+        send_action, send_action_from, send_action_from_until, validate_action, write_stdout,
     },
     generation::{
         WorkspaceTarget, attach_generation, confirm, current_generation, generations_command,
         resolve_workspace, stop_generation, stop_generations, valid_generation,
     },
     managed_environment,
+    running::running_notice,
     sessions::{TAB_VARIABLE, TERMINAL_VARIABLE, terminal_session},
     supervisor::{LaunchMode, configuration_directory, launch_current, prepare_configuration},
     windows,
@@ -60,14 +61,13 @@ pub fn run(inputs: Inputs) -> (&'static str, Result<i32, Error>) {
     let mut arguments = env::args_os();
     let invocation = arguments.next().unwrap_or_default();
     let mut arguments: Vec<OsString> = arguments.collect();
-    if arguments
-        .first()
-        .is_some_and(|argument| argument == OsStr::new("__directory-picker"))
-    {
-        arguments.remove(0);
+    if arguments.first().is_some_and(|argument| {
+        argument == OsStr::new("__directory-picker") || argument == OsStr::new("__startup-picker")
+    }) {
+        let startup = arguments.remove(0) == OsStr::new("__startup-picker");
         return (
             "eon-directory-picker",
-            directory_picker(&inputs, arguments).map_err(Error::from),
+            directory_picker(&inputs, arguments, startup).map_err(Error::from),
         );
     }
     if arguments
@@ -423,7 +423,11 @@ fn startup_anima(inputs: &Inputs, arguments: Vec<OsString>) -> Result<i32, Strin
     if let Err(error) = play_startup_anima(inputs, style, duration) {
         eprintln!("eon: startup Anima: {error}; continuing to the directory picker");
     }
-    directory_picker(inputs, vec![socket.clone(), tab.clone(), instance.clone()])
+    directory_picker(
+        inputs,
+        vec![socket.clone(), tab.clone(), instance.clone()],
+        true,
+    )
 }
 
 fn play_startup_anima(inputs: &Inputs, style: &OsStr, seconds: u64) -> Result<(), String> {
@@ -498,7 +502,33 @@ fn packaged_fzf(prompt: &str, footer: &str) -> Command {
     fzf
 }
 
-fn directory_picker(inputs: &Inputs, arguments: Vec<OsString>) -> Result<i32, String> {
+fn startup_notice(socket: &Path) -> Option<String> {
+    let deadline = Instant::now() + Duration::from_secs(1);
+    loop {
+        let ControlResponse::Workspace(Response::Snapshot(snapshot)) = send_action_from_until(
+            socket,
+            None,
+            Action::Workspace(WorkspaceAction::Inspect),
+            deadline,
+        )
+        .ok()?
+        else {
+            return None;
+        };
+        let running = snapshot.running?;
+        if let Some(others) = running.others {
+            return running_notice(&others, running.omitted);
+        }
+        let remaining = deadline.checked_duration_since(Instant::now())?;
+        thread::sleep(remaining.min(Duration::from_millis(100)));
+    }
+}
+
+fn directory_picker(
+    inputs: &Inputs,
+    arguments: Vec<OsString>,
+    startup: bool,
+) -> Result<i32, String> {
     let [socket, tab, instance] = arguments.as_slice() else {
         return Err("usage: eon-directory-picker EON_SOCKET TAB POPUP".into());
     };
@@ -516,31 +546,40 @@ fn directory_picker(inputs: &Inputs, arguments: Vec<OsString>) -> Result<i32, St
             std::process::id()
         ));
     let mut browse_from = PathBuf::from(".");
+    let header = if startup {
+        startup_notice(Path::new(socket))
+    } else {
+        None
+    };
     let directory = loop {
         let mut history = Command::new("zoxide")
             .args(["query", "--list"])
             .stdout(Stdio::piped())
             .spawn()
             .map_err(|error| format!("cannot launch packaged directory history: {error}"))?;
-        let output = packaged_fzf(
+        let mut picker = packaged_fzf(
             "Quick search > ",
             "Enter Use directory · Tab Browse folders · Esc/Ctrl+C Cancel",
-        )
-        .args([
-            "--exact",
-            "--no-sort",
-            "--keep-right",
-            "--tabstop=1",
-            "--expect=tab",
-            "--print0",
-        ])
-        .stdin(
-            history
-                .stdout
-                .take()
-                .expect("directory history stdout is piped"),
-        )
-        .output();
+        );
+        if let Some(header) = &header {
+            picker.arg(format!("--header={header}"));
+        }
+        let output = picker
+            .args([
+                "--exact",
+                "--no-sort",
+                "--keep-right",
+                "--tabstop=1",
+                "--expect=tab",
+                "--print0",
+            ])
+            .stdin(
+                history
+                    .stdout
+                    .take()
+                    .expect("directory history stdout is piped"),
+            )
+            .output();
         // No quick-search exit needs more input, including early Enter and Tab.
         let history_stopped = history.kill().is_ok();
         let history_status = history

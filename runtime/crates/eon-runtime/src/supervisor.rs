@@ -1000,7 +1000,7 @@ fn supervise(
                         &mut sessions,
                         &mut initial_child,
                         operation,
-                        startup_animation.as_ref(),
+                        PickerStart::Fresh(startup_animation.as_ref()),
                         admitted.as_ref().and_then(|venus| venus.name),
                     )
                 },
@@ -1351,7 +1351,7 @@ fn reap_finished_sessions(
                             sessions,
                             initial_child,
                             operation,
-                            None,
+                            PickerStart::Later,
                             venus,
                         )
                     });
@@ -1672,12 +1672,17 @@ fn caller_session(
         })
 }
 
+enum PickerStart<'a> {
+    Fresh(Option<&'a managed_environment::StartupAnimation>),
+    Later,
+}
+
 fn directory_picker_command(
     inputs: &Inputs,
     runtime: &Path,
     tab: &str,
     instance: &str,
-    startup_animation: Option<&managed_environment::StartupAnimation>,
+    start: PickerStart<'_>,
 ) -> Result<Vec<OsString>, String> {
     let session_bin = inputs
         .managed
@@ -1685,14 +1690,14 @@ fn directory_picker_command(
         .as_ref()
         .ok_or("the installed Eon package has no directory picker")?;
     let mut command = vec![session_bin.join("eon-directory-picker").into_os_string()];
-    if let Some(animation) = startup_animation {
-        command.extend([
+    match start {
+        PickerStart::Fresh(Some(animation)) => command.extend([
             OsString::from("__startup-anima"),
             animation.style.clone().into(),
             animation.duration_seconds.to_string().into(),
-        ]);
-    } else {
-        command.push("__directory-picker".into());
+        ]),
+        PickerStart::Fresh(None) => command.push("__startup-picker".into()),
+        PickerStart::Later => command.push("__directory-picker".into()),
     }
     command.extend([
         runtime.join("eon.sock").into_os_string(),
@@ -1711,7 +1716,7 @@ fn apply_session_operation(
     sessions: &mut Vec<RunningSession>,
     initial_child: &mut Vec<OsString>,
     operation: SessionOperation,
-    startup_animation: Option<&managed_environment::StartupAnimation>,
+    picker_start: PickerStart<'_>,
     venus: Option<AttachName>,
 ) -> Result<(), String> {
     let (session, directory, command, tab) = match operation {
@@ -1732,7 +1737,7 @@ fn apply_session_operation(
                 .ok_or("directory picker endpoint has no runtime directory")?,
             &tab,
             &instance,
-            startup_animation,
+            picker_start,
         )?,
         LaunchCommand::Tool(argv) => argv,
         LaunchCommand::Pane if session.id == "session-1" => initial_child.clone(),
@@ -1818,7 +1823,7 @@ fn cancel_transient_popups(
                     sessions,
                     initial_child,
                     operation,
-                    None,
+                    PickerStart::Later,
                     venus,
                 )
             });
@@ -2260,7 +2265,7 @@ fn dispatch_control_request(
                             sessions,
                             initial_child,
                             operation,
-                            None,
+                            PickerStart::Later,
                             venus,
                         )
                     },

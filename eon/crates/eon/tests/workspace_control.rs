@@ -6871,6 +6871,129 @@ fn quit_all_stops_the_default_namespace_and_every_window_caller_last() {
 }
 
 #[test]
+fn fresh_window_picker_counts_other_running_windows_and_attach_shows_none() {
+    // Independent windows need short socket paths on macOS too.
+    let root = (0_u32..)
+        .map(|n| std::env::temp_dir().join(format!("ep{n:x}")))
+        .find(|path| match fs::create_dir(path) {
+            Ok(()) => true,
+            Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => false,
+            Err(error) => panic!("{}: {error}", path.display()),
+        })
+        .unwrap();
+    let runtime = root.join("r");
+    let stop = root.join("stop");
+    configure_mock_desktop(&root.join("config"));
+    managed_orbit_executable(&root.join("orbit"));
+    executable(&root.join("venus"), "#!/bin/sh\ncat >/dev/null\n");
+    let bin = root.join("bin");
+    let logs = root.join("logs");
+    fs::create_dir(&bin).unwrap();
+    fs::create_dir(&logs).unwrap();
+    let binary = PathBuf::from(env!("CARGO_BIN_EXE_eon"));
+    symlink(&binary, bin.join("eon-directory-picker")).unwrap();
+    executable(&bin.join("zoxide"), "#!/bin/sh\nprintf '/known\\n'\n");
+    executable(
+        &bin.join("fzf"),
+        r#"#!/bin/sh
+cat >/dev/null
+printf '%s\n' "$@" > "$EON_TEST_FZF_LOG.$$.tmp"
+mv "$EON_TEST_FZF_LOG.$$.tmp" "$EON_TEST_FZF_LOG.$$"
+while [ ! -e "$EON_TEST_STOP" ]; do sleep 0.01; done
+exit 130
+"#,
+    );
+    let command = || {
+        let mut command = quit_command(&root);
+        command
+            .current_dir(&root)
+            .env("EON_SESSION_BIN", &bin)
+            .env("EON_TEST_RUN_CHILD", "1")
+            .env("EON_TEST_FZF_LOG", logs.join("fzf"));
+        command
+    };
+    let mut first = TestProcess {
+        child: command()
+            .stdout(Stdio::null())
+            .stderr(Stdio::null())
+            .spawn()
+            .unwrap(),
+        stop: stop.clone(),
+    };
+    let control = generation_runtime(&runtime).join("eon.sock");
+    wait_for_connection(&control);
+    let picker_logs = || {
+        fs::read_dir(&logs)
+            .unwrap()
+            .map(|entry| entry.unwrap().path())
+            .filter(|path| path.extension().is_none_or(|extension| extension != "tmp"))
+            .map(|path| fs::read_to_string(path).unwrap())
+            .collect::<Vec<_>>()
+    };
+    let wait_for_pickers = |count| {
+        let deadline = Instant::now() + Duration::from_secs(5);
+        loop {
+            let logs = picker_logs();
+            if logs.len() == count {
+                break logs;
+            }
+            assert!(Instant::now() < deadline, "picker logs: {logs:?}");
+            thread::sleep(Duration::from_millis(10));
+        }
+    };
+    assert!(!wait_for_pickers(1)[0].contains("--header"));
+    let name = root.file_name().unwrap().to_str().unwrap();
+    let hint = "See them: eon workspace · Quit one: attach to it, then Commands > Quit this window";
+    let mut windows = Vec::new();
+    for count in 1..=2 {
+        let output = command().args(["window", "new"]).output().unwrap();
+        assert!(output.status.success(), "{output:?}");
+        windows.push(stdout(&output).trim().to_owned());
+        let logs = wait_for_pickers(count + 1);
+        let text = if count == 1 {
+            format!("--header=1 other Eon window is still running: {name}\n{hint}")
+        } else {
+            format!("--header=2 other Eon windows are still running: {name}, {name}\n{hint}")
+        };
+        assert!(logs.iter().any(|log| log.contains(&text)), "{logs:?}");
+    }
+    // A later tab's picker stays plain, in window A, which already lists D.
+    let output = command()
+        .args(["tab", "create", "--window", &windows[0]])
+        .output()
+        .unwrap();
+    assert!(output.status.success(), "{output:?}");
+    let logs = wait_for_pickers(4);
+    assert_eq!(
+        logs.iter().filter(|log| log.contains("--header")).count(),
+        2,
+        "{logs:?}"
+    );
+    for args in [vec!["window", "attach", &windows[0]], vec!["attach"]] {
+        let output = command().args(args).output().unwrap();
+        assert!(output.status.success(), "{output:?}");
+        assert_eq!(picker_logs().len(), 4);
+    }
+    for window in &windows {
+        let output = command()
+            .args(["window", "stop", window, "--json"])
+            .output()
+            .unwrap();
+        assert!(output.status.success(), "{output:?}");
+    }
+    let generation = control.parent().unwrap().file_name().unwrap();
+    let output = command()
+        .arg("stop")
+        .arg(generation)
+        .arg("--json")
+        .output()
+        .unwrap();
+    assert!(output.status.success(), "{output:?}");
+    wait_for_successful_exit(&mut first.child);
+    fs::remove_dir_all(root).unwrap();
+}
+
+#[test]
 fn running_windows_name_each_other_and_refresh_on_start_and_end() {
     let root = (0_u32..)
         .map(|n| std::env::temp_dir().join(format!("er{n:x}")))
