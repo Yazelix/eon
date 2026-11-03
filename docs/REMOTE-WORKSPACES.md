@@ -114,10 +114,12 @@ navigation remains scoped to the window's host unless separately amended.
 
 ## EON-C38 — Persistent workspace identity and host registry
 
-**Text for Lucca's review for slice 2a only.** On approval, index this as
-EON-C38 with status Planned. It is not an implemented or proved guarantee.
+**Approved by Lucca on 2026-11-03 and indexed in
+[`docs/CONTRACTS.md`](CONTRACTS.md#eon-c38--persistent-workspace-identity-and-host-registry)
+as Planned.** That entry is canonical; the text below is the reviewed draft.
+It is not an implemented or proved guarantee.
 
-- **Status:** Awaiting exact-text approval; not in the canonical index.
+- **Status:** Planned (approved 2026-11-03; see `docs/CONTRACTS.md`).
 - **Consumer:** Local and remote Eon workspace clients and the host's
   ID-targeted workspace operations.
 - **Trigger:** Create or rename a workspace, list/read its registration, resolve

@@ -3649,3 +3649,50 @@ socket names, JSON fields and protocol identifiers retain their spellings.
 - **Open proof:** The config and state corpus test (`eon-embg6`) in
   `eon-test`, plus one installed skip-version observation (floor release to
   new release) and one rollback observation per minor release.
+
+## EON-C38 — Persistent workspace identity and host registry
+
+- **Status:** Planned (`eon-remote-workspaces-52i4.4`, text by Yu Sun in
+  PR #3, approved by Lucca 2026-11-03). Slice 2a
+  (`eon-remote-workspaces-52i4.5`) implements it; the plan and acceptance
+  matrix are in [`REMOTE-WORKSPACES.md`](REMOTE-WORKSPACES.md).
+- **Consumer:** Local and remote Eon workspace clients and the host's
+  ID-targeted workspace operations.
+- **Trigger:** Create or rename a workspace, list/read its registration, resolve
+  a target, detach/reattach, or restart the workspace supervisor.
+- **Result:**
+  - The host owns a durable, opaque workspace ID and a versioned registry.
+    An ID identifies the same registered workspace across client and supervisor
+    lifetimes. A window's `wN` is a local handle, not durable identity. A remote
+    target includes its host and workspace ID; one window still uses one host.
+  - Names and directories are attributes. Renaming keeps the ID; names need
+    not be unique. Separate workspaces may use the same directory, and one
+    workspace may contain multiple directories. A stale/deleted ID is never
+    rebound to a different workspace merely because its name/path matches.
+  - Registry inspection can find registered identities independently of the
+    current window's members. Registration is metadata, not proof that any
+    terminal is running or that a recorded process may be signalled.
+  - Concurrent registry mutations are serialized. A successful durable mutation
+    is acknowledged only after atomic persistence; failure does not publish a
+    successful new identity or partly committed registration. IDs are not reused.
+    Version changes preserve the old durable file as the repository's durable
+    format policy requires; no unknown version is silently overwritten.
+- **Important failures:** Unknown/stale/ambiguous targets, corrupt or unknown
+  registry versions and persistence failures give explicit diagnostics rather
+  than guessed targets or a replacement with the same name. Malformed state
+  remains available for diagnosis. Registry failure authorizes no terminal
+  stop, destructive cleanup, duplicate process launch or fallback local creation.
+- **Owner:** Eon Runtime owns persistent IDs, registry state and target
+  resolution. Eon projects that authority through its existing command/picker
+  boundaries. Orbit remains the authority for terminal/run state and lifecycle.
+- **Boundary:** Identity and registry only. Slice 2a does not promise original
+  membership/layout recovery, SSH transport, takeover, terminal stop/Forget
+  behavior, reboot process restoration or moving live work across hosts. Any
+  CLI/schema changes introduced with 2a amend EON-C10 in that slice; this text
+  allocates no separate CLI contract. Existing window-local handles may remain
+  adapters, with an explicit mapping to persistent IDs.
+- **Proof:** None yet.
+- **Open proof:** I1–I3 in the acceptance matrix of
+  [`REMOTE-WORKSPACES.md`](REMOTE-WORKSPACES.md), run by slice 2a. Original
+  groups/layout and verified run recovery belong to slice 2b and amendments
+  to EON-C15/C33, not this proof.
