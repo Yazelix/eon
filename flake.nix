@@ -1038,7 +1038,9 @@
               (import ./nix/test-sandbox.nix { inherit pkgs; })
               br
               bv
-            ];
+            ]
+            # Orbit's build needs cctools here too, on Macs without Xcode's command line tools.
+            ++ lib.optionals pkgs.stdenv.hostPlatform.isDarwin [ pkgs.cctools ];
             buildInputs = venusBuildInputs;
             inherit (ghosttyBuildEnv) LIBGHOSTTY_VT_SYS_CPU GHOSTTY_SOURCE_DIR GHOSTTY_ZIG_SYSTEM_DIR;
             inherit (bendBuildEnv) BEND_SOURCE_DIR BEND_CLANG BEND_NO_TELEMETRY;
