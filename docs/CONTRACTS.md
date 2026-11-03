@@ -857,6 +857,9 @@ socket names, JSON fields and protocol identifiers retain their spellings.
     beside `config-path` and `config defaults`.
   - Eon selects exact Nushell, Bash, Starship, Zoxide, fzf, Atuin, Carapace,
     Helix, Yazi, and LazyGit artifacts.
+  - Helix that Eon starts loads its Steel configuration files, `helix.scm` and
+    `init.scm`, only from Eon's Helix config directory, never from a
+    repository's `.helix` directory.
   - Stable `eon-*` commands expose managed shells and tools outside Eon; one
     child-private PATH exposes accepted unprefixed names inside terminals.
   - Configuration accepts one direct argv command and independent Starship,
@@ -906,7 +909,9 @@ socket names, JSON fields and protocol identifiers retain their spellings.
   a replacement terminal. Optional integration failure warns without preventing
   shell launch. A missing or failing host mise is skipped silently; mise reports
   its own per-project errors, such as an untrusted configuration. Unavailable
-  native clipboard access reports Nushell's own error.
+  native clipboard access reports Nushell's own error. A configuration root
+  whose path is not valid UTF-8 fails Helix launch, since Helix cannot read
+  its Steel configuration directory there.
   Eon never mutates global configuration, startup files, aliases, or PATH.
 - **Owner:** Eon supplies defaults, component selection and Nix shell adapters;
   Eon Runtime owns strict configuration and private launch-environment
@@ -955,6 +960,14 @@ socket names, JSON fields and protocol identifiers retain their spellings.
     the `config-path` and `config defaults` help entries name `config.toml`;
     `relative_configuration_root_is_resolved_once` covers absolute output for
     both commands.
+  - **Steel trust:** `eon-2yj90` adds to `managed-command-path`, on Linux, the
+    real `hx` on Eon's managed PATH, under a pseudo-terminal in a repository
+    that holds `.helix/helix.scm` and `.helix/init.scm`: the `init.scm` in the
+    configuration root's `helix` directory runs and the repository's does
+    not. `managed_commands_use_exact_programs_and_private_configuration`
+    checks that Helix gets `HELIX_STEEL_CONFIG`, and
+    `helix_does_not_start_under_a_configuration_root_that_is_not_utf8` that
+    such a root fails Helix launch.
   - **Note:** `eon-8olu` removed the managed Zsh and Fish shells. The
     `shell-environment` check went with them; its Zsh and Fish evidence above
     no longer applies. The remaining checks cover Nushell and Bash launch
@@ -963,6 +976,7 @@ socket names, JSON fields and protocol identifiers retain their spellings.
   startup of each shell, and a native Wayland clipboard round trip through
   `clip copy`, the aliases and `wl-paste`. Agent session (`eon-geigu`): a
   Claude Code started in such a terminal shows no transcript-saving warning.
+  Steel trust (`eon-2yj90`): no real Helix run on macOS.
 
 ## EON-C10 — Typed workspace control
 

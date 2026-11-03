@@ -1344,10 +1344,19 @@ pub(crate) fn command(
                 .env("XDG_CONFIG_DIRS", config);
         }
         Tool::Helix => {
+            // Without it, Helix runs a workspace's own .helix/{helix,init}.scm. Helix
+            // reads it only as UTF-8 and otherwise falls back to them too.
+            let steel = config.join("helix");
+            if steel.to_str().is_none() {
+                return Err(format!(
+                    "cannot start Helix: the configuration root {} is not valid UTF-8",
+                    config.display()
+                ));
+            }
             command
                 .env_remove("CARGO_MANIFEST_DIR")
                 .env_remove("HELIX_RUNTIME")
-                .env_remove("HELIX_STEEL_CONFIG");
+                .env("HELIX_STEEL_CONFIG", steel);
         }
     }
     if let Some(shell) = &shell {
@@ -1602,7 +1611,7 @@ mod tests {
     use std::{
         ffi::{OsStr, OsString},
         fs,
-        os::unix::fs::PermissionsExt,
+        os::unix::{ffi::OsStrExt, fs::PermissionsExt},
         path::{Path, PathBuf},
         process::Command,
     };
@@ -2880,7 +2889,7 @@ keep_alive = false
             (
                 Helix,
                 "/managed/hx",
-                &["CARGO_MANIFEST_DIR", "HELIX_RUNTIME", "HELIX_STEEL_CONFIG"][..],
+                &["CARGO_MANIFEST_DIR", "HELIX_RUNTIME"][..],
             ),
             (Yazi, "/managed/yazi", &["YAZI_CONFIG_HOME"][..]),
             (Ya, "/managed/ya", &["YAZI_CONFIG_HOME"][..]),
@@ -2916,6 +2925,12 @@ keep_alive = false
                 assert_eq!(
                     command_environment(&command, "XDG_CONFIG_DIRS"),
                     Some(Some(config.as_os_str()))
+                );
+            }
+            if tool == Helix {
+                assert_eq!(
+                    command_environment(&command, "HELIX_STEEL_CONFIG"),
+                    Some(Some(config.join("helix").as_os_str()))
                 );
             }
         }
@@ -2963,6 +2978,20 @@ keep_alive = false
                 Some(Some(OsStr::new("1")))
             );
         }
+    }
+
+    #[test]
+    fn helix_does_not_start_under_a_configuration_root_that_is_not_utf8() {
+        // Helix reads HELIX_STEEL_CONFIG only as UTF-8; otherwise it falls back to
+        // a repository's own .helix Steel files.
+        let inputs = crate::fixtures::inputs();
+        let config = Path::new(OsStr::from_bytes(b"/private/\xffeon"));
+        let error = managed_command(Tool::Helix, &inputs.managed, config, &[], &inputs.defaults)
+            .unwrap_err();
+        assert!(error.contains("not valid UTF-8"), "{error}");
+        assert!(
+            managed_command(Tool::Yazi, &inputs.managed, config, &[], &inputs.defaults).is_ok()
+        );
     }
 
     #[test]

@@ -5,6 +5,13 @@ installation, and proven contract changes.
 
 ## Unreleased
 
+- Security: Helix that Eon starts no longer runs a repository's own Steel
+  configuration. When a repository held both `.helix/helix.scm` and
+  `.helix/init.scm`, opening Helix there from Eon (`hx`, `eon edit`, Files)
+  ran them as you, so an untrusted clone could run any command. Eon's Helix
+  now loads its Steel configuration only from `$(eon config-dir)/helix/`,
+  where your own `helix.scm` and `init.scm` still load, and does not start
+  when that root's path is not valid UTF-8 (`eon-2yj90`).
 - `echo hi | eon pane send p1 --enter`, without `--stdin`, fails with
   `unread-stdin` (exit 2) and sends nothing, instead of pressing Enter alone
   and dropping the piped text. Text from a file or socket on standard input
