@@ -767,6 +767,8 @@
                 pkgs.copyDesktopItems
                 pkgs.makeWrapper
               ];
+              # Runtime tests paste printed commands into Eon's Nushell.
+              nativeCheckInputs = [ nushellPackage ];
               desktopItems = [ desktopItem ];
               postInstall = ''
                 for size in 16 24 32 48 64 128 256 512; do
@@ -1036,6 +1038,8 @@
               zig
               pkgs.bun
               (import ./nix/test-sandbox.nix { inherit pkgs; })
+              # Runtime tests paste printed commands into Eon's Nushell.
+              nushellPackage
               br
               bv
             ]

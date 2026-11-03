@@ -2984,8 +2984,22 @@ pub(crate) fn failure_human(failure: &Failure) -> String {
     format!(
         "error {}: {}\n",
         failure.code,
-        failure.detail.escape_debug()
+        terminal_text(&failure.detail)
     )
+}
+
+/// Text for a terminal: control and other unprintable characters are escaped,
+/// so a detail cannot drive the terminal, while quotes, backslashes and line
+/// breaks stay as written, so a command in it can be pasted.
+pub(crate) fn terminal_text(text: &str) -> String {
+    let mut printable = String::new();
+    for character in text.chars() {
+        match character {
+            '\\' | '\'' | '"' | '\n' => printable.push(character),
+            character => printable.extend(character.escape_debug()),
+        }
+    }
+    printable
 }
 
 pub(crate) fn failure_json(failure: &Failure) -> String {

@@ -12,7 +12,7 @@ use super::{
         LaunchMode, SESSION_START_TIMEOUT, base_runtime_directory, prepare_runtime,
         probe_supervisor, request_id, runtime_directory, validate_private_directory,
     },
-    workspace::{failure_json, json_escape},
+    workspace::{failure_json, json_escape, terminal_text},
 };
 use eon_workspace_protocol::v29::Failure;
 use std::{
@@ -31,7 +31,7 @@ use std::{
     time::{Duration, Instant},
 };
 
-const WINDOW_RUNTIME: &str = "EON_WINDOW_RUNTIME_DIR";
+pub(super) const WINDOW_RUNTIME: &str = "EON_WINDOW_RUNTIME_DIR";
 
 pub(super) fn valid_window_id(id: &str) -> bool {
     id.len() == 8
@@ -181,6 +181,9 @@ pub(super) fn quit(inputs: &Inputs, json: bool) -> Result<i32, Error> {
             for (id, _, generation) in candidates {
                 let generation_id = generation.id.escape_debug().to_string();
                 let command = match id {
+                    _ if !generation.stop.available => {
+                        format!("cannot stop: {}", terminal_text(&generation.stop.reason))
+                    }
                     Some(id) => format!("eon window stop {id}"),
                     None => format!("env -u EON_WINDOW_RUNTIME_DIR eon stop {generation_id}"),
                 };

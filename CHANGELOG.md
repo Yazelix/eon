@@ -5,6 +5,11 @@ installation, and proven contract changes.
 
 ## Unreleased
 
+- A newer `eon` stops and quits windows that an Eon build with another EONW
+  started, through the `eon` that build recorded; `eon quit` lists only stop
+  commands that work. Human-mode errors, `eon generations` and `eon windows`
+  print quotes, backslashes and line breaks as written, so a command they name
+  can be pasted (`eon-7cf0y.9`).
 - Security: Helix that Eon starts no longer runs a repository's own Steel
   configuration. When a repository held both `.helix/helix.scm` and
   `.helix/init.scm`, opening Helix there from Eon (`hx`, `eon edit`, Files)

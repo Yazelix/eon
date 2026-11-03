@@ -8144,6 +8144,409 @@ fn generations_from_another_eonw_are_incompatible_and_not_stopped() {
     fs::remove_dir_all(root).unwrap();
 }
 
+/// Serves an older build's supervisor at `runtime`'s generation `id`: it
+/// rejects each request in its own framing until `done` exists.
+fn older_supervisor(runtime: &Path, id: &str, done: &Path) -> thread::JoinHandle<()> {
+    let listener = generation_listener(runtime, id);
+    let done = done.to_owned();
+    thread::spawn(move || {
+        loop {
+            let (mut stream, _) = listener.accept().unwrap();
+            if done.exists() {
+                return;
+            }
+            read_request(&mut stream);
+            let mut failure = encode_response(&Response::Failure(ProtocolFailure {
+                code: "unsupported-version".into(),
+                detail: format!("unsupported EONW version {VERSION}"),
+            }))
+            .unwrap();
+            failure[4..6].copy_from_slice(&11u16.to_le_bytes());
+            stream.write_all(&failure).unwrap();
+        }
+    })
+}
+
+fn end_older_supervisors(done: &Path, sockets: &[PathBuf], servers: Vec<thread::JoinHandle<()>>) {
+    fs::write(done, "").unwrap();
+    for socket in sockets {
+        let _ = UnixStream::connect(socket);
+    }
+    for server in servers {
+        server.join().unwrap();
+    }
+}
+
+#[test]
+fn older_eonw_generations_stop_through_their_recorded_eon() {
+    let root = temporary_directory();
+    // A runtime root with a space, so printed commands must quote it.
+    let runtime = root.join("e r");
+    let config = root.join("config");
+    let windows = runtime.join("w");
+    let window = windows.join("0000abcd");
+    let done = root.join("done");
+    let default = format!("g1-{:032x}", 21);
+    let windowed = format!("g1-{:032x}", 22);
+    let mut servers = vec![older_supervisor(&runtime, &default, &done)];
+    fs::create_dir(&windows).unwrap();
+    fs::set_permissions(&windows, fs::Permissions::from_mode(0o700)).unwrap();
+    servers.push(older_supervisor(&window, &windowed, &done));
+    let sockets = [
+        runtime.join("generations").join(&default).join("eon.sock"),
+        window.join("generations").join(&windowed).join("eon.sock"),
+    ];
+    // The recorded `eon` logs how it ran, then answers as the older build does.
+    let log = root.join("log");
+    let mode = root.join("mode");
+    let older_eon = root.join("older-eon");
+    executable(
+        &older_eon,
+        format!(
+            "#!/bin/sh\n\
+             if read -r line; then input=data; else input=eof; fi\n\
+             printf '%s|%s|%s|%s|%s\\n' \"$*\" \"${{EON_WINDOW_RUNTIME_DIR-unset}}\" \
+             \"${{EON_TERMINAL-unset}}\" \"${{EON_STOP_DELEGATED-unset}}\" \"$input\" >> '{log}'\n\
+             case \"$(cat '{mode}' 2>/dev/null)\" in\n\
+             garbage) echo 'not a result' ;;\n\
+             error) printf '{{\"error\":{{\"code\":\"supervisor-unavailable\",\"detail\":\"older supervisor ended\"}}}}\\n'; exit 4 ;;\n\
+             killed) printf '{{\"stopped\":{{\"generation\":\"%s\",\"sessions\":[]}}}}\\n' \"$2\"; kill -KILL $$ ;;\n\
+             *) printf '{{\"stopped\":{{\"generation\":\"%s\",\"sessions\":[\"session-1\"]}}}}\\n' \"$2\" ;;\n\
+             esac\n",
+            log = log.display(),
+            mode = mode.display(),
+        ),
+    );
+    for (namespace, id) in [(&runtime, &default), (&window, &windowed)] {
+        symlink(
+            &older_eon,
+            namespace.join("generations").join(id).join("eon"),
+        )
+        .unwrap();
+    }
+    let binary = PathBuf::from(env!("CARGO_BIN_EXE_eon"));
+    let eon = |arguments: &[&str], input: &[u8]| {
+        let mut child = eon_command(&binary)
+            .args(arguments)
+            .env("EON_RUNTIME_DIR", &runtime)
+            .env("EON_CONFIG_HOME", &config)
+            .env_remove("EON_WINDOW_RUNTIME_DIR")
+            .env_remove("EON_TERMINAL")
+            .stdin(Stdio::piped())
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped())
+            .spawn()
+            .unwrap();
+        child.stdin.take().unwrap().write_all(input).unwrap();
+        child.wait_with_output().unwrap()
+    };
+    let take_log = || {
+        let lines = fs::read_to_string(&log).unwrap_or_default();
+        let _ = fs::remove_file(&log);
+        lines
+    };
+
+    // The listing reports the Stop it can run.
+    let listed = eon(&["generations", "--json"], b"");
+    assert!(listed.status.success(), "{listed:?}");
+    let listed: serde_json::Value = serde_json::from_slice(&listed.stdout).unwrap();
+    let older = listed["generations"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|generation| generation["id"] == default.as_str())
+        .unwrap();
+    assert_eq!(older["state"], "incompatible", "{older}");
+    assert_eq!(older["stop"]["available"], true, "{older}");
+    assert_eq!(older["executable"], older_eon.to_str().unwrap());
+
+    // A JSON Stop runs the recorded `eon` without input or a calling terminal.
+    let stopped = eon_command(&binary)
+        .args(["stop", &default, "--json"])
+        .env("EON_RUNTIME_DIR", &runtime)
+        .env("EON_CONFIG_HOME", &config)
+        .env_remove("EON_WINDOW_RUNTIME_DIR")
+        .env("EON_TERMINAL", "not-a-terminal")
+        .stdin(Stdio::null())
+        .output()
+        .unwrap();
+    assert_eq!(stopped.status.code(), Some(0), "{stopped:?}");
+    assert_eq!(
+        stdout(&stopped),
+        format!("{{\"stopped\":{{\"generation\":\"{default}\",\"sessions\":[\"session-1\"]}}}}\n")
+    );
+    assert_eq!(
+        take_log(),
+        format!("stop {default} --json|unset|unset|{default}|eof\n")
+    );
+
+    // A human Stop asks first; a refusal runs nothing.
+    let refused = eon(&["stop", &default], b"n\n");
+    assert_eq!(refused.status.code(), Some(1), "{refused:?}");
+    let error = String::from_utf8_lossy(&refused.stderr);
+    assert!(
+        error.contains(&format!(
+            "Stop generation {default}? It runs another Eon build, so its terminals are unknown. [y/N] "
+        )),
+        "{error}"
+    );
+    assert!(error.contains("error not-confirmed:"), "{error}");
+    assert_eq!(take_log(), "");
+    let human = eon(&["stop", &default], b"y\n");
+    assert_eq!(human.status.code(), Some(0), "{human:?}");
+    assert_eq!(
+        stdout(&human),
+        format!("stopped generation {default}: session-1\n")
+    );
+    take_log();
+
+    // Quit stops every older window, each through a Stop in its own namespace.
+    let quit = eon(&["quit", "--all", "--json"], b"");
+    assert_eq!(quit.status.code(), Some(0), "{quit:?}");
+    let quit: serde_json::Value = serde_json::from_slice(&quit.stdout).unwrap();
+    assert_eq!(
+        quit,
+        serde_json::json!([
+            {"window": "0000abcd", "results": [
+                {"stopped": {"generation": windowed, "sessions": ["session-1"]}}
+            ]},
+            {"window": null, "results": [
+                {"stopped": {"generation": default, "sessions": ["session-1"]}}
+            ]},
+        ])
+    );
+    let lines = take_log();
+    assert!(
+        lines.contains(&format!(
+            "stop {windowed} --json|{}|unset|{windowed}|eof\n",
+            window.display()
+        )),
+        "{lines}"
+    );
+    assert!(
+        lines.contains(&format!(
+            "stop {default} --json|unset|unset|{default}|eof\n"
+        )),
+        "{lines}"
+    );
+    // Input left after the questions never reaches a recorded `eon`.
+    let quit = eon(&["quit", "--all"], b"y\ny\nextra\n");
+    assert_eq!(quit.status.code(), Some(0), "{quit:?}");
+    let error = String::from_utf8_lossy(&quit.stderr);
+    for id in [&default, &windowed] {
+        assert!(
+            error.contains(&format!(
+                "Quit window {id}? It runs another Eon build, so its terminals are unknown. [y/N] "
+            )),
+            "{error}"
+        );
+    }
+    let lines = take_log();
+    assert_eq!(lines.lines().count(), 2, "{lines}");
+    assert!(lines.lines().all(|line| line.ends_with("|eof")), "{lines}");
+    let stopped = eon(&["window", "stop", "0000abcd"], b"y\n");
+    assert_eq!(stopped.status.code(), Some(0), "{stopped:?}");
+    assert_eq!(
+        take_log(),
+        format!(
+            "stop {windowed} --json|{}|unset|{windowed}|eof\n",
+            window.display()
+        )
+    );
+
+    // Its result is passed through, and anything else fails the Stop.
+    fs::write(&mode, "error").unwrap();
+    let failed = eon(&["stop", &default, "--json"], b"");
+    assert_eq!(failed.status.code(), Some(4), "{failed:?}");
+    assert_eq!(
+        stdout(&failed),
+        "{\"error\":{\"code\":\"supervisor-unavailable\",\"detail\":\"older supervisor ended\"}}\n"
+    );
+    fs::write(&mode, "garbage").unwrap();
+    let failed = eon(&["stop", &default, "--json"], b"");
+    assert_eq!(failed.status.code(), Some(1), "{failed:?}");
+    let failed: serde_json::Value = serde_json::from_slice(&failed.stdout).unwrap();
+    assert_eq!(failed["error"]["code"], "stop-failed", "{failed}");
+    // A Stop that a signal ends fails, whatever it printed first.
+    fs::write(&mode, "killed").unwrap();
+    let killed = eon(&["stop", &default, "--json"], b"");
+    assert_eq!(killed.status.code(), Some(1), "{killed:?}");
+    let killed: serde_json::Value = serde_json::from_slice(&killed.stdout).unwrap();
+    assert_eq!(killed["error"]["code"], "stop-failed", "{killed}");
+    fs::remove_file(&mode).unwrap();
+    take_log();
+
+    // A delegated Stop never delegates the same generation again.
+    let again = eon_command(&binary)
+        .args(["stop", &default, "--json"])
+        .env("EON_RUNTIME_DIR", &runtime)
+        .env("EON_CONFIG_HOME", &config)
+        .env_remove("EON_WINDOW_RUNTIME_DIR")
+        .env("EON_STOP_DELEGATED", &default)
+        .output()
+        .unwrap();
+    assert_eq!(again.status.code(), Some(1), "{again:?}");
+    let again: serde_json::Value = serde_json::from_slice(&again.stdout).unwrap();
+    assert_eq!(again["error"]["code"], "stop-unavailable", "{again}");
+    assert_eq!(take_log(), "");
+
+    // A record whose file is gone or cannot run says so and names the way
+    // back, in that generation's namespace, as a command a shell runs as is.
+    let missing = root.join("it's gone").join("eon");
+    let unrunnable = root.join("unrunnable-eon");
+    fs::write(&unrunnable, "#!/bin/sh\n").unwrap();
+    for (namespace, id) in [(&runtime, &default), (&window, &windowed)] {
+        let record = namespace.join("generations").join(id).join("eon");
+        fs::remove_file(&record).unwrap();
+        symlink(&missing, &record).unwrap();
+    }
+    let quoted = format!("\"{}\"", missing.display());
+    let gone = eon(&["stop", &default, "--json"], b"");
+    assert_eq!(gone.status.code(), Some(1), "{gone:?}");
+    let gone: serde_json::Value = serde_json::from_slice(&gone.stdout).unwrap();
+    assert_eq!(gone["error"]["code"], "stop-unavailable", "{gone}");
+    let detail = gone["error"]["detail"].as_str().unwrap();
+    assert!(
+        detail.ends_with(&format!(
+            "its recorded eon {} is missing; restore that build, then run \
+             env -u EON_WINDOW_RUNTIME_DIR {quoted} stop {default}",
+            missing.display(),
+        )),
+        "{detail}"
+    );
+    let advice = |output: &Output| {
+        let error = String::from_utf8_lossy(&output.stderr).into_owned();
+        error
+            .lines()
+            .find_map(|line| line.split_once("; restore that build, then run "))
+            .map(|(_, command)| command.to_owned())
+            .unwrap_or_else(|| panic!("no advice: {error}"))
+    };
+    let default_advice = advice(&eon(&["stop", &default], b""));
+    let window_advice = advice(&eon(&["window", "stop", "0000abcd"], b""));
+    assert_eq!(
+        window_advice,
+        format!(
+            "env 'EON_WINDOW_RUNTIME_DIR={}' {quoted} stop {windowed}",
+            window.display()
+        )
+    );
+    // Both listings print that advice as written, ready to paste.
+    let listed = eon(&["generations"], b"");
+    assert!(
+        stdout(&listed).contains(&format!("then run {default_advice}\n")),
+        "{listed:?}"
+    );
+    let listed = eon(&["windows"], b"");
+    assert!(
+        stdout(&listed).contains(&format!("then run {window_advice}\n")),
+        "{listed:?}"
+    );
+    assert_eq!(take_log(), "");
+    // Once that build is back, each command stops its own generation, pasted
+    // into sh or Nushell.
+    fs::create_dir(missing.parent().unwrap()).unwrap();
+    symlink(&older_eon, &missing).unwrap();
+    for (command, expected) in [
+        (
+            default_advice,
+            format!("stop {default}|unset|unset|unset|eof\n"),
+        ),
+        (
+            window_advice,
+            format!("stop {windowed}|{}|unset|unset|eof\n", window.display()),
+        ),
+    ] {
+        for shell in [&["/bin/sh", "-c"][..], &["nu", "--no-config-file", "-c"]] {
+            let ran = Command::new(shell[0])
+                .args(&shell[1..])
+                .arg(&command)
+                .env("EON_WINDOW_RUNTIME_DIR", root.join("elsewhere"))
+                .env_remove("EON_TERMINAL")
+                .env_remove("EON_STOP_DELEGATED")
+                .stdin(Stdio::null())
+                .output()
+                .unwrap();
+            assert!(ran.status.success(), "{shell:?} {command}: {ran:?}");
+            assert_eq!(take_log(), expected, "{shell:?} {command}");
+        }
+    }
+    let record = runtime.join("generations").join(&default).join("eon");
+    fs::remove_file(&record).unwrap();
+    symlink(&unrunnable, &record).unwrap();
+    let blocked = eon(&["stop", &default, "--json"], b"");
+    assert_eq!(blocked.status.code(), Some(1), "{blocked:?}");
+    let blocked: serde_json::Value = serde_json::from_slice(&blocked.stdout).unwrap();
+    let detail = blocked["error"]["detail"].as_str().unwrap();
+    assert!(
+        detail.contains(&format!(
+            "its recorded eon {} is not an executable file; restore that build",
+            unrunnable.display()
+        )),
+        "{detail}"
+    );
+    assert_eq!(take_log(), "");
+
+    end_older_supervisors(&done, &sockets, servers);
+    fs::remove_dir_all(root).unwrap();
+}
+
+#[test]
+fn quit_listing_names_only_working_stop_commands() {
+    let root = temporary_directory();
+    let runtime = root.join("r");
+    let config = root.join("config");
+    let done = root.join("done");
+    let recorded = format!("g1-{:032x}", 23);
+    let unrecorded = format!("g1-{:032x}", 24);
+    let servers = vec![
+        older_supervisor(&runtime, &recorded, &done),
+        older_supervisor(&runtime, &unrecorded, &done),
+    ];
+    let sockets =
+        [&recorded, &unrecorded].map(|id| runtime.join("generations").join(id).join("eon.sock"));
+    let older_eon = root.join("older-eon");
+    executable(&older_eon, "#!/bin/sh\nexit 1\n");
+    symlink(
+        &older_eon,
+        runtime.join("generations").join(&recorded).join("eon"),
+    )
+    .unwrap();
+    let binary = PathBuf::from(env!("CARGO_BIN_EXE_eon"));
+    let output = eon_command(&binary)
+        .arg("quit")
+        .env("EON_RUNTIME_DIR", &runtime)
+        .env("EON_CONFIG_HOME", &config)
+        .env_remove("EON_WINDOW_RUNTIME_DIR")
+        .env_remove("EON_TERMINAL")
+        .stdin(Stdio::null())
+        .output()
+        .unwrap();
+    assert_eq!(output.status.code(), Some(1), "{output:?}");
+    let detail = String::from_utf8_lossy(&output.stderr);
+    assert!(detail.contains("error ambiguous-window:"), "{detail}");
+    let row = |id: &str| {
+        detail
+            .lines()
+            .find(|line| line.contains(&format!("generation {id} ")))
+            .unwrap_or_else(|| panic!("no row for {id}: {detail}"))
+            .to_owned()
+    };
+    assert!(
+        row(&recorded).ends_with(&format!(
+            "; env -u EON_WINDOW_RUNTIME_DIR eon stop {recorded}"
+        )),
+        "{detail}"
+    );
+    let row = row(&unrecorded);
+    assert!(row.contains("; cannot stop: "), "{row}");
+    assert!(row.contains("EONW 11"), "{row}");
+    assert!(!row.contains("eon stop"), "{row}");
+
+    end_older_supervisors(&done, &sockets, servers);
+    fs::remove_dir_all(root).unwrap();
+}
+
 #[test]
 fn window_attach_runs_the_build_that_started_its_generation() {
     let root = temporary_directory();

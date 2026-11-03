@@ -1473,7 +1473,10 @@ socket names, JSON fields and protocol identifiers retain their spellings.
   2026-11-03 (approved under eon-7cf0y's approval mode, relayed by
   eon-overseer) by `eon-7cf0y.12`: `eon quit` asks only while a terminal is
   busy, and runtime results and workspace snapshots carry the busy terminals,
-  proven by its amendment proof below.
+  proven by its amendment proof below. Amended on 2026-11-03 (approved under
+  eon-7cf0y's approval mode, relayed by eon-overseer) by `eon-7cf0y.9`: a
+  generation from another EONW version is stopped through the `eon` it
+  recorded, proven by its amendment proof below.
 - **Consumer:** Eon and eonbase users launching or targeting a product generation.
 - **Trigger:** Launch current generation, inspect an older live generation,
   present a compatible existing surface, stop one generation, stop a selected
@@ -1490,8 +1493,28 @@ socket names, JSON fields and protocol identifiers retain their spellings.
     presentable when compatible, and stoppable through their own supervisor;
     presentation still requires the exact current EONW and component graph. A
     generation from a build with another EONW version is listed as
-    incompatible; this `eon` neither inspects nor stops it, and the build that
-    started it can.
+    incompatible, and this `eon` does not inspect it. When that generation
+    recorded its `eon` (below) and the recorded file exists and is executable,
+    `eon generations` and `eon windows` report its `stop` as available.
+
+    Every Stop of it, through `eon stop`, `eon window stop`, `eon quit` or
+    `eon quit --all`, runs that `eon` as `stop GENERATION --json` in the
+    generation's namespace, without standard input, after this `eon` asks any
+    question the command asks. Its live and busy terminals are unknown here,
+    so human-mode `eon quit` and `eon quit --all` always ask: `Quit window
+    GENERATION? It runs another Eon build, so its terminals are unknown.
+    [y/N]`.
+
+    This `eon` reports that `eon`'s Stop result as its own. Output that is not
+    one Stop result, a Stop that a signal ends, and a `stopped` result from an
+    `eon` that exits unsuccessfully are `stop-failed`, and a delegated Stop
+    never delegates the same generation again.
+
+    Without a record, the Stop is `stop-unavailable` and says the build that
+    started it can stop it. With a record whose file is missing or not
+    executable, the Stop is `stop-unavailable`, names the recorded path, and
+    says to restore that build and run its `eon stop GENERATION` in the
+    generation's namespace.
   - A generation records the `eon` executable of the build that started it, an
     opaque launch input, so a later build can name or run it; `eon attach
     GENERATION` delegates to it when this build cannot present that
@@ -1536,7 +1559,8 @@ socket names, JSON fields and protocol identifiers retain their spellings.
     `ambiguous-window`, stops nothing, and names each one's window ID or the
     default namespace, generation, state, live terminal count when inspectable
     (otherwise unknown) and the `eon window stop ID` or
-    `env -u EON_WINDOW_RUNTIME_DIR eon stop GENERATION` command that stops it.
+    `env -u EON_WINDOW_RUNTIME_DIR eon stop GENERATION` command that stops it,
+    or, when this `eon` cannot stop it, `cannot stop: REASON`.
     `eon quit --all [--json]` attempts Stop of every non-dead generation in the
     default namespace and in every independent window, in `eon stop all`'s
     order, the caller's own namespace last, asking for each window as
@@ -1693,6 +1717,12 @@ socket names, JSON fields and protocol identifiers retain their spellings.
       once nothing is busy, inside and outside Eon.
   - **Gap:** the close notice's Quit is covered by construction only
     (`eon-7cf0y.14`); macOS is unproved.
+- **Older-EONW Stop proof:** `eon-7cf0y.9`; that bead's commit is its revision.
+  - **Environment:** automated tier; isolated installed tier (private headless
+    Sway, x86_64 Linux) with Eon 0.1.10 (EONW 27) and 0.1.12 (EONW 28) windows.
+  - **Evidence:** `older_eonw_generations_stop_through_their_recorded_eon` and
+    `quit_listing_names_only_working_stop_commands`; the installed steps are
+    recorded on the bead.
 - **Open proof:** Pending re-proof in this repository: native Present of a live
   surface and launch with `/sys/fs/cgroup` hidden.
 

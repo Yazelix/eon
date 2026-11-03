@@ -94,7 +94,8 @@ counts as running, and so does the Agent popup; the Files and Git popups
 never do. Eon does not see a shell builtin or a background job of an idle
 shell. Outside Eon, `eon quit` quits the only running window, asking the same
 way with `Quit window NAME?`; when several run, it lists each with the
-command that stops it and stops nothing. The listing includes each
+command that stops it, or `cannot stop: REASON` when this `eon` cannot stop
+it, and stops nothing. The listing includes each
 generation's state and live terminal count; an uninspectable count is
 `unknown`. `eon quit --all` quits every window, asking for each as `eon quit`
 does.
@@ -104,7 +105,14 @@ including end of input, exits 1 with `not-confirmed` and sends no Stop.
 Previous generations that use the current EONW can be stopped
 through their own supervisor even when the current desktop cannot attach to them.
 A generation from a build with another EONW version is listed as incompatible;
-stop it with the build that started it. Each generation records its own
+`eon stop`, `eon window stop`, `eon quit` and `eon quit --all` stop it by
+running the `eon` it recorded. In human mode they always ask first, as in
+`Quit window GENERATION? It runs another Eon build, so its terminals are
+unknown. [y/N]`, because this `eon` cannot see its terminals. When that
+recorded file is missing or not executable, the Stop names it and the
+command to run once that build is restored, quoted so that POSIX shells and
+Nushell run it as printed; a path that no quoting suits in both gets one
+command for sh and one for Nushell. Each generation records its own
 build's `eon`, and `eon generations` lists it as the executable of a generation
 this `eon` cannot present. `eon attach GENERATION` and `eon window attach ID`
 present such a generation by running that build's `eon`. Generations started
