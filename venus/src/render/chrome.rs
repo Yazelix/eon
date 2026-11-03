@@ -8,17 +8,24 @@ use super::{
 use crate::{
     DialogKind, DialogScene, Load, SceneRect, WorkspaceFocus, WorkspaceHeaderControl,
     WorkspaceScene,
-    scene::{QuotaProvider, SIDEBAR_EMPTY, SIDEBAR_TITLE, TabBadge, chrome_title_metrics},
+    scene::{
+        QuotaProvider, SIDEBAR_EMPTY, SIDEBAR_TITLE, TabBadge, WorkspaceControl,
+        chrome_title_metrics,
+    },
 };
 use eon_workspace_protocol::v30::AttentionState;
 use glyphon::{
     Attrs, Buffer, Color, ContentType, CustomGlyph, Family, FontSystem, Metrics,
-    RasterizeCustomGlyphRequest, RasterizedCustomGlyph, TextBounds, Weight, Wrap, fontdb,
+    RasterizeCustomGlyphRequest, RasterizedCustomGlyph, SwashCache, TextBounds, Weight, Wrap,
+    fontdb,
 };
 
 const OPENAI_BLOSSOM_ID: u16 = 1;
 const CLAUDE_SPLAT_ID: u16 = 2;
+const EON_ICON_ID: u16 = 3;
 const QUOTA_ICON_SIZE: usize = 104;
+/// The sides an Eon icon image may have, in pixels.
+const EON_ICON_SIDES: std::ops::RangeInclusive<usize> = 16..=512;
 
 fn contrast(a: SceneColor, b: SceneColor) -> f32 {
     let luminance = |color: SceneColor| {
@@ -153,46 +160,219 @@ impl HeaderInteraction {
     }
 }
 
-pub(super) fn rasterize_quota_icon(
+/// Reads the Eon icon Eon names with `--eon-icon`: a square image, four bytes per pixel (red,
+/// green, blue and premultiplied alpha) row by row, 16 to 512 pixels a side.
+///
+/// # Errors
+///
+/// Names the file when it cannot be read or is not such an image.
+pub fn read_eon_icon(path: &std::path::Path) -> Result<std::sync::Arc<[u8]>, String> {
+    use std::io::Read;
+    let limit = EON_ICON_SIDES.end() * EON_ICON_SIDES.end() * 4;
+    let mut image = Vec::new();
+    std::fs::File::open(path)
+        .and_then(|file| file.take(limit as u64 + 1).read_to_end(&mut image))
+        .map_err(|error| format!("cannot read {}: {error}", path.display()))?;
+    let side = (image.len() / 4).isqrt();
+    if side * side * 4 != image.len() || !EON_ICON_SIDES.contains(&side) {
+        return Err(format!(
+            "{} is not a square RGBA image of 16 to 512 pixels a side",
+            path.display()
+        ));
+    }
+    Ok(image.into())
+}
+
+/// Shapes `glyph` in the status font and returns it with the origin that puts its ink's centre on
+/// `centre`, in whole physical pixels. A glyph's side bearings and baseline leave its ink off the
+/// middle of its layout box, so the ink box comes from the rasterized glyphs, placed as glyphon
+/// places them; a whole-pixel origin moves that ink by exactly the origin.
+pub(super) fn ink_centred_glyph(
+    font_system: &mut FontSystem,
+    swash_cache: &mut SwashCache,
+    metrics: CellMetrics,
+    glyph: &str,
+    centre: (f32, f32),
+) -> (Buffer, f32, f32) {
+    let (buffer, (left, top, right, bottom)) =
+        status_glyph_ink(font_system, swash_cache, metrics, glyph);
+    let origin_left = (centre.0 - (left + right) as f32 / 2.0).round();
+    let origin_top = (centre.1 - (top + bottom) as f32 / 2.0).round();
+    (buffer, origin_left, origin_top)
+}
+
+/// Shapes `glyph` like [`ink_centred_glyph`] and returns the origin that centres its ink
+/// vertically on `centre_y` and leaves as many whole pixels between its ink and `target`'s right
+/// edge as between its ink and the window's top. When that would put ink outside `target`, as in
+/// a narrow window, the ink centres on `centre_x` instead, pulled inside `target` where it fits.
+pub(super) fn ink_cornered_glyph(
+    font_system: &mut FontSystem,
+    swash_cache: &mut SwashCache,
+    metrics: CellMetrics,
+    glyph: &str,
+    centre: (f32, f32),
+    target: SceneRect,
+) -> (Buffer, f32, f32) {
+    let (buffer, (left, top, right, bottom)) =
+        status_glyph_ink(font_system, swash_cache, metrics, glyph);
+    let inset = (centre.1 - (bottom - top) as f32 / 2.0).round();
+    let pixels = super::text_clip_bounds(target);
+    let mut origin_left = target.right().round() - inset - right as f32;
+    if origin_left as i32 + left < pixels.left || origin_left as i32 + right > pixels.right {
+        origin_left = (centre.0 - (left + right) as f32 / 2.0)
+            .round()
+            .min((pixels.right - right) as f32)
+            .max((pixels.left - left) as f32);
+    }
+    (buffer, origin_left, inset - top as f32)
+}
+
+/// The glyph of a header control whose ink Venus places itself, with its origin: Shortcuts' `?`
+/// centred in its circle, and Close's `×` at the window's corner. None for the others, which
+/// draw their layout box.
+pub(super) fn placed_control_glyph(
+    font_system: &mut FontSystem,
+    swash_cache: &mut SwashCache,
+    metrics: CellMetrics,
+    workspace: &WorkspaceScene,
+    control: &WorkspaceControl,
+) -> Option<(Buffer, f32, f32)> {
+    let circle = workspace.round_button_rect(control, metrics);
+    let centre = (
+        circle.left + circle.width / 2.0,
+        circle.top + circle.height / 2.0,
+    );
+    let glyph = control.kind.glyph();
+    match control.kind {
+        WorkspaceHeaderControl::Shortcuts => Some(ink_centred_glyph(
+            font_system,
+            swash_cache,
+            metrics,
+            glyph,
+            centre,
+        )),
+        WorkspaceHeaderControl::CloseTab => Some(ink_cornered_glyph(
+            font_system,
+            swash_cache,
+            metrics,
+            glyph,
+            (control.centre, centre.1),
+            control.rect,
+        )),
+        _ => None,
+    }
+}
+
+/// `glyph` shaped in the status font, and its ink box from an origin at zero in whole physical
+/// pixels: left, top, right and bottom. A glyph without ink gives its layout box.
+fn status_glyph_ink(
+    font_system: &mut FontSystem,
+    swash_cache: &mut SwashCache,
+    metrics: CellMetrics,
+    glyph: &str,
+) -> (Buffer, (i32, i32, i32, i32)) {
+    let title = chrome_title_metrics(metrics);
+    let mut buffer = Buffer::new(
+        font_system,
+        Metrics::new(title.font_size, title.line_height),
+    );
+    buffer.set_size(None, None);
+    buffer.set_wrap(Wrap::None);
+    buffer.set_text(
+        glyph,
+        &Attrs::new().family(Family::SansSerif),
+        shaping(glyph),
+        None,
+    );
+    buffer.shape_until_scroll(font_system, false);
+    let mut ink: Option<(i32, i32, i32, i32)> = None;
+    for run in buffer.layout_runs() {
+        for glyph in run.glyphs {
+            let physical = glyph.physical((0.0, 0.0), 1.0);
+            let Some(image) = swash_cache.get_image(font_system, physical.cache_key) else {
+                continue;
+            };
+            let (width, height) = (image.placement.width as i32, image.placement.height as i32);
+            if width == 0 || height == 0 {
+                continue;
+            }
+            let left = physical.x + image.placement.left;
+            let top = run.line_y.round() as i32 + physical.y - image.placement.top;
+            ink = Some(ink.map_or((left, top, left + width, top + height), |ink| {
+                (
+                    ink.0.min(left),
+                    ink.1.min(top),
+                    ink.2.max(left + width),
+                    ink.3.max(top + height),
+                )
+            }));
+        }
+    }
+    let ink = ink.unwrap_or((
+        0,
+        0,
+        buffer
+            .layout_runs()
+            .map(|run| run.line_w.ceil() as i32)
+            .max()
+            .unwrap_or(0),
+        title.line_height.ceil() as i32,
+    ));
+    (buffer, ink)
+}
+
+/// Area-averages a provider mark, or the Eon icon when Eon supplied one, to the requested
+/// physical pixels.
+pub(super) fn rasterize_bar_icon(
     request: RasterizeCustomGlyphRequest,
+    eon_icon: Option<&[u8]>,
 ) -> Option<RasterizedCustomGlyph> {
-    let source = match request.id {
-        OPENAI_BLOSSOM_ID => OPENAI_BLOSSOM_ALPHA,
-        CLAUDE_SPLAT_ID => CLAUDE_SPLAT_ALPHA,
+    let (source, channels, content_type): (&[u8], usize, _) = match request.id {
+        OPENAI_BLOSSOM_ID => (OPENAI_BLOSSOM_ALPHA, 1, ContentType::Mask),
+        CLAUDE_SPLAT_ID => (CLAUDE_SPLAT_ALPHA, 1, ContentType::Mask),
+        // Premultiplied, so averaging never bleeds a clear pixel's colour into the mark.
+        EON_ICON_ID => (eon_icon?, 4, ContentType::Color),
         _ => return None,
     };
+    let size = (source.len() / channels).isqrt();
     let width = usize::from(request.width);
     let height = usize::from(request.height);
     if width == 0 || height == 0 {
         return None;
     }
-    let mut data = vec![0; width * height];
+    let mut data = vec![0; width * height * channels];
     for y in 0..height {
-        let top = y * QUOTA_ICON_SIZE / height;
-        let bottom = ((y + 1) * QUOTA_ICON_SIZE)
-            .div_ceil(height)
-            .max(top + 1)
-            .min(QUOTA_ICON_SIZE);
+        let top = y * size / height;
+        let bottom = ((y + 1) * size).div_ceil(height).max(top + 1).min(size);
         for x in 0..width {
-            let left = x * QUOTA_ICON_SIZE / width;
-            let right = ((x + 1) * QUOTA_ICON_SIZE)
-                .div_ceil(width)
-                .max(left + 1)
-                .min(QUOTA_ICON_SIZE);
-            let mut alpha = 0_u64;
+            let left = x * size / width;
+            let right = ((x + 1) * size).div_ceil(width).max(left + 1).min(size);
+            let mut sums = [0_u64; 4];
             let count = ((right - left) * (bottom - top)) as u64;
             for source_y in top..bottom {
                 for source_x in left..right {
-                    alpha += u64::from(source[source_y * QUOTA_ICON_SIZE + source_x]);
+                    let pixel = (source_y * size + source_x) * channels;
+                    for (sum, value) in sums.iter_mut().zip(&source[pixel..pixel + channels]) {
+                        *sum += u64::from(*value);
+                    }
                 }
             }
-            data[y * width + x] = (alpha / count) as u8;
+            let pixel = &mut data[(y * width + x) * channels..][..channels];
+            if let [red, green, blue, alpha] = pixel {
+                // Glyphon blends colour glyphs with straight alpha.
+                let coverage = sums[3];
+                for (channel, sum) in [red, green, blue].into_iter().zip(sums) {
+                    *channel = (sum * 255 + coverage / 2)
+                        .checked_div(coverage)
+                        .map_or(0, |value| value.min(255) as u8);
+                }
+                *alpha = (coverage / count) as u8;
+            } else {
+                pixel[0] = (sums[0] / count) as u8;
+            }
         }
     }
-    Some(RasterizedCustomGlyph {
-        data,
-        content_type: ContentType::Mask,
-    })
+    Some(RasterizedCustomGlyph { data, content_type })
 }
 
 /// A working badge's phases, Nova's braille frames ⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏, each as its offset from
@@ -1214,6 +1394,9 @@ impl Renderer {
                 .push_badge(*badge, Some(palette::BAR_BACKGROUND), rectangles);
         }
         rectangles.clip = None;
+        if let Some(icon) = workspace.eon_icon {
+            self.push_bar_icon(EON_ICON_ID, palette::VERSION_TEXT, icon, None);
+        }
         // The workspace label shares the tabs' band but reads as a bar widget, with the header
         // controls' hover, pressed and focus states while it opens the picker.
         if let Some(label) = &workspace.workspace_label {
@@ -1328,8 +1511,22 @@ impl Renderer {
             if control.rect.width <= 0.0 {
                 continue;
             }
-            let content = workspace.bar_item_rect(control.rect, self.metrics);
-            let visual = header_item_visual(content, self.metrics.padding);
+            // The button centres on the glyph, which Close keeps one bar edge from the window's.
+            let half =
+                (control.centre - control.rect.left).min(control.rect.right() - control.centre);
+            let button = SceneRect {
+                left: control.centre - half,
+                width: half * 2.0,
+                ..control.rect
+            };
+            let content = workspace.bar_item_rect(button, self.metrics);
+            // Shortcuts is a round button as tall as the tab pills, like the Eon icon.
+            let round = control.kind == WorkspaceHeaderControl::Shortcuts;
+            let visual = if round {
+                workspace.round_button_rect(&control, self.metrics)
+            } else {
+                header_item_visual(content, self.metrics.padding)
+            };
             let hovered = self.header.hovers(WorkspaceFocus::Header(control.kind), "");
             let pressed = self.header.pressed_header == Some(control.kind);
             let focused = focus == WorkspaceFocus::Header(control.kind);
@@ -1343,11 +1540,42 @@ impl Renderer {
             rectangles.push_rounded(visual, visual.height / 2.0, fill);
             if focused {
                 rectangles.push_rounded_outline(visual, visual.height / 2.0, palette::ACCENT);
+            } else if round {
+                push_bar_widget(rectangles, visual, self.border_width, self.metrics.scale);
             }
-            let glyph_width = self.metrics.width.min(control.rect.width);
+            // The round button centres the glyph's ink, not its layout box, and Close's ink keeps
+            // equal right and top insets at the window's corner.
+            let placed = placed_control_glyph(
+                &mut self.fonts.font_system,
+                &mut self.swash_cache,
+                self.metrics,
+                workspace,
+                &control,
+            );
+            if let Some((buffer, left, top)) = placed {
+                let bounds = super::text_clip_bounds(control.rect);
+                let color = if pressed || focused {
+                    palette::PRIMARY_TEXT
+                } else {
+                    palette::SECONDARY_TEXT
+                };
+                self.text.push(PlacedText {
+                    buffer,
+                    custom_glyph: None,
+                    left,
+                    top,
+                    right: bounds.right,
+                    bottom: bounds.bottom,
+                    bound_left: bounds.left,
+                    bound_top: bounds.top,
+                    color: Color::rgba(color.r, color.g, color.b, 255),
+                });
+                continue;
+            }
+            let glyph_width = self.metrics.width.min(button.width);
             self.push_text_clipped(
                 control.kind.glyph(),
-                control.rect.left + (control.rect.width - glyph_width).max(0.0) / 2.0,
+                control.centre - glyph_width / 2.0,
                 content.top + (content.height - self.metrics.height).max(0.0) / 2.0,
                 glyph_width,
                 glyph_width,
@@ -1584,12 +1812,24 @@ impl Renderer {
         rect: SceneRect,
         clip: Option<SceneRect>,
     ) {
-        let Some(bounds) = clip.map_or(Some(rect), |clip| rect.intersection(clip)) else {
-            return;
-        };
         let (id, color) = match provider {
             QuotaProvider::Codex => (OPENAI_BLOSSOM_ID, palette::QUOTA_ICON_CODEX),
             QuotaProvider::Claude => (CLAUDE_SPLAT_ID, palette::QUOTA_ICON_CLAUDE),
+        };
+        self.push_bar_icon(id, color, rect, clip);
+    }
+
+    /// Draws the custom glyph `id` in `rect`, a mask tinted `color` or a colour image as it is,
+    /// cut to `clip` when one is given.
+    fn push_bar_icon(
+        &mut self,
+        id: u16,
+        color: SceneColor,
+        rect: SceneRect,
+        clip: Option<SceneRect>,
+    ) {
+        let Some(bounds) = clip.map_or(Some(rect), |clip| rect.intersection(clip)) else {
+            return;
         };
         let mut buffer = Buffer::new_empty(Metrics::new(rect.height, rect.height));
         buffer.set_size(Some(rect.width), Some(rect.height));
@@ -1618,6 +1858,209 @@ mod tests {
     use super::super::*;
     use super::*;
     use glyphon::cosmic_text::SubpixelBin;
+
+    /// The ink box of `buffer` as glyphon draws it from `left` and `top`: left, top, right and
+    /// bottom in physical pixels.
+    fn drawn_ink(
+        font_system: &mut FontSystem,
+        buffer: &Buffer,
+        left: f32,
+        top: f32,
+    ) -> (i32, i32, i32, i32) {
+        let mut swash_cache = SwashCache::new();
+        let mut ink = (i32::MAX, i32::MAX, i32::MIN, i32::MIN);
+        for run in buffer.layout_runs() {
+            for glyph in run.glyphs {
+                let physical = glyph.physical((left, top), 1.0);
+                let image = swash_cache
+                    .get_image_uncached(font_system, physical.cache_key)
+                    .expect("the bar glyph should rasterize");
+                let x = physical.x + image.placement.left;
+                let y = run.line_y.round() as i32 + physical.y - image.placement.top;
+                ink = (
+                    ink.0.min(x),
+                    ink.1.min(y),
+                    ink.2.max(x + image.placement.width as i32),
+                    ink.3.max(y + image.placement.height as i32),
+                );
+            }
+        }
+        ink
+    }
+
+    #[test]
+    fn close_glyph_ink_keeps_equal_right_and_top_insets() {
+        let mut font_system = FontSystem::new();
+        let mut swash_cache = SwashCache::new();
+        let glyph = WorkspaceHeaderControl::CloseTab.glyph();
+        for scale in [1.0, 1.25, 2.0] {
+            let metrics = CellMetrics::for_scale(scale);
+            // The bar's centre line on whole, half and quarter pixels; the window's right edge.
+            for (centre_y, right) in [(25.0, 1920.0), (31.5, 1600.0), (49.25, 3840.0)] {
+                // A corner target as wide as the bar is tall.
+                let target = SceneRect {
+                    left: right - centre_y * 2.0,
+                    top: 0.0,
+                    width: centre_y * 2.0,
+                    height: centre_y * 2.0,
+                };
+                let (buffer, left, top) = ink_cornered_glyph(
+                    &mut font_system,
+                    &mut swash_cache,
+                    metrics,
+                    glyph,
+                    (right - centre_y, centre_y),
+                    target,
+                );
+                assert_eq!((left.fract(), top.fract()), (0.0, 0.0));
+                let ink = drawn_ink(&mut font_system, &buffer, left, top);
+                assert!(ink.2 > ink.0 && ink.3 > ink.1, "{scale}: the glyph has ink");
+                assert_eq!(
+                    right as i32 - ink.2,
+                    ink.1,
+                    "{scale}: right and top ink insets"
+                );
+                let ink_centre_y = (ink.1 + ink.3) as f32 / 2.0;
+                assert!(
+                    (ink_centre_y - centre_y).abs() <= 0.5,
+                    "{scale}: ink centre {ink_centre_y}, bar centre {centre_y}"
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn placed_control_glyphs_stay_inside_their_targets() {
+        use eon_workspace_protocol::v30::{Column, Pane, PopupGeometry, Sidebar, Snapshot, Tab};
+        let snapshot = Snapshot {
+            workspace: "w1".into(),
+            active_workspace: "w1".into(),
+            workspaces: Vec::new(),
+            active_tab: "t1".into(),
+            geometry: PopupGeometry {
+                side_margin: 8.0,
+                vertical_margin: 4.0,
+            },
+            entries: Vec::new(),
+            tabs: vec![Tab {
+                id: "t1".into(),
+                directory: b"/tmp".to_vec(),
+                pending: false,
+                selected_pane: Some("p1".into()),
+                selected_popup: None,
+                columns: vec![Column {
+                    panes: vec![Pane {
+                        label: "p1".into(),
+                        pinned_name: None,
+                        id: "p1".into(),
+                        session: "s1".into(),
+                        endpoint: b"/tmp/p1.sock".to_vec(),
+                        live: true,
+                        attention: None,
+                    }],
+                    expanded: "p1".into(),
+                }],
+                popups: Vec::new(),
+                attention_rollup: None,
+            }],
+            codex_quota: None,
+            claude_quota: None,
+            codex_quota_failure: None,
+            claude_quota_failure: None,
+            running: None,
+            busy: None,
+            sidebar: Sidebar::Open,
+            attention_queue: Vec::new(),
+        };
+        let mut font_system = FontSystem::new();
+        let mut swash_cache = SwashCache::new();
+        for scale in [1.0, 1.25, 2.0] {
+            let metrics = CellMetrics::for_scale(scale);
+            for logical_width in [100, 120, 160, 1280] {
+                let width = (f64::from(logical_width) * scale) as u32;
+                let workspace = WorkspaceScene::from_snapshot_with_bar(
+                    &snapshot,
+                    crate::EonBar {
+                        version: Some("9.8.7"),
+                        icon: true,
+                        ..crate::EonBar::default()
+                    },
+                    PhysicalSize::new(width, 600),
+                    metrics,
+                    0.0,
+                    0.0,
+                    |_, text| {
+                        (
+                            text.to_owned(),
+                            text.chars().count() as f32 * 10.0 * scale as f32,
+                        )
+                    },
+                    None,
+                );
+                let mut placed = 0;
+                for control in &workspace.controls {
+                    if control.rect.width <= 0.0 {
+                        continue;
+                    }
+                    let Some((buffer, left, top)) = placed_control_glyph(
+                        &mut font_system,
+                        &mut swash_cache,
+                        metrics,
+                        &workspace,
+                        control,
+                    ) else {
+                        continue;
+                    };
+                    placed += 1;
+                    // Every pixel of ink lies inside the target the glyph is clipped to.
+                    let ink = drawn_ink(&mut font_system, &buffer, left, top);
+                    let bounds = super::super::text_clip_bounds(control.rect);
+                    let at = format!("{:?} at {scale}, {logical_width} px", control.kind);
+                    assert!(ink.2 > ink.0 && ink.3 > ink.1, "{at}: the glyph has ink");
+                    assert!(
+                        ink.0 >= bounds.left
+                            && ink.2 <= bounds.right
+                            && ink.1 >= bounds.top
+                            && ink.3 <= bounds.bottom,
+                        "{at}: ink {ink:?} outside {:?}",
+                        (bounds.left, bounds.top, bounds.right, bounds.bottom)
+                    );
+                    // With room, Close keeps equal right and top ink insets.
+                    if control.kind == WorkspaceHeaderControl::CloseTab && logical_width >= 160 {
+                        assert_eq!(width as i32 - ink.2, ink.1, "{at}");
+                    }
+                }
+                assert_eq!(
+                    placed, 2,
+                    "Shortcuts and Close at {scale}, {logical_width} px"
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn round_shortcuts_glyph_centres_its_ink_on_the_circle() {
+        let mut font_system = FontSystem::new();
+        let mut swash_cache = SwashCache::new();
+        let glyph = WorkspaceHeaderControl::Shortcuts.glyph();
+        for scale in [1.0, 1.25, 2.0] {
+            let metrics = CellMetrics::for_scale(scale);
+            // Circle centres fall on whole, half and quarter pixels.
+            for centre in [(16.0, 20.0), (16.5, 20.5), (40.25, 23.75), (1203.5, 19.0)] {
+                let (buffer, left, top) =
+                    ink_centred_glyph(&mut font_system, &mut swash_cache, metrics, glyph, centre);
+                assert_eq!((left.fract(), top.fract()), (0.0, 0.0));
+                let ink = drawn_ink(&mut font_system, &buffer, left, top);
+                assert!(ink.2 > ink.0 && ink.3 > ink.1, "{scale}: the glyph has ink");
+                let ink_centre = ((ink.0 + ink.2) as f32 / 2.0, (ink.1 + ink.3) as f32 / 2.0);
+                assert!(
+                    (ink_centre.0 - centre.0).abs() <= 0.5
+                        && (ink_centre.1 - centre.1).abs() <= 0.5,
+                    "{scale}: ink centre {ink_centre:?}, circle centre {centre:?}"
+                );
+            }
+        }
+    }
 
     #[test]
     fn quota_pace_gradient_is_ordered_readable_and_colors_only_judged_windows() {
@@ -2099,14 +2542,17 @@ mod tests {
             (CLAUDE_SPLAT_ID, CLAUDE_SPLAT_ALPHA),
         ] {
             for size in [16, 20, 32, 104] {
-                let image = rasterize_quota_icon(RasterizeCustomGlyphRequest {
-                    id,
-                    width: size,
-                    height: size,
-                    x_bin: SubpixelBin::Zero,
-                    y_bin: SubpixelBin::Zero,
-                    scale: f32::from(size) / 16.0,
-                })
+                let image = rasterize_bar_icon(
+                    RasterizeCustomGlyphRequest {
+                        id,
+                        width: size,
+                        height: size,
+                        x_bin: SubpixelBin::Zero,
+                        y_bin: SubpixelBin::Zero,
+                        scale: f32::from(size) / 16.0,
+                    },
+                    None,
+                )
                 .unwrap();
                 assert_eq!(image.content_type, ContentType::Mask);
                 assert_eq!(image.data.len(), usize::from(size * size));
@@ -2121,16 +2567,109 @@ mod tests {
             }
         }
         assert!(
-            rasterize_quota_icon(RasterizeCustomGlyphRequest {
-                id: CLAUDE_SPLAT_ID + 1,
-                width: 16,
-                height: 16,
-                x_bin: SubpixelBin::Zero,
-                y_bin: SubpixelBin::Zero,
-                scale: 1.0,
-            })
+            rasterize_bar_icon(
+                RasterizeCustomGlyphRequest {
+                    id: EON_ICON_ID + 1,
+                    width: 16,
+                    height: 16,
+                    x_bin: SubpixelBin::Zero,
+                    y_bin: SubpixelBin::Zero,
+                    scale: 1.0,
+                },
+                Some(&[255; 256]),
+            )
             .is_none()
         );
+    }
+
+    #[test]
+    fn eon_icon_loads_only_bounded_square_rgba_images() {
+        let root = std::env::temp_dir().join(format!("venus-eon-icon-{}", std::process::id()));
+        std::fs::create_dir_all(&root).unwrap();
+        let image = |name: &str, length: usize| {
+            let path = root.join(name);
+            std::fs::write(&path, vec![7; length]).unwrap();
+            path
+        };
+        for side in [16, 256, 512] {
+            let icon = read_eon_icon(&image("square", side * side * 4)).unwrap();
+            assert_eq!(icon.len(), side * side * 4);
+            assert!(icon.iter().all(|byte| *byte == 7));
+        }
+        for path in [
+            image("small", 15 * 15 * 4),
+            image("large", 513 * 513 * 4),
+            image("oblong", 256 * 255 * 4),
+            image("ragged", 256 * 256 * 4 - 1),
+            image("empty", 0),
+            root.join("missing"),
+            root.clone(),
+        ] {
+            let error = read_eon_icon(&path).unwrap_err();
+            assert!(error.contains(path.to_str().unwrap()), "{error}");
+        }
+        std::fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn eon_icon_rasterizes_in_its_own_colours_at_the_requested_pixels() {
+        // A 16-pixel image, clear but for its lower right quarter: solid orange, and orange at a
+        // fifth of full coverage in its last row, both premultiplied.
+        let image = (0..256)
+            .flat_map(|index| match (index / 16, index % 16) {
+                (15, 8..) => [40, 20, 10, 51],
+                (8.., 8..) => [200, 100, 50, 255],
+                _ => [0; 4],
+            })
+            .collect::<Vec<u8>>();
+        let request = |width, height| RasterizeCustomGlyphRequest {
+            id: EON_ICON_ID,
+            width,
+            height,
+            x_bin: SubpixelBin::Zero,
+            y_bin: SubpixelBin::Zero,
+            scale: 1.0,
+        };
+        for side in [1, 8, 11, 16, 22, 40] {
+            let glyph = rasterize_bar_icon(request(side, side), Some(&image)).unwrap();
+            assert_eq!(glyph.content_type, ContentType::Color);
+            assert_eq!(glyph.data.len(), usize::from(side) * usize::from(side) * 4);
+            // Glyphon blends straight alpha, so every coloured pixel keeps the colour whatever
+            // its coverage.
+            for pixel in glyph.data.chunks(4).filter(|pixel| pixel[3] > 0) {
+                assert!(pixel[0].abs_diff(200) <= 2, "{pixel:?}");
+                assert!(pixel[1].abs_diff(100) <= 2, "{pixel:?}");
+                assert!(pixel[2].abs_diff(50) <= 2, "{pixel:?}");
+            }
+            if side >= 8 {
+                assert_eq!(glyph.data[..4], [0; 4], "the clear corner stays clear");
+            }
+            if (8..=16).contains(&side) {
+                let row = usize::from(side) * 4;
+                let above_last = glyph.data.len() - row - 4;
+                assert_eq!(glyph.data[above_last..above_last + 4], [200, 100, 50, 255]);
+            }
+            if side == 16 {
+                assert_eq!(glyph.data[glyph.data.len() - 4..], [200, 100, 50, 51]);
+            }
+        }
+        assert!(rasterize_bar_icon(request(11, 11), None).is_none());
+        // The provider marks keep their ids beside the Eon icon.
+        for id in [OPENAI_BLOSSOM_ID, CLAUDE_SPLAT_ID] {
+            let quota = |eon_icon| {
+                let glyph = rasterize_bar_icon(
+                    RasterizeCustomGlyphRequest {
+                        id,
+                        ..request(16, 16)
+                    },
+                    eon_icon,
+                )
+                .unwrap();
+                assert_eq!(glyph.content_type, ContentType::Mask);
+                glyph.data
+            };
+            assert_eq!(quota(Some(&image)), quota(None));
+        }
     }
 
     #[test]
@@ -2306,6 +2845,7 @@ mod tests {
                     1,
                     2,
                     true,
+                    None,
                     FontSetup::new(&FontSettings::default()).unwrap(),
                 ))
                 .unwrap();

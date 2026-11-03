@@ -373,7 +373,8 @@ impl Snapshot {
                 .into_iter()
                 .chain([TAB_LIST, NEW_TAB])
                 .collect::<Vec<_>>();
-            // Quota chips and labels follow their visual order, which Eon chooses.
+            // Quota chips, labels and Shortcuts follow their visual order, which Eon chooses.
+            let shortcuts = workspace.controls[1];
             let mut items = workspace
                 .quotas
                 .iter()
@@ -389,12 +390,14 @@ impl Snapshot {
                     .into_iter()
                     .filter_map(|(id, label)| Some((label.as_ref()?.rect.left, id))),
                 )
+                .chain(
+                    workspace
+                        .has_control(WorkspaceHeaderControl::Shortcuts)
+                        .then_some((shortcuts.rect.left, SHORTCUTS)),
+                )
                 .collect::<Vec<_>>();
             items.sort_by(|a, b| a.0.total_cmp(&b.0));
             children.extend(items.into_iter().map(|(_, id)| id));
-            if workspace.has_control(WorkspaceHeaderControl::Shortcuts) {
-                children.push(SHORTCUTS);
-            }
             children.push(CLOSE_TAB);
             if workspace.sidebar().is_some() {
                 children.push(SIDEBAR);
@@ -1312,7 +1315,17 @@ mod tests {
                             let scene = project(Some("9.8.7-alpha.2+proof"));
                             assert_eq!(scene.tabs, baseline.tabs);
                             assert_eq!(scene.tab_viewport, baseline.tab_viewport);
-                            assert_eq!(scene.controls, baseline.controls);
+                            // Shortcuts moves before the version label; the rest stay.
+                            assert_eq!(scene.controls[0], baseline.controls[0]);
+                            assert_eq!(scene.controls[2], baseline.controls[2]);
+                            assert_eq!(
+                                scene.controls[1].rect.left,
+                                baseline.controls[1].rect.left
+                                    - scene
+                                        .version
+                                        .as_ref()
+                                        .map_or(0.0, |version| version.rect.width)
+                            );
                             assert_eq!(scene.terminal, baseline.terminal);
                             assert_eq!(scene.panes, baseline.panes);
                             assert_eq!(scene.quotas.len(), baseline.quotas.len());
@@ -1344,17 +1357,14 @@ mod tests {
                                 );
                                 assert!(scene.drag_region.width >= metrics.font_size * 4.0);
                                 assert!(scene.drag_region.right() <= version.rect.left);
-                                assert_eq!(version.rect.right(), scene.controls[1].rect.left);
-                                assert_eq!(
-                                    scene.controls[1].rect.right(),
-                                    scene.controls[2].rect.left
-                                );
+                                assert_eq!(scene.controls[1].rect.right(), version.rect.left);
+                                assert_eq!(version.rect.right(), scene.controls[2].rect.left);
                                 let children = node(&tree, WINDOW).children();
                                 let version_index =
                                     children.iter().position(|id| *id == VERSION).unwrap();
+                                assert_eq!(children[version_index + 1], CLOSE_TAB);
                                 if scene.has_control(WorkspaceHeaderControl::Shortcuts) {
-                                    assert_eq!(children[version_index + 1], SHORTCUTS);
-                                    assert_eq!(children[version_index + 2], CLOSE_TAB);
+                                    assert_eq!(children[version_index - 1], SHORTCUTS);
                                     let rect = scene.controls[1].rect;
                                     assert_eq!(
                                         scene.hit_test(
@@ -1365,14 +1375,12 @@ mod tests {
                                             WorkspaceHeaderControl::Shortcuts
                                         ))
                                     );
-                                } else {
-                                    assert_eq!(children[version_index + 1], CLOSE_TAB);
                                 }
                                 if let Some(quota) = scene.quotas.first() {
                                     assert_eq!(scene.drag_region.right(), quota.rect.left);
                                 }
                                 if let Some(quota) = scene.quotas.last() {
-                                    assert_eq!(quota.rect.right(), version.rect.left);
+                                    assert_eq!(quota.rect.right(), scene.controls[1].rect.left);
                                 }
                                 let node = node(&tree, VERSION);
                                 assert_eq!(node.role(), Role::Label);
@@ -1556,7 +1564,15 @@ mod tests {
                             let scene = project(logical_width, version, Some(&clock));
                             assert_eq!(scene.tabs, baseline.tabs);
                             assert_eq!(scene.tab_viewport, baseline.tab_viewport);
-                            assert_eq!(scene.controls, baseline.controls);
+                            // Shortcuts' target may reach back over the space after the clock;
+                            // its glyph and right edge stay.
+                            assert_eq!(scene.controls[0], baseline.controls[0]);
+                            assert_eq!(scene.controls[2], baseline.controls[2]);
+                            assert_eq!(scene.controls[1].centre, baseline.controls[1].centre);
+                            assert_eq!(
+                                scene.controls[1].rect.right(),
+                                baseline.controls[1].rect.right()
+                            );
                             assert_eq!(scene.terminal, baseline.terminal);
                             assert_eq!(scene.panes, baseline.panes);
                             assert_eq!(
@@ -1602,15 +1618,7 @@ mod tests {
                                 5.0 * metrics.width + metrics.padding * 2.0
                             );
                             assert!(scene.drag_region.width >= metrics.font_size * 4.0);
-                            assert_eq!(
-                                shown.rect.right(),
-                                scene
-                                    .version
-                                    .as_ref()
-                                    .map_or(scene.controls[1].rect.left, |version| version
-                                        .rect
-                                        .left)
-                            );
+                            assert_eq!(shown.rect.right(), scene.controls[1].rect.left);
                             assert_eq!(
                                 scene
                                     .quotas
@@ -1634,7 +1642,10 @@ mod tests {
                                 children[index - 1],
                                 scene.quotas.last().map_or(NEW_TAB, quota_id)
                             );
-                            assert_eq!(children[index + 1] == VERSION, version.is_some());
+                            assert_eq!(
+                                children[index + 1..index + 3] == [SHORTCUTS, VERSION],
+                                version.is_some()
+                            );
                             let node = node(&tree, CLOCK);
                             assert_eq!(node.role(), Role::Label);
                             assert_eq!(
@@ -1782,7 +1793,6 @@ mod tests {
                     (RAM, scene.ram.as_ref()),
                     (DISK, scene.disk.as_ref()),
                     (CLOCK, scene.clock.as_ref()),
-                    (VERSION, scene.version.as_ref()),
                 ]
                 .into_iter()
                 .filter_map(|(id, label)| Some((id, label?)))
@@ -1805,6 +1815,9 @@ mod tests {
                     );
                 }
                 assert_eq!(left, scene.controls[1].rect.left);
+                if let Some(version) = &scene.version {
+                    assert_eq!(version.rect.left, scene.controls[1].rect.right());
+                }
                 assert!(scene.drag_region.width >= metrics.font_size * 4.0);
                 assert_eq!(scene.drag_region.right(), scene.quotas[0].rect.left);
                 for (label, hit) in [
@@ -1927,11 +1940,13 @@ mod tests {
                 EonBar {
                     items,
                     version: Some("9.8.7"),
+                    icon: false,
                     cpu: Some(&cpu),
                     ram: Some(&ram),
                     disk: None,
                     clock: Some(&clock),
                     workspace_picker: None,
+                    scoped_windows: &[],
                 },
                 size,
                 metrics,
@@ -1958,18 +1973,20 @@ mod tests {
             panic!("both quota chips show");
         };
         assert_eq!(claude.provider.name(), "Claude");
+        // The version label keeps its place between Shortcuts and Close.
         let rects = [
             scene.clock.as_ref().unwrap().rect,
             claude.rect,
-            scene.version.as_ref().unwrap().rect,
             scene.cpu.as_ref().unwrap().rect,
             codex.rect,
+            scene.controls[1].rect,
+            scene.version.as_ref().unwrap().rect,
+            scene.controls[2].rect,
         ];
         assert_eq!(scene.drag_region.right(), rects[0].left);
         for pair in rects.windows(2) {
             assert_eq!(pair[0].right(), pair[1].left);
         }
-        assert_eq!(rects[4].right(), scene.controls[1].rect.left);
         assert_eq!(codex.logo.left, codex.rect.left + metrics.padding);
         let mut accessible = Snapshot::new(size);
         accessible.set_workspace(Some(&scene));
@@ -1977,14 +1994,15 @@ mod tests {
         let children = node(&tree, WINDOW).children();
         let start = children.iter().position(|id| *id == NEW_TAB).unwrap() + 1;
         assert_eq!(
-            children[start..start + 6],
+            children[start..start + 7],
             [
                 CLOCK,
                 quota_id(claude),
-                VERSION,
                 CPU,
                 quota_id(codex),
-                SHORTCUTS
+                SHORTCUTS,
+                VERSION,
+                CLOSE_TAB
             ]
         );
         assert!(tree.nodes.iter().all(|(id, _)| *id != RAM));

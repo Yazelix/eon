@@ -4,7 +4,7 @@ use crate::{
     render::{CellMetrics, FALLBACK_CAP_HEIGHT_EM},
 };
 use eon_workspace_protocol::v30::{
-    ALT, Attention, AttentionKind, AttentionState, BusyTerminals, ClaudeQuotaState,
+    ALT, Attention, AttentionKind, AttentionState, BusyTerminals, ClaudeQuota, ClaudeQuotaState,
     CodexQuotaState, PopupEntry, QuotaWindow, SHIFT, Sidebar, Snapshot, Tab, TargetId,
 };
 use orbit_protocol::{
@@ -283,7 +283,7 @@ impl TabBadge {
 }
 
 /// What the agent sidebar's rows need besides the snapshot (VEN-C30).
-#[derive(Default)]
+#[derive(Clone, Copy, Default)]
 pub struct SidebarView<'a> {
     /// The wall-clock Unix milliseconds that row ages count to.
     pub now: u64,
@@ -510,6 +510,8 @@ impl WorkspaceHeaderControl {
 pub(crate) struct WorkspaceControl {
     pub(crate) kind: WorkspaceHeaderControl,
     pub(crate) rect: SceneRect,
+    /// The horizontal centre of the control's glyph and painted button.
+    pub(crate) centre: f32,
     pub(crate) label: &'static str,
 }
 
@@ -663,6 +665,8 @@ impl BarItem {
 pub struct EonBar<'a> {
     pub items: &'a [BarItem],
     pub version: Option<&'a str>,
+    /// Whether Eon supplied a readable icon to lead the bar.
+    pub icon: bool,
     pub cpu: Option<&'a CpuUse>,
     pub ram: Option<&'a RamUse>,
     pub disk: Option<&'a DiskUse>,
@@ -670,6 +674,43 @@ pub struct EonBar<'a> {
     /// The `workspaces` popup entry's label and chord, while Eon configures that entry; the
     /// workspace label then opens it.
     pub workspace_picker: Option<&'a str>,
+    /// Claude's scoped windows as of its latest read, which keep their room in the bar after
+    /// they reset ([`ScopedWindows`]).
+    pub scoped_windows: &'a [(String, u32)],
+}
+
+/// The scoped windows Claude reported at its latest read. The runtime drops a window at its
+/// reset until the next read; remembering it until then, or until Claude's quota goes away,
+/// keeps every reset from showing or hiding the Eon icon.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct ScopedWindows {
+    observed_at: Option<u64>,
+    windows: Vec<(String, u32)>,
+}
+
+impl ScopedWindows {
+    pub fn observe(&mut self, quota: Option<&ClaudeQuota>) {
+        let Some(quota) = quota else {
+            *self = Self::default();
+            return;
+        };
+        if self.observed_at != Some(quota.observed_at) {
+            self.observed_at = Some(quota.observed_at);
+            self.windows.clear();
+        }
+        for window in &quota.windows {
+            if let Some(scope) = &window.scope {
+                let window = (scope.clone(), window.duration_minutes);
+                if !self.windows.contains(&window) {
+                    self.windows.push(window);
+                }
+            }
+        }
+    }
+
+    pub fn windows(&self) -> &[(String, u32)] {
+        &self.windows
+    }
 }
 
 impl Default for EonBar<'_> {
@@ -677,11 +718,13 @@ impl Default for EonBar<'_> {
         Self {
             items: &BarItem::DEFAULT,
             version: None,
+            icon: false,
             cpu: None,
             ram: None,
             disk: None,
             clock: None,
             workspace_picker: None,
+            scoped_windows: &[],
         }
     }
 }
@@ -1538,6 +1581,13 @@ pub struct WorkspaceScene {
     /// The tab viewport less the columns its edge badges take, so no label is drawn over them.
     pub(crate) tab_label_clip: SceneRect,
     pub(crate) header: SceneRect,
+    /// The decorative Eon icon at the bar's leading edge, before the workspace label and tabs,
+    /// while it shows.
+    pub(crate) eon_icon: Option<SceneRect>,
+    /// Whether the bar shows everything it was asked to as a wide window would: the workspace
+    /// label, every tab at its full width, every quota chip and every listed reading and version
+    /// label that has data.
+    bar_complete: bool,
     /// The shown workspace's label before the tabs, while it shows.
     pub(crate) workspace_label: Option<WorkspaceNameLabel>,
     pub(crate) drag_region: SceneRect,
@@ -1645,6 +1695,13 @@ fn bar_pill_band(metrics: CellMetrics, tab_height: f32, card_top: f32) -> Range<
     }
 }
 
+/// The bar's edge: how far the painted band's centre lies below the window's top. The close
+/// glyph's centre lies as far from the window's right edge, and the Eon icon's from its left.
+fn bar_edge(metrics: CellMetrics, tab_height: f32, card_top: f32) -> f32 {
+    let band = bar_pill_band(metrics, tab_height, card_top);
+    (band.start + band.end) / 2.0
+}
+
 /// Leave the bar's top gap before the title capitals, using the renderer's title placement.
 fn bar_title_margin(metrics: CellMetrics) -> f32 {
     let title = chrome_title_metrics(metrics);
@@ -1702,6 +1759,19 @@ pub(crate) fn chrome_title_metrics(metrics: CellMetrics) -> ChromeTitleMetrics {
             |cap| metrics.height / 2.0 + metrics.font_size * cap,
         ),
     }
+}
+
+/// The Eon icon's square: two logical pixels shorter than the tab pills' `band`, its centre as
+/// far from the window's left as the band's from its top, in whole pixels.
+pub(crate) fn eon_icon_rect(band: Range<f32>, scale: f32) -> Option<SceneRect> {
+    let side = (band.end - band.start - 2.0 * scale).round().max(1.0);
+    let inset = ((band.start + band.end - side) / 2.0).round().max(0.0);
+    (side.is_finite() && inset.is_finite()).then_some(SceneRect {
+        left: inset,
+        top: inset,
+        width: side,
+        height: side,
+    })
 }
 
 /// Snap the complete title midpoint once, in physical pixels.
@@ -2047,6 +2117,7 @@ fn card_area(
 /// The header's regions. A requested lead before the tab viewport, the workspace label and the
 /// gap after it, is kept while the tabs keep their minimum after it, and quota chips show only
 /// once it is kept; the tab viewport starts after it.
+#[allow(clippy::too_many_arguments)]
 fn workspace_header_geometry(
     size: PhysicalSize<u32>,
     tab_height: f32,
@@ -2054,6 +2125,7 @@ fn workspace_header_geometry(
     requested_lead: f32,
     requested_quota_width: Option<f32>,
     show_shortcuts: bool,
+    edge: f32,
     entries: &[PopupEntry],
 ) -> (
     SceneRect,
@@ -2075,7 +2147,11 @@ fn workspace_header_geometry(
     let control_count = if show_shortcuts { 3.0 } else { 2.0 };
     let control_width =
         tab_row(metrics, tab_height).min(((width - minimum_tabs) / control_count).max(0.0));
-    let controls_width = control_width * control_count;
+    // Close reaches the window's edge, its glyph `edge` from it, while the tabs keep their minimum.
+    let close_extra = (edge - control_width / 2.0)
+        .min(width - minimum_tabs - control_width * control_count)
+        .max(0.0);
+    let controls_width = control_width * control_count + close_extra;
     let drag_width =
         (metrics.font_size * 4.0).min((width - controls_width - minimum_tabs).max(0.0));
     // The room past the tabs' minimum, which the lead takes before any quota chip.
@@ -2116,10 +2192,10 @@ fn workspace_header_geometry(
     ];
     let mut left = drag_region.right() + quota_width;
     let controls = control_kinds.map(|kind| {
-        let width = if kind == WorkspaceHeaderControl::Shortcuts && !show_shortcuts {
-            0.0
-        } else {
-            control_width
+        let width = match kind {
+            WorkspaceHeaderControl::Shortcuts if !show_shortcuts => 0.0,
+            WorkspaceHeaderControl::CloseTab => control_width + close_extra,
+            _ => control_width,
         };
         let control = WorkspaceControl {
             kind,
@@ -2129,6 +2205,7 @@ fn workspace_header_geometry(
                 height: tab_height,
                 ..SceneRect::default()
             },
+            centre: left + width.min(control_width) / 2.0,
             label: kind.label(entries),
         };
         left += width;
@@ -2368,6 +2445,24 @@ impl WorkspaceScene {
         }
     }
 
+    /// A round header button's circle: as tall as the tab pills, centred on the control's glyph
+    /// and the pills' band, in whole pixels, never wider than the button.
+    pub(crate) fn round_button_rect(
+        &self,
+        control: &WorkspaceControl,
+        metrics: CellMetrics,
+    ) -> SceneRect {
+        let band = self.bar_pill_rect(control.rect, metrics);
+        let half = (control.centre - control.rect.left).min(control.rect.right() - control.centre);
+        let side = band.height.round().min(half * 2.0).max(0.0);
+        SceneRect {
+            left: (control.centre - side / 2.0).round(),
+            top: (band.top + (band.height - side) / 2.0).round(),
+            width: side,
+            height: side,
+        }
+    }
+
     /// Centre existing content and control shapes on the band without resizing them.
     pub(crate) fn bar_item_rect(&self, rect: SceneRect, metrics: CellMetrics) -> SceneRect {
         let band = self.bar_pill_rect(rect, metrics);
@@ -2382,8 +2477,9 @@ impl WorkspaceScene {
     pub(crate) fn tab_text_width(size: PhysicalSize<u32>, metrics: CellMetrics) -> f32 {
         // Header widths depend only on the pill row, never on the header's extra inset.
         let tab_height = header_heights(metrics).0.min(size.height as f32);
+        let edge = bar_edge(metrics, tab_height, tab_height);
         let (_, tab_viewport, _, _, _) =
-            workspace_header_geometry(size, tab_height, metrics, 0.0, None, true, &[]);
+            workspace_header_geometry(size, tab_height, metrics, 0.0, None, true, edge, &[]);
         (tab_max_width(metrics, tab_viewport.width) - metrics.padding * 2.0)
             .max(0.0)
             .floor()
@@ -2496,6 +2592,55 @@ impl WorkspaceScene {
         zoom: bool,
         sidebar_view: SidebarView<'_>,
     ) -> Self {
+        // The icon yields first and stays gone at every narrower width: it shows only while the
+        // bar shows everything else with it, every listed live item at the widest it can be, and
+        // the whole tab strip fits unscrolled. None of that depends on the tab scroll or on what
+        // a quota, a reading or the clock shows, and all of it only fails as the window narrows.
+        let icon = bar.icon && {
+            let widest = Self::layout(
+                snapshot,
+                EonBar { ..bar },
+                size,
+                metrics,
+                0.0,
+                0.0,
+                &mut header_text,
+                hints.clone(),
+                zoom,
+                sidebar_view,
+                true,
+            );
+            widest.eon_icon.is_some() && widest.bar_complete && widest.tab_scroll_limit <= 0.5
+        };
+        Self::layout(
+            snapshot,
+            EonBar { icon, ..bar },
+            size,
+            metrics,
+            tab_scroll,
+            pane_scroll,
+            &mut header_text,
+            hints,
+            zoom,
+            sidebar_view,
+            false,
+        )
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    fn layout(
+        snapshot: &Snapshot,
+        bar: EonBar<'_>,
+        size: PhysicalSize<u32>,
+        metrics: CellMetrics,
+        tab_scroll: f32,
+        pane_scroll: f32,
+        mut header_text: impl FnMut(HeaderText<'_>, &str) -> (String, f32),
+        hints: Option<ShortcutHintsScene>,
+        zoom: bool,
+        sidebar_view: SidebarView<'_>,
+        widest: bool,
+    ) -> Self {
         let width = size.width as f32;
         let height = size.height as f32;
         let pane_height = header_heights(metrics).1;
@@ -2516,6 +2661,34 @@ impl WorkspaceScene {
         let tab_height = header_height(metrics, height, content_height, minimum_height);
         let gap = tab_gap(metrics, tab_height);
         let inset = tab_inset(metrics, tab_height);
+        // Every card shares this area; a popup or an empty tab uses all of it as one card. The
+        // area follows the tab's columns whether or not a popup covers them, so toggling a popup
+        // keeps the outer card edges: each column needs one padded cell below its first header.
+        // A visible sidebar narrows it to the content area at its right.
+        let cards = |left: f32| {
+            card_area(
+                left,
+                width - left,
+                active.columns.len().max(1),
+                tab_height,
+                content_height,
+                hints.is_some(),
+                minimum_height,
+                metrics,
+            )
+        };
+        let sidebar = sidebar_rect(snapshot.sidebar, width, cards(0.0), metrics);
+        let pane_viewport = cards(sidebar.map_or(0.0, SceneRect::right));
+        let pill_band = bar_pill_band(metrics, tab_height, pane_viewport.top);
+        let edge = bar_edge(metrics, tab_height, pane_viewport.top);
+        // The Eon icon is just shorter than the tab pills and its centre `edge` from the window's left
+        // and top, as the close glyph's is from its right and top. What follows it starts as far
+        // after it as it is from the window's left edge.
+        let mut eon_icon = bar
+            .icon
+            .then(|| eon_icon_rect(pill_band.clone(), metrics.scale))
+            .flatten();
+        let start = eon_icon.map_or(inset, |icon| icon.right() + icon.left);
         // The workspace label fits its name to a tab's widest text and keeps its position whole.
         let mut workspace_label = bar_workspace(snapshot).map(|(name, position, count)| {
             let (suffix, suffix_width) = if count >= 2 {
@@ -2527,7 +2700,7 @@ impl WorkspaceScene {
             let (fitted, name_width) = header_text(HeaderText::Fit(fit), name);
             WorkspaceNameLabel {
                 rect: SceneRect {
-                    left: inset,
+                    left: start,
                     top: inset,
                     width: (name_width + suffix_width).ceil() + metrics.padding * 2.0,
                     height: (tab_height - inset * 2.0).max(0.0),
@@ -2538,9 +2711,10 @@ impl WorkspaceScene {
                 badge: None,
             }
         });
-        let lead = workspace_label
-            .as_ref()
-            .map_or(0.0, |label| label.rect.right() + gap);
+        let lead = workspace_label.as_ref().map_or_else(
+            || eon_icon.map_or(0.0, |_| start),
+            |label| label.rect.right() + gap,
+        );
         let quota_texts = bar
             .items
             .iter()
@@ -2643,10 +2817,100 @@ impl WorkspaceScene {
                 }
             })
             .collect::<Vec<_>>();
+        if widest {
+            // Each provider with a quota fact reserves every chip it can show, at the widest
+            // text a window can have, every digit the font's widest: Codex two, Claude its two
+            // unscoped windows and each scoped one of its latest read, so a window resetting
+            // before the next read changes nothing.
+            let digit = ('0'..='9')
+                .map(|digit| (digit, header_text(HeaderText::Fact, &digit.to_string()).1))
+                .fold(('0', f32::MIN), |widest, digit| {
+                    if digit.1 > widest.1 { digit } else { widest }
+                })
+                .0;
+            let mut widest_text = |windows: &[(Option<&str>, u32)]| {
+                [(None, 5 * 60), (None, 7 * 24 * 60)]
+                    .iter()
+                    .chain(windows)
+                    .map(|&(scope, minutes)| {
+                        let label = format!(
+                            "{}/{} 100% old",
+                            quota_minutes(u64::from(minutes.saturating_sub(1)), minutes),
+                            quota_duration(minutes)
+                        );
+                        let label = match scope {
+                            Some(scope) => format!("{scope} {label}"),
+                            None => label,
+                        }
+                        .chars()
+                        .map(|c| if c.is_ascii_digit() { digit } else { c })
+                        .collect::<String>();
+                        header_text(HeaderText::Fact, &label).1
+                    })
+                    .fold(0.0, f32::max)
+            };
+            let mut reserved = Vec::new();
+            for item in bar.items {
+                let (provider, windows, count) =
+                    match (item, &snapshot.codex_quota, &snapshot.claude_quota) {
+                        (BarItem::CodexQuota, Some(quota), _) => (
+                            QuotaProvider::Codex,
+                            quota
+                                .windows
+                                .iter()
+                                .map(|window| (window.scope.as_deref(), window.duration_minutes))
+                                .collect::<Vec<_>>(),
+                            2,
+                        ),
+                        (BarItem::ClaudeQuota, _, Some(quota)) => {
+                            let mut windows = quota
+                                .windows
+                                .iter()
+                                .map(|window| (window.scope.as_deref(), window.duration_minutes))
+                                .collect::<Vec<_>>();
+                            for (scope, minutes) in bar.scoped_windows {
+                                if !windows.contains(&(Some(scope), *minutes)) {
+                                    windows.push((Some(scope), *minutes));
+                                }
+                            }
+                            let scoped =
+                                windows.iter().filter(|(scope, _)| scope.is_some()).count();
+                            (QuotaProvider::Claude, windows, 2 + scoped)
+                        }
+                        _ => continue,
+                    };
+                let width = widest_text(&windows) + quota_padding;
+                reserved.extend((0..count).map(|_| WorkspaceQuota {
+                    provider,
+                    window: None,
+                    rect: SceneRect {
+                        width,
+                        ..SceneRect::default()
+                    },
+                    logo: SceneRect::default(),
+                    accessible_label: String::new(),
+                    label: String::new(),
+                    pace: None,
+                    description: String::new(),
+                }));
+            }
+            quotas = reserved;
+        }
         let quota_count = quotas.len();
+        // A chip or reading before Shortcuts keeps the chips' own spacing from its round button:
+        // each chip's outline sits `chip_inset` inside its slot, and the circle inside its own.
+        let chip_inset = (metrics.padding / 3.0).min(tab_height / 4.0);
+        let button = tab_row(metrics, tab_height);
+        let circle = (pill_band.end - pill_band.start).round().min(button);
+        let before_shortcuts = if show_shortcuts {
+            (chip_inset - (button - circle) / 2.0).max(0.0)
+        } else {
+            0.0
+        };
         let geometry = loop {
-            let requested =
-                (!quotas.is_empty()).then(|| quotas.iter().map(|quota| quota.rect.width).sum());
+            let requested = (!quotas.is_empty()).then(|| {
+                quotas.iter().map(|quota| quota.rect.width).sum::<f32>() + before_shortcuts
+            });
             let geometry = workspace_header_geometry(
                 size,
                 tab_height,
@@ -2654,6 +2918,7 @@ impl WorkspaceScene {
                 lead,
                 requested,
                 show_shortcuts,
+                edge,
                 &snapshot.entries,
             );
             if geometry.3.is_some() || quotas.is_empty() {
@@ -2663,9 +2928,12 @@ impl WorkspaceScene {
             quotas.remove(0);
         };
         let (header, mut tab_viewport, mut drag_region, quota_rect, mut controls) = geometry;
-        // Without room for the tabs' minimum after it, the label is dropped.
-        if tab_viewport.left == 0.0 {
+        let mut spaced = !quotas.is_empty();
+        // Without room for the tabs' minimum after them, the label and the icon are dropped.
+        let crowded = tab_viewport.left == 0.0;
+        if crowded {
             workspace_label = None;
+            eon_icon = None;
         }
         let mut left = quota_rect.map_or(0.0, |rect| rect.left + controls[0].rect.width);
         for quota in &mut quotas {
@@ -2680,31 +2948,14 @@ impl WorkspaceScene {
             left = quota.rect.right();
         }
         let max_tab_width = tab_max_width(metrics, tab_viewport.width);
+        // Whether every tab keeps the width a wide window gives it.
+        let mut tabs_uncapped = true;
         let active_tab = snapshot
             .tabs
             .iter()
             .position(|tab| tab.id == snapshot.active_tab)
             .expect("EONW validates the active tab");
         let zoomed = Self::zoom_visible(snapshot, zoom);
-        // Every card shares this area; a popup or an empty tab uses all of it as one card. The
-        // area follows the tab's columns whether or not a popup covers them, so toggling a popup
-        // keeps the outer card edges: each column needs one padded cell below its first header.
-        // A visible sidebar narrows it to the content area at its right.
-        let cards = |left: f32| {
-            card_area(
-                left,
-                width - left,
-                active.columns.len().max(1),
-                tab_height,
-                content_height,
-                hints.is_some(),
-                minimum_height,
-                metrics,
-            )
-        };
-        let sidebar = sidebar_rect(snapshot.sidebar, width, cards(0.0), metrics);
-        let pane_viewport = cards(sidebar.map_or(0.0, SceneRect::right));
-        let pill_band = bar_pill_band(metrics, tab_height, pane_viewport.top);
         // Unlike tab badges, it shows with the sidebar, which lists only the shown workspace.
         if let Some(label) = &mut workspace_label
             && hidden_needs_input(snapshot)
@@ -2731,8 +2982,8 @@ impl WorkspaceScene {
             || (Vec::new(), Vec::new(), SceneRect::default()),
             |card| sidebar_contents(snapshot, card, metrics, sidebar_view),
         );
-        // Tabs follow the label's gap, or else the bar's left inset.
-        let mut tab_end = if workspace_label.is_some() {
+        // Tabs follow the label's or the icon's gap, or else the bar's left inset.
+        let mut tab_end = if workspace_label.is_some() || eon_icon.is_some() {
             tab_viewport.left
         } else {
             inset
@@ -2751,6 +3002,9 @@ impl WorkspaceScene {
                 let (label, text_width) = header_text(HeaderText::Tab(&tab.id), &label);
                 let tab_width = (text_width.ceil() + metrics.padding * 2.0)
                     .clamp((metrics.font_size * 4.0).min(max_tab_width), max_tab_width);
+                tabs_uncapped &= tab_width
+                    >= (text_width.ceil() + metrics.padding * 2.0)
+                        .clamp(metrics.font_size * 4.0, metrics.font_size * 17.5);
                 let left = tab_end;
                 tab_end = left + tab_width + gap;
                 let rect = SceneRect {
@@ -2793,6 +3047,7 @@ impl WorkspaceScene {
             })
             .collect();
         tab_viewport.width = tab_viewport.width.min(tab_end - tab_viewport.left);
+        controls[0].centre += tab_viewport.right() - controls[0].rect.left;
         controls[0].rect.left = tab_viewport.right();
         drag_region.left = controls[0].rect.right();
         drag_region.width = (quotas
@@ -2808,6 +3063,11 @@ impl WorkspaceScene {
         // CPU and RAM keep the width of `CPU 100%`, and disk that of `DISK 100%`, so the header
         // never shifts as they change.
         let readings = "CPU 100%".len();
+        // The widest layout reserves every listed reading and the clock, with or without data.
+        let placeholder = |item, label: &str, cells| {
+            (widest && reading(item))
+                .then(|| (label.to_owned(), String::new(), cells, Load::Normal))
+        };
         let mut labels = [
             bar.version
                 .filter(|_| shown(BarItem::Version))
@@ -2819,38 +3079,50 @@ impl WorkspaceScene {
                         Load::Normal,
                     )
                 }),
-            bar.cpu.filter(|_| reading(BarItem::Cpu)).map(|cpu| {
-                (
-                    cpu.label.clone(),
-                    cpu.description.clone(),
-                    readings,
-                    cpu.load,
-                )
-            }),
-            bar.ram.filter(|_| reading(BarItem::Ram)).map(|ram| {
-                (
-                    ram.label.clone(),
-                    ram.description.clone(),
-                    readings,
-                    ram.load,
-                )
-            }),
-            bar.disk.filter(|_| reading(BarItem::Disk)).map(|disk| {
-                (
-                    disk.label.clone(),
-                    disk.description.clone(),
-                    "DISK 100%".len(),
-                    disk.load,
-                )
-            }),
-            bar.clock.filter(|_| reading(BarItem::Clock)).map(|clock| {
-                (
-                    clock.label.clone(),
-                    clock.description.clone(),
-                    0,
-                    Load::Normal,
-                )
-            }),
+            bar.cpu
+                .filter(|_| reading(BarItem::Cpu))
+                .map(|cpu| {
+                    (
+                        cpu.label.clone(),
+                        cpu.description.clone(),
+                        readings,
+                        cpu.load,
+                    )
+                })
+                .or_else(|| placeholder(BarItem::Cpu, "CPU 100%", readings)),
+            bar.ram
+                .filter(|_| reading(BarItem::Ram))
+                .map(|ram| {
+                    (
+                        ram.label.clone(),
+                        ram.description.clone(),
+                        readings,
+                        ram.load,
+                    )
+                })
+                .or_else(|| placeholder(BarItem::Ram, "RAM 100%", readings)),
+            bar.disk
+                .filter(|_| reading(BarItem::Disk))
+                .map(|disk| {
+                    (
+                        disk.label.clone(),
+                        disk.description.clone(),
+                        "DISK 100%".len(),
+                        disk.load,
+                    )
+                })
+                .or_else(|| placeholder(BarItem::Disk, "DISK 100%", 0)),
+            bar.clock
+                .filter(|_| reading(BarItem::Clock))
+                .map(|clock| {
+                    (
+                        clock.label.clone(),
+                        clock.description.clone(),
+                        0,
+                        Load::Normal,
+                    )
+                })
+                .or_else(|| placeholder(BarItem::Clock, "00:00", 0)),
         ]
         .map(|label| {
             label.map(|(label, description, cells, load)| WorkspaceLabel {
@@ -2866,21 +3138,31 @@ impl WorkspaceScene {
                 load,
             })
         });
+        // The first reading to show before Shortcuts also takes the space before its button,
+        // unless a quota chip already took it.
         let mut fits = true;
-        for label in &mut labels {
+        for (index, label) in labels.iter_mut().enumerate() {
             let Some(width) = label.as_ref().map(|label| label.rect.width) else {
                 continue;
             };
+            let space = if index > 0 && !spaced {
+                before_shortcuts
+            } else {
+                0.0
+            };
             fits &= width.is_finite()
                 && width > 0.0
-                && width + metrics.font_size * 4.0 <= drag_region.width;
+                && width + space + metrics.font_size * 4.0 <= drag_region.width;
             if fits {
-                drag_region.width -= width;
+                drag_region.width -= width + space;
+                spaced |= index > 0;
             } else {
                 *label = None;
             }
         }
-        // Quota chips and labels sit in Eon's order between the drag region and Shortcuts.
+        let bar_complete = !crowded && tabs_uncapped && quotas.len() == quota_count && fits;
+        // Quota chips and labels sit in Eon's order between the drag region and Shortcuts, and
+        // the version label between Shortcuts and Close.
         let [version, cpu, ram, disk, clock] = labels;
         let mut labels = [
             (BarItem::Cpu, cpu),
@@ -2890,7 +3172,7 @@ impl WorkspaceScene {
             (BarItem::Version, version),
         ];
         let mut left = drag_region.right();
-        for item in bar.items {
+        for item in bar.items.iter().filter(|item| **item != BarItem::Version) {
             if let Some(label) = labels
                 .iter_mut()
                 .find_map(|(kind, label)| label.as_mut().filter(|_| kind == item))
@@ -2908,7 +3190,15 @@ impl WorkspaceScene {
                 }
             }
         }
-        let [(_, cpu), (_, ram), (_, disk), (_, clock), (_, version)] = labels;
+        let [(_, cpu), (_, ram), (_, disk), (_, clock), (_, mut version)] = labels;
+        // Shortcuts' target reaches back over that space, so it only grows.
+        let grow = if spaced { before_shortcuts } else { 0.0 };
+        controls[1].centre += left + grow - controls[1].rect.left;
+        controls[1].rect.left = left;
+        controls[1].rect.width += grow;
+        if let Some(version) = &mut version {
+            version.rect.left = controls[1].rect.right();
+        }
         let tab_scroll_limit = (tab_end - tab_viewport.right()).max(0.0);
         let active = tabs[active_tab].rect;
         // Revealing the first tab never scrolls.
@@ -2964,6 +3254,7 @@ impl WorkspaceScene {
                 edge_badges,
                 tab_label_clip,
                 header,
+                eon_icon,
                 workspace_label,
                 drag_region,
                 quotas,
@@ -3003,6 +3294,7 @@ impl WorkspaceScene {
                 tab_scroll,
                 pane_scroll: 0.0,
                 tab_scroll_limit,
+                bar_complete,
                 pane_scroll_limit: 0.0,
                 active_tab_scroll,
                 selected_pane_scroll: 0.0,
@@ -3145,6 +3437,7 @@ impl WorkspaceScene {
             edge_badges,
             tab_label_clip,
             header,
+            eon_icon,
             workspace_label,
             drag_region,
             quotas,
@@ -3171,6 +3464,7 @@ impl WorkspaceScene {
             tab_scroll,
             pane_scroll,
             tab_scroll_limit,
+            bar_complete,
             pane_scroll_limit,
             active_tab_scroll,
             selected_pane_scroll,

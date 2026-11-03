@@ -46,7 +46,8 @@ use cells::{
     cell_text_attrs, cell_text_segments, cursor_bounds, cursor_outline, fitted_cell_font,
     set_cell_layer, shape_cell_text,
 };
-use chrome::{HeaderInteraction, Spinners, fit_header_text, rasterize_quota_icon, spinners_turn};
+pub use chrome::read_eon_icon;
+use chrome::{HeaderInteraction, Spinners, fit_header_text, rasterize_bar_icon, spinners_turn};
 use cursor_trail::{CursorAnimation, build_tail_cursor};
 use images::{BandItem, DrawStep, ImageDraw, Images, draw_steps};
 
@@ -877,6 +878,8 @@ pub struct Renderer {
     terminal: TerminalLayer,
     header: HeaderInteraction,
     spinners: Spinners,
+    /// The Eon icon's premultiplied RGBA image, when Eon supplied a readable one.
+    eon_icon: Option<Arc<[u8]>>,
     cursor_tail: Option<(SceneColor, SceneColor, f32)>,
     clear: wgpu::Color,
     background_opacity: f32,
@@ -950,6 +953,7 @@ impl Renderer {
         border_width: u8,
         focus_border_width: u8,
         animate_working_badge: bool,
+        eon_icon: Option<Arc<[u8]>>,
         mut fonts: FontSetup,
     ) -> Result<Self, RenderError> {
         let size = nonzero(window.inner_size());
@@ -1132,6 +1136,7 @@ impl Renderer {
             },
             header: HeaderInteraction::default(),
             spinners: Spinners::new(spinners_turn),
+            eon_icon,
             cursor_tail: cursor_tail
                 .map(|(color, duration)| (color, cursor_outline(color), duration)),
             clear: clear_color(palette::TERMINAL_FALLBACK, background_opacity, srgb_target),
@@ -1305,6 +1310,7 @@ impl Renderer {
                     height: self.config.height,
                 },
             );
+            let eon_icon = self.eon_icon.as_deref();
             if self
                 .text_renderer
                 .prepare_with_custom(
@@ -1315,7 +1321,7 @@ impl Renderer {
                     &self.viewport,
                     text_areas(&self.text, self.text_overlay),
                     &mut self.swash_cache,
-                    rasterize_quota_icon,
+                    |request| rasterize_bar_icon(request, eon_icon),
                 )
                 .is_err()
             {
@@ -1329,7 +1335,7 @@ impl Renderer {
                         &self.viewport,
                         text_areas(&self.text, self.text_overlay),
                         &mut self.swash_cache,
-                        rasterize_quota_icon,
+                        |request| rasterize_bar_icon(request, eon_icon),
                     )
                     .map_err(display_error("the Venus glyph atlas is full"))?;
             }

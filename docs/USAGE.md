@@ -226,13 +226,20 @@ chooses the path the disk chip measures.
 A reading that can't be taken shows no label rather than 0%. A 24-hour clock
 follows and shows local time; hover it for the date and UTC offset, and it stays
 hidden if the local time zone can't be determined. The `EON <version>` label, in
-softened cyan, sits by default at the edge, just before `?` and `×`; it names
-the running supervisor, so updating the installation doesn't change it. `[bar]
-widgets` chooses which of these show and in what order (see
+softened cyan, sits between `?` and `×`; it names the running supervisor, so
+updating the installation doesn't change it. The Eon logo leads the bar, before
+the tabs. `[bar] widgets` chooses which of these show and in what order (see
 [Configuration](CONFIGURATION.md#configuration-behavior)). When the bar runs
-short of space the clock hides first, then disk, RAM, CPU and the version label,
-before any quota chip. See [Eon Bar](../venus/docs/PRESENTATION.md#eon-bar) for
-the details of each item.
+short of space the Eon logo hides first; then the clock, then disk, RAM, CPU
+and the version label, before any quota chip. The logo also hides whenever the
+tabs would not all fit beside it, however wide the window, so tabs never lose
+room to it, and it leaves room for each chip and reading at its widest, so a
+changing quota, reading or clock, or a quota window's reset, never shows or
+hides it. It can show or hide once, shifting the tabs, when a provider's quota
+first appears or goes away (as it does when all its windows reset before a
+read), or when a read finds the provider has gained or lost a scoped window.
+See [Eon Bar](../venus/docs/PRESENTATION.md#eon-bar) for the details of each
+item.
 
 The bottom hints bar starts visible. Alt+Shift+B hides or restores it for this
 window, returning or reserving its space without restarting terminals; the

@@ -62,6 +62,20 @@ installation, and proven contract changes.
   Alt+Shift+D detaches instead. The Shortcuts viewer lists it as "Quit: close
   the window, stop its terminals" and the hints bar shows `quit`
   (`eon-7cf0y.3`).
+- The Eon Bar starts with the Eon logo, in its own colours and just shorter
+  than the tab pills, before the tabs. The `?` button is a circle as tall as
+  the pills, the `EON <version>` label sits between `?` and `×` whatever its
+  place in `[bar] widgets`, and the logo and `×` sit as far from the window's
+  sides as the bar's centre is from its top, with the same space between the
+  logo and the first tab. The logo shows whatever `[bar] widgets` lists. On a
+  narrow window it hides first, leaving room for each chip and reading at its
+  widest so changing values and window resets never show or hide it (a
+  provider's quota first appearing or going away, or a read finding a scoped
+  window gained or lost, may, once), and
+  it hides whenever the tabs would not all fit beside it, however wide the
+  window.
+  Nix derives the icon from `assets/eon.png` (EON-C1, EON-C3, EON-C32;
+  `eon-369s`).
 - The bottom hints bar leaves more room on narrow windows: the `next agent`
   and `previous agent` hints are gone (Alt+G and Alt+Shift+G still work and
   stay in the Shortcuts viewer), the move hints read `mv tab` and `mv pane`,

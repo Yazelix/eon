@@ -178,16 +178,23 @@ is ignored with a warning. `[bar] show_version`, deprecated in v0.1.2, reads as
 `true` gives the built-in list. Any other value is a configuration error.
 
 `[bar] widgets` chooses which Eon Bar widgets show and their order, left to
-right between the tabs and the Shortcuts and Close buttons: the Codex and
-Claude quota chips, CPU, RAM and disk use, the local clock and
-`EON <version>`. Each name appears at most once. A widget left out doesn't
-show, `widgets = []` leaves only the tabs and buttons, and omitting the key
-uses the built-in list above. The list applies when a window next opens or
-reopens, and an unknown or repeated name is a configuration error. Narrow
-windows hide the clock first, then disk, RAM, CPU and the version, whatever
-the order, then quota chips one by one, the one closest to the tabs first. The
-version belongs to its running supervisor; updating the installation does not
-change it.
+right between the tabs and the Shortcuts button, except `version`, which sits
+between the Shortcuts and Close buttons: the Codex and Claude quota chips, CPU,
+RAM and disk use, the local clock and `EON <version>`. The Eon logo at the
+bar's left end is not a widget and shows whatever the list holds. Each name
+appears at most once. A widget left out doesn't show, `widgets = []` leaves
+only the logo, the tabs and the buttons, and omitting the key uses the built-in
+list above. The list applies when a window next opens or reopens, and an
+unknown or repeated name is a configuration error. Narrow windows hide the Eon
+logo first, then the clock, then disk, RAM, CPU and the version, whatever the
+order, then quota chips one by one, the one closest to the tabs first. The logo
+also hides whenever the tabs would not all fit beside it, however wide the
+window, and it leaves room for every chip and reading at its widest, so their
+changing values and a window's reset never show or hide it; it can change once
+when a provider's quota first appears or goes away (as it does when all its
+windows reset before a read), or when a read finds the provider has gained or
+lost a scoped window. The version belongs to its
+running supervisor; updating the installation does not change it.
 
 The CPU and RAM chips stay neutral on a healthy machine and colour only under
 load. RAM turns orange from `ram_warning_percent` and red from

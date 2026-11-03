@@ -37,11 +37,11 @@ use yazelix_venus::{
     Color, ConnectionState, CpuReadings, CpuTimes, CpuUse, DialogKind, DialogScene, DiskUse,
     EonBar, FontSettings, FontSetup, HeaderText, Hyperlink, ImageKey, ImageResync, InputState,
     LoadLevels, LocalClock, LocalNoticeSource, MAX_LINK_BYTES, ModelEffect, ModelError,
-    PaddingColor, PresentOutcome, RamUse, Renderer, Scene, SceneRect, SessionModel,
+    PaddingColor, PresentOutcome, RamUse, Renderer, Scene, SceneRect, ScopedWindows, SessionModel,
     ShortcutHintsScene, SidebarView, Transport, TransportEvent, WorkspaceEvent, WorkspaceFocus,
     WorkspaceHeaderControl, WorkspaceHit, WorkspaceModel, WorkspaceScene, WorkspaceTransport,
-    active_popup, attention_only_change, focused_terminal, labels_only_change, shown_workspace,
-    validate_copy_uri, validate_open_uri,
+    active_popup, attention_only_change, focused_terminal, labels_only_change, read_eon_icon,
+    shown_workspace, validate_copy_uri, validate_open_uri,
 };
 
 mod geometry;
@@ -976,6 +976,8 @@ struct Application {
     /// Whether working badges may turn; Eon's `--animate-working-badge` (VEN-C21).
     animate_working_badge: bool,
     eon_version: Option<String>,
+    /// The Eon icon's RGBA image, read once at startup; none when Eon supplied no readable one.
+    eon_icon: Option<Arc<[u8]>>,
     bar_items: Vec<BarItem>,
     load_levels: LoadLevels,
     /// The absolute path whose filesystem the disk chip measures, if any.
@@ -1044,6 +1046,8 @@ struct Application {
     zoom: Option<ZoomTarget>,
     tab_texts: HashMap<String, (String, f32)>,
     quota_widths: HashMap<String, f32>,
+    /// Claude's scoped windows, kept through their resets until its next read.
+    scoped_windows: ScopedWindows,
     /// Fitted header texts, the workspace label's name, by their text.
     fitted_texts: HashMap<String, (String, f32)>,
     tab_scroll: f32,
@@ -1067,6 +1071,7 @@ impl Application {
             warning_close_last_tab,
             animate_working_badge,
             eon_version,
+            eon_icon,
             bar_items,
             load_levels,
             disk_path,
@@ -1078,6 +1083,12 @@ impl Application {
             columns,
             rows,
         } = arguments;
+        // A missing or unusable icon leaves the Eon Bar without it; launch goes on.
+        let eon_icon = eon_icon.and_then(|path| {
+            read_eon_icon(&path)
+                .map_err(|error| report(format_args!("Eon icon not shown: {error}")))
+                .ok()
+        });
         let initial_scale_pending = startup_admission
             || columns.is_some()
             || rows.is_some()
@@ -1101,6 +1112,7 @@ impl Application {
             focus_border_width,
             animate_working_badge,
             eon_version,
+            eon_icon,
             bar_items,
             load_levels,
             disk_path,
@@ -1152,6 +1164,7 @@ impl Application {
             zoom: None,
             tab_texts: HashMap::new(),
             quota_widths: HashMap::new(),
+            scoped_windows: ScopedWindows::default(),
             fitted_texts: HashMap::new(),
             tab_scroll: 0.0,
             pane_scroll: 0.0,
@@ -1209,6 +1222,7 @@ impl Application {
             self.border_width,
             self.focus_border_width,
             self.animate_working_badge,
+            self.eon_icon.clone(),
             fonts,
         ))?;
         window.set_visible(true);
@@ -1396,11 +1410,13 @@ impl Application {
                 EonBar {
                     items: &self.bar_items,
                     version: self.eon_version.as_deref(),
+                    icon: self.eon_icon.is_some(),
                     cpu: self.cpu.as_ref(),
                     ram: self.ram.as_ref(),
                     disk: self.disk.as_ref(),
                     clock: self.clock.as_ref(),
                     workspace_picker: picker.as_deref(),
+                    scoped_windows: self.scoped_windows.windows(),
                 },
                 state.renderer.size(),
                 state.renderer.metrics(),
@@ -1951,6 +1967,7 @@ impl Application {
         let zoom = self.zoomed();
         let state = self.window.as_mut()?;
         let snapshot = self.workspace_model.snapshot()?;
+        self.scoped_windows.observe(snapshot.claude_quota.as_ref());
         let zoom = WorkspaceScene::zoom_visible(snapshot, zoom);
         self.hints = self.hints_visible.then(|| {
             ShortcutHintsScene::new(
@@ -1980,11 +1997,13 @@ impl Application {
             EonBar {
                 items: &self.bar_items,
                 version: self.eon_version.as_deref(),
+                icon: self.eon_icon.is_some(),
                 cpu: self.cpu.as_ref(),
                 ram: self.ram.as_ref(),
                 disk: self.disk.as_ref(),
                 clock: self.clock.as_ref(),
                 workspace_picker: picker.as_deref(),
+                scoped_windows: self.scoped_windows.windows(),
             },
             state.renderer.size(),
             state.renderer.metrics(),

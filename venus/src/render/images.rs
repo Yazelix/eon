@@ -1753,6 +1753,7 @@ mod tests {
                     1,
                     2,
                     true,
+                    None,
                     FontSetup::new(&FontSettings::default()).unwrap(),
                 ))
                 .unwrap();

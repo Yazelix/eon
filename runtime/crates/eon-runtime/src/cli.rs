@@ -52,6 +52,8 @@ pub struct Inputs {
     pub orbit: PathBuf,
     pub venus: PathBuf,
     pub anima: PathBuf,
+    /// The Eon icon's image, passed to Venus unread; none when Eon has no icon.
+    pub icon: Option<PathBuf>,
     pub codexbar: PathBuf,
     pub managed: managed_environment::ManagedPrograms,
 }

@@ -472,6 +472,9 @@ fn venus_command(
         if shown("version") {
             command.arg("--eon-version").arg(inputs.version);
         }
+        if let Some(icon) = &inputs.icon {
+            command.arg("--eon-icon").arg(icon);
+        }
         let load = &bar.load;
         if shown("ram") {
             command
@@ -3487,6 +3490,16 @@ mod tests {
             for flag in ["--bar-items", "--eon-version"] {
                 assert!(launch_input(&inputs, LaunchMode::Terminal, flag).is_empty());
             }
+            // The Eon icon reaches every workspace window, whatever the widgets, as the opaque
+            // path Eon supplied.
+            assert!(launch_input(&inputs, LaunchMode::Workspace, "--eon-icon").is_empty());
+            let mut iconic = crate::fixtures::inputs();
+            iconic.icon = Some("/fixture/eon-icon.rgba".into());
+            assert_eq!(
+                launch_input(&iconic, LaunchMode::Workspace, "--eon-icon"),
+                ["/fixture/eon-icon.rgba"]
+            );
+            assert!(launch_input(&iconic, LaunchMode::Terminal, "--eon-icon").is_empty());
         }
         // Load levels and the disk path reach Venus with the chip they belong to, and never a
         // terminal window. `~` names the supervisor's HOME.

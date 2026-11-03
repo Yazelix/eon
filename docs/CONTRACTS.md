@@ -72,7 +72,8 @@ socket names, JSON fields and protocol identifiers retain their spellings.
 
 ## EON-C1 — Exact compatible component launch
 
-- **Status:** Proven
+- **Status:** Proven. Amended on 2026-11-03 (approved by Lucca, relayed by
+  eon-overseer) by `eon-369s`: Nix derives the Eon Bar's icon image.
 - **Consumer:** A user launching Eon or eonbase from one accepted product
   generation.
 - **Trigger:** Eon starts a new composed runtime or adopts an exact live run.
@@ -81,7 +82,8 @@ socket names, JSON fields and protocol identifiers retain their spellings.
     each required Ready boundary before publication, and reports every exact
     external component revision and the generation of its in-tree build.
   - `assets/eon.png` is the transparent canonical application icon; Nix derives
-    exact hicolor sizes and installed desktop metadata names `eon`.
+    exact hicolor sizes and the Eon Bar's icon image from it, and installed
+    desktop metadata names `eon`.
   - The installed launcher action is named `Open Eon` and invokes the exact
     packaged executable. It may start or present the exact current generation,
     so it promises neither a new window nor a new terminal; live surfaces retain
@@ -203,12 +205,14 @@ socket names, JSON fields and protocol identifiers retain their spellings.
 
 ## EON-C3 — Distribution-neutral runtime inputs
 
-- **Status:** Candidate
+- **Status:** Candidate. Amended on 2026-11-03 (approved by Lucca, relayed by
+  eon-overseer) by `eon-369s`: the Eon icon's image is an opaque input.
 - **Consumer:** Eon launch and every distribution channel.
 - **Trigger:** A channel supplies exact component artifacts to Eon.
 - **Result:** Eon receives explicit component paths, treats Nix store paths as
   opaque inputs, and invokes no Nix evaluator during normal runtime. The Nix
-  full-Eon launcher supplies the pinned Anima executable as an opaque input.
+  full-Eon launcher supplies the pinned Anima executable and the Eon icon's
+  colour image as opaque inputs.
   Nix builds Orbit, Venus, Eon and eonbase from the in-tree crates. Generation
   identity covers every regular file in the Eon build's source tree outside dot
   entries and `target` directories; in Nix, that is the in-tree workspace
@@ -228,7 +232,9 @@ socket names, JSON fields and protocol identifiers retain their spellings.
   - **Evidence:** `generation_identity_is_stable_bounded_and_namespaced` and
     `current_generation_consumes_supplied_assembly`; the `default` and
     `eonbase-closure` Nix checks build Orbit, Venus, Eon and eonbase from the
-    in-tree crates.
+    in-tree crates. For the icon image (`eon-369s`), the `default` check's
+    image size assertion and the extended
+    `version_badge_uses_supervising_product_and_visibility_at_each_launch`.
 
 ## EON-C4 — Thin orchestrator ownership
 
@@ -3241,18 +3247,23 @@ socket names, JSON fields and protocol identifiers retain their spellings.
   relayed by eon-overseer) by `eon-wc119`: a leftover `show_version` loads as
   an alias. Amended on 2026-10-31 (approved by Lucca, "ok" to options A and E,
   recorded on the bead) by `eon-0oh9v`: the CPU label colours by the use it
-  shows, and its hover gives the average.
+  shows, and its hover gives the average. Amended on 2026-11-03 (approved by
+  Lucca, relayed by eon-overseer) by `eon-369s`: the Eon icon leads the Eon Bar,
+  and the version label sits between Shortcuts and Close.
 - **Consumer:** Full-Eon workspace users.
 - **Trigger:** A workspace window opens or reopens.
 - **Result:** `[bar] widgets` is an ordered list of unique names from
   `codex_quota`, `claude_quota`, `cpu`, `ram`, `disk`, `clock` and `version`.
   The Eon Bar shows the listed widgets left to right in that order, between the
-  drag region and Shortcuts and Close. `codex_quota` and `claude_quota` are the
-  quota chips (EON-C27), `cpu` and `ram` the whole-machine CPU and memory use
-  labels, `disk` the used percentage of the filesystem holding the configured
-  path, `clock` the local 24-hour clock, and `version` the read-only
-  `EON <version>` label of the supervisor serving the window. A widget left out
-  doesn't show, and `widgets = []` leaves only tabs and controls. Omitting the
+  drag region and Shortcuts, except `version`, which sits between Shortcuts and
+  Close. `codex_quota` and `claude_quota` are the quota chips (EON-C27), `cpu`
+  and `ram` the whole-machine CPU and memory use labels, `disk` the used
+  percentage of the filesystem holding the configured path, `clock` the local
+  24-hour clock, and `version` the read-only `EON <version>` label of the
+  supervisor serving the window. The decorative Eon icon at the bar's leading
+  edge is not a widget: whatever the list, it shows when Eon has one and the
+  bar has room for it (VEN-C21). A widget left out doesn't show, and
+  `widgets = []` leaves only the icon, tabs and controls. Omitting the
   key shows all seven in that order. A listed widget without data still shows
   nothing, as [Eon Bar](../venus/docs/PRESENTATION.md#eon-bar) describes for
   each widget. Narrow windows keep the fixed hiding priority it gives, whatever
@@ -3282,7 +3293,8 @@ socket names, JSON fields and protocol identifiers retain their spellings.
   handling, preserving live terminals.
 - **Owner:** Eon owns the settings, their names and defaults. Runtime parses
   and validates them and passes the list to Venus unchanged as `--bar-items`,
-  with `--eon-version` only when `version` is listed, the RAM levels only when
+  with `--eon-version` only when `version` is listed, the Eon icon's path
+  (`--eon-icon`) whenever Eon has one, the RAM levels only when
   `ram` is listed, the CPU levels only when `cpu` is listed, and the disk
   levels and resolved path only when `disk` is listed. Venus owns placement,
   fitting, colour, hover and accessibility.
@@ -3319,7 +3331,11 @@ socket names, JSON fields and protocol identifiers retain their spellings.
     the isolated installed observation recorded in `eon-wc119`. For the CPU
     colour by the shown use, `cpu_and_ram_chips_colour_under_load_and_say_so`,
     `a_failed_cpu_reading_restarts_the_average_window`, and the isolated
-    installed observation recorded in `eon-0oh9v`.
+    installed observation recorded in `eon-0oh9v`. For the Eon icon, the
+    extended `version_badge_uses_supervising_product_and_visibility_at_each_launch`
+    and `bare_eon_attaches_only_to_the_live_current_generation`, Venus's
+    `eon_icon_is_a_workspace_only_absolute_path`, and the isolated installed
+    observation recorded in `eon-369s`.
 
 ## EON-C33 — Several workspaces in one window
 

@@ -23,7 +23,7 @@ const CURSOR_COLOR_PRESETS: [(&str, Color); 8] = [
     ("nebula", rgb(0xa970ff)),
     ("bubblegum", rgb(0xff5da2)),
 ];
-const USAGE: &str = "usage: yazelix-venus [--application-id ID] [--no-decorations] [--pane-frames true|false] [--focus-color preset:NAME|custom:#RRGGBB] [--border-width 1..3] [--focus-border-width 1..3] [--warning-close-last-tab true|false] [--animate-working-badge true|false] [--eon-version VERSION] [--bar-items ITEM,...] [--ram-warning-percent 1..100] [--ram-critical-percent 1..100] [--cpu-warning-percent 1..100] [--cpu-average-seconds 2..600] [--disk-warning-percent 1..100] [--disk-critical-percent 1..100] [--disk-path ABSOLUTE_PATH] [--background-opacity VALUE] [--background-blur] [--padding-color extend|extend-always|background] [--cursor-trail-color random|preset:NAME|custom:#RRGGBB] [--cursor-effect-v1 none|tail] [--cursor-trail-color-v1 #RRGGBB] [--cursor-trail-duration-v1 0|0.25..4.0] [--font-family FAMILY] [--font-fallback FAMILY] [--font-size 6..96] [--line-height 1..3] [--columns N] [--rows N] [ORBIT_SOCKET | --workspace EON_WORKSPACE_SOCKET]";
+const USAGE: &str = "usage: yazelix-venus [--application-id ID] [--no-decorations] [--pane-frames true|false] [--focus-color preset:NAME|custom:#RRGGBB] [--border-width 1..3] [--focus-border-width 1..3] [--warning-close-last-tab true|false] [--animate-working-badge true|false] [--eon-version VERSION] [--eon-icon ABSOLUTE_PATH] [--bar-items ITEM,...] [--ram-warning-percent 1..100] [--ram-critical-percent 1..100] [--cpu-warning-percent 1..100] [--cpu-average-seconds 2..600] [--disk-warning-percent 1..100] [--disk-critical-percent 1..100] [--disk-path ABSOLUTE_PATH] [--background-opacity VALUE] [--background-blur] [--padding-color extend|extend-always|background] [--cursor-trail-color random|preset:NAME|custom:#RRGGBB] [--cursor-effect-v1 none|tail] [--cursor-trail-color-v1 #RRGGBB] [--cursor-trail-duration-v1 0|0.25..4.0] [--font-family FAMILY] [--font-fallback FAMILY] [--font-size 6..96] [--line-height 1..3] [--columns N] [--rows N] [ORBIT_SOCKET | --workspace EON_WORKSPACE_SOCKET]";
 
 #[derive(Debug)]
 pub(super) struct LaunchArguments {
@@ -40,6 +40,8 @@ pub(super) struct LaunchArguments {
     pub(super) warning_close_last_tab: bool,
     pub(super) animate_working_badge: bool,
     pub(super) eon_version: Option<String>,
+    /// The file holding the Eon icon's RGBA image: `--eon-icon`, read once at startup.
+    pub(super) eon_icon: Option<PathBuf>,
     pub(super) bar_items: Vec<BarItem>,
     pub(super) load_levels: LoadLevels,
     /// The absolute path whose filesystem the disk chip measures: `--disk-path`, else an absolute
@@ -70,6 +72,7 @@ pub(super) fn launch_arguments(
     let mut warning_close_last_tab = None;
     let mut animate_working_badge = None;
     let mut eon_version = None;
+    let mut eon_icon: Option<PathBuf> = None;
     let mut bar_items = None;
     let mut ram_warning_percent = None;
     let mut ram_critical_percent = None;
@@ -156,6 +159,18 @@ pub(super) fn launch_arguments(
         } else if argument == "--cpu-average-seconds" {
             option_value(&mut cpu_average_seconds, arguments.next())?;
             if !cpu_average_seconds.is_some_and(|seconds| (2..=600).contains(&seconds)) {
+                return Err(USAGE.into());
+            }
+        } else if argument == "--eon-icon" {
+            // An opaque absolute path Eon supplies; Venus reads it only once it starts.
+            if eon_icon.is_some() {
+                return Err(USAGE.into());
+            }
+            eon_icon = arguments
+                .next()
+                .map(PathBuf::from)
+                .filter(|path| path.is_absolute());
+            if eon_icon.is_none() {
                 return Err(USAGE.into());
             }
         } else if argument == "--disk-path" {
@@ -314,7 +329,7 @@ pub(super) fn launch_arguments(
     };
     if load_levels.ram_critical_percent < load_levels.ram_warning_percent
         || load_levels.disk_critical_percent < load_levels.disk_warning_percent
-        || ((eon_version.is_some() || bar_items.is_some() || load_given)
+        || ((eon_version.is_some() || eon_icon.is_some() || bar_items.is_some() || load_given)
             && workspace_socket.is_none())
     {
         return Err(USAGE.into());
@@ -378,6 +393,7 @@ pub(super) fn launch_arguments(
         warning_close_last_tab: warning_close_last_tab.unwrap_or(true),
         animate_working_badge: animate_working_badge.unwrap_or(true),
         eon_version,
+        eon_icon,
         bar_items: bar_items.unwrap_or_else(|| BarItem::DEFAULT.into()),
         load_levels,
         disk_path: disk_path.or_else(|| {
@@ -701,6 +717,40 @@ mod tests {
                 "accepted {flag:?} without a workspace"
             );
         }
+    }
+
+    #[test]
+    fn eon_icon_is_a_workspace_only_absolute_path() {
+        let parse = |items: &[&str]| {
+            launch_arguments(
+                items
+                    .iter()
+                    .chain(&["--workspace", "eon.sock"])
+                    .map(OsString::from),
+                None,
+            )
+        };
+        assert_eq!(parse(&[]).unwrap().eon_icon, None);
+        assert_eq!(
+            parse(&["--eon-icon", "/nix/store/eon/share/eon/eon-icon-256.rgba"])
+                .unwrap()
+                .eon_icon,
+            Some(PathBuf::from("/nix/store/eon/share/eon/eon-icon-256.rgba"))
+        );
+        // Venus reads the file only once it starts, so a missing one still launches.
+        assert!(parse(&["--eon-icon", "/missing/eon-icon"]).is_ok());
+        for items in [
+            vec!["--eon-icon", "icon.rgba"],
+            vec!["--eon-icon", ""],
+            vec!["--eon-icon", "/a", "--eon-icon", "/a"],
+            vec!["--eon-icon"],
+        ] {
+            assert!(parse(&items).is_err(), "accepted {items:?}");
+        }
+        assert!(
+            launch_arguments(["--eon-icon", "/a", "orbit.sock"].map(OsString::from), None).is_err(),
+            "accepted the Eon icon without a workspace"
+        );
     }
 
     #[test]

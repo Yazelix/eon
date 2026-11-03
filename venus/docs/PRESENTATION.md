@@ -19,9 +19,28 @@ order, selection, and popups; Venus draws the visible scene.
   fills; widgets have no fill and use rounded outlines in the pane cards'
   neutral colour and `border_width`. The plain version label and header controls
   share their centre. Hover and accessibility bounds stay unchanged.
+- The Eon logo, in its own colours and two logical pixels shorter than the tab
+  pills, leads the bar before the workspace label and tabs. Its centre is as far
+  from the window's left edge as the bar's centre line is below the window top,
+  and the next item starts as far after it as it is from the left edge. It is
+  decorative, with no action, hover or accessible node. It shows only while
+  everything else in the bar would show with it, each quota chip, reading and
+  the clock at the widest it can be, and every tab fits unscrolled at its full
+  width. So it hides before any other item and stays hidden as the window
+  narrows, and it hides whenever the tabs overflow, however wide the window.
+  The tab scroll, a live value and a window's reset never show or hide it: a
+  window keeps its room from its reset until the next read. It can change once
+  when a provider's quota first appears or goes away (as it does when all its
+  windows reset before a read), or when a read finds the provider has gained or
+  lost a scoped window. Without a readable icon from Eon
+  there is none and no gap.
 - New tab sits beside the last tab and pins to the tab-region edge when tabs
-  overflow. Shortcut help and Close stay at the right. A small empty area lets
-  users drag an undecorated window without taking clicks from tabs or controls.
+  overflow. Shortcut help, a round outlined button as tall as the tab pills
+  with its `?` centred in the circle, then the version label and Close stay at
+  the right; after a chip or reading, the button keeps the space chips keep
+  between them. Close's `×` lies as far from the window's right edge as from
+  its top. A small empty area lets users drag an undecorated window without
+  taking clicks from tabs or controls.
 - Codex and Claude facts show one read-only chip per window, five-hour then
   seven-day, each with its provider's mark (the monochrome OpenAI Blossom, or
   Claude's splat in its terracotta `#D97757`),
@@ -98,16 +117,21 @@ order, selection, and popups; Venus draws the visible scene.
   its accessible label. Updating the installation does not relabel a running
   supervisor. Without a version from Eon, no label shows.
 - Eon's `[bar] widgets` chooses which of these items show and their order, left
-  to right between the drag region and Shortcuts and Close. By default the order
+  to right between the drag region and Shortcuts; the version always sits
+  between Shortcuts and Close. By default the order
   is Codex quota, Claude quota, CPU, RAM, disk, clock and version. A left-out
   item has no chip, hover or accessible node, and a left-out CPU, RAM, disk or
   clock is never read and never wakes Venus. Accessibility order follows the
   visual order. The items use only spare drag-region space and keep its minimum.
-  Whatever the order, narrow windows hide the clock first, then disk, RAM, CPU
-  and the version, then quota chips, before tabs or controls. No item has an
-  action or a keyboard focus target, and none drags the window. A change in
-  quota, a reading or the clock never moves the tabs, cancels scrolling or
-  resizes terminals.
+  Whatever the order, narrow windows hide the Eon logo first, then the clock,
+  then disk, RAM, CPU and the version, then quota chips, before tabs or
+  controls. No item has an action or a keyboard focus target, and none drags
+  the window. A change in a quota's numbers, a reading or the clock never moves
+  the tabs, cancels scrolling or resizes terminals, and neither does a window's
+  reset. The one exception is the Eon logo: it can show or hide once, shifting
+  the tabs, when a provider's quota first appears or goes away (as it does when
+  all its windows reset before a read), or when a read finds the provider has
+  gained or lost a scoped window.
 
 ### Panes and popups
 

@@ -1337,3 +1337,804 @@ fn disk_chip_shows_filesystem_use_and_colours_only_when_filling_up() {
     assert_eq!(empty.drag_region.right(), empty.controls[1].rect.left);
     assert!(project(&[BarItem::Ram], Some(&full)).disk.is_none());
 }
+
+#[test]
+fn eon_icon_leads_the_bar_and_yields_first() {
+    use eon_workspace_protocol::v30::{Pane, PopupGeometry, Tab};
+    let tab = |id: String| Tab {
+        id: id.clone(),
+        directory: b"/tmp".to_vec(),
+        pending: false,
+        selected_pane: Some(id.clone()),
+        selected_popup: None,
+        columns: vec![eon_workspace_protocol::v30::Column {
+            panes: vec![Pane {
+                label: id.clone(),
+                pinned_name: None,
+                id: id.clone(),
+                session: id.clone(),
+                endpoint: b"/tmp/p.sock".to_vec(),
+                live: true,
+                attention: None,
+            }],
+            expanded: id,
+        }],
+        popups: Vec::new(),
+        attention_rollup: None,
+    };
+    let used = crate::RamUse::parse("MemTotal: 100000 kB\nMemAvailable: 50000 kB\n")
+        .unwrap()
+        .rated(crate::LoadLevels::default());
+    let mut states = [false; 2];
+    for scale in [1.0, 1.25, 2.0] {
+        let metrics = CellMetrics::for_scale(scale);
+        for (workspaces, tab_count) in [(1, 1), (2, 1), (1, 12), (2, 12)] {
+            let snapshot = Snapshot {
+                workspace: "w1".into(),
+                active_workspace: "w1".into(),
+                workspaces: (1..=workspaces)
+                    .map(|n| eon_workspace_protocol::v30::WorkspaceInfo {
+                        id: format!("w{n}"),
+                        name: None,
+                        tab_count,
+                        attention: None,
+                        recency: 0,
+                    })
+                    .collect(),
+                active_tab: "t1".into(),
+                geometry: PopupGeometry {
+                    side_margin: 8.0,
+                    vertical_margin: 4.0,
+                },
+                entries: Vec::new(),
+                tabs: (1..=tab_count).map(|n| tab(format!("t{n}"))).collect(),
+                codex_quota: None,
+                claude_quota: None,
+                codex_quota_failure: None,
+                claude_quota_failure: None,
+                running: None,
+                busy: None,
+                sidebar: eon_workspace_protocol::v30::Sidebar::Open,
+                attention_queue: Vec::new(),
+            };
+            for (version, ram) in [
+                (Some("9.8.7"), None),
+                (None, None),
+                (Some("9.8.7"), Some(&used)),
+            ] {
+                // The icon hides first and stays hidden: once it shows as the window widens, it
+                // shows at every wider width.
+                let mut shown_from = None;
+                for logical_width in (100..=1600).step_by(10) {
+                    let size = PhysicalSize::new((logical_width as f64 * scale) as u32, 600);
+                    let project = |icon, tab_scroll| {
+                        WorkspaceScene::from_snapshot_with_bar(
+                            &snapshot,
+                            EonBar {
+                                version,
+                                icon,
+                                ram,
+                                ..EonBar::default()
+                            },
+                            size,
+                            metrics,
+                            tab_scroll,
+                            0.0,
+                            |_, text| {
+                                (
+                                    text.to_owned(),
+                                    text.chars().count() as f32 * 10.0 * scale as f32,
+                                )
+                            },
+                            None,
+                        )
+                    };
+                    let plain = project(false, 0.0);
+                    let iconic = project(true, 0.0);
+                    assert!(plain.eon_icon.is_none());
+                    if tab_count == 12 && logical_width == 600 {
+                        assert!(plain.tab_scroll_limit() > 0.5, "{scale}: 12 tabs overflow");
+                    }
+                    // The icon yields before anything else: without room it leaves today's bar,
+                    // whatever the tab scroll.
+                    let Some(icon) = iconic.eon_icon else {
+                        assert_eq!(iconic, plain);
+                        assert_eq!(shown_from, None, "{scale} {logical_width}: icon came back");
+                        let limit = plain.tab_scroll_limit();
+                        for tab_scroll in [limit / 2.0, limit - 1.0, limit, 1.0e6] {
+                            assert_eq!(
+                                project(true, tab_scroll),
+                                project(false, tab_scroll),
+                                "{scale} {logical_width} {tab_scroll}"
+                            );
+                        }
+                        states[1] = true;
+                        continue;
+                    };
+                    shown_from.get_or_insert(logical_width);
+                    states[0] = true;
+                    // It costs nothing: the whole strip fits unscrolled with it, and every chip
+                    // and reading that has data shows, at any tab scroll.
+                    assert!(iconic.tab_scroll_limit() <= 0.5, "{scale} {logical_width}");
+                    assert_eq!(iconic.version.is_some(), version.is_some());
+                    assert_eq!(iconic.ram.is_some(), ram.is_some());
+                    assert_eq!(iconic.version, plain.version);
+                    assert_eq!(iconic.ram, plain.ram);
+                    for tab_scroll in [5.0, 1.0e6] {
+                        let scrolled = project(true, tab_scroll);
+                        assert_eq!(scrolled.eon_icon, iconic.eon_icon);
+                        assert_eq!(scrolled.tabs, iconic.tabs);
+                    }
+                    // A square two logical pixels shorter than the tab pills, in whole pixels,
+                    // whose centre is one bar edge from the window's left and top, with the same
+                    // gap before and after it.
+                    let height = iconic.header.height;
+                    let gap = tab_gap(metrics, height);
+                    let edge = bar_edge(metrics, height, iconic.pane_viewport.top);
+                    let pill = iconic.bar_pill_rect(iconic.tabs[0].rect, metrics);
+                    let side = (pill.height - 2.0 * metrics.scale).round();
+                    assert_eq!((icon.width, icon.height), (side, side), "{scale}");
+                    assert!((icon.top + side / 2.0 - (pill.top + pill.height / 2.0)).abs() <= 0.5);
+                    assert_eq!(icon.left, (edge - side / 2.0).round());
+                    assert_eq!(icon.top, icon.left);
+                    assert_eq!(icon.left.fract(), 0.0);
+                    assert!(icon.bottom() <= height);
+                    let next = iconic
+                        .workspace_label
+                        .as_ref()
+                        .map_or(iconic.tabs[0].rect.left, |label| label.rect.left);
+                    assert_eq!(next - icon.right(), icon.left, "{scale} {logical_width}");
+                    if let Some(label) = &iconic.workspace_label {
+                        assert_eq!(iconic.tabs[0].rect.left, label.rect.right() + gap);
+                    }
+                    assert_eq!(iconic.tab_viewport.left, iconic.tabs[0].rect.left);
+                    // Every tab moves by the same amount without narrowing.
+                    let shift = icon.right() + icon.left - tab_inset(metrics, height);
+                    for (iconic, plain) in iconic.tabs.iter().zip(&plain.tabs) {
+                        assert_eq!(iconic.rect.left, plain.rect.left + shift);
+                        assert_eq!(iconic.rect.width, plain.rect.width);
+                    }
+                    assert_eq!(iconic.version, plain.version);
+                    // Close keeps the right end; nothing but the icon is drawn before the tabs.
+                    assert_eq!(iconic.controls[2].rect.right(), size.width as f32);
+                    assert!(iconic.tab_viewport.left >= icon.right() + icon.left);
+                    // It is no hit target, and the tabs keep theirs.
+                    let centre = (icon.left + icon.width / 2.0, icon.top + icon.height / 2.0);
+                    assert_eq!(iconic.hit_test(centre.0, centre.1), None);
+                    for tab in iconic.tabs.iter().filter(|tab| {
+                        tab.rect.right() <= iconic.tab_viewport.right() && tab.rect.width > 1.0
+                    }) {
+                        assert_eq!(
+                            iconic.hit_test(tab.rect.left + tab.rect.width / 2.0, height / 2.0),
+                            Some(WorkspaceHit::Tab(&tab.id))
+                        );
+                    }
+                }
+            }
+        }
+    }
+    assert_eq!(states, [true; 2], "both a shown and a yielded icon");
+}
+
+#[test]
+fn live_items_never_show_or_hide_the_icon_or_move_the_tabs() {
+    use eon_workspace_protocol::v30::{
+        ClaudeQuota, ClaudeQuotaState, CodexQuota, Pane, PopupGeometry, Tab,
+    };
+    let snapshot = Snapshot {
+        workspace: "w1".into(),
+        active_workspace: "w1".into(),
+        workspaces: Vec::new(),
+        active_tab: "t1".into(),
+        geometry: PopupGeometry {
+            side_margin: 8.0,
+            vertical_margin: 4.0,
+        },
+        entries: Vec::new(),
+        tabs: vec![Tab {
+            id: "t1".into(),
+            directory: b"/tmp".to_vec(),
+            pending: false,
+            selected_pane: Some("p1".into()),
+            selected_popup: None,
+            columns: vec![eon_workspace_protocol::v30::Column {
+                panes: vec![Pane {
+                    label: "p1".into(),
+                    pinned_name: None,
+                    id: "p1".into(),
+                    session: "s1".into(),
+                    endpoint: b"/tmp/p1.sock".to_vec(),
+                    live: true,
+                    attention: None,
+                }],
+                expanded: "p1".into(),
+            }],
+            popups: Vec::new(),
+            attention_rollup: None,
+        }],
+        codex_quota: None,
+        claude_quota: None,
+        codex_quota_failure: None,
+        claude_quota_failure: None,
+        running: None,
+        busy: None,
+        sidebar: eon_workspace_protocol::v30::Sidebar::Open,
+        attention_queue: Vec::new(),
+    };
+    let levels = crate::LoadLevels::default();
+    let ram = |available: u32| {
+        crate::RamUse::parse(&format!(
+            "MemTotal: 100000 kB\nMemAvailable: {available} kB\n"
+        ))
+        .unwrap()
+        .rated(levels)
+    };
+    let (ram_low, ram_high) = (ram(99_000), ram(0));
+    let gib = 1 << 18;
+    let disk = DiskUse::of(1000 * gib, 0, 0, 4096, "/")
+        .unwrap()
+        .rated(levels);
+    let clock = LocalClock {
+        label: "23:58".into(),
+        description: "Clock".into(),
+    };
+    let observed_at = 1_000_000;
+    // A window `remaining` percent full, `elapsed` minutes in when it has a reset.
+    let window = |minutes: u32, remaining, elapsed: Option<u32>, scope: Option<&str>| QuotaWindow {
+        duration_minutes: minutes,
+        remaining_percent: remaining,
+        resets_at: elapsed.map(|elapsed| observed_at + u64::from(minutes - elapsed) * 60),
+        scope: scope.map(Into::into),
+    };
+    let narrow = |minutes| window(minutes, 5, None, None);
+    let wide = |minutes| window(minutes, 100, Some(minutes - 1), None);
+    // Each provider keeps its windows; what they show runs from narrowest to widest.
+    let codex = [
+        (CodexQuotaState::Fresh, vec![narrow(300), narrow(10_080)]),
+        (CodexQuotaState::Fresh, vec![wide(300), wide(10_080)]),
+        (CodexQuotaState::Stale, vec![wide(300), wide(10_080)]),
+        // The five-hour window reset before the next read.
+        (CodexQuotaState::Fresh, vec![wide(10_080)]),
+        (CodexQuotaState::Blocked, Vec::new()),
+        (CodexQuotaState::Unknown, Vec::new()),
+    ]
+    .map(|(state, windows)| CodexQuota {
+        state,
+        observed_at,
+        windows,
+    });
+    let claude = [
+        (
+            ClaudeQuotaState::Fresh,
+            vec![
+                narrow(300),
+                narrow(10_080),
+                window(10_080, 5, None, Some("Fable")),
+            ],
+        ),
+        (
+            ClaudeQuotaState::Stale,
+            vec![
+                wide(300),
+                wide(10_080),
+                window(10_080, 100, Some(10_079), Some("Fable")),
+            ],
+        ),
+        // Unscoped windows that reset before the next read.
+        (
+            ClaudeQuotaState::Fresh,
+            vec![
+                wide(10_080),
+                window(10_080, 100, Some(10_079), Some("Fable")),
+            ],
+        ),
+        (
+            ClaudeQuotaState::Fresh,
+            vec![wide(300), window(10_080, 100, Some(10_079), Some("Fable"))],
+        ),
+        (
+            ClaudeQuotaState::Fresh,
+            vec![window(10_080, 100, Some(10_079), Some("Fable"))],
+        ),
+        // The scoped window reset before the next read, alone or with an unscoped one.
+        (ClaudeQuotaState::Fresh, vec![wide(300), wide(10_080)]),
+        (ClaudeQuotaState::Stale, vec![wide(300)]),
+    ]
+    .map(|(state, windows)| ClaudeQuota {
+        state,
+        observed_at,
+        windows,
+    });
+    let claude_read = claude[1].clone();
+    let cpu = |percent: u64| crate::CpuUse {
+        percent,
+        label: format!("CPU {percent}%"),
+        description: "CPU".into(),
+        load: Load::Normal,
+    };
+    let (cpu_low, cpu_high) = (cpu(1), cpu(100));
+    let readings = [
+        (None, None, None, None),
+        (Some(&cpu_low), Some(&ram_low), Some(&disk), Some(&clock)),
+        (Some(&cpu_high), Some(&ram_high), Some(&disk), Some(&clock)),
+    ];
+    let mut states = [false; 2];
+    for scale in [1.0, 1.25, 2.0] {
+        let metrics = CellMetrics::for_scale(scale);
+        // Every chip reserved at its widest needs a wide window for the icon.
+        for logical_width in (100..=3000).step_by(25) {
+            let size = PhysicalSize::new((logical_width as f64 * scale) as u32, 600);
+            let mut seen = None;
+            for codex in &codex {
+                for claude in &claude {
+                    // What Venus remembers from the read that reported every window.
+                    let mut scoped = crate::ScopedWindows::default();
+                    scoped.observe(Some(&claude_read));
+                    scoped.observe(Some(claude));
+                    for (cpu, ram, disk, clock) in readings {
+                        let mut snapshot = snapshot.clone();
+                        snapshot.codex_quota = Some(codex.clone());
+                        snapshot.claude_quota = Some(claude.clone());
+                        let scene = WorkspaceScene::from_snapshot_with_bar(
+                            &snapshot,
+                            EonBar {
+                                version: Some("9.8.7"),
+                                icon: true,
+                                cpu,
+                                ram,
+                                disk,
+                                clock,
+                                scoped_windows: scoped.windows(),
+                                ..EonBar::default()
+                            },
+                            size,
+                            metrics,
+                            0.0,
+                            0.0,
+                            |_, text| {
+                                (
+                                    text.to_owned(),
+                                    text.chars().count() as f32 * 10.0 * scale as f32,
+                                )
+                            },
+                            None,
+                        );
+                        let shown = (
+                            scene.eon_icon,
+                            scene
+                                .tabs
+                                .iter()
+                                .map(|tab| tab.rect.left)
+                                .collect::<Vec<_>>(),
+                        );
+                        states[usize::from(shown.0.is_some())] = true;
+                        match &seen {
+                            None => seen = Some(shown),
+                            Some(seen) => assert_eq!(
+                                &shown, seen,
+                                "{scale} {logical_width}: {codex:?} {claude:?} {ram:?}"
+                            ),
+                        }
+                    }
+                }
+            }
+        }
+    }
+    assert_eq!(states, [true; 2], "both a shown and a yielded icon");
+}
+
+#[test]
+fn quota_facts_and_windows_appearing_may_hide_the_icon_once() {
+    use eon_workspace_protocol::v30::{
+        ClaudeQuota, ClaudeQuotaState, CodexQuota, Pane, PopupGeometry, Tab,
+    };
+    let snapshot = Snapshot {
+        workspace: "w1".into(),
+        active_workspace: "w1".into(),
+        workspaces: Vec::new(),
+        active_tab: "t1".into(),
+        geometry: PopupGeometry {
+            side_margin: 8.0,
+            vertical_margin: 4.0,
+        },
+        entries: Vec::new(),
+        tabs: vec![Tab {
+            id: "t1".into(),
+            directory: b"/tmp".to_vec(),
+            pending: false,
+            selected_pane: Some("p1".into()),
+            selected_popup: None,
+            columns: vec![eon_workspace_protocol::v30::Column {
+                panes: vec![Pane {
+                    label: "p1".into(),
+                    pinned_name: None,
+                    id: "p1".into(),
+                    session: "s1".into(),
+                    endpoint: b"/tmp/p1.sock".to_vec(),
+                    live: true,
+                    attention: None,
+                }],
+                expanded: "p1".into(),
+            }],
+            popups: Vec::new(),
+            attention_rollup: None,
+        }],
+        codex_quota: None,
+        claude_quota: None,
+        codex_quota_failure: None,
+        claude_quota_failure: None,
+        running: None,
+        busy: None,
+        sidebar: eon_workspace_protocol::v30::Sidebar::Open,
+        attention_queue: Vec::new(),
+    };
+    let observed_at = 1_000_000;
+    let window = |minutes: u32, scope: Option<&str>| QuotaWindow {
+        duration_minutes: minutes,
+        remaining_percent: 50,
+        resets_at: None,
+        scope: scope.map(Into::into),
+    };
+    let codex = CodexQuota {
+        state: CodexQuotaState::Fresh,
+        observed_at,
+        windows: vec![window(300, None), window(10_080, None)],
+    };
+    let claude = |scoped: bool| ClaudeQuota {
+        state: ClaudeQuotaState::Fresh,
+        observed_at,
+        windows: [window(300, None), window(10_080, None)]
+            .into_iter()
+            .chain(scoped.then(|| window(10_080, Some("Fable"))))
+            .collect(),
+    };
+    // From no fact to a Codex fact; from Claude's two windows to a third, scoped one.
+    let changes = [
+        (
+            (None, Some(claude(false))),
+            (Some(codex.clone()), Some(claude(false))),
+        ),
+        ((None, None), (None, Some(claude(false)))),
+        (
+            (Some(codex.clone()), Some(claude(false))),
+            (Some(codex), Some(claude(true))),
+        ),
+    ];
+    for scale in [1.0, 1.25, 2.0] {
+        let metrics = CellMetrics::for_scale(scale);
+        for (index, (before, after)) in changes.iter().enumerate() {
+            let mut toggled = false;
+            for logical_width in (100..=3000).step_by(25) {
+                let size = PhysicalSize::new((logical_width as f64 * scale) as u32, 600);
+                let project = |(codex, claude): &(Option<CodexQuota>, Option<ClaudeQuota>)| {
+                    let mut snapshot = snapshot.clone();
+                    snapshot.codex_quota = codex.clone();
+                    snapshot.claude_quota = claude.clone();
+                    WorkspaceScene::from_snapshot_with_bar(
+                        &snapshot,
+                        EonBar {
+                            version: Some("9.8.7"),
+                            icon: true,
+                            ..EonBar::default()
+                        },
+                        size,
+                        metrics,
+                        0.0,
+                        0.0,
+                        |_, text| {
+                            (
+                                text.to_owned(),
+                                text.chars().count() as f32 * 10.0 * scale as f32,
+                            )
+                        },
+                        None,
+                    )
+                    .eon_icon
+                    .is_some()
+                };
+                let (shown_before, shown_after) = (project(before), project(after));
+                // More reserved chips never bring the icon back; near the threshold they hide it.
+                assert!(
+                    shown_before || !shown_after,
+                    "{scale} {logical_width} change {index}"
+                );
+                toggled |= shown_before != shown_after;
+            }
+            assert!(
+                toggled,
+                "{scale}: change {index} hides the icon at some width"
+            );
+        }
+    }
+}
+
+#[test]
+fn shortcuts_version_and_close_end_the_bar_one_edge_from_the_corner() {
+    use eon_workspace_protocol::v30::{Pane, PopupGeometry, Tab};
+    let snapshot = Snapshot {
+        workspace: "w1".into(),
+        active_workspace: "w1".into(),
+        workspaces: Vec::new(),
+        active_tab: "t1".into(),
+        geometry: PopupGeometry {
+            side_margin: 8.0,
+            vertical_margin: 4.0,
+        },
+        entries: Vec::new(),
+        tabs: vec![Tab {
+            id: "t1".into(),
+            directory: b"/tmp".to_vec(),
+            pending: false,
+            selected_pane: Some("p1".into()),
+            selected_popup: None,
+            columns: vec![eon_workspace_protocol::v30::Column {
+                panes: vec![Pane {
+                    label: "p1".into(),
+                    pinned_name: None,
+                    id: "p1".into(),
+                    session: "s1".into(),
+                    endpoint: b"/tmp/p1.sock".to_vec(),
+                    live: true,
+                    attention: None,
+                }],
+                expanded: "p1".into(),
+            }],
+            popups: Vec::new(),
+            attention_rollup: None,
+        }],
+        codex_quota: None,
+        claude_quota: None,
+        codex_quota_failure: None,
+        claude_quota_failure: None,
+        running: None,
+        busy: None,
+        sidebar: eon_workspace_protocol::v30::Sidebar::Open,
+        attention_queue: Vec::new(),
+    };
+    let used = crate::RamUse::parse("MemTotal: 100000 kB\nMemAvailable: 50000 kB\n")
+        .unwrap()
+        .rated(crate::LoadLevels::default());
+    for scale in [1.0, 1.25, 2.0] {
+        let metrics = CellMetrics::for_scale(scale);
+        let width = 1280.0 * scale as f32;
+        for (version, ram) in [Some("9.8.7"), None]
+            .into_iter()
+            .flat_map(|version| [(version, None), (version, Some(&used))])
+        {
+            let scene = WorkspaceScene::from_snapshot_with_bar(
+                &snapshot,
+                EonBar {
+                    version,
+                    ram,
+                    icon: true,
+                    ..EonBar::default()
+                },
+                PhysicalSize::new(width as u32, (800.0 * scale) as u32),
+                metrics,
+                0.0,
+                0.0,
+                |_, text| {
+                    (
+                        text.to_owned(),
+                        text.chars().count() as f32 * 10.0 * scale as f32,
+                    )
+                },
+                None,
+            );
+            let [_, shortcuts, close] = scene.controls;
+            let height = scene.header.height;
+            let edge = bar_edge(metrics, height, scene.pane_viewport.top);
+            // Close's glyph centre is as far from the window's right edge as from its top, its
+            // target reaches the edge, and its button is as wide as the others.
+            assert_eq!(close.rect.right(), width);
+            assert!((width - close.centre - edge).abs() < 0.01, "{scale}");
+            assert!(close.centre - close.rect.left <= close.rect.right() - close.centre);
+            assert_eq!(
+                close.centre - close.rect.left,
+                shortcuts.rect.right() - shortcuts.centre
+            );
+            // Shortcuts, then the version label, then Close; Shortcuts keeps its whole target.
+            assert_eq!(
+                shortcuts.centre,
+                shortcuts.rect.right() - scene.controls[0].rect.width / 2.0
+            );
+            // After a chip the round button keeps the chips' own spacing: two outline insets
+            // between the chip's outline and the circle, with the target reaching back over it.
+            if let Some(ram) = &scene.ram {
+                let chip_inset = (metrics.padding / 3.0).min(height / 4.0);
+                assert_eq!(ram.rect.right(), shortcuts.rect.left);
+                let circle = scene.round_button_rect(&shortcuts, metrics);
+                let gap = circle.left - (ram.rect.right() - chip_inset);
+                assert!((gap - 2.0 * chip_inset).abs() <= 0.5, "{scale}: {gap}");
+                assert_eq!(
+                    scene.hit_test(ram.rect.left + ram.rect.width / 2.0, height / 2.0),
+                    Some(WorkspaceHit::Ram)
+                );
+            } else {
+                assert_eq!(shortcuts.rect.width, scene.controls[0].rect.width);
+            }
+            assert!(shortcuts.rect.width >= metrics.height.round());
+            match &scene.version {
+                Some(label) => {
+                    assert_eq!(label.label, "EON 9.8.7");
+                    assert_eq!(label.rect.left, shortcuts.rect.right());
+                    assert_eq!(label.rect.right(), close.rect.left);
+                }
+                None => assert_eq!(shortcuts.rect.right(), close.rect.left),
+            }
+            let middle = height / 2.0;
+            for (x, hit) in [
+                (shortcuts.rect.left + 0.5, WorkspaceHeaderControl::Shortcuts),
+                (shortcuts.centre, WorkspaceHeaderControl::Shortcuts),
+                (
+                    shortcuts.rect.right() - 0.5,
+                    WorkspaceHeaderControl::Shortcuts,
+                ),
+                (close.rect.left + 0.5, WorkspaceHeaderControl::CloseTab),
+                (close.centre, WorkspaceHeaderControl::CloseTab),
+                (width - 0.5, WorkspaceHeaderControl::CloseTab),
+            ] {
+                assert_eq!(scene.hit_test(x, middle), Some(WorkspaceHit::Control(hit)));
+            }
+            if let Some(label) = &scene.version {
+                let centre = label.rect.left + label.rect.width / 2.0;
+                assert_eq!(scene.hit_test(centre, middle), Some(WorkspaceHit::Version));
+            }
+            // The Eon icon and the round Shortcuts button are as tall as the tab pills, centred
+            // on them, and the button's circle stays inside its target.
+            let pill = scene.bar_pill_rect(scene.tabs[0].rect, metrics);
+            let pill_centre = pill.top + pill.height / 2.0;
+            let circle = scene.round_button_rect(&shortcuts, metrics);
+            assert_eq!(
+                (circle.width, circle.height),
+                (pill.height.round(), pill.height.round())
+            );
+            assert!((circle.left + circle.width / 2.0 - shortcuts.centre).abs() <= 0.5);
+            assert!((circle.top + circle.height / 2.0 - pill_centre).abs() <= 0.5);
+            assert!(circle.left >= shortcuts.rect.left && circle.right() <= shortcuts.rect.right());
+            assert_eq!(
+                scene.hit_test(circle.left + 0.5, pill_centre),
+                Some(WorkspaceHit::Control(WorkspaceHeaderControl::Shortcuts))
+            );
+            // The Eon icon mirrors Close's glyph about the bar's middle.
+            let icon = scene.eon_icon.unwrap();
+            assert_eq!(
+                icon.height,
+                (pill.height - 2.0 * metrics.scale).round(),
+                "{scale}"
+            );
+            let icon_centre = icon.left + icon.width / 2.0;
+            assert!((icon_centre - edge).abs() <= 0.5, "{scale}");
+            assert!(
+                (icon.top + icon.height / 2.0 - edge).abs() <= 0.5,
+                "{scale}"
+            );
+        }
+    }
+}
+
+#[test]
+fn scoped_windows_keep_their_room_until_the_next_read() {
+    use eon_workspace_protocol::v30::{ClaudeQuota, ClaudeQuotaState};
+    let window = |minutes: u32, scope: Option<&str>| QuotaWindow {
+        duration_minutes: minutes,
+        remaining_percent: 50,
+        resets_at: None,
+        scope: scope.map(Into::into),
+    };
+    let read = |observed_at, windows| ClaudeQuota {
+        state: ClaudeQuotaState::Fresh,
+        observed_at,
+        windows,
+    };
+    let fable = vec![("Fable".to_owned(), 10_080)];
+    let mut scoped = crate::ScopedWindows::default();
+    scoped.observe(Some(&read(
+        1,
+        vec![window(300, None), window(10_080, Some("Fable"))],
+    )));
+    assert_eq!(scoped.windows(), fable);
+    // The runtime drops a window at its reset; the same read keeps its room.
+    scoped.observe(Some(&read(1, vec![window(300, None)])));
+    assert_eq!(scoped.windows(), fable);
+    // A new read decides the set again.
+    scoped.observe(Some(&read(2, vec![window(300, None)])));
+    assert!(scoped.windows().is_empty());
+    scoped.observe(Some(&read(3, vec![window(10_080, Some("Fable"))])));
+    assert_eq!(scoped.windows(), fable);
+    // The quota going away forgets them.
+    scoped.observe(None);
+    assert_eq!(scoped, crate::ScopedWindows::default());
+}
+
+#[test]
+fn reserved_chips_take_the_widest_digit() {
+    use eon_workspace_protocol::v30::{CodexQuota, Pane, PopupGeometry, Tab};
+    let snapshot = Snapshot {
+        workspace: "w1".into(),
+        active_workspace: "w1".into(),
+        workspaces: Vec::new(),
+        active_tab: "t1".into(),
+        geometry: PopupGeometry {
+            side_margin: 8.0,
+            vertical_margin: 4.0,
+        },
+        entries: Vec::new(),
+        tabs: vec![Tab {
+            id: "t1".into(),
+            directory: b"/tmp".to_vec(),
+            pending: false,
+            selected_pane: Some("p1".into()),
+            selected_popup: None,
+            columns: vec![eon_workspace_protocol::v30::Column {
+                panes: vec![Pane {
+                    label: "p1".into(),
+                    pinned_name: None,
+                    id: "p1".into(),
+                    session: "s1".into(),
+                    endpoint: b"/tmp/p1.sock".to_vec(),
+                    live: true,
+                    attention: None,
+                }],
+                expanded: "p1".into(),
+            }],
+            popups: Vec::new(),
+            attention_rollup: None,
+        }],
+        codex_quota: None,
+        claude_quota: None,
+        codex_quota_failure: None,
+        claude_quota_failure: None,
+        running: None,
+        busy: None,
+        sidebar: eon_workspace_protocol::v30::Sidebar::Open,
+        attention_queue: Vec::new(),
+    };
+    let observed_at = 1_000_000;
+    // Full windows 4h10m and 6d10h in: more zeros than the latest minute's 4h59m and 6d23h.
+    let window = |minutes: u32, left: u32| QuotaWindow {
+        duration_minutes: minutes,
+        remaining_percent: 100,
+        resets_at: Some(observed_at + u64::from(left) * 60),
+        scope: None,
+    };
+    let mut snapshot = snapshot;
+    snapshot.codex_quota = Some(CodexQuota {
+        state: CodexQuotaState::Stale,
+        observed_at,
+        windows: vec![window(300, 50), window(10_080, 14 * 60)],
+    });
+    // A font whose zero is wider than its other digits.
+    let measure = |_: HeaderText, text: &str| {
+        (
+            text.to_owned(),
+            text.chars()
+                .map(|c| if c == '0' { 13.0 } else { 10.0 })
+                .sum::<f32>(),
+        )
+    };
+    let metrics = CellMetrics::for_scale(1.0);
+    let mut shown = false;
+    for logical_width in 600..=1600 {
+        let scene = WorkspaceScene::from_snapshot_with_bar(
+            &snapshot,
+            EonBar {
+                items: &[BarItem::CodexQuota],
+                icon: true,
+                ..EonBar::default()
+            },
+            PhysicalSize::new(logical_width, 600),
+            metrics,
+            0.0,
+            0.0,
+            measure,
+            None,
+        );
+        shown |= scene.eon_icon.is_some();
+        assert!(
+            scene.eon_icon.is_none() || scene.bar_complete,
+            "{logical_width}: the icon shows beside a chip that does not fit"
+        );
+    }
+    assert!(shown);
+}

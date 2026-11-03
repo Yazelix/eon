@@ -73,6 +73,20 @@ immutable launch fact, not a lookup of the installed executable or Venus version
 Eon owns the `[bar] widgets` preference. Narrow layouts hide the full label
 when there is insufficient spare header space.
 
+The supervising Eon may pass `--eon-icon ABSOLUTE_PATH`, the Eon icon that
+leads the Eon Bar. The input is workspace-only and given at most once; a
+relative or empty path fails launch. Venus reads the file once at startup: a
+square image, four bytes per pixel row by row (red, green and blue
+premultiplied by the fourth, alpha), 16 to 512 pixels a side. A file Venus
+cannot read or that is not such an image shows no icon and one line on stderr,
+and launch goes on. Venus area-averages the image to two logical pixels less
+than the tab pills' height, in whole pixels, and draws it in its own colours.
+Under width pressure the icon hides before any other bar item, leaving room for
+each quota chip and reading at its widest, so only a provider's quota first
+appearing or going away, or a read finding a scoped window gained or lost, can
+show or hide it; it also hides whenever the tabs would not all fit beside it,
+however wide the window.
+
 The supervising Eon may also pass `--bar-items ITEM,...` to choose which Eon
 Bar items show and in what order ([Eon Bar](PRESENTATION.md#eon-bar)). Items
 are `codex_quota`, `claude_quota`, `cpu`, `ram`, `disk`, `clock` and `version`,

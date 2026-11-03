@@ -683,6 +683,7 @@
               EON_VENUS = "${venusPackage}/bin/yazelix-venus";
               EON_CODEXBAR = "${codexbarPackage}/bin/CodexBarCLI";
               EON_ANIMA = "${animaPackage}/bin/anima";
+              EON_ICON = "${out}/share/eon/eon-icon-256.rgba";
               EON_NU = "${nushellPackage}/bin/nu";
               EON_BASH = "${bashPackage}/bin/bash";
               EON_HX = "${helixPackage}/bin/hx";
@@ -779,6 +780,14 @@
                   ${pkgs.imagemagick}/bin/magick ${./assets/eon.png} \
                     -filter Box -resize "''${size}x''${size}" "$icon_dir/eon.png"
                 done
+                # The Eon Bar's icon: the mark in its own colours, centred in a 256x256 square,
+                # as raw 8-bit RGBA with premultiplied alpha.
+                mkdir -p "$out/share/eon"
+                ${pkgs.imagemagick}/bin/magick ${./assets/eon.png} -trim +repage -background none \
+                  -set option:side '%[fx:max(w,h)]' -gravity center -extent '%[side]x%[side]' \
+                  -filter Box -resize 256x256 -channel RGB -fx 'u*u.a' +channel -depth 8 \
+                  "rgba:$out/share/eon/eon-icon-256.rgba"
+                test "$(stat -c %s "$out/share/eon/eon-icon-256.rgba")" = 262144
                 for command in nu bash hx yazi ya lazygit lg; do
                   ln -s eon "$out/bin/eon-$command"
                 done

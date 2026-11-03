@@ -19,6 +19,20 @@
   `Stopped` exits as `Ended` does and `Failure` shows as a refused action's
   notice (`eon-7cf0y.3`). No wire change.
 
+- VEN-C21: the Eon icon may lead the Eon Bar before the workspace label and
+  tabs, only while everything else would show with it at its widest and the
+  tabs fit unscrolled, however wide the window (so only a provider's quota
+  first appearing or going away, or a read finding a scoped window gained or
+  lost, may show or hide it, once; no window's reset does);
+  Keyboard shortcuts is a round button with its glyph centred; the version
+  label sits between Keyboard shortcuts and Close; the icon's centre and
+  Close's glyph ink sit as far from the window's sides as from its top (Close's
+  centred instead where that would leave its target), with as much space after
+  the icon as before it. Eon passes the icon as
+  `--eon-icon PATH`, a square premultiplied RGBA image Venus reads once at
+  startup; a missing or unusable file shows no icon and never fails launch
+  (`eon-369s`). No wire change.
+
 - VEN-C7: a held selection keeps scrolling into history while its pointer is
   above the pane's top row, including over the Eon Bar, a pane above, or the
   header's scrollback pill, with the tick position clamped to the top row and

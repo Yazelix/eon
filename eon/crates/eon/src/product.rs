@@ -160,6 +160,7 @@ pub(crate) fn inputs() -> Inputs {
         venus: configured_program("EON_VENUS", "yazelix-venus"),
         codexbar: configured_program("EON_CODEXBAR", "codexbar"),
         anima: configured_program("EON_ANIMA", "anima"),
+        icon: eon_icon(std::env::var_os("EON_ICON")),
         managed: ManagedPrograms {
             nu: configured_program("EON_NU", "nu"),
             bash: configured_program("EON_BASH", "bash"),
@@ -178,8 +179,38 @@ fn configured_program(variable: &str, fallback: &str) -> std::path::PathBuf {
     std::env::var_os(variable).map_or_else(|| fallback.into(), std::path::PathBuf::from)
 }
 
+/// The Eon icon's image from `EON_ICON`. Venus refuses a relative `--eon-icon`, so a relative
+/// path counts as no icon rather than stopping every workspace window from launching.
+fn eon_icon(value: Option<std::ffi::OsString>) -> Option<std::path::PathBuf> {
+    value
+        .filter(|value| !value.is_empty())
+        .map(std::path::PathBuf::from)
+        .filter(|path| path.is_absolute())
+}
+
 fn nonempty_environment_path(name: &str) -> Option<std::path::PathBuf> {
     std::env::var_os(name)
         .filter(|value| !value.is_empty())
         .map(std::path::PathBuf::from)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::eon_icon;
+
+    #[test]
+    fn eon_icon_takes_only_an_absolute_path() {
+        assert_eq!(
+            eon_icon(Some("/nix/store/x-eon/share/eon/eon-icon-256.rgba".into())),
+            Some("/nix/store/x-eon/share/eon/eon-icon-256.rgba".into())
+        );
+        for value in [
+            None,
+            Some(""),
+            Some("eon-icon.rgba"),
+            Some("./share/eon-icon.rgba"),
+        ] {
+            assert_eq!(eon_icon(value.map(Into::into)), None, "{value:?}");
+        }
+    }
 }
