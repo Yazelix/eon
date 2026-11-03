@@ -747,6 +747,9 @@ fn parse_quit_arguments(arguments: &[OsString]) -> Result<Option<(bool, bool)>, 
 }
 
 fn execute(inputs: &Inputs, arguments: Vec<OsString>) -> Result<i32, Error> {
+    if let Some(result) = command_help(inputs.version, &arguments) {
+        return result;
+    }
     if let Some(code) = lifecycle_command(inputs, &arguments, "eon")? {
         return Ok(code);
     }
@@ -758,7 +761,6 @@ fn execute(inputs: &Inputs, arguments: Vec<OsString>) -> Result<i32, Error> {
         };
     }
     let result = match arguments.as_slice() {
-        [flag] if flag == "-h" || flag == "--help" => print_help(inputs),
         [] => launch_current(inputs, LaunchMode::Workspace, &[], true, false, "eon"),
         [command, action] if command == "window" && action == "new" => windows::new_window(inputs),
         [command, action, id] if command == "window" && action == "attach" => {
@@ -871,84 +873,242 @@ fn print_config_defaults(inputs: &Inputs, json: bool) -> Result<i32, String> {
     Ok(0)
 }
 
-fn print_help(inputs: &Inputs) -> Result<i32, String> {
+/// `eon --help`'s command rows by section, as (command, description). A row whose command is
+/// empty or starts with spaces continues the row above it.
+const HELP_SECTIONS: &[(&str, &[(&str, &str)])] = &[
+    (
+        "Start",
+        &[
+            ("eon", "Open or present the workspace"),
+            ("run [-- COMMAND...]", "Start a fresh workspace"),
+        ],
+    ),
+    (
+        "Windows",
+        &[
+            ("quit [--json]", "End this window and its terminals"),
+            ("quit --all [--json]", "End every window's terminals"),
+            ("window new", "Open an independent window"),
+            ("window attach ID", "Reopen a window"),
+            ("window stop ID [--json]", "End that window's terminals"),
+            ("window stop all [--json]", "End every window's terminals"),
+            ("windows [--json]", "List independent windows"),
+        ],
+    ),
+    (
+        "Attach & stop",
+        &[
+            ("attach [GENERATION]", "Reattach to current or named work"),
+            ("generations [--json]", "List current and older work"),
+            (
+                "stop GENERATION|previous|all [--json]",
+                "End selected terminals",
+            ),
+        ],
+    ),
+    (
+        "Workspaces",
+        &[
+            ("workspaces [--json]", "List this window's workspaces"),
+            ("workspace [--json]", "Inspect the workspace"),
+            (
+                "workspace new [--json] [--no-focus]",
+                "Add a workspace and show it",
+            ),
+            ("workspace switch WS [--json]", "Show workspace WS"),
+            (
+                "workspace rename [WS] NAME [--json]",
+                "Name a workspace; empty clears",
+            ),
+            (
+                "workspace close WS [--json]",
+                "Stop its terminals and remove it",
+            ),
+        ],
+    ),
+    (
+        "Tabs & panes",
+        &[
+            ("tab create [--json]", "Choose a directory for a new tab"),
+            (
+                "tab create --directory DIRECTORY",
+                "Start a tab without the picker",
+            ),
+            (
+                "  [--json] [--no-focus] [-- COMMAND...]",
+                "COMMAND needs an Eon terminal",
+            ),
+            ("tab close TAB [--json]", "Close the active tab"),
+            (
+                "tab directory TAB [--json] -- DIRECTORY",
+                "Set the tab's launch directory",
+            ),
+            ("tab move left|right [--json]", "Move the active tab"),
+            (
+                "pane create [--json] [--no-focus]",
+                "Add a pane to the active tab",
+            ),
+            (
+                "pane create [--json] -- COMMAND...",
+                "Run COMMAND in a new pane",
+            ),
+            ("edit [--json] -- FILE", "Open FILE in Helix in a new pane"),
+            ("pane close PANE [--json]", "Close a pane of the active tab"),
+            (
+                "pane rename PANE NAME [--json]",
+                "Pin a pane name; empty clears",
+            ),
+            (
+                "pane rename PANE --clear [--json]",
+                "Restore automatic pane naming",
+            ),
+            (
+                "pane move up|down|left|right [--json]",
+                "Move the selected pane",
+            ),
+            (
+                "pane read PANE|POPUP [--json]",
+                "Print a pane's or popup's text",
+            ),
+            (
+                "pane send PANE|POPUP [--enter] [--json]",
+                "Paste TEXT, then Enter if asked",
+            ),
+            ("  [--stdin | -- TEXT]", "TEXT up to 64 KiB, or Enter alone"),
+            (
+                "focus ID|left|right|up|down [--json]",
+                "Focus by ID or navigate",
+            ),
+        ],
+    ),
+    (
+        "Tools & information",
+        &[
+            ("anima [STYLE] [CHILD OPTIONS...]", "Play an animation here"),
+            ("versions", "Show exact component versions"),
+            ("config-path", "Create the config root and print"),
+            ("", "its config.toml path"),
+            ("config-dir", "Create and print the config root"),
+            ("config defaults [--json]", "Print config.toml defaults"),
+            ("-h, --help", "Show this help; after a command,"),
+            ("", "only that command's lines"),
+        ],
+    ),
+];
+
+/// Answers `-h` or `--help` alone or after one or two command words: `eon FAMILY --help` and
+/// `eon FAMILY COMMAND --help` print the rows of `eon --help` whose command starts with those
+/// words, and words no row starts with are invalid. Operands, as in `run -- --help`, and
+/// Anima's own help are not help here.
+fn command_help(version: &str, arguments: &[OsString]) -> Option<Result<i32, Error>> {
+    let (flag, words) = arguments.split_last()?;
+    // Command words are lowercase, as `config-path`; `--`, IDs and the `-h,` row are not.
+    let command_word = |word: &OsString| {
+        word.to_str().is_some_and(|word| {
+            word.starts_with(|first: char| first.is_ascii_lowercase())
+                && word
+                    .bytes()
+                    .all(|byte| byte.is_ascii_lowercase() || byte == b'-')
+        })
+    };
+    if !(flag == "-h" || flag == "--help")
+        || words.len() > 2
+        || words.first().is_some_and(|word| word == "anima")
+        || !words.iter().all(command_word)
+    {
+        return None;
+    }
     let color = std::io::stdout().is_terminal()
         && env::var_os("TERM").as_deref() != Some(OsStr::new("dumb"))
         && env::var_os("NO_COLOR").is_none_or(|value| value.is_empty());
-    write_stdout(help_text(inputs.version, color))?;
-    Ok(0)
+    let help = match words {
+        [] => Some(help_text(version, color)),
+        // The bare `eon` row is not a family.
+        [family, ..] if family == "eon" => None,
+        _ => command_help_text(words, color),
+    };
+    Some(match help {
+        Some(help) => write_stdout(help).map(|()| 0).map_err(Error::from),
+        None => Err(Error::usage(EON_USAGE)),
+    })
 }
 
-fn help_text(version: &str, color: bool) -> String {
-    let (heading, command, reset) = if color {
+fn help_colors(color: bool) -> (&'static str, &'static str, &'static str) {
+    if color {
         ("\x1b[1;35m", "\x1b[36m", "\x1b[0m")
     } else {
         ("", "", "")
-    };
+    }
+}
+
+fn help_rows<'a>(rows: impl IntoIterator<Item = &'a (&'a str, &'a str)>, color: bool) -> String {
+    let (_, command, reset) = help_colors(color);
+    rows.into_iter()
+        .map(|(text, description)| {
+            let words = text.trim_start();
+            let indent = &text[..text.len() - words.len()];
+            // A row longer than the column keeps one space before its description.
+            let padding = 44usize.saturating_sub(text.len()).max(1);
+            if words.is_empty() {
+                format!("  {:padding$}{description}\n", "")
+            } else {
+                format!(
+                    "  {indent}{command}{words}{reset}{:padding$}{description}\n",
+                    ""
+                )
+            }
+        })
+        .collect()
+}
+
+/// The rows whose command starts with `words`, with their continuations, under their
+/// sections' headings, or `None` when no row does.
+fn command_help_text(words: &[OsString], color: bool) -> Option<String> {
+    let (heading, _, reset) = help_colors(color);
+    let mut help = String::new();
+    for (title, rows) in HELP_SECTIONS {
+        let mut selected = false;
+        let rows = help_rows(
+            rows.iter().filter(|(text, _)| {
+                if !text.is_empty() && !text.starts_with(' ') {
+                    let mut row = text.split(' ');
+                    selected = words
+                        .iter()
+                        .all(|word| row.next().is_some_and(|row| word == row));
+                }
+                selected
+            }),
+            color,
+        );
+        if !rows.is_empty() {
+            help += &format!("{heading}{title}{reset}\n{rows}\n");
+        }
+    }
+    (!help.is_empty())
+        .then(|| help + "Run `eon --help` for workspace flags, notes and exit status.\n")
+}
+
+fn help_text(version: &str, color: bool) -> String {
+    let (heading, command, reset) = help_colors(color);
+    let sections: String = HELP_SECTIONS
+        .iter()
+        .map(|(title, rows)| format!("\n{heading}{title}{reset}\n{}", help_rows(*rows, color)))
+        .collect();
+    let examples = help_rows(
+        &[
+            ("eon run -- eon-nu -c 'print hello'", "Start with a command"),
+            ("eon windows --json", "Inspect windows as JSON"),
+            ("eon anima --help", "Browse animation styles/options"),
+        ],
+        color,
+    );
     format!(
         "{heading}Eon{reset} {version}  ·  Terminal workspaces. Persistent terminals.
 
 {heading}Usage{reset}  {command}eon [COMMAND]{reset}
-
-{heading}Start{reset}
-  {command}eon{reset}                                         Open or present the workspace
-  {command}run [-- COMMAND...]{reset}                         Start a fresh workspace
-
-{heading}Windows{reset}
-  {command}quit [--json]{reset}                               End this window and its terminals
-  {command}quit --all [--json]{reset}                         End every window's terminals
-  {command}window new{reset}                                  Open an independent window
-  {command}window attach ID{reset}                            Reopen a window
-  {command}window stop ID [--json]{reset}                     End that window's terminals
-  {command}window stop all [--json]{reset}                    End every window's terminals
-  {command}windows [--json]{reset}                            List independent windows
-
-{heading}Attach & stop{reset}
-  {command}attach [GENERATION]{reset}                         Reattach to current or named work
-  {command}generations [--json]{reset}                        List current and older work
-  {command}stop GENERATION|previous|all [--json]{reset}       End selected terminals
-
-{heading}Workspaces{reset}
-  {command}workspaces [--json]{reset}                         List this window's workspaces
-  {command}workspace [--json]{reset}                          Inspect the workspace
-  {command}workspace new [--json] [--no-focus]{reset}         Add a workspace and show it
-  {command}workspace switch WS [--json]{reset}                Show workspace WS
-  {command}workspace rename [WS] NAME [--json]{reset}         Name a workspace; empty clears
-  {command}workspace close WS [--json]{reset}                 Stop its terminals and remove it
-
-{heading}Tabs & panes{reset}
-  {command}tab create [--json]{reset}                         Choose a directory for a new tab
-  {command}tab create --directory DIRECTORY{reset}            Start a tab without the picker
-    {command}[--json] [--no-focus] [-- COMMAND...]{reset}     COMMAND needs an Eon terminal
-  {command}tab close TAB [--json]{reset}                      Close the active tab
-  {command}tab directory TAB [--json] -- DIRECTORY{reset}     Set the tab's launch directory
-  {command}tab move left|right [--json]{reset}                Move the active tab
-  {command}pane create [--json] [--no-focus]{reset}           Add a pane to the active tab
-  {command}pane create [--json] -- COMMAND...{reset}          Run COMMAND in a new pane
-  {command}edit [--json] -- FILE{reset}                       Open FILE in Helix in a new pane
-  {command}pane close PANE [--json]{reset}                    Close a pane of the active tab
-  {command}pane rename PANE NAME [--json]{reset}              Pin a pane name; empty clears
-  {command}pane rename PANE --clear [--json]{reset}           Restore automatic pane naming
-  {command}pane move up|down|left|right [--json]{reset}       Move the selected pane
-  {command}pane read PANE|POPUP [--json]{reset}               Print a pane's or popup's text
-  {command}pane send PANE|POPUP [--enter] [--json]{reset}     Paste TEXT, then Enter if asked
-    {command}[--stdin | -- TEXT]{reset}                       TEXT up to 64 KiB, or Enter alone
-  {command}focus ID|left|right|up|down [--json]{reset}        Focus by ID or navigate
-
-{heading}Tools & information{reset}
-  {command}anima [STYLE] [CHILD OPTIONS...]{reset}            Play an animation here
-  {command}versions{reset}                                    Show exact component versions
-  {command}config-path{reset}                                 Create the config root and print
-                                              its config.toml path
-  {command}config-dir{reset}                                  Create and print the config root
-  {command}config defaults [--json]{reset}                    Print config.toml defaults
-  {command}-h, --help{reset}                                  Show this help
-
+{sections}
 {heading}Examples{reset}
-  {command}eon run -- eon-nu -c 'print hello'{reset}          Start with a command
-  {command}eon windows --json{reset}                          Inspect windows as JSON
-  {command}eon anima --help{reset}                            Browse animation styles/options
-
+{examples}
 Closing a window detaches; eon quit ends it.
 Inside Eon, workspace commands use the calling terminal's supervisor/workspace.
 Tab move and pane commands retain their calling-tab rules.
@@ -1960,6 +2120,41 @@ mod parity;
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn help_flags_that_are_operands_or_anima_options_reach_their_commands() {
+        for arguments in [
+            &["run", "--", "--help"][..],
+            &["edit", "--", "-h"],
+            &["anima", "--help"],
+            &["anima", "aquarium", "-h"],
+            &["pane", "send", "p1", "--", "--help"],
+            &["workspace", "rename", "--", "-h"],
+            &["workspace", "switch", "--", "--help"],
+            &["pane", "rename", "p1", "--", "--help"],
+            &["pane", "p1", "--help"],
+            &["-h,", "--help"],
+        ] {
+            let arguments: Vec<OsString> = arguments.iter().map(OsString::from).collect();
+            assert!(command_help("0", &arguments).is_none(), "{arguments:?}");
+        }
+        let send = ["pane", "send", "p1", "--", "--help"].map(OsString::from);
+        let send = parse_pane_send_arguments(&send).unwrap().unwrap();
+        assert!(matches!(send.text, SendText::Operand(text) if text == "--help"));
+    }
+
+    #[test]
+    fn a_help_row_longer_than_the_column_keeps_one_space() {
+        let long = "x".repeat(50);
+        assert_eq!(
+            help_rows(&[(long.as_str(), "d")], false),
+            format!("  {long} d\n")
+        );
+        assert_eq!(
+            help_rows(&[("eon", "d")], false),
+            format!("  eon{}d\n", " ".repeat(41))
+        );
+    }
 
     #[test]
     fn final_close_prompt_names_the_workspace_it_closes() {

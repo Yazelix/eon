@@ -303,7 +303,71 @@ fn help_is_readable_and_does_not_start_or_prepare_a_workspace() {
         assert!(!absent_config.exists());
         assert_eq!(fs::read_dir(&config).unwrap().count(), 1);
     }
-    for args in [vec!["unknown"], vec!["-h", "extra"], vec!["tab", "close"]] {
+    // A family's or command's help is its rows of `eon --help`, continuations included.
+    let full = stdout(&eon_command(binary).arg("--help").output().unwrap()).to_owned();
+    for (args, present, absent) in [
+        (
+            vec!["pane", "--help"],
+            &["pane create", "pane send PANE|POPUP", "[--stdin | -- TEXT]"][..],
+            &["tab create", "edit [--json]"][..],
+        ),
+        (
+            vec!["pane", "send", "--help"],
+            &["pane send PANE|POPUP", "[--stdin | -- TEXT]"],
+            &["pane create", "pane read"],
+        ),
+        (
+            vec!["pane", "send", "-h"],
+            &["pane send PANE|POPUP"],
+            &["pane read"],
+        ),
+        (
+            vec!["quit", "--help"],
+            &["quit --all [--json]"],
+            &["window new"],
+        ),
+    ] {
+        let output = eon_command(binary)
+            .args(&args)
+            .env("EON_CONFIG_HOME", &absent_config)
+            .env("EON_RUNTIME_DIR", &runtime)
+            .env_remove("EON_WINDOW_RUNTIME_DIR")
+            .env("EON_ORBIT", root.join("missing-orbit"))
+            .env("EON_VENUS", root.join("missing-venus"))
+            .output()
+            .unwrap();
+        assert!(
+            output.status.success(),
+            "{args:?}: {}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+        let help = stdout(&output);
+        assert!(
+            !help.contains('\u{1b}'),
+            "{args:?}: piped help must be plain text"
+        );
+        for row in present {
+            assert!(help.contains(row), "{args:?} is missing {row}");
+        }
+        for row in absent {
+            assert!(!help.contains(row), "{args:?} must not list {row}");
+        }
+        for line in help.lines().filter(|line| line.starts_with("  ")) {
+            assert!(
+                full.lines().any(|full| full == line),
+                "{line:?} is not in eon --help"
+            );
+        }
+        assert!(!runtime.exists());
+        assert!(!absent_config.exists());
+    }
+    for args in [
+        vec!["unknown"],
+        vec!["-h", "extra"],
+        vec!["tab", "close"],
+        vec!["unknown", "--help"],
+        vec!["pane", "unknown", "--help"],
+    ] {
         let output = eon_command(binary)
             .args(&args)
             .env("EON_CONFIG_HOME", &absent_config)
@@ -311,7 +375,7 @@ fn help_is_readable_and_does_not_start_or_prepare_a_workspace() {
             .env_remove("EON_WINDOW_RUNTIME_DIR")
             .output()
             .unwrap();
-        assert!(!output.status.success());
+        assert_eq!(output.status.code(), Some(2), "{args:?}");
         assert!(output.stdout.is_empty());
         let error = String::from_utf8_lossy(&output.stderr);
         assert!(error.contains("eon --help"));
@@ -8973,6 +9037,12 @@ fn pane_send_pastes_then_waits_for_enter_and_exits_by_failure() {
         format!("{log}session-1 Paste(\"x\")\nsession-1 Paste(\"y\")\n")
     );
     fs::remove_file(root.join("orbit-reply")).unwrap();
+    // A help flag after `--` is TEXT, not a request for help.
+    let log = sent();
+    let help_text = run(&["pane", "send", "p1", "--json", "--", "--help"]);
+    assert_eq!(help_text.status.code(), Some(0));
+    assert_eq!(json(&help_text), reply(6, true.into(), false));
+    assert_eq!(sent(), format!("{log}session-1 Paste(\"--help\")\n"));
     // Sending changed nothing a person sees but the program.
     assert_eq!(
         stable_workspace_json(&run(&["workspace", "--json"])),

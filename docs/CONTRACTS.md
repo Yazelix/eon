@@ -109,8 +109,12 @@ socket names, JSON fields and protocol identifiers retain their spellings.
     rejected reopen preserves the existing terminal and command.
   - Standalone `eon -h` and `eon --help` print grouped command descriptions and
     examples to stdout and exit successfully without starting children or
-    preparing configuration/runtime state. Terminal output uses color unless
-    `NO_COLOR` is nonempty or `TERM=dumb`; redirected output has no ANSI escapes.
+    preparing configuration/runtime state. `eon FAMILY -h`, `eon FAMILY --help`,
+    `eon FAMILY COMMAND -h` and `eon FAMILY COMMAND --help` print that family's
+    or command's lines from the same descriptions and exit the same way; an
+    unknown family or command remains invalid syntax. Terminal output uses
+    color unless `NO_COLOR` is nonempty or `TERM=dumb`; redirected output has
+    no ANSI escapes.
     Invalid syntax remains a concise stderr failure pointing to `eon --help`.
     Child arguments, including Anima help, retain their existing forwarding.
   - Eon owns the cursor-tail duration default `1.5` and the optional

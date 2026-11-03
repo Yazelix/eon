@@ -78,7 +78,7 @@ agents report through OSC 7501.
 
 Use `env -u EON_TERMINAL eon ...` only when asked to act on the shown workspace
 instead of your own. Keep `--json` on the workspace command you substitute.
-Run `eon --help` for the command list.
+Run `eon --help` for the command list, or `eon pane --help` for one family.
 
 ## Read a pane's screen
 

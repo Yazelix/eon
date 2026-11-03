@@ -5,6 +5,13 @@ installation, and proven contract changes.
 
 ## Unreleased
 
+- `eon pane --help`, `eon pane send -h` and the same after every other command
+  family print only that family's or command's lines of `eon --help`, instead
+  of failing as an invalid command; `eon focus --help` looked for a target
+  named `--help` before. An unknown family or command still fails with exit 2,
+  and `eon anima --help` still shows Anima's own help. A name or text that is
+  itself `--help` goes after `--`, as in `eon workspace rename -- --help`
+  (`eon-xubt`).
 - The bottom hints bar leaves more room on narrow windows: the `next agent`
   and `previous agent` hints are gone (Alt+G and Alt+Shift+G still work and
   stay in the Shortcuts viewer), the move hints read `mv tab` and `mv pane`,

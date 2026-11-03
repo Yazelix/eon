@@ -409,7 +409,9 @@ or last entry, `H`/`L` go back/forward, and `/`/`?` with `n`/`N` find entries.
 ## CLI commands
 
 `eon -h` and `eon --help` show grouped commands,
-short descriptions, and examples without starting a workspace. Help uses color
+short descriptions, and examples without starting a workspace. After a command
+family or command, as in `eon pane --help` or `eon pane send -h`, they show
+only that family's or command's lines. Help uses color
 on terminals; redirected output is plain text. A nonempty `NO_COLOR` or
 `TERM=dumb` disables color. Invalid syntax points to `eon --help`.
 
