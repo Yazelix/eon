@@ -6,6 +6,9 @@ and remaining limitations. Owning Beads and Git retain execution history;
 
 ## Status
 
+- **Proposed:** review text only; not accepted intent, implementation or proof.
+  Existing contracts remain in force until the proposal and its amendments
+  are approved and implemented.
 - **Planned:** accepted intent without implementation evidence
 - **Candidate:** implemented and mechanically verified without an accepted final
   proof revision
@@ -3555,3 +3558,223 @@ socket names, JSON fields and protocol identifiers retain their spellings.
 - **Open proof:** The config and state corpus test (`eon-embg6`) in
   `eon-test`, plus one installed skip-version observation (floor release to
   new release) and one rollback observation per minor release.
+
+
+<!-- Proposed remote-workspace contracts: no current proof or implementation amended. -->
+
+The following proposals belong to slice 1 of
+[`eon-remote-workspaces-52i4`](REMOTE-WORKSPACES.md). Their exact text and the
+explicit expansion beyond the previously approved single-client scope await
+Lucca's review. They do not amend the behavior or proof of the existing
+contracts above. The linked proposal owns the scope delta, slice order and
+acceptance matrix.
+
+## EON-C38 — Host-owned persistent workspace identity and registry
+
+- **Status:** Proposed for review (`eon-remote-workspaces-52i4.10`); not yet
+  approved by Lucca, implemented or proved.
+- **Consumer:** Local and remote Eon clients and ID-targeted agent commands.
+- **Trigger:** Create, rename, discover, select, or forget a workspace; restart
+  a supervisor or reconnect a client.
+- **Result:** The host is authoritative for a durable opaque workspace ID and
+  versioned registry. Names and directories are attributes; duplicate names,
+  two workspaces using one directory, and multiple directories in one workspace
+  are valid. Window-local wN values remain handles, never durable identities.
+  Durable targeting identifies the host and workspace ID and never rebinds a
+  stale ID to another workspace. Registry state separates registration from
+  verified running/stopped state and stores versioned run membership/layout
+  for C39; slice 2a does not claim original-layout recovery. Mutations are
+  serialized and persist atomically; failed writes do not publish success.
+  Durable-format migration preserves the old version for older builds.
+- **Important failures:** Missing, corrupt, unknown-version, ambiguous, or stale
+  data yields an explicit diagnostic and no guessed target, duplicate launch,
+  deletion of live work, or overwrite of unrecoverable state. A host lookup
+  failure does not become local creation. Forget requires authoritative
+  confirmation that the target's work is stopped; cached/offline data alone
+  cannot authorize it.
+- **Owner:** Eon Runtime owns workspace identity, registry and topology; Eon
+  exposes launch policy and CLI; Orbit remains terminal/run authority.
+- **Boundary:** One host per workspace; no migration of live work across hosts,
+  reboot process restoration, second terminal store, or name-as-identity.
+- **Proof:** Not run. The [acceptance matrix](REMOTE-WORKSPACES.md#acceptance-matrix)
+  requires I1–I4 for slice 2a; C39 owns recovery proof.
+
+## EON-C39 — Original workspace reconstruction around surviving Orbit runs
+
+- **Status:** Proposed for review (`eon-remote-workspaces-52i4.10`); not yet
+  approved by Lucca, implemented or proved.
+- **Consumer:** A user returning after a compatible supervisor exit or crash.
+- **Trigger:** A replacement supervisor recovers the host's registered work.
+- **Result:** Recover the original workspace IDs, names, membership, tabs,
+  panes, persistent popups and saved layout around individually verified live
+  Orbit runs. Orbit owns PTYs, terminal state, output draining, program status
+  and terminal resources independently of the supervisor and Venus. Recovery
+  neither replays commands nor starts replacements masquerading as surviving
+  work. Missing runs are explicit stopped slots; unrelated or unclaimed runs
+  are not silently adopted or stopped. Only verified recovered state is
+  published. A compatible replacement may be a different build (C40).
+- **Important failures:** Invalid/unknown snapshots preserve live work and the
+  original state for diagnosis rather than fabricating a successful layout.
+  UID, PID plus start-time, endpoint inode, owner lease and protocol checks
+  remain mandatory. Busy, stale/replaced endpoints and partial or uncertain
+  recovery never authorize process termination or unsafe identity reuse.
+- **Owner:** Eon Runtime owns registry-to-layout reconstruction and supervisor
+  recovery; Orbit owns live terminal identity, ownership and state.
+- **Boundary:** Slice 2b proves local recovery first. Normal supervisor exit,
+  supervisor crash and client loss are distinct from Orbit death and reboot;
+  original-process continuity is promised only while those Orbit runs and
+  their tasks survive. Immediate unattended supervisor restart is optional.
+- **Proof:** Not run. [Matrix](REMOTE-WORKSPACES.md#acceptance-matrix) R1–R4,
+  then repeated through each hosting policy.
+
+## EON-C40 — SSH attachment, targeted lifecycle and explicit hosting
+
+- **Status:** Proposed for review (`eon-remote-workspaces-52i4.10`); not yet
+  approved by Lucca, implemented or proved.
+- **Consumer:** A full-Eon user on local x86_64 Linux native Wayland with work
+  on a headless x86_64 Linux host reached using OpenSSH; agents targeting it.
+- **Trigger:** Attach, reconnect, detach, close Venus, lose SSH, explicitly
+  Stop a workspace, bootstrap a supervisor, or change managed installation.
+- **Result:**
+  - Venus remains local. Runtime and Orbit execute remotely; OpenSSH owns
+    authentication, host-key checking, aliases, keys and ProxyJump. Private
+    mode-0600 forwarded Unix sockets carry canonical EONW and Orbit protocols.
+    Each window cleans up only its own SSH master/forwards. No new remote
+    listener, authentication protocol, terminal parser or graphics stack.
+    Local configuration owns presentation; host configuration owns launches.
+  - **Requested scope change; requires Lucca approval:** multiple devices
+    may remain connected and interactive on the same workspace, while one
+    authoritative host runtime and Orbit terminal owner validate and order
+    operations. A/B do not need an exclusive-controller takeover or handoff.
+    Multiple explicit host connections may coexist; foreground switching does
+    not implicitly disconnect another host. A host connection alone does not
+    attach every workspace on that host. Each device's focus, local scroll,
+    selection and presentation are independent. Attention/read-state
+    and OS-notification details remain deferred in the linked proposal.
+  - **Requested multi-device sizing rule; requires Lucca approval:** each PTY
+    has one authoritative size and its own current device size source. An
+    explicit user activation of that terminal pane immediately makes that
+    device the size source; accepted key/paste/application-directed mouse
+    input can also make it the source. Host selection gestures, local scroll,
+    hover, passive output, reconnect, and automatic foreground restoration do
+    not. Only resize from the current source propagates to the PTY. The host
+    orders accepted source changes and applies the corresponding size before
+    its input. Loss of that device's connection retains the last PTY size
+    until another explicit activation/input; it stops no task and replays no
+    input. Other displays adapt locally without resetting local focus,
+    selection or scroll. PTY resizing may still cause the application/TUI
+    to reflow; zero visual movement is not guaranteed. Application mouse
+    coordinates must be valid for the accepted frame/size or fail explicitly,
+    never be silently reinterpreted against a different layout.
+  - Build compatibility is exactly equality of EONW, Orbit management, ORBS
+    and ORBF versions. Baseline values are 28/5/14/3, not permanent pins.
+    Different builds with an equal tuple can attach; any unequal member
+    refuses clearly, naming versions/builds, and stops or upgrades nothing.
+    Matching versions do not replace identity and authorization checks.
+  - Window close/detach/SSH loss leaves live work running. Stop resolves one explicit
+    host/workspace ID and stops only that workspace through its owning
+    lifecycle; it never expands to a prior host or window collection. The
+    final Stop keeps an empty view with discovery available. Stop failure
+    retains remaining work and reports partial/unknown outcomes honestly.
+    Offline input and Stop are discarded/rejected, never replayed. An already
+    sent Stop whose confirmation is lost is unknown until queried, not
+    automatically retried. Stop and Forget remain distinct operations.
+  - **Shared-close semantics proposed for approval:** closing
+    a pane stops that pane's shared terminal; closing a tab stops the shared
+    terminals in that tab. Every connected device observes the same removal/
+    stop result. Neither action expands to unrelated tabs/workspaces/hosts.
+    Closing an Eon window or disconnecting only releases the requesting
+    client's relevant connections; another device and remote work continue.
+    An explicit workspace Stop still stops its shared tasks regardless of
+    which connected device issues it; it is not a device-local termination.
+  - Portable SSH hosting uses one foreground-capable runtime/recovery owner
+    and stands alone without a systemd user service. Startup follows
+    connect/check, lock, recheck, start-if-needed, readiness; competing clients
+    cannot launch duplicate supervisors. Managed hosting is explicit opt-in;
+    the configured service owns startup. Failure never launches a portable
+    fallback. Merely having systemd installed never selects managed mode.
+  - Supervisor restart cleanup must not kill independently owned Orbit runs.
+    Host policy that kills work or removes required sockets at last logout is
+    diagnosed with setup requirements; Eon does not claim detachment alone
+    defeats that policy. Connecting installs/enables/upgrades nothing and
+    never enables linger. Hosting-mode changes do not replace live work.
+  - Nix/Home Manager managed hosting is part of the initial remote feature,
+    not deferred follow-up support. Headless packaging excludes Venus and
+    graphical resources. Nix composition retains resources needed by live
+    work using GC roots/profiles; runtime never queries or records store paths
+    as durable component identity. Switch, rollback and compatible upgrades
+    preserve live tasks; no graphical-session binding or imperative overwrite
+    of declaratively owned units.
+- **Important failures:** Wrong host keys, missing authentication, forwarding
+  or readiness failure, incompatible tuples, unauthorized clients, replaced
+  sockets, reused PIDs, stale leases and service failure fail explicitly and
+  affect no unrelated work. Remote UID/PID/start-time/inode/lease verification
+  occurs at the remote authority: credentials on a forwarded socket prove
+  only the SSH hop. Uncertain transport success is not a stopped result.
+- **Owner:** Eon owns lifecycle/hosting policy and distribution; Runtime owns
+  execution and validation; Orbit owns live runs and terminal stop semantics;
+  Venus owns presentation; OpenSSH owns transport/login. Managed Nix code owns
+  resource retention, without a second recovery engine or component graph.
+- **Boundary:** No forced takeover, mixed-host workspace, second terminal
+  authority, reboot resurrection, automatic installation or mandatory
+  service manager. Deliberately detached processes retain Orbit's existing
+  shutdown boundary. Auto-reconnect is not required by the initial slice.
+- **Proof:** Not run. [Matrix](REMOTE-WORKSPACES.md#acceptance-matrix)
+  L1–L5, M1–M8, S1–S5, H1–H5. Portable and managed require
+  separate installed evidence. Existing prototype systemd proof proves neither
+  portable behavior nor current-edge integration.
+
+## EON-C41 — Unified discovery and ID-targeted agent parity
+
+- **Status:** Proposed for review (`eon-remote-workspaces-52i4.10`); not yet
+  approved by Lucca, implemented or proved.
+- **Consumer:** People using Eon's existing picker and agents using its CLI.
+- **Trigger:** List, discover, create, rename, attach/switch, Stop, Forget or
+  navigate attention across known local/remote workspaces.
+- **Result:** Extend upstream fzf discovery instead of adding a competing SSH
+  selector. Registries remain authoritative; cached observations name host,
+  workspace ID and freshness and are explicitly labelled cached in both GUI
+  and CLI. Connecting/offline/stopped and host identity are visible. Selecting
+  a known row reconnects to its identity, never a replacement with its name.
+  Every new picker/registry/Stop/Forget action has an ID-targeted eon CLI path
+  and machine-readable result in the slice adding it. Creation requires a
+  successfully resolved host target; failed remote discovery or an offline
+  row can never fall through to unmatched-query local creation. Agent status,
+  sidebar and attention navigation retain C31 semantics with host/freshness
+  context; cached attention never claims a fresh remote observation.
+- **Important failures:** Unknown/stale/ambiguous IDs, offline lookup, failed
+  attachment or authorization and uncertain state affect no unintended host
+  or workspace. Background agent actions preserve the person's view unless
+  movement is explicitly requested. Offline actions obey C40, not a queue.
+- **Owner:** Runtime owns discovery/action data and target validation; Eon
+  owns CLI/fzf policy; Venus presents state; providers/Orbit retain status.
+- **Boundary:** No second registry, truth from screen heuristics, invisible
+  fallback creation, or new authority over terminal contents (C35/C36 apply).
+  Exact CLI grammar/JSON changes are reviewed with the implementing slice.
+- **Proof:** Not run. [Matrix](REMOTE-WORKSPACES.md#acceptance-matrix) D1–D4. Existing attach/host-label beads join 3/5.
+
+## EON-C42 — Bounded remote presentation and history integration
+
+- **Status:** Proposed for review (`eon-remote-workspaces-52i4.10`); not yet
+  approved by Lucca, implemented or proved.
+- **Consumer:** A remote user on a constrained link and Venus consuming Orbit.
+- **Trigger:** Incremental updates, a slow receiver, reconnect/resync, or
+  reading retained history while output continues or history changes.
+- **Result:** Orbit remains sole terminal/history authority and owns canonical
+  frame/history protocols. Eon integrates incremental frames with bounded
+  backpressure, full-snapshot resynchronization, bounded history requests and
+  explicit anchor invalidation. Compare authoritative terminal results with
+  the full-frame correctness baseline. Queues/memory remain bounded under a
+  stalled receiver; reconnect starts from coherent current state rather than
+  replaying stale input. Measurements record wire bytes, CPU, input latency
+  and queue/memory bounds under documented RTT/bandwidth conditions.
+- **Important failures:** Missing/out-of-order/inapplicable deltas require
+  authoritative resync; invalid or pruned history anchors fail explicitly,
+  never silently select different history. No performance claim without exact
+  workload, identities, environment, baseline and observed results.
+- **Owner:** Orbit owns replication/history semantics and validation; Venus
+  consumes; Eon owns composition and end-to-end acceptance.
+- **Boundary:** No second emulator/history authority, prediction, protocol
+  translation or invented permanent wire schema in this Eon contract. Exact
+  Orbit changes and measurable budgets are approved before slices 6/7 code.
+- **Proof:** Not run. [Matrix](REMOTE-WORKSPACES.md#acceptance-matrix) P1–P3. Issue #1 is not complete before final proof.
