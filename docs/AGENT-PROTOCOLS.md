@@ -110,11 +110,13 @@ or a summary loses detail; a temporary path is not proof. Unattended runs and
 waits close unused stdin, time out, check progress early, and never match
 themselves as the target; stalls fail.
 
-Finish every change to code, tests, or scripts with review by a fresh agent
-that did not write it, since authors miss their own leftovers; in Claude Code,
-use the converge skill. Docs-only and planning-only work skips it. A pass that
-changes anything requires another; convergence needs a full clean pass. Nits
-never block it, and text-only fixes restart a review at most twice per slice.
+Finish every change to code, tests, or scripts with one full review by fresh
+agents that did not write it, a second model too where available and behavior
+changes, since authors miss their own leftovers; in Claude Code, use the
+converge skill. Docs-only and planning-only work skips it. The author fixes or
+rebuts each finding; its finder re-checks only those fixes and rebuttals. Rerun
+the full review only when a fix changes behavior beyond its finding or crosses
+a trust boundary. Nits never block, and text-only fixes need no re-check.
 
 ## AP-PLAN-001 — Durable planning state
 
@@ -147,24 +149,26 @@ the issue tool (beads_rust `br` when available), never its storage.
 
 ## AP-SESSION-001 — Session continuity across compaction
 
-Compaction is lossy; avoid it. Write each user decision to its durable owner
-when it is made. Delegate work whose raw output matters only as a conclusion,
-such as broad searches, long logs and checks, or research, to a fresh
-subagent; subagents are authorized unless the user or local rules say
-otherwise.
+Compaction is lossy; keep it rare and checkpointed. Write each user decision
+to its durable owner when it is made. Delegate work whose raw output matters
+only as a conclusion, such as broad searches, long logs and checks, or
+research, to a fresh subagent; subagents are authorized unless the user or
+local rules say otherwise.
 
 Budget absolute context tokens, not window share; if the host reports none,
 estimate high:
 
-- From 300k, add no scope or new steps: close the issue if it can
-  close soon, else bring work in progress to a verified state and
-  hand off.
-- Never pass 400k: hand off before the host would compact. After any
-  compaction, reread the issue and hand off.
+- From 300k, start no new step: close the issue if it can close soon, else
+  bring the current step to a verified state, checkpoint, and compact, or ask
+  the operator to. Never pass 400k without a checkpoint.
+- After a compaction, reread the instructions and the latest checkpoint, treat
+  the summary as discovery only, and continue.
+- After a session's fifth compaction, hand off from 300k instead of
+  compacting.
 
-A handoff is an issue comment: state, next step, and open decisions with
-reasons. The next session primes, e.g. "prime, then continue <issue> from its
-handoff".
+A checkpoint or handoff is an issue comment: state, next step, open decisions
+with reasons, and approaches ruled out. After a handoff, the next session
+primes, e.g. "prime, then continue <issue> from its handoff".
 
 ## AP-COORDINATOR-001 — One coordinator across agent sessions
 
