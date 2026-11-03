@@ -1462,6 +1462,12 @@ fn window_json(window: Option<&str>) -> String {
 fn send_terminal(inputs: &Inputs, send: PaneSend, target: WorkspaceTarget) -> Result<i32, Error> {
     let json = send.json;
     let text = match send.text {
+        SendText::None if stdin_holds_data() => {
+            let detail = "standard input holds text, so nothing was sent; add --stdin to send \
+                          that text, or give empty input to press Enter alone: </dev/null, or \
+                          null | eon ... in Nushell";
+            return Ok(report_failure(&failure("unread-stdin", detail), json)?);
+        }
         SendText::None => Vec::new(),
         SendText::Operand(text) => text.into_vec(),
         SendText::Stdin => {
@@ -1559,6 +1565,48 @@ fn send_terminal(inputs: &Inputs, send: PaneSend, target: WorkspaceTarget) -> Re
         );
     }
     Ok(if enter_failure.is_some() { 1 } else { 0 })
+}
+
+/// How long `pane send` without TEXT gives an open, empty pipe on standard input to receive
+/// bytes. A writer such as `echo X |` starts beside Eon and usually has written before Eon looks;
+/// under load average 22 its bytes took at most 11 ms to arrive, and an open pipe that stays
+/// empty, as agents' shells give commands, costs this wait once.
+// Fixed, not configured: eon-zuidu records why (rule 6), the measurement and the residual gap.
+const STDIN_DATA_WAIT_MS: libc::c_int = 100;
+
+/// Whether standard input already holds bytes `pane send` would ignore without `--stdin`: a
+/// regular file with bytes past its offset, or a pipe or socket with bytes waiting, or arriving
+/// within `STDIN_DATA_WAIT_MS`. Terminals, devices such as /dev/null, and ended inputs are not
+/// read or waited on.
+fn stdin_holds_data() -> bool {
+    // SAFETY: stat holds only integers, so all zeros is a valid value.
+    let mut status = unsafe { std::mem::zeroed::<libc::stat>() };
+    // SAFETY: fstat fills the valid local stat buffer.
+    if unsafe { libc::fstat(libc::STDIN_FILENO, &mut status) } != 0 {
+        return false;
+    }
+    match status.st_mode & libc::S_IFMT {
+        libc::S_IFREG => {
+            // SAFETY: a zero move from the current offset reads it without changing it.
+            let offset = unsafe { libc::lseek(libc::STDIN_FILENO, 0, libc::SEEK_CUR) };
+            offset >= 0 && status.st_size > offset
+        }
+        libc::S_IFIFO | libc::S_IFSOCK => {
+            let mut input = libc::pollfd {
+                fd: libc::STDIN_FILENO,
+                events: libc::POLLIN,
+                revents: 0,
+            };
+            // SAFETY: poll reads and writes the one valid local pollfd. It returns early when
+            // bytes arrive or the writer has ended; its result only bounds the wait.
+            unsafe { libc::poll(&mut input, 1, STDIN_DATA_WAIT_MS) };
+            let mut waiting: libc::c_int = 0;
+            // SAFETY: FIONREAD writes the waiting byte count into the valid local int.
+            let read = unsafe { libc::ioctl(libc::STDIN_FILENO, libc::FIONREAD, &mut waiting) };
+            read == 0 && waiting > 0
+        }
+        _ => false,
+    }
 }
 
 fn unreachable_supervisor(error: EndpointFailure, generation: &str) -> Failure {

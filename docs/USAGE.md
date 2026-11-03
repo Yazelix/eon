@@ -598,6 +598,11 @@ A send refuses, with nothing sent:
   control character other than tab, line feed and carriage return;
 - `input-too-large`, exit 2: TEXT is over 64 KiB;
 - no TEXT and no `--enter`, exit 2;
+- `unread-stdin`, exit 2: neither `--stdin` nor TEXT, and standard input is a
+  pipe, socket or file that already holds text, as in `echo hi | eon pane send
+  p1 --enter`. Add `--stdin` to send that text, or give the command empty
+  input to press Enter alone (see the loops below). A terminal, `/dev/null`,
+  an ended input, or a pipe or socket still empty after 100 ms is not read;
 - `unbracketed-newline`, exit 1: TEXT has a line break and the program has not
   enabled bracketed paste;
 - `terminal-access-off`, exit 1, when `[agents] terminal_access` is `"none"`.
@@ -608,6 +613,21 @@ within 2 s. A send that timed out may still arrive. When the paste lands and
 the Enter then fails, the command exits 1, the text stays in the program, and
 the JSON reply carries `enter: false` and the Enter's `error`. An unknown
 target exits 3 (`unknown-target`).
+
+A loop that presses Enter in several panes can hand `eon` its own input: a
+Nushell closure passes its element to the first external command, and in a
+bash `while read` loop the command inherits the rest of the list. Give the
+command empty input so it presses Enter alone:
+
+```nu
+["p1" "p2"] | each {|pane| null | eon pane send $pane --enter }
+```
+
+```bash
+printf '%s\n' p1 p2 | while read -r pane; do
+  eon pane send "$pane" --enter </dev/null
+done
+```
 
 **Sandboxed agents.** A sandboxed agent that may connect to Unix sockets can
 drive Eon, and `eon pane create` and `eon pane send` then run commands outside

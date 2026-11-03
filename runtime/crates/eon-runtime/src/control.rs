@@ -592,7 +592,8 @@ const UNREACHABLE: u8 = 4;
 
 fn failure_status(code: &str) -> u8 {
     match code {
-        "invalid-tab" | "malformed-action" | "invalid-text" | "input-too-large" => USAGE,
+        "invalid-tab" | "malformed-action" | "invalid-text" | "input-too-large"
+        | "unread-stdin" => USAGE,
         "unknown-tab" | "unknown-pane" | "unknown-id" | "unknown-session" | "unknown-popup"
         | "stale-popup" | "stale-target" | "unknown-generation" | "unknown-caller"
         | "unknown-workspace" | "unknown-window" | "unknown-target" => MISSING,

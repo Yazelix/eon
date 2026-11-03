@@ -5,6 +5,15 @@ installation, and proven contract changes.
 
 ## Unreleased
 
+- `echo hi | eon pane send p1 --enter`, without `--stdin`, fails with
+  `unread-stdin` (exit 2) and sends nothing, instead of pressing Enter alone
+  and dropping the piped text. Text from a file or socket on standard input
+  fails the same way. A terminal, `/dev/null`, an ended input, or a pipe or
+  socket still empty after 100 ms is not read, so `--enter` alone still
+  presses Enter. A loop that presses Enter in several panes, such as a
+  Nushell `each` or a bash `while read`, can hand `eon` its own input; give
+  that command empty input (`null | eon ...` in Nushell, `</dev/null` in
+  bash), as the refusal says (`eon-zuidu`).
 - `eon pane --help`, `eon pane send -h` and the same after every other command
   family print only that family's or command's lines of `eon --help`, instead
   of failing as an invalid command; `eon focus --help` looked for a target

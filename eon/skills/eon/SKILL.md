@@ -94,7 +94,10 @@ means the program has exited.
 
 Run `eon pane send ID --json -- TEXT` to paste TEXT into a pane or popup, in
 any workspace, without moving anything; add `--enter` to press Enter after it,
-or pass `--enter` alone. Use `--stdin` for text from a pipe. Keep sends short:
+or pass `--enter` alone. Use `--stdin` for text from a pipe; without it, piped
+text fails the send (`unread-stdin`). In a loop that presses only Enter, give
+the command empty input: `</dev/null` in bash, `null | eon pane send ...` in
+Nushell. Keep sends short:
 for long material, write a file and send its path. A line break never submits,
 and Eon refuses control characters (`invalid-text`), more than 64 KiB
 (`input-too-large`) and, when the program lacks bracketed paste, line breaks

@@ -8941,6 +8941,106 @@ fn pane_send_pastes_then_waits_for_enter_and_exits_by_failure() {
         "session-1 Paste(\"echo hi\")\nsession-1 Paste(\"ls\")\nsession-1 Enter\n\
          session-1 Enter\nsession-1 Enter\nsession-1 Paste(\"from stdin\")\n"
     );
+    // Without --stdin or TEXT, input waiting in a pipe, socket or file fails
+    // rather than vanish, also when it arrives just after Eon starts. An input
+    // with nothing in it yet, as agents' shells give commands, an ended one, or
+    // one read to its end, still sends Enter alone.
+    let log = sent();
+    let send_enter =
+        |json: bool, stdin: Stdio, mut writer: Option<Box<dyn Write>>, delay: Option<Duration>| {
+            let mut child = eon(&root)
+                .args(["pane", "send", "p1", "--enter"])
+                .args(json.then_some("--json"))
+                .stdin(stdin)
+                .stdout(Stdio::piped())
+                .stderr(Stdio::piped())
+                .spawn()
+                .unwrap();
+            if let (Some(writer), Some(delay)) = (&mut writer, delay) {
+                thread::sleep(delay);
+                writer.write_all(b"lost text").unwrap();
+            }
+            wait_for_exit(&mut child);
+            drop(writer);
+            child.wait_with_output().unwrap()
+        };
+    let pipe = || {
+        let (reader, writer) = std::io::pipe().unwrap();
+        (
+            Stdio::from(reader),
+            Some(Box::new(writer) as Box<dyn Write>),
+        )
+    };
+    let socket = || {
+        let (reader, writer) = UnixStream::pair().unwrap();
+        let reader = std::os::fd::OwnedFd::from(reader);
+        (
+            Stdio::from(reader),
+            Some(Box::new(writer) as Box<dyn Write>),
+        )
+    };
+    let file = root.join("piped-text");
+    fs::write(&file, "lost text").unwrap();
+    for json in [false, true] {
+        let (written, mut writer) = pipe();
+        writer.as_mut().unwrap().write_all(b"lost text").unwrap();
+        drop(writer);
+        let refused = [
+            send_enter(json, written, None, None),
+            // Below the wait's bound, so only the wait sees these bytes.
+            {
+                let (stdin, writer) = pipe();
+                send_enter(json, stdin, writer, Some(Duration::from_millis(30)))
+            },
+            {
+                let (stdin, writer) = socket();
+                send_enter(json, stdin, writer, Some(Duration::ZERO))
+            },
+            send_enter(json, fs::File::open(&file).unwrap().into(), None, None),
+        ];
+        for (case, output) in refused.iter().enumerate() {
+            assert_eq!(output.status.code(), Some(2), "{case} {json}");
+            let message = if json {
+                assert!(output.stderr.is_empty());
+                assert!(stdout(output).contains("\"code\":\"unread-stdin\""));
+                stdout(output).to_owned()
+            } else {
+                assert!(output.stdout.is_empty());
+                let message = String::from_utf8_lossy(&output.stderr).into_owned();
+                assert!(message.starts_with("error unread-stdin: "), "{message}");
+                message
+            };
+            assert!(
+                message.contains("--stdin") && message.contains("</dev/null"),
+                "{message}"
+            );
+        }
+    }
+    assert_eq!(sent(), log);
+    let mut read = fs::File::open(&file).unwrap();
+    read.read_to_end(&mut Vec::new()).unwrap();
+    let accepted = [
+        {
+            let (stdin, writer) = pipe();
+            send_enter(true, stdin, writer, None)
+        },
+        // Ended: its writer closes before Eon starts, so the pipe is at EOF.
+        {
+            let (stdin, writer) = pipe();
+            drop(writer);
+            send_enter(true, stdin, None, None)
+        },
+        {
+            let (stdin, writer) = socket();
+            send_enter(true, stdin, writer, None)
+        },
+        send_enter(true, read.into(), None, None),
+    ];
+    for (case, output) in accepted.iter().enumerate() {
+        assert_eq!(output.status.code(), Some(0), "{case}");
+        assert_eq!(json(output), reply(0, serde_json::Value::Null, true));
+    }
+    assert_eq!(sent(), log + &"session-1 Enter\n".repeat(4));
 
     // Refusals before the supervisor, and the supervisor's, send nothing.
     let log = sent();

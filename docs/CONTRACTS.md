@@ -3512,6 +3512,10 @@ socket names, JSON fields and protocol identifiers retain their spellings.
   - TARGET is a pane or popup ID as `eon workspace --json` names them;
   - TEXT is exactly one operand, or standard input with `--stdin`. TEXT is
     required unless `--enter` is given, and `--enter` alone sends only Enter;
+    with neither `--stdin` nor TEXT, standard input that is a pipe, socket or
+    file already holding data fails before anything is sent, naming `--stdin`
+    and empty input as the remedies; a terminal, an empty or ended input, or a
+    pipe or socket with no data within 100 ms is not read;
   - EON-C10's `--window` and `--generation` selection applies.
 - **Result:**
   - The supervisor that EON-C10 selects (validating `EON_TERMINAL` when set)
@@ -3545,6 +3549,8 @@ socket names, JSON fields and protocol identifiers retain their spellings.
       except tab, line feed and carriage return, DEL, or a C1 control. Eon
       refuses rather than rewrites it;
     - `input-too-large`: TEXT exceeds 64 KiB;
+    - `unread-stdin`: neither `--stdin` nor TEXT, and standard input holds
+      data, as the Trigger says;
     - no TEXT and no `--enter`, or other invalid arguments.
   - Exit 1:
     - `terminal-access-off`, with nothing sent;
