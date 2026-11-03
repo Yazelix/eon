@@ -9,10 +9,12 @@ installation, and proven contract changes.
   and `previous agent` hints are gone (Alt+G and Alt+Shift+G still work and
   stay in the Shortcuts viewer), the move hints read `mv tab` and `mv pane`,
   and the column hint reads `+col` (`eon-x0edg`).
-- `eon config-path --file` creates the configuration root and prints the full
-  path of its settings file, `config.toml`, whether or not the file exists yet.
-  `eon --help` names `config.toml` beside `config-path` and `config defaults`;
-  plain `eon config-path` still prints only the root (`eon-wt5v8`).
+- `eon config-path` prints the full path of the settings file, `config.toml`,
+  whether or not the file exists yet, so `hx $(eon config-path)` opens it. The
+  new `eon config-dir` prints the configuration root, which `config-path`
+  printed before; scripts that read the root from `config-path` move to
+  `config-dir`. Both create the root when it is missing, and `eon --help`
+  names `config.toml` (`eon-wt5v8`, `eon-hb4zp`).
 - A new window's first directory picker says when other Eon windows still run,
   naming them (`eon-7cf0y.7`).
 - Holding a drag selection above a pane's top row, over the Eon Bar or a pane

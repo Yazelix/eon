@@ -276,15 +276,26 @@ fn help_is_readable_and_does_not_start_or_prepare_a_workspace() {
             "window attach ID",
             "tab directory TAB",
             "config-path",
+            "config-dir",
             "eon run --",
         ] {
             assert!(help.contains(command), "missing {command}");
         }
-        for command in ["config-path --file", "config defaults"] {
+        assert!(!help.contains("--file"));
+        // An entry's description may continue on the next line.
+        let lines: Vec<&str> = help.lines().collect();
+        for command in ["config-path ", "config defaults "] {
+            let entry = lines
+                .iter()
+                .position(|line| line.trim_start().starts_with(command))
+                .unwrap_or_else(|| panic!("missing {command}"));
+            let description = lines[entry].to_owned()
+                + lines
+                    .get(entry + 1)
+                    .filter(|line| line.starts_with("    "))
+                    .unwrap_or(&"");
             assert!(
-                help.lines()
-                    .any(|line| line.trim_start().starts_with(command)
-                        && line.contains("config.toml")),
+                description.contains("config.toml"),
                 "{command} must name config.toml"
             );
         }
@@ -2419,11 +2430,7 @@ fn stop_result_covers_queued_operation_and_managed_cleanup() {
 #[test]
 fn closed_stdout_pipe_is_not_a_panic() {
     let root = temporary_directory();
-    for arguments in [
-        &["config-path"][..],
-        &["config-path", "--file"],
-        &["versions"],
-    ] {
+    for arguments in [&["config-path"][..], &["config-dir"], &["versions"]] {
         let (reader, writer) = std::io::pipe().unwrap();
         drop(reader);
         let output = eon_command(Path::new(env!("CARGO_BIN_EXE_eon")))
@@ -2451,26 +2458,31 @@ fn relative_configuration_root_is_resolved_once() {
     // Eon resolves the root from its working directory, which macOS reports
     // through /private for a root under /tmp.
     let config = fs::canonicalize(&root).unwrap().join("config");
-    let output = eon_command(Path::new(env!("CARGO_BIN_EXE_eon")))
-        .arg("config-path")
-        .current_dir(&root)
-        .env("EON_CONFIG_HOME", "config")
-        .output()
-        .unwrap();
+    for (command, path) in [
+        ("config-dir", config.clone()),
+        ("config-path", config.join("config.toml")),
+    ] {
+        let output = eon_command(Path::new(env!("CARGO_BIN_EXE_eon")))
+            .arg(command)
+            .current_dir(&root)
+            .env("EON_CONFIG_HOME", "config")
+            .output()
+            .unwrap();
 
-    assert!(
-        output.status.success(),
-        "stdout={} stderr={}",
-        stdout(&output),
-        String::from_utf8_lossy(&output.stderr)
-    );
-    assert_eq!(stdout(&output), format!("{}\n", config.display()));
-    assert!(config.is_dir());
+        assert!(
+            output.status.success(),
+            "{command}: stdout={} stderr={}",
+            stdout(&output),
+            String::from_utf8_lossy(&output.stderr)
+        );
+        assert_eq!(stdout(&output), format!("{}\n", path.display()));
+        assert!(config.is_dir());
+    }
     fs::remove_dir_all(root).unwrap();
 }
 
 #[test]
-fn config_path_file_prints_the_settings_file_without_creating_it() {
+fn config_path_prints_the_settings_file_and_config_dir_the_root() {
     let root = temporary_directory();
     let config = root.join("config");
     let run = |arguments: &[&str]| {
@@ -2481,7 +2493,7 @@ fn config_path_file_prints_the_settings_file_without_creating_it() {
             .unwrap()
     };
 
-    let output = run(&["config-path", "--file"]);
+    let output = run(&["config-path"]);
     assert!(
         output.status.success(),
         "stdout={} stderr={}",
@@ -2496,15 +2508,34 @@ fn config_path_file_prints_the_settings_file_without_creating_it() {
     assert!(config.is_dir());
     assert!(!config.join("config.toml").exists());
 
-    let output = run(&["config-path"]);
+    let output = run(&["config-dir"]);
     assert!(output.status.success());
+    assert!(output.stderr.is_empty());
     assert_eq!(stdout(&output), format!("{}\n", config.display()));
 
     for arguments in [
-        &["config-path", "--json"][..],
-        &["config-path", "--file", "--file"],
+        &["config-path", "--file"][..],
+        &["config-path", "--json"],
+        &["config-dir", "--json"],
     ] {
         assert_eq!(run(arguments).status.code(), Some(2), "{arguments:?}");
+    }
+
+    // A root under a regular file cannot be created.
+    fs::write(root.join("file"), "").unwrap();
+    for command in ["config-path", "config-dir"] {
+        let output = eon_command(Path::new(env!("CARGO_BIN_EXE_eon")))
+            .arg(command)
+            .env("EON_CONFIG_HOME", root.join("file/config"))
+            .output()
+            .unwrap();
+        assert_eq!(output.status.code(), Some(1), "{command}");
+        assert!(output.stdout.is_empty(), "{command}");
+        assert!(
+            String::from_utf8_lossy(&output.stderr).contains("cannot create"),
+            "{command}: {}",
+            String::from_utf8_lossy(&output.stderr)
+        );
     }
     fs::remove_dir_all(root).unwrap();
 }

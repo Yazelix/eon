@@ -451,8 +451,8 @@ on terminals; redirected output is plain text. A nonempty `NO_COLOR` or
 | `eon pane send TARGET [--enter] [--stdin] [--json] [-- TEXT]` | Paste TEXT, or standard input with `--stdin`, into pane or popup TARGET in any workspace of the window, then with `--enter` press Enter; see [Sending to a terminal](#sending-to-a-terminal) |
 | `eon focus ID\|left\|right\|up\|down [--json]` | Focus a stable identity or traverse the workspace |
 | `eon versions` | Print Eon, protocol, and component identities |
-| `eon config-path` | Create and print the configuration root |
-| `eon config-path --file` | Create the configuration root and print the full path of its settings file, `config.toml`, which need not exist yet |
+| `eon config-path` | Create the configuration root and print the full path of its settings file, `config.toml`, which need not exist yet |
+| `eon config-dir` | Create and print the configuration root |
 | `eon config defaults [--json]` | Print built-in defaults as commented TOML or a nested JSON object, without reading user configuration |
 
 A window holds one or more workspaces and shows one at a time; hidden

@@ -818,8 +818,8 @@ fn execute(inputs: &Inputs, arguments: Vec<OsString>) -> Result<i32, Error> {
             ))?;
             Ok(0)
         }
-        [command] if command == "config-path" => print_config_path(false),
-        [command, flag] if command == "config-path" && flag == "--file" => print_config_path(true),
+        [command] if command == "config-path" => print_config_path(true),
+        [command] if command == "config-dir" => print_config_path(false),
         [command, action] if command == "config" && action == "defaults" => {
             print_config_defaults(inputs, false)
         }
@@ -849,7 +849,7 @@ fn control_command(command: &OsStr) -> bool {
     .any(|word| command == *word)
 }
 
-/// Creates the configuration root and prints it, or with `file` its settings file.
+/// Creates the configuration root and prints its settings file, or without `file` the root.
 fn print_config_path(file: bool) -> Result<i32, String> {
     let root = configuration_directory()?;
     prepare_configuration(&root)?;
@@ -938,8 +938,9 @@ fn help_text(version: &str, color: bool) -> String {
 {heading}Tools & information{reset}
   {command}anima [STYLE] [CHILD OPTIONS...]{reset}            Play an animation here
   {command}versions{reset}                                    Show exact component versions
-  {command}config-path{reset}                                 Create and print the config root
-  {command}config-path --file{reset}                          Print the root's config.toml path
+  {command}config-path{reset}                                 Create the config root and print
+                                              its config.toml path
+  {command}config-dir{reset}                                  Create and print the config root
   {command}config defaults [--json]{reset}                    Print config.toml defaults
   {command}-h, --help{reset}                                  Show this help
 

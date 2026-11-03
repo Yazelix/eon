@@ -372,8 +372,9 @@ pair.
 Eon may precompute graph validation without effects and pass its result.
 Runtime consumes a failure only where the current command needs the graph,
 before runtime ownership directories, sockets or children. It preserves
-help/usage, managed-tool, `config-path`, direct Anima and private-picker ordering;
-the entry point does not impose blanket graph validation on them.
+help/usage, managed-tool, `config-path`, `config-dir`, direct Anima and
+private-picker ordering; the entry point does not impose blanket graph
+validation on them.
 
 Source dependencies run from Eon to the library and selected Orbit/Venus
 artifacts, from runtime to Orbit's canonical protocol, and from Venus to Orbit's

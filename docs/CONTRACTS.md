@@ -795,14 +795,14 @@ socket names, JSON fields and protocol identifiers retain their spellings.
     a supervisor or start children. Successful output exits 0 with no stderr
     output; invalid syntax exits 2 and output failure exits 1.
   - `eon config-path` creates the configuration root if it is missing and
-    prints its absolute path. `eon config-path --file` creates the root the
-    same way and prints the absolute path of the settings file `config.toml`
-    inside it, without creating or reading that file. On success both exit 0
-    with one line on stdout and no stderr output; other arguments exit 2. A
-    root that cannot be resolved or created, or a stdout write that fails for
-    any reason but a closed pipe, exits 1 with the reason on stderr; a closed
-    stdout pipe still exits 0 with no stderr output. `eon --help` names
-    `config.toml` beside `config-path` and `config defaults`.
+    prints the absolute path of the settings file `config.toml` inside it,
+    without creating or reading that file. `eon config-dir` creates the root
+    the same way and prints its absolute path. On success both exit 0 with one
+    line on stdout and no stderr output; other arguments exit 2. A root that
+    cannot be resolved or created, or a stdout write that fails for any reason
+    but a closed pipe, exits 1 with the reason on stderr; a closed stdout pipe
+    still exits 0 with no stderr output. `eon --help` names `config.toml`
+    beside `config-path` and `config defaults`.
   - Eon selects exact Nushell, Bash, Starship, Zoxide, fzf, Atuin, Carapace,
     Helix, Yazi, and LazyGit artifacts.
   - Stable `eon-*` commands expose managed shells and tools outside Eon; one
@@ -894,14 +894,15 @@ socket names, JSON fields and protocol identifiers retain their spellings.
     settings in its environment; Venus, the default Nushell terminal, a CLI
     pane, the Files and Commands popups and both quota readers carry none of
     the removed names and all three settings with their values.
-  - **Config path:** `eon-wt5v8` adds
-    `config_path_file_prints_the_settings_file_without_creating_it` (plain
-    and `--file` output, root created, file not created, other arguments exit
-    2), runs both forms in `closed_stdout_pipe_is_not_a_panic` (exit 0, no
-    stderr) and has `help_is_readable_and_does_not_start_or_prepare_a_workspace`
-    check that the `config-path --file` and `config defaults` help lines name
-    `config.toml`; `relative_configuration_root_is_resolved_once` covers the
-    absolute root.
+  - **Config path:** `eon-wt5v8` and `eon-hb4zp` add
+    `config_path_prints_the_settings_file_and_config_dir_the_root`
+    (`config-path` and `config-dir` output, root created, file not created,
+    `--file` and other arguments exit 2), run both commands in
+    `closed_stdout_pipe_is_not_a_panic` (exit 0, no stderr) and have
+    `help_is_readable_and_does_not_start_or_prepare_a_workspace` check that
+    the `config-path` and `config defaults` help entries name `config.toml`;
+    `relative_configuration_root_is_resolved_once` covers absolute output for
+    both commands.
   - **Note:** `eon-8olu` removed the managed Zsh and Fish shells. The
     `shell-environment` check went with them; its Zsh and Fish evidence above
     no longer applies. The remaining checks cover Nushell and Bash launch
@@ -2572,7 +2573,7 @@ socket names, JSON fields and protocol identifiers retain their spellings.
     prints at 1.0 keeps its name, type and meaning; the 1.0 JSON fixture
     (`eon-igae.11`) is the documented record of those fields. Later releases
     may add fields and values; consumers ignore what they don't know.
-  - **Configuration:** a `config.toml` under `eon config-path` that loads in
+  - **Configuration:** a `config.toml` under `eon config-dir` that loads in
     1.0 loads in every 1.x with the same meaning, and the documented
     `EON_CONFIG_HOME` and `EON_RUNTIME_DIR` variables keep theirs. A setting
     deprecated in 1.x still loads and warns (the first deprecation adds the
