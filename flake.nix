@@ -528,10 +528,10 @@
             EOF
           '';
 
-          # The Files popup's Yazi: Nova's F+ keys (Yazelix Nova defaults/yazi at cd95fee1),
-          # with files opening in a new Helix pane instead of Nova's managed editor.
+          # The Files popup's Yazi and its quick search: the EON-C18 pair keys, with files
+          # opening in a new Helix pane. Nothing writes Zoxide history; Eon records a pick.
           filesPopupConfig = pkgs.runCommand "eon-files-popup-config" { } ''
-            mkdir -p "$out/plugins/quick-search.yazi" "$out/plugins/tab-folder.yazi" "$out/plugins/smart-enter.yazi"
+            mkdir -p "$out/plugins/quick-search.yazi" "$out/plugins/tab-folder.yazi" "$out/plugins/smart-enter.yazi" "$out/plugins/close.yazi"
             cat > "$out/yazi.toml" <<'EOF'
             # Text files open through `eon edit`; a failure stays on screen until Enter.
             [opener]
@@ -544,19 +544,24 @@
             prepend_keymap = [
               { on = "<Enter>", run = "plugin smart-enter", desc = "Enter the hovered folder, else open as usual" },
               { on = "<Tab>", run = "plugin quick-search", desc = "Search recent folders" },
-              { on = "Z", run = "plugin quick-search", desc = "Search recent folders" },
               { on = "<BackTab>", run = "spot", desc = "Spot hovered file" },
               { on = "<S-Tab>", run = "spot", desc = "Spot hovered file" },
-              { on = "<A-Enter>", run = "plugin tab-folder", desc = "Set the hovered or current folder as the tab folder" },
+              { on = "<A-Enter>", run = "plugin tab-folder", desc = "Use the hovered or current folder for the tab" },
+              { on = "<Esc>", run = "plugin close", desc = "Leave a selection, filter or find, else close" },
+              { on = "<C-[>", run = "plugin close", desc = "Leave a selection, filter or find, else close" },
+              { on = "<C-c>", run = "plugin close", desc = "Leave a selection, filter or find, else close" },
+              # Files has one search and one close.
+              { on = "Z", run = "noop" },
+              { on = "q", run = "noop" },
+              { on = "Q", run = "noop" },
             ]
             EOF
             cat > "$out/init.lua" <<'EOF'
-            require("zoxide"):setup({ update_db = true })
             for id = 1, 6 do
               Status:children_remove(id, id <= 3 and Status.LEFT or Status.RIGHT)
             end
             Status:children_add(function()
-              return tostring(cx.layer) == "mgr" and " Alt+Enter Set tab folder · Tab/Z Search · Shift+Tab Spot" or ""
+              return tostring(cx.layer) == "mgr" and " Enter Open · Alt+Enter Use folder · Tab Search · Esc Close" or ""
             end, 1000, Status.LEFT)
             EOF
             cat > "$out/plugins/smart-enter.yazi/main.lua" <<'EOF'
@@ -571,7 +576,8 @@
             }
             EOF
             cat > "$out/plugins/quick-search.yazi/main.lua" <<'EOF'
-            -- One search of Zoxide history for Tab and Z: Enter moves Yazi, Alt+Enter sets the tab folder.
+            -- Quick search over Zoxide history: Enter uses the highlighted folder, Tab moves
+            -- Files there, and Esc or Ctrl+C closes Files.
             local M = {}
 
             local cwd = ya.sync(function() return tostring(cx.active.current.cwd) end)
@@ -581,45 +587,54 @@
             end
 
             function M:entry()
-              local history, err = Command("zoxide"):arg({ "query", "--list", "--exclude", cwd() }):output()
+              local history, err = Command("zoxide")
+                :arg({ "query", "--list", "--exclude", cwd() })
+                :stdout(Command.PIPED)
+                :stderr(Command.NULL)
+                :spawn()
               if not history then return fail(err) end
-              if not history.status.success then return fail(history.stderr) end
-              if history.stdout == "" then return end
 
               local permit = ui.hide()
+              -- fzf reads the history as it arrives instead of waiting for all of it.
               local child, spawn_err = Command("fzf")
                 :env("FZF_DEFAULT_OPTS", "--exact --no-sort --cycle --keep-right --info=inline --layout=reverse "
-                  .. "--height=100% --border=none --tabstop=1 --exit-0 --expect=alt-enter "
-                  .. "--bind=enter:accept-non-empty,ctrl-z:ignore,tab:abort,btab:up --prompt='Go to folder > ' "
-                  .. "--footer='Enter Go here · Alt+Enter Set tab folder · Tab/Esc Browse Yazi' "
+                  .. "--height=100% --border=none --tabstop=1 --expect=tab "
+                  .. "--bind=enter:accept-non-empty,ctrl-z:ignore,btab:up --prompt='Quick search > ' "
+                  .. "--footer='Enter Use · Tab Browse from here · Esc Close' "
                   .. "--footer-border=none --color=footer:-1")
                 :env("FZF_DEFAULT_OPTS_FILE", "")
-                :stdin(Command.PIPED)
+                :stdin(history:take_stdout())
                 :stdout(Command.PIPED)
                 :stderr(Command.PIPED)
                 :spawn()
-              if child then
-                child:write_all(history.stdout)
-                child:flush()
-              end
               local output, wait_err
               if child then output, wait_err = child:wait_with_output() end
+              -- A query that already ended on its own and failed left fzf an empty list.
+              local ended = history:try_wait()
+              -- No exit needs the rest of the history, so stop and reap the query.
+              history:start_kill()
+              history:wait()
               permit:drop()
+              if ended and not ended.success then
+                fail("zoxide query exited with status " .. tostring(ended.code))
+              end
               if not output then return fail(spawn_err or wait_err) end
-              -- 130 is a cancel; 1 is Alt+Enter with no match.
-              if output.status.code == 130 or output.status.code == 1 then return end
+              if output.status.code == 130 then return require("tab-folder").close() end
+              -- 1 is Tab with no result: Files stays where it is.
+              if output.status.code == 1 then return end
               if not output.status.success then return fail(output.stderr) end
               local key, target = output.stdout:match("^([^\n]*)\n(.*)")
               target = target and target:gsub("\n$", "")
               if not target or target == "" then return end
-              if key == "alt-enter" then return require("tab-folder").set(target) end
-              ya.emit("cd", { target, raw = true })
+              if key == "tab" then return ya.emit("cd", { target, raw = true }) end
+              require("tab-folder").set(target)
             end
 
             return M
             EOF
             cat > "$out/plugins/tab-folder.yazi/main.lua" <<'EOF'
-            -- Alt+Enter: set this popup's Eon tab directory without moving Yazi.
+            -- Alt+Enter: use the hovered or current folder for this popup's Eon tab without
+            -- moving Yazi. Also the pick and close for quick search and Esc.
             local M = {}
 
             local target = ya.sync(function()
@@ -632,46 +647,86 @@
               ya.notify({ title = "Tab folder", content = content, timeout = level == "info" and 3 or 5, level = level })
             end
 
-            -- After a supervisor recovery EON_TAB can name another tab, so act only
-            -- while that tab still lists this terminal among its popups.
-            local function owns(eon, tab)
+            local function ran(output, err)
+              if not output then return nil, tostring(err) end
+              if output.status.success then return output end
+              local detail = output.stderr:gsub("%s+$", "")
+              return nil, detail ~= "" and detail or "eon exited with status " .. tostring(output.status.code)
+            end
+
+            -- This terminal's popup ID, false when a readable snapshot does not list it, or nil
+            -- and why when the snapshot cannot be read. After a supervisor recovery EON_TAB can
+            -- name another tab, so act only while that tab still lists this terminal among its
+            -- popups.
+            local function popup(eon, tab)
               local session = (os.getenv("EON_TERMINAL") or ""):match("^([^.]+)%.")
               if not session then return false end
-              local output, err = Command(eon):arg({ "workspace", "--json" }):output()
-              if not output then return nil, tostring(err) end
-              if not output.status.success then return nil, (output.stderr:gsub("%s+$", "")) end
+              local output, failure = ran(Command(eon):arg({ "workspace", "--json" }):output())
+              if not output then return nil, failure end
               local ok, snapshot = pcall(ya.json_decode, output.stdout)
-              if not ok or type(snapshot) ~= "table" then return false end
+              if not ok or type(snapshot) ~= "table" then
+                return nil, "eon workspace --json returned no readable workspace"
+              end
               for _, item in ipairs(snapshot.tabs or {}) do
                 if item.id == tab then
-                  for _, popup in ipairs(item.popups or {}) do
-                    if popup.session == session then return true end
+                  for _, entry in ipairs(item.popups or {}) do
+                    if entry.session == session then return entry.id end
                   end
                 end
               end
               return false
             end
 
-            function M.set(dir)
+            -- Calls `eon ARGS...` for this popup's tab with its popup ID, or notifies why not. A
+            -- Yazi that is no longer a listed popup calls `unlisted` instead, when given.
+            local function act(arguments, unlisted)
               local eon, tab = os.getenv("EON_FILES_CLI"), os.getenv("EON_TAB")
               if not eon or eon == "" or not tab or tab == "" then
+                if unlisted then return unlisted() end
                 return notify("This Yazi is not an Eon Files popup", "error")
               end
-              local owned, failure = owns(eon, tab)
-              if owned == nil then
-                return notify(failure ~= "" and failure or "eon workspace failed", "error")
+              local id, failure = popup(eon, tab)
+              if id == nil then return notify(failure ~= "" and failure or "eon workspace failed", "error") end
+              if not id then
+                if unlisted then return unlisted() end
+                return notify("This Yazi is no longer a popup of tab " .. tab, "error")
               end
-              if not owned then return notify("This Yazi is no longer a popup of tab " .. tab, "error") end
-              local output, err = Command(eon):arg({ "tab", "directory", tab, "--", dir }):output()
-              if not output then return notify(tostring(err), "error") end
-              if not output.status.success then
-                local detail = output.stderr:gsub("%s+$", "")
-                return notify(detail ~= "" and detail or "eon exited with status " .. tostring(output.status.code), "error")
+              local output, err = ran(Command(eon):arg(arguments(tab, id)):output())
+              if not output then return notify(err, "error") end
+              return true
+            end
+
+            function M.set(dir)
+              if act(function(tab) return { "tab", "directory", tab, "--", dir } end) then
+                notify("Set to " .. dir, "info")
               end
-              notify("Set to " .. dir, "info")
+            end
+
+            -- A Yazi its tab no longer lists, as after a supervisor recovery, has no popup to
+            -- hide, so closing quits it.
+            function M.close()
+              act(function(_, id) return { "popup", "hide", id } end, function() ya.emit("quit", {}) end)
             end
 
             function M:entry() M.set(target()) end
+
+            return M
+            EOF
+            cat > "$out/plugins/close.yazi/main.lua" <<'EOF'
+            -- Esc and Ctrl+C: leave a visual mode, selection, filter, find or search
+            -- first, as Yazi's escape does; otherwise close Files.
+            local M = {}
+
+            local busy = ya.sync(function()
+              local tab = cx.active
+              return tab.mode.is_visual or #tab.selected > 0 or tab.finder ~= nil
+                or tab.current.files.filter ~= nil or tab.current.cwd.is_search
+            end)
+
+            function M:entry()
+              if busy() then return ya.emit("escape", {}) end
+              require("tab-folder").close()
+            end
 
             return M
             EOF

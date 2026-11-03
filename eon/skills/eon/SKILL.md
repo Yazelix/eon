@@ -61,7 +61,12 @@ a tab with a directory picker: it activates the new pending tab and moves
 the person's view.
 Create a workspace with `eon workspace new --no-focus --json`, adding
 `--name NAME` when requested; read its ID from `created`.
-Set a tab's launch directory with `eon tab directory tN --json -- DIRECTORY`.
+Set a tab's launch directory with `eon tab directory tN --json -- DIRECTORY`;
+it also adds one Zoxide visit for DIRECTORY unless `[shell] zoxide = false`.
+Zoxide's own exclusions apply: by default it records no visit for the home
+directory.
+Hide popup `uN` with `eon popup hide uN --json` only when asked: a keep-alive
+popup keeps running, a transient one stops.
 
 ## Read the workspace
 

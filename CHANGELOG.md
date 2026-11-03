@@ -5,6 +5,17 @@ installation, and proven contract changes.
 
 ## Unreleased
 
+- Files has new keys (`eon-quick-search-parity-23y9.3`). In quick search (Tab),
+  Enter uses the highlighted folder for the tab and Tab moves Yazi there; in
+  Yazi, Alt+Enter uses a folder, Enter opens, and Esc closes Files after
+  leaving any visual mode, selection, filter, find or search; Ctrl+C does the
+  same instead of closing a Yazi tab. Z, q and Q no longer search or quit.
+  Browsing and searching no longer write Zoxide history: a folder used for a
+  tab, from Files or `eon tab directory`, adds exactly one visit as Zoxide
+  records it (by default not for the home directory), unless
+  `[shell] zoxide = false`. New `eon popup hide POPUP` hides a popup as its
+  window's dismissal would: a keep-alive popup keeps running, a transient one
+  stops.
 - EONW moves to v30 and Eon to 0.1.14 (`eon-ciwn.6`). v30 carries the
   workspace event subscription that `eon events` will use (EON-C39); no
   command uses it yet, and a supervisor refuses it until `eon-ciwn.7`. As

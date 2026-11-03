@@ -1042,7 +1042,10 @@ socket names, JSON fields and protocol identifiers retain their spellings.
 
 - **Status:** Proven. Amended on 2026-11-03 (approved by Lucca, relayed by
   eon-overseer) by `eon-ciwn.1`: EON-C39's planned event subscription is the
-  one connection that carries more than one response.
+  one connection that carries more than one response. Amended on 2026-11-03
+  (approved by Lucca, relayed by eon-overseer) by
+  `eon-quick-search-parity-23y9.3`: the Files quick-search keys, and
+  `eon popup hide`.
 - **Consumer:** One local CLI or approved composition controlling a live Eon
   supervisor.
 - **Trigger:** The client submits one versioned workspace or supervisor-lifecycle
@@ -1156,6 +1159,18 @@ socket names, JSON fields and protocol identifiers retain their spellings.
     reply's tab list ends with the new tab. An unavailable DIRECTORY, the tab
     limit, or a command that cannot start refuses the command with exit 1 and
     changes nothing. `--no-focus` and `-- COMMAND` require `--directory`.
+  - `eon popup hide POPUP [--json]` hides popup `uN` of the addressed
+    workspace, as its owning window's dismissal would:
+
+    - a keep-alive popup is hidden and keeps running;
+    - a transient popup stops;
+    - dismissing a pending tab's chooser starts its first pane (EON-C18).
+
+    The CLI reads the owning tab from workspace inspection, then sends EONW
+    `DismissPopup`. It changes no other tab, pane, popup or desktop focus. A
+    POPUP that the addressed workspace does not list fails with
+    `unknown-popup`; one that leaves between the read and the dismissal fails
+    with `stale-popup`. Both exit 3 and change nothing.
   - `eon tab close TAB` and `eon pane close PANE` may name the final tab or
     its last pane, which ends the window (EON-C8), or, while other workspaces
     remain, removes that workspace (EON-C33). Before either final close, when
@@ -1301,19 +1316,35 @@ socket names, JSON fields and protocol identifiers retain their spellings.
   and stops nothing and cannot fail on terminal or column capacity. The next
   Agent invocation starts a fresh agent at the new directory. Files defaults to
   Alt+Shift+Y and runs the pinned Yazi at the tab directory with Eon's packaged
-  popup configuration. Tab and Z open one move-only search of Zoxide history:
-  Enter moves Yazi to the selected folder, and Tab or Esc returns to browsing.
-  Shift+Tab spots the hovered file. Enter on a hovered folder enters it; every
-  other key, including Enter on files, keeps Yazi's native behavior, including
-  file operations, and the footer names the search and Spot keys. Files
-  remains live when hidden and keeps its process, location and cursor across
-  tab-directory changes; only after its process exits does the
-  next invocation start a fresh instance at the tab directory. In Files,
-  Alt+Enter sets the owning tab's directory, as `eon tab directory` with its
-  `EON_TAB` would, to the hovered folder, else Yazi's current folder, or in
-  search to the selected result; Yazi does not move. It refuses when that tab
-  no longer lists the popup, as after a supervisor recovery. A notification
-  reports the result, and a failure changes nothing. The footers name Alt+Enter.
+  popup configuration. Tab opens quick search, which ranks Zoxide history
+  through fzf.
+
+  - In quick search, Enter uses the highlighted folder. Tab moves Yazi to the
+    highlighted result without using it; with empty history, Yazi stays where
+    it is. Esc and Ctrl+C close Files. Every quick-search exit stops and reaps
+    a still-running history query.
+  - In Files, Enter on a hovered folder enters it, and Enter on a file opens
+    it. Alt+Enter uses the hovered folder, else Yazi's current folder.
+    Shift+Tab spots the hovered file. Esc and Ctrl+C first leave a visual
+    mode, selection, filter, find or search, and otherwise close Files. Z, q
+    and Q do nothing. Every other key keeps Yazi's native behavior, including
+    file operations.
+  - Quick search and Files each show one persistent footer: "Enter Use · Tab
+    Browse from here · Esc Close" and "Enter Open · Alt+Enter Use folder · Tab
+    Search · Esc Close".
+  - Using a folder sets the owning tab's directory, as `eon tab directory` with
+    its `EON_TAB` would; Yazi does not move. It refuses when that tab no longer
+    lists the popup, as after a supervisor recovery. A notification reports
+    the result, and a failure changes nothing.
+  - Closing hides Files, as `eon popup hide` with its popup ID would. A Files
+    Yazi that its tab no longer lists as a popup, as after a supervisor
+    recovery, quits instead.
+  - Opening, browsing, quick search, Tab moves and closing add no Zoxide
+    history.
+
+  Files remains live when hidden and keeps its process, location and cursor
+  across tab-directory changes; only after its process exits does the next
+  invocation start a fresh instance at the tab directory.
   In Files, Yazi's edit opener runs `eon edit`, so Enter on a text file opens
   it in a new Helix pane and hides the popup. Enter on a folder enters it,
   and other file types keep Yazi's default openers. For
@@ -2003,7 +2034,9 @@ socket names, JSON fields and protocol identifiers retain their spellings.
 
 ## EON-C17 — Tab launch directory
 
-- **Status:** Partially proved
+- **Status:** Partially proved. Amended on 2026-11-03 (approved by Lucca,
+  relayed by eon-overseer) by `eon-quick-search-parity-23y9.3`: the Zoxide
+  visit of an accepted `SetTabDirectory`.
 - **Consumer:** One local Eon workspace user creating tabs and panes.
 - **Trigger:** Eon creates or recovers a workspace, creates a tab or pane, or an
   approved same-user client explicitly retargets one live tab.
@@ -2017,7 +2050,12 @@ socket names, JSON fields and protocol identifiers retain their spellings.
     at the tab's starting directory when dismissed.
   - `SetTabDirectory` changes exactly one addressed tab. Later panes in that tab
     start with the accepted directory; existing terminals and terminal CWDs do
-    not change.
+    not change. Each accepted `SetTabDirectory` then adds one Zoxide visit for
+    the accepted directory through Eon's packaged Zoxide, unless
+    `[shell] zoxide = false`. Zoxide's own exclusions apply: by default it
+    records no visit for the home directory. The visit runs beside the
+    supervisor; its failure is logged and changes nothing else. A refused
+    `SetTabDirectory` adds no visit.
   - Current EONW v7 returns the exact accepted raw path bytes. Venus derives a
     bounded `N  leaf` or `N  /` label while retaining `tN` for actions and
     exposing identity plus bounded path context to accessibility.

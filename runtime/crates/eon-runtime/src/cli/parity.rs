@@ -18,10 +18,13 @@ enum CliPath {
     /// These arguments parse to a `pane send` whose one request is exactly
     /// this action.
     Send(Vec<OsString>),
+    /// These arguments parse to a `popup hide` of this action's popup; the
+    /// command reads its owning tab from the workspace.
+    Hide(Vec<OsString>),
 }
 
 fn cli_path(action: &Action) -> CliPath {
-    use CliPath::{Command, Exception, Lifecycle, Send};
+    use CliPath::{Command, Exception, Hide, Lifecycle, Send};
     let words = |words: &[&str]| words.iter().map(OsString::from).collect::<Vec<_>>();
     let flag = |set: bool, flag: &str| if set { words(&[flag]) } else { Vec::new() };
     let direction = |direction: &Direction| match direction {
@@ -78,9 +81,10 @@ fn cli_path(action: &Action) -> CliPath {
             ]
             .concat(),
         },
-        Action::InvokePopup { .. } | Action::DismissPopup(_) => {
+        Action::InvokePopup { .. } => {
             return Exception("eon-agent-parity-a9g0.1 adds popup commands");
         }
+        Action::DismissPopup(target) => return Hide(words(&["popup", "hide", &target.instance])),
         Action::CommitDirectory { .. } => {
             return Exception(
                 "the directory picker completes its own popup; `tab directory` retargets a tab, \
@@ -310,6 +314,19 @@ fn every_eonw_action_has_a_cli_path_or_a_named_exception() {
                     action,
                     "{arguments:?}"
                 );
+            }
+            CliPath::Hide(arguments) => {
+                assert!(control_command(&arguments[0]), "{arguments:?}");
+                let (popup, json) = parse_workspace_target_arguments(&arguments)
+                    .and_then(|(arguments, _)| parse_popup_hide_arguments(&arguments))
+                    .map_err(|error| error.message)
+                    .unwrap()
+                    .unwrap();
+                assert!(!json, "{arguments:?}");
+                let Action::DismissPopup(target) = &action else {
+                    panic!("{action:?}");
+                };
+                assert_eq!(popup, target.instance, "{arguments:?}");
             }
             CliPath::Exception(reason) => {
                 assert!(reason.contains("eon-"), "{action:?}: {reason}");

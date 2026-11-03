@@ -306,16 +306,22 @@ terminals whose terminal state survives hiding and reopening. When the tab's
 directory changes, a running Agent moves out of its popup into a pane of the
 tab, with its conversation and old directory intact, and the next Alt+Shift+L
 starts a fresh agent in the new directory. Git restarts in the new directory
-the next time you open it. Files is Yazi at the tab's directory: Tab or Z
-searches recent folders and Enter moves Yazi there, Shift+Tab shows the
-hovered file's details, Enter on a folder moves into it, and every other Yazi
-key, including file operations, works as usual. It keeps its place when the
-tab's directory changes; quitting Yazi with
-`q` closes it, and the next Alt+Shift+Y opens a fresh one. Alt+Enter sets the
-tab's directory to the hovered folder, or Yazi's current one, without moving
-Yazi; in search it uses the selected result. Enter on a text file opens it in
-a new Helix pane beside your work and hides Files, one pane per selected file;
-other files keep Yazi's default openers. Anima is transient:
+the next time you open it. Files is Yazi at the tab's directory. Tab opens
+quick search over recent folders: Enter uses the highlighted folder for the
+tab, Tab moves Yazi there without using it, and Esc closes Files. In Yazi,
+Alt+Enter uses the hovered folder, or Yazi's current one, for the tab without
+moving Yazi; Enter on a folder moves into it; Shift+Tab shows the hovered
+file's details. Esc first leaves a visual mode, selection, filter, find or
+search, one per press, and otherwise closes Files; Ctrl+C does the same and no
+longer closes a Yazi tab. In a Files left over from a supervisor recovery, they
+quit Yazi instead. Every other Yazi key, including
+file operations, works as usual; Z, q and Q do nothing. Files keeps its place
+when hidden and when the tab's directory changes. Only a folder you use enters
+Zoxide history, as Zoxide records it (by default it skips your home
+directory); browsing and searching add none, and `[shell] zoxide = false`
+stops even that. Enter on a text file opens it in a new Helix pane beside your
+work and hides Files, one pane per selected file; other files keep Yazi's
+default openers. Anima is transient:
 closing its popup stops playback and returns to the tab.
 
 Commands lists Eon commands you can search and run: new tab, pane or
@@ -482,6 +488,7 @@ line points agents to `eon --skill`.
 | `eon pane move left\|right [--json]` | Move the selected pane, or the calling pane, into the neighbouring column, as Ctrl+Alt+H/L does |
 | `eon pane read TARGET [--json]` | Print the visible text of pane or popup TARGET, in any workspace of the window, without changing anything; see [Reading a terminal](#reading-a-terminal) |
 | `eon pane send TARGET [--enter] [--stdin] [--json] [-- TEXT]` | Paste TEXT, or standard input with `--stdin`, into pane or popup TARGET in any workspace of the window, then with `--enter` press Enter; see [Sending to a terminal](#sending-to-a-terminal) |
+| `eon popup hide POPUP [--json]` | Hide popup `uN` of the workspace as its window's dismissal would: a keep-alive popup keeps running, a transient one stops |
 | `eon focus ID\|left\|right\|up\|down [--json]` | Focus a stable identity or traverse the workspace |
 | `eon versions` | Print Eon, protocol, and component identities |
 | `eon config-path` | Create the configuration root and print the full path of its settings file, `config.toml`, which need not exist yet |

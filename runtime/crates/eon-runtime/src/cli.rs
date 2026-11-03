@@ -810,6 +810,9 @@ fn execute(inputs: &Inputs, arguments: Vec<OsString>) -> Result<i32, Error> {
             if let Some(send) = parse_pane_send_arguments(&arguments)? {
                 return send_terminal(inputs, send, target);
             }
+            if let Some((popup, json)) = parse_popup_hide_arguments(&arguments)? {
+                return Ok(hide_popup(inputs, popup, json, target)?);
+            }
             let (action, json) = parse_control_arguments(&arguments)?;
             let list = arguments.first().is_some_and(|value| value == "workspaces");
             control(inputs, action, json, list, target)
@@ -850,6 +853,7 @@ fn control_command(command: &OsStr) -> bool {
         "workspaces",
         "tab",
         "pane",
+        "popup",
         "edit",
         "focus",
         "--generation",
@@ -983,6 +987,10 @@ const HELP_SECTIONS: &[(&str, &[(&str, &str)])] = &[
                 "Paste TEXT, then Enter if asked",
             ),
             ("  [--stdin | -- TEXT]", "TEXT up to 64 KiB, or Enter alone"),
+            (
+                "popup hide POPUP [--json]",
+                "Hide a popup as its window would",
+            ),
             (
                 "focus ID|left|right|up|down [--json]",
                 "Focus by ID or navigate",
@@ -1717,6 +1725,42 @@ fn final_close_prompt(terminals: &[String], workspace: Option<&str>) -> (String,
     (question, cancelled)
 }
 
+/// `eon popup hide` (EON-C10): dismisses popup `uN` as its owning window would,
+/// reading the owning tab from the workspace first.
+fn hide_popup(
+    inputs: &Inputs,
+    popup: String,
+    json: bool,
+    target: WorkspaceTarget,
+) -> Result<i32, String> {
+    let caller = match calling_terminal() {
+        Ok(caller) => caller,
+        Err(error) => return report_failure(&error, json),
+    };
+    let snapshot = match resolve_workspace(inputs, target.clone(), caller.as_deref())
+        .and_then(|resolved| inspect(&resolved.socket, caller.as_deref(), &resolved.generation))
+    {
+        Ok(snapshot) => snapshot,
+        Err(error) => return report_failure(&error, json),
+    };
+    let Some(tab) = snapshot
+        .tabs
+        .iter()
+        .find(|tab| tab.popups.iter().any(|item| item.id == popup))
+    else {
+        let detail = format!(
+            "popup {} is not live in this workspace",
+            popup.escape_debug()
+        );
+        return report_failure(&failure("unknown-popup", detail), json);
+    };
+    let action = Action::DismissPopup(PopupTarget {
+        tab: tab.id.clone(),
+        instance: popup,
+    });
+    control(inputs, action, json, false, target)
+}
+
 /// The workspace `eon workspace` reports: the caller's, else the shown one.
 fn inspect(socket: &Path, caller: Option<&str>, generation: &str) -> Result<Snapshot, Failure> {
     match send_action_from(
@@ -2050,6 +2094,28 @@ fn parse_tab_directory_arguments(arguments: &[OsString]) -> Result<Option<(Actio
         }),
         json,
     )))
+}
+
+/// `popup hide POPUP [--json]`.
+fn parse_popup_hide_arguments(arguments: &[OsString]) -> Result<Option<(String, bool)>, Error> {
+    let (popup, json) = match arguments {
+        [command, operation, popup] if command == "popup" && operation == "hide" => (popup, false),
+        [command, operation, popup, flag]
+            if command == "popup" && operation == "hide" && flag == "--json" =>
+        {
+            (popup, true)
+        }
+        [command, ..] if command == "popup" => return Err(Error::usage(EON_USAGE)),
+        _ => return Ok(None),
+    };
+    let popup = popup
+        .to_str()
+        .ok_or_else(|| Error::usage("Eon popup identities must be UTF-8"))?;
+    // An option where POPUP belongs, as in `popup hide --json`, is a usage error.
+    if popup.starts_with('-') {
+        return Err(Error::usage(EON_USAGE));
+    }
+    Ok(Some((popup.into(), json)))
 }
 
 /// `edit [--json] -- FILE`, with a relative FILE resolved against the
@@ -2432,6 +2498,32 @@ mod tests {
         );
         assert_eq!(workspace_pick_arguments("  \n"), None);
         assert_eq!(workspace_pick_arguments(""), None);
+    }
+
+    #[test]
+    fn popup_hide_parser_takes_one_popup_and_json_once() {
+        let parse = |args: &[&str]| {
+            parse_popup_hide_arguments(&args.iter().map(OsString::from).collect::<Vec<_>>())
+        };
+        assert_eq!(
+            parse(&["popup", "hide", "u2"]).unwrap(),
+            Some(("u2".into(), false))
+        );
+        assert_eq!(
+            parse(&["popup", "hide", "u2", "--json"]).unwrap(),
+            Some(("u2".into(), true))
+        );
+        for args in [
+            vec!["popup", "hide", "--json"],
+            vec!["popup", "hide", "-u2"],
+            vec!["popup", "hide"],
+            vec!["popup", "hide", "u2", "--json", "--json"],
+            vec!["popup", "show", "u2"],
+            vec!["popup"],
+        ] {
+            assert_eq!(parse(&args).unwrap_err().status, 2, "{args:?}");
+        }
+        assert_eq!(parse(&["pane", "read", "u2"]).unwrap(), None);
     }
 
     #[test]

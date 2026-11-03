@@ -5342,6 +5342,121 @@ fn tab_directory_retargets_future_sessions_without_crossing_tabs() {
 }
 
 #[test]
+fn tab_directory_records_one_zoxide_visit_unless_disabled() {
+    let root = temporary_directory();
+    let launch = root.join("launch");
+    let visited = root.join("visited");
+    let unrecorded = root.join("unrecorded");
+    let runtime = root.join("runtime");
+    let config = root.join("config");
+    let stop = root.join("stop");
+    let zoxide_log = root.join("zoxide.log");
+    let picker_release = root.join("picker-release");
+    let session_bin = root.join("session-bin");
+    for directory in [&launch, &visited, &unrecorded, &config, &session_bin] {
+        fs::create_dir(directory).unwrap();
+    }
+    let launch_directory = fs::canonicalize(&launch).unwrap();
+    let visited = fs::canonicalize(&visited).unwrap();
+    let unrecorded = fs::canonicalize(&unrecorded).unwrap();
+    let missing = fs::canonicalize(&root).unwrap().join("missing");
+    let orbit = root.join("orbit");
+    let venus = root.join("venus");
+    managed_orbit_executable(&orbit);
+    executable(&venus, "#!/bin/sh\nexit 0\n");
+    // The startup picker's history query waits so the exiting Venus stub cancels it.
+    executable(
+        &session_bin.join("zoxide"),
+        format!(
+            "#!/bin/sh\nprintf '%s\\n' \"$*\" >> '{}'\nif test \"$1\" = query; then\n  while test ! -e '{}'; do sleep 0.01; done\nfi\nexit 0\n",
+            zoxide_log.display(),
+            picker_release.display()
+        ),
+    );
+    let settings = "[terminal]\nfont_fallbacks = []\n\n[anima]\nenabled = false\n";
+    fs::write(config.join("config.toml"), settings).unwrap();
+    let binary = PathBuf::from(env!("CARGO_BIN_EXE_eon"));
+    symlink(&binary, session_bin.join("eon-directory-picker")).unwrap();
+    quick_picker_executable(&session_bin.join("fzf"));
+    let child = eon_command(&binary)
+        .arg("run")
+        .current_dir(&launch)
+        .env("EON_RUNTIME_DIR", &runtime)
+        .env("EON_CONFIG_HOME", &config)
+        .env("EON_ORBIT", &orbit)
+        .env("EON_VENUS", &venus)
+        .env("EON_SESSION_BIN", &session_bin)
+        .env("EON_TEST_STOP", &stop)
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
+        .spawn()
+        .unwrap();
+    let mut supervisor = TestProcess {
+        child,
+        stop: stop.clone(),
+    };
+    let control = generation_runtime(&runtime).join("eon.sock");
+    wait_for_connection(&control);
+    let mut snapshot = wait_for_picker_close(&control, &launch_directory);
+    fs::write(&picker_release, "").unwrap();
+    let deadline = Instant::now() + Duration::from_secs(5);
+    while snapshot.tabs[0].panes().next().is_none() {
+        assert!(Instant::now() < deadline, "t1 has no pane: {snapshot:?}");
+        thread::sleep(Duration::from_millis(10));
+        let Response::Snapshot(next) = workspace_action(&control, "t1-pane", Action::Inspect)
+        else {
+            panic!("cannot inspect t1");
+        };
+        snapshot = next;
+    }
+    let visits = || {
+        fs::read_to_string(&zoxide_log)
+            .unwrap_or_default()
+            .lines()
+            .filter(|line| line.starts_with("add"))
+            .map(str::to_owned)
+            .collect::<Vec<_>>()
+    };
+    let recorded = vec![format!("add -- {}", visited.display())];
+
+    let retarget = |directory: &Path| {
+        invoke(
+            &binary,
+            &runtime,
+            &config,
+            &["tab", "directory", "t1", "--", directory.to_str().unwrap()],
+        )
+    };
+    let output = retarget(&visited);
+    assert!(output.status.success(), "{output:?}");
+    let deadline = Instant::now() + Duration::from_secs(5);
+    while visits().is_empty() {
+        assert!(Instant::now() < deadline, "no zoxide visit was recorded");
+        thread::sleep(Duration::from_millis(10));
+    }
+    assert_eq!(visits(), recorded);
+
+    let output = retarget(&missing);
+    assert!(!output.status.success(), "{output:?}");
+    thread::sleep(Duration::from_millis(500));
+    assert_eq!(visits(), recorded);
+
+    fs::write(
+        config.join("config.toml"),
+        format!("{settings}\n[shell]\nzoxide = false\n"),
+    )
+    .unwrap();
+    let output = retarget(&unrecorded);
+    assert!(output.status.success(), "{output:?}");
+    thread::sleep(Duration::from_millis(500));
+    assert_eq!(visits(), recorded);
+
+    fs::write(&stop, "").unwrap();
+    wait_for_successful_exit(&mut supervisor.child);
+    fs::remove_dir_all(root).unwrap();
+}
+
+#[test]
 fn session_exit_prunes_the_workspace_and_the_last_exit_closes_eon() {
     for unclean in [false, true] {
         let root = temporary_directory();
@@ -6861,6 +6976,113 @@ fn quit_from_default_and_commands_popup_callers_stops_only_their_windows() {
         .unwrap();
     assert!(stopped.status.success(), "{stopped:?}");
     wait_for_generation_removal(&second_generation);
+    fs::remove_dir_all(root).unwrap();
+}
+
+#[test]
+fn popup_hide_hides_a_popup_and_refuses_unknown_ones() {
+    let (root, mut default) = quit_workspace();
+    let runtime = root.join("r");
+    let git = root.join("git");
+    executable(
+        &git,
+        format!(
+            "#!/bin/sh\nwhile test ! -e '{}'; do sleep 0.01; done\n",
+            root.join("stop").display()
+        ),
+    );
+    fs::write(
+        root.join("config/config.toml"),
+        format!(
+            "[terminal]\nfont_fallbacks = []\n[anima]\nenabled = false\n[popups.git]\ncommand = [\"{}\"]\n",
+            git.display()
+        ),
+    )
+    .unwrap();
+    let window = open_quit_window(&root);
+    let window_root = runtime.join("w").join(&window);
+    let generation = generation_runtime(&window_root);
+    let control = generation.join("eon.sock");
+    let Response::Snapshot(opened) = protocol_action(
+        &control,
+        "popup-hide-open",
+        ProtocolAction::InvokePopup {
+            tab: "t1".into(),
+            entry: "git".into(),
+            expected_instance: None,
+            intent: InvokeIntent::Toggle,
+        },
+    ) else {
+        panic!("Git popup did not open");
+    };
+    let popup = opened.tabs[0]
+        .popups
+        .iter()
+        .find(|popup| popup.entry == "git")
+        .unwrap()
+        .clone();
+    assert_eq!(opened.tabs[0].selected_popup.as_ref(), Some(&popup.id));
+    let host = live_identity(Path::new(OsStr::from_bytes(&popup.endpoint))).process_id;
+
+    let hidden = quit_command(&root)
+        .env("EON_WINDOW_RUNTIME_DIR", &window_root)
+        .args(["popup", "hide", &popup.id, "--json"])
+        .output()
+        .unwrap();
+    assert_eq!(hidden.status.code(), Some(0), "{hidden:?}");
+    let Response::Snapshot(hidden) =
+        workspace_action(&control, "popup-hide-inspect", Action::Inspect)
+    else {
+        panic!("cannot inspect the hidden popup");
+    };
+    let tab = hidden.tabs.iter().find(|tab| tab.id == "t1").unwrap();
+    assert_eq!(tab.selected_popup, None);
+    assert!(tab.popups.iter().any(|listed| listed.id == popup.id));
+    assert!(process::exists(host), "the hidden popup's terminal stopped");
+    // Only t1's shown popup changed.
+    let mut expected = stable_tabs(&opened.tabs);
+    expected[0].selected_popup = None;
+    assert_eq!(hidden.active_tab, opened.active_tab);
+    assert_eq!(stable_tabs(&hidden.tabs), expected);
+
+    let usage = quit_command(&root)
+        .env("EON_WINDOW_RUNTIME_DIR", &window_root)
+        .args(["popup", "hide", "--json"])
+        .output()
+        .unwrap();
+    assert_eq!(usage.status.code(), Some(2), "{usage:?}");
+
+    let refused = quit_command(&root)
+        .env("EON_WINDOW_RUNTIME_DIR", &window_root)
+        .args(["popup", "hide", "u999", "--json"])
+        .output()
+        .unwrap();
+    assert_eq!(refused.status.code(), Some(3), "{refused:?}");
+    assert!(
+        stdout(&refused).contains("\"code\":\"unknown-popup\""),
+        "{refused:?}"
+    );
+    let Response::Snapshot(unchanged) =
+        workspace_action(&control, "popup-hide-unknown-inspect", Action::Inspect)
+    else {
+        panic!("cannot inspect after the refused hide");
+    };
+    assert_eq!(unchanged.active_tab, hidden.active_tab);
+    assert_eq!(stable_tabs(&unchanged.tabs), stable_tabs(&hidden.tabs));
+    assert!(process::exists(host));
+
+    let stopped = quit_command(&root)
+        .args(["window", "stop", &window, "--json"])
+        .output()
+        .unwrap();
+    assert!(stopped.status.success(), "{stopped:?}");
+    wait_for_generation_removal(&generation);
+    let stopped = quit_command(&root)
+        .args(["stop", "all", "--json"])
+        .output()
+        .unwrap();
+    assert!(stopped.status.success(), "{stopped:?}");
+    wait_for_successful_exit(&mut default.child);
     fs::remove_dir_all(root).unwrap();
 }
 

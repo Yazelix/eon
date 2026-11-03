@@ -601,7 +601,7 @@ fn defaults_table(
             }
             "command" => "Direct argv, or auto for Agent's command selection.",
             "starship" => "Enable the managed Starship prompt integration.",
-            "zoxide" => "Enable the managed Zoxide directory integration.",
+            "zoxide" => "Enable the managed Zoxide integration and record tab-directory picks.",
             "atuin" => "Enable the managed Atuin history integration.",
             "carapace" => "Enable the managed Carapace completion integration.",
             "mise" => "Activate host mise when available and not already active.",
@@ -686,6 +686,14 @@ pub(crate) fn shell_command(
     log: Option<&DiagnosticLog>,
 ) -> Result<Vec<String>, String> {
     Ok(read_shell_config(root, defaults, log)?.command)
+}
+
+pub(crate) fn zoxide_enabled(
+    root: &Path,
+    defaults: &Defaults,
+    log: Option<&DiagnosticLog>,
+) -> Result<bool, String> {
+    Ok(read_shell_config(root, defaults, log)?.zoxide)
 }
 
 pub(crate) fn startup_animation(

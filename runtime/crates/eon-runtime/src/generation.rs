@@ -213,7 +213,7 @@ fn is_default_namespace(root: &Path) -> bool {
 
 const MAX_GENERATIONS: usize = 256;
 
-#[derive(Default)]
+#[derive(Clone, Default)]
 pub(super) struct WorkspaceTarget {
     pub(super) generation: Option<String>,
     pub(super) window: Option<String>,

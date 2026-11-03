@@ -97,7 +97,7 @@ carapace = true # Enable the managed Carapace completion integration.
 command = ["eon-nu"] # Direct argv for terminals without an explicit command.
 mise = true # Activate host mise when available and not already active.
 starship = true # Enable the managed Starship prompt integration.
-zoxide = true # Enable the managed Zoxide directory integration.
+zoxide = true # Enable the managed Zoxide integration and record tab-directory picks.
 
 [anima]
 duration_seconds = 3 # Startup animation duration in seconds.

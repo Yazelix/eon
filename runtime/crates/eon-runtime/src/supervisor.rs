@@ -26,12 +26,13 @@ use eon_workspace_protocol::v30::{
 use orbit_protocol::management::{LeaseInput, Screen as OrbitScreen};
 use std::{
     env,
-    ffi::OsString,
+    ffi::{OsStr, OsString},
     fs,
     io::{Read, Write},
     net::Shutdown,
     os::fd::OwnedFd,
     os::unix::{
+        ffi::OsStrExt,
         fs::{DirBuilderExt, MetadataExt, OpenOptionsExt, PermissionsExt},
         net::UnixStream,
     },
@@ -1724,6 +1725,40 @@ fn directory_picker_command(
     Ok(command)
 }
 
+/// A committed tab directory is a pick (EON-C17), so it adds one Zoxide visit
+/// unless `[shell] zoxide = false`. Zoxide runs and is reaped on its own worker
+/// beside the supervisor; any failure, the worker's included, is logged and
+/// changes nothing else.
+fn record_visit(inputs: &Inputs, config: &Path, log: &Arc<DiagnosticLog>, directory: &[u8]) {
+    let Some(session_bin) = &inputs.managed.shell_bin else {
+        return log.record("Zoxide visit skipped: this Eon has no packaged Zoxide");
+    };
+    match managed_environment::zoxide_enabled(config, &inputs.defaults, None) {
+        Ok(true) => {}
+        Ok(false) => return,
+        Err(error) => return log.record(&format!("Zoxide visit skipped: {error}")),
+    }
+    let mut zoxide = Command::new(session_bin.join("zoxide"));
+    zoxide
+        .args(["add", "--"])
+        .arg(OsStr::from_bytes(directory))
+        .stdin(Stdio::null())
+        .stdout(Stdio::null())
+        .stderr(Stdio::null());
+    let worker = Arc::clone(log);
+    let started = thread::Builder::new().spawn(move || {
+        let failure = match zoxide.status() {
+            Ok(status) if status.success() => return,
+            Ok(status) => format!("zoxide {status}"),
+            Err(error) => error.to_string(),
+        };
+        worker.record(&format!("Zoxide visit failed: {failure}"));
+    });
+    if let Err(error) = started {
+        log.record(&format!("Zoxide visit failed: {error}"));
+    }
+}
+
 #[allow(clippy::too_many_arguments)]
 fn apply_session_operation(
     inputs: &Inputs,
@@ -2252,6 +2287,12 @@ fn dispatch_control_request(
                 Action::ToggleSidebar | Action::FocusAttention { .. }
             )
             .then(|| action.clone());
+            let visit = match &action {
+                Action::Workspace(WorkspaceAction::SetTabDirectory { directory, .. }) => {
+                    Some(directory.clone())
+                }
+                _ => None,
+            };
             let direct_cross_workspace = jump.is_none()
                 && accepted.as_ref().is_some_and(|action| {
                     matches!(action, Action::FocusAttention { tab, .. }
@@ -2299,6 +2340,11 @@ fn dispatch_control_request(
                     },
                 ),
             };
+            if result.is_ok()
+                && let Some(directory) = visit
+            {
+                record_visit(inputs, config, log, &directory);
+            }
             // Only shown focus sees. A direct cross-workspace focus resets the cursor even
             // when a hidden caller named the terminal already focused in the shown workspace.
             if result.is_ok()
