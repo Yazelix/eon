@@ -8,6 +8,7 @@ pub(crate) fn inputs() -> Inputs {
     const MANIFEST: &str = include_str!("../../../../components/eon-v5.json");
     Inputs {
         version: env!("CARGO_PKG_VERSION"),
+        skill: include_str!("../../../skills/eon/SKILL.md"),
         component_report: eon_manifest::version_report(MANIFEST).map_err(|error| error.to_string()),
         assembly: env!("EON_WORKSPACE_DIGEST").as_bytes(),
         defaults: Defaults {

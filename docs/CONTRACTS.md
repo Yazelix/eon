@@ -117,6 +117,11 @@ socket names, JSON fields and protocol identifiers retain their spellings.
     no ANSI escapes.
     Invalid syntax remains a concise stderr failure pointing to `eon --help`.
     Child arguments, including Anima help, retain their existing forwarding.
+  - Standalone `eon --skill` prints the agent skill this build ships
+    (Eon's `eon/skills/eon/SKILL.md`, embedded at build time) to stdout
+    unchanged and exits successfully without starting children or preparing
+    configuration/runtime state; extra arguments are invalid syntax.
+    `eon --help` lists it and ends with a line pointing agents to it.
   - Eon owns the cursor-tail duration default `1.5` and the optional
     `[terminal] cursor_trail_duration` multiplier in the same config file.
     Zero disables the trail while retaining the cursor color and contrasting
@@ -139,7 +144,8 @@ socket names, JSON fields and protocol identifiers retain their spellings.
   including `window new` parent-directory creation. Eon Runtime in `runtime/`
   owns the consumed runtime. See the
   [runtime input contract](ARCHITECTURE.md#ownership-and-invocation).
-- **Proof:** `795d735a8f61ef439c56d68e1cc4d3929af0dfcf`, `eon-monorepo-2oko.6`.
+- **Proof:** `795d735a8f61ef439c56d68e1cc4d3929af0dfcf`, `eon-monorepo-2oko.6`;
+  `eon --skill`: `eon-ivge0`, whose commit is its revision.
   - **Environment:** Automated tier; installed tier.
   - **Evidence:** Graph validation and version report
     (`canonical_manifest_is_valid`, `invalid_graphs_are_rejected`,
@@ -152,14 +158,20 @@ socket names, JSON fields and protocol identifiers retain their spellings.
     1 (Anima welcome, picker, first terminal) and 7 (terminal text including
     box drawing, Braille and CJK); Lucca opened the installed build from the
     `Open Eon` desktop entry on COSMIC (recorded in `eon-monorepo-2oko.6`).
+  - **`eon --skill` (`eon-ivge0`):** automated tier on x86_64 Linux: sandboxed
+    `nix develop -c eon-test -p eon-runtime -p eon`, including
+    `skill_prints_the_shipped_skill_and_help_points_agents_to_it`, and the
+    `default` package build, whose `bin/eon --skill` matched
+    `eon/skills/eon/SKILL.md` byte for byte.
 - **Open proof:** Pending re-proof in this repository: installed
   `eon anima accelerando` playback, installed scrollback,
   ReturnToLive, click-selection ladder and copy/paste, installed help color
   gates (`NO_COLOR`, `TERM=dumb`, 80-column PTY), explicit cursor-trail colors
   and durations on new and reopened surfaces, hicolor icon sizes, retained
-  history and terminal-query replies during synchronized-output bursts, and
-  COSMIC sessions. Fractional scale, broader compositors and screen-reader use
-  remain unproved.
+  history and terminal-query replies during synchronized-output bursts,
+  installed `eon --skill` and `eon --help` from a refreshed `eon` profile
+  (`eon-ivge0`), and COSMIC sessions. Fractional scale, broader compositors
+  and screen-reader use remain unproved.
 
 ## EON-C2 — One component compatibility graph
 

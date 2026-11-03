@@ -436,7 +436,8 @@ short descriptions, and examples without starting a workspace. After a command
 family or command, as in `eon pane --help` or `eon pane send -h`, they show
 only that family's or command's lines. Help uses color
 on terminals; redirected output is plain text. A nonempty `NO_COLOR` or
-`TERM=dumb` disables color. Invalid syntax points to `eon --help`.
+`TERM=dumb` disables color. Invalid syntax points to `eon --help`, whose last
+line points agents to `eon --skill`.
 
 | Command | Result |
 |---|---|
@@ -479,6 +480,7 @@ on terminals; redirected output is plain text. A nonempty `NO_COLOR` or
 | `eon config-path` | Create the configuration root and print the full path of its settings file, `config.toml`, which need not exist yet |
 | `eon config-dir` | Create and print the configuration root |
 | `eon config defaults [--json]` | Print built-in defaults as commented TOML or a nested JSON object, without reading user configuration |
+| `eon --skill` | Print the `eon` agent skill this build ships, without starting a workspace or reading configuration |
 
 A window holds one or more workspaces and shows one at a time; hidden
 workspaces keep their terminals running. WS is a workspace ID (`w1`, `w2`, ...),
@@ -696,7 +698,10 @@ the initial command's once it has ended.
 
 Eon packages an `eon` skill that teaches agents the CLI, how to find their own
 pane or popup through `eon workspace --json`'s `caller`, and how to leave your
-focus alone. Install it for the agents you use. For a `nix profile` install in
+focus alone. An agent in an Eon terminal reads it with `eon --skill`, which
+prints the skill of the running build and needs no setup; `eon --help` ends
+by pointing agents there. To have an agent load the skill on its own, install
+it for the agents you use. For a `nix profile` install in
 `~/.nix-profile`, run the relevant commands below; substitute your profile path
 if you installed with `--profile`. The links follow profile upgrades.
 

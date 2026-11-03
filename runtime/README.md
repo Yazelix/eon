@@ -35,8 +35,8 @@ pane at that directory; an explicit tab close removes it without a replacement.
 Initial workspace launch and explicit directory selection retain their own paths.
 A failed first-pane fallback reports the error and leaves other tabs running.
 
-Eon supplies its own product version, chosen defaults, validated component
-report, opaque executable paths, and immutable assembly contribution. The
+Eon supplies its own product version, agent skill, chosen defaults, validated
+component report, opaque executable paths, and immutable assembly contribution. The
 runtime has no dependency on Eon, its component graph, validator, product
 defaults, assets or Nix expressions.
 

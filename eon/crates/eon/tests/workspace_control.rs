@@ -387,6 +387,63 @@ fn help_is_readable_and_does_not_start_or_prepare_a_workspace() {
 }
 
 #[test]
+fn skill_prints_the_shipped_skill_and_help_points_agents_to_it() {
+    let root = temporary_directory();
+    let config = root.join("config");
+    let absent_config = root.join("absent-config");
+    let runtime = root.join("runtime");
+    fs::create_dir(&config).unwrap();
+    fs::write(config.join("config.toml"), "invalid configuration = [").unwrap();
+    let binary = Path::new(env!("CARGO_BIN_EXE_eon"));
+    let eon_with = |config: &Path, args: &[&str]| {
+        eon_command(binary)
+            .args(args)
+            .env("EON_CONFIG_HOME", config)
+            .env("EON_RUNTIME_DIR", &runtime)
+            .env_remove("EON_WINDOW_RUNTIME_DIR")
+            .env("EON_ORBIT", root.join("missing-orbit"))
+            .env("EON_VENUS", root.join("missing-venus"))
+            .env("EON_ANIMA", root.join("missing-anima"))
+            .output()
+            .unwrap()
+    };
+    let eon = |args: &[&str]| eon_with(&config, args);
+    for config in [&config, &absent_config] {
+        let output = eon_with(config, &["--skill"]);
+        assert!(
+            output.status.success(),
+            "{}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+        assert!(output.stderr.is_empty());
+        assert_eq!(
+            stdout(&output),
+            include_str!("../../../skills/eon/SKILL.md")
+        );
+    }
+    let output = eon(&["--skill", "extra"]);
+    assert_eq!(output.status.code(), Some(2));
+    assert!(output.stdout.is_empty());
+    let error = String::from_utf8_lossy(&output.stderr);
+    assert!(error.contains("eon --help") && error.len() < 200);
+    let help = eon(&["--help"]);
+    let help = stdout(&help);
+    assert!(
+        help.lines()
+            .any(|line| line.trim_start().starts_with("--skill ")),
+        "eon --help must list --skill"
+    );
+    assert!(
+        help.lines().last().unwrap().contains("eon --skill"),
+        "eon --help must end by pointing agents to eon --skill"
+    );
+    assert!(!runtime.exists());
+    assert!(!absent_config.exists());
+    assert_eq!(fs::read_dir(&config).unwrap().count(), 1);
+    fs::remove_dir_all(root).unwrap();
+}
+
+#[test]
 fn unknown_configuration_keys_warn_once_on_the_managed_cli() {
     let root = temporary_directory();
     for (directory, source, key) in [

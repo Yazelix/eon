@@ -9,6 +9,7 @@ use eon_workspace_protocol::v29::{ALT, PopupGeometry, PopupKey, SHIFT, Shortcut}
 pub(crate) fn inputs() -> Inputs {
     Inputs {
         version: "fixture-product",
+        skill: "fixture-skill",
         component_report: Ok("fixture-components".into()),
         codexbar: "missing-fixture-codexbar".into(),
         assembly: b"fixture-assembly",

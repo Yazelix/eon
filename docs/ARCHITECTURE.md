@@ -366,6 +366,7 @@ pair.
 |---|---|
 | Product version | Version from `eon/crates/eon/Cargo.toml`, used by CLI and EONW runtime diagnostics; library and codec versions retain their own Cargo owners |
 | Fallible validated component facts | The sole graph validator's report |
+| Agent skill | `eon/skills/eon/SKILL.md`, embedded at build time, which `eon --skill` prints |
 | Concrete defaults | Chosen shell/terminal/Anima settings, popup definitions/margins, palette, program fallbacks and Agent preference order |
 | Immutable assembly contribution | Eon's source-tree digest; see [In-tree package selection](#in-tree-package-selection) |
 | Opaque launch inputs | Component/program paths and environment/configuration projection, in their resolution and override order |

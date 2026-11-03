@@ -44,6 +44,8 @@ const EONBASE_USAGE: &str = "usage: eonbase [--no-decorations] [--application-id
 
 pub struct Inputs {
     pub version: &'static str,
+    /// The agent skill this build ships, which `eon --skill` prints.
+    pub skill: &'static str,
     pub component_report: Result<String, String>,
     pub assembly: &'static [u8],
     pub defaults: managed_environment::Defaults,
@@ -810,6 +812,10 @@ fn execute(inputs: &Inputs, arguments: Vec<OsString>) -> Result<i32, Error> {
             let list = arguments.first().is_some_and(|value| value == "workspaces");
             control(inputs, action, json, list, target)
         }
+        [flag] if flag == "--skill" => {
+            write_stdout(inputs.skill)?;
+            Ok(0)
+        }
         [command] if command == "versions" => {
             write_stdout(format!(
                 "eon {} {}\neonw {}\n{}\n",
@@ -990,6 +996,7 @@ const HELP_SECTIONS: &[(&str, &[(&str, &str)])] = &[
             ("", "its config.toml path"),
             ("config-dir", "Create and print the config root"),
             ("config defaults [--json]", "Print config.toml defaults"),
+            ("--skill", "Print this build's agent skill"),
             ("-h, --help", "Show this help; after a command,"),
             ("", "only that command's lines"),
         ],
@@ -1125,6 +1132,7 @@ Where shown, {command}--json{reset} prints JSON and skips confirmation.
 Without a terminal, a confirmation needs yes or exits 1 (not-confirmed).
 Exit status: 0 success, 1 failed, 2 invalid command, 3 target not found,
 4 Eon unreachable, 130 interrupted.
+Agent? Run {command}eon --skill{reset} to learn how to work in Eon.
 "
     )
 }

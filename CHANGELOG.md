@@ -5,6 +5,10 @@ installation, and proven contract changes.
 
 ## Unreleased
 
+- `eon --skill` prints the `eon` agent skill that this build ships, so an
+  agent in an Eon terminal can learn the CLI with no setup, and `eon --help`
+  lists it and ends with `Agent? Run eon --skill to learn how to work in Eon.`
+  (`eon-ivge0`).
 - Closing the Eon window, with the desktop's close-window key or the window's
   close button, quits it as Alt+Shift+Q does instead of detaching: an idle
   window quits at once, and while a terminal runs something the quit prompt

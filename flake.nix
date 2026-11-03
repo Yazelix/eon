@@ -101,7 +101,8 @@
             )
           ) manifest.components;
           # Cargo needs only the crates to build Orbit and Venus. Eon also compiles
-          # in the graph and digests its Nix recipes into its generation identity.
+          # in the graph and its agent skill, and digests its Nix recipes into its
+          # generation identity.
           crateFiles = lib.fileset.difference (lib.fileset.unions [
             ./Cargo.toml
             ./Cargo.lock
@@ -133,6 +134,7 @@
               ./flake.lock
               ./components
               ./docs/CONFIGURATION.md
+              ./eon/skills/eon/SKILL.md
               ./nix/shell-environment.nix
             ];
           };
