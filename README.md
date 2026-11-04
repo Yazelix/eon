@@ -60,7 +60,7 @@ folder. A terminal opens there.
 | Alt+Shift+J | Git popup |
 | Alt+Shift+Y | Files popup (Yazi) |
 | Alt+Shift+M | Commands popup: search and run Eon commands |
-| Alt+Shift+S | Workspaces: switch or create a workspace in this window |
+| Alt+Shift+S | Workspaces: switch, create or close a workspace in this window |
 | Alt+Shift+D | Detach: hide the window, keep terminals running |
 | Alt+Shift+Q | Quit this window; closing the window does the same |
 

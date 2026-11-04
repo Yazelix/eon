@@ -4556,7 +4556,7 @@ fn workspace_cli_lists_creates_switches_renames_and_closes() {
 }
 
 #[test]
-fn workspace_picker_switches_creates_and_cancels() {
+fn workspace_picker_switches_creates_closes_and_cancels() {
     let root = temporary_directory();
     let runtime = root.join("runtime");
     let config = root.join("config");
@@ -4645,7 +4645,7 @@ fn workspace_picker_switches_creates_and_cancels() {
 n=$(($(cat '{count}') + 1)); echo "$n" > '{count}'
 cat > '{rows}'$n
 case $n in
-  1) printf 'w3\nw3\tw3\t1 tab\n';;
+  1) printf 'w3\n\nw3\tw3\t1 tab\n';;
   2) printf 'fresh\n';;
   *) exit 130;;
 esac
@@ -4654,7 +4654,10 @@ esac
             rows = recorded.display(),
         ),
     );
-    let popup_status = |name: &str, caller: &str, input: &[u8]| {
+    // Runs a popup with `input` on its stdin: a pipe, or with `terminal` a pseudoterminal whose
+    // controller stays open until the popup exits.
+    let popup_status = |name: &str, caller: &str, input: &[u8], terminal: bool| {
+        use std::os::fd::{AsRawFd, FromRawFd, OwnedFd};
         let program = root.join(name);
         if !program.exists() {
             symlink(&binary, &program).unwrap();
@@ -4666,6 +4669,35 @@ esac
             .unwrap()
             .to_owned();
         let path = std::iter::once(tools.clone()).chain(std::env::split_paths(&original));
+        let mut controller = None;
+        let stdin = if terminal {
+            let (mut leader, mut device) = (-1, -1);
+            // SAFETY: openpty initializes both descriptors on success.
+            let opened = unsafe {
+                libc::openpty(
+                    &raw mut leader,
+                    &raw mut device,
+                    std::ptr::null_mut(),
+                    std::ptr::null_mut(),
+                    std::ptr::null_mut(),
+                )
+            };
+            assert_eq!(opened, 0, "{}", std::io::Error::last_os_error());
+            // SAFETY: a successful openpty transferred ownership of both descriptors.
+            let (leader, device) =
+                unsafe { (fs::File::from_raw_fd(leader), OwnedFd::from_raw_fd(device)) };
+            for descriptor in [leader.as_raw_fd(), device.as_raw_fd()] {
+                // SAFETY: both descriptors are open and owned here.
+                assert_eq!(
+                    unsafe { libc::fcntl(descriptor, libc::F_SETFD, libc::FD_CLOEXEC) },
+                    0
+                );
+            }
+            controller.insert(leader).write_all(input).unwrap();
+            Stdio::from(device)
+        } else {
+            Stdio::piped()
+        };
         let mut child = TestProcess {
             child: command
                 .env("PATH", std::env::join_paths(path).unwrap())
@@ -4673,18 +4705,22 @@ esac
                 .env("EON_CONFIG_HOME", &config)
                 .env("EON_TAB", "t1")
                 .env("EON_TERMINAL", caller)
-                .stdin(Stdio::piped())
+                .stdin(stdin)
                 .stdout(Stdio::piped())
                 .stderr(Stdio::piped())
                 .spawn()
                 .unwrap(),
             stop: supervisor.stop.clone(),
         };
-        child.child.stdin.take().unwrap().write_all(input).unwrap();
-        child.wait_with_output().unwrap()
+        if let Some(mut pipe) = child.child.stdin.take() {
+            pipe.write_all(input).unwrap();
+        }
+        let output = child.wait_with_output().unwrap();
+        drop(controller);
+        output
     };
     let popup = |name: &str, caller: &str, input: &[u8]| {
-        let output = popup_status(name, caller, input);
+        let output = popup_status(name, caller, input, false);
         assert!(
             output.status.success(),
             "{name}: {}",
@@ -4736,7 +4772,7 @@ esac
             format!(
                 r#"#!/bin/sh
 case "$*" in
-  *--print-query*) cat > /dev/null; printf '\nw1\tRenamed\t1 tab\n';;
+  *--print-query*) cat > /dev/null; printf '\n\nw1\tRenamed\t1 tab\n';;
   *--bind=enter:print-query*) printf 'Renamed\0';;
   *) while IFS="$(printf '\t')" read -r index rest; do
        case "$rest" in '{menu}'*) printf '%s\tchosen\n' "$index";; esac
@@ -4765,22 +4801,96 @@ esac
 cat > /dev/null
 '{eon}' workspace close w3 --json > /dev/null
 '{eon}' workspace rename w4 w3 --json > /dev/null
-printf '\nw3\tw3\t1 tab\n'
+printf '\n\nw3\tw3\t1 tab\n'
 "#,
             eon = binary.display(),
         ),
     );
-    let output = popup_status("eon-workspaces", &first, b"\n");
+    let output = popup_status("eon-workspaces", &first, b"\n", false);
     assert_eq!(output.status.code(), Some(3));
-    assert_eq!(
-        list(),
-        [
-            entry("w1", Some("Renamed"), true),
-            entry("w4", Some("w3"), false),
-        ]
+    let stale = [
+        entry("w1", Some("Renamed"), true),
+        entry("w4", Some("w3"), false),
+    ];
+    assert_eq!(list(), stale);
+    // Ctrl+X on that stale row closes nothing and asks nothing.
+    executable(
+        &tools.join("fzf"),
+        "#!/bin/sh\ncat > /dev/null\nprintf '\\nctrl-x\\nw3\\tw3\\t1 tab\\n'\n",
     );
-    read(&["workspace", "close", "w4", "--json"]);
-    assert!(read(&["workspace", "close", "w1", "--json"])["ended"].is_object());
+    let output = popup_status("eon-workspaces", &first, b"yes\n\n", false);
+    assert_eq!(output.status.code(), Some(3));
+    assert!(!String::from_utf8_lossy(&output.stderr).contains("Close workspace"));
+    assert_eq!(list(), stale);
+
+    // Ctrl+X closes the highlighted row's workspace after a yes and lists the rest again. A "no"
+    // through a pipe is the non-terminal refusal: not-confirmed, exit 1, then the wait for
+    // Enter; a terminal's "no" lists again, as the pseudoterminal steps below show.
+    read(&["workspace", "new", "--no-focus", "--json"]);
+    read(&["workspace", "new", "--no-focus", "--json"]);
+    read(&["workspace", "switch", "w6", "--json"]);
+    read(&["workspace", "switch", "w5", "--json"]);
+    read(&["workspace", "switch", "w1", "--json"]);
+    fs::write(&count, "0").unwrap();
+    executable(
+        &tools.join("fzf"),
+        format!(
+            r#"#!/bin/sh
+case "$*" in *--expect=ctrl-x*) ;; *) exit 2;; esac
+n=$(($(cat '{count}') + 1)); echo "$n" > '{count}'
+cat > '{rows}'$n
+case $n in
+  1) printf '\nctrl-x\nw4\tw3\t1 tab\n';;
+  2) printf 'w5\nctrl-x\nw5\tw5\t1 tab\n';;
+  3|5) printf '\nctrl-x\nw1\tRenamed\t1 tab · shown\n';;
+  6) printf '\nctrl-x\nw5\tw5\t1 tab · shown\n';;
+  *) exit 130;;
+esac
+"#,
+            count = count.display(),
+            rows = recorded.display(),
+        ),
+    );
+    let output = popup_status("eon-workspaces", &first, b"yes\nno\n", false);
+    assert_eq!(output.status.code(), Some(1));
+    assert!(String::from_utf8_lossy(&output.stderr).contains("error not-confirmed: workspace w5"));
+    assert_eq!(
+        rows(2),
+        "w5\tw5\t1 tab\nw6\tw6\t1 tab\nw1\tRenamed\t1 tab · shown\n"
+    );
+    let kept = [
+        entry("w1", Some("Renamed"), true),
+        entry("w6", None, false),
+        entry("w5", None, false),
+    ];
+    assert_eq!(list(), kept);
+    let fzf_runs = || {
+        fs::read_to_string(&count)
+            .unwrap()
+            .trim()
+            .parse::<u32>()
+            .unwrap()
+    };
+    // A terminal's "no" to closing the picker's own workspace keeps it and lists again.
+    let output = popup_status("eon-workspaces", &first, b"no\n", true);
+    assert!(output.status.success());
+    assert!(String::from_utf8_lossy(&output.stdout).contains("workspace w1 stays open"));
+    assert_eq!(fzf_runs(), 4);
+    assert_eq!(list(), kept);
+    // Ctrl+X on the picker's own workspace closes it, ends the picker and shows the most
+    // recently shown remaining workspace.
+    let last = caller("session-5.sock");
+    popup("eon-workspaces", &first, b"yes\n");
+    assert_eq!(fzf_runs(), 5);
+    assert_eq!(list(), [entry("w6", None, false), entry("w5", None, true)]);
+    // Declining the last workspace's close keeps the window and lists again.
+    read(&["workspace", "close", "w6", "--json"]);
+    let output = popup_status("eon-workspaces", &last, b"no\n", true);
+    assert!(output.status.success());
+    assert!(String::from_utf8_lossy(&output.stdout).contains("workspace w5 stays open"));
+    assert_eq!(fzf_runs(), 7);
+    assert_eq!(list(), [entry("w5", None, true)]);
+    assert!(read(&["workspace", "close", "w5", "--json"])["ended"].is_object());
     wait_for_successful_exit(&mut supervisor.child);
     fs::remove_dir_all(root).unwrap();
 }

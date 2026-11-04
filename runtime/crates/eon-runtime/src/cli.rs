@@ -257,47 +257,78 @@ fn pick_and_run_command(inputs: &Inputs) -> Result<(i32, RunnerOutput), String> 
 
 /// Runs the workspace picker as the popup's caller: Enter on a row, including on an empty query,
 /// shows that workspace, Enter on a non-blank query that matches no row creates a workspace of
-/// that name, and Escape or Ctrl+C does nothing.
+/// that name, Ctrl+X on a row closes that workspace and lists the rest again, and Escape or
+/// Ctrl+C does nothing.
 fn pick_and_run_workspace(inputs: &Inputs) -> Result<i32, String> {
-    let snapshot = caller_snapshot(inputs)?;
-    let Some(output) = run_picker(
-        packaged_fzf(
-            "Workspace > ",
-            "Enter Switch · No match: Enter Create · Esc/Ctrl+C Cancel",
-        )
-        .args([
-            "--exact",
-            "--delimiter=\t",
-            "--with-nth=2..",
-            "--nth=1",
-            "--print-query",
-            "--bind=enter:accept-or-print-query",
-        ]),
-        &workspace_rows(&snapshot.workspaces, &snapshot.active_workspace),
-        "workspace",
-    )?
-    else {
-        return Ok(0);
-    };
-    let output = String::from_utf8_lossy(&output);
-    let Some(arguments) = workspace_pick_arguments(&output) else {
-        return Ok(0);
-    };
-    // Runtime would read a departed row's wN as another workspace's name, so a row switches only
-    // while its wN is still live; the check and the switch are not atomic.
-    if arguments[1] == "switch"
-        && !caller_snapshot(inputs)?
-            .workspaces
-            .iter()
-            .any(|workspace| workspace.id == arguments[2])
-    {
-        let detail = format!("workspace {} is not live", arguments[2]);
-        return report_failure(&failure("unknown-workspace", detail), false);
+    loop {
+        let snapshot = caller_snapshot(inputs)?;
+        let Some(output) = run_picker(
+            packaged_fzf(
+                "Workspace > ",
+                "Enter Switch · Ctrl+X Close · No match: Enter Create · Esc/Ctrl+C Cancel",
+            )
+            .args([
+                "--exact",
+                "--delimiter=\t",
+                "--with-nth=2..",
+                "--nth=1",
+                "--print-query",
+                "--expect=ctrl-x",
+                "--bind=enter:accept-or-print-query",
+            ]),
+            &workspace_rows(&snapshot.workspaces, &snapshot.active_workspace),
+            "workspace",
+        )?
+        else {
+            return Ok(0);
+        };
+        let output = String::from_utf8_lossy(&output);
+        let Some(arguments) = workspace_pick_arguments(&output) else {
+            return Ok(0);
+        };
+        // Runtime would read a departed row's wN as another workspace's name, so a row switches
+        // or closes only while its wN is still live; the check and the action are not atomic.
+        if arguments[1] != "new"
+            && !caller_snapshot(inputs)?
+                .workspaces
+                .iter()
+                .any(|workspace| workspace.id == arguments[2])
+        {
+            let detail = format!("workspace {} is not live", arguments[2]);
+            return report_failure(&failure("unknown-workspace", detail), false);
+        }
+        let status = run_as_caller(
+            inputs,
+            arguments.iter().copied().map(OsString::from).collect(),
+        );
+        if let Some(status) = workspace_pick_end(&arguments, status, &snapshot.workspace, || {
+            caller_snapshot(inputs).ok().map(|after| after.workspaces)
+        }) {
+            return Ok(status);
+        }
     }
-    Ok(run_as_caller(
-        inputs,
-        arguments.into_iter().map(OsString::from).collect(),
-    ))
+}
+
+/// How the workspace picker ends after running `arguments` with `status`, or None to list
+/// again. Only a close that succeeded, including a declined one, lists again. A close of the
+/// picker's own workspace lists again only while `listed()`, the caller's fresh list (None when
+/// it cannot be read), still holds it; once it has closed the picker ends with it.
+fn workspace_pick_end(
+    arguments: &[&str],
+    status: i32,
+    own: &str,
+    listed: impl FnOnce() -> Option<Vec<WorkspaceInfo>>,
+) -> Option<i32> {
+    if arguments[1] != "close" || status != 0 {
+        return Some(status);
+    }
+    if arguments[2] != own {
+        return None;
+    }
+    match listed() {
+        Some(workspaces) if workspaces.iter().any(|workspace| workspace.id == own) => None,
+        _ => Some(0),
+    }
 }
 
 /// The workspace picker's rows: ID, label, tab count and a needs-input marker, most recently
@@ -329,14 +360,27 @@ fn workspace_rows(workspaces: &[WorkspaceInfo], shown: &str) -> String {
         .collect()
 }
 
-/// The `eon` arguments for the workspace picker's output: its query line, then the chosen row
-/// when one matched. A query that matched no row names a new workspace; a blank one runs nothing.
+/// The `eon` arguments for the workspace picker's output: its query line, then the key that
+/// accepted (empty for Enter) and the chosen row when one matched. Ctrl+X closes the row's
+/// workspace and Enter shows it; a query that matched no row names a new workspace; a blank one
+/// runs nothing.
 fn workspace_pick_arguments(output: &str) -> Option<Vec<&str>> {
     let mut lines = output.lines();
     let query = lines.next().unwrap_or_default();
+    let key = lines.next();
     match lines.next() {
-        Some(row) => Some(vec!["workspace", "switch", row.split('\t').next()?]),
-        None if !query.trim().is_empty() => Some(vec!["workspace", "new", "--name", query]),
+        Some(row) => Some(vec![
+            "workspace",
+            if key == Some("ctrl-x") {
+                "close"
+            } else {
+                "switch"
+            },
+            row.split('\t').next()?,
+        ]),
+        None if key.is_none() && !query.trim().is_empty() => {
+            Some(vec!["workspace", "new", "--name", query])
+        }
         None => None,
     }
 }
@@ -2287,13 +2331,53 @@ mod tests {
             "w3\tnotes\t3 tabs\nw1\twork\t2 tabs · needs input\n\
              w2\tw2\t1 tab · needs input · shown\n"
         );
+        // fzf prints the query, the --expect key (empty for Enter), then the row.
         assert_eq!(
-            workspace_pick_arguments("wo\nw1\twork\t2 tabs\n"),
+            workspace_pick_arguments("wo\n\nw1\twork\t2 tabs\n"),
             Some(vec!["workspace", "switch", "w1"])
         );
         assert_eq!(
-            workspace_pick_arguments("\nw2\tw2\t1 tab · shown\n"),
+            workspace_pick_arguments("\n\nw2\tw2\t1 tab · shown\n"),
             Some(vec!["workspace", "switch", "w2"])
+        );
+        assert_eq!(
+            workspace_pick_arguments("wo\nctrl-x\nw1\twork\t2 tabs\n"),
+            Some(vec!["workspace", "close", "w1"])
+        );
+        // fzf exits 1 on Ctrl+X without a row, so it never prints this.
+        assert_eq!(workspace_pick_arguments("zz\nctrl-x\n"), None);
+        // Closing another workspace always lists again, and the next listing reports any
+        // failure; closing the picker's own w1 lists again only while w1 is still live (it was
+        // declined); a failure or any other command ends the picker.
+        let live = |ids: &[&str]| {
+            Some(
+                ids.iter()
+                    .map(|id| workspace(id, None, 1, 0, None))
+                    .collect::<Vec<_>>(),
+            )
+        };
+        let close = |id| ["workspace", "close", id];
+        assert_eq!(workspace_pick_end(&close("w1"), 0, "w1", || None), Some(0));
+        assert_eq!(
+            workspace_pick_end(&close("w1"), 0, "w1", || live(&["w2"])),
+            Some(0)
+        );
+        assert_eq!(
+            workspace_pick_end(&close("w1"), 0, "w1", || live(&["w1"])),
+            None
+        );
+        assert_eq!(
+            workspace_pick_end(&close("w2"), 0, "w1", || live(&["w1"])),
+            None
+        );
+        assert_eq!(workspace_pick_end(&close("w2"), 0, "w1", || None), None);
+        assert_eq!(
+            workspace_pick_end(&close("w2"), 1, "w1", || live(&["w1"])),
+            Some(1)
+        );
+        assert_eq!(
+            workspace_pick_end(&["workspace", "switch", "w2"], 0, "w1", || live(&["w1"])),
+            Some(0)
         );
         assert_eq!(
             workspace_pick_arguments(" --fresh \n"),

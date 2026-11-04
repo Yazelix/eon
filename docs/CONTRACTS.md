@@ -1358,7 +1358,8 @@ socket names, JSON fields and protocol identifiers retain their spellings.
   the popup's tab under the caller rules above, closing names `EON_TAB`, and
   every command keeps the CLI's own validation, targets and Stop and
   final-close confirmations; it adds no EONW action. A successful action
-  ends the popup; a listing, `stop previous`, or a failure reported while the
+  ends the popup, except a close from the workspace list, which shows the
+  list again; a listing, `stop previous`, or a failure reported while the
   popup is still open, waits for Enter. "Quit this window" runs `eon quit`
   (EON-C11) as the popup's terminal, so it stops only the popup's own window,
   in an independent window too (EON-C23), with `eon quit`'s confirmation; it
@@ -1378,8 +1379,11 @@ socket names, JSON fields and protocol identifiers retain their spellings.
   exits 3, and the check and the switch are not atomic. Enter on a non-blank
   query that matches no row runs `eon workspace new --name QUERY`. Both run in
   the popup's terminal as for Commands, so the CLI keeps its validation,
-  targets and failures; a failure waits for Enter. Esc or Ctrl+C runs
-  nothing.
+  targets and failures; a failure waits for Enter. Ctrl+X on the highlighted
+  row runs `eon workspace close wN` in the popup's terminal once the CLI has
+  checked again that the `wN` is live (otherwise it changes nothing and exits
+  3), with its confirmation, and then shows the list again unless that close
+  stopped the popup. Esc or Ctrl+C runs nothing.
   Commands > New workspace runs `eon workspace new`, Rename workspace reads a
   name and runs `eon workspace rename` for the popup's workspace (an empty
   name clears it), and Close this workspace runs `eon workspace close` for the
@@ -3392,6 +3396,8 @@ socket names, JSON fields and protocol identifiers retain their spellings.
   v22.
   Amended on 2026-10-29 (approved by Lucca, relayed by eon-overseer) by
   `eon-ngwf.2`: `FocusAttention` across workspaces.
+  Amended on 2026-11-04 (approved by Lucca) by `eon-p7omw`: Ctrl+X in the
+  picker closes the highlighted workspace.
 - **Consumer:** One full-Eon user, or an agent working for them, who keeps
   several separate sets of work in one Eon window.
 - **Trigger:** Alt+Shift+S or Commands > Switch workspace; Commands > New
@@ -3470,7 +3476,12 @@ socket names, JSON fields and protocol identifiers retain their spellings.
     previous workspace; the Alt+G jump, not the picker, leads to agents that
     need input. Enter shows the highlighted workspace, including on an empty
     query. Enter on a non-empty query that matches no row creates a workspace
-    with that name and shows it. Esc or Ctrl+C runs nothing. The marker reads
+    with that name and shows it. Esc or Ctrl+C runs nothing. Ctrl+X on the
+    highlighted row closes that workspace as `eon workspace close` does, after
+    the same confirmation in the popup; then the picker lists the remaining
+    workspaces again. Closing the picker's own workspace ends the picker with
+    it, and closing the last workspace is the window's final close (EON-C8).
+    The marker reads
     ` · needs input`. EONW v22 gives each workspace its `recency`: 0 for the
     shown one, then 1, 2, ... from the most recently shown, which orders the
     rows (`eon-workspace-switching-shn4.6` and
