@@ -596,7 +596,7 @@
               local child, spawn_err = Command("fzf")
                 :arg(arguments)
                 :env("FZF_DEFAULT_OPTS", "--exact --no-sort --cycle --keep-right --info=inline --layout=reverse "
-                  .. "--height=100% --border=none --tabstop=1 --expect=tab "
+                  .. "--height=100% --no-clear --border=none --tabstop=1 --expect=tab "
                   .. "--bind=enter:accept-non-empty,ctrl-z:ignore,btab:up --prompt='Quick search > ' "
                   .. "--footer='Enter Use · Tab Browse from here · Esc Close' "
                   .. "--footer-border=none --color=footer:-1")
@@ -614,21 +614,34 @@
               -- No exit needs the rest of the history, so stop and reap the query.
               history:start_kill()
               history:wait()
+              local code = output and output.status.code
+              local key, target
+              if output and output.status.success then
+                key, target = output.stdout:match("^([^\n]*)\n(.*)")
+                target = target and target:gsub("\n$", "")
+                if target == "" then target = nil end
+              end
+              -- A pick or Esc is reported while Yazi is still hidden: a pending tab's pair
+              -- hides as its first pane starts, so fzf's kept last frame (--no-clear) goes
+              -- straight to the pane, with no Files frame between.
+              local reported, report_err = pcall(function()
+                if code == 130 then
+                  require("tab-folder").close()
+                elseif target and key ~= "tab" then
+                  require("tab-folder").set(target)
+                end
+              end)
               permit:drop()
+              if not reported then fail(report_err) end
               if ended and not ended.success then
                 fail("zoxide query exited with status " .. tostring(ended.code))
               end
               if not output then return fail(spawn_err or wait_err) end
-              if output.status.code == 130 then return require("tab-folder").close() end
               -- 1 is Tab with no result, and 11 the runtime's switch to Files: Files stays
               -- where it is.
-              if output.status.code == 1 or output.status.code == 11 then return end
+              if code == 130 or code == 1 or code == 11 then return end
               if not output.status.success then return fail(output.stderr) end
-              local key, target = output.stdout:match("^([^\n]*)\n(.*)")
-              target = target and target:gsub("\n$", "")
-              if not target or target == "" then return end
-              if key == "tab" then return ya.emit("cd", { target, raw = true }) end
-              require("tab-folder").set(target)
+              if target and key == "tab" then ya.emit("cd", { target, raw = true }) end
             end
 
             function M:entry()
@@ -1094,7 +1107,8 @@
             helix-grammars = helix.checks.${system}.codeberg_grammars;
             eonbase-closure = eonbaseClosureCheck;
             managed-command-path = managedCommandPathCheck;
-            # The pair's quick search against a slow stand-in fzf (EON-C18).
+            # The pair's quick search against a slow stand-in fzf (EON-C18), and a pick or
+            # Esc reported while Yazi is still hidden.
             quick-search-guard = pkgs.runCommand "eon-quick-search-guard" {
               nativeBuildInputs = [ pkgs.lua5_4 ];
             } ''

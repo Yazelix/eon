@@ -1,26 +1,49 @@
 -- Checks the Files pair's quick-search plugin against stand-ins for Yazi, Zoxide
 -- and a slow fzf (EON-C18): a second invocation while one is up returns at once
 -- instead of queueing a second fzf, every exit frees the plugin for the next
--- one, and fzf's socket is removed when it ends.
+-- one, fzf's socket is removed when it ends, fzf keeps its last frame, and a
+-- pick or Esc is reported while Yazi is still hidden, so Yazi does not redraw
+-- Files before the pane. Whether Venus shows a frame is for the installed proof.
 -- Usage: lua quick-search-guard.lua PLUGIN SOCKET
 local plugin, socket = arg[1], arg[2]
 
-local state, spawned, notes = {}, 0, {}
+local state, spawned, notes, reports = {}, 0, {}, {}
+local hidden = false
+local fzf_options -- FZF_DEFAULT_OPTS of the last fzf
+local report_fails = false
 local fzf_wait -- how the next fzf ends
 local zoxide_fails = false
 
 ya = {
   sync = function(f) return function(...) return f(state, ...) end end,
   notify = function(note) notes[#notes + 1] = note.content end,
-  emit = function() end,
+  emit = function(name, args)
+    reports[#reports + 1] = { name, args[1], hidden }
+  end,
 }
-ui = { hide = function() return { drop = function() end } end }
+ui = {
+  hide = function()
+    hidden = true
+    return { drop = function() hidden = false end }
+  end,
+}
+package.loaded["tab-folder"] = {
+  set = function(dir)
+    if report_fails then error("eon vanished") end
+    reports[#reports + 1] = { "set", dir, hidden }
+  end,
+  close = function() reports[#reports + 1] = { "close", nil, hidden } end,
+}
 cx = { active = { current = { cwd = "/" } } }
 
 local builder = {}
 builder.__index = builder
-for _, method in ipairs({ "arg", "env", "stdin", "stdout", "stderr" }) do
+for _, method in ipairs({ "arg", "stdin", "stdout", "stderr" }) do
   builder[method] = function(self) return self end
+end
+function builder:env(name, value)
+  if self.name == "fzf" and name == "FZF_DEFAULT_OPTS" then fzf_options = value end
+  return self
 end
 function builder:spawn()
   if self.name == "zoxide" then
@@ -72,6 +95,7 @@ end
 fzf_wait = function() return { status = { code = 11, success = false }, stdout = "", stderr = "" } end
 local first = invocation()
 check(select(2, coroutine.resume(first)) == "fzf up", "the first quick search starts fzf")
+check(fzf_options and fzf_options:find("--no-clear", 1, true), "fzf keeps its last frame when it ends")
 -- Alt+Z again before the first is done.
 local second = invocation()
 check(coroutine.resume(second), "the second invocation runs")
@@ -99,4 +123,37 @@ local again = invocation()
 check(select(2, coroutine.resume(again)) == "fzf up", "a later quick search starts")
 check(spawned == 3, "a later quick search starts its own fzf")
 coroutine.resume(again)
+
+-- How each fzf exit is reported, and whether Yazi was still hidden then.
+local function ends(code, stdout)
+  fzf_wait = function()
+    return { status = { code = code, success = code == 0 }, stdout = stdout, stderr = "" }
+  end
+  reports = {}
+  local run = invocation()
+  coroutine.resume(run)
+  coroutine.resume(run)
+  check(coroutine.status(run) == "dead", "quick search ends after status " .. code)
+  check(not hidden, "Yazi shows again after status " .. code)
+  return reports[1], #reports
+end
+local report, count = ends(0, "\n/picked\n")
+check(count == 1 and report[1] == "set" and report[2] == "/picked", "a pick sets the tab folder")
+check(report[3], "a pick is reported while Yazi is hidden")
+report, count = ends(130, "")
+check(count == 1 and report[1] == "close", "Esc closes Files")
+check(report[3], "Esc is reported while Yazi is hidden")
+report, count = ends(0, "tab\n/browsed\n")
+check(count == 1 and report[1] == "cd" and report[2] == "/browsed", "Tab moves Files")
+check(not report[3], "Tab moves Files after Yazi shows again")
+for _, code in ipairs({ 1, 11 }) do
+  report, count = ends(code, "")
+  check(count == 0, "status " .. code .. " leaves Files where it is")
+end
+-- A report that raises still shows Yazi again, and says why.
+report_fails = true
+local before = #notes
+ends(0, "\n/picked\n")
+report_fails = false
+check(#notes == before + 1 and notes[#notes]:find("eon vanished", 1, true), "a failed report is reported")
 print("quick-search guard: ok")
