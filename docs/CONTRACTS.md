@@ -3945,11 +3945,16 @@ socket names, JSON fields and protocol identifiers retain their spellings.
   moved when the subscriber has read at least one write unit of up to 4 KiB
   since the last check. Amended on 2026-11-03 (approved by Lucca, relayed by
   eon-overseer) by `eon-ciwn.11`: the retained events are bounded by 8 MiB
-  as well as by 1024 events.
+  as well as by 1024 events. Amended on 2026-11-04 (approved by eon-overseer
+  under Lucca's standing approval for this fix) by `eon-61efs.1`: Venus
+  subscribes to learn of workspace changes promptly, and the events of a
+  change caused by an EONW action are written before that action's reply.
 - **Consumer:** An agent or script running as the person's user, in an Eon
   terminal or outside one, that must notice workspace and attention changes
   without polling: an overseer answering its tab's questions (`eon-ciwn.4`),
-  `eon pane wait`, and a person's own notifier (`eon-sixj`).
+  `eon pane wait`, and a person's own notifier (`eon-sixj`). Venus also
+  subscribes, once per window, so that it re-reads the workspace when it
+  changes instead of at its next `Inspect` poll.
 - **Trigger:**
   - `eon events [--json]`, with:
     - EON-C10's `--window` and `--generation` selection and `EON_TERMINAL`
@@ -4045,9 +4050,11 @@ socket names, JSON fields and protocol identifiers retain their spellings.
       when its `name`, pane or popup changes. The calling terminal is never
       reported, as EON-C11 excludes it.
   - **Latency.** An event is written within one supervisor loop turn of the
-    Runtime state change it reports. An attention change reported by a
-    program is a Runtime state change when the poller receives it (at most
-    2 Hz, EON-C31).
+    Runtime state change it reports. The events of a change made by an EONW
+    action are written before that action's reply to each subscriber with no
+    earlier events still pending; a subscriber that is behind receives them
+    after its pending output. An attention change reported by a program is a
+    Runtime state change when the poller receives it (at most 2 Hz, EON-C31).
   - **Filters.** The Runtime applies them. Different flags combine with
     AND; repeats of one flag combine with OR. Without filters the stream
     covers the whole window.
@@ -4155,7 +4162,9 @@ socket names, JSON fields and protocol identifiers retain their spellings.
   - an agent's menu options: OSC 7501 (ORB-C15) does not carry them, and a
     consumer reads them with `eon pane read`;
   - quotas or sidebar visibility;
-  - Venus presentation, which keeps polling `Inspect`;
+  - Venus presentation: Venus renders from `Inspect`, re-reading it when an
+    event arrives and every 250 ms as a fallback, and uses an event itself
+    only to stop presenting a popup that was hidden;
   - events across a supervisor restart (a new STREAM starts with a
     snapshot);
   - remote or MCP exposure (`eon-ciwn.3`);

@@ -1280,6 +1280,10 @@ fn live_output_keeps_application_input_admitted_before_repaint() {
                     .read_exact(&mut bytes[workspace::HEADER_BYTES..])
                     .unwrap();
                 let action = workspace::decode_request(&bytes).unwrap().action;
+                // Closing a subscription leaves Venus refreshing on its interval.
+                if matches!(action, WorkspaceAction::Subscribe { .. }) {
+                    continue;
+                }
                 stream
                     .write_all(&workspace::encode_response(&response).unwrap())
                     .unwrap();
@@ -1827,6 +1831,207 @@ fn release_shortcut(app: &mut Application, event_loop: &ActiveEventLoop, code: K
     )
 }
 
+/// Two quick popup toggles answered in one batch, hidden then shown again, replace the popup's
+/// attachment with a new one on the same endpoint. Orbit frames drained for the old attachment
+/// before that batch must not reach the new one, which is still connecting: one would mark it
+/// lost and drop its transport.
+#[test]
+#[cfg(target_os = "linux")]
+#[ignore = "requires an isolated native Wayland display and Vulkan renderer"]
+fn a_quick_popup_hide_and_show_keeps_the_popup_attached() {
+    run_quit_probe("popup-toggle", |app, event_loop, busy, _, _| {
+        use eon_workspace_protocol::v31 as workspace;
+        use orbit_protocol::{
+            Capabilities, Cell, CellStyle, CellWidth, Colors, Cursor, CursorShape, Dimensions,
+            Frame, Rgb, Row, Screen, StyleColor, Underline,
+        };
+        use std::{
+            io::{Read, Write},
+            os::unix::net::{UnixListener, UnixStream},
+            sync::mpsc,
+        };
+
+        fn read_hello(stream: &mut UnixStream) {
+            let mut header = [0; session::HEADER_BYTES];
+            stream.read_exact(&mut header).unwrap();
+            let mut bytes = Vec::from(header);
+            bytes.resize(session::client_message_len(&header).unwrap().unwrap(), 0);
+            stream
+                .read_exact(&mut bytes[session::HEADER_BYTES..])
+                .unwrap();
+            assert_eq!(
+                session::decode_client_message(&bytes).unwrap(),
+                ClientMessage::Hello
+            );
+        }
+
+        let root = std::env::temp_dir().join(format!("venus-toggle-{}", std::process::id()));
+        std::fs::create_dir_all(&root).unwrap();
+        let mut shown = busy.clone();
+        // Only what EONW encodes for this window.
+        (shown.running, shown.busy) = (None, None);
+        super::show_test_popup(&mut shown);
+        shown.tabs[0].popups[0].endpoint = root.join("popup.sock").into_os_string().into_vec();
+        let mut hidden = shown.clone();
+        hidden.tabs[0].selected_popup = None;
+
+        // The popup's Orbit answers each attachment; the first also draws once when asked.
+        let popup = UnixListener::bind(root.join("popup.sock")).unwrap();
+        let (draw, drawing) = mpsc::channel::<()>();
+        let (drew, drawn) = mpsc::channel::<()>();
+        thread::spawn(move || {
+            let mut held = Vec::new();
+            for (index, stream) in popup.incoming().enumerate() {
+                let Ok(mut stream) = stream else { return };
+                read_hello(&mut stream);
+                stream
+                    .write_all(&session::encode_server_message(&ServerMessage::Attached).unwrap())
+                    .unwrap();
+                if index == 0 {
+                    drawing.recv().unwrap();
+                    let style = CellStyle {
+                        foreground: StyleColor::None,
+                        background: StyleColor::None,
+                        underline_color: StyleColor::None,
+                        underline: Underline::None,
+                        bold: false,
+                        italic: false,
+                        faint: false,
+                        blink: false,
+                        inverse: false,
+                        invisible: false,
+                        strikethrough: false,
+                        overline: false,
+                        selected: false,
+                        protected: false,
+                    };
+                    let frame = Frame {
+                        revision: 1,
+                        dimensions: Dimensions { cols: 1, rows: 1 },
+                        screen: Screen::Alternate,
+                        scroll_position: orbit_protocol::ScrollPosition::default(),
+                        title: "yazi".into(),
+                        working_directory: String::new(),
+                        capabilities: Capabilities { hyperlinks: true },
+                        colors: Colors {
+                            background: Rgb::BLACK,
+                            foreground: Rgb::BLACK,
+                            cursor: None,
+                            palette: [Rgb::BLACK; orbit_protocol::PALETTE_LEN],
+                        },
+                        cursor: Cursor {
+                            visible: false,
+                            blinking: false,
+                            password_input: false,
+                            shape: CursorShape::Block,
+                            viewport: None,
+                        },
+                        rows: vec![Row {
+                            wrapped: false,
+                            wrap_continuation: false,
+                            cells: vec![Cell {
+                                width: CellWidth::Narrow,
+                                text: "y".into(),
+                                hyperlink: String::new(),
+                                style,
+                            }],
+                        }],
+                        graphics: None,
+                    };
+                    stream
+                        .write_all(
+                            &session::encode_server_message(&ServerMessage::Frame(Box::new(frame)))
+                                .unwrap(),
+                        )
+                        .unwrap();
+                    drew.send(()).unwrap();
+                }
+                held.push(stream);
+            }
+        });
+
+        // Eon answers refreshes with the popup shown, the first action hiding it and the
+        // second showing it again, and refuses subscriptions by closing them.
+        let eon = UnixListener::bind(root.join("eon.sock")).unwrap();
+        let (answered, answers) = mpsc::channel::<()>();
+        {
+            let (shown, hidden) = (shown.clone(), hidden.clone());
+            thread::spawn(move || {
+                let mut actions = 0;
+                for stream in eon.incoming() {
+                    let Ok(mut stream) = stream else { return };
+                    let mut header = [0; workspace::HEADER_BYTES];
+                    if stream.read_exact(&mut header).is_err() {
+                        continue;
+                    }
+                    let mut bytes = Vec::from(header);
+                    bytes.resize(workspace::declared_message_len(&header).unwrap(), 0);
+                    stream
+                        .read_exact(&mut bytes[workspace::HEADER_BYTES..])
+                        .unwrap();
+                    let snapshot = match workspace::decode_request(&bytes).unwrap().action {
+                        WorkspaceAction::Subscribe { .. } => continue,
+                        WorkspaceAction::Workspace(CommonAction::Inspect) => &shown,
+                        _ => {
+                            actions += 1;
+                            if actions == 1 { &hidden } else { &shown }
+                        }
+                    };
+                    let _ = stream.write_all(
+                        &workspace::encode_response(&workspace::Response::Snapshot(
+                            snapshot.clone(),
+                        ))
+                        .unwrap(),
+                    );
+                    if actions == 2 {
+                        let _ = answered.send(());
+                    }
+                }
+            });
+        }
+        app.workspace_transport = Some(WorkspaceTransport::start(root.join("eon.sock"), || {}));
+
+        // The popup shows and its attachment is admitted.
+        app.handle_workspace(WorkspaceEvent::Response(workspace::Response::Snapshot(
+            shown.clone(),
+        )));
+        let deadline = Instant::now() + Duration::from_secs(5);
+        while !app.terminal.model.is_attached() {
+            assert!(Instant::now() < deadline, "the popup attaches");
+            thread::sleep(Duration::from_millis(20));
+            app.user_event(event_loop, UserEvent::Transport);
+        }
+
+        // Two toggles: Eon answers both before the window drains them, and the popup draws.
+        let focus = |pane: &str| WorkspaceAction::Workspace(CommonAction::FocusId(pane.into()));
+        let transport = app.workspace_transport.as_ref().unwrap();
+        transport.send(focus("p1")).unwrap();
+        transport.send(focus("p1")).unwrap();
+        answers.recv_timeout(Duration::from_secs(5)).unwrap();
+        draw.send(()).unwrap();
+        drawn.recv_timeout(Duration::from_secs(5)).unwrap();
+        // The workspace worker and the Orbit reader queue what they read.
+        thread::sleep(Duration::from_millis(300));
+
+        app.user_event(event_loop, UserEvent::Transport);
+        assert_eq!(
+            app.terminal.active_endpoint,
+            Some(root.join("popup.sock").into_os_string().into_vec())
+        );
+        assert!(
+            !matches!(
+                app.terminal.model.connection(),
+                ConnectionState::Lost { .. }
+            ),
+            "{:?}",
+            app.terminal.model.connection()
+        );
+        assert!(app.terminal.transport.is_some(), "the popup stays attached");
+        event_loop.exit();
+        std::fs::remove_dir_all(root).unwrap();
+    });
+}
+
 /// What a quit probe checks once the window is presented with the busy snapshot: the app,
 /// its event loop, that snapshot, every action but Inspect that Venus sent, and every message
 /// Venus sent its Orbit attachment.
@@ -1916,6 +2121,10 @@ fn run_quit_probe(name: &str, check: QuitCheck) {
                 .read_exact(&mut bytes[workspace::HEADER_BYTES..])
                 .unwrap();
             let action = workspace::decode_request(&bytes).unwrap().action;
+            // Closing a subscription leaves Venus refreshing on its interval.
+            if matches!(action, WorkspaceAction::Subscribe { .. }) {
+                continue;
+            }
             let _ = stream.write_all(&workspace::encode_response(&failure).unwrap());
             if action != WorkspaceAction::Workspace(CommonAction::Inspect)
                 && sender.send(action).is_err()

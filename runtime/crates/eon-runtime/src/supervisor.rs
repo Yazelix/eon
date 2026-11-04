@@ -1123,9 +1123,11 @@ fn supervise(
                 return Ok(state.initial_status.unwrap_or(0));
             }
 
-            match control_listener.accept(|request| {
+            let accepted = control_listener.accept(|request| {
                 dispatch(request, &mut state, inputs, config, runtime, generation)
-            })? {
+            })?;
+            state.end_turn(Instant::now());
+            match accepted {
                 Accepted::None => thread::sleep(Duration::from_millis(25)),
                 Accepted::Replied { shutdown: true } => {
                     return Ok(state.initial_status.unwrap_or(0));
@@ -1294,9 +1296,9 @@ impl SupervisorState {
         Some(Projection::new(&prepared, busy))
     }
 
-    /// The loop turn's work between control requests: follows the window's
-    /// terminals, focus and attention, then serves subscribers after the
-    /// poller, so attention it applied reaches them in this turn (EON-C39).
+    /// The loop turn's work before its control request: follows the window's
+    /// terminals, focus and attention. The turn publishes it to subscribers
+    /// once, with its action's change (EON-C39).
     fn tend(&mut self, now: Instant) {
         if !self.stopping {
             sessions::drain_given_up_requests(&mut self.sessions);
@@ -1330,13 +1332,23 @@ impl SupervisorState {
         } else {
             self.pane_labels.reconcile(&[]);
         }
-        self.serve_subscribers(now);
     }
 
-    /// Publishes this loop turn's changes to the subscribers and writes to
-    /// them without waiting; with none, it does nothing (EON-C39). While a
-    /// Stop is incomplete it publishes nothing but still writes, and ends
-    /// subscribers that hung up or went too slow.
+    /// Ends a loop turn: publishes its changes to subscribers, unless the
+    /// turn's action already did, after it was applied and before its reply
+    /// (EON-C39). So a turn publishes once, attention the poller applied
+    /// included.
+    fn end_turn(&mut self, now: Instant) {
+        if !self.subscribers.take_served() {
+            self.serve_subscribers(now);
+            self.subscribers.take_served();
+        }
+    }
+
+    /// Publishes the changes since it last ran to the subscribers and writes
+    /// to them without waiting; with none, it does nothing (EON-C39). While a Stop is incomplete it
+    /// publishes nothing but still writes, and ends subscribers that hung up
+    /// or went too slow.
     fn serve_subscribers(&mut self, now: Instant) {
         if self.stopping {
             self.subscribers.maintain(now);
@@ -2190,7 +2202,9 @@ pub(super) fn try_lock_supervisor_lifecycle(path: &Path) -> Result<Option<fs::Fi
 }
 
 /// Serves one control request: a `Subscribe` keeps its connection for the
-/// event stream (EON-C39), and every other request gets one reply.
+/// event stream (EON-C39), and every other request gets one reply. The turn's
+/// events, the request's change included, are published first and written
+/// before the reply as far as each subscriber takes them without waiting.
 fn dispatch(
     request: Request,
     state: &mut SupervisorState,
@@ -2207,7 +2221,9 @@ fn dispatch(
             }
         };
     }
-    dispatch_control_request(request, state, inputs, config, runtime, generation).into()
+    let reply = dispatch_control_request(request, state, inputs, config, runtime, generation);
+    state.serve_subscribers(Instant::now());
+    reply.into()
 }
 
 /// Accepts a subscription, which changes no selection, shown workspace or
@@ -2801,14 +2817,15 @@ pub(super) fn status_code(status: ExitStatus) -> i32 {
 
 #[cfg(test)]
 mod tests {
+    use super::WorkspaceAction;
+    #[cfg(target_os = "linux")]
+    use super::apply_session_operation;
     use super::{
         Action, DiagnosticLog, Dispatched, LaunchMode, PairStart, SESSION_START_TIMEOUT,
         SupervisorState, WorkspaceSet, effective_uid, pair_command, prepare_configuration,
         prepare_runtime, reap_finished_sessions, stop_generation_sessions, stop_owned_session,
         stop_owned_sessions, temporary_directory, venus_command, window_bar, xdg_path,
     };
-    #[cfg(target_os = "linux")]
-    use super::{WorkspaceAction, apply_session_operation};
     use crate::sessions::{
         self,
         tests::{leased_orbit, orbit_pid, script},
@@ -2973,8 +2990,195 @@ mod tests {
         fs::remove_dir_all(root).unwrap();
     }
 
+    /// EON-C39: the events of a change an action makes are written to a
+    /// subscriber before the acting client can read its reply, so a client
+    /// that learns of a change by subscription never learns of it later than
+    /// the client that made it.
+    #[test]
+    fn an_actions_events_reach_subscribers_before_its_reply() {
+        let (root, inputs, mut state, peer) = subscribed_window();
+        let control = super::ControlListener::bind(&root.join("eon.sock")).unwrap();
+        let client = rename_client(&root, peer);
+        serve_turn(&control, &mut state, &inputs, &root);
+        let (reply, held) = client.join().unwrap();
+        assert!(matches!(reply, super::Response::Snapshot(_)), "{reply:?}");
+        assert_eq!(renames(&held), [Some("renamed".to_owned())], "{held:?}");
+        drop(control);
+        drop(state);
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    /// EON-C39: a turn publishes once, so a change its tending made and the
+    /// change of its action coalesce into one event.
+    #[test]
+    fn a_turn_with_an_action_publishes_once() {
+        let (root, inputs, mut state, peer) = subscribed_window();
+        let control = super::ControlListener::bind(&root.join("eon.sock")).unwrap();
+        // Stands in for a change the turn's tending makes.
+        state
+            .workspaces
+            .as_mut()
+            .unwrap()
+            .dispatch(
+                "tend-1",
+                None,
+                Action::Workspace(WorkspaceAction::RenameWorkspace {
+                    workspace: None,
+                    name: "tended".into(),
+                }),
+                |_, _| Ok(Vec::new()),
+                |_| Ok(()),
+            )
+            .unwrap();
+        let client = rename_client(&root, peer);
+        serve_turn(&control, &mut state, &inputs, &root);
+        let (_, held) = client.join().unwrap();
+        assert_eq!(renames(&held), [Some("renamed".to_owned())], "{held:?}");
+        drop(control);
+        drop(state);
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    /// A pending window with one unfiltered subscriber that has read its
+    /// snapshot, and that subscriber's end of the connection.
+    fn subscribed_window() -> (PathBuf, crate::cli::Inputs, SupervisorState, UnixStream) {
+        use eon_workspace_protocol::v31::SubscriptionMessage;
+        let root = temporary_directory();
+        let inputs = crate::fixtures::inputs();
+        let workspace = WorkspaceSet::pending(
+            root.clone(),
+            root.clone(),
+            Some(root.clone()),
+            inputs.defaults.popups.clone(),
+            |_, _| Ok(Vec::new()),
+            |_| Ok(()),
+        )
+        .unwrap();
+        let mut state = SupervisorState {
+            started_at: 1,
+            window: None,
+            running: None,
+            component_generation: "component-1".into(),
+            application_id: String::new(),
+            decorations: false,
+            workspaces: Some(workspace),
+            sessions: Vec::new(),
+            venus: None,
+            initial_child: Vec::new(),
+            initial_status: None,
+            stopping: false,
+            quotas: None,
+            attention: None,
+            pane_labels: super::super::pane_labels::Labels::default(),
+            agents: window_agents(),
+            notices: crate::notification::Notices::default(),
+            subscribers: crate::subscriptions::Subscribers::new("g1-test"),
+            log: DiagnosticLog::open_in(Ok(root.join("logs")), "g1-test", "workspace"),
+        };
+        let Dispatched::Subscribe(subscriber) = super::dispatch(
+            super::Request {
+                id: "subscribe-1".into(),
+                caller: None,
+                action: Action::Subscribe {
+                    filter: Default::default(),
+                    after: None,
+                },
+            },
+            &mut state,
+            &inputs,
+            &root,
+            &root,
+            "component-1",
+        ) else {
+            panic!("a subscription is served");
+        };
+        state.end_turn(Instant::now());
+        let (stream, mut peer) = UnixStream::pair().unwrap();
+        state
+            .subscribers
+            .attach(stream, *subscriber, Instant::now());
+        assert!(matches!(
+            subscription_messages(&mut peer)[..],
+            [SubscriptionMessage::Subscribed(_), ..]
+        ));
+        (root, inputs, state, peer)
+    }
+
+    /// A client that renames the shown workspace, sent before this returns so
+    /// the next loop turn serves it, then reads its reply and at once what
+    /// `peer` holds; no loop turn runs between.
+    fn rename_client(
+        root: &Path,
+        mut peer: UnixStream,
+    ) -> std::thread::JoinHandle<(
+        super::Response,
+        Vec<eon_workspace_protocol::v31::SubscriptionMessage>,
+    )> {
+        use eon_workspace_protocol::v31::{
+            HEADER_BYTES, declared_message_len, decode_response, encode_request,
+        };
+        use std::io::Write;
+        let mut stream = UnixStream::connect(root.join("eon.sock")).unwrap();
+        stream
+            .write_all(
+                &encode_request(&super::Request {
+                    id: "rename-1".into(),
+                    caller: None,
+                    action: Action::Workspace(WorkspaceAction::RenameWorkspace {
+                        workspace: None,
+                        name: "renamed".into(),
+                    }),
+                })
+                .unwrap(),
+            )
+            .unwrap();
+        std::thread::spawn(move || {
+            let mut reply = vec![0; HEADER_BYTES];
+            stream.read_exact(&mut reply).unwrap();
+            reply.resize(declared_message_len(&reply).unwrap(), 0);
+            stream.read_exact(&mut reply[HEADER_BYTES..]).unwrap();
+            let held = subscription_messages(&mut peer);
+            (decode_response(&reply).unwrap(), held)
+        })
+    }
+
+    /// Runs one supervisor loop turn as `run` does; it serves the waiting
+    /// client.
+    fn serve_turn(
+        control: &super::ControlListener,
+        state: &mut SupervisorState,
+        inputs: &crate::cli::Inputs,
+        root: &Path,
+    ) {
+        state.tend(Instant::now());
+        let accepted = control
+            .accept(|request| super::dispatch(request, state, inputs, root, root, "component-1"))
+            .unwrap();
+        state.end_turn(Instant::now());
+        assert!(!matches!(accepted, super::Accepted::None));
+    }
+
+    /// The names of the `workspace-renamed` events in `messages`.
+    fn renames(
+        messages: &[eon_workspace_protocol::v31::SubscriptionMessage],
+    ) -> Vec<Option<String>> {
+        use eon_workspace_protocol::v31::{Change, SubscriptionMessage, WorkspaceChange};
+        messages
+            .iter()
+            .filter_map(|message| match message {
+                SubscriptionMessage::Event(event) => match &event.change {
+                    Change::Workspace {
+                        change: WorkspaceChange::Renamed,
+                        workspace,
+                    } => Some(workspace.workspace.name.clone()),
+                    _ => None,
+                },
+                _ => None,
+            })
+            .collect()
+    }
+
     /// Every whole subscription message already written to `peer`.
-    #[cfg(target_os = "linux")]
     fn subscription_messages(
         peer: &mut UnixStream,
     ) -> Vec<eon_workspace_protocol::v31::SubscriptionMessage> {
@@ -3080,6 +3284,7 @@ mod tests {
         let mut read = None;
         loop {
             state.tend(Instant::now());
+            state.end_turn(Instant::now());
             for message in subscription_messages(&mut peer) {
                 if let SubscriptionMessage::Event(event) = message
                     && let Change::Attention { attention, .. } = event.change

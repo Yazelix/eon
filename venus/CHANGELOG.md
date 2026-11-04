@@ -2,6 +2,12 @@
 
 ## Unreleased
 
+- Subscribe to EON-C39 workspace events, once per window (`eon-61efs.1`).
+  Venus re-reads `Inspect` as soon as an event arrives, keeping the 250 ms
+  refresh as a fallback. It stops showing a popup as soon as its
+  `popup-hidden` event arrives, before it applies a frame drawn after it. No
+  wire change.
+
 - Consume EONW v31, in which a pending tab holds its Files popup instead of a
   Project popup (`eon-quick-search-parity-23y9.2`). Venus renders it as any
   selected popup and presents nothing new; its Project shortcut now names the

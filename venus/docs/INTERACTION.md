@@ -36,8 +36,12 @@ The accepted Eon snapshot supplies the authoritative terminal endpoints: the
 active tab's selected popup, otherwise the expanded Orbit pane of each of its
 columns. Input goes to the popup or the selected pane. An empty body
 detaches the presentation without stopping hidden Sessions.
-While the window is open, Venus re-inspects Eon every 250 ms so accepted
-workspace changes from another client appear without a click or restart.
+While the window is open, Venus subscribes to Eon's workspace events and
+re-inspects Eon as soon as one arrives, so accepted workspace changes from
+another client appear without a click or restart; it also re-inspects every
+250 ms as a fallback, which alone keeps it current while no subscription is
+open. A hidden popup stops showing as soon as its event arrives, before that
+re-inspection answers.
 Recovery continues only while that exact attachment remains current and live;
 endpoint replacement or authoritative offline state cancels obsolete retry
 state.

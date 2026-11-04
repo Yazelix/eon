@@ -998,6 +998,9 @@ struct Application {
     terminal: TerminalView,
     /// Display-only terminals of the active tab's other columns, one per expanded live pane.
     column_views: Vec<TerminalView>,
+    /// Counts replacements of the selected terminal's attachment, so events drained from one
+    /// are never applied to the next, even on the same endpoint.
+    attachments: u64,
     /// The selected terminal's presented identity, which pairs its input; column output
     /// repaints without changing it.
     presentation: PresentationState,
@@ -1127,6 +1130,7 @@ impl Application {
             fatal_error: None,
             initial_scale_pending,
             window: None,
+            attachments: 0,
             workspace_transport: None,
             workspace_model: WorkspaceModel::default(),
             input: InputState::default(),
@@ -2222,6 +2226,8 @@ impl Application {
     }
 
     fn set_orbit_attachment(&mut self, endpoint: Option<Vec<u8>>, live: bool) {
+        // Every path below swaps in another view or replaces this one's transport.
+        self.attachments += 1;
         let same_endpoint = self.terminal.active_endpoint == endpoint;
         // A terminal that stays visible in another column keeps its view; one that Orbit
         // still owes an ordered viewport response reattaches after the retry delay, giving
@@ -2670,6 +2676,33 @@ impl Application {
                 Err(error) => view
                     .model
                     .set_venus_notice(LocalNoticeSource::Queue, error.to_string()),
+            }
+        }
+    }
+
+    fn apply_workspace_events(
+        &mut self,
+        event_loop: &ActiveEventLoop,
+        events: Vec<WorkspaceEvent>,
+    ) {
+        for event in events {
+            // A close that stopped the last terminal ended the
+            // generation; exit as on control loss.
+            if matches!(
+                event,
+                WorkspaceEvent::Response(eon_workspace_protocol::v31::Response::Ended(_))
+            ) {
+                event_loop.exit();
+                return;
+            }
+            self.handle_workspace(event);
+        }
+        if self.window.is_none() {
+            if self.workspace_model.snapshot().is_some() {
+                self.resumed(event_loop);
+            } else if let Some(notice) = self.workspace_model.notice() {
+                self.fatal_error = Some(notice.to_owned());
+                event_loop.exit();
             }
         }
     }
@@ -4947,8 +4980,23 @@ impl ApplicationHandler<UserEvent> for Application {
                     .transport
                     .as_ref()
                     .map_or_else(Vec::new, Transport::drain_events);
-                for event in events {
-                    self.handle_transport(event);
+                // A shown popup that Eon hid before these frames were written stops showing
+                // first, and they leave with its attachment (EON-C39).
+                let attachment = self.attachments;
+                if self
+                    .workspace_model
+                    .snapshot()
+                    .and_then(active_popup)
+                    .is_some()
+                    && let Some(workspace) = &self.workspace_transport
+                {
+                    let events = workspace.catch_up();
+                    self.apply_workspace_events(event_loop, events);
+                }
+                if self.attachments == attachment {
+                    for event in events {
+                        self.handle_transport(event);
+                    }
                 }
                 for index in 0..self.column_views.len() {
                     let events = self.column_views[index]
@@ -4966,26 +5014,7 @@ impl ApplicationHandler<UserEvent> for Application {
                     .workspace_transport
                     .as_ref()
                     .map_or_else(Vec::new, WorkspaceTransport::drain_events);
-                for event in events {
-                    // A close that stopped the last terminal ended the
-                    // generation; exit as on control loss.
-                    if matches!(
-                        event,
-                        WorkspaceEvent::Response(eon_workspace_protocol::v31::Response::Ended(_))
-                    ) {
-                        event_loop.exit();
-                        return;
-                    }
-                    self.handle_workspace(event);
-                }
-                if self.window.is_none() {
-                    if self.workspace_model.snapshot().is_some() {
-                        self.resumed(event_loop);
-                    } else if let Some(notice) = self.workspace_model.notice() {
-                        self.fatal_error = Some(notice.to_owned());
-                        event_loop.exit();
-                    }
-                }
+                self.apply_workspace_events(event_loop, events);
             }
             UserEvent::AccessKit(event) => {
                 let Some(state) = &mut self.window else {

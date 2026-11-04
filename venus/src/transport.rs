@@ -70,12 +70,18 @@ pub enum WorkspaceEvent {
 
 /// Bounded semantic-action handle for EONW v31.
 pub struct WorkspaceTransport {
-    actions: mpsc::SyncSender<(WorkspaceAction, u64)>,
+    actions: mpsc::SyncSender<WorkerItem>,
     events: Arc<WorkspaceEventQueue>,
     /// The next action's ticket.
     tickets: AtomicU64,
+    subscription: Arc<Subscription>,
+    notify: Arc<Notify>,
 }
 
+/// An action for the workspace worker and its ticket; a refresh carries none.
+type WorkerItem = (WorkspaceAction, Option<u64>);
+
+/// The fallback refresh; an event the subscription reads refreshes at once.
 const WORKSPACE_REFRESH_INTERVAL: Duration = Duration::from_millis(250);
 
 impl WorkspaceTransport {
@@ -89,13 +95,38 @@ impl WorkspaceTransport {
         refresh_interval: Duration,
         wake: impl Fn() + Send + Sync + 'static,
     ) -> Self {
+        let transport = Self::start_worker(socket.clone(), refresh_interval, wake);
+        // Without its subscription the worker still refreshes on its interval.
+        let _ = thread::Builder::new()
+            .name("venus-eon-events".into())
+            .spawn({
+                let subscription = Arc::clone(&transport.subscription);
+                let notify = Arc::clone(&transport.notify);
+                move || run_subscription(socket, subscription, notify)
+            });
+        transport
+    }
+
+    /// The transport without its subscription thread.
+    fn start_worker(
+        socket: PathBuf,
+        refresh_interval: Duration,
+        wake: impl Fn() + Send + Sync + 'static,
+    ) -> Self {
         let (actions, receiver) = mpsc::sync_channel(32);
         let events = Arc::new(WorkspaceEventQueue::default());
         let notify = workspace_notifier(Arc::clone(&events), wake);
-        let worker_notify = Arc::clone(&notify);
+        let subscription = Arc::new(Subscription::new(actions.clone()));
         if let Err(error) = thread::Builder::new()
             .name("venus-eon-workspace".into())
-            .spawn(move || run_workspace(socket, receiver, refresh_interval, worker_notify))
+            .spawn({
+                let (socket, subscription, notify) = (
+                    socket.clone(),
+                    Arc::clone(&subscription),
+                    Arc::clone(&notify),
+                );
+                move || run_workspace(socket, receiver, refresh_interval, subscription, notify)
+            })
         {
             notify(WorkspaceEvent::Unavailable(format!(
                 "Cannot start the Eon workspace worker: {error}"
@@ -105,6 +136,8 @@ impl WorkspaceTransport {
             actions,
             events,
             tickets: AtomicU64::new(0),
+            subscription,
+            notify,
         }
     }
 
@@ -112,7 +145,7 @@ impl WorkspaceTransport {
     pub fn send(&self, action: WorkspaceAction) -> Result<u64, SendError> {
         let ticket = self.tickets.fetch_add(1, Ordering::Relaxed);
         self.actions
-            .try_send((action, ticket))
+            .try_send((action, Some(ticket)))
             .map(|()| ticket)
             .map_err(|error| match error {
                 mpsc::TrySendError::Full(_) => SendError::Full,
@@ -123,6 +156,23 @@ impl WorkspaceTransport {
     pub fn drain_events(&self) -> Vec<WorkspaceEvent> {
         self.events.drain()
     }
+
+    /// Applies, without waiting, every subscription message whose bytes are readable now,
+    /// then drains the events to apply, as `drain_events` does. Eon writes a hide before it
+    /// answers the action that hid the popup, and the popup's terminal can draw again only
+    /// after that answer, so these events hide the popup of any frame already received, whether
+    /// this call or the subscription thread read the hide.
+    pub fn catch_up(&self) -> Vec<WorkspaceEvent> {
+        self.subscription
+            .pump(&mut self.subscription.link(), &*self.notify);
+        self.events.drain()
+    }
+}
+
+impl Drop for WorkspaceTransport {
+    fn drop(&mut self) {
+        self.subscription.stop();
+    }
 }
 
 #[derive(Default)]
@@ -131,11 +181,21 @@ struct WorkspaceEventQueue(Mutex<VecDeque<WorkspaceEvent>>);
 impl WorkspaceEventQueue {
     fn push(&self, event: WorkspaceEvent) -> bool {
         // A full action channel (32 queued and one in flight) answers with two events each, a
-        // response and its `Answered`, and still leaves room for refreshes.
+        // response and its `Answered`. A snapshot replaces a snapshot still waiting at the end,
+        // which an `Answered` would otherwise follow, so refreshes and hides add at most one
+        // event between answers.
         const CAPACITY: usize = 128;
         let mut events = self.0.lock().expect("workspace event queue lock poisoned");
         let wake = events.is_empty();
-        if events.len() == CAPACITY {
+        let snapshot = |event: &WorkspaceEvent| {
+            matches!(
+                event,
+                WorkspaceEvent::Response(WorkspaceResponse::Snapshot(_))
+            )
+        };
+        if snapshot(&event) && events.back().is_some_and(snapshot) {
+            *events.back_mut().expect("the queue has a last event") = event;
+        } else if events.len() == CAPACITY {
             events.clear();
             events.push_back(WorkspaceEvent::Unavailable(
                 "Eon workspace event queue exceeded its bounded capacity".into(),
@@ -158,7 +218,7 @@ impl WorkspaceEventQueue {
 fn workspace_notifier(
     events: Arc<WorkspaceEventQueue>,
     wake: impl Fn() + Send + Sync + 'static,
-) -> Arc<dyn Fn(WorkspaceEvent) + Send + Sync> {
+) -> Arc<Notify> {
     Arc::new(move |event| {
         if events.push(event) {
             wake();
@@ -168,9 +228,10 @@ fn workspace_notifier(
 
 fn run_workspace(
     socket: PathBuf,
-    receiver: mpsc::Receiver<(WorkspaceAction, u64)>,
+    receiver: mpsc::Receiver<WorkerItem>,
     refresh_interval: Duration,
-    notify: Arc<dyn Fn(WorkspaceEvent) + Send + Sync>,
+    subscription: Arc<Subscription>,
+    notify: Arc<Notify>,
 ) {
     let nonce = SystemTime::now()
         .duration_since(SystemTime::UNIX_EPOCH)
@@ -181,6 +242,7 @@ fn run_workspace(
     let mut action = WorkspaceAction::Workspace(workspace::WorkspaceAction::Inspect);
     let mut ticket = None;
     loop {
+        let begun = subscription.presented().hides;
         let event = workspace_exchange(&socket, nonce, counter, action)
             .map(WorkspaceEvent::Response)
             .unwrap_or_else(WorkspaceEvent::Unavailable);
@@ -188,19 +250,406 @@ fn run_workspace(
             event,
             WorkspaceEvent::Response(WorkspaceResponse::Snapshot(_))
         );
-        notify(event);
-        if let Some(ticket) = ticket {
-            notify(WorkspaceEvent::Answered { ticket, accepted });
-        }
+        let answered = ticket.map(|ticket| WorkspaceEvent::Answered { ticket, accepted });
+        subscription.deliver(event, answered, begun, &*notify);
         counter = counter.wrapping_add(1);
         (action, ticket) = match receiver.recv_timeout(refresh_interval) {
-            Ok((action, ticket)) => (action, Some(ticket)),
+            Ok((action, ticket)) => {
+                if ticket.is_none() {
+                    subscription.link().refresh_due = false;
+                }
+                (action, ticket)
+            }
             Err(mpsc::RecvTimeoutError::Timeout) => (
                 WorkspaceAction::Workspace(workspace::WorkspaceAction::Inspect),
                 None,
             ),
             Err(mpsc::RecvTimeoutError::Disconnected) => break,
         };
+    }
+}
+
+/// The window's EON-C39 event subscription: an event makes the workspace worker refresh at once,
+/// and a hidden popup stops showing before that refresh answers. Polling keeps the workspace
+/// correct while no subscription is open.
+struct Subscription {
+    link: Mutex<Link>,
+    stopped: Condvar,
+    presented: Mutex<Presented>,
+}
+
+struct Link {
+    /// Queues the worker's refreshes. Taken when the transport drops, which stops the
+    /// subscription and leaves the transport's sender the worker's last.
+    worker: Option<mpsc::SyncSender<WorkerItem>>,
+    /// A refresh waits in the worker's queue, so further events add none.
+    refresh_due: bool,
+    /// The open subscription. It is read only under this lock, and what is read is applied
+    /// before the lock is released, so whoever next holds the lock has seen every message whose
+    /// bytes were readable when it took it.
+    reader: Option<Reader>,
+}
+
+struct Reader {
+    /// Nonblocking.
+    stream: UnixStream,
+    /// The start of a message not yet whole.
+    partial: Vec<u8>,
+    accepted: bool,
+}
+
+/// What the worker last delivered, and the popups Eon hid since.
+#[derive(Default)]
+struct Presented {
+    /// The worker's last snapshot, while it is what the window shows.
+    snapshot: Option<workspace::Snapshot>,
+    /// How many hides the subscription has read.
+    hides: u64,
+    /// The latest hides that an answer begun before them may still show.
+    hidden: VecDeque<Hidden>,
+    /// An answer to an exchange begun before this many hides is dropped: a hide it may still
+    /// show left `hidden` when that overflowed.
+    floor: u64,
+}
+
+struct Hidden {
+    /// `Presented::hides` once this one was read.
+    number: u64,
+    workspace: String,
+    tab: String,
+    popup: String,
+}
+
+type Notify = dyn Fn(WorkspaceEvent) + Send + Sync;
+
+/// How many recent hides the worker's answers are checked against.
+const HIDDEN_CAPACITY: usize = 32;
+/// The first wait before subscribing again, which doubles to the limit while Eon refuses.
+const SUBSCRIBE_RETRY: Duration = Duration::from_secs(1);
+const SUBSCRIBE_RETRY_LIMIT: Duration = Duration::from_secs(30);
+
+impl Subscription {
+    fn new(worker: mpsc::SyncSender<WorkerItem>) -> Self {
+        Self {
+            link: Mutex::new(Link {
+                worker: Some(worker),
+                refresh_due: false,
+                reader: None,
+            }),
+            stopped: Condvar::new(),
+            presented: Mutex::new(Presented::default()),
+        }
+    }
+
+    fn link(&self) -> std::sync::MutexGuard<'_, Link> {
+        self.link
+            .lock()
+            .expect("workspace subscription lock poisoned")
+    }
+
+    fn presented(&self) -> std::sync::MutexGuard<'_, Presented> {
+        self.presented
+            .lock()
+            .expect("workspace presentation lock poisoned")
+    }
+
+    /// Delivers the worker's answer to an exchange begun after `begun` hides, then its ticket's
+    /// `answered`. Eon wrote those hides before it read the exchange, so the answer holds them;
+    /// one read since may have come after the answer was written, so its popup is hidden here
+    /// too.
+    fn deliver(
+        &self,
+        mut event: WorkspaceEvent,
+        answered: Option<WorkspaceEvent>,
+        begun: u64,
+        notify: &Notify,
+    ) {
+        // Eon writes an action's events before its reply, so applying those already readable
+        // first keeps a late hide from undoing what this answer shows.
+        let link = &mut self.link();
+        self.pump(link, notify);
+        let mut presented = self.presented();
+        presented.hidden.retain(|hidden| hidden.number > begun);
+        let stale = begun < presented.floor;
+        match &mut event {
+            // The refresh the overflow queued answers instead.
+            WorkspaceEvent::Response(WorkspaceResponse::Snapshot(_)) if stale => {}
+            WorkspaceEvent::Response(WorkspaceResponse::Snapshot(snapshot)) => {
+                for hidden in &presented.hidden {
+                    hidden.apply(snapshot);
+                }
+                presented.snapshot = Some(snapshot.clone());
+            }
+            // The window keeps its snapshot after a refused action; a patch would undo
+            // unavailability.
+            WorkspaceEvent::Response(WorkspaceResponse::Failure(failure))
+                if failure.code != "stop-incomplete" => {}
+            _ => presented.snapshot = None,
+        }
+        // Under the lock, so a hide read meanwhile follows this answer.
+        if !(stale
+            && matches!(
+                event,
+                WorkspaceEvent::Response(WorkspaceResponse::Snapshot(_))
+            ))
+        {
+            notify(event);
+        }
+        if let Some(answered) = answered {
+            notify(answered);
+        }
+    }
+
+    /// Connects and asks for an unfiltered subscription; a handle for awaiting its bytes.
+    fn open(&self, socket: &Path) -> Option<UnixStream> {
+        let request = WorkspaceRequest {
+            id: format!("venus-{}-events", std::process::id()),
+            caller: None,
+            action: WorkspaceAction::Subscribe {
+                filter: workspace::Filter::default(),
+                after: None,
+            },
+        };
+        let encoded = workspace::encode_request(&request).ok()?;
+        let mut stream = UnixStream::connect(socket).ok()?;
+        stream
+            .set_write_timeout(Some(WORKSPACE_EXCHANGE_TIMEOUT))
+            .and_then(|()| stream.write_all(&encoded))
+            .and_then(|()| stream.set_nonblocking(true))
+            .ok()?;
+        let readiness = stream.try_clone().ok()?;
+        let mut link = self.link();
+        link.worker.as_ref()?;
+        link.reader = Some(Reader {
+            stream,
+            partial: Vec::new(),
+            accepted: false,
+        });
+        Some(readiness)
+    }
+
+    /// Applies the subscription's messages as they become readable until it ends, fails or the
+    /// transport drops; true when Eon accepted it.
+    fn follow(&self, readiness: &UnixStream, notify: &Notify) -> bool {
+        loop {
+            // Waits without the lock, so the window can read meanwhile.
+            let mut ready = [rustix::event::PollFd::new(
+                readiness,
+                rustix::event::PollFlags::IN,
+            )];
+            match rustix::event::poll(&mut ready, None) {
+                Ok(_) | Err(rustix::io::Errno::INTR) => {}
+                Err(_) => break,
+            }
+            if !self.pump(&mut self.link(), notify) {
+                break;
+            }
+        }
+        self.link()
+            .reader
+            .take()
+            .is_some_and(|reader| reader.accepted)
+    }
+
+    /// Reads what the subscription holds without waiting and applies each whole message; false
+    /// once it has ended, failed or closed.
+    fn pump(&self, link: &mut Link, notify: &Notify) -> bool {
+        let Link {
+            worker,
+            refresh_due,
+            reader,
+        } = link;
+        let Some(reader) = reader else {
+            return false;
+        };
+        let mut refresh = || queue_refresh(worker.as_ref(), refresh_due);
+        let mut buffer = [0; 4096];
+        let open = loop {
+            match reader.stream.read(&mut buffer) {
+                Ok(0) => break false,
+                Ok(read) => reader.partial.extend_from_slice(&buffer[..read]),
+                Err(error) if error.kind() == ErrorKind::WouldBlock => break true,
+                Err(error) if error.kind() == ErrorKind::Interrupted => continue,
+                Err(_) => break false,
+            }
+            let mut ended = false;
+            while let Some(length) = whole_message(&reader.partial) {
+                let decoded = length.and_then(|length| {
+                    workspace::decode_subscription_message(&reader.partial[..length]).ok()
+                });
+                let Some((length, message)) = length.zip(decoded) else {
+                    ended = true;
+                    break;
+                };
+                reader.partial.drain(..length);
+                match message {
+                    workspace::SubscriptionMessage::Subscribed(_) => {
+                        reader.accepted = true;
+                        // Changes since the last refresh began reach no event.
+                        refresh();
+                    }
+                    workspace::SubscriptionMessage::Tabs(_) => {}
+                    workspace::SubscriptionMessage::Event(event) => {
+                        if let workspace::Change::Popup {
+                            change,
+                            workspace,
+                            tab,
+                            popup,
+                            ..
+                        } = event.change
+                        {
+                            let mut presented = self.presented();
+                            if change == workspace::PopupChange::Hidden {
+                                let dropped = presented.hide(workspace, tab, popup.id, notify);
+                                // An answer begun before a dropped hide may still show its
+                                // popup; the refresh below replaces it.
+                                if let Some(dropped) = dropped {
+                                    presented.floor = dropped;
+                                }
+                            } else if matches!(
+                                change,
+                                workspace::PopupChange::Shown | workspace::PopupChange::Created
+                            ) {
+                                // A late answer must not hide a popup shown again; any other
+                                // window is corrected by the refresh every event queues.
+                                presented.hidden.retain(|hidden| {
+                                    (&hidden.workspace, &hidden.tab, &hidden.popup)
+                                        != (&workspace, &tab, &popup.id)
+                                });
+                            }
+                        }
+                        refresh();
+                    }
+                    workspace::SubscriptionMessage::Gap(_) => refresh(),
+                    workspace::SubscriptionMessage::End(_)
+                    | workspace::SubscriptionMessage::Failure(_) => {
+                        ended = true;
+                        break;
+                    }
+                }
+            }
+            if ended {
+                break false;
+            }
+        };
+        if !open {
+            // Wakes a waiting `follow`, which retires the reader.
+            let _ = reader.stream.shutdown(Shutdown::Both);
+        }
+        open
+    }
+
+    /// Waits `delay` unless the transport drops; true when the subscription may try again.
+    fn wait(&self, delay: Duration) -> bool {
+        let (link, _) = self
+            .stopped
+            .wait_timeout_while(self.link(), delay, |link| link.worker.is_some())
+            .expect("workspace subscription lock poisoned");
+        link.worker.is_some()
+    }
+
+    fn stop(&self) {
+        let mut link = self.link();
+        link.worker = None;
+        if let Some(reader) = link.reader.take() {
+            let _ = reader.stream.shutdown(Shutdown::Both);
+        }
+        self.stopped.notify_all();
+    }
+}
+
+/// The length of the whole message `partial` starts with: None while it is not whole, and
+/// `Some(None)` when its header is invalid.
+fn whole_message(partial: &[u8]) -> Option<Option<usize>> {
+    if partial.len() < workspace::HEADER_BYTES {
+        return None;
+    }
+    match workspace::declared_message_len(&partial[..workspace::HEADER_BYTES]) {
+        Ok(length) if partial.len() < length => None,
+        Ok(length) => Some(Some(length)),
+        Err(_) => Some(None),
+    }
+}
+
+/// Queues a refresh unless one already waits. A full queue's actions answer with snapshots
+/// begun after this, so none is queued then.
+fn queue_refresh(worker: Option<&mpsc::SyncSender<WorkerItem>>, due: &mut bool) {
+    if !*due {
+        *due = worker.is_some_and(|worker| {
+            worker
+                .try_send((
+                    WorkspaceAction::Workspace(workspace::WorkspaceAction::Inspect),
+                    None,
+                ))
+                .is_ok()
+        });
+    }
+}
+
+impl Presented {
+    /// Records that Eon hid `popup` in `tab`; when the window shows it, a snapshot without it
+    /// goes out at once. Returns the number of the oldest hide when it overflowed.
+    fn hide(
+        &mut self,
+        workspace: String,
+        tab: String,
+        popup: String,
+        notify: &Notify,
+    ) -> Option<u64> {
+        self.hides += 1;
+        let dropped = if self.hidden.len() == HIDDEN_CAPACITY {
+            self.hidden.pop_front().map(|hidden| hidden.number)
+        } else {
+            None
+        };
+        let hidden = Hidden {
+            number: self.hides,
+            workspace,
+            tab,
+            popup,
+        };
+        let patched = self
+            .snapshot
+            .as_mut()
+            .is_some_and(|snapshot| snapshot.active_tab == hidden.tab && hidden.apply(snapshot));
+        if patched && let Some(snapshot) = &self.snapshot {
+            notify(WorkspaceEvent::Response(WorkspaceResponse::Snapshot(
+                snapshot.clone(),
+            )));
+        }
+        self.hidden.push_back(hidden);
+        dropped
+    }
+}
+
+impl Hidden {
+    /// Hides the popup in `snapshot`; true when it showed there.
+    fn apply(&self, snapshot: &mut workspace::Snapshot) -> bool {
+        if snapshot.workspace != self.workspace {
+            return false;
+        }
+        snapshot
+            .tabs
+            .iter_mut()
+            .find(|tab| tab.id == self.tab && tab.selected_popup.as_deref() == Some(&self.popup))
+            .map(|tab| tab.selected_popup = None)
+            .is_some()
+    }
+}
+
+/// Subscribes while the transport lives, waiting longer after each refusal.
+fn run_subscription(socket: PathBuf, subscription: Arc<Subscription>, notify: Arc<Notify>) {
+    let mut retry = SUBSCRIBE_RETRY;
+    loop {
+        if let Some(readiness) = subscription.open(&socket)
+            && subscription.follow(&readiness, &*notify)
+        {
+            retry = SUBSCRIBE_RETRY;
+        }
+        if !subscription.wait(retry) {
+            return;
+        }
+        retry = (retry * 2).min(SUBSCRIBE_RETRY_LIMIT);
     }
 }
 
@@ -669,7 +1118,7 @@ mod tests {
     use std::{
         fs,
         os::unix::net::UnixListener,
-        time::{Duration, SystemTime},
+        time::{Duration, Instant, SystemTime},
     };
 
     #[test]
@@ -1348,6 +1797,628 @@ mod tests {
         );
     }
 
+    #[test]
+    fn a_subscription_event_refreshes_the_workspace_at_once() {
+        let socket = TestSocket::new();
+        let mut eon = FakeEon::new(UnixListener::bind(&socket.path).unwrap());
+        let (wakes, receiver) = mpsc::channel();
+        // No refresh falls due during the test.
+        let transport = WorkspaceTransport::start_with_refresh(
+            socket.path.clone(),
+            Duration::from_secs(60),
+            move || {
+                let _ = wakes.send(());
+            },
+        );
+        let first = workspace_snapshot();
+        let mut second = first.clone();
+        second.active_tab = "t2".into();
+        second.tabs.push(second_workspace_tab());
+        second.workspaces[0].tab_count = second.tabs.len();
+        eon.answer_refresh(&first);
+        receiver.recv_timeout(Duration::from_secs(5)).unwrap();
+        assert_eq!(transport.drain_events(), [snapshot_event(&first)]);
+
+        // Accepting the subscription refreshes too: no event covers what changed before it.
+        let mut subscription = eon.subscription();
+        write_subscription(&mut subscription, &subscribed());
+        eon.answer_refresh(&first);
+        receiver.recv_timeout(Duration::from_secs(5)).unwrap();
+        assert_eq!(transport.drain_events(), [snapshot_event(&first)]);
+        write_subscription(
+            &mut subscription,
+            &workspace::SubscriptionMessage::Event(workspace::Event {
+                seq: 1,
+                change: workspace::Change::Tab {
+                    change: workspace::TabChange::Activated,
+                    workspace: "w1".into(),
+                    tab: second_workspace_tab(),
+                    tabs: None,
+                },
+            }),
+        );
+        eon.answer_refresh(&second);
+        receiver.recv_timeout(Duration::from_secs(5)).unwrap();
+        assert_eq!(transport.drain_events(), [snapshot_event(&second)]);
+    }
+
+    #[test]
+    fn a_hidden_presented_popup_stops_showing_before_the_refresh_answers() {
+        let socket = TestSocket::new();
+        let mut eon = FakeEon::new(UnixListener::bind(&socket.path).unwrap());
+        let (wakes, receiver) = mpsc::channel();
+        let transport = WorkspaceTransport::start_with_refresh(
+            socket.path.clone(),
+            Duration::from_secs(60),
+            move || {
+                let _ = wakes.send(());
+            },
+        );
+        let shown = shown_popup();
+        let hidden = workspace_snapshot();
+        eon.answer_refresh(&shown);
+        receiver.recv_timeout(Duration::from_secs(5)).unwrap();
+        assert_eq!(transport.drain_events(), [snapshot_event(&shown)]);
+        let mut subscription = eon.subscription();
+        write_subscription(&mut subscription, &subscribed());
+        eon.answer_refresh(&shown);
+        receiver.recv_timeout(Duration::from_secs(5)).unwrap();
+        assert_eq!(transport.drain_events(), [snapshot_event(&shown)]);
+
+        // Eon hides the presented popup: Venus stops showing it with no answer from Eon.
+        write_subscription(&mut subscription, &popup_hidden(1));
+        receiver.recv_timeout(Duration::from_secs(5)).unwrap();
+        assert_eq!(transport.drain_events(), [snapshot_event(&hidden)]);
+        // The refresh the event queued was begun after the hide, so its answer stands.
+        let (mut refresh, action) = eon.exchange();
+        assert_eq!(
+            action,
+            WorkspaceAction::Workspace(workspace::WorkspaceAction::Inspect)
+        );
+        assert!(eon.exchanges.is_empty());
+        write_response(&mut refresh, &shown);
+        receiver.recv_timeout(Duration::from_secs(5)).unwrap();
+        assert_eq!(transport.drain_events(), [snapshot_event(&shown)]);
+        drop(eon);
+    }
+
+    #[test]
+    fn an_answer_begun_before_a_hide_does_not_show_its_popup() {
+        let socket = TestSocket::new();
+        let mut eon = FakeEon::new(UnixListener::bind(&socket.path).unwrap());
+        let (transport, receiver, mut subscription) =
+            held_subscription(&socket, &mut eon, &shown_popup());
+        let ticket = transport.send(focus_pane()).unwrap();
+        let (mut stale, _) = eon.exchange();
+        write_subscription(&mut subscription, &popup_hidden(1));
+        assert_eq!(
+            transport.catch_up(),
+            [snapshot_event(&workspace_snapshot())]
+        );
+        write_response(&mut stale, &shown_popup());
+        assert_eq!(
+            take(&transport, &receiver, 2),
+            [
+                snapshot_event(&workspace_snapshot()),
+                WorkspaceEvent::Answered {
+                    ticket,
+                    accepted: true
+                }
+            ]
+        );
+    }
+
+    #[test]
+    fn a_refused_action_keeps_the_snapshot_a_hide_patches() {
+        let socket = TestSocket::new();
+        let mut eon = FakeEon::new(UnixListener::bind(&socket.path).unwrap());
+        let (transport, receiver, mut subscription) =
+            held_subscription(&socket, &mut eon, &shown_popup());
+        let ticket = transport.send(focus_pane()).unwrap();
+        let (mut refused, _) = eon.exchange();
+        let failure = workspace::Failure {
+            code: "unknown-pane".into(),
+            detail: "no pane pane-1".into(),
+        };
+        refused
+            .write_all(
+                &workspace::encode_response(&WorkspaceResponse::Failure(failure.clone())).unwrap(),
+            )
+            .unwrap();
+        assert_eq!(
+            take(&transport, &receiver, 2),
+            [
+                WorkspaceEvent::Response(WorkspaceResponse::Failure(failure)),
+                WorkspaceEvent::Answered {
+                    ticket,
+                    accepted: false
+                }
+            ]
+        );
+        write_subscription(&mut subscription, &popup_hidden(1));
+        assert_eq!(
+            transport.catch_up(),
+            [snapshot_event(&workspace_snapshot())]
+        );
+    }
+
+    #[test]
+    fn a_popup_shown_again_is_not_hidden_by_a_late_answer() {
+        let socket = TestSocket::new();
+        let mut eon = FakeEon::new(UnixListener::bind(&socket.path).unwrap());
+        let (transport, receiver, mut subscription) =
+            held_subscription(&socket, &mut eon, &shown_popup());
+        let ticket = transport.send(focus_pane()).unwrap();
+        let (mut late, _) = eon.exchange();
+        write_subscription(&mut subscription, &popup_hidden(1));
+        write_subscription(
+            &mut subscription,
+            &popup_event(2, workspace::PopupChange::Shown, "u1"),
+        );
+        assert_eq!(
+            transport.catch_up(),
+            [snapshot_event(&workspace_snapshot())]
+        );
+        write_response(&mut late, &shown_popup());
+        assert_eq!(
+            take(&transport, &receiver, 2),
+            [
+                snapshot_event(&shown_popup()),
+                WorkspaceEvent::Answered {
+                    ticket,
+                    accepted: true
+                }
+            ]
+        );
+    }
+
+    #[test]
+    fn overflowing_hides_drop_an_answer_that_needs_one_and_refresh() {
+        let socket = TestSocket::new();
+        let mut eon = FakeEon::new(UnixListener::bind(&socket.path).unwrap());
+        let (transport, receiver, mut subscription) =
+            held_subscription(&socket, &mut eon, &shown_popup());
+        let ticket = transport.send(focus_pane()).unwrap();
+        let (mut stale, _) = eon.exchange();
+        write_subscription(&mut subscription, &popup_hidden(1));
+        // Hides of other popups push the first out of the bound.
+        for seq in 2..=(HIDDEN_CAPACITY as u64 + 1) {
+            write_subscription(
+                &mut subscription,
+                &popup_event(seq, workspace::PopupChange::Hidden, &format!("x{seq}")),
+            );
+        }
+        assert_eq!(
+            transport.catch_up(),
+            [snapshot_event(&workspace_snapshot())]
+        );
+        write_response(&mut stale, &shown_popup());
+        assert_eq!(
+            take(&transport, &receiver, 1),
+            [WorkspaceEvent::Answered {
+                ticket,
+                accepted: true
+            }]
+        );
+        let (_, refresh) = eon.exchange();
+        assert_eq!(
+            refresh,
+            WorkspaceAction::Workspace(workspace::WorkspaceAction::Inspect)
+        );
+    }
+
+    /// The window applies the subscription before an Orbit frame: Eon wrote a hide before the
+    /// answer that let the popup's terminal draw again, so `catch_up` after the frame arrived
+    /// finds it, with no subscription thread to run first.
+    #[test]
+    fn a_frame_drawn_after_a_hide_finds_the_hide_applied() {
+        let socket = TestSocket::new();
+        let mut eon = FakeEon::new(UnixListener::bind(&socket.path).unwrap());
+        let (transport, _receiver, mut subscription) =
+            held_subscription(&socket, &mut eon, &shown_popup());
+        let mut popup = PopupTerminal::new();
+        write_subscription(&mut subscription, &popup_hidden(1));
+        popup.redraw();
+        assert_eq!(
+            transport.catch_up(),
+            [snapshot_event(&workspace_snapshot())]
+        );
+    }
+
+    /// The same order when the subscription thread read the hide first: its patch waits for
+    /// the window, which `catch_up` hands over before the frame.
+    #[test]
+    fn a_frame_drawn_after_a_hide_the_thread_read_finds_it_applied() {
+        let socket = TestSocket::new();
+        let mut eon = FakeEon::new(UnixListener::bind(&socket.path).unwrap());
+        let (wakes, receiver) = mpsc::channel();
+        let transport = WorkspaceTransport::start_with_refresh(
+            socket.path.clone(),
+            Duration::from_secs(60),
+            move || {
+                let _ = wakes.send(());
+            },
+        );
+        eon.answer_refresh(&shown_popup());
+        assert_eq!(
+            take(&transport, &receiver, 1),
+            [snapshot_event(&shown_popup())]
+        );
+        let mut subscription = eon.subscription();
+        write_subscription(&mut subscription, &subscribed());
+        eon.answer_refresh(&shown_popup());
+        assert_eq!(
+            take(&transport, &receiver, 1),
+            [snapshot_event(&shown_popup())]
+        );
+        let mut popup = PopupTerminal::new();
+        write_subscription(&mut subscription, &popup_hidden(1));
+        // The thread queued the patch; the window has not drained it.
+        receiver.recv_timeout(Duration::from_secs(5)).unwrap();
+        popup.redraw();
+        assert_eq!(
+            transport.catch_up(),
+            [snapshot_event(&workspace_snapshot())]
+        );
+    }
+
+    /// Eon hid and showed the popup again before answering an action that shows it: the
+    /// answer goes out as it is, and no late hide follows it.
+    #[test]
+    fn a_late_hide_does_not_undo_a_reopened_popup() {
+        let socket = TestSocket::new();
+        let mut eon = FakeEon::new(UnixListener::bind(&socket.path).unwrap());
+        let (transport, receiver, mut subscription) =
+            held_subscription(&socket, &mut eon, &workspace_snapshot());
+        let ticket = transport.send(focus_pane()).unwrap();
+        let (mut reopening, _) = eon.exchange();
+        write_subscription(&mut subscription, &popup_hidden(1));
+        write_subscription(
+            &mut subscription,
+            &popup_event(2, workspace::PopupChange::Shown, "u1"),
+        );
+        write_response(&mut reopening, &shown_popup());
+        assert_eq!(
+            take(&transport, &receiver, 2),
+            [
+                snapshot_event(&shown_popup()),
+                WorkspaceEvent::Answered {
+                    ticket,
+                    accepted: true
+                }
+            ]
+        );
+        assert_eq!(transport.catch_up(), []);
+    }
+
+    /// A popup's Orbit terminal, attached through the window's Orbit transport.
+    struct PopupTerminal {
+        _socket: TestSocket,
+        orbit: Transport,
+        arrived: mpsc::Receiver<()>,
+        terminal: UnixStream,
+    }
+
+    impl PopupTerminal {
+        fn new() -> Self {
+            let socket = TestSocket::new();
+            let listener = UnixListener::bind(&socket.path).unwrap();
+            let (frames, arrived) = mpsc::channel();
+            let orbit = Transport::start(socket.path.clone(), move || {
+                let _ = frames.send(());
+            });
+            let (mut terminal, _) = listener.accept().unwrap();
+            assert_eq!(read_client(&mut terminal), ClientMessage::Hello);
+            Self {
+                _socket: socket,
+                orbit,
+                arrived,
+                terminal,
+            }
+        }
+
+        /// Yazi draws one cell, and the window receives it.
+        fn redraw(&mut self) {
+            let mut redraw = frame(1);
+            redraw.dimensions = Dimensions { cols: 1, rows: 1 };
+            redraw.capabilities.hyperlinks = true;
+            redraw.rows = vec![orbit_protocol::Row {
+                wrapped: false,
+                wrap_continuation: false,
+                cells: vec![orbit_protocol::Cell {
+                    width: orbit_protocol::CellWidth::Narrow,
+                    text: "y".into(),
+                    hyperlink: String::new(),
+                    style: orbit_protocol::CellStyle {
+                        foreground: orbit_protocol::StyleColor::None,
+                        background: orbit_protocol::StyleColor::None,
+                        underline_color: orbit_protocol::StyleColor::None,
+                        underline: orbit_protocol::Underline::None,
+                        bold: false,
+                        italic: false,
+                        faint: false,
+                        blink: false,
+                        inverse: false,
+                        invisible: false,
+                        strikethrough: false,
+                        overline: false,
+                        selected: false,
+                        protected: false,
+                    },
+                }],
+            }];
+            let redraw = ServerMessage::Frame(Box::new(redraw));
+            self.terminal
+                .write_all(&session::encode_server_message(&redraw).unwrap())
+                .unwrap();
+            self.arrived.recv_timeout(Duration::from_secs(5)).unwrap();
+            assert_eq!(self.orbit.drain_events(), [TransportEvent::Server(redraw)]);
+        }
+    }
+
+    #[test]
+    fn a_snapshot_replaces_a_waiting_snapshot() {
+        let events = WorkspaceEventQueue::default();
+        let first = snapshot_event(&workspace_snapshot());
+        let second = snapshot_event(&shown_popup());
+        let answered = WorkspaceEvent::Answered {
+            ticket: 0,
+            accepted: true,
+        };
+        assert!(events.push(first.clone()));
+        for _ in 0..200 {
+            assert!(!events.push(second.clone()));
+        }
+        assert!(!events.push(answered.clone()));
+        assert!(!events.push(first.clone()));
+        assert_eq!(events.drain(), [second, answered, first]);
+    }
+
+    /// A transport whose subscription only `catch_up` reads, accepted while `presented` shows,
+    /// with no event waiting.
+    fn held_subscription(
+        socket: &TestSocket,
+        eon: &mut FakeEon,
+        presented: &Snapshot,
+    ) -> (WorkspaceTransport, mpsc::Receiver<()>, UnixStream) {
+        let (wakes, receiver) = mpsc::channel();
+        let transport =
+            WorkspaceTransport::start_worker(socket.path.clone(), Duration::from_secs(60), {
+                move || {
+                    let _ = wakes.send(());
+                }
+            });
+        eon.answer_refresh(presented);
+        assert_eq!(take(&transport, &receiver, 1), [snapshot_event(presented)]);
+        transport.subscription.open(&socket.path).unwrap();
+        let mut subscription = eon.subscription();
+        write_subscription(&mut subscription, &subscribed());
+        assert_eq!(transport.catch_up(), []);
+        eon.answer_refresh(presented);
+        assert_eq!(take(&transport, &receiver, 1), [snapshot_event(presented)]);
+        (transport, receiver, subscription)
+    }
+
+    /// The next `count` events, waiting for each wake.
+    fn take(
+        transport: &WorkspaceTransport,
+        receiver: &mpsc::Receiver<()>,
+        count: usize,
+    ) -> Vec<WorkspaceEvent> {
+        let mut events = Vec::new();
+        while events.len() < count {
+            receiver.recv_timeout(Duration::from_secs(5)).unwrap();
+            events.extend(transport.drain_events());
+        }
+        events
+    }
+
+    fn shown_popup() -> Snapshot {
+        let mut shown = workspace_snapshot();
+        shown.tabs[0].selected_popup = Some("u1".into());
+        shown
+    }
+
+    fn focus_pane() -> WorkspaceAction {
+        WorkspaceAction::Workspace(workspace::WorkspaceAction::FocusId("pane-1".into()))
+    }
+
+    #[test]
+    fn a_refused_or_ended_subscription_falls_back_to_polling() {
+        let socket = TestSocket::new();
+        let mut eon = FakeEon::new(UnixListener::bind(&socket.path).unwrap());
+        let transport = WorkspaceTransport::start_with_refresh(
+            socket.path.clone(),
+            Duration::from_millis(10),
+            || {},
+        );
+        let snapshot = workspace_snapshot();
+        let refused = workspace::SubscriptionMessage::Failure(workspace::Failure {
+            code: "subscriber-limit".into(),
+            detail: "this window already serves 32 event subscribers".into(),
+        });
+        let ended = workspace::SubscriptionMessage::End(workspace::End::TooSlow);
+        for closing in [vec![refused], vec![subscribed(), ended]] {
+            let mut subscription = eon.subscription();
+            for message in &closing {
+                write_subscription(&mut subscription, message);
+            }
+            drop(subscription);
+            // Refreshes go on while Venus waits a second before it subscribes again.
+            let closed = Instant::now();
+            let mut refreshes = 0;
+            while eon.subscriptions.is_empty() {
+                if let Some((mut stream, _)) = eon.exchanges.pop_front() {
+                    write_response(&mut stream, &snapshot);
+                    refreshes += 1;
+                } else if !eon.accept() {
+                    assert!(closed.elapsed() < Duration::from_secs(5));
+                    thread::sleep(Duration::from_millis(1));
+                }
+            }
+            assert!(closed.elapsed() >= Duration::from_millis(900));
+            assert!(refreshes >= 10, "{refreshes} refreshes");
+        }
+        drop(eon);
+        drop(transport);
+    }
+
+    #[test]
+    fn dropping_the_transport_stops_its_subscription_and_worker() {
+        let socket = TestSocket::new();
+        let mut eon = FakeEon::new(UnixListener::bind(&socket.path).unwrap());
+        let transport = WorkspaceTransport::start_with_refresh(
+            socket.path.clone(),
+            Duration::from_millis(10),
+            || {},
+        );
+        let mut subscription = eon.subscription();
+        write_subscription(&mut subscription, &subscribed());
+        eon.answer_refresh(&workspace_snapshot());
+        drop(transport);
+
+        subscription
+            .set_read_timeout(Some(Duration::from_secs(5)))
+            .unwrap();
+        let mut rest = Vec::new();
+        subscription.read_to_end(&mut rest).unwrap();
+        // The worker finishes an exchange already begun, then makes no more.
+        let dropped = Instant::now();
+        let mut last = Instant::now();
+        while dropped.elapsed() < Duration::from_millis(500) {
+            if let Some((mut stream, _)) = eon.exchanges.pop_front() {
+                write_response(&mut stream, &workspace_snapshot());
+                last = Instant::now();
+            } else if !eon.accept() {
+                thread::sleep(Duration::from_millis(1));
+            }
+        }
+        assert!(eon.subscriptions.is_empty());
+        assert!(
+            last.duration_since(dropped) < Duration::from_millis(100),
+            "the worker refreshed {:?} after the drop",
+            last.duration_since(dropped)
+        );
+    }
+
+    /// A fake Eon that sorts its clients into exchanges and subscriptions.
+    struct FakeEon {
+        listener: UnixListener,
+        exchanges: VecDeque<(UnixStream, WorkspaceAction)>,
+        subscriptions: VecDeque<UnixStream>,
+    }
+
+    impl FakeEon {
+        fn new(listener: UnixListener) -> Self {
+            listener.set_nonblocking(true).unwrap();
+            Self {
+                listener,
+                exchanges: VecDeque::new(),
+                subscriptions: VecDeque::new(),
+            }
+        }
+
+        /// Accepts one waiting client; false when none waits.
+        fn accept(&mut self) -> bool {
+            match self.listener.accept() {
+                Ok((stream, _)) => {
+                    let (stream, action) = read_workspace_action(stream);
+                    if matches!(action, WorkspaceAction::Subscribe { .. }) {
+                        self.subscriptions.push_back(stream);
+                    } else {
+                        self.exchanges.push_back((stream, action));
+                    }
+                    true
+                }
+                Err(error) if error.kind() == ErrorKind::WouldBlock => false,
+                Err(error) => panic!("{error}"),
+            }
+        }
+
+        fn until<T>(&mut self, mut next: impl FnMut(&mut Self) -> Option<T>) -> T {
+            let deadline = Instant::now() + Duration::from_secs(5);
+            loop {
+                if let Some(item) = next(self) {
+                    return item;
+                }
+                if !self.accept() {
+                    assert!(Instant::now() < deadline, "no client within 5 s");
+                    thread::sleep(Duration::from_millis(1));
+                }
+            }
+        }
+
+        fn exchange(&mut self) -> (UnixStream, WorkspaceAction) {
+            self.until(|eon| eon.exchanges.pop_front())
+        }
+
+        fn subscription(&mut self) -> UnixStream {
+            self.until(|eon| eon.subscriptions.pop_front())
+        }
+
+        fn answer_refresh(&mut self, snapshot: &Snapshot) {
+            let (mut stream, action) = self.exchange();
+            assert_eq!(
+                action,
+                WorkspaceAction::Workspace(workspace::WorkspaceAction::Inspect)
+            );
+            write_response(&mut stream, snapshot);
+        }
+    }
+
+    fn write_response(stream: &mut UnixStream, snapshot: &Snapshot) {
+        stream
+            .write_all(
+                &workspace::encode_response(&WorkspaceResponse::Snapshot(snapshot.clone()))
+                    .unwrap(),
+            )
+            .unwrap();
+    }
+
+    fn write_subscription(stream: &mut UnixStream, message: &workspace::SubscriptionMessage) {
+        stream
+            .write_all(&workspace::encode_subscription_message(message).unwrap())
+            .unwrap();
+    }
+
+    fn snapshot_event(snapshot: &Snapshot) -> WorkspaceEvent {
+        WorkspaceEvent::Response(WorkspaceResponse::Snapshot(snapshot.clone()))
+    }
+
+    fn subscribed() -> workspace::SubscriptionMessage {
+        workspace::SubscriptionMessage::Subscribed(workspace::Subscribed {
+            stream: "s1".into(),
+            seq: 0,
+            generation: "g1".into(),
+            window: None,
+            caller: None,
+            snapshot: None,
+        })
+    }
+
+    fn popup_hidden(seq: u64) -> workspace::SubscriptionMessage {
+        popup_event(seq, workspace::PopupChange::Hidden, "u1")
+    }
+
+    fn popup_event(
+        seq: u64,
+        change: workspace::PopupChange,
+        id: &str,
+    ) -> workspace::SubscriptionMessage {
+        let mut popup = workspace_snapshot().tabs[0].popups[0].clone();
+        popup.id = id.into();
+        workspace::SubscriptionMessage::Event(workspace::Event {
+            seq,
+            change: workspace::Change::Popup {
+                change,
+                workspace: "w1".into(),
+                tab: "t1".into(),
+                popup,
+                chosen: change == workspace::PopupChange::Shown,
+            },
+        })
+    }
+
     fn read_client(stream: &mut UnixStream) -> ClientMessage {
         let mut header = [0; session::HEADER_BYTES];
         stream.read_exact(&mut header).unwrap();
@@ -1360,8 +2431,19 @@ mod tests {
         session::decode_client_message(&bytes).unwrap()
     }
 
+    /// The next exchange; this fake refuses each subscription by closing it.
     fn accept_workspace_action(listener: &UnixListener) -> (UnixStream, WorkspaceAction) {
-        let (mut stream, _) = listener.accept().unwrap();
+        loop {
+            let (stream, _) = listener.accept().unwrap();
+            let (stream, action) = read_workspace_action(stream);
+            if !matches!(action, WorkspaceAction::Subscribe { .. }) {
+                return (stream, action);
+            }
+        }
+    }
+
+    fn read_workspace_action(mut stream: UnixStream) -> (UnixStream, WorkspaceAction) {
+        stream.set_nonblocking(false).unwrap();
         let mut header = [0; workspace::HEADER_BYTES];
         stream.read_exact(&mut header).unwrap();
         let length = workspace::declared_message_len(&header).unwrap();

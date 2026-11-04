@@ -223,7 +223,8 @@ dependency decision does not establish public-distribution proof.
 ### Disk use reading
 
 - **Selected shape:** direct `rustix = "=1.1.4"` with default features
-  disabled and `fs` and `std` enabled, the exact version already in the lock,
+  disabled and `fs` and `std` enabled (and `event`, below), the exact version
+  already in the lock,
   declared for Linux and macOS only (`eon-d7itl`, the Eon Bar disk chip in
   [PRESENTATION.md](PRESENTATION.md#eon-bar)). Approved by Lucca 2026-10-31
   (relayed by eon-overseer). The lock gains one edge and no package or version.
@@ -250,6 +251,21 @@ dependency decision does not establish public-distribution proof.
   edge if Venus drops the disk chip or the standard library gains `statvfs`;
   follow the version the rest of the lock resolves, through the dependency
   gate.
+
+### Subscription readiness
+
+- **Selected shape:** the `event` feature of the rustix edge above
+  (`eon-61efs.1`); no package, version or lock change. On Linux the crates
+  listed above already build rustix with it.
+- **Capability:** `event::poll` waits until Venus's EON-C39 subscription is
+  readable without holding the lock under which Venus reads it, so the window
+  can read the same socket before it applies an Orbit frame. Venus adds no
+  unsafe code.
+- **Rejected:** a blocking read outside the lock, which can hold bytes the
+  window cannot see; a short read timeout under the lock, which stalls the
+  window; libc's unsafe `poll`; and polling the socket on a timer.
+- **Exit:** one call site in `src/transport.rs`. Drop the feature if the
+  standard library gains a readiness wait or peek on `UnixStream`.
 
 ## Measured comparison
 

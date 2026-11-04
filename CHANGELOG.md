@@ -18,6 +18,11 @@ installation, and proven contract changes.
   Helix. Each edit reads the setting again; an editor missing from the
   terminal PATH fails the edit with `edit-command` instead of falling back to
   Helix.
+- Picking a folder in quick search, or pressing Esc there, no longer shows a
+  frame of Files' Yazi before the tab's terminal (`eon-61efs.1`). Eon
+  Desktop now learns of workspace changes from Eon's event stream instead of
+  waiting for its next 250 ms check, and Eon writes a change's events before
+  answering the command that made it.
 - The Project directory picker and the Files popup are one Yazi per tab
   (`eon-quick-search-parity-23y9.2`). A fresh window, a new tab (Alt+Shift+T,
   `eon tab create`, `eon workspace new`) and Alt+Z show the tab's Files on

@@ -590,7 +590,10 @@ failures, and semantic actions. Venus consumes those values directly, derives
 bounded tab labels and accessibility context, and retains `tN` for action routing.
 The `ven-c87.1` refresh hardening
 reuses bounded `Inspect` every 250 ms without adding a protocol message, CLI
-adapter, hidden-state reader, or second workspace schema.
+adapter, hidden-state reader, or second workspace schema. Since `eon-61efs.1`
+Venus also holds one EON-C39 subscription per window, decoded by the same
+canonical package, and re-reads `Inspect` when an event arrives; the 250 ms
+refresh remains the fallback.
 
 Canario/Rio at `3e41b8b19a1cad9cd9bdfc8f7900cf61ce5a9098`
 was MIT-licensed comparison-only evidence for bounded header scrolling, direct

@@ -32,6 +32,8 @@ const WRITE_CHUNK: usize = 4096;
 pub(super) struct Subscribers {
     events: Events,
     subscribers: Vec<Subscriber>,
+    /// A turn or maintenance ran since the supervisor last asked.
+    served: bool,
 }
 
 /// One subscription: its filter and the frames not yet written to it.
@@ -75,6 +77,7 @@ impl Subscribers {
         Self {
             events: Events::new(generation),
             subscribers: Vec::new(),
+            served: false,
         }
     }
 
@@ -191,6 +194,11 @@ impl Subscribers {
         }
     }
 
+    /// Whether a turn or maintenance ran since the last call.
+    pub(super) fn take_served(&mut self) -> bool {
+        std::mem::take(&mut self.served)
+    }
+
     /// Pauses the stream once no subscriber is left, so the supervisor does
     /// no work for it until the next subscribes and no `--after` resumes
     /// across the turns nobody saw.
@@ -205,6 +213,7 @@ impl Subscribers {
     /// `end` for those whose named objects are gone, and writes without
     /// waiting.
     pub(super) fn turn(&mut self, projection: Projection, now: Instant) {
+        self.served = true;
         // Each event is encoded once, which weighs it for the retained log
         // and serves every subscriber that admits it. One that cannot be
         // encoded weighs nothing and ends those subscribers.
@@ -258,6 +267,7 @@ impl Subscribers {
     /// writes what each connection takes and ends subscribers that hung up
     /// or went too slow.
     pub(super) fn maintain(&mut self, now: Instant) {
+        self.served = true;
         let (projection, seq) = (self.events.projection(), self.events.seq());
         self.subscribers.retain_mut(|subscriber| {
             // A due gap still goes out, from the window last published, and
