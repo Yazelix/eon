@@ -108,13 +108,16 @@ any workspace, without moving anything; add `--enter` to press Enter after it,
 or pass `--enter` alone. Use `--stdin` for text from a pipe; without it, piped
 text fails the send (`unread-stdin`). In a loop that presses only Enter, give
 the command empty input: `</dev/null` in bash, `null | eon pane send ...` in
-Nushell. Keep sends short:
+Nushell. `person-typing` with exit 5 means nothing was sent: wait for the
+configured quiet interval before retrying. `--force` bypasses only the typing
+check; use it only when the person asks. Keep sends short:
 for long material, write a file and send its path. A line break never submits,
 and Eon refuses control characters (`invalid-text`), more than 64 KiB
 (`input-too-large`) and, when the program lacks bracketed paste, line breaks
 (`unbracketed-newline`); nothing is sent then. With `enter: false` and exit 1,
-the text arrived but Enter did not. Send only what the person asked for, and
-read the pane again to see the result.
+the text arrived but Enter did not, including when the error is `person-typing`.
+Do not resend the text; later send `--enter` alone. Send only what the person
+asked for, and read the pane again to see the result.
 
 A sandboxed agent that may connect to Unix sockets can drive Eon, and
 `eon pane create` and `eon pane send` then run commands outside its sandbox.
@@ -135,6 +138,7 @@ be null; Codex in Eon needs `codex --no-daemon`.
 | 2 | Invalid command or arguments |
 | 3 | Named tab, pane, terminal, popup, generation or window not found |
 | 4 | Supervisor not running or did not answer |
+| 5 | `pane send` refused with `person-typing`; nothing was sent |
 | 130 | Interrupted with Ctrl+C |
 
 Read `error.code` for the specific failure. A stale or ended caller exits 3;

@@ -50,6 +50,7 @@ enabled = true
 [agents]
 terminal_access = "window"
 send_enter_delay_ms = 300
+send_typing_quiet_ms = 2000
 ```
 
 ## Built-in defaults
@@ -115,6 +116,7 @@ enabled = true # Enable this feature or popup.
 
 [agents]
 send_enter_delay_ms = 300 # Wait between `eon pane send` text and its --enter.
+send_typing_quiet_ms = 2000 # Refuse unforced sends within this many ms of typing; 0 disables (0 to 60000).
 terminal_access = "window" # Let `eon pane read` and `eon pane send` reach this window's terminals; "none" refuses both.
 
 [editor]
@@ -366,6 +368,12 @@ processes can already read and drive terminals.
 `[agents] send_enter_delay_ms`, 300 by default, is how long
 `eon pane send --enter` waits after the text before sending Enter, so agent
 prompts take the whole paste first. It must be 0 to 5000.
+
+`[agents] send_typing_quiet_ms`, 2000 by default, refuses each unforced CLI
+paste or Enter while attached-client typing is queued or within this many
+milliseconds of typing. It must be 0 to 60000; 0 disables the check.
+`eon pane send --force` bypasses only this check. CLI sends never extend the
+interval. Like the other agent settings, the window reads it when it starts.
 
 Pane labels use a fixed policy: a pin, then sanitized terminal title, then compact
 working directory, with differing-directory context. Commands and `eon pane rename`

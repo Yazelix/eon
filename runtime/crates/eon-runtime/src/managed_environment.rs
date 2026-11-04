@@ -17,7 +17,7 @@ use std::{
     time::{Duration, Instant},
 };
 
-use eon_workspace_protocol::v31::{
+use eon_workspace_protocol::v32::{
     ALT, CTRL, MAX_ENTER_DELAY_MS, MAX_ENTRIES, MAX_ENTRY_ID_BYTES, MAX_LABEL_BYTES, PopupGeometry,
     PopupKey, SHIFT, SUPER, Shortcut,
 };
@@ -95,6 +95,8 @@ pub struct Defaults {
     pub terminal_access: TerminalAccess,
     /// How long `eon pane send --enter` waits after the text (EON-C36).
     pub send_enter_delay_ms: u16,
+    /// Quiet interval after attached-client typing before an unforced send (EON-C36).
+    pub send_typing_quiet_ms: u16,
     pub popups: PopupCatalog,
     /// The editor's argv, before the file, while `[editor] command` is unset.
     pub editor: &'static [&'static str],
@@ -327,11 +329,14 @@ pub enum TerminalAccess {
     None,
 }
 
+const MAX_TYPING_QUIET_MS: u16 = 60000;
+
 #[derive(Debug, Default, Deserialize)]
 #[serde(default)]
 struct AgentSettings {
     terminal_access: Option<TerminalAccess>,
     send_enter_delay_ms: Option<u64>,
+    send_typing_quiet_ms: Option<u64>,
     #[serde(flatten)]
     unknown: BTreeMap<String, toml::Value>,
 }
@@ -341,6 +346,7 @@ struct AgentSettings {
 pub(crate) struct Agents {
     pub(crate) terminal_access: TerminalAccess,
     pub(crate) send_enter_delay_ms: u16,
+    pub(crate) send_typing_quiet_ms: u16,
 }
 
 #[derive(Debug, Default, Deserialize)]
@@ -550,6 +556,7 @@ pub(crate) fn print_defaults(defaults: &Defaults, json: bool) -> Result<String, 
         "sidebar": { "enabled": defaults.sidebar_enabled },
         "agents": {
             "send_enter_delay_ms": defaults.send_enter_delay_ms,
+            "send_typing_quiet_ms": defaults.send_typing_quiet_ms,
             "terminal_access": defaults.terminal_access,
         },
         "editor": { "command": defaults.editor },
@@ -645,6 +652,9 @@ fn defaults_table(
                 "Alt+Shift+1..9 and Alt+Shift+0 show workspaces 1..10; false leaves the keys to the terminal."
             }
             "send_enter_delay_ms" => "Wait between `eon pane send` text and its --enter.",
+            "send_typing_quiet_ms" => {
+                "Refuse unforced sends within this many ms of typing; 0 disables (0 to 60000)."
+            }
             "terminal_access" => {
                 "Let `eon pane read` and `eon pane send` reach this window's terminals; \"none\" refuses both."
             }
@@ -834,7 +844,16 @@ pub(crate) fn agents(
     let delay = settings
         .send_enter_delay_ms
         .unwrap_or(defaults.send_enter_delay_ms.into());
+    let quiet = settings
+        .send_typing_quiet_ms
+        .unwrap_or(defaults.send_typing_quiet_ms.into());
     Ok(Agents {
+        send_typing_quiet_ms: u16::try_from(quiet)
+            .ok()
+            .filter(|quiet| *quiet <= MAX_TYPING_QUIET_MS)
+            .ok_or_else(|| {
+                format!("agents.send_typing_quiet_ms must be from 0 through {MAX_TYPING_QUIET_MS}")
+            })?,
         terminal_access: settings.terminal_access.unwrap_or(defaults.terminal_access),
         send_enter_delay_ms: u16::try_from(delay)
             .ok()
@@ -1967,6 +1986,7 @@ mod tests {
                 defaults.number_keys = false;
                 defaults.terminal_access = super::TerminalAccess::None;
                 defaults.send_enter_delay_ms = 0;
+                defaults.send_typing_quiet_ms = 0;
                 defaults.popups.entries[1].command = PopupCommand::Argv(vec![
                     "fixture-git".into(),
                     "quote\"and\\slash".into(),
@@ -2051,6 +2071,7 @@ mod tests {
             sidebar_enabled: sidebar_enabled(root, defaults, None)?,
             terminal_access: agents.terminal_access,
             send_enter_delay_ms: agents.send_enter_delay_ms,
+            send_typing_quiet_ms: agents.send_typing_quiet_ms,
             popups: popup_catalog(root, defaults, None)?,
             editor: Box::leak(
                 super::editor_command(root, defaults, None)?
@@ -2128,6 +2149,39 @@ mod tests {
     }
 
     #[test]
+    fn typing_quiet_configuration_bounds_and_defaults() {
+        let root = crate::supervisor::temporary_directory();
+        let defaults = crate::fixtures::inputs().defaults;
+        for (source, expected) in [
+            ("", 2000),
+            ("[agents]\nsend_typing_quiet_ms = 0\n", 0),
+            ("[agents]\nsend_typing_quiet_ms = 60000\n", 60000),
+        ] {
+            fs::write(root.join("config.toml"), source).unwrap();
+            let (resolved, warnings) = resolved_config(&root, &defaults).unwrap();
+            assert!(warnings.is_empty(), "{warnings:?}");
+            assert_eq!(resolved["agents"]["send_typing_quiet_ms"], expected);
+        }
+        for value in [
+            "60001",
+            "65536",
+            "4294967296",
+            "-1",
+            "1.5",
+            "true",
+            "\"2000\"",
+        ] {
+            fs::write(
+                root.join("config.toml"),
+                format!("[agents]\nsend_typing_quiet_ms = {value}\n"),
+            )
+            .unwrap();
+            assert!(resolved_config(&root, &defaults).is_err(), "{value}");
+        }
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
     fn agent_settings_take_window_or_none_and_a_bounded_enter_delay() {
         let root = crate::supervisor::temporary_directory();
         let defaults = crate::fixtures::inputs().defaults;
@@ -2140,6 +2194,7 @@ mod tests {
             Ok(super::Agents {
                 terminal_access: super::TerminalAccess::None,
                 send_enter_delay_ms: 5000,
+                send_typing_quiet_ms: 2000,
             })
         );
         assert_eq!(
@@ -2147,6 +2202,7 @@ mod tests {
             Ok(super::Agents {
                 terminal_access: super::TerminalAccess::Window,
                 send_enter_delay_ms: 0,
+                send_typing_quiet_ms: 2000,
             })
         );
         for source in [

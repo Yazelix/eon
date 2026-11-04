@@ -7,7 +7,7 @@ use super::{
     },
     workspace,
 };
-use eon_workspace_protocol::v31::{
+use eon_workspace_protocol::v32::{
     Action, Error as ProtocolError, Failure, HEADER_BYTES, LifecycleResponse, MAX_DETAIL_BYTES,
     Request, Response, Runtime, VERSION, WorkspaceAction, declared_message_len,
     decode_lifecycle_response, decode_request, decode_response, encode_lifecycle_response,
@@ -628,6 +628,7 @@ const FAILED: u8 = 1;
 const USAGE: u8 = 2;
 const MISSING: u8 = 3;
 const UNREACHABLE: u8 = 4;
+const TYPING: u8 = 5;
 
 fn failure_status(code: &str) -> u8 {
     match code {
@@ -637,6 +638,7 @@ fn failure_status(code: &str) -> u8 {
         | "stale-popup" | "stale-target" | "unknown-generation" | "unknown-caller"
         | "unknown-workspace" | "unknown-window" | "unknown-target" => MISSING,
         "missing-supervisor" | "supervisor-unavailable" => UNREACHABLE,
+        "person-typing" => TYPING,
         _ => FAILED,
     }
 }

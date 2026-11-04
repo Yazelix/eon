@@ -20,7 +20,7 @@ use super::{
         list_human, list_json, resolve_selector, terminal_sent_json, terminal_text_json,
     },
 };
-use eon_workspace_protocol::v31::{
+use eon_workspace_protocol::v32::{
     Action, AttentionState, Direction, Failure, MAX_PASTE_BYTES, PopupTarget, Response, Side,
     Snapshot, TerminalInput, VERSION, WorkspaceAction, WorkspaceInfo, valid_caller, validate_paste,
 };
@@ -834,10 +834,13 @@ const HELP_SECTIONS: &[(&str, &[(&str, &str)])] = &[
                 "Print a pane's or popup's text",
             ),
             (
-                "pane send PANE|POPUP [--enter] [--json]",
+                "pane send PANE|POPUP [--enter] [--force]",
                 "Paste TEXT, then Enter if asked",
             ),
-            ("  [--stdin | -- TEXT]", "TEXT up to 64 KiB, or Enter alone"),
+            (
+                "  [--json] [--stdin | -- TEXT]",
+                "TEXT up to 64 KiB, or Enter alone",
+            ),
             (
                 "popup hide POPUP [--json]",
                 "Hide a popup as its window would",
@@ -989,10 +992,11 @@ With --no-focus, workspace new keeps the shown workspace, and either
 pane create keeps the selected pane and any popup.
 pane read and send reach hidden workspaces; [agents] terminal_access
 governs both. pane send --enter waits [agents] send_enter_delay_ms first.
+pane send refuses while a person is typing; --force bypasses the typing check.
 Where shown, {command}--json{reset} prints JSON and skips confirmation.
 Without a terminal, a confirmation needs yes or exits 1 (not-confirmed).
 Exit status: 0 success, 1 failed, 2 invalid command, 3 target not found,
-4 Eon unreachable, 130 interrupted.
+4 Eon unreachable, 5 person typing (nothing sent), 130 interrupted.
 Agent? Run {command}eon --skill{reset} to learn how to work in Eon.
 "
     )
@@ -1164,7 +1168,7 @@ fn control(
     // by Runtime's rule; a WS that resolves to none or several fails unasked.
     // After a yes it checks again that the wN is live before closing it, since
     // Runtime would read a departed wN as another workspace's name; the check
-    // and the close are not atomic. v31 lists only
+    // and the close are not atomic. v32 lists only
     // the caller's or shown workspace's terminals, so the prompt names none.
     if let Action::Workspace(WorkspaceAction::CloseWorkspace { workspace }) = &mut action
         && !json
@@ -1377,6 +1381,7 @@ fn send_terminal(inputs: &Inputs, send: PaneSend, target: WorkspaceTarget) -> Re
     let action = |input| Action::SendTerminal {
         target: send.target.clone(),
         input,
+        force: send.force,
     };
     if let Err(error) = validate_action(caller.clone(), action(TerminalInput::Enter)) {
         return Ok(report_failure(
@@ -1405,7 +1410,7 @@ fn send_terminal(inputs: &Inputs, send: PaneSend, target: WorkspaceTarget) -> Re
     // the program takes the whole paste first; once the paste is in, an Enter
     // failure leaves it there.
     let bytes = text.as_ref().map_or(0, String::len);
-    let (sent, enter_failure) = match text {
+    let (sent, mut enter_failure) = match text {
         None => match request(TerminalInput::Enter) {
             Ok(sent) => (sent, None),
             Err(failure) => return Ok(report_failure(&failure, json)?),
@@ -1419,6 +1424,13 @@ fn send_terminal(inputs: &Inputs, send: PaneSend, target: WorkspaceTarget) -> Re
             Ok(pasted) => (pasted, None),
         },
     };
+    if let Some(failure) = &mut enter_failure
+        && failure.code == "person-typing"
+    {
+        failure.detail = "a person is typing in the target terminal; wait for a quiet interval, \
+                          then send --enter alone without resending the text"
+            .into();
+    }
     let enter = send.enter && enter_failure.is_none();
     if json {
         write_stdout(format!(
@@ -1691,12 +1703,13 @@ fn parse_workspace_target_arguments(
     Ok((values, target))
 }
 
-/// `pane send TARGET [--enter] [--stdin] [--json] [-- TEXT]` (EON-C36).
+/// `pane send TARGET [--enter] [--force] [--stdin] [--json] [-- TEXT]` (EON-C36).
 #[derive(Debug, PartialEq)]
 struct PaneSend {
     target: String,
     text: SendText,
     enter: bool,
+    force: bool,
     json: bool,
 }
 
@@ -1719,10 +1732,11 @@ fn parse_pane_send_arguments(arguments: &[OsString]) -> Result<Option<PaneSend>,
         None => (rest, None),
     };
     let mut target = None;
-    let (mut enter, mut stdin, mut json) = (false, false, false);
+    let (mut enter, mut force, mut stdin, mut json) = (false, false, false, false);
     for option in options {
         let flag = match option.to_str() {
             Some("--enter") => &mut enter,
+            Some("--force") => &mut force,
             Some("--stdin") => &mut stdin,
             Some("--json") => &mut json,
             Some(id) if target.is_none() && !id.starts_with('-') => {
@@ -1745,6 +1759,7 @@ fn parse_pane_send_arguments(arguments: &[OsString]) -> Result<Option<PaneSend>,
         target: target.ok_or_else(|| Error::usage(EON_USAGE))?,
         text,
         enter,
+        force,
         json,
     }))
 }
@@ -1843,7 +1858,7 @@ fn parse_pane_rename_arguments(arguments: &[OsString]) -> Result<(Action, bool),
         _ => return Err(Error::usage(EON_USAGE)),
     };
     if let Some(name) = name {
-        eon_workspace_protocol::v31::validate_pane_name(name)
+        eon_workspace_protocol::v32::validate_pane_name(name)
             .map_err(|error| Error::usage(error.to_string()))?;
     }
     Ok((
@@ -2755,6 +2770,7 @@ mod tests {
                 target: "u2".into(),
                 text,
                 enter,
+                force: false,
                 json,
             }))
         };
@@ -2783,6 +2799,7 @@ mod tests {
             &["pane", "send", "u2", "--", "a", "b"],
             &["pane", "send", "u2", "--stdin", "--", "text"],
             &["pane", "send", "u2", "--enter", "--enter"],
+            &["pane", "send", "u2", "--force", "--force", "--enter"],
             &["pane", "send", "u2", "--no-focus", "--", "text"],
         ] {
             assert_eq!(parse(args), Err(2), "{args:?}");

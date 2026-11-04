@@ -2,6 +2,9 @@
 
 ## Unreleased
 
+- Consume EONW v32, which adds `SendTerminal`'s force flag (`eon-buys1.2`,
+  EON-C36). No Venus behavior change.
+
 - VEN-C8: physical Alt+Shift+1 through Alt+Shift+9 and Alt+Shift+0 show
   workspace positions 1 to 10 through `SwitchWorkspace`, unless
   `--number-keys false` leaves them to the terminal or a configured popup takes

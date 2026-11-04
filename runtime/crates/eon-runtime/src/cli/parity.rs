@@ -4,7 +4,7 @@
 //! in the test too.
 
 use super::*;
-use eon_workspace_protocol::v31::{Filter, InvokeIntent, TerminalInput};
+use eon_workspace_protocol::v32::{Filter, InvokeIntent, TerminalInput};
 
 enum CliPath {
     /// These arguments parse to exactly this action.
@@ -98,11 +98,20 @@ fn cli_path(action: &Action) -> CliPath {
             return Exception("eon-ciwn.8 adds `eon events` and eon-ciwn.9 `eon pane wait`");
         }
         Action::ReadTerminal { target } => words(&["pane", "read", target]),
-        Action::SendTerminal { target, input } => {
-            return Send(match input {
-                TerminalInput::Paste(text) => words(&["pane", "send", target, "--", text]),
-                TerminalInput::Enter => words(&["pane", "send", target, "--enter"]),
+        Action::SendTerminal {
+            target,
+            input,
+            force,
+        } => {
+            let mut arguments = words(&["pane", "send", target]);
+            if *force {
+                arguments.push("--force".into());
+            }
+            arguments.extend(match input {
+                TerminalInput::Paste(text) => words(&["--", text]),
+                TerminalInput::Enter => words(&["--enter"]),
             });
+            return Send(arguments);
         }
         Action::ClosePane { pane } => words(&["pane", "close", pane]),
         Action::RenamePane { pane, name: None } => {
@@ -251,11 +260,18 @@ fn every_eonw_action_has_a_cli_path_or_a_named_exception() {
         Action::ReadTerminal { target: text("p1") },
         Action::SendTerminal {
             target: text("u1"),
+            force: false,
             input: TerminalInput::Paste(text("echo hi")),
         },
         Action::SendTerminal {
             target: text("p1"),
+            force: true,
             input: TerminalInput::Enter,
+        },
+        Action::SendTerminal {
+            target: text("p1"),
+            force: true,
+            input: TerminalInput::Paste(text("hi")),
         },
         Action::Subscribe {
             filter: Filter::default(),
@@ -299,6 +315,7 @@ fn every_eonw_action_has_a_cli_path_or_a_named_exception() {
                 assert_eq!(
                     Action::SendTerminal {
                         target: send.target,
+                        force: send.force,
                         input
                     },
                     action,

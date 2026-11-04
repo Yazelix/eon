@@ -2,7 +2,8 @@
   "resolved": {
     "agents": {
       "send_enter_delay_ms": 300,
-      "terminal_access": "window"
+      "terminal_access": "window",
+      "send_typing_quiet_ms": 2000
     },
     "anima": {
       "enabled": false

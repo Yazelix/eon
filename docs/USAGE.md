@@ -500,7 +500,7 @@ line points agents to `eon --skill`.
 | `eon pane move up\|down [--json]` | Move the selected pane, or the calling pane, one position within its column |
 | `eon pane move left\|right [--json]` | Move the selected pane, or the calling pane, into the neighbouring column, as Ctrl+Alt+H/L does |
 | `eon pane read TARGET [--json]` | Print the visible text of pane or popup TARGET, in any workspace of the window, without changing anything; see [Reading a terminal](#reading-a-terminal) |
-| `eon pane send TARGET [--enter] [--stdin] [--json] [-- TEXT]` | Paste TEXT, or standard input with `--stdin`, into pane or popup TARGET in any workspace of the window, then with `--enter` press Enter; see [Sending to a terminal](#sending-to-a-terminal) |
+| `eon pane send TARGET [--enter] [--force] [--stdin] [--json] [-- TEXT]` | Paste TEXT, or standard input with `--stdin`, into pane or popup TARGET in any workspace of the window, then with `--enter` press Enter; see [Sending to a terminal](#sending-to-a-terminal) |
 | `eon popup hide POPUP [--json]` | Hide popup `uN` of the workspace as its window's dismissal would: a keep-alive popup keeps running, a transient one stops, and a pending tab's Files starts the tab's first terminal at its starting directory |
 | `eon focus ID\|left\|right\|up\|down [--json]` | Focus a stable identity or traverse the workspace |
 | `eon versions` | Print Eon, protocol, and component identities |
@@ -644,11 +644,17 @@ with `generation` and `window`, `bytes` (TEXT's length, 0 for Enter alone),
 `bracketed` (null for Enter alone) and `enter`. Human output prints nothing on
 success.
 
+Orbit refuses each paste or Enter while a person's typing is queued or
+within [`[agents] send_typing_quiet_ms`](CONFIGURATION.md#configuration-behavior)
+(2000 ms by default). Wait for the quiet interval, or use `--force` to bypass
+only the typing check; 0 disables it. CLI input never extends this interval.
+
 A send refuses, with nothing sent:
 
 - `invalid-text`, exit 2: TEXT is not UTF-8, or holds ESC, DEL or another
   control character other than tab, line feed and carriage return;
 - `input-too-large`, exit 2: TEXT is over 64 KiB;
+- `person-typing`, exit 5: a person is typing in the target;
 - no TEXT and no `--enter`, exit 2;
 - `unread-stdin`, exit 2: neither `--stdin` nor TEXT, and standard input is a
   pipe, socket or file that already holds text, as in `echo hi | eon pane send
@@ -663,7 +669,8 @@ It also exits 1 with `terminal-ended` once the program has exited, and with
 `terminal-unavailable` when the terminal's Orbit refuses or does not answer
 within 2 s. A send that timed out may still arrive. When the paste lands and
 the Enter then fails, the command exits 1, the text stays in the program, and
-the JSON reply carries `enter: false` and the Enter's `error`. An unknown
+the JSON reply carries `enter: false` and the Enter's `error`, including
+`person-typing`. Do not retry the paste: it would duplicate the text. An unknown
 target exits 3 (`unknown-target`).
 
 A loop that presses Enter in several panes can hand `eon` its own input: a
@@ -710,6 +717,7 @@ with `codex --no-daemon`.
 | 2 | Invalid command or arguments, such as a malformed tab or generation ID |
 | 3 | The named tab, pane, terminal, popup, generation or window was not found |
 | 4 | The supervisor is not running or did not answer; outside Eon, run `eon` first |
+| 5 | `pane send` refused because a person is typing; nothing was sent |
 | 130 | Interrupted with Ctrl+C |
 
 The `code` in an `error` result, such as `unknown-tab`, names the failure more

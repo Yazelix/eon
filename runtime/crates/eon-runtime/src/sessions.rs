@@ -8,7 +8,7 @@ use super::{
         validate_private_directory,
     },
 };
-use eon_workspace_protocol::v31::{
+use eon_workspace_protocol::v32::{
     Failure, MAX_PASTE_BYTES, MAX_SESSIONS, MAX_TERMINAL_METADATA_BYTES, MAX_TERMINAL_TEXT_BYTES,
 };
 use orbit_protocol::management::{
@@ -1362,10 +1362,10 @@ pub(super) fn read_visible(
 pub(super) fn send_input(
     session: &mut RunningSession,
     input: LeaseInput,
+    quiet_ms: u16,
     log: &DiagnosticLog,
 ) -> Result<bool, Failure> {
-    // No quiet window: Orbit never refuses this input for a person's typing.
-    let request = ManagementClientMessage::Input { input, quiet_ms: 0 };
+    let request = ManagementClientMessage::Input { input, quiet_ms };
     match terminal_request(session, &request, log)? {
         ManagementServerMessage::Input { bracketed } => Ok(bracketed),
         _ => Err(unavailable(session, "Orbit returned the wrong result")),
@@ -1472,6 +1472,10 @@ fn terminal_request(
         Ok(ManagementServerMessage::Refused(Refusal::UnbracketedNewline)) => Err(failure(
             "unbracketed-newline",
             "the text holds a line break and the program has not enabled bracketed paste",
+        )),
+        Ok(ManagementServerMessage::Refused(Refusal::Typing)) => Err(failure(
+            "person-typing",
+            "a person is typing in the target terminal; wait for a quiet interval or use --force",
         )),
         Ok(ManagementServerMessage::Refused(Refusal::InvalidInput)) => Err(failure(
             "invalid-text",
@@ -3071,7 +3075,7 @@ pub(crate) mod tests {
         let (mut session, peer, tombstone) =
             tombstoned_session(&root, 1, TerminationReason::NaturalExit);
         let code =
-            |result: Result<bool, eon_workspace_protocol::v31::Failure>| result.unwrap_err().code;
+            |result: Result<bool, eon_workspace_protocol::v32::Failure>| result.unwrap_err().code;
         let paste = || LeaseInput::Paste("hi".into());
 
         let orbit = answer(
@@ -3090,9 +3094,12 @@ pub(crate) mod tests {
                 ManagementServerMessage::Input { bracketed: false },
             ],
         );
-        assert_eq!(super::send_input(&mut session, paste(), &log), Ok(true));
         assert_eq!(
-            super::send_input(&mut session, LeaseInput::Enter, &log),
+            super::send_input(&mut session, paste(), 2000, &log),
+            Ok(true)
+        );
+        assert_eq!(
+            super::send_input(&mut session, LeaseInput::Enter, 2000, &log),
             Ok(false)
         );
         assert_eq!(
@@ -3100,16 +3107,20 @@ pub(crate) mod tests {
             [
                 ManagementClientMessage::Input {
                     input: paste(),
-                    quiet_ms: 0,
+                    quiet_ms: 2000,
                 },
                 ManagementClientMessage::Input {
                     input: LeaseInput::Enter,
-                    quiet_ms: 0,
+                    quiet_ms: 2000,
                 },
             ]
         );
 
         for (reply, expected) in [
+            (
+                ManagementServerMessage::Refused(Refusal::Typing),
+                "person-typing",
+            ),
             (
                 ManagementServerMessage::Refused(Refusal::UnbracketedNewline),
                 "unbracketed-newline",
@@ -3134,7 +3145,7 @@ pub(crate) mod tests {
             (ManagementServerMessage::Allowed, "terminal-unavailable"),
         ] {
             let orbit = answer(&peer, vec![reply]);
-            let failure = super::send_input(&mut session, paste(), &log).unwrap_err();
+            let failure = super::send_input(&mut session, paste(), 2000, &log).unwrap_err();
             assert_eq!(failure.code, expected);
             assert!(!failure.detail.contains("hi"), "{failure:?}");
             orbit.join().unwrap();
@@ -3193,7 +3204,10 @@ pub(crate) mod tests {
                 ManagementServerMessage::Input { bracketed: false },
             ],
         );
-        assert_eq!(super::send_input(&mut session, paste(), &log), Ok(false));
+        assert_eq!(
+            super::send_input(&mut session, paste(), 2000, &log),
+            Ok(false)
+        );
         assert!(matches!(
             orbit.join().unwrap()[0],
             ManagementClientMessage::AttachAllow { .. }
@@ -3203,7 +3217,7 @@ pub(crate) mod tests {
         // An answer later than 2 s is unavailable. The request stays in
         // flight and holds the slot; a read behind it fails at once.
         let started = Instant::now();
-        let failure = super::send_input(&mut session, paste(), &log).unwrap_err();
+        let failure = super::send_input(&mut session, paste(), 2000, &log).unwrap_err();
         assert_eq!(failure.code, "terminal-unavailable");
         assert!(failure.detail.contains("may still arrive"), "{failure:?}");
         assert!(started.elapsed() >= Duration::from_secs(2));
@@ -3213,7 +3227,7 @@ pub(crate) mod tests {
             read_request(&mut late),
             ManagementClientMessage::Input {
                 input: paste(),
-                quiet_ms: 0,
+                quiet_ms: 2000,
             }
         );
         assert!(!super::send_program_status(&mut session, Instant::now()).unwrap());
@@ -3249,7 +3263,7 @@ pub(crate) mod tests {
         // A stopping or closed terminal has ended, and nothing is sent.
         session.stop_sent = true;
         assert_eq!(
-            code(super::send_input(&mut session, paste(), &log)),
+            code(super::send_input(&mut session, paste(), 2000, &log)),
             "terminal-ended"
         );
         session.stop_sent = false;
@@ -3289,17 +3303,17 @@ pub(crate) mod tests {
         assert!(super::send_program_status(&mut session, Instant::now()).unwrap());
         // cat never enables bracketed paste, so a line break is refused.
         assert_eq!(
-            super::send_input(&mut session, LeaseInput::Paste("a\nb".into()), &log)
+            super::send_input(&mut session, LeaseInput::Paste("a\nb".into()), 2000, &log)
                 .unwrap_err()
                 .code,
             "unbracketed-newline"
         );
         assert_eq!(
-            super::send_input(&mut session, LeaseInput::Paste("hello".into()), &log),
+            super::send_input(&mut session, LeaseInput::Paste("hello".into()), 2000, &log),
             Ok(false)
         );
         assert_eq!(
-            super::send_input(&mut session, LeaseInput::Enter, &log),
+            super::send_input(&mut session, LeaseInput::Enter, 2000, &log),
             Ok(false)
         );
         // The line discipline echoes the line, then cat writes it back.

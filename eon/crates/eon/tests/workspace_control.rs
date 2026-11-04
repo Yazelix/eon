@@ -1,4 +1,4 @@
-use eon_workspace_protocol::v31::{
+use eon_workspace_protocol::v32::{
     Action as ProtocolAction, Availability, Change, Direction, End, Failure as ProtocolFailure,
     Filter, HEADER_BYTES, InvokeIntent, LifecycleResponse, MAX_SESSIONS, Popup, PopupTarget,
     Request, Response, Runtime, Screen, Sent, Snapshot, Stopped, SubscriptionMessage, Tab,
@@ -1021,7 +1021,28 @@ fn managed_orbit_helper() {
                         let reply = std::env::var_os("EON_TEST_ORBIT_REPLY")
                             .and_then(|path| fs::read_to_string(path).ok())
                             .unwrap_or_default();
+                        if let ManagementClientMessage::Input { quiet_ms, .. } = &request
+                            && let Some(log) = std::env::var_os("EON_TEST_QUIET_LOG")
+                        {
+                            fs::OpenOptions::new()
+                                .create(true)
+                                .append(true)
+                                .open(log)
+                                .unwrap()
+                                .write_all(format!("{quiet_ms}\n").as_bytes())
+                                .unwrap();
+                        }
                         let scripted = match (reply.trim(), &request) {
+                            ("typing", ManagementClientMessage::Input { quiet_ms, .. })
+                            | (
+                                "typing-enter",
+                                ManagementClientMessage::Input {
+                                    input: LeaseInput::Enter,
+                                    quiet_ms,
+                                },
+                            ) if *quiet_ms != 0 => {
+                                Some(ManagementServerMessage::Refused(Refusal::Typing))
+                            }
                             (
                                 "busy",
                                 ManagementClientMessage::ReadVisible
@@ -8525,7 +8546,7 @@ fn running_windows_name_each_other_and_refresh_on_start_and_end() {
         }
         let response = read_request(&mut stream);
         assert!(matches!(
-            eon_workspace_protocol::v31::decode_lifecycle_response(&response).unwrap(),
+            eon_workspace_protocol::v32::decode_lifecycle_response(&response).unwrap(),
             LifecycleResponse::Runtime(_)
         ));
     }
@@ -10010,6 +10031,7 @@ fn terminal_access_workspace(root: &Path, agents: &str) -> (TestProcess, PathBuf
         .env("EON_VENUS", &venus)
         .env("EON_TEST_STOP", &stop)
         .env("EON_TEST_INPUT_LOG", root.join("input.log"))
+        .env("EON_TEST_QUIET_LOG", root.join("quiet.log"))
         .env("EON_TEST_ORBIT_REPLY", root.join("orbit-reply"))
         .env("EON_TEST_INPUT_TIMES", root.join("input-times.log"))
         .stdout(Stdio::null())
@@ -10082,6 +10104,7 @@ fn the_shown_workspace_pickers_key_presses_enter_in_it_instead_of_hiding_it() {
     let selected = relaunched.tabs[0].selected_popup.clone().unwrap();
     assert_ne!(selected, picker.id);
     assert_eq!(inputs(), format!("{} Enter\n", picker.session));
+    assert_eq!(fs::read_to_string(root.join("quiet.log")).unwrap(), "0\n");
     // Another transient popup's key still hides it, pressing nothing.
     let commands = invoke("commands", "commands", None, InvokeIntent::Toggle);
     let shown = commands.tabs[0].selected_popup.clone().unwrap();
@@ -10164,6 +10187,7 @@ fn terminal_reads_and_sends_reach_a_hidden_workspace_and_change_nothing() {
             id,
             ProtocolAction::SendTerminal {
                 target: pane.id.clone(),
+                force: false,
                 input,
             },
         )
@@ -10227,6 +10251,7 @@ fn terminal_access_none_refuses_every_read_and_send() {
             "send",
             ProtocolAction::SendTerminal {
                 target: "p1".into(),
+                force: false,
                 input: TerminalInput::Paste("echo hi".into()),
             },
         ),
@@ -10240,6 +10265,37 @@ fn terminal_access_none_refuses_every_read_and_send() {
     fs::write(&supervisor.stop, "").unwrap();
     wait_for_successful_exit(&mut supervisor.child);
     fs::remove_dir_all(root).unwrap();
+}
+
+#[test]
+fn pane_send_uses_the_windows_typing_interval() {
+    for quiet in [0, 60000] {
+        let root = temporary_directory();
+        let (mut supervisor, _, _) = terminal_access_workspace(
+            &root,
+            &format!("\n[agents]\nsend_typing_quiet_ms = {quiet}\n"),
+        );
+        fs::write(root.join("orbit-reply"), "typing").unwrap();
+        let output = eon_command(Path::new(env!("CARGO_BIN_EXE_eon")))
+            .env("EON_RUNTIME_DIR", root.join("runtime"))
+            .env("EON_CONFIG_HOME", root.join("config"))
+            .args(["pane", "send", "p1", "--json", "--", "x"])
+            .output()
+            .unwrap();
+        assert_eq!(
+            output.status.code(),
+            Some(if quiet == 0 { 0 } else { 5 }),
+            "{output:?}"
+        );
+        assert_eq!(
+            fs::read_to_string(root.join("quiet.log")).unwrap(),
+            format!("{quiet}\n")
+        );
+        assert_eq!(root.join("input.log").exists(), quiet == 0);
+        fs::write(&supervisor.stop, "").unwrap();
+        wait_for_successful_exit(&mut supervisor.child);
+        fs::remove_dir_all(root).unwrap();
+    }
 }
 
 #[test]
@@ -10631,6 +10687,76 @@ fn pane_send_pastes_then_waits_for_enter_and_exits_by_failure() {
         );
     }
     assert_eq!(sent(), log);
+    fs::write(root.join("orbit-reply"), "typing").unwrap();
+    for args in [vec!["--", "x"], vec!["--enter"]] {
+        for flags in [vec![], vec!["--json"]] {
+            let output = run(&[vec!["pane", "send", "p1"], flags.clone(), args.clone()].concat());
+            assert_eq!(output.status.code(), Some(5), "{output:?}");
+            if flags.is_empty() {
+                assert!(output.stdout.is_empty());
+                assert!(
+                    String::from_utf8_lossy(&output.stderr).starts_with("error person-typing: ")
+                );
+            } else {
+                assert_eq!(json(&output)["error"]["code"], "person-typing");
+            }
+        }
+    }
+    assert_eq!(sent(), log);
+    assert!(
+        fs::read_to_string(root.join("quiet.log"))
+            .unwrap()
+            .lines()
+            .all(|line| line == "2000")
+    );
+    let forced = run(&[
+        "pane", "send", "p1", "--force", "--enter", "--json", "--", "forced",
+    ]);
+    assert_eq!(forced.status.code(), Some(0), "{forced:?}");
+    assert_eq!(json(&forced), reply(6, true.into(), true));
+    assert!(
+        fs::read_to_string(root.join("quiet.log"))
+            .unwrap()
+            .ends_with("0\n0\n")
+    );
+    let log = sent();
+    // Do not retry text when the person starts typing during the Enter delay.
+    fs::write(root.join("orbit-reply"), "typing-enter").unwrap();
+    for flags in [vec![], vec!["--json"]] {
+        let half = run(&[
+            vec!["pane", "send", "p1", "--enter"],
+            flags.clone(),
+            vec!["--", "partial"],
+        ]
+        .concat());
+        assert_eq!(half.status.code(), Some(1), "{half:?}");
+        if flags.is_empty() {
+            let error = String::from_utf8_lossy(&half.stderr);
+            assert!(error.starts_with("error person-typing: "));
+            assert!(!error.contains("--force"), "{error}");
+            assert!(
+                error.contains("--enter alone without resending the text"),
+                "{error}"
+            );
+            assert!(error.ends_with("the text was pasted; Enter was not sent\n"));
+        } else {
+            let mut value = json(&half);
+            let error = value.as_object_mut().unwrap().remove("error").unwrap();
+            assert_eq!(error["code"], "person-typing");
+            let detail = error["detail"].as_str().unwrap();
+            assert!(!detail.contains("--force"), "{detail}");
+            assert!(
+                detail.contains("--enter alone without resending the text"),
+                "{detail}"
+            );
+            assert_eq!(value, reply(7, true.into(), false));
+        }
+    }
+    assert_eq!(
+        sent(),
+        format!("{log}{}", "session-1 Paste(\"partial\")\n".repeat(2))
+    );
+    let log = sent();
     // A paste that lands before a failed Enter stays, and the reply says so.
     fs::write(root.join("orbit-reply"), "busy-enter").unwrap();
     let half = run(&["pane", "send", "p1", "--enter", "--json", "--", "x"]);
@@ -10675,7 +10801,9 @@ fn pane_send_pastes_then_waits_for_enter_and_exits_by_failure() {
     let (mut supervisor, _, _) =
         terminal_access_workspace(&off, "\n[agents]\nterminal_access = \"none\"\n");
     let refused = eon(&off)
-        .args(["pane", "send", "p1", "--enter", "--json", "--", "x"])
+        .args([
+            "pane", "send", "p1", "--force", "--enter", "--json", "--", "x",
+        ])
         .output()
         .unwrap();
     assert_eq!(refused.status.code(), Some(1));

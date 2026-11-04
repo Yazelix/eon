@@ -5,6 +5,13 @@ installation, and proven contract changes.
 
 ## Unreleased
 
+- `eon pane send` refuses with `person-typing` (exit 5, nothing sent) while
+  a person is typing in the target. `[agents] send_typing_quiet_ms` defaults
+  to 2000; 0 disables it and `--force` bypasses only this check. If the paste
+  succeeded but Enter is refused, exit 1 with `enter: false`; do not repaste
+  (`eon-buys1.2`, EON-C36). EONW v32 and Eon 0.1.16 require old windows to
+  restart before this build's CLI can control them; live terminals keep running.
+
 - Choose quota chips individually in `[bar] widgets` with `codex_quota_5h`,
   `codex_quota_7d`, `claude_quota_5h`, `claude_quota_7d` and
   `claude_quota_scoped`. All five are listed by default. Leave out
