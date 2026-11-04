@@ -548,13 +548,14 @@ socket names, JSON fields and protocol identifiers retain their spellings.
     ([EON-C10](#eon-c10--typed-workspace-control)).
   - Closing names the expected active `tN`. A non-final pending tab first
     stops its exact picker, then disappears and restores its prior tab. Eon
-    stops the tab's pane and popup terminals one at a time and prunes each
-    confirmed end through the normal terminal-exit owner. Complete success
-    removes the tab with the same deterministic focus rule as natural exit.
-    If a later stop fails, no later terminal is stopped, the action reports
-    failure, and every remaining live terminal stays represented in the
-    partially pruned tab. A terminal that ended naturally during the request is
-    reconciled and pruned as an exit rather than reported as a successful Stop.
+    stops the tab's pane and popup terminals together, under one shared
+    five-second bound, and prunes each confirmed end, in tab order, through
+    the normal terminal-exit owner. Complete success removes the tab with the
+    same deterministic focus rule as natural exit. If any stop fails, the
+    action reports failure, and every terminal whose end was not confirmed
+    stays represented in the partially pruned tab. A terminal that ended
+    naturally during the request is reconciled and pruned as an exit rather
+    than reported as a successful Stop.
     Closing the final tab of the window's last workspace (EON-C33) ends the
     window. Eon stops its pane and popup
     terminals as above, then, as Stop does, any run of the generation that no
@@ -750,6 +751,14 @@ socket names, JSON fields and protocol identifiers retain their spellings.
     independent window, Commands > Quit this window asked to stop that
     window's terminals and, confirmed, ended only that window; the default
     window kept its terminal and its Orbit process.
+  - **Stops together (`eon-8wh7h`):** the stop step every close shares
+    stops its terminals together: seven that each take Orbit's 500 ms grace
+    stop in under 2.5 s, the confirmed ends come back in close order, and
+    only an unreconcilable terminal stays tracked, in its place
+    (`a_close_stops_its_terminals_together_and_keeps_only_the_unended`).
+    Two runs whose cleanup never completes hold it for one shared
+    five-second bound, not one each
+    (`a_close_waits_for_unreconciled_ends_within_one_shared_bound`).
   - **Quit key (`eon-7cf0y.3`):** the busy rule, the Stop, its retry after
     `stop-incomplete` and the Enter hold by `quit_asks_only_while_busy`,
     `quit_progress_follows_workspace_events` and

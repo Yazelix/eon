@@ -15,7 +15,7 @@ use super::{
     sessions::{
         self, AttachName, RunningSession, TAB_VARIABLE, TERMINAL_VARIABLE,
         acquire_generation_sessions, bound_io, name_presentation, recover_sessions,
-        session_finished, start_orbit, stop_managed_sessions,
+        session_finished, session_finished_within, start_orbit, stop_managed_sessions,
     },
     subscriptions::{Subscriber, Subscribers},
     workspace::{self, LaunchCommand, SessionEnd, SessionOperation, WorkspaceSet},
@@ -1457,36 +1457,6 @@ fn reap_finished_sessions(
     Ok(())
 }
 
-/// Stops a terminal, or reconciles the end it reached first. The caller
-/// removes an ended terminal before a reap would see it, so an Orbit lost on
-/// the way is recorded here.
-fn stop_workspace_session(
-    session: &mut RunningSession,
-    log: &DiagnosticLog,
-) -> Result<Option<i32>, String> {
-    let status = match session_finished(session)? {
-        Some(status) => Some(status),
-        None => match stop_managed_sessions(std::slice::from_mut(session), SESSION_START_TIMEOUT) {
-            Ok(_) => None,
-            Err(stop_error) => match session_finished(session) {
-                Ok(Some(status)) => Some(status),
-                Ok(None) => return Err(stop_error),
-                Err(reconcile_error) => {
-                    return Err(format!(
-                        "{stop_error}; cannot reconcile terminal after failed stop: {reconcile_error}"
-                    ));
-                }
-            },
-        },
-    };
-    if let Some(code) = status
-        && session.owner_lost()
-    {
-        log.record(&session_end_line(session, code));
-    }
-    Ok(status)
-}
-
 fn close_workspace_tab(
     request: &Request,
     tab: &str,
@@ -1589,16 +1559,16 @@ fn close_workspace(
     )
 }
 
-/// Stops a close's terminals one at a time and prunes each confirmed end, so
-/// a failed stop leaves every remaining terminal represented.
+/// Stops a close's terminals together and prunes each confirmed end in close
+/// order, so a failed stop leaves exactly the unended terminals represented
+/// (EON-C8).
 fn stop_closed_sessions(
     state: &mut SupervisorState,
     sessions: Vec<String>,
     code: &str,
 ) -> Result<(), Failure> {
-    for id in sessions {
-        let natural_status = stop_owned_session(&mut state.sessions, &id, &state.log)
-            .map_err(|detail| failure(code, format!("{id}: {detail}")))?;
+    let (ended, errors) = stop_owned_sessions(&mut state.sessions, &sessions, &state.log);
+    for (id, natural_status) in ended {
         state
             .workspaces
             .as_mut()
@@ -1610,7 +1580,11 @@ fn stop_closed_sessions(
             state.initial_status = natural_status;
         }
     }
-    Ok(())
+    if errors.is_empty() {
+        Ok(())
+    } else {
+        Err(failure(code, errors.join("; ")))
+    }
 }
 
 /// A close that stopped the window's last terminal ends its generation, and
@@ -1947,15 +1921,122 @@ fn stop_owned_session(
     id: &str,
     log: &DiagnosticLog,
 ) -> Result<Option<i32>, String> {
-    let index = sessions
+    let (ended, errors) = stop_owned_sessions(sessions, &[id.to_owned()], log);
+    match ended.into_iter().next() {
+        Some((_, status)) => Ok(status),
+        None => Err(errors.join("; ")),
+    }
+}
+
+/// Stops the live terminals `ids` names together and reconciles the ends any
+/// reached first, all under one shared bound, and removes each ended
+/// terminal. Returns the ended terminals in `ids` order with a natural end's
+/// status (`None` for a confirmed Stop), and why each other terminal stays
+/// tracked. The caller prunes an ended terminal before a reap would see it,
+/// so an Orbit lost on the way is recorded here.
+fn stop_owned_sessions(
+    sessions: &mut Vec<RunningSession>,
+    ids: &[String],
+    log: &DiagnosticLog,
+) -> (Vec<(String, Option<i32>)>, Vec<String>) {
+    // Reconciling, stopping and reconciling after a failed stop share one
+    // bound (EON-C8).
+    let deadline = Instant::now() + SESSION_START_TIMEOUT;
+    let remaining = || deadline.saturating_duration_since(Instant::now());
+    let mut errors = ids
         .iter()
-        .position(|session| session.id == id)
-        .ok_or_else(|| format!("terminal {id} is missing from the supervisor"))?;
-    let session = &mut sessions[index];
-    let status = stop_workspace_session(session, log)
-        .map_err(|error| format!("{error}{}", session.orbit_log_suffix()))?;
-    sessions.remove(index);
-    Ok(status)
+        .filter(|id| !sessions.iter().any(|session| &session.id == *id))
+        .map(|id| format!("terminal {id} is missing from the supervisor"))
+        .collect::<Vec<_>>();
+    let (closing, kept): (Vec<_>, Vec<_>) = std::mem::take(sessions)
+        .into_iter()
+        .enumerate()
+        .partition(|(_, session)| ids.contains(&session.id));
+    // A live lease is stopped. One that already closed belongs to a run that
+    // ended first: it is reconciled, without a Stop, once the stops are sent.
+    let mut settled = Vec::new();
+    let mut stopping = Vec::new();
+    let mut lagging = Vec::new();
+    for (index, mut session) in closing {
+        match session_finished_within(&mut session, Duration::ZERO) {
+            Ok(None) => stopping.push((index, session)),
+            Ok(status) => settled.push((index, session, status)),
+            Err(_) => lagging.push((index, session)),
+        }
+    }
+    let (positions, mut runs): (Vec<_>, Vec<_>) = stopping.into_iter().unzip();
+    if !runs.is_empty()
+        && let Err(mut detail) = stop_managed_sessions(&mut runs, remaining())
+    {
+        // A terminal that ended by itself while its Stop failed is an exit.
+        let mut unconfirmed = false;
+        for session in runs.iter_mut().filter(|session| !session.is_finished()) {
+            if let Err(error) = session_finished_within(session, remaining()) {
+                detail.push_str(&format!(
+                    "; {}: cannot reconcile terminal after failed stop: {error}",
+                    session.id
+                ));
+            }
+            if !session.is_finished() {
+                unconfirmed = true;
+                detail.push_str(&session.orbit_log_suffix());
+            }
+        }
+        if unconfirmed {
+            errors.push(detail);
+        }
+    }
+    for (index, mut session) in lagging {
+        let status = match session_finished_within(&mut session, remaining()) {
+            Ok(Some(status)) => Some(status),
+            Ok(None) => {
+                errors.push(format!(
+                    "{}: terminal end was not confirmed{}",
+                    session.id,
+                    session.orbit_log_suffix()
+                ));
+                None
+            }
+            Err(error) => {
+                errors.push(format!(
+                    "{}: {error}{}",
+                    session.id,
+                    session.orbit_log_suffix()
+                ));
+                None
+            }
+        };
+        settled.push((index, session, status));
+    }
+    // An ended run's status is already known, so reading it never waits.
+    let stopped = positions.into_iter().zip(runs).map(|(index, mut session)| {
+        let status = if session.is_finished() && !session.stopped() {
+            session_finished_within(&mut session, Duration::ZERO)
+                .ok()
+                .flatten()
+        } else {
+            None
+        };
+        (index, session, status)
+    });
+    let mut ended = Vec::new();
+    let mut unended = kept;
+    for (index, session, status) in settled.into_iter().chain(stopped) {
+        if !session.is_finished() {
+            unended.push((index, session));
+            continue;
+        }
+        if let Some(code) = status
+            && session.owner_lost()
+        {
+            log.record(&session_end_line(&session, code));
+        }
+        ended.push((session.id.clone(), status));
+    }
+    unended.sort_by_key(|(index, _)| *index);
+    *sessions = unended.into_iter().map(|(_, session)| session).collect();
+    ended.sort_by_key(|(id, _)| ids.iter().position(|named| named == id));
+    (ended, errors)
 }
 
 /// Dismisses every pending tab's pair after presentation detachment
@@ -2713,10 +2794,10 @@ pub(super) fn status_code(status: ExitStatus) -> i32 {
 #[cfg(test)]
 mod tests {
     use super::{
-        Action, DiagnosticLog, Dispatched, LaunchMode, PairStart, SupervisorState, WorkspaceSet,
-        effective_uid, pair_command, prepare_configuration, prepare_runtime,
-        reap_finished_sessions, stop_generation_sessions, stop_owned_session, temporary_directory,
-        venus_command, window_bar, xdg_path,
+        Action, DiagnosticLog, Dispatched, LaunchMode, PairStart, SESSION_START_TIMEOUT,
+        SupervisorState, WorkspaceSet, effective_uid, pair_command, prepare_configuration,
+        prepare_runtime, reap_finished_sessions, stop_generation_sessions, stop_owned_session,
+        stop_owned_sessions, temporary_directory, venus_command, window_bar, xdg_path,
     };
     #[cfg(target_os = "linux")]
     use super::{WorkspaceAction, apply_session_operation};
@@ -3321,6 +3402,124 @@ mod tests {
             Ok(None)
         );
         fs::set_permissions(&record, fs::Permissions::from_mode(0o600)).unwrap();
+        for root in roots {
+            fs::remove_dir_all(root).unwrap();
+        }
+    }
+
+    #[test]
+    fn a_close_stops_its_terminals_together_and_keeps_only_the_unended() {
+        // Each child ignores SIGHUP, so its Orbit waits out the 500 ms grace
+        // before SIGKILL (ORB-C12): stopped one at a time, the seven healthy
+        // terminals the close names would take 3.5 seconds.
+        let roots = (0..9).map(|_| temporary_directory()).collect::<Vec<_>>();
+        let mut sessions = roots
+            .iter()
+            .map(|root| leased_orbit(root, "trap '' HUP; exec sleep 30"))
+            .collect::<Vec<_>>();
+        for (number, session) in sessions.iter_mut().enumerate() {
+            session.id = format!("session-{}", number + 1);
+        }
+        let log = DiagnosticLog::open_in(Ok(roots[0].join("logs")), "g1-test", "workspace");
+        // A record that no longer validates leaves session-4 unreconcilable.
+        let record = sessions::tests::record(&sessions[3]).to_path_buf();
+        fs::set_permissions(&record, fs::Permissions::from_mode(0o644)).unwrap();
+        // The close leaves session-2 alone; session-10 does not exist.
+        let ids = [
+            "session-9",
+            "session-8",
+            "session-7",
+            "session-6",
+            "session-5",
+        ]
+        .into_iter()
+        .chain(["session-4", "session-10", "session-3", "session-1"])
+        .map(String::from)
+        .collect::<Vec<_>>();
+
+        let started = Instant::now();
+        let (ended, errors) = stop_owned_sessions(&mut sessions, &ids, &log);
+        let elapsed = started.elapsed();
+        assert!(
+            elapsed < Duration::from_millis(2500),
+            "the close's stops ran one at a time: {elapsed:?}"
+        );
+        assert_eq!(
+            ended,
+            [
+                "session-9",
+                "session-8",
+                "session-7",
+                "session-6",
+                "session-5"
+            ]
+            .into_iter()
+            .chain(["session-3", "session-1"])
+            .map(|id| (id.to_owned(), None))
+            .collect::<Vec<_>>()
+        );
+        assert_eq!(errors.len(), 2, "{errors:?}");
+        assert_eq!(
+            errors[0],
+            "terminal session-10 is missing from the supervisor"
+        );
+        assert!(errors[1].starts_with("session-4: "), "{errors:?}");
+        // The terminals that stay keep their order.
+        assert_eq!(
+            sessions
+                .iter()
+                .map(|session| session.id.as_str())
+                .collect::<Vec<_>>(),
+            ["session-2", "session-4"]
+        );
+        assert_eq!(
+            stop_owned_session(&mut sessions, "session-2", &log),
+            Ok(None)
+        );
+        fs::set_permissions(&record, fs::Permissions::from_mode(0o600)).unwrap();
+        for root in roots {
+            fs::remove_dir_all(root).unwrap();
+        }
+    }
+
+    #[test]
+    fn a_close_waits_for_unreconciled_ends_within_one_shared_bound() {
+        let roots = (0..3).map(|_| temporary_directory()).collect::<Vec<_>>();
+        let mut sessions = roots
+            .iter()
+            .map(|root| leased_orbit(root, "exec sleep 30"))
+            .collect::<Vec<_>>();
+        for (number, session) in sessions.iter_mut().enumerate() {
+            session.id = format!("session-{}", number + 1);
+        }
+        let log = DiagnosticLog::open_in(Ok(roots[0].join("logs")), "g1-test", "workspace");
+        // Two runs whose cleanup never completes: each could hold the close
+        // for the whole bound by itself.
+        sessions::tests::stall(&sessions[0]);
+        sessions::tests::stall(&sessions[2]);
+        let ids = ["session-1", "session-2", "session-3"].map(String::from);
+
+        let started = Instant::now();
+        let (ended, errors) = stop_owned_sessions(&mut sessions, &ids, &log);
+        let elapsed = started.elapsed();
+        assert!(
+            elapsed < SESSION_START_TIMEOUT + Duration::from_millis(1500),
+            "the close waited past its one shared bound: {elapsed:?}"
+        );
+        assert_eq!(ended, [("session-2".to_owned(), None)]);
+        assert_eq!(errors.len(), 2, "{errors:?}");
+        assert!(errors[0].starts_with("session-1: "), "{errors:?}");
+        assert!(errors[1].starts_with("session-3: "), "{errors:?}");
+        assert_eq!(
+            sessions
+                .iter()
+                .map(|session| session.id.as_str())
+                .collect::<Vec<_>>(),
+            ["session-1", "session-3"]
+        );
+        for session in &mut sessions {
+            sessions::tests::end_stalled(session);
+        }
         for root in roots {
             fs::remove_dir_all(root).unwrap();
         }

@@ -2058,6 +2058,15 @@ fn wait_and_finalize_tombstone(
 }
 
 pub(super) fn session_finished(session: &mut RunningSession) -> Result<Option<i32>, String> {
+    session_finished_within(session, SESSION_START_TIMEOUT)
+}
+
+/// As [`session_finished`], giving a closed lease's run at most `wait` to
+/// reconcile.
+pub(super) fn session_finished_within(
+    session: &mut RunningSession,
+    wait: Duration,
+) -> Result<Option<i32>, String> {
     let end = if let Some(end) = session.finished {
         end
     } else {
@@ -2088,7 +2097,7 @@ pub(super) fn session_finished(session: &mut RunningSession) -> Result<Option<i3
         let wait = if session.reap_failure_reported {
             Duration::ZERO
         } else {
-            SESSION_START_TIMEOUT
+            wait
         };
         wait_and_finalize_tombstone(session, None, None, Instant::now() + wait)?
     };
@@ -2871,6 +2880,24 @@ pub(crate) mod tests {
     /// The run record of a leased Orbit this test started.
     pub(crate) fn record(session: &RunningSession) -> &Path {
         &session.record
+    }
+
+    /// Leaves a run that looks ended but cannot be reconciled: its Orbit is
+    /// stopped with its record Live, and its lease reads end of file.
+    pub(crate) fn stall(session: &RunningSession) {
+        // SAFETY: signals the test-owned Orbit process.
+        assert_eq!(unsafe { libc::kill(orbit_pid(session), libc::SIGSTOP) }, 0);
+        session.lease.shutdown(std::net::Shutdown::Read).unwrap();
+    }
+
+    /// Ends a stalled run's Orbit, which stops its terminal (ORB-C12).
+    pub(crate) fn end_stalled(session: &mut RunningSession) {
+        let orbit = orbit_pid(session);
+        // SAFETY: signals the test-owned Orbit process.
+        assert_eq!(unsafe { libc::kill(orbit, libc::SIGTERM) }, 0);
+        // SAFETY: signals the test-owned Orbit process.
+        assert_eq!(unsafe { libc::kill(orbit, libc::SIGCONT) }, 0);
+        session.child.as_mut().unwrap().wait().unwrap();
     }
 
     /// Marks a run ended before the supervisor reaps it.

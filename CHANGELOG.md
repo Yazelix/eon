@@ -5,6 +5,13 @@ installation, and proven contract changes.
 
 ## Unreleased
 
+- Closing a tab, pane or workspace stops its terminals together, under one
+  shared five-second bound, instead of one at a time (`eon-8wh7h`, EON-C8).
+  The window and `eon` commands waited while the stops ran; a tab of
+  programs slow to exit could hold them past six seconds, and the window then
+  showed "Cannot read Eon workspace response header". If a stop fails, Eon
+  still stops the close's other terminals; only the terminals whose end it
+  could not confirm stay in the tab.
 - The Project directory picker and the Files popup are one Yazi per tab
   (`eon-quick-search-parity-23y9.2`). A fresh window, a new tab (Alt+Shift+T,
   `eon tab create`, `eon workspace new`) and Alt+Z show the tab's Files on
