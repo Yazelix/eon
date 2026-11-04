@@ -205,14 +205,23 @@ impl Subscribers {
     /// `end` for those whose named objects are gone, and writes without
     /// waiting.
     pub(super) fn turn(&mut self, projection: Projection, now: Instant) {
-        let published = self.events.publish(projection);
+        // Each event is encoded once, which weighs it for the retained log
+        // and serves every subscriber that admits it. One that cannot be
+        // encoded weighs nothing and ends those subscribers.
+        let mut encoded: Vec<Option<Rc<[u8]>>> = Vec::new();
+        let published = self.events.publish(projection, |numbered| {
+            let bytes = encode(&event_message(numbered.seq, &numbered.event)).ok();
+            let weight = bytes.as_ref().map_or(0, |bytes| bytes.len());
+            encoded.push(bytes);
+            weight
+        });
+        // `weigh` saw each published event once, in order.
+        debug_assert_eq!(encoded.len(), published.len());
         let projection = self
             .events
             .projection()
             .expect("a published window has a projection");
         let seq = self.events.seq();
-        // Each event is encoded once, for every subscriber that admits it.
-        let mut encoded: Vec<Option<Rc<[u8]>>> = vec![None; published.len()];
         self.subscribers.retain_mut(|subscriber| {
             if subscriber.closing {
                 return subscriber.flush(now) == Flushed::Open;
@@ -223,23 +232,16 @@ impl Subscribers {
                     return false;
                 }
             } else {
-                for (numbered, frame) in published.iter().zip(&mut encoded) {
+                for (numbered, frame) in published.iter().zip(&encoded) {
                     // Past the bound, the gap's snapshot covers the rest.
                     if subscriber.gap_due {
                         break;
                     }
                     if subscriber.filter.admits(&numbered.event) {
-                        let bytes = match frame {
-                            Some(bytes) => Rc::clone(bytes),
-                            None => {
-                                let message = event_message(numbered.seq, &numbered.event);
-                                let Ok(bytes) = encode(&message) else {
-                                    return false;
-                                };
-                                frame.insert(bytes).clone()
-                            }
+                        let Some(bytes) = frame else {
+                            return false;
                         };
-                        subscriber.queue(bytes, true);
+                        subscriber.queue(Rc::clone(bytes), true);
                     }
                 }
             }
@@ -1797,5 +1799,103 @@ pub(crate) mod tests {
         assert_eq!(gap.snapshot.tab_messages, 2);
         // Reading it took far longer than 30 s.
         assert!(second > 60, "{second} s");
+    }
+
+    /// Two tabs of 120 terminals with endpoints and labels near EONW's
+    /// bounds, so each `tab-activated` event carries hundreds of KB.
+    fn large_tabs() -> Projection {
+        let mut window = base();
+        for (tab, prefix) in [("t1", "a"), ("t2", "b")] {
+            let tab = tab_mut(&mut window, tab);
+            tab.columns[0].panes = (0..120)
+                .map(|index| {
+                    let id = format!("{prefix}{index}");
+                    let mut pane = crate::events::tests::pane(&id, &format!("{prefix}s{index}"));
+                    pane.endpoint = format!("/{}/{id}", "e".repeat(4000)).into_bytes();
+                    pane.label = format!("{id}  {}", "€".repeat(eonw::MAX_PANE_NAME_CHARS));
+                    pane
+                })
+                .collect();
+            tab.columns[0].expanded = format!("{prefix}0");
+            tab.selected_pane = Some(format!("{prefix}0"));
+        }
+        window
+    }
+
+    /// The bead's worst case: flipping between two large tabs. The retained
+    /// events stay within 8 MiB as EONW frames (EON-C39), so far fewer than
+    /// 1024 of them are kept; each turn encodes its event once.
+    #[test]
+    fn flipping_two_large_tabs_keeps_the_retained_events_within_8_mib() {
+        let now = Instant::now();
+        let window = large_tabs();
+        let mut flipped = window.clone();
+        crate::events::tests::activate(&mut flipped, "w1", "t2");
+        let mut subscribers = Subscribers::new(GENERATION);
+        let only_queue = eonw::Filter {
+            kinds: vec![EventKind::Queue],
+            ..eonw::Filter::default()
+        };
+        let mut peer = subscribe(&mut subscribers, &window, only_queue.clone(), None, now).unwrap();
+        let SubscriptionMessage::Subscribed(first) = read(&mut peer) else {
+            panic!("no SUBSCRIBED");
+        };
+        read_available_bytes(&mut peer);
+        let stream = subscribers.events.stream().to_owned();
+        let mut largest = 0;
+        // The byte bound binds from the 17th event; weighing what is kept
+        // costs a full encode, so it is checked every 8 turns.
+        for turn in 0..48 {
+            ENCODED.with(|encoded| encoded.set(0));
+            subscribers.turn(if turn % 2 == 0 { &flipped } else { &window }.clone(), now);
+            assert_eq!(ENCODED.with(Cell::get), 1, "turn {turn}");
+            if turn % 8 != 7 {
+                continue;
+            }
+            let seq = subscribers.events.seq();
+            let retained: Vec<_> = (0..=seq)
+                .find_map(|after| subscribers.events.resume(&stream, after))
+                .unwrap()
+                .map(|numbered| {
+                    encode_subscription_message(&event_message(numbered.seq, &numbered.event))
+                        .unwrap()
+                        .len()
+                })
+                .collect();
+            let bytes: usize = retained.iter().sum();
+            largest = largest.max(*retained.last().unwrap());
+            assert!(
+                bytes <= 8 * 1024 * 1024,
+                "turn {turn}: {bytes} bytes retained"
+            );
+        }
+        // What a count bound alone would have kept.
+        eprintln!(
+            "tab-activated frames up to {largest} bytes; 1024 of them would be {} MiB",
+            largest * 1024 / (1024 * 1024)
+        );
+        assert!(largest > 500 * 1024);
+
+        // A cursor whose events the bound dropped gets a full snapshot; one
+        // ten events back, about 5 MiB, still resumes. The last turn showed
+        // `window`, as these subscribers do.
+        let seq = subscribers.events.seq();
+        for (after, resumed) in [(first.seq, false), (seq - 10, true)] {
+            let mut again = subscribe(
+                &mut subscribers,
+                &window,
+                only_queue.clone(),
+                Some(Resume {
+                    stream: stream.clone(),
+                    seq: after,
+                }),
+                now,
+            )
+            .unwrap();
+            let SubscriptionMessage::Subscribed(head) = read(&mut again) else {
+                panic!("no SUBSCRIBED");
+            };
+            assert_eq!(head.snapshot.is_none(), resumed, "after {after}");
+        }
     }
 }

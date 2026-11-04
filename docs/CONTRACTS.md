@@ -3943,7 +3943,9 @@ socket names, JSON fields and protocol identifiers retain their spellings.
   which kinds a stream admits for rebuilding. Amended on 2026-11-03
   (approved by Lucca, relayed by eon-overseer) by `eon-ciwn.7`: output has
   moved when the subscriber has read at least one write unit of up to 4 KiB
-  since the last check.
+  since the last check. Amended on 2026-11-03 (approved by Lucca, relayed by
+  eon-overseer) by `eon-ciwn.11`: the retained events are bounded by 8 MiB
+  as well as by 1024 events.
 - **Consumer:** An agent or script running as the person's user, in an Eon
   terminal or outside one, that must notice workspace and attention changes
   without polling: an overseer answering its tab's questions (`eon-ciwn.4`),
@@ -4069,14 +4071,15 @@ socket names, JSON fields and protocol identifiers retain their spellings.
     snapshot holding the `workspaces`, `tabs`, `attention_queue` and `busy`
     that a non-resumed snapshot line carries, then live events. Events are never
     skipped silently.
-  - **Resume.** `--after STREAM:SEQ` resumes when STREAM names this
-    supervisor process, SEQ is not above its current event counter, and its
-    last 1024 events still hold every event after SEQ. The snapshot line
-    then carries `"resumed":true`, `seq` equal to SEQ and no state, and the
-    matching events after SEQ follow. Otherwise the first line is a full
-    snapshot with `"resumed":false`. STREAM identifies one supervisor
-    process, so a supervisor restarted or recovered under the same
-    generation (EON-C15) is a new STREAM.
+  - **Resume.** `--after STREAM:SEQ` resumes when STREAM names this supervisor
+    process, SEQ is not above its current event counter, and the events it
+    retains still hold every event after SEQ. It retains its last 1024 events,
+    or fewer while those take more than 8 MiB as EONW frames. The snapshot
+    line then carries `"resumed":true`, `seq` equal to SEQ and no state, and
+    the matching events after SEQ follow. Otherwise the first line is a full
+    snapshot with `"resumed":false`. STREAM identifies one supervisor process,
+    so a supervisor restarted or recovered under the same generation (EON-C15)
+    is a new STREAM.
   - **End.** The stream ends with `{"type":"end","reason",...}` and EOF.
     Its reasons are:
     - `ended`, with `generation`: Stop, quit or the window's final close;

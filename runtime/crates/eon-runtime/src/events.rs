@@ -14,6 +14,10 @@ use std::{
 
 /// How many of the latest events a supervisor keeps for `--after`.
 const RETAINED_EVENTS: usize = 1024;
+/// The most the kept events may weigh as EONW frames (EON-C39): a `tab-*`
+/// event carries its whole tab, so a count alone would let a few large tabs
+/// flipping hold hundreds of MB.
+const RETAINED_BYTES: usize = 8 * 1024 * 1024;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(super) enum Kind {
@@ -1031,11 +1035,12 @@ pub(super) struct Numbered {
 }
 
 /// The supervisor's event source: the last published projection, the event
-/// counter and the latest events.
+/// counter and the latest events with their weights.
 pub(super) struct Events {
     stream: String,
     seq: u64,
-    retained: VecDeque<Numbered>,
+    retained: VecDeque<(Numbered, usize)>,
+    retained_bytes: usize,
     published: Option<Projection>,
 }
 
@@ -1049,6 +1054,7 @@ impl Events {
             stream: format!("{generation}-{}", request_id()),
             seq: 0,
             retained: VecDeque::new(),
+            retained_bytes: 0,
             published: None,
         }
     }
@@ -1068,8 +1074,15 @@ impl Events {
 
     /// Publishes `next` and numbers the events that turn the last published
     /// projection into it; the first is the baseline and has none. The
-    /// supervisor publishes every loop turn while it has subscribers.
-    pub(super) fn publish(&mut self, next: Projection) -> Vec<Numbered> {
+    /// supervisor publishes every loop turn while it has subscribers. Each
+    /// event is kept at the weight `weigh` gives it, its EONW frame size, and
+    /// the oldest go while more than 1024 are kept or they weigh more than
+    /// 8 MiB.
+    pub(super) fn publish(
+        &mut self,
+        next: Projection,
+        mut weigh: impl FnMut(&Numbered) -> usize,
+    ) -> Vec<Numbered> {
         let Some(published) = &self.published else {
             self.published = Some(next);
             return Vec::new();
@@ -1086,9 +1099,17 @@ impl Events {
                 }
             })
             .collect();
-        self.retained.extend(numbered.iter().cloned());
-        let excess = self.retained.len().saturating_sub(RETAINED_EVENTS);
-        self.retained.drain(..excess);
+        for event in &numbered {
+            let weight = weigh(event);
+            self.retained_bytes += weight;
+            self.retained.push_back((event.clone(), weight));
+        }
+        while self.retained.len() > RETAINED_EVENTS || self.retained_bytes > RETAINED_BYTES {
+            let Some((_, weight)) = self.retained.pop_front() else {
+                break;
+            };
+            self.retained_bytes -= weight;
+        }
         numbered
     }
 
@@ -1100,6 +1121,7 @@ impl Events {
         if self.published.take().is_some() {
             self.seq += 1;
             self.retained.clear();
+            self.retained_bytes = 0;
         }
     }
 
@@ -1112,8 +1134,12 @@ impl Events {
         after: u64,
     ) -> Option<impl Iterator<Item = &Numbered>> {
         let oldest = self.seq + 1 - self.retained.len() as u64;
-        (stream == self.stream && after <= self.seq && after + 1 >= oldest)
-            .then(|| self.retained.iter().filter(move |event| event.seq > after))
+        (stream == self.stream && after <= self.seq && after + 1 >= oldest).then(|| {
+            self.retained
+                .iter()
+                .map(|(event, _)| event)
+                .filter(move |event| event.seq > after)
+        })
     }
 }
 
@@ -1259,6 +1285,11 @@ pub(super) mod tests {
             Vec::new(),
         );
         Projection::new(&snapshots, Vec::new())
+    }
+
+    /// Makes `tab` the active tab of `workspace`.
+    pub(crate) fn activate(projection: &mut Projection, workspace: &str, tab: &str) {
+        workspace_mut(projection, workspace).item.active_tab = tab.into();
     }
 
     fn workspace_mut<'a>(projection: &'a mut Projection, id: &str) -> &'a mut WorkspaceState {
@@ -2048,11 +2079,11 @@ pub(super) mod tests {
         let mut events = Events::new("g1-0123");
         let stream = events.stream().to_owned();
         assert!(stream.starts_with("g1-0123-"));
-        assert!(events.publish(before.clone()).is_empty());
+        assert!(events.publish(before.clone(), |_| 0).is_empty());
         assert_eq!(events.seq(), 0);
         assert_eq!(events.resume(&stream, 0).unwrap().count(), 0);
 
-        let published = events.publish(after.clone());
+        let published = events.publish(after.clone(), |_| 0);
         assert_eq!(published.len(), 15);
         assert_eq!(
             published.iter().map(|event| event.seq).collect::<Vec<_>>(),
@@ -2068,13 +2099,13 @@ pub(super) mod tests {
         assert!(events.resume(&stream, 16).is_none());
 
         // An unchanged turn publishes nothing.
-        assert!(events.publish(after.clone()).is_empty());
+        assert!(events.publish(after.clone(), |_| 0).is_empty());
         // Each toggle of p1's attention is one event.
         let mut toggled = after.clone();
         pane_mut(&mut toggled, "p1").attention = None;
         for turn in 0..1100 {
             let next = if turn % 2 == 0 { &toggled } else { &after };
-            assert_eq!(events.publish(next.clone()).len(), 1);
+            assert_eq!(events.publish(next.clone(), |_| 0).len(), 1);
         }
         assert_eq!(events.seq(), 1115);
         let oldest = events.resume(&stream, 1115 - 1024).unwrap();
@@ -2084,12 +2115,52 @@ pub(super) mod tests {
     }
 
     #[test]
+    fn the_log_keeps_at_most_8_mib_of_events_and_resumes_only_within_them() {
+        let (_, after) = busy_turn();
+        let mut toggled = after.clone();
+        pane_mut(&mut toggled, "p1").attention = None;
+        let mut events = Events::new("g1-0123");
+        let stream = events.stream().to_owned();
+        events.publish(after.clone(), |_| 0);
+        // Events of 1 MiB each: the log keeps the last 8.
+        for turn in 0..20 {
+            let next = if turn % 2 == 0 { &toggled } else { &after };
+            assert_eq!(events.publish(next.clone(), |_| 1024 * 1024).len(), 1);
+        }
+        assert_eq!(events.seq(), 20);
+        assert_eq!(events.resume(&stream, 12).unwrap().count(), 8);
+        assert!(events.resume(&stream, 11).is_none());
+
+        // One event of 3 MiB pushes out the three oldest; small ones then
+        // fill toward the count bound without passing the byte bound.
+        events.publish(toggled.clone(), |_| 3 * 1024 * 1024);
+        assert_eq!(events.resume(&stream, 15).unwrap().count(), 6);
+        assert!(events.resume(&stream, 14).is_none());
+        for turn in 0..2000 {
+            let next = if turn % 2 == 0 { &after } else { &toggled };
+            events.publish(next.clone(), |_| 100);
+        }
+        assert_eq!(events.seq(), 2021);
+        assert_eq!(events.resume(&stream, 2021 - 1024).unwrap().count(), 1024);
+        assert!(events.resume(&stream, 2021 - 1025).is_none());
+
+        // A pause forgets the weights with the events.
+        events.pause();
+        events.publish(after.clone(), |_| 0);
+        for turn in 0..8 {
+            let next = if turn % 2 == 0 { &toggled } else { &after };
+            events.publish(next.clone(), |_| 1024 * 1024);
+        }
+        assert_eq!(events.resume(&stream, 2022).unwrap().count(), 8);
+    }
+
+    #[test]
     fn each_event_source_is_its_own_stream() {
         // Two supervisors of one generation, even started together.
         let (first, second) = (Events::new("g1-0123"), Events::new("g1-0123"));
         assert_ne!(first.stream(), second.stream());
         let mut first = first;
-        first.publish(base());
+        first.publish(base(), |_| 0);
         assert!(second.resume(first.stream(), 0).is_none());
     }
 
@@ -2098,29 +2169,29 @@ pub(super) mod tests {
         let (before, after) = busy_turn();
         let mut events = Events::new("g1-0123");
         let stream = events.stream().to_owned();
-        events.publish(before.clone());
-        events.publish(after.clone());
+        events.publish(before.clone(), |_| 0);
+        events.publish(after.clone(), |_| 0);
         let cursor = events.seq();
         // The last subscriber leaves; p1 asks and is answered unobserved.
         events.pause();
         assert_eq!(events.projection(), None);
         assert!(events.resume(&stream, cursor).is_none());
         // The window ends where it was, so a diff would find nothing.
-        assert!(events.publish(after.clone()).is_empty());
+        assert!(events.publish(after.clone(), |_| 0).is_empty());
         assert!(events.resume(&stream, cursor).is_none());
         let fresh = events.seq();
         assert_eq!(fresh, cursor + 1);
         assert_eq!(events.resume(&stream, fresh).unwrap().count(), 0);
         let mut later = after.clone();
         pane_mut(&mut later, "p4").label = "tests".into();
-        assert_eq!(events.publish(later).len(), 1);
+        assert_eq!(events.publish(later, |_| 0).len(), 1);
         assert_eq!(events.resume(&stream, fresh).unwrap().count(), 1);
 
         // Pausing before any publish, or again before the next, changes
         // nothing more.
         let mut idle = Events::new("g1-0123");
         idle.pause();
-        idle.publish(before);
+        idle.publish(before, |_| 0);
         assert_eq!(idle.seq(), 0);
         idle.pause();
         idle.pause();
