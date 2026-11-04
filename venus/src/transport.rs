@@ -16,7 +16,7 @@ use std::{
         mpsc,
     },
     thread,
-    time::{Duration, SystemTime},
+    time::{Duration, Instant, SystemTime},
 };
 
 /// Events delivered from the local-session worker to the native event loop.
@@ -54,12 +54,19 @@ pub struct Transport {
 }
 
 /// One complete result from the Eon-owned workspace request boundary.
-// The queue holds at most 128 events; snapshot payloads are already heap-owned.
+// The queue holds at most 168 events; snapshot payloads are already heap-owned.
 #[allow(clippy::large_enum_variant)]
 #[derive(Clone, Debug, PartialEq)]
 pub enum WorkspaceEvent {
     Response(WorkspaceResponse),
-    Unavailable(String),
+    /// A request has waited `Waits::slow` without an answer; its answer or failure follows.
+    Slow,
+    /// The workspace cannot be reached. `notice` is what the window shows; `detail`, which may
+    /// hold operating-system text, goes only to Venus's diagnostics.
+    Unavailable {
+        notice: String,
+        detail: Option<String>,
+    },
     /// Follows the event that answered the action `send` numbered `ticket`; `accepted` when that
     /// answer was a snapshot.
     Answered {
@@ -83,19 +90,75 @@ type WorkerItem = (WorkspaceAction, Option<u64>);
 
 /// The fallback refresh; an event the subscription reads refreshes at once.
 const WORKSPACE_REFRESH_INTERVAL: Duration = Duration::from_millis(250);
+/// How long a request waits before the window says Eon is slow. Fixed: VEN-C8 sets this bound,
+/// well inside the six-second one below, so the notice comes before any loss. A terminal start
+/// can still take longer under load; eon-pimct tracks slow starts.
+const WORKSPACE_SLOW_THRESHOLD: Duration = Duration::from_secs(2);
+
+/// What the window shows when Venus cannot connect to Eon (VEN-C8).
+const UNREACHABLE_NOTICE: &str = "Cannot reach Eon.";
+/// What the window shows when a connected request fails or times out (VEN-C8).
+const NOT_ANSWERING_NOTICE: &str = "Eon is not answering.";
+
+/// How long the workspace worker waits on Eon.
+#[derive(Clone, Copy, Debug)]
+struct Waits {
+    /// Between refreshes while no action is queued.
+    refresh: Duration,
+    /// Before a request still unanswered reports `WorkspaceEvent::Slow`.
+    slow: Duration,
+    /// Before a request other than Stop gives up.
+    answer: Duration,
+    /// Before a Stop gives up.
+    stop: Duration,
+}
+
+const WAITS: Waits = Waits {
+    refresh: WORKSPACE_REFRESH_INTERVAL,
+    slow: WORKSPACE_SLOW_THRESHOLD,
+    answer: WORKSPACE_EXCHANGE_TIMEOUT,
+    stop: STOP_EXCHANGE_TIMEOUT,
+};
+
+impl Waits {
+    /// The product's waits, refreshing every `refresh` and never reporting a slow answer, for
+    /// tests that are not about one.
+    #[cfg(test)]
+    fn refreshing(refresh: Duration) -> Self {
+        Self {
+            refresh,
+            slow: Duration::from_secs(3600),
+            ..WAITS
+        }
+    }
+
+    fn timeout(&self, action: &WorkspaceAction) -> Duration {
+        if is_stop(action) {
+            self.stop
+        } else {
+            self.answer
+        }
+    }
+}
 
 impl WorkspaceTransport {
     #[must_use]
     pub fn start(socket: PathBuf, wake: impl Fn() + Send + Sync + 'static) -> Self {
-        Self::start_with_refresh(socket, WORKSPACE_REFRESH_INTERVAL, wake)
+        Self::start_with(socket, WAITS, wake)
     }
 
+    /// The transport refreshing every `refresh`, for tests that are not about slow answers.
+    #[cfg(test)]
     fn start_with_refresh(
         socket: PathBuf,
-        refresh_interval: Duration,
+        refresh: Duration,
         wake: impl Fn() + Send + Sync + 'static,
     ) -> Self {
-        let transport = Self::start_worker(socket.clone(), refresh_interval, wake);
+        Self::start_with(socket, Waits::refreshing(refresh), wake)
+    }
+
+    fn start_with(socket: PathBuf, waits: Waits, wake: impl Fn() + Send + Sync + 'static) -> Self {
+        let transport = Self::start_worker(socket.clone(), waits, wake);
         // Without its subscription the worker still refreshes on its interval.
         let _ = thread::Builder::new()
             .name("venus-eon-events".into())
@@ -110,7 +173,7 @@ impl WorkspaceTransport {
     /// The transport without its subscription thread.
     fn start_worker(
         socket: PathBuf,
-        refresh_interval: Duration,
+        waits: Waits,
         wake: impl Fn() + Send + Sync + 'static,
     ) -> Self {
         let (actions, receiver) = mpsc::sync_channel(32);
@@ -125,12 +188,13 @@ impl WorkspaceTransport {
                     Arc::clone(&subscription),
                     Arc::clone(&notify),
                 );
-                move || run_workspace(socket, receiver, refresh_interval, subscription, notify)
+                move || run_workspace(socket, receiver, waits, subscription, notify)
             })
         {
-            notify(WorkspaceEvent::Unavailable(format!(
-                "Cannot start the Eon workspace worker: {error}"
-            )));
+            notify(WorkspaceEvent::Unavailable {
+                notice: UNREACHABLE_NOTICE.into(),
+                detail: Some(format!("Cannot start the Eon workspace worker: {error}")),
+            });
         }
         Self {
             actions,
@@ -180,11 +244,12 @@ struct WorkspaceEventQueue(Mutex<VecDeque<WorkspaceEvent>>);
 
 impl WorkspaceEventQueue {
     fn push(&self, event: WorkspaceEvent) -> bool {
-        // A full action channel (32 queued and one in flight) answers with two events each, a
-        // response and its `Answered`. A snapshot replaces a snapshot still waiting at the end,
-        // which an `Answered` would otherwise follow, so refreshes and hides add at most one
-        // event between answers.
-        const CAPACITY: usize = 128;
+        // A full action channel (32 queued and one in flight) answers with at most three events
+        // each: a slow report, a response and its `Answered`. A snapshot replaces a snapshot
+        // still waiting at the end, or one that only a slow report follows, which an `Answered`
+        // would otherwise follow, and a slow report adds nothing after another. So refreshes and
+        // hides add at most two events between answers: 33 × 5 = 165.
+        const CAPACITY: usize = 168;
         let mut events = self.0.lock().expect("workspace event queue lock poisoned");
         let wake = events.is_empty();
         let snapshot = |event: &WorkspaceEvent| {
@@ -193,13 +258,29 @@ impl WorkspaceEventQueue {
                 WorkspaceEvent::Response(WorkspaceResponse::Snapshot(_))
             )
         };
+        let slow = |event: &WorkspaceEvent| *event == WorkspaceEvent::Slow;
+        let len = events.len();
         if snapshot(&event) && events.back().is_some_and(snapshot) {
             *events.back_mut().expect("the queue has a last event") = event;
+        } else if slow(&event) && events.back().is_some_and(slow) {
+            // The waiting report already says so.
+        } else if snapshot(&event)
+            && events.back().is_some_and(slow)
+            && len >= 2
+            && snapshot(&events[len - 2])
+        {
+            // [.., Snapshot, Slow] becomes [.., Slow, Snapshot], one slow report kept.
+            events.remove(len - 2);
+            if len >= 3 && slow(&events[len - 3]) {
+                events.pop_back();
+            }
+            events.push_back(event);
         } else if events.len() == CAPACITY {
             events.clear();
-            events.push_back(WorkspaceEvent::Unavailable(
-                "Eon workspace event queue exceeded its bounded capacity".into(),
-            ));
+            events.push_back(WorkspaceEvent::Unavailable {
+                notice: "Eon workspace event queue exceeded its bounded capacity".into(),
+                detail: None,
+            });
         } else {
             events.push_back(event);
         }
@@ -229,9 +310,37 @@ fn workspace_notifier(
 fn run_workspace(
     socket: PathBuf,
     receiver: mpsc::Receiver<WorkerItem>,
-    refresh_interval: Duration,
+    waits: Waits,
     subscription: Arc<Subscription>,
     notify: Arc<Notify>,
+) {
+    let watch = SlowWatch::default();
+    thread::scope(|scope| {
+        // Without the watch, answers and failures still arrive; only the slow report is lost.
+        let _ = thread::Builder::new()
+            .name("venus-eon-slow".into())
+            .spawn_scoped(scope, || watch.run(&*notify));
+        // Stops the watch even if the worker panics, so the scope can end.
+        let _stop = StopWatch(&watch);
+        exchange_until_dropped(&socket, &receiver, waits, &subscription, &*notify, &watch);
+    });
+}
+
+struct StopWatch<'a>(&'a SlowWatch);
+
+impl Drop for StopWatch<'_> {
+    fn drop(&mut self) {
+        self.0.stop();
+    }
+}
+
+fn exchange_until_dropped(
+    socket: &Path,
+    receiver: &mpsc::Receiver<WorkerItem>,
+    waits: Waits,
+    subscription: &Subscription,
+    notify: &Notify,
+    watch: &SlowWatch,
 ) {
     let nonce = SystemTime::now()
         .duration_since(SystemTime::UNIX_EPOCH)
@@ -243,17 +352,19 @@ fn run_workspace(
     let mut ticket = None;
     loop {
         let begun = subscription.presented().hides;
-        let event = workspace_exchange(&socket, nonce, counter, action)
-            .map(WorkspaceEvent::Response)
-            .unwrap_or_else(WorkspaceEvent::Unavailable);
+        watch.begin(waits.slow);
+        let result = workspace_exchange(socket, nonce, counter, action, &waits);
+        // Ended before the answer is delivered, so a slow report always precedes it.
+        watch.end();
+        let event = result.map_or_else(ExchangeError::into_event, WorkspaceEvent::Response);
         let accepted = matches!(
             event,
             WorkspaceEvent::Response(WorkspaceResponse::Snapshot(_))
         );
         let answered = ticket.map(|ticket| WorkspaceEvent::Answered { ticket, accepted });
-        subscription.deliver(event, answered, begun, &*notify);
+        subscription.deliver(event, answered, begun, notify);
         counter = counter.wrapping_add(1);
-        (action, ticket) = match receiver.recv_timeout(refresh_interval) {
+        (action, ticket) = match receiver.recv_timeout(waits.refresh) {
             Ok((action, ticket)) => {
                 if ticket.is_none() {
                     subscription.link().refresh_due = false;
@@ -266,6 +377,73 @@ fn run_workspace(
             ),
             Err(mpsc::RecvTimeoutError::Disconnected) => break,
         };
+    }
+}
+
+/// Reports `WorkspaceEvent::Slow` once for the worker's request still unanswered at its
+/// deadline.
+#[derive(Default)]
+struct SlowWatch {
+    state: Mutex<Watched>,
+    changed: Condvar,
+}
+
+#[derive(Default)]
+struct Watched {
+    /// When the request in flight becomes slow; None once it is answered or reported.
+    deadline: Option<Instant>,
+    stopped: bool,
+}
+
+impl SlowWatch {
+    fn state(&self) -> std::sync::MutexGuard<'_, Watched> {
+        self.state
+            .lock()
+            .expect("workspace slow watch lock poisoned")
+    }
+
+    fn begin(&self, slow: Duration) {
+        self.state().deadline = Some(Instant::now() + slow);
+        self.changed.notify_all();
+    }
+
+    /// The request has its answer or failure; no slow report follows.
+    fn end(&self) {
+        self.state().deadline = None;
+    }
+
+    /// Runs while the worker unwinds too, so it never panics on a poisoned lock.
+    fn stop(&self) {
+        self.state
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .stopped = true;
+        self.changed.notify_all();
+    }
+
+    fn run(&self, notify: &Notify) {
+        let mut state = self.state();
+        while !state.stopped {
+            let now = Instant::now();
+            state = match state.deadline {
+                None => self
+                    .changed
+                    .wait(state)
+                    .expect("workspace slow watch lock poisoned"),
+                Some(deadline) if now < deadline => {
+                    self.changed
+                        .wait_timeout(state, deadline - now)
+                        .expect("workspace slow watch lock poisoned")
+                        .0
+                }
+                Some(_) => {
+                    state.deadline = None;
+                    // Under the lock, so the worker's `end` and then its answer follow this.
+                    notify(WorkspaceEvent::Slow);
+                    state
+                }
+            };
+        }
     }
 }
 
@@ -662,14 +840,6 @@ const WORKSPACE_EXCHANGE_TIMEOUT: Duration = Duration::from_secs(6);
 /// then five seconds for the Stop itself.
 const STOP_EXCHANGE_TIMEOUT: Duration = Duration::from_secs(41);
 
-fn exchange_timeout(action: &WorkspaceAction) -> Duration {
-    if is_stop(action) {
-        STOP_EXCHANGE_TIMEOUT
-    } else {
-        WORKSPACE_EXCHANGE_TIMEOUT
-    }
-}
-
 fn is_stop(action: &WorkspaceAction) -> bool {
     matches!(
         action,
@@ -677,73 +847,114 @@ fn is_stop(action: &WorkspaceAction) -> bool {
     )
 }
 
+/// Why a workspace request has no answer.
+#[derive(Debug, PartialEq)]
+enum ExchangeError {
+    /// Venus could not connect to Eon; the detail may hold operating-system text.
+    Unreachable(String),
+    /// Connected, but the request or its answer did not get through: a timeout, a read or write
+    /// failure, or an early end. The detail may hold operating-system text.
+    NotAnswering(String),
+    /// Venus refused the request or its answer; the detail is Venus's own.
+    Invalid(String),
+}
+
+impl ExchangeError {
+    fn into_event(self) -> WorkspaceEvent {
+        let (notice, detail) = match self {
+            Self::Unreachable(detail) => (UNREACHABLE_NOTICE.into(), Some(detail)),
+            Self::NotAnswering(detail) => (NOT_ANSWERING_NOTICE.into(), Some(detail)),
+            Self::Invalid(detail) => (NOT_ANSWERING_NOTICE.into(), Some(detail)),
+        };
+        WorkspaceEvent::Unavailable { notice, detail }
+    }
+
+    fn into_detail(self) -> String {
+        match self {
+            Self::Unreachable(detail) | Self::NotAnswering(detail) | Self::Invalid(detail) => {
+                detail
+            }
+        }
+    }
+}
+
 fn workspace_exchange(
     socket: &Path,
     nonce: u128,
     counter: usize,
     action: WorkspaceAction,
-) -> Result<WorkspaceResponse, String> {
-    let timeout = Some(exchange_timeout(&action));
+    waits: &Waits,
+) -> Result<WorkspaceResponse, ExchangeError> {
+    let timeout = Some(waits.timeout(&action));
     let stop = is_stop(&action);
     let request = WorkspaceRequest {
         id: format!("venus-{}-{nonce}-{counter}", std::process::id()),
         caller: None,
         action,
     };
-    let encoded = workspace::encode_request(&request)
-        .map_err(|error| format!("Cannot encode Eon workspace action: {error}"))?;
+    let encoded = workspace::encode_request(&request).map_err(|error| {
+        ExchangeError::Invalid(format!("Cannot encode Eon workspace action: {error}"))
+    })?;
     let mut stream = UnixStream::connect(socket).map_err(|error| {
-        format!(
+        ExchangeError::Unreachable(format!(
             "Cannot connect to Eon workspace at {}: {error}",
             socket.display()
-        )
+        ))
     })?;
     stream
         .set_read_timeout(timeout)
         .and_then(|()| stream.set_write_timeout(timeout))
-        .map_err(|error| format!("Cannot bound Eon workspace I/O: {error}"))?;
-    stream
-        .write_all(&encoded)
-        .map_err(|error| format!("Cannot send Eon workspace action: {error}"))?;
+        .map_err(|error| {
+            ExchangeError::NotAnswering(format!("Cannot bound Eon workspace I/O: {error}"))
+        })?;
+    stream.write_all(&encoded).map_err(|error| {
+        ExchangeError::NotAnswering(format!("Cannot send Eon workspace action: {error}"))
+    })?;
 
+    let response = read_workspace_message(&mut stream)?;
     if !stop {
-        return read_workspace_response(&mut stream);
+        return workspace::decode_response(&response).map_err(invalid_response);
     }
     // Stop answers with a lifecycle reply: `Stopped` ends the generation as `Ended` does.
-    let response = read_workspace_message(&mut stream)?;
-    match workspace::decode_lifecycle_response(&response)
-        .map_err(|error| format!("Eon sent an invalid workspace response: {error}"))?
-    {
+    match workspace::decode_lifecycle_response(&response).map_err(invalid_response)? {
         workspace::LifecycleResponse::Stopped(stopped) => {
             Ok(WorkspaceResponse::Ended(workspace::Ended {
                 generation: stopped.generation,
             }))
         }
         workspace::LifecycleResponse::Failure(failure) => Ok(WorkspaceResponse::Failure(failure)),
-        workspace::LifecycleResponse::Runtime(_) => {
-            Err("Eon answered Stop with a runtime report".into())
-        }
+        workspace::LifecycleResponse::Runtime(_) => Err(ExchangeError::Invalid(
+            "Eon answered Stop with a runtime report".into(),
+        )),
     }
+}
+
+fn invalid_response(error: workspace::Error) -> ExchangeError {
+    ExchangeError::Invalid(format!("Eon sent an invalid workspace response: {error}"))
 }
 
 /// Read one bounded canonical response, leaving subsequent control bytes unread.
 pub fn read_workspace_response(stream: &mut impl Read) -> Result<WorkspaceResponse, String> {
-    let response = read_workspace_message(stream)?;
-    workspace::decode_response(&response)
-        .map_err(|error| format!("Eon sent an invalid workspace response: {error}"))
+    let response = read_workspace_message(stream).map_err(ExchangeError::into_detail)?;
+    workspace::decode_response(&response).map_err(|error| invalid_response(error).into_detail())
 }
 
-fn read_workspace_message(stream: &mut impl Read) -> Result<Vec<u8>, String> {
+fn read_workspace_message(stream: &mut impl Read) -> Result<Vec<u8>, ExchangeError> {
     let mut response = vec![0; workspace::HEADER_BYTES];
-    stream
-        .read_exact(&mut response)
-        .map_err(|error| format!("Cannot read Eon workspace response header: {error}"))?;
-    let length = workspace::declared_message_len(&response)
-        .map_err(|error| format!("Eon sent an invalid workspace response: {error}"))?;
+    stream.read_exact(&mut response).map_err(|error| {
+        ExchangeError::NotAnswering(format!(
+            "Cannot read Eon workspace response header: {error}"
+        ))
+    })?;
+    let length = workspace::declared_message_len(&response).map_err(invalid_response)?;
     response.resize(length, 0);
     stream
         .read_exact(&mut response[workspace::HEADER_BYTES..])
-        .map_err(|error| format!("Cannot read complete Eon workspace response: {error}"))?;
+        .map_err(|error| {
+            ExchangeError::NotAnswering(format!(
+                "Cannot read complete Eon workspace response: {error}"
+            ))
+        })?;
     Ok(response)
 }
 
@@ -1715,10 +1926,14 @@ mod tests {
             1,
             0,
             WorkspaceAction::Workspace(workspace::WorkspaceAction::Inspect),
+            &WAITS,
         )
         .unwrap_err();
 
-        assert!(error.contains("unsupported EONW version"));
+        assert!(
+            matches!(&error, ExchangeError::Invalid(text) if text.contains("unsupported EONW version")),
+            "{error:?}"
+        );
         server.join().unwrap();
     }
 
@@ -1740,10 +1955,204 @@ mod tests {
             1,
             0,
             WorkspaceAction::Workspace(workspace::WorkspaceAction::CreatePane { focus: true }),
+            &WAITS,
         );
 
         assert_eq!(result, Ok(snapshot));
         server.join().unwrap();
+    }
+
+    /// Waits short enough for a test: a request is slow after 100 ms and gives up after
+    /// `answer`.
+    fn quick_waits(answer: Duration) -> Waits {
+        Waits {
+            refresh: Duration::from_secs(60),
+            slow: Duration::from_millis(100),
+            answer,
+            stop: answer,
+        }
+    }
+
+    fn worker(socket: &Path, waits: Waits) -> (WorkspaceTransport, mpsc::Receiver<()>) {
+        let (wakes, receiver) = mpsc::channel();
+        let transport = WorkspaceTransport::start_worker(socket.to_path_buf(), waits, move || {
+            let _ = wakes.send(());
+        });
+        (transport, receiver)
+    }
+
+    /// The events through the first that `last` matches, or all that arrive within 5 s.
+    fn take_through(
+        transport: &WorkspaceTransport,
+        receiver: &mpsc::Receiver<()>,
+        last: impl Fn(&WorkspaceEvent) -> bool,
+    ) -> Vec<WorkspaceEvent> {
+        let deadline = Instant::now() + Duration::from_secs(5);
+        let mut events = Vec::new();
+        while !events.last().is_some_and(&last) {
+            let Some(wait) = deadline.checked_duration_since(Instant::now()) else {
+                break;
+            };
+            if receiver.recv_timeout(wait).is_err() {
+                break;
+            }
+            events.extend(transport.drain_events());
+        }
+        events
+    }
+
+    fn is_response(event: &WorkspaceEvent) -> bool {
+        matches!(event, WorkspaceEvent::Response(_))
+    }
+
+    fn is_answered(event: &WorkspaceEvent) -> bool {
+        matches!(event, WorkspaceEvent::Answered { .. })
+    }
+
+    fn is_unavailable(event: &WorkspaceEvent) -> bool {
+        matches!(event, WorkspaceEvent::Unavailable { .. })
+    }
+
+    #[test]
+    fn a_late_answer_reports_slow_before_it_arrives() {
+        let socket = TestSocket::new();
+        let listener = UnixListener::bind(&socket.path).unwrap();
+        let snapshot = workspace_snapshot();
+        let late = snapshot.clone();
+        let server = thread::spawn(move || {
+            // The refresh, then a queued action: each request is slow, not only refreshes.
+            for _ in 0..2 {
+                let (mut stream, _) = accept_workspace_action(&listener);
+                // A second past the slow threshold, so a loaded machine still reports it.
+                thread::sleep(Duration::from_millis(1100));
+                write_response(&mut stream, &late);
+            }
+        });
+        let (transport, receiver) = worker(&socket.path, quick_waits(Duration::from_secs(10)));
+
+        assert_eq!(
+            take_through(&transport, &receiver, is_response),
+            [WorkspaceEvent::Slow, snapshot_event(&snapshot)]
+        );
+        let ticket = transport.send(focus_pane()).unwrap();
+        assert_eq!(
+            take_through(&transport, &receiver, is_answered),
+            [
+                WorkspaceEvent::Slow,
+                snapshot_event(&snapshot),
+                WorkspaceEvent::Answered {
+                    ticket,
+                    accepted: true,
+                },
+            ]
+        );
+        server.join().unwrap();
+    }
+
+    #[test]
+    fn a_request_past_its_timeout_reports_that_eon_is_not_answering() {
+        let socket = TestSocket::new();
+        let listener = UnixListener::bind(&socket.path).unwrap();
+        let (held, release) = mpsc::channel::<()>();
+        let server = thread::spawn(move || {
+            // The refresh waits without an answer until Venus gives up.
+            let (silent, _) = accept_workspace_action(&listener);
+            // The queued action's connection ends without an answer.
+            drop(accept_workspace_action(&listener));
+            let _ = release.recv();
+            drop(silent);
+        });
+        // The slow report has 900 ms to arrive before the timeout.
+        let (transport, receiver) = worker(&socket.path, quick_waits(Duration::from_secs(1)));
+
+        let events = take_through(&transport, &receiver, is_unavailable);
+        let ticket = transport.send(focus_pane()).unwrap();
+        let mut ended = take_through(&transport, &receiver, is_answered);
+        // The early end may still take past the slow threshold on a loaded machine.
+        ended.retain(|event| *event != WorkspaceEvent::Slow);
+        held.send(()).unwrap();
+        server.join().unwrap();
+
+        // The operating system's text goes only to the diagnostics.
+        let not_answering = |events: &[WorkspaceEvent]| match events {
+            [
+                WorkspaceEvent::Unavailable {
+                    notice,
+                    detail: Some(detail),
+                },
+                ..,
+            ] => {
+                assert_eq!(notice, "Eon is not answering.");
+                assert!(
+                    detail.starts_with("Cannot read Eon workspace response header: "),
+                    "{detail}"
+                );
+                detail.clone()
+            }
+            _ => panic!("expected Eon not answering, got {events:?}"),
+        };
+        assert_eq!(events[0], WorkspaceEvent::Slow, "{events:?}");
+        let timed_out = not_answering(&events[1..]);
+        assert!(timed_out.contains("(os error "), "{timed_out}");
+        not_answering(&ended);
+        assert_eq!(
+            ended[1],
+            WorkspaceEvent::Answered {
+                ticket,
+                accepted: false,
+            }
+        );
+    }
+
+    #[test]
+    fn an_invalid_answer_reports_that_eon_is_not_answering() {
+        let socket = TestSocket::new();
+        let listener = UnixListener::bind(&socket.path).unwrap();
+        let server = thread::spawn(move || {
+            let (mut stream, _) = accept_workspace_action(&listener);
+            let mut response =
+                workspace::encode_response(&WorkspaceResponse::Snapshot(workspace_snapshot()))
+                    .unwrap();
+            response[4..6].copy_from_slice(&(workspace::VERSION + 1).to_le_bytes());
+            stream.write_all(&response).unwrap();
+        });
+        let (transport, receiver) = worker(&socket.path, quick_waits(Duration::from_secs(10)));
+
+        let events = take_through(&transport, &receiver, is_unavailable);
+        server.join().unwrap();
+        // Venus's own account of the answer goes only to the diagnostics.
+        assert!(
+            matches!(
+                events.last(),
+                Some(WorkspaceEvent::Unavailable { notice, detail: Some(detail) })
+                    if notice == "Eon is not answering."
+                        && detail.contains("unsupported EONW version")
+            ),
+            "{events:?}"
+        );
+    }
+
+    #[test]
+    fn a_missing_or_refused_socket_reports_that_venus_cannot_reach_eon() {
+        let missing = TestSocket::new();
+        let refused = TestSocket::new();
+        // Its file stays after the listener closes, so connecting is refused.
+        drop(UnixListener::bind(&refused.path).unwrap());
+        for socket in [missing, refused] {
+            let (transport, receiver) = worker(&socket.path, quick_waits(Duration::from_secs(10)));
+            let events = take(&transport, &receiver, 1);
+            // The operating system's text goes only to the diagnostics.
+            assert!(
+                matches!(
+                    &events[..],
+                    [WorkspaceEvent::Unavailable { notice, detail: Some(detail) }]
+                        if notice == "Cannot reach Eon."
+                            && detail.starts_with("Cannot connect to Eon workspace at ")
+                            && detail.contains("(os error ")
+                ),
+                "{events:?}"
+            );
+        }
     }
 
     #[test]
@@ -1777,20 +2186,20 @@ mod tests {
         });
 
         assert_eq!(
-            workspace_exchange(&socket.path, 1, 0, stop()),
+            workspace_exchange(&socket.path, 1, 0, stop(), &WAITS),
             Ok(WorkspaceResponse::Ended(workspace::Ended {
                 generation: "g7".into()
             }))
         );
         assert_eq!(
-            workspace_exchange(&socket.path, 1, 1, stop()),
+            workspace_exchange(&socket.path, 1, 1, stop(), &WAITS),
             Ok(WorkspaceResponse::Failure(failure))
         );
         server.join().unwrap();
         // Stop waits as long as `eon quit` does: one in-flight operation, then the Stop.
-        assert_eq!(exchange_timeout(&stop()), Duration::from_secs(41));
+        assert_eq!(WAITS.timeout(&stop()), Duration::from_secs(41));
         assert_eq!(
-            exchange_timeout(&WorkspaceAction::Workspace(
+            WAITS.timeout(&WorkspaceAction::Workspace(
                 workspace::WorkspaceAction::Inspect
             )),
             WORKSPACE_EXCHANGE_TIMEOUT
@@ -1939,6 +2348,41 @@ mod tests {
         assert_eq!(
             transport.catch_up(),
             [snapshot_event(&workspace_snapshot())]
+        );
+    }
+
+    #[test]
+    fn a_slow_answer_keeps_the_snapshot_a_hide_patches() {
+        let socket = TestSocket::new();
+        let mut eon = FakeEon::new(UnixListener::bind(&socket.path).unwrap());
+        let waits = Waits {
+            slow: Duration::from_secs(1),
+            ..quick_waits(Duration::from_secs(10))
+        };
+        let (transport, receiver, mut subscription) =
+            held_subscription_waiting(&socket, &mut eon, &shown_popup(), waits);
+        let ticket = transport.send(focus_pane()).unwrap();
+        let (mut late, _) = eon.exchange();
+        assert_eq!(
+            take_through(&transport, &receiver, |event| *event
+                == WorkspaceEvent::Slow),
+            [WorkspaceEvent::Slow]
+        );
+        write_subscription(&mut subscription, &popup_hidden(1));
+        assert_eq!(
+            transport.catch_up(),
+            [snapshot_event(&workspace_snapshot())]
+        );
+        write_response(&mut late, &workspace_snapshot());
+        assert_eq!(
+            take(&transport, &receiver, 2),
+            [
+                snapshot_event(&workspace_snapshot()),
+                WorkspaceEvent::Answered {
+                    ticket,
+                    accepted: true
+                }
+            ]
         );
     }
 
@@ -2174,6 +2618,25 @@ mod tests {
         assert_eq!(events.drain(), [second, answered, first]);
     }
 
+    #[test]
+    fn slow_reports_keep_waiting_snapshots_coalesced() {
+        let events = WorkspaceEventQueue::default();
+        let first = snapshot_event(&workspace_snapshot());
+        let second = snapshot_event(&shown_popup());
+        assert!(events.push(first.clone()));
+        // Each slow refresh adds a slow report and its snapshot.
+        for _ in 0..200 {
+            assert!(!events.push(WorkspaceEvent::Slow));
+            assert!(!events.push(second.clone()));
+        }
+        assert!(!events.push(WorkspaceEvent::Slow));
+        assert!(!events.push(WorkspaceEvent::Slow));
+        assert_eq!(
+            events.drain(),
+            [WorkspaceEvent::Slow, second, WorkspaceEvent::Slow]
+        );
+    }
+
     /// A transport whose subscription only `catch_up` reads, accepted while `presented` shows,
     /// with no event waiting.
     fn held_subscription(
@@ -2181,13 +2644,22 @@ mod tests {
         eon: &mut FakeEon,
         presented: &Snapshot,
     ) -> (WorkspaceTransport, mpsc::Receiver<()>, UnixStream) {
-        let (wakes, receiver) = mpsc::channel();
-        let transport =
-            WorkspaceTransport::start_worker(socket.path.clone(), Duration::from_secs(60), {
-                move || {
-                    let _ = wakes.send(());
-                }
-            });
+        held_subscription_waiting(
+            socket,
+            eon,
+            presented,
+            Waits::refreshing(Duration::from_secs(60)),
+        )
+    }
+
+    /// `held_subscription` with the worker waiting `waits`.
+    fn held_subscription_waiting(
+        socket: &TestSocket,
+        eon: &mut FakeEon,
+        presented: &Snapshot,
+        waits: Waits,
+    ) -> (WorkspaceTransport, mpsc::Receiver<()>, UnixStream) {
+        let (transport, receiver) = worker(&socket.path, waits);
         eon.answer_refresh(presented);
         assert_eq!(take(&transport, &receiver, 1), [snapshot_event(presented)]);
         transport.subscription.open(&socket.path).unwrap();

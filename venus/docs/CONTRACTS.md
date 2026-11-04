@@ -564,7 +564,9 @@ re-proved when that platform or feature is next touched.
 
 ## VEN-C8 — Eon workspace presentation
 
-- **Status:** Partially proved
+- **Status:** Partially proved. Amended on 2026-11-04 (approved under
+  Lucca's standing approval rule, relayed by eon-overseer) by `eon-8wh7h`: the
+  slow notice and product text for unavailable notices.
 - **Consumer:** One Venus surface controlled by an Eon workspace.
 - **Trigger:** Outside visible `VEN-C18` popup presentation, Eon supplies
   durable topology, a workspace action changes tab, pane, focus, order,
@@ -771,7 +773,13 @@ re-proved when that platform or feature is next touched.
   remain available through unchanged, quota-only, and EON-C31 attention- or
   sidebar-only refreshes until workspace structure changes, except the EON-C31
   empty-queue notice, whose lifetime VEN-C30 sets.
-  Connection-unavailable notices clear on a successful snapshot.
+  When Eon has not answered a workspace request within two seconds, Venus
+  shows "Eon is slow to answer." and changes nothing else. A request that
+  fails or reaches its timeout makes the workspace unavailable, with "Cannot
+  reach Eon." when Venus cannot connect and "Eon is not answering."
+  otherwise; these notices never show operating-system error text, which
+  Venus writes to its diagnostics. Slow and connection-unavailable notices
+  clear on a successful snapshot.
   No notice disables link hover, highlight, open or copy: VEN-C5 links work
   while any workspace or link notice shows. The status line shows the newer of
   a workspace notice and a VEN-C5 link result. With no pending result, a
@@ -862,6 +870,31 @@ re-proved when that platform or feature is next touched.
     `eon-test -p yazelix-venus` passed 170 + 75 + 21, and clippy and the
     Darwin clippy were clean. Installed proof as recorded under EON-C8
     (`/nix/store/n907id3sg8sramk8sd2bb1qgaqqsvi44-eon-0.1.13`).
+  - **Slow and unavailable notices (`eon-8wh7h`):** the slow report before a
+    late answer, to refreshes and actions alike, by
+    `a_late_answer_reports_slow_before_it_arrives`; the kept popup snapshot by
+    `a_slow_answer_keeps_the_snapshot_a_hide_patches`; "Eon is not
+    answering." on a timeout or an early end, with the operating-system text
+    only in the diagnostic detail, by
+    `a_request_past_its_timeout_reports_that_eon_is_not_answering`, and on
+    an invalid answer by `an_invalid_answer_reports_that_eon_is_not_answering`;
+    "Cannot reach Eon." for a missing or refused socket by
+    `a_missing_or_refused_socket_reports_that_venus_cannot_reach_eon`; the
+    model's notice, which keeps the snapshot, its quotas and availability, is
+    not renewed on repeat and clears on the next snapshot, by
+    `a_slow_answer_shows_its_notice_and_changes_nothing_else`; a covered
+    refused-action or empty-queue notice that returns with its own serial when
+    the slow notice clears, unless its own lifetime ended, by
+    `the_slow_notice_keeps_the_notice_it_covers`, and a VEN-C5 link result
+    that stays newer than it by
+    `a_link_result_stays_newer_than_a_notice_shown_again_after_the_slow_notice`;
+    and bounded queued slow reports by
+    `slow_reports_keep_waiting_snapshots_coalesced`. Venus shows no slow notice
+    before the first snapshot, when no window exists yet, or while the
+    workspace is already unavailable, whose notice then shows. The window
+    applies a slow report to the model alone and returns before its quit,
+    prompt and attention-jump handling; no test without a display covers that
+    return.
 - **Open proof:** Columns (`eon-splits-opwv`): layout, column attachments and
   the 40-column threshold are covered by
   `columns_sit_side_by_side_and_keep_the_selected_column_primary`,

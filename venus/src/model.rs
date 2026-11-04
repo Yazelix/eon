@@ -256,8 +256,11 @@ impl Resources {
 pub struct WorkspaceModel {
     snapshot: Option<Snapshot>,
     notice: Option<WorkspaceNotice>,
-    /// Counts new notices, so a newer notice can outrank older client notices.
+    /// The serial the shown notice was given, so a newer notice can outrank older client
+    /// notices and a client notice can outrank older ones.
     notice_serial: u64,
+    /// The last serial given; every new notice takes the next, so none is reused.
+    last_serial: u64,
     /// Whether Eon was last unreachable, or refused every refresh after a failed Stop; a
     /// snapshot clears it.
     unavailable: bool,
@@ -269,7 +272,17 @@ enum WorkspaceNotice {
     /// Eon's answer to a queue jump with no agent needing attention (EON-C31).
     NoAttention(String),
     Unavailable(String),
+    /// A workspace request has waited past its slow threshold (VEN-C8). `under` is the notice
+    /// it covers, which shows again when the slow notice clears if its own lifetime keeps it.
+    Slow {
+        under: Option<Box<WorkspaceNotice>>,
+        /// The serial `under` was given.
+        serial: u64,
+    },
 }
+
+/// What the window shows while Eon is slow to answer a workspace request (VEN-C8).
+const SLOW_NOTICE: &str = "Eon is slow to answer.";
 
 /// The selected column's panes, which size the initial window.
 #[must_use]
@@ -394,6 +407,7 @@ impl WorkspaceModel {
             WorkspaceNotice::Action(text)
             | WorkspaceNotice::NoAttention(text)
             | WorkspaceNotice::Unavailable(text) => text.as_str(),
+            WorkspaceNotice::Slow { .. } => SLOW_NOTICE,
         })
     }
 
@@ -422,13 +436,34 @@ impl WorkspaceModel {
                             || bar_workspace(current) != bar_workspace(&snapshot)
                             || hidden_needs_input(current) != hidden_needs_input(&snapshot)
                     });
-                let notice_cleared = (workspace_changed
-                    || matches!(self.notice, Some(WorkspaceNotice::Unavailable(_)))
-                    || matches!(self.notice, Some(WorkspaceNotice::NoAttention(_)))
-                        && self.snapshot.as_ref().is_some_and(|current| {
-                            attention_states(&current.tabs) != attention_states(&snapshot.tabs)
-                        }))
-                    && self.notice.take().is_some();
+                let kept = |notice: &WorkspaceNotice| {
+                    !workspace_changed
+                        && match notice {
+                            WorkspaceNotice::Action(_) => true,
+                            WorkspaceNotice::NoAttention(_) => {
+                                self.snapshot.as_ref().is_none_or(|current| {
+                                    attention_states(&current.tabs)
+                                        == attention_states(&snapshot.tabs)
+                                })
+                            }
+                            WorkspaceNotice::Unavailable(_) | WorkspaceNotice::Slow { .. } => false,
+                        }
+                };
+                let notice_cleared = match self.notice.take() {
+                    // The covered notice returns as it was, with its own serial.
+                    Some(WorkspaceNotice::Slow { under, serial }) => {
+                        self.notice = under.map(|under| *under).filter(|under| kept(under));
+                        if self.notice.is_some() {
+                            self.notice_serial = serial;
+                        }
+                        true
+                    }
+                    Some(notice) if kept(&notice) => {
+                        self.notice = Some(notice);
+                        false
+                    }
+                    notice => notice.is_some(),
+                };
                 self.snapshot = Some(snapshot);
                 self.unavailable = false;
                 (snapshot_changed || notice_cleared, workspace_changed)
@@ -467,14 +502,27 @@ impl WorkspaceModel {
     /// Mark the current notice as a refused action's answer, so it outranks older client notices.
     pub fn renew_notice(&mut self) -> bool {
         self.notice.is_some() && {
-            self.notice_serial += 1;
+            self.next_serial();
             true
         }
     }
 
     /// Clear the empty-queue notice, which the next terminal input retires (VEN-C30).
     pub fn dismiss_no_attention(&mut self) -> bool {
-        matches!(self.notice, Some(WorkspaceNotice::NoAttention(_))) && self.notice.take().is_some()
+        match &mut self.notice {
+            Some(WorkspaceNotice::NoAttention(_)) => {
+                self.notice = None;
+                true
+            }
+            // Under the slow notice it no longer returns; what shows is unchanged.
+            Some(WorkspaceNotice::Slow { under, .. })
+                if matches!(under.as_deref(), Some(WorkspaceNotice::NoAttention(_))) =>
+            {
+                *under = None;
+                false
+            }
+            _ => false,
+        }
     }
 
     /// Refuse an action locally with the same lifetime as an Eon rejection.
@@ -494,6 +542,21 @@ impl WorkspaceModel {
             WorkspaceNotice::Unavailable(bounded(detail.into())),
             answers_action,
         ) || expired_quota
+    }
+
+    /// Show that Eon is slow to answer, changing nothing else (VEN-C8); true when the notice is
+    /// new. Before the first snapshot no window shows it, and while Eon is unavailable its
+    /// notice says more, so either keeps what it has. The notice it covers is kept under it.
+    pub fn mark_slow(&mut self) -> bool {
+        if self.snapshot.is_none()
+            || self.unavailable
+            || matches!(self.notice, Some(WorkspaceNotice::Slow { .. }))
+        {
+            return false;
+        }
+        let under = self.notice.take().map(Box::new);
+        let serial = self.notice_serial;
+        self.set_notice(WorkspaceNotice::Slow { under, serial }, true)
     }
 
     #[must_use]
@@ -547,8 +610,15 @@ impl WorkspaceModel {
     fn set_notice(&mut self, notice: WorkspaceNotice, answers_action: bool) -> bool {
         let fresh = answers_action || self.notice.as_ref() != Some(&notice);
         self.notice = Some(notice);
-        self.notice_serial += u64::from(fresh);
+        if fresh {
+            self.next_serial();
+        }
         fresh
+    }
+
+    fn next_serial(&mut self) {
+        self.last_serial += 1;
+        self.notice_serial = self.last_serial;
     }
 }
 
@@ -1103,9 +1173,9 @@ mod tests {
         );
     }
 
-    #[test]
-    fn quota_refresh_and_workspace_failures_preserve_structure() {
-        let snapshot = Snapshot {
+    /// A workspace of two tabs whose snapshot carries both quotas.
+    fn quota_snapshot() -> Snapshot {
+        Snapshot {
             workspace: "w1".into(),
             active_workspace: "w1".into(),
             workspaces: vec![eon_workspace_protocol::v31::WorkspaceInfo {
@@ -1186,7 +1256,128 @@ mod tests {
             claude_quota_failure: None,
             running: None,
             busy: None,
+        }
+    }
+
+    #[test]
+    fn a_slow_answer_shows_its_notice_and_changes_nothing_else() {
+        let snapshot = quota_snapshot();
+        let mut model = WorkspaceModel::default();
+        assert!(
+            !model.mark_slow(),
+            "no window shows it before the first snapshot"
+        );
+        assert_eq!(model.notice(), None);
+
+        model.apply(WorkspaceResponse::Snapshot(snapshot.clone()));
+        let before = model.notice_serial();
+        assert!(model.mark_slow());
+        assert_eq!(model.notice(), Some("Eon is slow to answer."));
+        assert!(
+            model.notice_serial() > before,
+            "the first report is a new notice"
+        );
+        assert!(!model.unavailable(), "the workspace stays available");
+        assert_eq!(
+            model.snapshot(),
+            Some(&snapshot),
+            "quotas and the rest of the snapshot stay"
+        );
+        let slow = model.notice_serial();
+        assert!(!model.mark_slow(), "a repeated report is no new notice");
+        assert_eq!(model.notice_serial(), slow);
+
+        assert_eq!(
+            model.apply(WorkspaceResponse::Snapshot(snapshot.clone())),
+            (true, false),
+            "an identical snapshot clears it"
+        );
+        assert_eq!(model.notice(), None);
+
+        model.mark_unavailable("Eon is not answering.", false);
+        let unavailable = model.notice_serial();
+        assert!(
+            !model.mark_slow(),
+            "an unavailable workspace keeps its notice"
+        );
+        assert_eq!(model.notice(), Some("Eon is not answering."));
+        assert_eq!(model.notice_serial(), unavailable);
+        assert!(model.unavailable());
+    }
+
+    #[test]
+    fn the_slow_notice_keeps_the_notice_it_covers() {
+        let snapshot = quota_snapshot();
+        let mut changed = snapshot.clone();
+        changed.active_tab = "t2".into();
+        let empty_queue = || {
+            WorkspaceResponse::Failure(Failure {
+                code: "no-attention".into(),
+                detail: "No agent needs attention".into(),
+            })
         };
+        let mut model = WorkspaceModel::default();
+        model.apply(WorkspaceResponse::Snapshot(snapshot.clone()));
+
+        for refused in [true, false] {
+            if refused {
+                model.reject_action("refused");
+            } else {
+                model.apply(empty_queue());
+            }
+            let shown = model.notice().unwrap().to_owned();
+            let own = model.notice_serial();
+            assert!(model.mark_slow());
+            let slow = model.notice_serial();
+            assert!(slow > own, "the slow notice is newer");
+            assert_eq!(
+                model.apply(WorkspaceResponse::Snapshot(snapshot.clone())),
+                (true, false)
+            );
+            assert_eq!(
+                model.notice(),
+                Some(shown.as_str()),
+                "an unchanged snapshot shows the covered notice again"
+            );
+            assert_eq!(
+                model.notice_serial(),
+                own,
+                "with its own serial, as no new notice"
+            );
+            model.reject_action("later");
+            assert!(
+                model.notice_serial() > slow,
+                "a later notice takes a serial never given before"
+            );
+            model.apply(WorkspaceResponse::Snapshot(changed.clone()));
+            model.apply(WorkspaceResponse::Snapshot(snapshot.clone()));
+            if refused {
+                model.reject_action("refused");
+            } else {
+                model.apply(empty_queue());
+            }
+
+            assert!(model.mark_slow());
+            assert!(model.apply(WorkspaceResponse::Snapshot(changed.clone())).1);
+            assert_eq!(model.notice(), None, "a structure change retires both");
+            model.apply(WorkspaceResponse::Snapshot(snapshot.clone()));
+        }
+
+        model.apply(empty_queue());
+        model.mark_slow();
+        assert!(!model.dismiss_no_attention(), "the slow notice still shows");
+        assert_eq!(model.notice(), Some("Eon is slow to answer."));
+        model.apply(WorkspaceResponse::Snapshot(snapshot.clone()));
+        assert_eq!(
+            model.notice(),
+            None,
+            "terminal input retired the covered notice"
+        );
+    }
+
+    #[test]
+    fn quota_refresh_and_workspace_failures_preserve_structure() {
+        let snapshot = quota_snapshot();
         let mut model = WorkspaceModel::default();
 
         assert_eq!(

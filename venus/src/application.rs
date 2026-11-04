@@ -273,8 +273,17 @@ struct LinkNotice {
     text: String,
     /// When a success notice clears itself; other notices wait for input.
     expires: Option<Instant>,
-    /// The workspace notice serial when it appeared; a later workspace notice outranks it.
+    /// The shown workspace notice's serial when it appeared; a workspace notice given a later
+    /// serial outranks it.
     workspace_serial: u64,
+}
+
+impl LinkNotice {
+    /// Whether it is newer than the shown workspace notice, which `workspace_serial` numbers.
+    /// A covered notice shown again after the slow notice keeps its older serial.
+    fn outranks(&self, workspace_serial: u64) -> bool {
+        self.workspace_serial >= workspace_serial
+    }
 }
 
 impl LinkInteraction {
@@ -752,12 +761,13 @@ impl QuitProgress {
                 }
                 return QuitEffects::default();
             }
-            WorkspaceEvent::Unavailable(_) => {
+            WorkspaceEvent::Unavailable { .. } => {
                 if *self == Self::Pending {
                     *self = Self::Idle;
                 }
                 return QuitEffects::default();
             }
+            WorkspaceEvent::Slow => unreachable!("handle_workspace returns before a slow report"),
             WorkspaceEvent::Response(_) => return QuitEffects::default(),
         };
         let step = if *self == Self::Pending {
@@ -2711,6 +2721,17 @@ impl Application {
     }
 
     fn handle_workspace(&mut self, event: WorkspaceEvent) {
+        if event == WorkspaceEvent::Slow {
+            // Only the notice changes; a pending quit or jump waits for the answer (VEN-C8).
+            // As below, the view waits for the window and its initial scale.
+            if self.workspace_model.mark_slow()
+                && self.window.is_some()
+                && !self.initial_scale_pending
+            {
+                self.refresh_client_view();
+            }
+            return;
+        }
         let quit = self.quit.on_workspace(
             self.workspace_model.snapshot(),
             self.close_prompt
@@ -2758,17 +2779,24 @@ impl Application {
             }
             _ => (false, false, false, false, false, false),
         };
-        let unavailable = matches!(&event, WorkspaceEvent::Unavailable(_));
+        let unavailable = matches!(&event, WorkspaceEvent::Unavailable { .. });
         let quota_expired = unavailable
             && self.workspace_model.snapshot().is_some_and(|snapshot| {
                 snapshot.codex_quota.is_some() || snapshot.claude_quota.is_some()
             });
         let (mut view_changed, workspace_changed) = match event {
             WorkspaceEvent::Response(response) => self.workspace_model.apply(response),
-            WorkspaceEvent::Unavailable(detail) => {
-                (self.workspace_model.mark_unavailable(detail, false), false)
+            WorkspaceEvent::Unavailable { notice, detail } => {
+                let changed = self.workspace_model.mark_unavailable(notice, false);
+                // Operating-system text goes to the diagnostics, once per new notice.
+                if changed && let Some(detail) = detail {
+                    report(detail);
+                }
+                (changed, false)
             }
-            WorkspaceEvent::Answered { .. } => unreachable!("answers return above"),
+            WorkspaceEvent::Answered { .. } | WorkspaceEvent::Slow => {
+                unreachable!("answers and slow reports return above")
+            }
         };
         if received_snapshot
             && snapshot_changed
@@ -4112,7 +4140,7 @@ impl Application {
         // The newer of a link result and a workspace notice shows. With no result, a
         // hovered link's hint outranks the workspace notice, which returns when it leaves.
         let link_first = match &self.links.notice {
-            Some(notice) => notice.workspace_serial == self.workspace_model.notice_serial(),
+            Some(notice) => notice.outranks(self.workspace_model.notice_serial()),
             None => self.visible_link(unshifted).is_some(),
         };
         if links_available

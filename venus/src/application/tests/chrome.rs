@@ -803,6 +803,56 @@ fn quit_asks_only_while_busy() {
 }
 
 #[test]
+fn a_link_result_stays_newer_than_a_notice_shown_again_after_the_slow_notice() {
+    use eon_workspace_protocol::v31::Response;
+
+    let snapshot = quit_snapshot();
+    let mut model = WorkspaceModel::default();
+    model.apply(Response::Snapshot(snapshot.clone()));
+    model.reject_action("refused");
+    let mut links = LinkInteraction::default();
+    let result = |links: &mut LinkInteraction, model: &WorkspaceModel| {
+        links.show_notice(
+            "Cannot open link.",
+            false,
+            Instant::now(),
+            model.notice_serial(),
+        );
+    };
+    let link_first = |links: &LinkInteraction, model: &WorkspaceModel| {
+        links
+            .notice
+            .as_ref()
+            .unwrap()
+            .outranks(model.notice_serial())
+    };
+
+    result(&mut links, &model);
+    assert!(
+        link_first(&links, &model),
+        "the result is newer than the refusal"
+    );
+    assert!(model.mark_slow());
+    assert!(!link_first(&links, &model), "the slow notice is newer");
+    model.apply(Response::Snapshot(snapshot.clone()));
+    assert_eq!(model.notice(), Some("refused"));
+    assert!(
+        link_first(&links, &model),
+        "the result is still newer than the refusal shown again"
+    );
+
+    assert!(model.mark_slow());
+    result(&mut links, &model);
+    model.apply(Response::Snapshot(snapshot.clone()));
+    assert!(
+        link_first(&links, &model),
+        "so is a result that came while the slow notice showed"
+    );
+    model.reject_action("later");
+    assert!(!link_first(&links, &model), "a later notice outranks it");
+}
+
+#[test]
 fn quit_progress_follows_workspace_events() {
     use eon_workspace_protocol::v31::{Failure, Response};
 
@@ -916,7 +966,10 @@ fn quit_progress_follows_workspace_events() {
         quit.on_workspace(
             Some(&idle),
             false,
-            &WorkspaceEvent::Unavailable("gone".into())
+            &WorkspaceEvent::Unavailable {
+                notice: "Eon is not answering.".into(),
+                detail: None,
+            }
         ),
         effects(false, None)
     );

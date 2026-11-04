@@ -5,6 +5,13 @@ installation, and proven contract changes.
 
 ## Unreleased
 
+- When Eon is slow to answer, the window says so instead of freezing
+  silently (`eon-8wh7h`, VEN-C8). After two seconds without an answer the
+  status line shows "Eon is slow to answer.", and the next answer clears it;
+  nothing else in the window changes. When Eon cannot be reached the window
+  shows "Cannot reach Eon.", and when it stops answering, "Eon is not
+  answering.", instead of raw system text such as "Resource temporarily
+  unavailable (os error 11)", which now goes to Eon's log.
 - Closing Commands, Workspaces or Anima, by key or with `eon popup hide`,
   returns to the popup it covered (`eon-knowp`, EON-C33, EON-C10). Switching
   workspaces from the picker over the Agent popup and back, or Esc in the

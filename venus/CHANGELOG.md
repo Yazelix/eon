@@ -2,6 +2,14 @@
 
 ## Unreleased
 
+- VEN-C8: when Eon has not answered a workspace request within two seconds,
+  Venus shows "Eon is slow to answer." and changes nothing else; the next
+  snapshot clears it (`eon-8wh7h`). A request that fails or reaches its
+  timeout still makes the workspace unavailable, now with "Cannot reach Eon."
+  when Venus cannot connect and "Eon is not answering." otherwise; the
+  operating-system error text goes to Venus's diagnostics instead of the
+  notice. No wire change.
+
 - VEN-C21: the Eon icon's room reserves a chip for each window a provider's
   latest read reported, each at that window's own widest, or Codex's one
   blocked or unknown chip, instead of Codex's two chips and Claude's two

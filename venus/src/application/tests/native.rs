@@ -1014,7 +1014,10 @@ fn live_output_keeps_application_input_admitted_before_repaint() {
             app.terminal.transport = Some(original_transport);
             let snapshot = app.workspace_model.snapshot().unwrap().clone();
             app.links.pressed = link.clone();
-            app.handle_workspace(WorkspaceEvent::Unavailable("offline".into()));
+            app.handle_workspace(WorkspaceEvent::Unavailable {
+                notice: "Cannot reach Eon.".into(),
+                detail: None,
+            });
             assert_eq!(app.presented_revision(), None);
             assert!(
                 !matches!(app.links.pressed, Some(LinkPress::Live(_))),
@@ -1717,7 +1720,10 @@ fn a_close_request_quits_as_alt_shift_q_does() {
 fn a_close_request_detaches_while_the_workspace_is_unavailable() {
     run_quit_probe("unavailable", |app, event_loop, _, actions, _| {
         let id = app.window.as_ref().unwrap().window.id();
-        app.handle_workspace(WorkspaceEvent::Unavailable("gone".into()));
+        app.handle_workspace(WorkspaceEvent::Unavailable {
+            notice: "Eon is not answering.".into(),
+            detail: None,
+        });
         app.window_event(event_loop, id, WindowEvent::CloseRequested);
         assert!(event_loop.exiting());
         assert!(app.close_prompt.is_none());
