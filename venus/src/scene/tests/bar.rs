@@ -1595,8 +1595,6 @@ fn live_items_never_show_or_hide_the_icon_or_move_the_tabs() {
         (CodexQuotaState::Stale, vec![wide(300), wide(10_080)]),
         // The five-hour window reset before the next read.
         (CodexQuotaState::Fresh, vec![wide(10_080)]),
-        (CodexQuotaState::Blocked, Vec::new()),
-        (CodexQuotaState::Unknown, Vec::new()),
     ]
     .map(|(state, windows)| CodexQuota {
         state,
@@ -1645,7 +1643,7 @@ fn live_items_never_show_or_hide_the_icon_or_move_the_tabs() {
         observed_at,
         windows,
     });
-    let claude_read = claude[1].clone();
+    let (codex_read, claude_read) = (codex[1].clone(), claude[1].clone());
     let cpu = |percent: u64| crate::CpuUse {
         percent,
         label: format!("CPU {percent}%"),
@@ -1668,9 +1666,9 @@ fn live_items_never_show_or_hide_the_icon_or_move_the_tabs() {
             for codex in &codex {
                 for claude in &claude {
                     // What Venus remembers from the read that reported every window.
-                    let mut scoped = crate::ScopedWindows::default();
-                    scoped.observe(Some(&claude_read));
-                    scoped.observe(Some(claude));
+                    let mut read = crate::QuotaWindows::default();
+                    read.observe(Some(&codex_read), Some(&claude_read));
+                    read.observe(Some(codex), Some(claude));
                     for (cpu, ram, disk, clock) in readings {
                         let mut snapshot = snapshot.clone();
                         snapshot.codex_quota = Some(codex.clone());
@@ -1684,7 +1682,7 @@ fn live_items_never_show_or_hide_the_icon_or_move_the_tabs() {
                                 ram,
                                 disk,
                                 clock,
-                                scoped_windows: scoped.windows(),
+                                quota_windows: &read,
                                 ..EonBar::default()
                             },
                             size,
@@ -1788,7 +1786,17 @@ fn quota_facts_and_windows_appearing_may_hide_the_icon_once() {
             .chain(scoped.then(|| window(10_080, Some("Fable"))))
             .collect(),
     };
-    // From no fact to a Codex fact; from Claude's two windows to a third, scoped one.
+    let weekly = |quota: &CodexQuota| CodexQuota {
+        windows: vec![window(10_080, None)],
+        ..quota.clone()
+    };
+    let blocked = CodexQuota {
+        state: CodexQuotaState::Blocked,
+        observed_at,
+        windows: Vec::new(),
+    };
+    // From no fact to a Codex fact; from Claude's two windows to a third, scoped one; a read
+    // that finds a second Codex window or ends a block.
     let changes = [
         (
             (None, Some(claude(false))),
@@ -1797,6 +1805,14 @@ fn quota_facts_and_windows_appearing_may_hide_the_icon_once() {
         ((None, None), (None, Some(claude(false)))),
         (
             (Some(codex.clone()), Some(claude(false))),
+            (Some(codex.clone()), Some(claude(true))),
+        ),
+        (
+            (Some(weekly(&codex)), Some(claude(true))),
+            (Some(codex.clone()), Some(claude(true))),
+        ),
+        (
+            (Some(blocked), Some(claude(true))),
             (Some(codex), Some(claude(true))),
         ),
     ];
@@ -1845,6 +1861,131 @@ fn quota_facts_and_windows_appearing_may_hide_the_icon_once() {
                 "{scale}: change {index} hides the icon at some width"
             );
         }
+    }
+}
+
+#[test]
+fn a_full_bar_with_room_shows_the_icon() {
+    use eon_workspace_protocol::v31::{
+        ClaudeQuota, ClaudeQuotaState, CodexQuota, Pane, PopupGeometry, Tab, WorkspaceInfo,
+    };
+    // Lucca's maximized 1861-pixel bar of 2026-11-04, which left about 340 pixels empty but
+    // showed no icon: workspace 1 of 2, Codex's weekly window, Claude's weekly and Fable
+    // windows, every reading and the version.
+    let tab = |index: usize, directory: &str| Tab {
+        id: format!("t{index}"),
+        directory: directory.as_bytes().to_vec(),
+        pending: false,
+        selected_pane: Some(format!("p{index}")),
+        selected_popup: None,
+        columns: vec![eon_workspace_protocol::v31::Column {
+            panes: vec![Pane {
+                label: format!("p{index}"),
+                pinned_name: None,
+                id: format!("p{index}"),
+                session: format!("s{index}"),
+                endpoint: format!("/tmp/p{index}.sock").into_bytes(),
+                live: true,
+                attention: None,
+            }],
+            expanded: format!("p{index}"),
+        }],
+        popups: Vec::new(),
+        attention_rollup: None,
+    };
+    let workspace = |id: &str, name: &str, recency| WorkspaceInfo {
+        id: id.into(),
+        name: Some(name.into()),
+        tab_count: 1,
+        attention: None,
+        recency,
+    };
+    let observed_at = 1_000_000;
+    let weekly = |scope: Option<&str>| QuotaWindow {
+        duration_minutes: 10_080,
+        remaining_percent: 60,
+        resets_at: Some(observed_at + 4 * 24 * 60 * 60),
+        scope: scope.map(Into::into),
+    };
+    let codex = CodexQuota {
+        state: CodexQuotaState::Fresh,
+        observed_at,
+        windows: vec![weekly(None)],
+    };
+    let claude = ClaudeQuota {
+        state: ClaudeQuotaState::Fresh,
+        observed_at,
+        windows: vec![weekly(None), weekly(Some("Fable"))],
+    };
+    let mut read = crate::QuotaWindows::default();
+    read.observe(Some(&codex), Some(&claude));
+    let levels = crate::LoadLevels::default();
+    let ram = crate::RamUse::parse("MemTotal: 100000 kB\nMemAvailable: 50000 kB\n")
+        .unwrap()
+        .rated(levels);
+    let disk = DiskUse::of(1000 << 18, 0, 0, 4096, "/")
+        .unwrap()
+        .rated(levels);
+    let cpu = crate::CpuUse {
+        percent: 12,
+        label: "CPU 12%".into(),
+        description: "CPU".into(),
+        load: Load::Normal,
+    };
+    let clock = LocalClock {
+        label: "09:20".into(),
+        description: "Clock".into(),
+    };
+    for tabs in [
+        vec![tab(1, "/home/lucca/pjs/eon")],
+        vec![
+            tab(1, "/home/lucca/pjs/eon"),
+            tab(2, "/home/lucca/pjs/nova"),
+            tab(3, "/home/lucca/pjs/starcompass"),
+        ],
+    ] {
+        let snapshot = Snapshot {
+            workspace: "w1".into(),
+            active_workspace: "w1".into(),
+            workspaces: vec![workspace("w1", "main", 0), workspace("w2", "evo", 1)],
+            active_tab: "t1".into(),
+            geometry: PopupGeometry {
+                side_margin: 8.0,
+                vertical_margin: 4.0,
+            },
+            entries: Vec::new(),
+            tabs,
+            codex_quota: Some(codex.clone()),
+            claude_quota: Some(claude.clone()),
+            codex_quota_failure: None,
+            claude_quota_failure: None,
+            running: None,
+            busy: None,
+            sidebar: eon_workspace_protocol::v31::Sidebar::Open,
+            attention_queue: Vec::new(),
+        };
+        let scene = WorkspaceScene::from_snapshot_with_bar(
+            &snapshot,
+            EonBar {
+                version: Some("0.1.15"),
+                icon: true,
+                cpu: Some(&cpu),
+                ram: Some(&ram),
+                disk: Some(&disk),
+                clock: Some(&clock),
+                quota_windows: &read,
+                ..EonBar::default()
+            },
+            PhysicalSize::new(1861, 1000),
+            CellMetrics::for_scale(1.0),
+            0.0,
+            0.0,
+            // About the bar's 16-pixel sans-serif: the live bar then leaves about the room his did.
+            |_, text| (text.to_owned(), text.chars().count() as f32 * 9.0),
+            None,
+        );
+        assert_eq!(scene.quotas.len(), 3);
+        assert!(scene.eon_icon.is_some(), "{} tabs", snapshot.tabs.len());
     }
 }
 
@@ -2014,41 +2155,54 @@ fn shortcuts_version_and_close_end_the_bar_one_edge_from_the_corner() {
 }
 
 #[test]
-fn scoped_windows_keep_their_room_until_the_next_read() {
-    use eon_workspace_protocol::v31::{ClaudeQuota, ClaudeQuotaState};
+fn quota_windows_keep_their_room_until_the_next_read() {
+    use eon_workspace_protocol::v31::{ClaudeQuota, ClaudeQuotaState, CodexQuota};
     let window = |minutes: u32, scope: Option<&str>| QuotaWindow {
         duration_minutes: minutes,
         remaining_percent: 50,
         resets_at: None,
         scope: scope.map(Into::into),
     };
-    let read = |observed_at, windows| ClaudeQuota {
+    let claude = |observed_at, windows| ClaudeQuota {
         state: ClaudeQuotaState::Fresh,
         observed_at,
         windows,
     };
-    let fable = vec![("Fable".to_owned(), 10_080)];
-    let mut scoped = crate::ScopedWindows::default();
-    scoped.observe(Some(&read(
-        1,
-        vec![window(300, None), window(10_080, Some("Fable"))],
-    )));
-    assert_eq!(scoped.windows(), fable);
+    let codex = |observed_at, windows| CodexQuota {
+        state: CodexQuotaState::Fresh,
+        observed_at,
+        windows,
+    };
+    let both = vec![(None, 300), (Some("Fable".to_owned()), 10_080)];
+    let mut read = crate::QuotaWindows::default();
+    read.observe(
+        Some(&codex(1, vec![window(300, None), window(300, None)])),
+        Some(&claude(
+            1,
+            vec![window(300, None), window(10_080, Some("Fable"))],
+        )),
+    );
+    assert_eq!(read.claude.windows, both);
+    assert_eq!(read.codex.windows, [(None, 300), (None, 300)]);
     // The runtime drops a window at its reset; the same read keeps its room.
-    scoped.observe(Some(&read(1, vec![window(300, None)])));
-    assert_eq!(scoped.windows(), fable);
+    read.observe(
+        Some(&codex(1, vec![window(300, None)])),
+        Some(&claude(1, vec![window(10_080, Some("Fable"))])),
+    );
+    assert_eq!(read.claude.windows, both);
+    assert_eq!(read.codex.windows, [(None, 300), (None, 300)]);
     // A new read decides the set again.
-    scoped.observe(Some(&read(2, vec![window(300, None)])));
-    assert!(scoped.windows().is_empty());
-    scoped.observe(Some(&read(3, vec![window(10_080, Some("Fable"))])));
-    assert_eq!(scoped.windows(), fable);
+    read.observe(None, Some(&claude(2, vec![window(300, None)])));
+    assert_eq!(read.claude.windows, [(None, 300)]);
+    read.observe(None, Some(&claude(3, vec![window(10_080, Some("Fable"))])));
+    assert_eq!(read.claude.windows, [(Some("Fable".to_owned()), 10_080)]);
     // The quota going away forgets them.
-    scoped.observe(None);
-    assert_eq!(scoped, crate::ScopedWindows::default());
+    read.observe(None, None);
+    assert_eq!(read, crate::QuotaWindows::default());
 }
 
 #[test]
-fn reserved_chips_take_the_widest_digit() {
+fn reserved_chips_take_the_widest_text() {
     use eon_workspace_protocol::v31::{CodexQuota, Pane, PopupGeometry, Tab};
     let snapshot = Snapshot {
         workspace: "w1".into(),
@@ -2098,26 +2252,31 @@ fn reserved_chips_take_the_widest_digit() {
         resets_at: Some(observed_at + u64::from(left) * 60),
         scope: None,
     };
-    let mut snapshot = snapshot;
-    snapshot.codex_quota = Some(CodexQuota {
-        state: CodexQuotaState::Stale,
-        observed_at,
-        windows: vec![window(300, 50), window(10_080, 14 * 60)],
-    });
     // A font whose zero is wider than its other digits.
-    let measure = |_: HeaderText, text: &str| {
-        (
-            text.to_owned(),
-            text.chars()
-                .map(|c| if c == '0' { 13.0 } else { 10.0 })
-                .sum::<f32>(),
-        )
+    let zero = |text: &str| {
+        text.chars()
+            .map(|c| if c == '0' { 13.0 } else { 10.0 })
+            .sum::<f32>()
+    };
+    // A font whose `unknown` is wider than its `blocked`.
+    let letters = |text: &str| {
+        text.chars()
+            .map(|c| if "nuw".contains(c) { 12.0 } else { 10.0 })
+            .sum::<f32>()
+    };
+    let codex = |state, windows| {
+        let mut snapshot = snapshot.clone();
+        snapshot.codex_quota = Some(CodexQuota {
+            state,
+            observed_at,
+            windows,
+        });
+        snapshot
     };
     let metrics = CellMetrics::for_scale(1.0);
-    let mut shown = false;
-    for logical_width in 600..=1600 {
-        let scene = WorkspaceScene::from_snapshot_with_bar(
-            &snapshot,
+    let scene = |snapshot: &Snapshot, logical_width, measure: &dyn Fn(&str) -> f32| {
+        WorkspaceScene::from_snapshot_with_bar(
+            snapshot,
             EonBar {
                 items: &[BarItem::CodexQuota],
                 icon: true,
@@ -2127,14 +2286,50 @@ fn reserved_chips_take_the_widest_digit() {
             metrics,
             0.0,
             0.0,
-            measure,
+            |_, text| (text.to_owned(), measure(text)),
             None,
-        );
-        shown |= scene.eon_icon.is_some();
-        assert!(
-            scene.eon_icon.is_none() || scene.bar_complete,
-            "{logical_width}: the icon shows beside a chip that does not fit"
-        );
+        )
+    };
+    let even = |text: &str| text.chars().count() as f32 * 10.0;
+    // A 25-hour window 23 hours 59 minutes in shows `23h`, longer than its last minute's `1d`.
+    for (snapshot, measure) in [
+        (
+            codex(
+                CodexQuotaState::Stale,
+                vec![window(300, 50), window(10_080, 14 * 60)],
+            ),
+            &zero as &dyn Fn(&str) -> f32,
+        ),
+        (codex(CodexQuotaState::Stale, vec![window(1500, 61)]), &even),
+    ] {
+        let mut seen = [false; 2];
+        for logical_width in 300..=1600 {
+            let scene = scene(&snapshot, logical_width, measure);
+            seen[usize::from(scene.eon_icon.is_some())] = true;
+            assert!(
+                scene.eon_icon.is_none() || (scene.bar_complete && scene.tab_scroll_limit() <= 0.5),
+                "{logical_width}: the icon shows beside a chip that does not fit"
+            );
+        }
+        assert_eq!(seen, [true; 2]);
     }
-    assert!(shown);
+    // Blocked and unknown keep one room, whichever word shows.
+    let (blocked, unknown) = (
+        codex(CodexQuotaState::Blocked, Vec::new()),
+        codex(CodexQuotaState::Unknown, Vec::new()),
+    );
+    let mut toggled = [false; 2];
+    for logical_width in 300..=1000 {
+        let shown = [&blocked, &unknown].map(|snapshot| {
+            let scene = scene(snapshot, logical_width, &letters);
+            assert!(
+                scene.eon_icon.is_none() || (scene.bar_complete && scene.tab_scroll_limit() <= 0.5),
+                "{logical_width}: the icon shows beside a chip that does not fit"
+            );
+            scene.eon_icon.is_some()
+        });
+        assert_eq!(shown[0], shown[1], "{logical_width}");
+        toggled[usize::from(shown[0])] = true;
+    }
+    assert_eq!(toggled, [true; 2]);
 }

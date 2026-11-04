@@ -2,6 +2,13 @@
 
 ## Unreleased
 
+- VEN-C21: the Eon icon's room reserves a chip for each window a provider's
+  latest read reported, each at that window's own widest, or Codex's one
+  blocked or unknown chip, instead of Codex's two chips and Claude's two
+  unscoped chips plus its scoped ones at the provider's widest; a read gaining
+  or losing any window may now show or hide it once (`eon-nfrbn`). No wire
+  change.
+
 - Subscribe to EON-C39 workspace events, once per window (`eon-61efs.1`).
   Venus re-reads `Inspect` as soon as an event arrives, keeping the 250 ms
   refresh as a fallback. It stops showing a popup as soon as its

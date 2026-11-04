@@ -190,11 +190,12 @@ unknown or repeated name is a configuration error. Narrow windows hide the Eon
 logo first, then the clock, then disk, RAM, CPU and the version, whatever the
 order, then quota chips one by one, the one closest to the tabs first. The logo
 also hides whenever the tabs would not all fit beside it, however wide the
-window, and it leaves room for every chip and reading at its widest, so their
-changing values and a window's reset never show or hide it; it can change once
-when a provider's quota first appears or goes away (as it does when all its
-windows reset before a read), or when a read finds the provider has gained or
-lost a scoped window. The version belongs to its
+window, and it leaves room for a chip for each window each provider's latest
+read reported and for every reading, all at their widest, so their changing
+values and a window's reset never show or hide it; it can change once when a
+provider's quota first appears or goes away (as it does when all its windows
+reset before a read), or when a read finds the provider has gained or lost a
+window. The version belongs to its
 running supervisor; updating the installation does not change it.
 
 The CPU and RAM chips stay neutral on a healthy machine and colour only under

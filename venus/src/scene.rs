@@ -5,7 +5,7 @@ use crate::{
 };
 use eon_workspace_protocol::v31::{
     ALT, Attention, AttentionKind, AttentionState, BusyTerminals, ClaudeQuota, ClaudeQuotaState,
-    CodexQuotaState, PopupEntry, QuotaWindow, SHIFT, Sidebar, Snapshot, Tab, TargetId,
+    CodexQuota, CodexQuotaState, PopupEntry, QuotaWindow, SHIFT, Sidebar, Snapshot, Tab, TargetId,
 };
 use orbit_protocol::{
     Cell, CellStyle, CellWidth, CursorShape, Frame, PlacementState, Rgb, Row, Screen, SourceRect,
@@ -674,42 +674,77 @@ pub struct EonBar<'a> {
     /// The `workspaces` popup entry's label and chord, while Eon configures that entry; the
     /// workspace label then opens it.
     pub workspace_picker: Option<&'a str>,
-    /// Claude's scoped windows as of its latest read, which keep their room in the bar after
-    /// they reset ([`ScopedWindows`]).
-    pub scoped_windows: &'a [(String, u32)],
+    /// Each provider's windows as of its latest read, which keep their room in the bar after
+    /// they reset ([`QuotaWindows`]).
+    pub quota_windows: &'a QuotaWindows,
 }
 
-/// The scoped windows Claude reported at its latest read. The runtime drops a window at its
-/// reset until the next read; remembering it until then, or until Claude's quota goes away,
-/// keeps every reset from showing or hiding the Eon icon.
+/// The windows each quota provider reported at its latest read. The runtime drops a window at
+/// its reset until the next read; remembering it until then, or until the provider's quota goes
+/// away, keeps every reset from showing or hiding the Eon icon.
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
-pub struct ScopedWindows {
-    observed_at: Option<u64>,
-    windows: Vec<(String, u32)>,
+pub struct QuotaWindows {
+    codex: ReadWindows,
+    claude: ReadWindows,
 }
 
-impl ScopedWindows {
-    pub fn observe(&mut self, quota: Option<&ClaudeQuota>) {
-        let Some(quota) = quota else {
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+struct ReadWindows {
+    observed_at: Option<u64>,
+    /// Scope and length of each window.
+    windows: Vec<(Option<String>, u32)>,
+}
+
+static NO_QUOTA_WINDOWS: QuotaWindows = QuotaWindows {
+    codex: ReadWindows::NONE,
+    claude: ReadWindows::NONE,
+};
+
+impl QuotaWindows {
+    pub fn observe(&mut self, codex: Option<&CodexQuota>, claude: Option<&ClaudeQuota>) {
+        self.codex
+            .observe(codex.map(|quota| (quota.observed_at, &quota.windows[..])));
+        self.claude
+            .observe(claude.map(|quota| (quota.observed_at, &quota.windows[..])));
+    }
+}
+
+impl ReadWindows {
+    const NONE: Self = Self {
+        observed_at: None,
+        windows: Vec::new(),
+    };
+
+    fn observe(&mut self, read: Option<(u64, &[QuotaWindow])>) {
+        let Some((observed_at, windows)) = read else {
             *self = Self::default();
             return;
         };
-        if self.observed_at != Some(quota.observed_at) {
-            self.observed_at = Some(quota.observed_at);
+        if self.observed_at != Some(observed_at) {
+            self.observed_at = Some(observed_at);
             self.windows.clear();
         }
-        for window in &quota.windows {
-            if let Some(scope) = &window.scope {
-                let window = (scope.clone(), window.duration_minutes);
-                if !self.windows.contains(&window) {
-                    self.windows.push(window);
-                }
+        merge_windows(
+            &mut self.windows,
+            windows
+                .iter()
+                .map(|window| (window.scope.clone(), window.duration_minutes)),
+        );
+    }
+}
+
+/// Adds each window of `from` that `into` lacks, counting repeats: Codex may report two windows
+/// of one length.
+fn merge_windows<T: PartialEq>(into: &mut Vec<T>, from: impl IntoIterator<Item = T>) {
+    let mut matched = vec![false; into.len()];
+    for window in from {
+        match (0..into.len()).find(|&index| !matched[index] && into[index] == window) {
+            Some(index) => matched[index] = true,
+            None => {
+                into.push(window);
+                matched.push(true);
             }
         }
-    }
-
-    pub fn windows(&self) -> &[(String, u32)] {
-        &self.windows
     }
 }
 
@@ -724,7 +759,7 @@ impl Default for EonBar<'_> {
             disk: None,
             clock: None,
             workspace_picker: None,
-            scoped_windows: &[],
+            quota_windows: &NO_QUOTA_WINDOWS,
         }
     }
 }
@@ -2818,24 +2853,36 @@ impl WorkspaceScene {
             })
             .collect::<Vec<_>>();
         if widest {
-            // Each provider with a quota fact reserves every chip it can show, at the widest
-            // text a window can have, every digit the font's widest: Codex two, Claude its two
-            // unscoped windows and each scoped one of its latest read, so a window resetting
-            // before the next read changes nothing.
+            // Each provider with a quota fact reserves a chip for every window its latest read
+            // reported, each at the widest text that window can have, every digit the font's
+            // widest, so a value changing or a window resetting before the next read changes
+            // nothing. A blocked or unknown observation reserves its one chip.
             let digit = ('0'..='9')
                 .map(|digit| (digit, header_text(HeaderText::Fact, &digit.to_string()).1))
                 .fold(('0', f32::MIN), |widest, digit| {
                     if digit.1 > widest.1 { digit } else { widest }
                 })
                 .0;
-            let mut widest_text = |windows: &[(Option<&str>, u32)]| {
-                [(None, 5 * 60), (None, 7 * 24 * 60)]
-                    .iter()
-                    .chain(windows)
-                    .map(|&(scope, minutes)| {
+            // Only Codex reports no windows, while blocked or unknown: the wider word holds.
+            let no_window = [CodexQuotaState::Blocked, CodexQuotaState::Unknown]
+                .map(|state| {
+                    let text = quota_text(QuotaProvider::Codex, state, 0, None).label;
+                    header_text(HeaderText::Fact, &text).1
+                })
+                .into_iter()
+                .fold(0.0, f32::max);
+            // The longest position is the window's last minute or the last minute of its day or
+            // hour before: a 25-hour window's `23h` is longer than its `1d`.
+            let mut widest_text = |(scope, minutes): (Option<&str>, u32)| {
+                let last = u64::from(minutes.saturating_sub(1));
+                let unit = if minutes >= 24 * 60 { 24 * 60 } else { 60 };
+                [Some(last), (last / unit * unit).checked_sub(1)]
+                    .into_iter()
+                    .flatten()
+                    .map(|elapsed| {
                         let label = format!(
                             "{}/{} 100% old",
-                            quota_minutes(u64::from(minutes.saturating_sub(1)), minutes),
+                            quota_minutes(elapsed, minutes),
                             quota_duration(minutes)
                         );
                         let label = match scope {
@@ -2851,40 +2898,40 @@ impl WorkspaceScene {
             };
             let mut reserved = Vec::new();
             for item in bar.items {
-                let (provider, windows, count) =
+                let (provider, current, read) =
                     match (item, &snapshot.codex_quota, &snapshot.claude_quota) {
                         (BarItem::CodexQuota, Some(quota), _) => (
                             QuotaProvider::Codex,
-                            quota
-                                .windows
-                                .iter()
-                                .map(|window| (window.scope.as_deref(), window.duration_minutes))
-                                .collect::<Vec<_>>(),
-                            2,
+                            &quota.windows,
+                            &bar.quota_windows.codex,
                         ),
-                        (BarItem::ClaudeQuota, _, Some(quota)) => {
-                            let mut windows = quota
-                                .windows
-                                .iter()
-                                .map(|window| (window.scope.as_deref(), window.duration_minutes))
-                                .collect::<Vec<_>>();
-                            for (scope, minutes) in bar.scoped_windows {
-                                if !windows.contains(&(Some(scope), *minutes)) {
-                                    windows.push((Some(scope), *minutes));
-                                }
-                            }
-                            let scoped =
-                                windows.iter().filter(|(scope, _)| scope.is_some()).count();
-                            (QuotaProvider::Claude, windows, 2 + scoped)
-                        }
+                        (BarItem::ClaudeQuota, _, Some(quota)) => (
+                            QuotaProvider::Claude,
+                            &quota.windows,
+                            &bar.quota_windows.claude,
+                        ),
                         _ => continue,
                     };
-                let width = widest_text(&windows) + quota_padding;
-                reserved.extend((0..count).map(|_| WorkspaceQuota {
+                let mut windows = current
+                    .iter()
+                    .map(|window| (window.scope.as_deref(), window.duration_minutes))
+                    .collect::<Vec<_>>();
+                merge_windows(
+                    &mut windows,
+                    read.windows
+                        .iter()
+                        .map(|(scope, minutes)| (scope.as_deref(), *minutes)),
+                );
+                let widths = if windows.is_empty() {
+                    vec![no_window]
+                } else {
+                    windows.into_iter().map(&mut widest_text).collect()
+                };
+                reserved.extend(widths.into_iter().map(|width| WorkspaceQuota {
                     provider,
                     window: None,
                     rect: SceneRect {
-                        width,
+                        width: width + quota_padding,
                         ..SceneRect::default()
                     },
                     logo: SceneRect::default(),

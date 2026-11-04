@@ -1946,7 +1946,7 @@ mod tests {
                     disk: None,
                     clock: Some(&clock),
                     workspace_picker: None,
-                    scoped_windows: &[],
+                    ..EonBar::default()
                 },
                 size,
                 metrics,

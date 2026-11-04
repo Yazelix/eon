@@ -37,7 +37,7 @@ use yazelix_venus::{
     Color, ConnectionState, CpuReadings, CpuTimes, CpuUse, DialogKind, DialogScene, DiskUse,
     EonBar, FontSettings, FontSetup, HeaderText, Hyperlink, ImageKey, ImageResync, InputState,
     LoadLevels, LocalClock, LocalNoticeSource, MAX_LINK_BYTES, ModelEffect, ModelError,
-    PaddingColor, PresentOutcome, RamUse, Renderer, Scene, SceneRect, ScopedWindows, SessionModel,
+    PaddingColor, PresentOutcome, QuotaWindows, RamUse, Renderer, Scene, SceneRect, SessionModel,
     ShortcutHintsScene, SidebarView, Transport, TransportEvent, WorkspaceEvent, WorkspaceFocus,
     WorkspaceHeaderControl, WorkspaceHit, WorkspaceModel, WorkspaceScene, WorkspaceTransport,
     active_popup, attention_only_change, focused_terminal, labels_only_change, read_eon_icon,
@@ -1049,8 +1049,8 @@ struct Application {
     zoom: Option<ZoomTarget>,
     tab_texts: HashMap<String, (String, f32)>,
     quota_widths: HashMap<String, f32>,
-    /// Claude's scoped windows, kept through their resets until its next read.
-    scoped_windows: ScopedWindows,
+    /// Each provider's windows, kept through their resets until its next read.
+    quota_windows: QuotaWindows,
     /// Fitted header texts, the workspace label's name, by their text.
     fitted_texts: HashMap<String, (String, f32)>,
     tab_scroll: f32,
@@ -1168,7 +1168,7 @@ impl Application {
             zoom: None,
             tab_texts: HashMap::new(),
             quota_widths: HashMap::new(),
-            scoped_windows: ScopedWindows::default(),
+            quota_windows: QuotaWindows::default(),
             fitted_texts: HashMap::new(),
             tab_scroll: 0.0,
             pane_scroll: 0.0,
@@ -1420,7 +1420,7 @@ impl Application {
                     disk: self.disk.as_ref(),
                     clock: self.clock.as_ref(),
                     workspace_picker: picker.as_deref(),
-                    scoped_windows: self.scoped_windows.windows(),
+                    quota_windows: &self.quota_windows,
                 },
                 state.renderer.size(),
                 state.renderer.metrics(),
@@ -1971,7 +1971,10 @@ impl Application {
         let zoom = self.zoomed();
         let state = self.window.as_mut()?;
         let snapshot = self.workspace_model.snapshot()?;
-        self.scoped_windows.observe(snapshot.claude_quota.as_ref());
+        self.quota_windows.observe(
+            snapshot.codex_quota.as_ref(),
+            snapshot.claude_quota.as_ref(),
+        );
         let zoom = WorkspaceScene::zoom_visible(snapshot, zoom);
         self.hints = self.hints_visible.then(|| {
             ShortcutHintsScene::new(
@@ -2007,7 +2010,7 @@ impl Application {
                 disk: self.disk.as_ref(),
                 clock: self.clock.as_ref(),
                 workspace_picker: picker.as_deref(),
-                scoped_windows: self.scoped_windows.windows(),
+                quota_windows: &self.quota_windows,
             },
             state.renderer.size(),
             state.renderer.metrics(),

@@ -24,16 +24,17 @@ order, selection, and popups; Venus draws the visible scene.
   from the window's left edge as the bar's centre line is below the window top,
   and the next item starts as far after it as it is from the left edge. It is
   decorative, with no action, hover or accessible node. It shows only while
-  everything else in the bar would show with it, each quota chip, reading and
-  the clock at the widest it can be, and every tab fits unscrolled at its full
-  width. So it hides before any other item and stays hidden as the window
-  narrows, and it hides whenever the tabs overflow, however wide the window.
+  everything else in the bar would show with it: a chip for each window each
+  provider's latest read reported, each at the widest that window's chip can
+  be, or Codex's one blocked or unknown chip; each reading and the clock at
+  its widest; and every tab unscrolled at its full width. So it hides before
+  any other item and stays hidden as the window narrows, and it hides whenever
+  the tabs overflow, however wide the window.
   The tab scroll, a live value and a window's reset never show or hide it: a
   window keeps its room from its reset until the next read. It can change once
   when a provider's quota first appears or goes away (as it does when all its
   windows reset before a read), or when a read finds the provider has gained or
-  lost a scoped window. Without a readable icon from Eon
-  there is none and no gap.
+  lost a window. Without a readable icon from Eon there is none and no gap.
 - New tab sits beside the last tab and pins to the tab-region edge when tabs
   overflow. Shortcut help, a round outlined button as tall as the tab pills
   with its `?` centred in the circle, then the version label and Close stay at
@@ -131,7 +132,7 @@ order, selection, and popups; Venus draws the visible scene.
   reset. The one exception is the Eon logo: it can show or hide once, shifting
   the tabs, when a provider's quota first appears or goes away (as it does when
   all its windows reset before a read), or when a read finds the provider has
-  gained or lost a scoped window.
+  gained or lost a window.
 
 ### Panes and popups
 

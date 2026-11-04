@@ -82,10 +82,11 @@ cannot read or that is not such an image shows no icon and one line on stderr,
 and launch goes on. Venus area-averages the image to two logical pixels less
 than the tab pills' height, in whole pixels, and draws it in its own colours.
 Under width pressure the icon hides before any other bar item, leaving room for
-each quota chip and reading at its widest, so only a provider's quota first
-appearing or going away, or a read finding a scoped window gained or lost, can
-show or hide it; it also hides whenever the tabs would not all fit beside it,
-however wide the window.
+a chip for each window each provider's latest read reported and for each
+reading, all at their widest, so only a provider's quota first appearing or
+going away, or a read finding a window gained or lost, can show or hide it; it
+also hides whenever the tabs would not all fit beside it, however wide the
+window.
 
 The supervising Eon may also pass `--bar-items ITEM,...` to choose which Eon
 Bar items show and in what order ([Eon Bar](PRESENTATION.md#eon-bar)). Items

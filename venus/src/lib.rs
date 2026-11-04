@@ -26,8 +26,8 @@ pub use render::{
 };
 pub use scene::{
     AttentionFilter, AttentionFilterChip, BarItem, Color, DialogKind, DialogScene, DrawCell,
-    DrawCursor, DrawRow, DrawStyle, EonBar, GlyphRun, HeaderText, Hyperlink, LocalClock, Scene,
-    SceneGraphics, ScenePlacement, ScenePreview, SceneRect, ScopedWindows, ShortcutGroup,
+    DrawCursor, DrawRow, DrawStyle, EonBar, GlyphRun, HeaderText, Hyperlink, LocalClock,
+    QuotaWindows, Scene, SceneGraphics, ScenePlacement, ScenePreview, SceneRect, ShortcutGroup,
     ShortcutHint, ShortcutHintsScene, ShortcutRow, SidebarRow, SidebarView, WorkspaceColumn,
     WorkspaceFocus, WorkspaceHeaderControl, WorkspaceHit, WorkspacePane, WorkspaceScene,
     WorkspaceTab, attention_inbox_hints, shown_workspace, validate_copy_uri, validate_open_uri,

@@ -1393,15 +1393,16 @@ re-proved when that platform or feature is next touched.
   leads the bar before the workspace label and tabs, two logical pixels shorter than the tab pills
   and centred on them, with no action, hover or accessible node. It shows only while the bar
   would show everything else with it at the widest it can be: for each provider that has a quota
-  fact, Codex's two chips, or Claude's two unscoped chips and one per scoped window its latest
-  read reported, each with the widest digit in every digit's place; each listed reading and the
-  clock; every tab at its full width; and the whole tab strip fitting unscrolled. So it hides
+  fact, a chip for each window its latest read reported, each at the widest that window's text
+  can be with the widest digit in every digit's place, or Codex's one blocked or unknown chip;
+  each listed reading and the clock; every tab at its full width; and the whole tab strip
+  fitting unscrolled. So it hides
   before any other item and stays hidden at every narrower width, and it hides whenever the tabs
   overflow however wide the window. The tab scroll, a live value (quota numbers, a reading, the
   clock) and a window's reset never show or hide it: a window keeps its room from its reset until
   the next read. It can change once when a provider's quota first appears or goes away (as it
   does when all its windows reset before a read), or when a read finds the provider has gained or
-  lost a scoped window. Its centre lies as far from
+  lost a window. Its centre lies as far from
   the window's left edge as the bar's centre line lies below the window's top, and what follows
   the icon starts as far after it as it lies from the window's left edge. Close's glyph ink lies
   as far from the window's right edge as from its top while that keeps every ink pixel inside
@@ -1513,6 +1514,13 @@ re-proved when that platform or feature is next touched.
     `readings_yield_after_the_clock_and_have_no_actions` and
     `eon_orders_and_omits_bar_items` updated to the new order; the isolated
     installed observation recorded in `eon-369s`.
+  - **Logo room per reported window (`eon-nfrbn`):** added checks
+    `a_full_bar_with_room_shows_the_icon` and
+    `quota_windows_keep_their_room_until_the_next_read` (renamed from
+    `scoped_windows_keep_their_room_until_the_next_read`);
+    `live_items_never_show_or_hide_the_icon_or_move_the_tabs` and
+    `quota_facts_and_windows_appearing_may_hide_the_icon_once` updated; the
+    isolated installed observation recorded in `eon-nfrbn`.
   - **Workspace label (`eon-workspace-switching-shn4.7`):** added checks
     `workspace_label_leads_the_tabs_and_opens_the_picker`,
     `eon_bar_controls_reuse_existing_actions_and_local_viewer` and

@@ -235,11 +235,12 @@ the tabs. `[bar] widgets` chooses which of these show and in what order (see
 short of space the Eon logo hides first; then the clock, then disk, RAM, CPU
 and the version label, before any quota chip. The logo also hides whenever the
 tabs would not all fit beside it, however wide the window, so tabs never lose
-room to it, and it leaves room for each chip and reading at its widest, so a
-changing quota, reading or clock, or a quota window's reset, never shows or
-hides it. It can show or hide once, shifting the tabs, when a provider's quota
-first appears or goes away (as it does when all its windows reset before a
-read), or when a read finds the provider has gained or lost a scoped window.
+room to it, and it leaves room for a chip for each window each provider's latest
+read reported and for each reading, all at their widest, so a changing quota,
+reading or clock, or a quota window's reset, never shows or hides it. It can
+show or hide once, shifting the tabs, when a provider's quota first appears or
+goes away (as it does when all its windows reset before a read), or when a read
+finds the provider has gained or lost a window.
 See [Eon Bar](../venus/docs/PRESENTATION.md#eon-bar) for the details of each
 item.
 
