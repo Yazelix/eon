@@ -1059,7 +1059,9 @@ socket names, JSON fields and protocol identifiers retain their spellings.
   the tab's pair (EON-C18), and `eon tab directory` on a pending tab is a
   pick. Amended on 2026-11-04 (approved by Lucca, relayed by eon-overseer) by
   `eon-knowp`: a stopped transient popup's tab shows again the popup it
-  covered.
+  covered. Amended on 2026-11-04 (approved by eon-overseer under Lucca's
+  standing rule) by `eon-vhhon`: a Toggle of the selected `eon-workspaces`
+  popup presses Enter in it.
 - **Consumer:** One local CLI or approved composition controlling a live Eon
   supervisor.
 - **Trigger:** The client submits one versioned workspace or supervisor-lifecycle
@@ -1388,6 +1390,17 @@ socket names, JSON fields and protocol identifiers retain their spellings.
   checked again that the `wN` is live (otherwise it changes nothing and exits
   3), with its confirmation, and then shows the list again unless that close
   stopped the popup. Esc or Ctrl+C runs nothing.
+  While a popup whose command is `["eon-workspaces"]` is its tab's selected
+  popup and was launched in its tab's current directory, a Toggle invocation
+  of its entry dispatches as Focus, and once accepted the supervisor sends
+  Enter to that popup's terminal as one key press over its lease, whatever it
+  shows (at a close confirmation with nothing typed Enter answers no; a typed
+  answer is submitted). This is the person's key, not EON-C36 input, so
+  `[agents] terminal_access` does not apply. A failed send is logged and the
+  popup stays shown; input whose send timed out may still arrive. A Focus
+  invocation, an entry with another command, a picker that the invocation
+  relaunches in its tab's new directory, and `eon popup hide` keep their
+  meaning.
   Commands > New workspace runs `eon workspace new`, Rename workspace reads a
   name and runs `eon workspace rename` for the popup's workspace (an empty
   name clears it), and Close this workspace runs `eon workspace close` for the
@@ -3408,6 +3421,8 @@ socket names, JSON fields and protocol identifiers retain their spellings.
   `eon-ngwf.2`: `FocusAttention` across workspaces.
   Amended on 2026-11-04 (approved by Lucca) by `eon-p7omw`: Ctrl+X in the
   picker closes the highlighted workspace.
+  Amended on 2026-11-04 (approved by eon-overseer under Lucca's standing
+  rule) by `eon-vhhon`: the picker's own key confirms the highlighted row.
 - **Consumer:** One full-Eon user, or an agent working for them, who keeps
   several separate sets of work in one Eon window.
 - **Trigger:** Alt+Shift+S or Commands > Switch workspace; Commands > New
@@ -3486,8 +3501,16 @@ socket names, JSON fields and protocol identifiers retain their spellings.
     previous workspace; the Alt+G jump, not the picker, leads to agents that
     need input. Enter shows the highlighted workspace, including on an empty
     query. Enter on a non-empty query that matches no row creates a workspace
-    with that name and shows it. Esc or Ctrl+C runs nothing. Ctrl+X on the
-    highlighted row closes that workspace as `eon workspace close` does, after
+    with that name and shows it. Esc or Ctrl+C runs nothing. While the picker
+    is its tab's selected popup, its own popup key (`[popups.workspaces]
+    keybinding`, Alt+Shift+S by default) presses Enter in it instead of
+    hiding it, so it confirms the highlighted row as Enter does: Alt+Shift+S
+    twice returns to the previous workspace, and twice again comes back. With
+    keyboard focus elsewhere in the window the key first focuses the picker,
+    as for any popup, and a picker shown before its tab's directory changed
+    restarts in the new directory (EON-C10). Esc, Ctrl+C and `eon popup hide`
+    still hide it. Ctrl+X on the highlighted row closes that workspace as
+    `eon workspace close` does, after
     the same confirmation in the popup; then the picker lists the remaining
     workspaces again. Closing the picker's own workspace ends the picker with
     it, and closing the last workspace is the window's final close (EON-C8).

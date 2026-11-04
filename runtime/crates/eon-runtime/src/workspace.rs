@@ -1,3 +1,4 @@
+use super::cli::WORKSPACE_PICKER;
 use super::managed_environment::{PopupCatalog, PopupCommand, PopupDefinition};
 use eon_workspace_protocol::v31::{
     Action, Attention, AttentionKind, AttentionState, BusyTerminals, ClaudeQuotaState,
@@ -800,6 +801,19 @@ impl WorkspaceSet {
             return None;
         }
         self.workspaces[self.caller_workspace(caller).ok()?].pair(tab)
+    }
+
+    /// The terminal of the Workspaces picker that toggling `entry` in `tab` of the caller's
+    /// workspace would hide: the tab's selected popup, when `entry` runs the runtime's own
+    /// picker. Its key confirms the highlighted row there instead (EON-C33). A picker launched in
+    /// another directory than its tab's has none: the invocation relaunches it.
+    pub(crate) fn shown_picker(
+        &self,
+        caller: Option<&str>,
+        tab: &str,
+        entry: &str,
+    ) -> Option<String> {
+        self.workspaces[self.caller_workspace(caller).ok()?].shown_picker(tab, entry)
     }
 
     fn reject_duplicate(&self, request_id: &str) -> Result<(), Failure> {
@@ -1737,6 +1751,23 @@ impl Workspace {
             popup.session.id.clone(),
             tab.selected_popup.as_deref() == Some(&popup.id),
         ))
+    }
+
+    fn shown_picker(&self, tab: &str, entry: &str) -> Option<String> {
+        if self.definition(entry).ok()?.command != PopupCommand::Argv(vec![WORKSPACE_PICKER.into()])
+        {
+            return None;
+        }
+        let tab = self.tabs.iter().find(|item| item.id == tab)?;
+        let selected = tab.selected_popup.as_deref()?;
+        tab.popups
+            .iter()
+            .find(|popup| {
+                popup.id == selected
+                    && popup.entry == entry
+                    && popup.launch_directory == tab.directory
+            })
+            .map(|popup| popup.session.id.clone())
     }
 
     pub(crate) fn prepare_close_tab(&mut self, id: &str) -> Result<Vec<String>, Failure> {

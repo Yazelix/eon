@@ -9964,8 +9964,9 @@ fn batch_stop_preserves_current_until_all_and_reports_unavailable_generations() 
     fs::remove_dir_all(root).unwrap();
 }
 
-/// A full-Eon supervisor over fake Orbits, with `agents` appended to the mock
-/// desktop's configuration, and its control socket.
+/// A full-Eon supervisor over fake Orbits and its control socket. `agents` is
+/// appended to the mock desktop's configuration, and stub Commands and
+/// Workspaces popups are on its terminal PATH.
 fn terminal_access_workspace(root: &Path, agents: &str) -> (TestProcess, PathBuf, PathBuf) {
     let runtime = root.join("runtime");
     let config = root.join("config");
@@ -9981,8 +9982,22 @@ fn terminal_access_workspace(root: &Path, agents: &str) -> (TestProcess, PathBuf
     let venus = root.join("venus");
     managed_orbit_executable(&orbit);
     executable(&venus, "#!/bin/sh\nexit 0\n");
-    let child = eon_command(&PathBuf::from(env!("CARGO_BIN_EXE_eon")))
+    // The fake Orbits never run it.
+    let bin = root.join("bin");
+    fs::create_dir(&bin).unwrap();
+    for popup in ["eon-commands", "eon-workspaces"] {
+        executable(&bin.join(popup), "#!/bin/sh\nexit 0\n");
+    }
+    let mut command = eon_command(&PathBuf::from(env!("CARGO_BIN_EXE_eon")));
+    let path = command
+        .get_envs()
+        .find_map(|(name, value)| (name == "PATH").then_some(value).flatten())
+        .unwrap()
+        .to_owned();
+    let path = std::iter::once(bin).chain(std::env::split_paths(&path));
+    let child = command
         .arg("run")
+        .env("PATH", std::env::join_paths(path).unwrap())
         .env("EON_RUNTIME_DIR", &runtime)
         .env("EON_CONFIG_HOME", &config)
         .env("EON_ORBIT", &orbit)
@@ -10000,6 +10015,76 @@ fn terminal_access_workspace(root: &Path, agents: &str) -> (TestProcess, PathBuf
     let control = generation.join("eon.sock");
     wait_for(&control);
     (supervisor, generation, control)
+}
+
+#[test]
+fn the_shown_workspace_pickers_key_presses_enter_in_it_instead_of_hiding_it() {
+    let root = temporary_directory();
+    let (mut supervisor, _generation, control) = terminal_access_workspace(&root, "");
+    let invoke = |id: &str, entry: &str, expected: Option<&str>, intent| match protocol_action(
+        &control,
+        id,
+        ProtocolAction::InvokePopup {
+            tab: "t1".into(),
+            entry: entry.into(),
+            expected_instance: expected.map(Into::into),
+            intent,
+        },
+    ) {
+        Response::Snapshot(snapshot) => snapshot,
+        other => panic!("{id}: {other:?}"),
+    };
+    let inputs = || fs::read_to_string(root.join("input.log")).unwrap_or_default();
+    let opened = invoke("open", "workspaces", None, InvokeIntent::Toggle);
+    let picker = opened.tabs[0]
+        .popups
+        .iter()
+        .find(|popup| popup.entry == "workspaces")
+        .unwrap()
+        .clone();
+    assert_eq!(opened.tabs[0].selected_popup.as_ref(), Some(&picker.id));
+    // Focusing the shown picker presses nothing; its key keeps it shown and presses Enter in it,
+    // which confirms the highlighted row (EON-C33).
+    let focused = invoke("focus", "workspaces", Some(&picker.id), InvokeIntent::Focus);
+    assert_eq!(stable_tabs(&focused.tabs), stable_tabs(&opened.tabs));
+    assert_eq!(inputs(), "");
+    let confirmed = invoke(
+        "confirm",
+        "workspaces",
+        Some(&picker.id),
+        InvokeIntent::Toggle,
+    );
+    assert_eq!(stable_tabs(&confirmed.tabs), stable_tabs(&opened.tabs));
+    assert_eq!(inputs(), format!("{} Enter\n", picker.session));
+    // After the tab's directory changes, the key relaunches the picker there, pressing nothing.
+    let Response::Snapshot(_) = protocol_action(
+        &control,
+        "directory",
+        ProtocolAction::Workspace(Action::SetTabDirectory {
+            tab: "t1".into(),
+            directory: root.as_os_str().as_bytes().to_vec(),
+        }),
+    ) else {
+        panic!("the tab directory did not change");
+    };
+    let relaunched = invoke(
+        "relaunch",
+        "workspaces",
+        Some(&picker.id),
+        InvokeIntent::Toggle,
+    );
+    let selected = relaunched.tabs[0].selected_popup.clone().unwrap();
+    assert_ne!(selected, picker.id);
+    assert_eq!(inputs(), format!("{} Enter\n", picker.session));
+    // Another transient popup's key still hides it, pressing nothing.
+    let commands = invoke("commands", "commands", None, InvokeIntent::Toggle);
+    let shown = commands.tabs[0].selected_popup.clone().unwrap();
+    let hidden = invoke("hide", "commands", Some(&shown), InvokeIntent::Toggle);
+    assert_eq!(hidden.tabs[0].selected_popup, None);
+    assert_eq!(inputs(), format!("{} Enter\n", picker.session));
+    fs::write(&supervisor.stop, "").unwrap();
+    wait_for_successful_exit(&mut supervisor.child);
+    fs::remove_dir_all(root).unwrap();
 }
 
 #[test]

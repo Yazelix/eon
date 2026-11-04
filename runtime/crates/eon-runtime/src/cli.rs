@@ -63,6 +63,10 @@ impl Inputs {
     }
 }
 
+/// The executable name of the Workspaces picker, whose own popup key confirms its highlighted
+/// row (EON-C33).
+pub(crate) const WORKSPACE_PICKER: &str = "eon-workspaces";
+
 pub fn run(inputs: Inputs) -> (&'static str, Result<i32, Error>) {
     let mut arguments = env::args_os();
     let invocation = arguments.next().unwrap_or_default();
@@ -70,7 +74,7 @@ pub fn run(inputs: Inputs) -> (&'static str, Result<i32, Error>) {
     match Path::new(&invocation).file_name().and_then(OsStr::to_str) {
         Some("eonbase") => ("eonbase", execute_eonbase(&inputs, arguments)),
         Some("eon-commands") => ("eon-commands", Ok(command_runner(&inputs))),
-        Some("eon-workspaces") => ("eon-workspaces", Ok(workspace_picker(&inputs))),
+        Some(WORKSPACE_PICKER) => (WORKSPACE_PICKER, Ok(workspace_picker(&inputs))),
         // Other names stay Eon: Nix's wrapped executable relaunches itself under its own file
         // name for independent windows.
         _ => match managed_environment::tool(&invocation) {

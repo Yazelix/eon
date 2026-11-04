@@ -21,9 +21,9 @@ use super::{
     workspace::{self, LaunchCommand, SessionEnd, SessionOperation, WorkspaceSet},
 };
 use eon_workspace_protocol::v31::{
-    Action, Availability, BusyTerminals, Ended, FILES_ENTRY, Failure, LifecycleResponse, Request,
-    Response, Runtime, Screen, Sent, Snapshot, Stopped, TerminalInput, TerminalText, VERSION,
-    WindowEntry, WindowState, WorkspaceAction,
+    Action, Availability, BusyTerminals, Ended, FILES_ENTRY, Failure, InvokeIntent,
+    LifecycleResponse, Request, Response, Runtime, Screen, Sent, Snapshot, Stopped, TerminalInput,
+    TerminalText, VERSION, WindowEntry, WindowState, WorkspaceAction,
 };
 use orbit_protocol::management::{LeaseInput, Screen as OrbitScreen};
 use std::{
@@ -2574,6 +2574,16 @@ fn dispatch_control_request(
                     }),
                 _ => None,
             };
+            // The shown Workspaces picker's own key keeps it shown and presses Enter in it, so
+            // it confirms the highlighted row instead of hiding the picker (EON-C33).
+            let picker_confirm = match &mut action {
+                Action::InvokePopup {
+                    tab, entry, intent, ..
+                } if *intent == InvokeIntent::Toggle => workspace
+                    .shown_picker(caller.as_deref(), tab, entry)
+                    .inspect(|_| *intent = InvokeIntent::Focus),
+                _ => None,
+            };
             let direct_cross_workspace = jump.is_none()
                 && accepted.as_ref().is_some_and(|action| {
                     matches!(action, Action::FocusAttention { tab, .. }
@@ -2636,6 +2646,16 @@ fn dispatch_control_request(
             {
                 let ya = inputs.managed.shell_bin.as_ref().map(|bin| bin.join("ya"));
                 pair::run(switch, ya.as_deref(), id, socket, log);
+            }
+            if result.is_ok()
+                && let Some(picker) = picker_confirm
+                && let Some(session) = sessions.iter_mut().find(|session| session.id == picker)
+                && let Err(error) = sessions::send_input(session, LeaseInput::Enter, log)
+            {
+                log.record(&format!(
+                    "workspace picker {picker} did not take its key: {}",
+                    error.detail
+                ));
             }
             // Only shown focus sees. A direct cross-workspace focus resets the cursor even
             // when a hidden caller named the terminal already focused in the shown workspace.

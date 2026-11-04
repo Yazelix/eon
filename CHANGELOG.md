@@ -12,6 +12,10 @@ installation, and proven contract changes.
   shows "Cannot reach Eon.", and when it stops answering, "Eon is not
   answering.", instead of raw system text such as "Resource temporarily
   unavailable (os error 11)", which now goes to Eon's log.
+- Alt+Shift+S twice switches to the previous workspace (`eon-vhhon`,
+  EON-C33, EON-C10): in the Workspaces picker its own key works as Enter,
+  showing the highlighted workspace, instead of closing the picker. Esc and
+  Ctrl+C still close it.
 - Closing Commands, Workspaces or Anima, by key or with `eon popup hide`,
   returns to the popup it covered (`eon-knowp`, EON-C33, EON-C10). Switching
   workspaces from the picker over the Agent popup and back, or Esc in the

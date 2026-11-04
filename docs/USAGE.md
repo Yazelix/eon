@@ -186,7 +186,7 @@ one, and clicking another column's terminal selects it.
 | Alt+Shift+Y | Show the tab's Files, or hide it when Files is shown |
 | Alt+Shift+A | Open or dismiss the tab's Anima popup |
 | Alt+Shift+M | Open or dismiss the tab's Commands popup |
-| Alt+Shift+S | Open or dismiss the Workspaces picker: Enter shows the highlighted workspace, Enter on an unmatched name creates one, Ctrl+X closes the highlighted one |
+| Alt+Shift+S | Open the Workspaces picker; in the picker, Alt+Shift+S or Enter shows the highlighted workspace, Enter on an unmatched name creates one, Ctrl+X closes the highlighted one |
 
 ### Eon Bar and tabs
 
@@ -357,8 +357,10 @@ without running anything.
 Workspaces (Alt+Shift+S, or Commands > Switch workspace) lists this window's
 workspaces most recently shown first, each by name or ID with its tab count and
 ` · needs input` when one of its agents needs input, the shown one last and
-marked, so Alt+Shift+S then Enter returns to the previous workspace. Type to
-filter by name. Enter shows the highlighted workspace, and Enter on a name that
+marked, so Alt+Shift+S then Enter returns to the previous workspace. In the
+picker Alt+Shift+S works as Enter, so pressing it twice, like a double
+Alt+Tab, switches back and forth between two workspaces. Type to filter by
+name. Enter shows the highlighted workspace, and Enter on a name that
 matches no workspace creates a workspace with that name and shows it. A name
 that is part of an existing one matches it, so create that workspace with
 Commands > New workspace and then rename it. Ctrl+X closes the highlighted
