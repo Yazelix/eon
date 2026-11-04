@@ -6,7 +6,7 @@ use std::fmt;
 const MESSAGE_MAGIC: [u8; 4] = *b"ORBM";
 const RECORD_MAGIC: [u8; 4] = *b"ORBR";
 
-pub const VERSION: u16 = 5;
+pub const VERSION: u16 = 6;
 pub const RECORD_GENERATION: u16 = 1;
 pub const HEADER_BYTES: usize = 12;
 /// Every message's bound, except a `Visible` reply's and an `Input`
@@ -38,8 +38,8 @@ pub const MAX_VISIBLE_MESSAGE_BYTES: usize =
     HEADER_BYTES + VISIBLE_FIXED_BYTES + MAX_METADATA_BYTES + MAX_VISIBLE_TEXT_BYTES;
 /// The bound on a lease paste's text (ORB-C5).
 pub const MAX_INPUT_PASTE_BYTES: usize = 64 * 1024;
-/// The bound on an `Input` request: its tag and pasted text.
-pub const MAX_INPUT_MESSAGE_BYTES: usize = HEADER_BYTES + 1 + MAX_INPUT_PASTE_BYTES;
+/// The bound on an `Input` request: its tag, quiet window and pasted text.
+pub const MAX_INPUT_MESSAGE_BYTES: usize = HEADER_BYTES + 1 + 2 + MAX_INPUT_PASTE_BYTES;
 
 const CLIENT_ACQUIRE: u8 = 1;
 const CLIENT_STATUS: u8 = 2;
@@ -247,6 +247,9 @@ pub enum Refusal {
     /// The PTY has closed, so it takes no input, while the child may still
     /// run.
     Closed,
+    /// An attached client's typing reached the PTY less than the request's
+    /// quiet window ago, or still waits in Orbit's queue for it.
+    Typing,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -259,7 +262,13 @@ pub enum ClientMessage {
     Stop,
     ProgramStatus,
     ReadVisible,
-    Input(LeaseInput),
+    /// Lease input, refused while an attached client's typing waits for the
+    /// PTY or reached it less than `quiet_ms` milliseconds ago; 0 never
+    /// refuses for typing (ORB-C5).
+    Input {
+        input: LeaseInput,
+        quiet_ms: u16,
+    },
     /// Names the one process, by process ID and process start identity, that
     /// a run with management admits as its interactive client (ORB-C3).
     AttachAllow {
@@ -403,14 +412,18 @@ pub fn encode_client_message(message: &ClientMessage) -> Result<Vec<u8>> {
         ClientMessage::Stop => client(CLIENT_STOP, &|_| Ok(())),
         ClientMessage::ProgramStatus => client(CLIENT_PROGRAM_STATUS, &|_| Ok(())),
         ClientMessage::ReadVisible => client(CLIENT_READ_VISIBLE, &|_| Ok(())),
-        ClientMessage::Input(input) => client(CLIENT_INPUT, &|out| {
+        ClientMessage::Input { input, quiet_ms } => client(CLIENT_INPUT, &|out| {
             match input {
                 LeaseInput::Paste(text) => {
                     validate_paste(text.as_bytes())?;
                     out.u8(1);
+                    out.u16(*quiet_ms);
                     out.bytes.extend_from_slice(text.as_bytes());
                 }
-                LeaseInput::Enter => out.u8(2),
+                LeaseInput::Enter => {
+                    out.u8(2);
+                    out.u16(*quiet_ms);
+                }
             }
             Ok(())
         }),
@@ -437,24 +450,29 @@ pub fn decode_client_message(bytes: &[u8]) -> Result<ClientMessage> {
         CLIENT_STOP => ClientMessage::Stop,
         CLIENT_PROGRAM_STATUS => ClientMessage::ProgramStatus,
         CLIENT_READ_VISIBLE => ClientMessage::ReadVisible,
-        CLIENT_INPUT => ClientMessage::Input(match input.u8()? {
-            1 => {
-                let bytes = input.rest();
-                validate_paste(bytes)?;
-                LeaseInput::Paste(String::from_utf8(bytes.to_vec()).map_err(|_| {
-                    Error::InvalidUtf8 {
-                        field: "paste text",
-                    }
-                })?)
-            }
-            2 => LeaseInput::Enter,
-            value => {
-                return Err(Error::InvalidTag {
-                    field: "lease input",
-                    value,
-                });
-            }
-        }),
+        CLIENT_INPUT => {
+            let kind = input.u8()?;
+            let quiet_ms = input.u16()?;
+            let input = match kind {
+                1 => {
+                    let bytes = input.rest();
+                    validate_paste(bytes)?;
+                    LeaseInput::Paste(String::from_utf8(bytes.to_vec()).map_err(|_| {
+                        Error::InvalidUtf8 {
+                            field: "paste text",
+                        }
+                    })?)
+                }
+                2 => LeaseInput::Enter,
+                value => {
+                    return Err(Error::InvalidTag {
+                        field: "lease input",
+                        value,
+                    });
+                }
+            };
+            ClientMessage::Input { input, quiet_ms }
+        }
         CLIENT_ATTACH_ALLOW => {
             let (process_id, process_start) = (input.u32()?, input.u64()?);
             validate_process(process_id, process_start)?;
@@ -511,6 +529,7 @@ pub fn encode_server_message(message: &ServerMessage) -> Result<Vec<u8>> {
                 Refusal::InputFull => 4,
                 Refusal::ReadFailed => 5,
                 Refusal::Closed => 6,
+                Refusal::Typing => 7,
             });
             Ok(())
         }),
@@ -550,6 +569,7 @@ pub fn decode_server_message(bytes: &[u8]) -> Result<ServerMessage> {
             4 => Refusal::InputFull,
             5 => Refusal::ReadFailed,
             6 => Refusal::Closed,
+            7 => Refusal::Typing,
             value => {
                 return Err(Error::InvalidTag {
                     field: "refusal",

@@ -40,7 +40,7 @@ use std::{
     process::{Child, Command, ExitStatus, Stdio},
     rc::Rc,
     thread,
-    time::Duration,
+    time::{Duration, Instant},
 };
 
 /// Client input and terminal replies wait here for the PTY, bounded at
@@ -173,6 +173,13 @@ pub(crate) struct Orbit {
     status_turn: Rc<RefCell<Turn>>,
     /// The program status records (ORB-C15).
     pub(crate) status: Records,
+    /// When an attached client's key press or repeat, or paste, last wrote
+    /// to the PTY; lease input refuses within its quiet window after it
+    /// (ORB-C5).
+    typed: Option<Instant>,
+    /// How many queued bytes stand before the end of that typing while the
+    /// PTY has not taken it all; 0 once it has.
+    typed_queued: usize,
 }
 
 impl Orbit {
@@ -283,6 +290,8 @@ impl Orbit {
             pointer: Pointer::default(),
             status_turn,
             status: Records::default(),
+            typed: None,
+            typed_queued: 0,
         })
     }
 
@@ -397,12 +406,22 @@ impl Orbit {
             let bytes = if front.is_empty() { back } else { front };
             match self.master.write(bytes) {
                 Ok(0) => writes.clear(),
-                Ok(written) => drop(writes.drain(..written)),
+                Ok(written) => {
+                    drop(writes.drain(..written));
+                    // The typing's last byte reached the PTY now (ORB-C5).
+                    if self.typed_queued > 0 && self.typed_queued <= written {
+                        self.typed = Some(Instant::now());
+                    }
+                    self.typed_queued = self.typed_queued.saturating_sub(written);
+                }
                 Err(error) if error.kind() == io::ErrorKind::Interrupted => {}
                 Err(error) if error.kind() == io::ErrorKind::WouldBlock => break,
                 Err(error) if error.raw_os_error() == Some(libc::EIO) => writes.clear(),
                 Err(error) => return Err(error),
             }
+        }
+        if writes.is_empty() {
+            self.typed_queued = 0;
         }
         Ok(())
     }
@@ -716,12 +735,20 @@ impl Orbit {
             return Ok(Effect::Resize);
         }
         let key = matches!(request, ClientMessage::Key(_));
+        let typing = match &request {
+            ClientMessage::Key(event) => event.action != session::KeyAction::Release,
+            ClientMessage::Paste(_) => true,
+            _ => false,
+        };
         let bytes = encode_input(&self.terminal, self.surface, request)?;
         if bytes.is_empty() {
             return Ok(Effect::Quiet);
         }
         if !self.writes.push(&bytes) {
             return Ok(Effect::Full);
+        }
+        if typing {
+            self.typed_queued = self.writes.0.borrow().len();
         }
         self.flush_writes()?;
         Ok(if key { Effect::Key } else { Effect::Write })
@@ -730,11 +757,22 @@ impl Orbit {
     /// Writes one lease input request whole, encoded as an attached client's
     /// paste or unmodified Enter press (and its release, when the keyboard
     /// mode reports releases) would be, and reports whether a paste was
-    /// bracketed (ORB-C5). It refuses a paste holding a control character
-    /// other than tab, line feed and carriage return, one holding a line feed
-    /// or carriage return while the program has not enabled bracketed paste,
+    /// bracketed (ORB-C5). It refuses input less than `quiet_ms` after an
+    /// attached client typed, a paste holding a control character other than
+    /// tab, line feed and carriage return, one holding a line feed or
+    /// carriage return while the program has not enabled bracketed paste,
     /// and input the PTY queue cannot take whole; a refusal writes nothing.
-    pub(crate) fn lease_input(&mut self, input: LeaseInput) -> io::Result<Result<bool, Refusal>> {
+    pub(crate) fn lease_input(
+        &mut self,
+        input: LeaseInput,
+        quiet_ms: u16,
+    ) -> io::Result<Result<bool, Refusal>> {
+        let quiet = Duration::from_millis(quiet_ms.into());
+        let typing =
+            self.typed_queued > 0 || self.typed.is_some_and(|typed| typed.elapsed() < quiet);
+        if quiet_ms > 0 && typing {
+            return Ok(Err(Refusal::Typing));
+        }
         let (bytes, bracketed) = match input {
             LeaseInput::Paste(text) => {
                 if text

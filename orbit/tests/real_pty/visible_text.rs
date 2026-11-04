@@ -11,7 +11,7 @@ use orbit_protocol::{
 };
 use std::{fs, io::Write, path::PathBuf, time::Instant};
 
-const MANAGED: [&str; 4] = ["--management-v5", "session-5", "run-5", "component-5"];
+const MANAGED: [&str; 4] = ["--management-v6", "session-5", "run-5", "component-5"];
 
 /// A managed run whose bash child, in raw mode without echo, runs each
 /// command line the check sends through a FIFO while `cat` copies the
@@ -289,8 +289,10 @@ fn requests_wait_for_the_whole_answer() {
     // The answer outgrows the socket's buffer, so it waits, partly written,
     // until the holder reads it.
     sleep(0.2);
-    run.lease
-        .post(&ClientMessage::Input(LeaseInput::Paste("in flight".into())));
+    run.lease.post(&ClientMessage::Input {
+        input: LeaseInput::Paste("in flight".into()),
+        quiet_ms: 0,
+    });
     sleep(0.2);
     let text = visible(run.lease.read());
     assert!(text.text == kept.join("\n"), "the answer differs");
@@ -451,7 +453,10 @@ fn a_read_ends_with_the_run() {
             },
             "{ended:?}"
         );
-        let reply = run.lease.send(&ClientMessage::Input(LeaseInput::Enter));
+        let reply = run.lease.send(&ClientMessage::Input {
+            input: LeaseInput::Enter,
+            quiet_ms: 0,
+        });
         assert_eq!(reply, Reply::Closed, "lease input after the run ended");
     }
 }

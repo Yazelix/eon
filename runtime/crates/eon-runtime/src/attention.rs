@@ -2562,7 +2562,7 @@ mod tests {
 
     /// Each reply's foreground reaches the terminal: `other` while a
     /// job-control job leads the PTY, `child` once the shell has it back
-    /// (ORB-C15, management v5).
+    /// (ORB-C15, since management v5).
     #[test]
     fn the_poller_reads_a_real_foreground() {
         let root = crate::supervisor::temporary_directory();

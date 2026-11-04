@@ -87,8 +87,18 @@ fn management_messages_and_records_round_trip_canonically() {
         ClientMessage::Stop,
         ClientMessage::ProgramStatus,
         ClientMessage::ReadVisible,
-        ClientMessage::Input(LeaseInput::Paste("echo ok\tdone\r\n🪐\u{1b}".into())),
-        ClientMessage::Input(LeaseInput::Enter),
+        ClientMessage::Input {
+            input: LeaseInput::Paste("echo ok\tdone\r\n🪐\u{1b}".into()),
+            quiet_ms: 0,
+        },
+        ClientMessage::Input {
+            input: LeaseInput::Enter,
+            quiet_ms: 2000,
+        },
+        ClientMessage::Input {
+            input: LeaseInput::Paste("x".into()),
+            quiet_ms: u16::MAX,
+        },
         ClientMessage::AttachAllow {
             process_id: 4242,
             process_start: 987_654_321,
@@ -147,6 +157,7 @@ fn management_messages_and_records_round_trip_canonically() {
         ServerMessage::Refused(Refusal::InputFull),
         ServerMessage::Refused(Refusal::ReadFailed),
         ServerMessage::Refused(Refusal::Closed),
+        ServerMessage::Refused(Refusal::Typing),
     ];
     for message in server_messages {
         let bytes = management::encode_server_message(&message).unwrap();
@@ -354,13 +365,14 @@ fn program_status_replies_keep_their_bounds() {
     ));
 }
 
-/// Management v4's new messages keep their exact bytes under generation 5:
-/// the header's generation, each kind's tag, and its payload.
+/// Management v4's new messages keep their exact bytes under generation 6,
+/// except lease input, which carries its quiet window after its kind: the
+/// header's generation, each kind's tag, and its payload.
 #[test]
-fn management_v5_messages_have_canonical_bytes() {
-    assert_eq!(management::VERSION, 5);
+fn management_v6_messages_have_canonical_bytes() {
+    assert_eq!(management::VERSION, 6);
     let framed = |kind: u8, payload: &[u8]| {
-        let mut bytes = b"ORBM\x05\x00".to_vec();
+        let mut bytes = b"ORBM\x06\x00".to_vec();
         bytes.extend([kind, 0]);
         bytes.extend((payload.len() as u32).to_le_bytes());
         bytes.extend(payload);
@@ -370,12 +382,18 @@ fn management_v5_messages_have_canonical_bytes() {
     let server = |message| management::encode_server_message(&message).unwrap();
     assert_eq!(client(ClientMessage::ReadVisible), framed(5, &[]));
     assert_eq!(
-        client(ClientMessage::Input(LeaseInput::Enter)),
-        framed(6, &[2])
+        client(ClientMessage::Input {
+            input: LeaseInput::Enter,
+            quiet_ms: 0,
+        }),
+        framed(6, &[2, 0, 0])
     );
     assert_eq!(
-        client(ClientMessage::Input(LeaseInput::Paste("ls".into()))),
-        framed(6, b"\x01ls")
+        client(ClientMessage::Input {
+            input: LeaseInput::Paste("ls".into()),
+            quiet_ms: 2000,
+        }),
+        framed(6, b"\x01\xd0\x07ls")
     );
     let mut allow = 7u32.to_le_bytes().to_vec();
     allow.extend(9u64.to_le_bytes());
@@ -398,6 +416,10 @@ fn management_v5_messages_have_canonical_bytes() {
     assert_eq!(
         server(ServerMessage::Refused(Refusal::Closed)),
         framed(75, &[6])
+    );
+    assert_eq!(
+        server(ServerMessage::Refused(Refusal::Typing)),
+        framed(75, &[7])
     );
     let mut payload = 3u64.to_le_bytes().to_vec();
     payload.push(2);
@@ -428,7 +450,7 @@ fn management_v5_messages_have_canonical_bytes() {
 }
 
 /// A `ProgramStatus` reply carries the terminal's foreground as one byte
-/// after the background count (management v5): each value keeps its tag and
+/// after the background count (since management v5): each value keeps its tag and
 /// round-trips, and a decoder refuses any other tag.
 #[test]
 fn program_status_carries_the_foreground() {
@@ -449,7 +471,7 @@ fn program_status_carries_the_foreground() {
     payload.push(b't');
     payload.extend(1u16.to_le_bytes());
     payload.extend(4u64.to_le_bytes());
-    let mut golden = b"ORBM\x05\x00".to_vec();
+    let mut golden = b"ORBM\x06\x00".to_vec();
     golden.extend([71, 0]);
     golden.extend((payload.len() as u32).to_le_bytes());
     golden.extend(&payload);
@@ -486,7 +508,10 @@ fn program_status_carries_the_foreground() {
 #[test]
 fn management_v4_bounds_are_per_kind() {
     let full = "a".repeat(management::MAX_INPUT_PASTE_BYTES);
-    let paste = |text: String| ClientMessage::Input(LeaseInput::Paste(text));
+    let paste = |text: String| ClientMessage::Input {
+        input: LeaseInput::Paste(text),
+        quiet_ms: 0,
+    };
     let bytes = management::encode_client_message(&paste(full.clone())).unwrap();
     assert_eq!(bytes.len(), management::MAX_INPUT_MESSAGE_BYTES);
     assert_eq!(
@@ -667,7 +692,7 @@ fn management_v4_decoders_reject_invalid_values() {
         Err(Error::InvalidTag { .. })
     ));
     let mut refusal = encoded(ServerMessage::Refused(Refusal::InputFull));
-    *refusal.last_mut().unwrap() = 7;
+    *refusal.last_mut().unwrap() = 8;
     assert!(matches!(
         management::decode_server_message(&refusal),
         Err(Error::InvalidTag {
@@ -707,7 +732,8 @@ fn management_v4_decoders_reject_invalid_values() {
         Err(Error::TrailingBytes { count: 1 })
     ));
 
-    let mut paste = client(ClientMessage::Input(LeaseInput::Paste("ab".into()))).unwrap();
+    let input = |input| ClientMessage::Input { input, quiet_ms: 0 };
+    let mut paste = client(input(LeaseInput::Paste("ab".into()))).unwrap();
     let len = paste.len();
     paste[len - 1] = 0xff;
     assert!(matches!(
@@ -725,7 +751,7 @@ fn management_v4_decoders_reject_invalid_values() {
             ..
         })
     ));
-    let mut empty = client(ClientMessage::Input(LeaseInput::Enter)).unwrap();
+    let mut empty = client(input(LeaseInput::Enter)).unwrap();
     empty[management::HEADER_BYTES] = 1;
     assert!(matches!(
         management::decode_client_message(&empty),
@@ -733,11 +759,18 @@ fn management_v4_decoders_reject_invalid_values() {
             field: "paste text"
         })
     ));
-    let mut enter_with_text = client(ClientMessage::Input(LeaseInput::Enter)).unwrap();
-    enter_with_text[8..12].copy_from_slice(&2u32.to_le_bytes());
+    let mut enter_with_text = client(input(LeaseInput::Enter)).unwrap();
+    enter_with_text[8..12].copy_from_slice(&4u32.to_le_bytes());
     enter_with_text.push(b'x');
     assert!(matches!(
         management::decode_client_message(&enter_with_text),
         Err(Error::TrailingBytes { count: 1 })
+    ));
+    let mut no_window = client(input(LeaseInput::Enter)).unwrap();
+    no_window.pop();
+    no_window[8..12].copy_from_slice(&2u32.to_le_bytes());
+    assert!(matches!(
+        management::decode_client_message(&no_window),
+        Err(Error::Truncated)
     ));
 }

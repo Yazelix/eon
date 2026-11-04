@@ -11,11 +11,20 @@ use orbit_protocol::{
 use std::{thread, time::Instant};
 
 fn input(run: &mut Driven, input: LeaseInput) -> Reply {
-    run.lease.send(&ClientMessage::Input(input))
+    quiet_input(run, input, 0)
+}
+
+fn quiet_input(run: &mut Driven, input: LeaseInput, quiet_ms: u16) -> Reply {
+    run.lease.send(&ClientMessage::Input { input, quiet_ms })
 }
 
 fn pasted(run: &mut Driven, text: &str) -> Reply {
     input(run, LeaseInput::Paste(text.into()))
+}
+
+/// A paste of `text` with a 1.5 s quiet window.
+fn quiet_pasted(run: &mut Driven, text: &str) -> Reply {
+    quiet_input(run, LeaseInput::Paste(text.into()), 1500)
 }
 
 fn written(bracketed: bool) -> Reply {
@@ -59,6 +68,8 @@ pub fn run() {
     input_is_encoded_as_a_client_would_send_it();
     a_lease_paste_is_never_interleaved();
     refused_requests_keep_the_lease();
+    input_waits_out_a_clients_typing();
+    typing_counts_once_it_reaches_the_pty();
 }
 
 /// Lease input reaches the PTY exactly as an attached client's would, without
@@ -232,11 +243,14 @@ fn refused_requests_keep_the_lease() {
         process_id: 1,
         process_start: 1,
     };
-    let paste = ClientMessage::Input(LeaseInput::Paste("a".into()));
-    // A zero process ID, and an empty paste.
+    let paste = ClientMessage::Input {
+        input: LeaseInput::Paste("a".into()),
+        quiet_ms: 0,
+    };
+    // A zero process ID, and an empty paste with a zero quiet window.
     assert_eq!(run.lease.send_bytes(&reframed(&allow, &[0; 12])), invalid);
     let tag = encoded(&paste)[management::HEADER_BYTES];
-    assert_eq!(run.lease.send_bytes(&reframed(&paste, &[tag])), invalid);
+    assert_eq!(run.lease.send_bytes(&reframed(&paste, &[tag, 0, 0])), invalid);
     let read = encoded(&ClientMessage::ReadVisible);
     let status = encoded(&ClientMessage::Status);
     let pipelined = [read.as_slice(), read.as_slice(), &status[..5]].concat();
@@ -249,9 +263,10 @@ fn refused_requests_keep_the_lease() {
 
     // Over the bound.
     assert!(
-        management::encode_client_message(&ClientMessage::Input(LeaseInput::Paste(
-            "x".repeat(MAX_INPUT_PASTE_BYTES + 1)
-        )))
+        management::encode_client_message(&ClientMessage::Input {
+            input: LeaseInput::Paste("x".repeat(MAX_INPUT_PASTE_BYTES + 1)),
+            quiet_ms: 0,
+        })
         .is_err()
     );
     let mut over = reframed(&paste, &[]);
@@ -277,5 +292,93 @@ fn refused_requests_keep_the_lease() {
     }
     run.lease = leased(&record);
     assert!(run.input().is_empty(), "a refused request wrote to the PTY");
+    run.stop();
+}
+
+/// Lease input with a quiet window is refused, and writes nothing, while an
+/// attached client's key press or paste is younger than the window. Lease
+/// input itself never counts, nor does a key release or a focus change that
+/// writes to the PTY, and a zero window never refuses.
+fn input_waits_out_a_clients_typing() {
+    let mut run = Driven::start();
+    let mut client = run.attach();
+    let typing = refused(Refusal::Typing);
+    assert_eq!(quiet_pasted(&mut run, "x"), written(false), "nobody typed");
+    assert_eq!(
+        quiet_pasted(&mut run, "y"),
+        written(false),
+        "lease input counted as typing"
+    );
+    assert_eq!(run.settled_input(0, 2), b"xy");
+
+    client.send(&key('a', KeyAction::Press));
+    assert_eq!(run.settled_input(2, 1), b"a");
+    assert_eq!(quiet_pasted(&mut run, "z"), typing, "paste after a key press");
+    assert_eq!(
+        quiet_input(&mut run, LeaseInput::Enter, 1500),
+        typing,
+        "Enter after a key press"
+    );
+    assert_eq!(pasted(&mut run, "0"), written(false), "a zero window refused");
+    assert_eq!(run.settled_input(3, 1), b"0");
+
+    sleep(1.7);
+    assert_eq!(quiet_pasted(&mut run, "z"), written(false), "after the window");
+    client.send(&paste(b"p"));
+    assert_eq!(run.settled_input(4, 2), b"zp");
+    assert_eq!(quiet_pasted(&mut run, "q"), typing, "paste after a client paste");
+    // A written sentinel shows that nothing refused arrived before it.
+    assert_eq!(pasted(&mut run, "s"), written(false));
+    assert_eq!(run.settled_input(0, 7), b"xya0zps", "a refused request wrote");
+
+    // With key releases and focus changes reported, both write to the PTY.
+    run.command("printf '\\033[>10u\\033[?1004h\\033]0;reports\\007'");
+    until_titled(&mut client, "reports");
+    sleep(1.7);
+    let from = run.input().len();
+    client.send(&key('a', KeyAction::Release));
+    client.send(&session::ClientMessage::Focus(session::FocusEvent::Gained));
+    let reported = run.settled_input(from, 4);
+    assert!(
+        reported.windows(3).any(|bytes| bytes == b":3u") && reported.ends_with(b"\x1b[I"),
+        "{reported:?}"
+    );
+    assert_eq!(
+        quiet_pasted(&mut run, "r"),
+        written(false),
+        "a release or focus change counted as typing"
+    );
+    drop(client);
+    run.stop();
+}
+
+/// A client's typing that waits in Orbit's PTY queue, behind a child that
+/// stopped reading, counts from when it reaches the PTY: lease input with a
+/// quiet window is refused while it waits and within the window after it is
+/// written.
+fn typing_counts_once_it_reaches_the_pty() {
+    let mut run = Driven::start();
+    let mut client = run.attach();
+    let typing = refused(Refusal::Typing);
+    run.command("kill -STOP $cat_pid; printf '\\033]0;stopped\\007'");
+    until_titled(&mut client, "stopped");
+    // Far more than the PTY's own buffer, so most of it waits in Orbit.
+    let text = vec![b'k'; 64 * 1024];
+    client.send(&paste(&text));
+    sleep(1.7);
+    assert_eq!(quiet_pasted(&mut run, "x"), typing, "typing still queued");
+    assert!(run.input().is_empty(), "the stopped child read");
+
+    run.command("kill -CONT $cat_pid");
+    assert_eq!(run.settled_input(0, text.len()), text, "the typing arrived");
+    assert_eq!(
+        quiet_pasted(&mut run, "x"),
+        typing,
+        "typing that just reached the PTY"
+    );
+    sleep(1.7);
+    assert_eq!(quiet_pasted(&mut run, "x"), written(false), "after the window");
+    assert_eq!(run.settled_input(text.len(), 1), b"x");
+    drop(client);
     run.stop();
 }

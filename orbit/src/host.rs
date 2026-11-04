@@ -1483,10 +1483,10 @@ impl Host {
                     self.managed()?.visible(visible)?
                 }
                 Decision::ManageInput => {
-                    let input = self.managed()?.take_input().ok_or_else(protocol)?;
+                    let (input, quiet_ms) = self.managed()?.take_input().ok_or_else(protocol)?;
                     // A closed PTY takes no input.
                     let outcome = if self.pty_open {
-                        self.orbit.lease_input(input)?
+                        self.orbit.lease_input(input, quiet_ms)?
                     } else {
                         Err(LeaseRefusal::Closed)
                     };

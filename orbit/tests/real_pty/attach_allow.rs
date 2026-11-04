@@ -11,7 +11,7 @@ use std::{
     time::Instant,
 };
 
-const MANAGED: [&str; 4] = ["--management-v5", "session-4", "run-4", "component-4"];
+const MANAGED: [&str; 4] = ["--management-v6", "session-4", "run-4", "component-4"];
 
 /// A child that appends each line it reads to `$ORBIT_LOG`, so a pasted word
 /// and Enter that reach it leave a line there.

@@ -42,7 +42,7 @@ pub(crate) const NEGOTIATION_MS: u32 = 1000;
 
 static NEXT_ARTIFACT: AtomicU64 = AtomicU64::new(0);
 
-/// The identities `--management-v5` names.
+/// The identities `--management-v6` names.
 #[derive(Debug, PartialEq, Eq)]
 pub(crate) struct Launch {
     pub(crate) session_id: String,
@@ -146,7 +146,7 @@ pub(crate) struct Connection {
 
 /// A request's content, which the host keeps while Bend decides it.
 enum Pending {
-    Input(LeaseInput),
+    Input(LeaseInput, u16),
     Allow(u32, u64),
 }
 
@@ -366,8 +366,8 @@ impl Owner {
                 return Ok(None);
             }
             ClientMessage::ReadVisible => Event::Read,
-            ClientMessage::Input(input) => {
-                connection.pending = Some(Pending::Input(input));
+            ClientMessage::Input { input, quiet_ms } => {
+                connection.pending = Some(Pending::Input(input, quiet_ms));
                 Event::Input
             }
             ClientMessage::AttachAllow {
@@ -464,10 +464,11 @@ impl Owner {
         })
     }
 
-    /// The lease input Bend decided to write.
-    pub(crate) fn take_input(&mut self) -> Option<LeaseInput> {
+    /// The lease input Bend decided to write, and its quiet window in
+    /// milliseconds.
+    pub(crate) fn take_input(&mut self) -> Option<(LeaseInput, u16)> {
         match self.connection.as_mut()?.pending.take()? {
-            Pending::Input(input) => Some(input),
+            Pending::Input(input, quiet_ms) => Some((input, quiet_ms)),
             Pending::Allow(..) => None,
         }
     }

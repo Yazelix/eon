@@ -248,10 +248,11 @@ PTY pixel size rule needs no wire change.
 - **Status:** Proved
 - **Consumer:** Attached clients sending key, mouse, focus, paste, or resize
   interaction, and the management lease holder (ORB-C13) sending paste or Enter
-  input.
+  input with a quiet window.
 - **Trigger:** Orbit accepts one canonical semantic input message or begins one
   revision-bound left-pointer sequence, or Orbit accepts one management lease
-  input request: a paste of up to 64 KiB, or one Enter key.
+  input request: a paste of up to 64 KiB, or one Enter key, each with a quiet
+  window of 0 to 65,535 ms.
 - **Result:**
   - Orbit encodes terminal interaction against its authoritative terminal
     state.
@@ -270,6 +271,14 @@ PTY pixel size rule needs no wire change.
   - Lease input needs no attachment, works whether or not a client is
     attached, and changes no presentation, viewport, selection or attachment
     state.
+  - Orbit keeps the time an attached client's input last wrote to the PTY,
+    counting a key press or repeat and a paste. A key release, focus, mouse,
+    wheel, selection or resize does not count. Lease input never counts.
+    Lease input that arrives with a nonzero quiet window, less than that
+    window after that time or while such input still waits in Orbit's queue
+    for the PTY, is refused (`typing`) and writes nothing. Orbit
+    tests this and writes the input in one step, so no client input lands
+    between the test and the write. A zero window never refuses for typing.
   - The reply says whether a paste was bracketed.
 - **Important failures:** Invalid or terminal-forbidden input fails without
   fallback text or duplicate insertion. Invalid phase order, pressure, cancel,
@@ -277,26 +286,35 @@ PTY pixel size rule needs no wire change.
   emit partial input, or synthesize terminal input. A lease paste containing
   a line feed or carriage return while the program has not enabled bracketed
   paste is refused (`unbracketed-newline`) and writes nothing. Lease input
-  after child exit is impossible because the run has ended (ORB-C13).
+  after child exit is impossible because the run has ended (ORB-C13). A lease
+  request within its quiet window after an attached client's typing is
+  refused (`typing`), writes nothing, and keeps the lease.
 - **Owner:** Canonical platform-neutral `orbit-protocol` values, Orbit's Bend
   selection policy for the pointer route, and its Rust host's libghostty input
   encoding.
 - **Consumes:** Canonical ORBS v9 semantic input, preserved through ORBS v14,
-  and management v5 lease input; Venus and Eon consume it in this repository.
+  and management v6 lease input; Venus and Eon consume it in this repository.
 - **Boundary:** Candidate-list IME and native input quality remain Venus-owned.
   Lease input carries no other keys, chords, mouse, focus or resize; raw bytes
-  are never written.
+  are never written. Orbit tells an attached client's input from lease input,
+  not a person from a program. Whatever drives the attached client, such as a
+  synthetic keystroke from code running as the same user, counts as typing.
 - **Proof:** the `eon-awmq.3` import commit, with the `eon-awmq.7.1` commit
   for the Kitty release and the `eon-agent-parity-a9g0.15` commit
   (`9c90032`) for lease input, proved installed by the
-  `eon-agent-parity-a9g0.19` commit
+  `eon-agent-parity-a9g0.19` commit, and the `eon-buys1.1` commit for the
+  quiet window
   - **Environment:** x86_64 Linux; `nix flake check -L` (`orbit-laws`,
     `orbit-boundary`, `orbit-terminfo`, every `orbit-<name>` real-PTY
     check); sandboxed `nix develop -c eon-test` (workspace and installer,
     `tests/lifecycle.rs` unmodified). For lease input: `nix build --keep-going`
     of every `orbit-*` check on tree `7b02ce4` and 53 real-PTY checks again
     on `a75917e`, as `eon-agent-parity-a9g0.15` records, and the isolated
-    installed Eon recorded under ORB-C3
+    installed Eon recorded under ORB-C3. For the quiet window: on tree
+    `0f4ec83`, `nix build --keep-going` of every `orbit-*` check with
+    `default`, `bundle-relink`, `bundle-launch`, `eonbase-closure` and
+    `managed-command-path`, and sandboxed `nix develop -c eon-test`
+    (workspace and installer), as `eon-buys1.1` records
   - **Evidence:**
     - [`canonical_input_uses_libghostty_encoding`](../src/input.rs)
     - [`kitty_release_never_falls_back_to_text`](../src/input.rs)
@@ -305,7 +323,9 @@ PTY pixel size rule needs no wire change.
       [`orbit-mouse`](../tests/real_pty/mouse.rs),
       [`orbit-key-live`](../tests/real_pty/key_live.rs),
       [`orbit-paste-flood`](../tests/real_pty/paste_flood.rs) and
-      [`orbit-lease-input`](../tests/real_pty/lease_input.rs)
+      [`orbit-lease-input`](../tests/real_pty/lease_input.rs), whose
+      quiet-window cases and their three sensitivity checks
+      [BEHAVIOR.md](BEHAVIOR.md#lease-input) records
     - Laws [`selection_answers_are_accounted`](../LAWS.bend),
       [`selection_shift_selects_on_the_host`](../LAWS.bend) and
       [`management_input_needs_a_live_lease`](../LAWS.bend) (`orbit-laws`)
@@ -816,7 +836,8 @@ PTY pixel size rule needs no wire change.
     one winner and one Busy loser; accepted Stop is not cancelled by disconnect.
   - Management carries only bounded identity, live status, the ORB-C15
     `ProgramStatus` request, the ORB-C17 `ReadVisible` request, the ORB-C5
-    lease input request, the ORB-C3 `AttachAllow` request, and explicit Stop,
+    lease input request with its quiet window, the ORB-C3 `AttachAllow`
+    request, and explicit Stop,
     with one request and response in flight.
   - `AttachAllow` names one process, by process ID and process start
     identity, as the only peer ORB-C3 may admit as the interactive client.
@@ -848,7 +869,7 @@ PTY pixel size rule needs no wire change.
     PTY, presentation, child observation, or shutdown.
 - **Owner:** Orbit's private management owner and canonical protocol package;
   platform mechanics remain isolated, while Eon owns consumer policy.
-- **Consumes:** Canonical management v5, ORB-C12, ORB-C3, ORB-C5 and ORB-C17.
+- **Consumes:** Canonical management v6, ORB-C12, ORB-C3, ORB-C5 and ORB-C17.
 - **Boundary:**
   - The contract is per live Orbit run. Eon retains topology, enumeration,
     cleanup, and recovery policy.
@@ -864,7 +885,8 @@ PTY pixel size rule needs no wire change.
   `eon-agent-parity-a9g0.15` commit (`9c90032`) for the management v4
   requests, proved installed by the `eon-agent-parity-a9g0.19` commit, and
   the `eon-7cf0y.8` commit for management v5 (the `ProgramStatus`
-  foreground)
+  foreground), and the `eon-buys1.1` commit for management v6 (the lease
+  input quiet window)
   - **Environment:** x86_64 Linux; `nix flake check -L` (`orbit-laws`,
     `orbit-boundary`, `orbit-terminfo`, every `orbit-<name>` real-PTY
     check); sandboxed `nix develop -c eon-test` (workspace and installer;
@@ -1523,7 +1545,7 @@ PTY pixel size rule needs no wire change.
     reply;
   - its Rust host, which extracts the text with libghostty's plain-text
     formatter;
-  - canonical `orbit-protocol` management v5.
+  - canonical `orbit-protocol` management v6.
 - **Consumes:** ORB-C13 (lease, validation, slow-peer rule), ORB-C4 (held
   updates), ORB-C3 (title and directory values).
 - **Boundary:**

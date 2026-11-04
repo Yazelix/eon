@@ -55,7 +55,7 @@ blind to the schema.
 `yazelix-orbit` takes this command line:
 
 ```sh
-yazelix-orbit serve [SOCKET] [--management-v5 SESSION_ID RUN_ID COMPONENT_GENERATION]
+yazelix-orbit serve [SOCKET] [--management-v6 SESSION_ID RUN_ID COMPONENT_GENERATION]
                   [--ansi-palette-v1 RGB,...] [-- COMMAND ...]
 ```
 
@@ -123,7 +123,7 @@ same way.
 
 ## Management record
 
-`--management-v5` makes the run managed (ORB-C13).
+`--management-v6` makes the run managed (ORB-C13).
 Each identity has 1 to 128 UTF-8 bytes. Before the child starts, Rust opens a
 private management socket at `SOCKET.management`; at Ready it publishes an
 exact user-owned 0600 live record at `SOCKET.record` naming the three
@@ -315,20 +315,29 @@ of the answer (the answer did not decode).
 
 ### Lease input
 
-A lease input request (ORB-C5) writes one paste of up to 64 KiB, or one
-Enter, while the child runs. The host refuses a paste that holds a control
+A lease input request (ORB-C5) writes one paste of up to 64 KiB, or one Enter,
+while the child runs. Each request carries a quiet window of 0 to 65,535 ms.
+The host keeps the time an attached client's key press or repeat, or paste,
+last wrote to the PTY ([src/pty.rs](../src/pty.rs), `apply` and
+`flush_writes`): typing that waits in Orbit's PTY queue, behind a child that
+is not reading, counts from when its last byte is written. A key release,
+focus, mouse, wheel, selection or resize does not count, nor does lease input,
+nor a key that writes nothing. Input with a nonzero window that arrives while
+such typing still waits, or less than the window after it was written, is
+refused first (`Refused(Typing)`), in the same owner-loop step that would
+write it, so no client input lands between the test and the write; a zero
+window never refuses for typing. The host refuses a paste that holds a control
 character other than tab, line feed and carriage return
 (`Refused(InvalidInput)`), and one that holds a line feed or carriage return
 while the program has not enabled bracketed paste
-(`Refused(UnbracketedNewline)`). Otherwise it encodes the paste as an
-attached client's `Paste`, bracketed when the program enabled bracketed
-paste, or Enter as an unmodified Enter press and its release, which the
-keyboard mode encodes or drops, and queues the bytes whole for the PTY,
-answering `Input` with whether the paste was bracketed; input the queue
-cannot take whole is refused with `Refused(InputFull)`, and input after the
-PTY closed while the child runs with `Refused(Closed)`. A refusal writes
-nothing, and lease input needs no attachment, sends a client nothing and
-moves no viewport.
+(`Refused(UnbracketedNewline)`). Otherwise it encodes the paste as an attached
+client's `Paste`, bracketed when the program enabled bracketed paste, or Enter
+as an unmodified Enter press and its release, which the keyboard mode encodes
+or drops, and queues the bytes whole for the PTY, answering `Input` with
+whether the paste was bracketed; input the queue cannot take whole is refused
+with `Refused(InputFull)`, and input after the PTY closed while the child runs
+with `Refused(Closed)`. A refusal writes nothing, and lease input needs no
+attachment, sends a client nothing and moves no viewport.
 
 The real-PTY lease-input check pastes and presses Enter with no client
 attached and finds exactly those bytes at the child, after refusing newlines,
@@ -340,8 +349,22 @@ key-release reporting on, a lease Enter writes its press and its release and
 equals the client's. A 64 KiB lease paste sent while the client types reaches
 the child whole between its keys. Once the child stops reading, lease pastes
 fill the queue until one is refused with `InputFull`, and the lease still
-answers Status. A sensitivity check that returned the viewport to live output
-at lease input made the check fail.
+answers Status. With a 1.5 s window, two lease pastes in a row are both
+written; after a client's key press reaches the child, a lease paste and a
+lease Enter are refused and a zero-window paste is written; 1.7 s later a
+paste is written; after a client's paste, a paste is refused, and the child
+received none of the refused input. When the child stops reading, a client's
+64 KiB paste waits in the queue, and a windowed paste 1.7 s later is refused;
+once the child reads again and the paste has arrived, a windowed paste is
+still refused, and 1.7 s later one is written. With Kitty key-release and
+focus reporting on, a client's key release and focus change write to the child
+and the next windowed paste is still written. A sensitivity check that
+returned the viewport to live output at lease input made the check fail, and
+so did one that counted every attached client's input as typing (it refused
+the paste after the release and focus change), one that counted lease input as
+typing (it refused the second paste in a row), and one that timed typing from
+when it was queued rather than written (it wrote the paste while the typing
+still waited).
 
 ## Host and worker split
 
@@ -1060,7 +1083,7 @@ Every reply also carries the terminal's foreground, sampled with `tcgetpgrp`
 on the PTY as the host builds it, records or not: `child` when the PTY's
 foreground process group is the child's own, `other` when it is another
 group, and `unknown` when there is none or the sample fails. It takes one
-byte after the background count (management v5). With it, seven records at
+byte after the background count (since management v5). With it, seven records at
 their bounds beside seven omitted creation sequences and a 64-byte terminal
 title fill exactly 4096 bytes: `program_status_replies_keep_their_bounds`
 encodes that reply and refuses an eighth omitted sequence, and
@@ -1068,7 +1091,7 @@ encodes that reply and refuses an eighth omitted sequence, and
 it and refuses any other tag. Orbit gives the foreground no status meaning.
 
 The real-PTY program-status check reads the records through a
-`--management-v5` lease:
+`--management-v6` lease:
 
 - One write carrying `working`, `blocked` and `done` reports, a prompt mark
   and a `working` report leaves the `done` record and the last report. The

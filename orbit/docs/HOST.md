@@ -221,7 +221,7 @@ samples then and, while it holds a record, the background process count it
 also samples then, or `ManageRefuse`, for which it sends Busy and keeps the
 lease.
 
-Management v5's other requests arrive as fact `Management`. The host reads at
+Management v6's other requests arrive as fact `Management`. The host reads at
 most one request at a time, within the largest request's bound (one lease
 paste). A request stays in flight until its answer is fully written, and one
 that arrives while another is in flight, while a read waits, before an answer
@@ -258,7 +258,9 @@ would carry. Extraction only reads the terminal, and any failure is
 `Refused(ReadFailed)`, never partial text.
 
 A lease input request is event `Input`. The host keeps the decoded paste or
-Enter while Bend decides, and `ManageInput` writes it or refuses it
+Enter and its quiet window while Bend decides, and `ManageInput` writes it or
+refuses it, refusing it as `Typing` within its window after an attached
+client's typing
 ([src/pty.rs](../src/pty.rs)), as [Lease input](BEHAVIOR.md#lease-input)
 states.
 

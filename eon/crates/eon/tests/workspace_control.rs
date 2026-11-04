@@ -893,7 +893,7 @@ fn managed_orbit_helper() {
     let presentation = PathBuf::from(&arguments[serve + 1]);
     let management_argument = arguments
         .iter()
-        .position(|argument| argument == OsStr::new("--management-v5"))
+        .position(|argument| argument == OsStr::new("--management-v6"))
         .unwrap();
     let session_id = arguments[management_argument + 1]
         .to_str()
@@ -1025,19 +1025,26 @@ fn managed_orbit_helper() {
                             (
                                 "busy",
                                 ManagementClientMessage::ReadVisible
-                                | ManagementClientMessage::Input(_),
+                                | ManagementClientMessage::Input { .. },
                             )
-                            | ("busy-enter", ManagementClientMessage::Input(LeaseInput::Enter)) => {
-                                Some(ManagementServerMessage::Busy)
-                            }
+                            | (
+                                "busy-enter",
+                                ManagementClientMessage::Input {
+                                    input: LeaseInput::Enter,
+                                    ..
+                                },
+                            ) => Some(ManagementServerMessage::Busy),
                             (
                                 "closed",
                                 ManagementClientMessage::ReadVisible
-                                | ManagementClientMessage::Input(_),
+                                | ManagementClientMessage::Input { .. },
                             ) => Some(ManagementServerMessage::Refused(Refusal::Closed)),
                             (
                                 "unbracketed",
-                                ManagementClientMessage::Input(LeaseInput::Paste(_)),
+                                ManagementClientMessage::Input {
+                                    input: LeaseInput::Paste(_),
+                                    ..
+                                },
                             ) => Some(ManagementServerMessage::Refused(
                                 Refusal::UnbracketedNewline,
                             )),
@@ -1121,7 +1128,7 @@ fn managed_orbit_helper() {
                                     text: format!("screen of {}", identity.session_id),
                                 }),
                             ),
-                            ManagementClientMessage::Input(input) if *leased => {
+                            ManagementClientMessage::Input { input, .. } if *leased => {
                                 if let Some(log) = std::env::var_os("EON_TEST_INPUT_LOG") {
                                     let line = format!("{} {input:?}\n", identity.session_id);
                                     fs::OpenOptions::new()

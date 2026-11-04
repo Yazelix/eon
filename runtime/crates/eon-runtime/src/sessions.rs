@@ -1364,7 +1364,9 @@ pub(super) fn send_input(
     input: LeaseInput,
     log: &DiagnosticLog,
 ) -> Result<bool, Failure> {
-    match terminal_request(session, &ManagementClientMessage::Input(input), log)? {
+    // No quiet window: Orbit never refuses this input for a person's typing.
+    let request = ManagementClientMessage::Input { input, quiet_ms: 0 };
+    match terminal_request(session, &request, log)? {
         ManagementServerMessage::Input { bracketed } => Ok(bracketed),
         _ => Err(unavailable(session, "Orbit returned the wrong result")),
     }
@@ -1451,7 +1453,7 @@ fn terminal_request(
             }
             ReplyProgress::WouldBlock => {
                 let detail = match message {
-                    ManagementClientMessage::Input(_) => {
+                    ManagementClientMessage::Input { .. } => {
                         "Orbit did not answer within 2 s; the input may still arrive"
                     }
                     _ => "Orbit did not answer within 2 s",
@@ -1859,7 +1861,7 @@ fn orbit_command(
     managed_environment::remove_agent_session(&mut orbit_command)
         .arg("serve")
         .arg(socket)
-        .arg("--management-v5")
+        .arg("--management-v6")
         .arg(session_id)
         .arg(run_id)
         .arg(component_generation)
@@ -3096,8 +3098,14 @@ pub(crate) mod tests {
         assert_eq!(
             orbit.join().unwrap(),
             [
-                ManagementClientMessage::Input(paste()),
-                ManagementClientMessage::Input(LeaseInput::Enter),
+                ManagementClientMessage::Input {
+                    input: paste(),
+                    quiet_ms: 0,
+                },
+                ManagementClientMessage::Input {
+                    input: LeaseInput::Enter,
+                    quiet_ms: 0,
+                },
             ]
         );
 
@@ -3203,7 +3211,10 @@ pub(crate) mod tests {
         late.set_read_timeout(Some(Duration::from_secs(5))).unwrap();
         assert_eq!(
             read_request(&mut late),
-            ManagementClientMessage::Input(paste())
+            ManagementClientMessage::Input {
+                input: paste(),
+                quiet_ms: 0,
+            }
         );
         assert!(!super::send_program_status(&mut session, Instant::now()).unwrap());
         let started = Instant::now();
@@ -3751,7 +3762,7 @@ pub(crate) mod tests {
             [
                 "serve",
                 "/runtime/orbit.sock",
-                "--management-v5",
+                "--management-v6",
                 "session-1",
                 "run-1",
                 "component-1",
@@ -3848,7 +3859,7 @@ pub(crate) mod tests {
             [
                 "serve",
                 "/runtime/orbit.sock",
-                "--management-v5",
+                "--management-v6",
                 "session-2",
                 "run-2",
                 "component-2",

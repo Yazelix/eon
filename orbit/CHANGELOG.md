@@ -6,6 +6,23 @@ remain canonical in `docs/CONTRACTS.md`, dependency decisions in
 
 ## Unreleased
 
+- Management moves to generation 6, a breaking change with no compatibility
+  window (`eon-buys1.1`). The lease `Input` request carries a quiet window, a
+  little-endian `u16` of milliseconds after its kind byte, and `Refused` gains
+  `Typing` (7). Orbit keeps the time an attached client's key press or
+  repeat, or paste, last wrote to the PTY, and refuses lease input with a
+  nonzero window less than that window after it, in the same owner-loop step
+  that would write it; a zero window never refuses for typing, and lease
+  input never counts as typing. ORBS and ORBF are unchanged.
+  `--management-v5` becomes `--management-v6`, so Eon Runtime moves to
+  generation 6 in the same change and sends a zero window, which leaves
+  `eon pane send` unchanged until `eon-buys1.2`; Venus does not use
+  management. As with generation 5, a new Eon Runtime cannot acquire or
+  recover the lease of an Orbit run that an older build started (ORB-C13), and
+  a live window an older build started keeps its own supervisor, which still
+  speaks generation 5 to its runs. EONW is unchanged, so the new `eon` still
+  reaches that window. ORB-C5 gains the quiet window and ORB-C13 lists it.
+
 - Management moves to generation 5, a breaking change with no compatibility
   window (`eon-7cf0y.8`). The `ProgramStatus` reply gains a one-byte
   foreground after the background count, sampled with `tcgetpgrp` on the PTY
