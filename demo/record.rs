@@ -585,8 +585,8 @@ fn features(r: &mut Recorder) -> Result<()> {
     focus_demo_tab(r)?;
     r.sleep(Duration::from_secs(1))?;
 
-    let clip = file("directory-picker.mp4");
-    let poster = file("directory-picker.png");
+    let clip = file("quick-search.mp4");
+    let poster = file("quick-search.png");
     r.record(&clip, |r| {
         r.sleep(Duration::from_millis(600))?;
         r.key("Alt+Shift+t", Duration::from_millis(1000))?;

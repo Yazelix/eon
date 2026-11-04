@@ -19,7 +19,7 @@ seam.
 | Anima | Anima | Terminal animations, style selection, input dismissal, and playback timing | A pinned executable for startup, CLI, and transient popup |
 | Nushell | Nushell | Shell language, execution, and native configuration | A pinned shell artifact and vendor-autoload input |
 | Starship | Starship | Prompt rendering, native modules, and configuration discovery | A pinned prompt artifact and guarded native initialization |
-| Zoxide and fzf | Zoxide and fzf | Directory ranking, storage, shell integration, and interactive fuzzy selection | Pinned artifacts, generated Zoxide initialization, and the picker command boundary |
+| Zoxide and fzf | Zoxide and fzf | Directory ranking, storage, shell integration, and interactive fuzzy selection | Pinned artifacts, generated Zoxide initialization, and the quick-search command boundary |
 | Helix | Helix | Editing, language integration, editor state | A relocatable editor artifact and explicit configuration inputs |
 | Yazi | Yazi | File management and navigation | A relocatable file-manager artifact and launch contract |
 | LazyGit | LazyGit | Git TUI behavior and configuration | A pinned executable and native configuration inputs |
@@ -101,9 +101,9 @@ shims require an explicit user decision, a removal condition, and a bead.
 EONW is the one versioned workspace boundary for independently released Eon
 clients. Its dependency-free owner crate defines semantic actions, complete
 snapshots, supervisor lifecycle results, structured failures, and bounded
-framing. EONW v30 carries Eon-owned raw tab launch directories, each tab's
+framing. EONW v31 carries Eon-owned raw tab launch directories, each tab's
 zero to four pane columns, each pane's semantic label and optional pin, the popup catalog,
-tab-scoped popup terminals, explicit retarget and chooser-completion actions, and
+tab-scoped popup terminals, explicit retarget actions, which commit a pending tab, and
 an optional pending tab's absent pane selection without interpreting Orbit
 terminal metadata. Workspace and
 lifecycle results are separate types, so the pinned
@@ -140,14 +140,17 @@ The pin is separate from terminal title and attention, follows the pane object,
 and is absent after supervisor recovery. Venus consumes the label without a
 second metadata observer or naming policy.
 
-EONW v30 is the current Eon source boundary. It adds the codec for the EON-C39
-event subscription: a `Subscribe` request whose connection then carries a
-`SUBSCRIBED` reply, `TABS`, `EVENT` and `GAP` messages and a final `END`, with
-a snapshot's tabs split one workspace per `TABS` message so each fits the 2
-MiB frame. The supervisor keeps each subscription's connection and writes to
-it without waiting, so a slow subscriber never delays its loop. v29 adds each
-window's busy terminals (EON-C11). v28 adds the running-windows summary and
-supervisor name and start time (EON-C23). v27 adds scoped quota windows and
+EONW v31 is the current Eon source boundary. It gives a pending tab the tab's
+Files popup, the directory pair of EON-C18, instead of a Project popup, removes
+`CommitDirectory`, and makes `SetTabDirectory` on a pending tab commit the
+tab's first pane. v30 adds the codec for the EON-C39 event subscription: a
+`Subscribe` request whose connection then carries a `SUBSCRIBED` reply,
+`TABS`, `EVENT` and `GAP` messages and a final `END`, with a snapshot's tabs
+split one workspace per `TABS` message so each fits the 2 MiB frame. The
+supervisor keeps each subscription's connection and writes to it without
+waiting, so a slow subscriber never delays its loop. v29 adds each window's
+busy terminals (EON-C11). v28 adds the running-windows summary and supervisor
+name and start time (EON-C23). v27 adds scoped quota windows and
 each provider's last failed quota read (EON-C27). v26 adds `ReadTerminal` and
 `SendTerminal`, which read a pane's or popup's visible text and paste text or
 send Enter to it in any workspace of the window, with their `Text` and `Sent`
@@ -192,7 +195,7 @@ lifecycle stay out of EONW and Venus. v7 also permits distinct pending Project
 pickers in separate tabs. Eon provides no version negotiation layer. Existing
 live supervisors retain their generation until explicitly stopped; the updated
 executable starts a separate generation. Composed activation requires an exact
-v30 Venus consumer.
+v31 Venus consumer.
 
 The optional Claude observation adds only bounded presentation facts. Under
 EON-C27, pinned CodexBar collects it; Runtime owns bounded subprocesses,
@@ -285,11 +288,11 @@ Paths below are relative to the repository root.
 
 - **Owning surfaces:** `runtime/crates/eon-runtime/src/workspace.rs`
 - **Owns:** Live ordered tabs and panes, stable identities, authoritative tab launch
-  directories, active selection, terminal-to-endpoint mapping, one captured-tab
-  directory-picker state, deterministic recovered-terminal projection, semantic action
+  directories, active selection, terminal-to-endpoint mapping, each pending tab's
+  directory pair, deterministic recovered-terminal projection, semantic action
   results, and complete snapshots
 - **Does not own:** EONW encoding, Orbit state, prior-topology persistence, shell-CWD
-  inference, picker rendering, or Venus geometry
+  inference, quick-search or Yazi rendering, or Venus geometry
 
 ### EONW boundary
 
@@ -355,12 +358,12 @@ them. Invalid graph or package inputs fail at their required boundary.
 |---|---|
 | Eon | Product contracts/version/default values, actual executable and exit/error mapping, canonical component graph and `eon-manifest`, assets, component selection, Nix translation and distribution |
 | `eon-runtime` | The `attention`, `cli`, `quota`, `control`, `generation`, `managed_environment`, `running`, `sessions`, `supervisor`, `windows` and `workspace` mechanisms, private state/invariants and one strict config parser |
-| `eon-workspace-protocol` in `runtime/crates/` | Canonical EONW package/API/codec v30 (package `0.1.0`, Rust `1.95`, Apache-2.0) |
+| `eon-workspace-protocol` in `runtime/crates/` | Canonical EONW package/API/codec v31 (package `0.1.0`, Rust `1.95`, Apache-2.0) |
 | Orbit and Venus | Their terminal and native-client authority |
 
 Eon calls one concrete library entry point. Runtime handles invocation selection,
 CLI projection and managed dispatch; Eon's real `main` retains process exit
-mapping and the private picker's failure delay. Public inputs carry product
+mapping. Public inputs carry product
 data, not access to private runtime operations. Rust type and function spellings
 remain implementation choices; the repository revision defines the accepted API
 pair.
@@ -377,8 +380,8 @@ pair.
 Eon may precompute graph validation without effects and pass its result.
 Runtime consumes a failure only where the current command needs the graph,
 before runtime ownership directories, sockets or children. It preserves
-help/usage, managed-tool, `config-path`, `config-dir`, direct Anima and
-private-picker ordering; the entry point does not impose blanket graph
+help/usage, managed-tool, `config-path`, `config-dir` and direct Anima
+ordering; the entry point does not impose blanket graph
 validation on them.
 
 Source dependencies run from Eon to the library and selected Orbit/Venus
@@ -455,7 +458,7 @@ the user activates an implementation bead and its prerequisite proofs exist. The
 active Eon slice launches one accepted Venus and Orbit pair, supplies the
 accepted managed environment, preserves Eon component and native shell
 configuration boundaries, reports component identity through one Nix-managed
-path, and exposes its live workspace through EONW v30. Venus consumes a new EONW
+path, and exposes its live workspace through EONW v31. Venus consumes a new EONW
 version only after Eon Runtime's producer proof; the graph's interface versions
 change only after Venus's consumer proof exists. Later slices earn their scope
 through dogfooding. Direct distribution has its own activation gate.

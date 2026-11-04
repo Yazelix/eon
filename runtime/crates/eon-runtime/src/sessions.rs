@@ -7,9 +7,8 @@ use super::{
         LaunchMode, SESSION_START_TIMEOUT, effective_uid, request_id, status_code, stop,
         validate_private_directory,
     },
-    workspace::{is_directory_picker_endpoint, is_directory_picker_session},
 };
-use eon_workspace_protocol::v30::{
+use eon_workspace_protocol::v31::{
     Failure, MAX_PASTE_BYTES, MAX_SESSIONS, MAX_TERMINAL_METADATA_BYTES, MAX_TERMINAL_TEXT_BYTES,
 };
 use orbit_protocol::management::{
@@ -43,14 +42,8 @@ fn session_number(value: &str) -> Option<usize> {
     number.parse().ok()
 }
 
-fn managed_session_number(value: &str) -> Result<Option<usize>, String> {
-    if value == "directory-picker" || is_directory_picker_session(value) {
-        Ok(None)
-    } else {
-        session_number(value)
-            .map(Some)
-            .ok_or_else(|| format!("invalid terminal identity {value:?}"))
-    }
+fn managed_session_number(value: &str) -> Result<usize, String> {
+    session_number(value).ok_or_else(|| format!("invalid terminal identity {value:?}"))
 }
 
 struct RecordSnapshot {
@@ -203,7 +196,7 @@ impl Drop for ReadyClaim {
 }
 
 struct ManagedCandidate {
-    number: Option<usize>,
+    number: usize,
     endpoint: PathBuf,
     record_path: PathBuf,
     record: ObjectIdentity,
@@ -318,7 +311,7 @@ fn validate_management_identity(
     component_generation: &str,
     expected_run: Option<&str>,
     require_live_endpoints: bool,
-) -> Result<(Option<usize>, PathBuf), String> {
+) -> Result<(usize, PathBuf), String> {
     let number = managed_session_number(&identity.session_id)?;
     if expected_run.is_some_and(|expected| identity.run_id != expected) {
         return Err("terminal record reports a different run identity".into());
@@ -346,12 +339,8 @@ fn validate_management_identity(
         .parent()
         .ok_or_else(|| "terminal presentation endpoint has no parent".to_string())?;
     let expected_presentation = match number {
-        None => presentation
-            .file_name()
-            .and_then(OsStr::to_str)
-            .is_some_and(is_directory_picker_endpoint),
-        Some(1) => presentation == runtime.join("orbit.sock"),
-        Some(number) => presentation == runtime.join(format!("session-{number}.sock")),
+        1 => presentation == runtime.join("orbit.sock"),
+        number => presentation == runtime.join(format!("session-{number}.sock")),
     };
     if !expected_presentation {
         return Err(format!(
@@ -555,6 +544,44 @@ fn acquire_management(
     })
 }
 
+/// Marks a pending tab's pair, whose terminal `endpoint` names, until its tab
+/// commits: a recovery stops a marked pair instead of adopting it as a pane
+/// (EON-C18).
+pub(super) fn pending_pair_marker(endpoint: &Path) -> PathBuf {
+    artifact_path(endpoint, ".pending")
+}
+
+pub(super) fn mark_pending_pair(endpoint: &Path) -> Result<(), String> {
+    let marker = pending_pair_marker(endpoint);
+    fs::OpenOptions::new()
+        .write(true)
+        .create(true)
+        .truncate(true)
+        .mode(0o600)
+        .custom_flags(libc::O_CLOEXEC | libc::O_NOFOLLOW)
+        .open(&marker)
+        .map(drop)
+        .map_err(|error| format!("cannot mark pending pair {}: {error}", marker.display()))
+}
+
+/// Whether a launch at `endpoint` still has its management record. A failed
+/// start whose rollback could not confirm cleanup keeps it, and its terminal
+/// may still be running.
+pub(super) fn launch_record_remains(endpoint: &Path) -> bool {
+    fs::symlink_metadata(artifact_path(endpoint, ".record")).is_ok()
+}
+
+pub(super) fn settle_pending_pair(endpoint: &Path) -> Result<(), String> {
+    let marker = pending_pair_marker(endpoint);
+    match fs::remove_file(&marker) {
+        Err(error) if error.kind() != io::ErrorKind::NotFound => Err(format!(
+            "cannot clear pending pair marker {}: {error}",
+            marker.display()
+        )),
+        _ => Ok(()),
+    }
+}
+
 fn cleanup_record(path: &Path, expected: ObjectIdentity) -> Result<(), String> {
     let metadata = fs::symlink_metadata(path).map_err(|error| {
         format!(
@@ -577,7 +604,29 @@ fn cleanup_record(path: &Path, expected: ObjectIdentity) -> Result<(), String> {
             "cannot remove ended terminal record {}: {error}",
             path.display()
         )
-    })
+    })?;
+    // An ended pair's marker and quick search socket go with its record.
+    match path.as_os_str().as_bytes().strip_suffix(b".record") {
+        Some(endpoint) => {
+            let endpoint = Path::new(OsStr::from_bytes(endpoint));
+            remove_pair_socket(endpoint)?;
+            settle_pending_pair(endpoint)
+        }
+        None => Ok(()),
+    }
+}
+
+/// Removes the quick search socket a pair's fzf leaves behind when it ends
+/// without unlinking it (EON-C18).
+fn remove_pair_socket(endpoint: &Path) -> Result<(), String> {
+    let socket = super::pair::socket(endpoint);
+    match fs::remove_file(&socket) {
+        Err(error) if error.kind() != io::ErrorKind::NotFound => Err(format!(
+            "cannot remove quick search socket {}: {error}",
+            socket.display()
+        )),
+        _ => Ok(()),
+    }
 }
 
 fn recorded_process_is_dead(identity: &LiveIdentity) -> Result<bool, String> {
@@ -648,7 +697,7 @@ pub(super) fn recover_sessions(
     orbit_logs: Option<&Path>,
     deadline: Instant,
 ) -> Result<(Vec<RunningSession>, bool), String> {
-    let mut sessions = acquire_generation_sessions(
+    let sessions = acquire_generation_sessions(
         runtime,
         mode,
         component_generation,
@@ -656,19 +705,48 @@ pub(super) fn recover_sessions(
         orbit_logs,
         deadline,
     )?;
-    let mut recovered_picker = false;
-    for picker in sessions
-        .iter_mut()
-        .filter(|session| session.number.is_none())
-    {
-        recovered_picker = true;
+    // A pending tab's pair is stopped, never adopted as a pane (EON-C18); a
+    // committed tab's Files carries no marker and recovers as a pane.
+    let (pairs, sessions): (Vec<_>, Vec<_>) = sessions
+        .into_iter()
+        .partition(|session| fs::symlink_metadata(pending_pair_marker(&session.endpoint)).is_ok());
+    let recovered_pair = !pairs.is_empty();
+    for mut pair in pairs {
         stop_managed_sessions(
-            std::slice::from_mut(picker),
-            operation_timeout(deadline, "stale directory-picker cleanup")?,
+            std::slice::from_mut(&mut pair),
+            operation_timeout(deadline, "stale pending pair cleanup")?,
         )?;
     }
-    sessions.retain(|session| session.number.is_some());
-    Ok((sessions, recovered_picker))
+    // Any marker left belongs to a terminal that ended without this
+    // supervisor, as does any quick search socket beside no live terminal.
+    let live = sessions
+        .iter()
+        .map(|session| session.endpoint.clone())
+        .collect::<HashSet<_>>();
+    for entry in fs::read_dir(runtime).map_err(|error| {
+        format!(
+            "cannot list terminal runtime {}: {error}",
+            runtime.display()
+        )
+    })? {
+        let path = entry
+            .map_err(|error| format!("cannot inspect terminal runtime entry: {error}"))?
+            .path();
+        if path.as_os_str().as_bytes().ends_with(b".sock.pending") {
+            fs::remove_file(&path).map_err(|error| {
+                format!(
+                    "cannot remove stale pending pair marker {}: {error}",
+                    path.display()
+                )
+            })?;
+        }
+        if let Some(endpoint) = crate::pair::socket_endpoint(&path)
+            && !live.contains(&endpoint)
+        {
+            remove_pair_socket(&endpoint)?;
+        }
+    }
+    Ok((sessions, recovered_pair))
 }
 
 pub(super) fn acquire_generation_sessions(
@@ -711,7 +789,6 @@ pub(super) fn acquire_generation_sessions(
     });
 
     let mut candidates = Vec::new();
-    let mut pickers = Vec::new();
     let mut numbers = HashSet::new();
     for record_path in paths {
         if owned.iter().any(|session| session.record == record_path) {
@@ -772,14 +849,10 @@ pub(super) fn acquire_generation_sessions(
             record: snapshot.object,
             identity,
         };
-        if let Some(number) = number {
-            if !numbers.insert(number) {
-                return Err(format!("duplicate live terminal identity session-{number}"));
-            }
-            candidates.push(candidate);
-        } else {
-            pickers.push(candidate);
+        if !numbers.insert(number) {
+            return Err(format!("duplicate live terminal identity session-{number}"));
         }
+        candidates.push(candidate);
     }
     candidates.sort_by_key(|candidate| candidate.number);
     if mode == LaunchMode::Terminal && candidates.len() > 1 {
@@ -788,13 +861,12 @@ pub(super) fn acquire_generation_sessions(
 
     candidates
         .into_iter()
-        .chain(pickers)
         .map(|candidate| acquire_management(candidate, orbit_logs, deadline))
         .collect()
 }
 
 pub(super) struct RunningSession {
-    pub(super) number: Option<usize>,
+    pub(super) number: usize,
     pub(super) id: String,
     pub(super) endpoint: PathBuf,
     record: PathBuf,
@@ -2172,9 +2244,8 @@ pub(crate) mod tests {
     use super::{
         AttachName, EndpointIdentity, LiveIdentity, ManagementRecord, Naming, ObjectIdentity,
         ProcessOutcome, ProgramStatusRead, RequestKind, RunningSession, TerminationReason,
-        Tombstone, bound_io, is_directory_picker_endpoint, managed_session_number, management,
-        name_presentation, orbit_command, read_management_response, session_number,
-        stop_managed_sessions, unix_connect_with_timeout,
+        Tombstone, bound_io, managed_session_number, management, name_presentation, orbit_command,
+        read_management_response, session_number, stop_managed_sessions, unix_connect_with_timeout,
     };
     use crate::{diagnostics::DiagnosticLog, supervisor::temporary_directory};
     use orbit_protocol::{
@@ -2247,7 +2318,7 @@ pub(crate) mod tests {
         lease.set_nonblocking(true).unwrap();
         drop(peer);
         let mut session = RunningSession {
-            number: Some(1),
+            number: 1,
             id: identity.session_id.clone(),
             endpoint: endpoint.clone(),
             record: record.clone(),
@@ -2399,10 +2470,10 @@ pub(crate) mod tests {
                 .unwrap()
                 .expect("live child has no process")
                 .start;
-            let endpoint = root.join("k1.sock");
-            let record = root.join("k1.sock.record");
+            let endpoint = root.join("session-2.sock");
+            let record = root.join("session-2.sock.record");
             let identity = LiveIdentity {
-                session_id: "directory-picker-1".into(),
+                session_id: "session-2".into(),
                 run_id: format!("run-{pid}"),
                 component_generation: "component-1".into(),
                 record_generation: management::RECORD_GENERATION,
@@ -2419,7 +2490,7 @@ pub(crate) mod tests {
                 },
                 management: EndpointIdentity {
                     path: root
-                        .join("k1.sock.management")
+                        .join("session-2.sock.management")
                         .as_os_str()
                         .as_bytes()
                         .to_vec(),
@@ -2638,7 +2709,7 @@ pub(crate) mod tests {
         let (lease, peer) = UnixStream::pair().unwrap();
         lease.set_nonblocking(true).unwrap();
         let session = RunningSession {
-            number: Some(number),
+            number,
             id: identity.session_id.clone(),
             endpoint,
             record_object: super::object_identity(&fs::symlink_metadata(&record).unwrap()),
@@ -2971,7 +3042,7 @@ pub(crate) mod tests {
         let (mut session, peer, tombstone) =
             tombstoned_session(&root, 1, TerminationReason::NaturalExit);
         let code =
-            |result: Result<bool, eon_workspace_protocol::v30::Failure>| result.unwrap_err().code;
+            |result: Result<bool, eon_workspace_protocol::v31::Failure>| result.unwrap_err().code;
         let paste = || LeaseInput::Paste("hi".into());
 
         let orbit = answer(
@@ -3480,7 +3551,13 @@ pub(crate) mod tests {
     fn session_identity_is_positive_canonical_decimal() {
         assert_eq!(session_number("session-1"), Some(1));
         assert_eq!(session_number("session-256"), Some(256));
-        assert_eq!(managed_session_number("directory-picker"), Ok(None));
+        // The retired directory pickers' identities are no longer terminals.
+        for retired in ["directory-picker", "directory-picker-1"] {
+            assert!(
+                managed_session_number(retired).is_err(),
+                "accepted {retired}"
+            );
+        }
         for invalid in [
             "session-0",
             "session-01",
@@ -3491,20 +3568,6 @@ pub(crate) mod tests {
             "session-184467440737095516160",
         ] {
             assert_eq!(session_number(invalid), None, "accepted {invalid}");
-        }
-        for valid in ["pick.sock", "k1.sock", "k256.sock"] {
-            assert!(is_directory_picker_endpoint(valid));
-        }
-        for invalid in [
-            "k0.sock",
-            "k01.sock",
-            "k.sock",
-            "k-1.sock",
-            "k1.sock.record",
-            "../k1.sock",
-            "k184467440737095516160.sock",
-        ] {
-            assert!(!is_directory_picker_endpoint(invalid), "accepted {invalid}");
         }
     }
 

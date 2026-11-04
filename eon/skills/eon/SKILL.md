@@ -52,12 +52,12 @@ When asked to open a file for the person, run `eon edit --json -- FILE` to open
 Helix in a new pane, selecting the new pane in your tab and dismissing that tab's popup.
 For a work tab, read `eon workspace --json` first, then run
 `eon tab create --no-focus --json --directory DIR`. This starts a tab at DIR
-without a picker and leaves the person's view alone. Append `-- COMMAND ARGS...`
+without quick search and leaves the person's view alone. Append `-- COMMAND ARGS...`
 to run an exact command from a calling Eon terminal; without a caller this form
 exits 1. Omit the command to open a shell pane. Find the new tab's ID by
 comparing `tabs[].id` before and after; `active_tab` stays unchanged with
 `--no-focus`. Use plain `eon tab create --json` only when the person asks for
-a tab with a directory picker: it activates the new pending tab and moves
+a tab that starts on quick search: it activates the new pending tab and moves
 the person's view.
 Create a workspace with `eon workspace new --no-focus --json`, adding
 `--name NAME` when requested; read its ID from `created`.
@@ -65,8 +65,13 @@ Set a tab's launch directory with `eon tab directory tN --json -- DIRECTORY`;
 it also adds one Zoxide visit for DIRECTORY unless `[shell] zoxide = false`.
 Zoxide's own exclusions apply: by default it records no visit for the home
 directory.
+A pending tab, one still showing quick search before its first pane, takes
+`eon tab directory tN --json -- DIRECTORY` as a pick: it starts the tab's
+first pane at DIRECTORY and hides quick search, as Enter there would. Pick
+for a pending tab only when the person asks.
 Hide popup `uN` with `eon popup hide uN --json` only when asked: a keep-alive
-popup keeps running, a transient one stops.
+popup keeps running, a transient one stops, and a pending tab's Files starts
+the tab's first pane at its starting directory.
 
 ## Read the workspace
 

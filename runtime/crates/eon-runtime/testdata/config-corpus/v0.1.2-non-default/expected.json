@@ -29,11 +29,6 @@
         "label": "Claude"
       },
       "files": {
-        "command": [
-          "eon-yazi"
-        ],
-        "enabled": true,
-        "keep_alive": false,
         "keybinding": "Alt+Shift+F",
         "label": "Files"
       },
@@ -91,6 +86,8 @@
     }
   },
   "warnings": [
-    "eon: ignoring unknown setting popup in config.toml"
+    "eon: ignoring unknown setting popup in config.toml",
+    "eon: ignoring popups.files.command in config.toml: Files is Eon's packaged Yazi; move a custom Yazi to its own popup, such as [popups.yazi] command = [\"eon-yazi\"]",
+    "eon: ignoring popups.files.keep_alive in config.toml: Files is Eon's packaged Yazi; move a custom Yazi to its own popup, such as [popups.yazi] command = [\"eon-yazi\"]"
   ]
 }

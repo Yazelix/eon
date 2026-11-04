@@ -4,7 +4,7 @@ use crate::{
     BarLoad, Defaults, Inputs, ManagedPrograms, PaddingColor, PopupCatalog, PopupCommand,
     PopupDefinition, ShellConfig, StartupAnimation, TerminalAccess, TerminalConfig,
 };
-use eon_workspace_protocol::v30::{ALT, PopupGeometry, PopupKey, SHIFT, Shortcut};
+use eon_workspace_protocol::v31::{ALT, PopupGeometry, PopupKey, SHIFT, Shortcut};
 
 pub(crate) fn inputs() -> Inputs {
     Inputs {
@@ -73,7 +73,13 @@ pub(crate) fn inputs() -> Inputs {
                     vertical_margin: 7.0,
                 },
                 entries: [
-                    ("project", "KeyZ", ALT, PopupCommand::Project, false),
+                    (
+                        "project",
+                        "KeyZ",
+                        ALT,
+                        PopupCommand::Argv(Vec::new()),
+                        false,
+                    ),
                     (
                         "git",
                         "KeyJ",
@@ -82,6 +88,13 @@ pub(crate) fn inputs() -> Inputs {
                         true,
                     ),
                     ("agent", "KeyL", ALT | SHIFT, PopupCommand::AgentAuto, true),
+                    (
+                        "files",
+                        "KeyY",
+                        ALT | SHIFT,
+                        PopupCommand::Argv(vec!["fixture-files".into()]),
+                        true,
+                    ),
                     (
                         "anima",
                         "KeyA",

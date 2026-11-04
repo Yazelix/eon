@@ -3,7 +3,7 @@ use crate::{
     model::{active_popup, focused_terminal, presented_panes},
     render::{CellMetrics, FALLBACK_CAP_HEIGHT_EM},
 };
-use eon_workspace_protocol::v30::{
+use eon_workspace_protocol::v31::{
     ALT, Attention, AttentionKind, AttentionState, BusyTerminals, ClaudeQuota, ClaudeQuotaState,
     CodexQuotaState, PopupEntry, QuotaWindow, SHIFT, Sidebar, Snapshot, Tab, TargetId,
 };

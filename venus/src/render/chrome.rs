@@ -13,7 +13,7 @@ use crate::{
         chrome_title_metrics,
     },
 };
-use eon_workspace_protocol::v30::AttentionState;
+use eon_workspace_protocol::v31::AttentionState;
 use glyphon::{
     Attrs, Buffer, Color, ContentType, CustomGlyph, Family, FontSystem, Metrics,
     RasterizeCustomGlyphRequest, RasterizedCustomGlyph, SwashCache, TextBounds, Weight, Wrap,
@@ -1931,7 +1931,7 @@ mod tests {
 
     #[test]
     fn placed_control_glyphs_stay_inside_their_targets() {
-        use eon_workspace_protocol::v30::{Column, Pane, PopupGeometry, Sidebar, Snapshot, Tab};
+        use eon_workspace_protocol::v31::{Column, Pane, PopupGeometry, Sidebar, Snapshot, Tab};
         let snapshot = Snapshot {
             workspace: "w1".into(),
             active_workspace: "w1".into(),
@@ -2816,7 +2816,7 @@ mod tests {
     #[ignore = "requires an isolated native Wayland display and Vulkan renderer"]
     fn long_workspace_labels_stay_on_the_visible_line() {
         use crate::EonBar;
-        use eon_workspace_protocol::v30::{Pane, Snapshot, Tab};
+        use eon_workspace_protocol::v31::{Pane, Snapshot, Tab};
         use winit::{
             application::ApplicationHandler, event::WindowEvent, event_loop::EventLoop,
             platform::wayland::EventLoopBuilderExtWayland, window::WindowId,
@@ -2852,7 +2852,7 @@ mod tests {
                 let snapshot = Snapshot {
                     workspace: "w1".into(),
                     active_workspace: "w1".into(),
-                    workspaces: vec![eon_workspace_protocol::v30::WorkspaceInfo {
+                    workspaces: vec![eon_workspace_protocol::v31::WorkspaceInfo {
                         id: "w1".into(),
                         name: None,
                         tab_count: 1,
@@ -2860,7 +2860,7 @@ mod tests {
                         recency: 0,
                     }],
                     active_tab: "t2".into(),
-                    geometry: eon_workspace_protocol::v30::PopupGeometry {
+                    geometry: eon_workspace_protocol::v31::PopupGeometry {
                         side_margin: 8.0,
                         vertical_margin: 4.0,
                     },
@@ -2875,7 +2875,7 @@ mod tests {
                             id: format!("t{}", index + 1),
                             directory: format!("/tmp/{directory}").into_bytes(),
                             selected_pane: Some(format!("p{}", index + 1)),
-                            columns: vec![eon_workspace_protocol::v30::Column {
+                            columns: vec![eon_workspace_protocol::v31::Column {
                                 panes: vec![Pane {
                                     label: format!("p{}", index + 1),
                                     pinned_name: None,
@@ -2897,7 +2897,7 @@ mod tests {
                     claude_quota_failure: None,
                     running: None,
                     busy: None,
-                    sidebar: eon_workspace_protocol::v30::Sidebar::Open,
+                    sidebar: eon_workspace_protocol::v31::Sidebar::Open,
                     attention_queue: Vec::new(),
                 };
                 let workspace = WorkspaceScene::from_snapshot(
@@ -3246,19 +3246,19 @@ mod tests {
                 // Shared popup/sidebar titles use the pane metric and interrupt their top edge.
                 snapshot
                     .entries
-                    .push(eon_workspace_protocol::v30::PopupEntry {
+                    .push(eon_workspace_protocol::v31::PopupEntry {
                         id: "files".into(),
                         label: "Files".into(),
-                        shortcut: eon_workspace_protocol::v30::PopupKey::Bound(
-                            eon_workspace_protocol::v30::Shortcut {
-                                modifiers: eon_workspace_protocol::v30::ALT,
+                        shortcut: eon_workspace_protocol::v31::PopupKey::Bound(
+                            eon_workspace_protocol::v31::Shortcut {
+                                modifiers: eon_workspace_protocol::v31::ALT,
                                 key: "KeyF".into(),
                             },
                         ),
                     });
                 snapshot.tabs[1]
                     .popups
-                    .push(eon_workspace_protocol::v30::Popup {
+                    .push(eon_workspace_protocol::v31::Popup {
                         id: "u1".into(),
                         entry: "files".into(),
                         session: "files-session".into(),

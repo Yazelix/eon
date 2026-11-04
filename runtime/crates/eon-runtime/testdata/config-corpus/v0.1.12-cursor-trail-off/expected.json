@@ -40,6 +40,10 @@
         "keybinding": "Alt+Shift+A",
         "label": "Fixture anima"
       },
+      "files": {
+        "keybinding": "Alt+Shift+Y",
+        "label": "Fixture files"
+      },
       "git": {
         "command": [
           "fixture-git"

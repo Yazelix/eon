@@ -41,16 +41,18 @@ each exact external component revision; Orbit, Venus and Eon Runtime report
 
 Fresh workspaces first show a three-second random Anima animation after the
 window is ready. Press any key other than the style-browsing keys to dismiss it;
-set `[anima].enabled = false` in `config.toml` to skip it. The directory picker
-then opens. When other Eon windows still run, a new window's first picker says
-how many above its results, names up to three, and says how to see and quit
-them; `eon workspace` lists them (JSON `running.others`). Press Enter to use a
-Zoxide history match, or Tab to browse folders with Yazi. In the browser, Enter chooses the
-highlighted folder and F1 shows its keys. New tabs start in your home directory. Escape dismisses the picker and opens
-a terminal there, keeping the tab. Close the tab with Alt+Shift+W if you no
-longer want it. The initial workspace uses the directory where Eon was launched.
+set `[anima].enabled = false` in `config.toml` to skip it. Quick search then
+opens over the first tab's Files. When other Eon windows still run, a new
+window's first quick search says how many in its header, names up to three,
+and says how to see and quit them; `eon workspace` lists them (JSON
+`running.others`). Press Enter to use a Zoxide history match, or Tab to move
+Files there and browse with Yazi, where Alt+Enter uses a folder (see
+[Eon Bar and tabs](#eon-bar-and-tabs) for every key). New tabs start in your
+home directory. Escape closes quick search and opens a terminal there, keeping
+the tab. Close the tab with Alt+Shift+W if you no longer want it. The initial
+workspace uses the directory where Eon was launched.
 
-A terminal starts after choosing a directory or dismissing the picker. Closing the last
+A terminal starts after choosing a directory or closing quick search. Closing the last
 tab quits the window and stops its terminals; in a window with several
 workspaces, it closes only that workspace. By default Eon asks first, listing the
 terminals that stop, and the question names the workspace while others remain.
@@ -146,7 +148,7 @@ Run a batch command outside the generations it will stop when you need every
 attempt or a complete result: stopping the caller's own terminal can terminate
 the CLI mid-batch.
 
-## Workspace and picker
+## Workspace and quick search
 
 A **workspace** is the whole collection of tabs and panes. A **tab** groups
 panes around its launch directory and shows them in one to four side-by-side
@@ -169,7 +171,7 @@ one, and clicking another column's terminal selects it.
 | Ctrl+Alt+H / Ctrl+Alt+L | Move the selected pane into the column to the left or right; at the tab's edge a stacked pane opens a new column |
 | Ctrl+Alt+K / Ctrl+Alt+J | Move the selected pane up or down in its column |
 | Ctrl+Alt+Shift+H / Ctrl+Alt+Shift+L | Move the active tab |
-| Alt+Shift+T | Create a tab through the directory picker |
+| Alt+Shift+T | Create a tab and choose its directory in quick search |
 | Alt+M | Create a pane in the selected column |
 | Ctrl+Alt+M | Create a column right of the selected one, up to four per tab |
 | Alt+Shift+Z | Show the selected pane alone across the tab, or restore the columns; changing the selected pane, tab or layout also restores them |
@@ -178,10 +180,10 @@ one, and clicking another column's terminal selects it.
 | Alt+Shift+N | Open an independent Eon window (also the desktop launcher's **New Eon Window** action) |
 | Alt+Shift+D | Detach: hide the window, keep terminals running |
 | Alt+Shift+Q | Quit this window, stopping its terminals; asks first while one runs something |
-| Alt+Z | Open the tab's Project directory picker |
+| Alt+Z | Show the tab's quick search, or hide it when quick search is shown |
 | Alt+Shift+J | Open or hide the tab's Git popup |
 | Alt+Shift+L | Open or hide the tab's Agent popup |
-| Alt+Shift+Y | Open or hide the tab's Files popup |
+| Alt+Shift+Y | Show the tab's Files, or hide it when Files is shown |
 | Alt+Shift+A | Open or dismiss the tab's Anima popup |
 | Alt+Shift+M | Open or dismiss the tab's Commands popup |
 | Alt+Shift+S | Open or dismiss the Workspaces picker: Enter shows the highlighted workspace, Enter on an unmatched name creates one |
@@ -253,7 +255,7 @@ focus; narrow windows omit whole hints, keeping the help and hints-toggle hints
 longest. Alt+Shift+D shows `detach`, Alt+Shift+Q `quit`, and Alt+Shift+H
 shows `sidebar` unless the
 sidebar is turned off. Alt+G and Alt+Shift+G, F6, Ctrl+Tab and Ctrl+Shift+Tab,
-and Project (Alt+Z) have no hint but stay in full help. Hints that create
+and Quick search (Alt+Z) have no hint but stay in full help. Hints that create
 something name the tab, pane, column or window. Compact groups spread across the bar with
 equal gaps and the outer groups near its edges; a lone group stays centered. Hint spacing stays compact.
 Only modifier headers have padded rounded backgrounds. Each pane is its own
@@ -300,29 +302,41 @@ opens the complete Shortcuts viewer, including the hints toggle. Eon has no
 minor modes yet.
 
 Tabs own launch directories; changing a shell's directory does not rename or
-retarget its tab. Project changes the directory used by future terminals in the
-captured tab without moving existing terminals. Git and Agent are tab-scoped
+retarget its tab. Using a folder from quick search or Files changes the
+directory used by future terminals in the tab without moving existing
+terminals. Git and Agent are tab-scoped
 terminals whose terminal state survives hiding and reopening. When the tab's
 directory changes, a running Agent moves out of its popup into a pane of the
 tab, with its conversation and old directory intact, and the next Alt+Shift+L
 starts a fresh agent in the new directory. Git restarts in the new directory
-the next time you open it. Files is Yazi at the tab's directory. Tab opens
-quick search over recent folders: Enter uses the highlighted folder for the
-tab, Tab moves Yazi there without using it, and Esc closes Files. In Yazi,
-Alt+Enter uses the hovered folder, or Yazi's current one, for the tab without
-moving Yazi; Enter on a folder moves into it; Shift+Tab shows the hovered
-file's details. Esc first leaves a visual mode, selection, filter, find or
-search, one per press, and otherwise closes Files; Ctrl+C does the same and no
-longer closes a Yazi tab. In a Files left over from a supervisor recovery, they
-quit Yazi instead. Every other Yazi key, including
-file operations, works as usual; Z, q and Q do nothing. Files keeps its place
-when hidden and when the tab's directory changes. Only a folder you use enters
+the next time you open it. Anima is transient:
+closing its popup stops playback and returns to the tab.
+
+Each tab has one Files popup, Yazi at the tab's directory, with two screens:
+quick search over recent folders, and Files itself. Alt+Z shows quick search
+and Alt+Shift+Y shows Files; each key hides the popup when its own screen is
+already shown. In quick search, Enter uses the highlighted folder for the tab,
+Tab moves Yazi there without using it and shows Files, and Esc or Ctrl+C
+closes the popup. In Files, Alt+Enter uses the hovered folder, or Yazi's
+current one, for the tab without moving Yazi; Tab returns to quick search
+without moving Yazi; Enter on a folder moves into it; Shift+Tab shows the
+hovered file's details. Esc first leaves a visual mode, selection, filter,
+find or search, one per press, and otherwise closes the popup; Ctrl+C does the
+same and no longer closes a Yazi tab. In a Files left over from a supervisor
+recovery, they quit Yazi instead. Every other Yazi key, including file
+operations, works as usual; Z, q and Q do nothing. Files keeps its place when
+hidden and when the tab's directory changes. Only a folder you use enters
 Zoxide history, as Zoxide records it (by default it skips your home
 directory); browsing and searching add none, and `[shell] zoxide = false`
 stops even that. Enter on a text file opens it in a new Helix pane beside your
 work and hides Files, one pane per selected file; other files keep Yazi's
-default openers. Anima is transient:
-closing its popup stops playback and returns to the tab.
+default openers. A new tab must have its directory first: until then, Enter on
+a text file refuses with `choose-directory-first`.
+
+A new tab has no terminal until you choose its directory: it starts on quick
+search. Using a folder starts the tab's first terminal there and hides the
+popup; closing the popup starts it at the tab's starting directory. Either
+way, the same Yazi stays as the tab's Files.
 
 Commands lists Eon commands you can search and run: new tab, pane or
 window, close or move the tab, quit this window, switch, create, rename or
@@ -377,7 +391,7 @@ brings the popup up. While no agent reports, the sidebar says so.
 
 Click a row, or press Enter or Space on it, to jump to that agent: Eon selects
 its tab and shows its pane or popup, and keyboard focus moves to that terminal.
-If a transient popup or a pending directory picker covers the agent, the jump
+If a transient popup covers the agent, the jump
 only selects the tab, and focus moves to the tabs. F6 moves keyboard focus from
 the terminal into the sidebar, back to the row it last focused while that row
 remains, then to the tabs and panes. Up and Down move between rows, and Escape
@@ -397,7 +411,7 @@ once you select another terminal some other way, such as with a click, a
 sidebar row or Alt+H, or when an agent needs something more urgent than the one
 you last jumped to, for example input while you were walking finished agents.
 A jump to an agent under a
-transient popup or a pending directory picker only selects its tab. With no
+transient popup only selects its tab. With no
 agent waiting, the keys show "No agent needs attention" and move nothing.
 
 ### Attention inbox
@@ -415,7 +429,7 @@ workspace. Opening the inbox does not mark any agent's attention as seen.
 Agents read the same queue as `attention_queue` in `eon workspace --json`.
 A popup configured on Alt+Q takes the shortcut.
 
-### Scrolling and directory picker
+### Scrolling and selection
 
 When you scroll above live output, `↓ N rows` shows how many display rows back
 you are. It appears in Eon's pane header or at the top right of eonbase, updates
@@ -429,19 +443,6 @@ cell selection. Hold a drag in or above the pane's top row to keep extending
 the selection into history. Release copies to both Wayland clipboard destinations, and
 Ctrl+Shift+C copies the frozen selection even after output changes.
 
-The directory picker starts with Zoxide and fzf. Tab switches to Yazi, Shift+Z
-jumps through Zoxide history from the browser, `g h` goes home, `g /` goes to
-root, `g Space` accepts a folder path, and F1 opens browser help. `a` uses
-Yazi's native **Create:** prompt: a plain name creates a
-file; a name ending in `/` creates a folder. Creation highlights the item;
-Enter selects a folder. Esc returns input to normal mode or closes it;
-in help, it clears a filter or closes help. Existing targets require
-Yazi's native confirmation. Cancelling leaves created files and folders on disk.
-If creation fails, the pinned Yazi returns to browsing without an error dialog.
-Files cannot be selected as a tab directory or opened by the picker.
-Browsing, find, sorting and previews use Yazi defaults: `gg`/`G` reach the first
-or last entry, `H`/`L` go back/forward, and `/`/`?` with `n`/`N` find entries.
-
 ## CLI commands
 
 `eon -h` and `eon --help` show grouped commands,
@@ -454,9 +455,9 @@ line points agents to `eon --skill`.
 
 | Command | Result |
 |---|---|
-| `eon` | Present the current workspace or start its first directory picker |
+| `eon` | Present the current workspace or start its first tab on quick search |
 | `eon anima [STYLE] [CHILD OPTIONS...]` | Run pinned Anima in the caller's terminal without starting a workspace; `--help` lists styles and options |
-| `eon run [-- COMMAND...]` | Start a fresh workspace picker, optionally for an exact first command |
+| `eon run [-- COMMAND...]` | Start a fresh workspace on quick search, optionally for an exact first command |
 | `eon window new` | Open an independent Eon window and print its window ID |
 | `eon windows [--json]` | List independent windows and their running generations, or that a window has ended, with each live generation's name, start time and busy terminals (`busy` in JSON) |
 | `eon window attach ID` | Present one window's live generation after detach, through the Eon build that started it when needed |
@@ -471,14 +472,14 @@ line points agents to `eon --skill`.
 | `eon stop all [--json]` | Attempt every non-dead generation, including current |
 | `eon workspaces [--json]` | List the window's workspaces in order, with each one's ID, name, whether it is shown, its tab count, its most urgent agent attention state, and its recency (0 for the shown one, then 1 for the one shown before it, and so on, the Workspaces picker's order) |
 | `eon workspace [--json]` | Inspect the live tab, pane, popup, and terminal mapping, with each terminal's agent attention state, app and name; JSON includes each terminal's full agent attention record and the Codex and Claude quota readings, and the calling terminal in `caller` (null without `EON_TERMINAL`; a `caller` line in human output only when present); JSON `running` holds this window and the other running Eon windows, each with its ID, generation, name, start time and live terminal count; JSON `busy` lists the window's busy terminals, each with its workspace, tab, pane or popup, terminal and name, and `omitted` counts those past 32, with one `busy` line per terminal in human output |
-| `eon workspace new [--name NAME] [--no-focus] [--json]` | Add a workspace after the shown one, with one tab and its directory picker, and show it; with `--no-focus` the shown workspace stays. The reply names the new workspace's ID in `created` (`created wN` in human output) |
+| `eon workspace new [--name NAME] [--no-focus] [--json]` | Add a workspace after the shown one, with one tab on quick search, and show it; with `--no-focus` the shown workspace stays. The reply names the new workspace's ID in `created` (`created wN` in human output) |
 | `eon workspace switch WS [--json]` | Show workspace WS, with its tabs, panes and popups as it left them |
 | `eon workspace rename [WS] NAME [--json]` | Name workspace WS, or the caller's workspace; an empty NAME clears the name |
 | `eon workspace close WS [--json]` | Stop every terminal of WS and remove it, asking first without `--json`; closing the last workspace quits the window |
-| `eon tab create [--json]` | Create a distinct pending tab with its directory picker, even while another picker is open |
-| `eon tab create [--json] [--no-focus] --directory DIRECTORY [-- COMMAND [ARGS...]]` | Create a tab at DIRECTORY without a picker, optionally running an exact command from a calling terminal; `--no-focus` preserves the active tab, selection and popup |
+| `eon tab create [--json]` | Create a distinct pending tab on quick search, even while another tab waits for its directory |
+| `eon tab create [--json] [--no-focus] --directory DIRECTORY [-- COMMAND [ARGS...]]` | Create a tab at DIRECTORY without quick search, optionally running an exact command from a calling terminal; `--no-focus` preserves the active tab, selection and popup |
 | `eon tab close TAB [--json]` | Close the expected active tab; the final tab quits the window, or closes the workspace while others remain, asking first from a terminal |
-| `eon tab directory TAB [--json] -- DIRECTORY` | Set a tab's directory for future terminals |
+| `eon tab directory TAB [--json] -- DIRECTORY` | Set a tab's directory for future terminals; on a pending tab, use DIRECTORY as quick search would: start its first terminal there and hide its Files |
 | `eon tab move left\|right [--json]` | Move the active tab, or the calling terminal's tab, one position |
 | `eon pane create [--json] [--no-focus]` | Create a pane in the active tab's selected column, or in the calling pane's column; with `--no-focus`, the tab's selected pane and any shown popup stay as they are |
 | `eon pane create [--json] [--no-focus] -- COMMAND...` | From an Eon terminal, run COMMAND exactly as given (no shell) in a new pane of the caller's column, at the tab's directory, with `--no-focus` as above; refused with exit 1 outside an Eon terminal |
@@ -488,7 +489,7 @@ line points agents to `eon --skill`.
 | `eon pane move left\|right [--json]` | Move the selected pane, or the calling pane, into the neighbouring column, as Ctrl+Alt+H/L does |
 | `eon pane read TARGET [--json]` | Print the visible text of pane or popup TARGET, in any workspace of the window, without changing anything; see [Reading a terminal](#reading-a-terminal) |
 | `eon pane send TARGET [--enter] [--stdin] [--json] [-- TEXT]` | Paste TEXT, or standard input with `--stdin`, into pane or popup TARGET in any workspace of the window, then with `--enter` press Enter; see [Sending to a terminal](#sending-to-a-terminal) |
-| `eon popup hide POPUP [--json]` | Hide popup `uN` of the workspace as its window's dismissal would: a keep-alive popup keeps running, a transient one stops |
+| `eon popup hide POPUP [--json]` | Hide popup `uN` of the workspace as its window's dismissal would: a keep-alive popup keeps running, a transient one stops, and a pending tab's Files starts the tab's first terminal at its starting directory |
 | `eon focus ID\|left\|right\|up\|down [--json]` | Focus a stable identity or traverse the workspace |
 | `eon versions` | Print Eon, protocol, and component identities |
 | `eon config-path` | Create the configuration root and print the full path of its settings file, `config.toml`, which need not exist yet |

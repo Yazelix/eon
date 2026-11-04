@@ -5,6 +5,28 @@ installation, and proven contract changes.
 
 ## Unreleased
 
+- The Project directory picker and the Files popup are one Yazi per tab
+  (`eon-quick-search-parity-23y9.2`). A fresh window, a new tab (Alt+Shift+T,
+  `eon tab create`, `eon workspace new`) and Alt+Z show the tab's Files on
+  quick search; Alt+Shift+Y shows Files; each key hides it again when its own
+  screen is already shown. Using a folder, with Enter in quick search or
+  Alt+Enter in Files, starts a new tab's first terminal there, and closing
+  the popup starts it at the tab's starting directory; either way the same
+  Yazi stays as the tab's Files. `eon tab directory` on a new tab still
+  waiting for its directory uses it the same way. The "other windows running"
+  notice moves to quick search's header, and Alt+Z's default label is now
+  "Quick search". The separate picker and its own Yazi keys are gone.
+  Files is always Eon's packaged Yazi: `command`, `enabled = false` and
+  `keep_alive = false` under `[popups.files]` are now ignored with a warning;
+  move a custom Yazi to its own popup, such as `[popups.yazi] command =
+  ["eon-yazi"]`.
+- EONW moves to v31 and Eon to 0.1.15 (`eon-quick-search-parity-23y9.2`).
+  v31 gives a new tab the tab's Files popup instead of a Project popup and
+  drops the picker's own request. As with every EONW change, this `eon` lists
+  a window started by an earlier Eon as incompatible and refuses its
+  workspace commands with the usual other-version failure; older windows
+  remain attachable and stoppable through the recorded `eon` that started
+  them.
 - Files has new keys (`eon-quick-search-parity-23y9.3`). In quick search (Tab),
   Enter uses the highlighted folder for the tab and Tab moves Yazi there; in
   Yazi, Alt+Enter uses a folder, Enter opens, and Esc closes Files after

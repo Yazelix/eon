@@ -496,40 +496,10 @@
             ];
           };
 
-          directoryPickerConfig = pkgs.runCommand "eon-directory-picker-config" { } ''
-            mkdir -p "$out"
-            cat > "$out/keymap.toml" <<'EOF'
-            [mgr]
-            prepend_keymap = [
-              { on = "<Enter>", run = "open --hovered", desc = "Use the highlighted folder for the Eon tab" },
-              { on = "q", run = "quit --no-cwd-file --code=130", desc = "Cancel folder selection" },
-              { on = "Q", run = "quit --no-cwd-file --code=130", desc = "Cancel folder selection" },
-              { on = "<C-c>", run = "quit --no-cwd-file --code=130", desc = "Cancel folder selection" },
-              { on = "<Esc>", run = "quit --no-cwd-file --code=130", desc = "Cancel folder selection" },
-              { on = "<Tab>", run = "quit --code=10", desc = "Return to quick search" },
-              { on = ["g", "/"], run = "cd /", desc = "Filesystem root" },
-              # Keep file operations, openers, shells and suspension out of the picker.
-              ${lib.concatMapStringsSep "\n" (key: "{ on = ${builtins.toJSON key}, run = \"noop\" },") [
-                "o" "O" "<S-Enter>" "y" "x" "p" "P" "-" "_" "<C-->"
-                "d" "D" "r" ";" ":" "<C-z>"
-              ]}
-            ]
-            EOF
-            cat > "$out/init.lua" <<'EOF'
-            -- Replace file metadata with actions for this directory-only picker.
-            for id = 1, 6 do
-              Status:children_remove(id, id <= 3 and Status.LEFT or Status.RIGHT)
-            end
-            Status:children_add(function()
-              return tostring(cx.layer) == "mgr"
-                and " Enter Use folder · a Create · Tab Quick search · Shift+Z Jump · Esc/Ctrl+C Cancel · F1 Help"
-                or ""
-            end, 1000, Status.LEFT)
-            EOF
-          '';
-
-          # The Files popup's Yazi and its quick search: the EON-C18 pair keys, with files
-          # opening in a new Helix pane. Nothing writes Zoxide history; Eon records a pick.
+          # The Files popup's Yazi and its quick search: the EON-C18 pair, which a pending tab
+          # opens on quick search, with files opening in a new Helix pane. Nothing writes
+          # Zoxide history; Eon records a pick. The runtime switches screens through
+          # `ya emit-to` and the fzf socket in $EON_PAIR_SOCKET.
           filesPopupConfig = pkgs.runCommand "eon-files-popup-config" { } ''
             mkdir -p "$out/plugins/quick-search.yazi" "$out/plugins/tab-folder.yazi" "$out/plugins/smart-enter.yazi" "$out/plugins/close.yazi"
             cat > "$out/yazi.toml" <<'EOF'
@@ -557,6 +527,8 @@
             ]
             EOF
             cat > "$out/init.lua" <<'EOF'
+            -- A pending tab's pair, and the pair Alt+Z opens, start on quick search.
+            if os.getenv("EON_FILES_START") == "quick" then ya.emit("plugin", { "quick-search" }) end
             for id = 1, 6 do
               Status:children_remove(id, id <= 3 and Status.LEFT or Status.RIGHT)
             end
@@ -582,11 +554,29 @@
 
             local cwd = ya.sync(function() return tostring(cx.active.current.cwd) end)
 
+            -- The startup pair's notice of other running windows heads only its first quick
+            -- search.
+            local notice = ya.sync(function(state)
+              if state.noticed then return nil end
+              state.noticed = true
+              local text = os.getenv("EON_FILES_NOTICE")
+              return text ~= "" and text or nil
+            end)
+
             local function fail(content)
               ya.notify({ title = "Quick search", content = tostring(content), timeout = 5, level = "error" })
             end
 
-            function M:entry()
+            -- One quick search at a time: Yazi would queue a second behind the shown one and
+            -- show it when the first ends.
+            local claim = ya.sync(function(state)
+              if state.searching then return false end
+              state.searching = true
+              return true
+            end)
+            local release = ya.sync(function(state) state.searching = nil end)
+
+            local function search()
               local history, err = Command("zoxide")
                 :arg({ "query", "--list", "--exclude", cwd() })
                 :stdout(Command.PIPED)
@@ -594,9 +584,17 @@
                 :spawn()
               if not history then return fail(err) end
 
+              -- The runtime finds a shown quick search at this socket, and asks it to end
+              -- with status 11 to switch to Files.
+              local arguments = {}
+              local socket = os.getenv("EON_PAIR_SOCKET")
+              if socket and socket ~= "" then arguments[#arguments + 1] = "--listen=" .. socket end
+              local header = notice()
+              if header then arguments[#arguments + 1] = "--header=" .. header end
               local permit = ui.hide()
               -- fzf reads the history as it arrives instead of waiting for all of it.
               local child, spawn_err = Command("fzf")
+                :arg(arguments)
                 :env("FZF_DEFAULT_OPTS", "--exact --no-sort --cycle --keep-right --info=inline --layout=reverse "
                   .. "--height=100% --border=none --tabstop=1 --expect=tab "
                   .. "--bind=enter:accept-non-empty,ctrl-z:ignore,btab:up --prompt='Quick search > ' "
@@ -609,6 +607,8 @@
                 :spawn()
               local output, wait_err
               if child then output, wait_err = child:wait_with_output() end
+              -- fzf leaves its socket behind when it ends.
+              if socket and socket ~= "" then os.remove(socket) end
               -- A query that already ended on its own and failed left fzf an empty list.
               local ended = history:try_wait()
               -- No exit needs the rest of the history, so stop and reap the query.
@@ -620,14 +620,22 @@
               end
               if not output then return fail(spawn_err or wait_err) end
               if output.status.code == 130 then return require("tab-folder").close() end
-              -- 1 is Tab with no result: Files stays where it is.
-              if output.status.code == 1 then return end
+              -- 1 is Tab with no result, and 11 the runtime's switch to Files: Files stays
+              -- where it is.
+              if output.status.code == 1 or output.status.code == 11 then return end
               if not output.status.success then return fail(output.stderr) end
               local key, target = output.stdout:match("^([^\n]*)\n(.*)")
               target = target and target:gsub("\n$", "")
               if not target or target == "" then return end
               if key == "tab" then return ya.emit("cd", { target, raw = true }) end
               require("tab-folder").set(target)
+            end
+
+            function M:entry()
+              if not claim() then return end
+              local ok, err = pcall(search)
+              release()
+              if not ok then fail(err) end
             end
 
             return M
@@ -743,7 +751,6 @@
               EON_BASH = "${bashPackage}/bin/bash";
               EON_HX = "${helixPackage}/bin/hx";
               EON_YAZI = "${yaziPackage}/bin/yazi";
-              EON_DIRECTORY_PICKER_CONFIG = "${directoryPickerConfig}";
               EON_FILES_CONFIG = "${filesPopupConfig}";
               EON_YA = "${yaziPackage}/bin/ya";
               EON_LAZYGIT = "${lazygitPackage}/bin/lazygit";
@@ -859,7 +866,6 @@
                 ln -s ${animaPackage}/bin/anima "$out/libexec/eon/bin/anima"
                 # A terminal's own build answers `eon` there after the profile changes.
                 ln -s "../../../bin/eon" "$out/libexec/eon/bin/eon"
-                ln -s "../../../bin/eon" "$out/libexec/eon/bin/eon-directory-picker"
                 ln -s "../../../bin/eon" "$out/libexec/eon/bin/eon-files"
                 ln -s "../../../bin/eon" "$out/libexec/eon/bin/eon-commands"
                 ln -s "../../../bin/eon" "$out/libexec/eon/bin/eon-workspaces"
@@ -1088,6 +1094,14 @@
             helix-grammars = helix.checks.${system}.codeberg_grammars;
             eonbase-closure = eonbaseClosureCheck;
             managed-command-path = managedCommandPathCheck;
+            # The pair's quick search against a slow stand-in fzf (EON-C18).
+            quick-search-guard = pkgs.runCommand "eon-quick-search-guard" {
+              nativeBuildInputs = [ pkgs.lua5_4 ];
+            } ''
+              lua ${./nix/quick-search-guard.lua} \
+                ${filesPopupConfig}/plugins/quick-search.yazi/main.lua "$TMPDIR/session-2.quick.sock"
+              touch "$out"
+            '';
           } // lib.optionalAttrs pkgs.stdenv.isLinux {
             bundle-relink = bundleRelink.tree;
             bundle-launch = bundleRelink.launch;

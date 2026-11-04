@@ -8,6 +8,7 @@ mod events;
 mod generation;
 mod managed_environment;
 mod notification;
+mod pair;
 mod pane_labels;
 mod platform;
 mod quota;

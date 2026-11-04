@@ -136,9 +136,7 @@ keybinding = "Alt+Shift+M" # Popup shortcut using physical keys.
 label = "Commands" # Popup display name.
 
 [popups.files]
-command = ["eon-files"] # Direct argv, or auto for Agent's command selection.
-enabled = true # Enable this feature or popup.
-keep_alive = true # Keep this popup running when hidden.
+# Files is required: it is the tab's directory pair.
 keybinding = "Alt+Shift+Y" # Popup shortcut using physical keys.
 label = "Files" # Popup display name.
 
@@ -150,9 +148,9 @@ keybinding = "Alt+Shift+J" # Popup shortcut using physical keys.
 label = "Git" # Popup display name.
 
 [popups.project]
-# Project is the required chooser.
+# Project is required and shows the tab's Files on quick search.
 keybinding = "Alt+Z" # Popup shortcut using physical keys.
-label = "Project" # Popup display name.
+label = "Quick search" # Popup display name.
 
 [popups.workspaces]
 command = ["eon-workspaces"] # Direct argv, or auto for Agent's command selection.
@@ -310,11 +308,11 @@ read for each terminal. Invalid startup configuration creates no fresh terminal;
 a failed replacement leaves existing terminals and commands alive.
 
 On a fresh full-Eon workspace, Anima plays after the desktop is ready and before
-the initial directory picker. Press any key other than its previous/next style
+the first tab's quick search. Press any key other than its previous/next style
 keys to dismiss it immediately. `enabled = false` skips startup playback;
 `style` is passed to the pinned Anima executable, and `duration_seconds` accepts
 1–30. Anima owns its style names; run `eon anima --help` to see them. A failed
-animation continues to the picker. Attachment, recovery, later tabs, and
+animation continues to quick search. Attachment, recovery, later tabs, and
 eonbase do not play the startup animation.
 
 Closing the last tab quits its window and stops its terminals. While the
@@ -418,25 +416,29 @@ keep_alive = true
 ```
 
 Built-in popup commands, labels and shortcuts are listed in the defaults above.
-Every built-in popup accepts `keybinding` and `label`. Git, Agent, Files,
-Commands and Workspaces also accept `command`, `enabled` and `keep_alive`, and
+Every built-in popup accepts `keybinding` and `label`. Git, Agent, Commands and
+Workspaces also accept `command`, `enabled` and `keep_alive`, and
 Agent's `command` may also be `"auto"`. Anima also accepts `enabled`; it
-rejects `command` and `keep_alive = true`. Project rejects `command`,
-`enabled = false` and `keep_alive = true`, since it is the required chooser. A
+rejects `command` and `keep_alive = true`. Project has no command of its own:
+it shows the tab's Files on quick search, and Alt+Z hides it again when quick
+search is already shown. It rejects `command`, `enabled = false` and
+`keep_alive = true`, since it is required. A
 custom popup needs `command` and `keybinding`; its `label` defaults to its ID
 and its `keep_alive` to `true`.
 Agent's `auto` command runs the first of `codex resume`, `grok`, `opencode`,
 `pi` and `claude --resume` whose executable is on the terminal PATH.
 Files opens Yazi with Eon's own popup keys on Alt+Shift+Y and reads no Yazi
-configuration of yours. Setting `[popups.files].command` replaces it, for
-example with `["eon-yazi"]`, which reads the `yazi` directory under Eon's
-configuration root.
+configuration of yours. It is the tab's directory pair, so it is required: Eon
+ignores `command`, `enabled = false` and `keep_alive = false` there, with a
+configuration warning. For a Yazi that reads the `yazi` directory under Eon's
+configuration root, add a custom popup such as `[popups.yazi]` with
+`command = ["eon-yazi"]` and a free `keybinding`.
 Anima opens a random animation and stops when dismissed or replaced.
 Commands searches and runs Eon commands.
 Workspaces lists this window's workspaces most recently shown first, the shown
 one last, marking one that needs input: Enter shows the highlighted one, and
 Enter on a name that matches none creates a workspace with that name.
-Set `enabled = false` on Git, Agent, Files, Anima, Commands, Workspaces, or a
+Set `enabled = false` on Git, Agent, Anima, Commands, Workspaces, or a
 custom popup to disable it.
 
 A `keybinding` you configure, on a custom popup or a built-in one, takes its
@@ -445,8 +447,8 @@ popup holds it; otherwise the built-in popup stays without a key, and Alt+/
 lists it under its default key as overridden by the popup that holds it.
 `keybinding = ""` leaves any popup, Project included, without a key. Until the
 CLI path `eon-agent-parity-a9g0.1` lands, a popup without a key cannot be
-opened from the window, except that Project still opens for a new tab's folder
-choice and the Eon Bar's workspace label still opens Workspaces.
+opened from the window, except that a new tab still opens on quick search and
+the Eon Bar's workspace label still opens Workspaces.
 Two configured popups on one key fail at load, except on a key reserved for
 moving focus, where both load without a key. A popup shortcut on the key of a
 built-in Eon shortcut takes that key, and Alt+/ lists the built-in one as

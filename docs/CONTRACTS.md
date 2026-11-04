@@ -688,7 +688,7 @@ socket names, JSON fields and protocol identifiers retain their spellings.
 - **Owner:** Eon Runtime workspace topology, identity, focus, pruning and action
   enforcement; Eon supplies product defaults/policy. Orbit owns terminals and
   Venus owns native materialization.
-- **Consumes:** Current EONW v30 workspace/popup values, Orbit terminal
+- **Consumes:** Current EONW v31 workspace/popup values, Orbit terminal
   identities/endpoints and Venus `VEN-C8`.
 - **Boundary:** No arbitrary split tree, vertical splits, column resizing,
   arbitrary reorder target, cross-tab pane movement, picker relocation, durable layout
@@ -1045,7 +1045,10 @@ socket names, JSON fields and protocol identifiers retain their spellings.
   one connection that carries more than one response. Amended on 2026-11-03
   (approved by Lucca, relayed by eon-overseer) by
   `eon-quick-search-parity-23y9.3`: the Files quick-search keys, and
-  `eon popup hide`.
+  `eon popup hide`. Amended on 2026-11-03 (approved by Lucca, relayed by
+  eon-overseer) by `eon-quick-search-parity-23y9.2`: Project and Files show
+  the tab's pair (EON-C18), and `eon tab directory` on a pending tab is a
+  pick.
 - **Consumer:** One local CLI or approved composition controlling a live Eon
   supervisor.
 - **Trigger:** The client submits one versioned workspace or supervisor-lifecycle
@@ -1159,12 +1162,14 @@ socket names, JSON fields and protocol identifiers retain their spellings.
     reply's tab list ends with the new tab. An unavailable DIRECTORY, the tab
     limit, or a command that cannot start refuses the command with exit 1 and
     changes nothing. `--no-focus` and `-- COMMAND` require `--directory`.
+  - `eon tab directory TAB [--json] -- DIRECTORY` on a pending tab is a pick:
+    it commits exactly as a pair pick does (EON-C18).
   - `eon popup hide POPUP [--json]` hides popup `uN` of the addressed
     workspace, as its owning window's dismissal would:
 
     - a keep-alive popup is hidden and keeps running;
     - a transient popup stops;
-    - dismissing a pending tab's chooser starts its first pane (EON-C18).
+    - dismissing a pending tab's pair starts its first pane (EON-C18).
 
     The CLI reads the owning tab from workspace inspection, then sends EONW
     `DismissPopup`. It changes no other tab, pane, popup or desktop focus. A
@@ -1289,7 +1294,7 @@ socket names, JSON fields and protocol identifiers retain their spellings.
 - **Owner:** Eon Runtime supervisor workspace/action state and CLI projection;
   its canonical EONW package owns types, codec and result ordering. Eon supplies
   validated component facts and product defaults.
-- **Consumes:** Current EONW v30 and accepted Orbit management operations.
+- **Consumes:** Current EONW v31 and accepted Orbit management operations.
 - **Boundary:** Additive lifecycle tags do not widen the pinned Venus workspace
   consumer. There is no event stream or subscription policy other than
   EON-C39's event subscription, and no remote transport,
@@ -1300,14 +1305,15 @@ socket names, JSON fields and protocol identifiers retain their spellings.
   child-protocol escape hatch.
 - **Package owner:** The canonical EONW crate lives in
   `runtime/crates/eon-workspace-protocol` with its accepted package/API and
-  v30 bytes. Venus, Eon Runtime and Eon consume it by path.
+  v31 bytes. Venus, Eon Runtime and Eon consume it by path.
   See [package selection](ARCHITECTURE.md#in-tree-package-selection).
-- **Runtime policy:** Project is required, defaults to Alt+Z, and uses Eon's
-  existing transient chooser command. Git defaults to `eon-lazygit` on Alt+Shift+J;
+- **Runtime policy:** Project is required and defaults to Alt+Z; it has no
+  command of its own and shows the tab's pair (EON-C18) on quick search. Git
+  defaults to `eon-lazygit` on Alt+Shift+J;
   Agent defaults to the first available provider in the accepted Nova order on
   Alt+Shift+L. Git and Agent remain live when hidden. Reopening at the same tab
   directory preserves identity. When a tab's directory changes explicitly
-  (Project chooser completion or `SetTabDirectory`), a live Agent terminal
+  (a pair pick or `SetTabDirectory`), a live Agent terminal
   launched at another directory is parked in the same step: it leaves the popup
   and becomes an ordinary pane at the end of the tab's selected column, or the
   first column of a tab without panes, keeping its Orbit terminal, process and
@@ -1316,31 +1322,8 @@ socket names, JSON fields and protocol identifiers retain their spellings.
   and stops nothing and cannot fail on terminal or column capacity. The next
   Agent invocation starts a fresh agent at the new directory. Files defaults to
   Alt+Shift+Y and runs the pinned Yazi at the tab directory with Eon's packaged
-  popup configuration. Tab opens quick search, which ranks Zoxide history
-  through fzf.
-
-  - In quick search, Enter uses the highlighted folder. Tab moves Yazi to the
-    highlighted result without using it; with empty history, Yazi stays where
-    it is. Esc and Ctrl+C close Files. Every quick-search exit stops and reaps
-    a still-running history query.
-  - In Files, Enter on a hovered folder enters it, and Enter on a file opens
-    it. Alt+Enter uses the hovered folder, else Yazi's current folder.
-    Shift+Tab spots the hovered file. Esc and Ctrl+C first leave a visual
-    mode, selection, filter, find or search, and otherwise close Files. Z, q
-    and Q do nothing. Every other key keeps Yazi's native behavior, including
-    file operations.
-  - Quick search and Files each show one persistent footer: "Enter Use · Tab
-    Browse from here · Esc Close" and "Enter Open · Alt+Enter Use folder · Tab
-    Search · Esc Close".
-  - Using a folder sets the owning tab's directory, as `eon tab directory` with
-    its `EON_TAB` would; Yazi does not move. It refuses when that tab no longer
-    lists the popup, as after a supervisor recovery. A notification reports
-    the result, and a failure changes nothing.
-  - Closing hides Files, as `eon popup hide` with its popup ID would. A Files
-    Yazi that its tab no longer lists as a popup, as after a supervisor
-    recovery, quits instead.
-  - Opening, browsing, quick search, Tab moves and closing add no Zoxide
-    history.
+  popup configuration. Files is the tab's pair (EON-C18), whose key table,
+  footers and Zoxide rules apply.
 
   Files remains live when hidden and keeps its process, location and cursor
   across tab-directory changes; only after its process exits does the next
@@ -1377,8 +1360,8 @@ socket names, JSON fields and protocol identifiers retain their spellings.
   fzf list of the popup's window's workspaces (EON-C33's picker); Commands >
   Switch workspace runs the same list in the Commands popup. Each row shows
   the workspace's name, or its `wN` when unnamed, its tab count, and
-  ` · needs input` when its EONW v30 `attention` is needs input. Rows run by
-  EONW v30 `recency`, most recently shown first, with the shown workspace last
+  ` · needs input` when its EONW v31 `attention` is needs input. Rows run by
+  EONW v31 `recency`, most recently shown first, with the shown workspace last
   and marked ` · shown`, and the query matches only that name or `wN`. Enter on the highlighted row,
   including on an empty query, runs `eon workspace switch wN` once the CLI
   has checked again that the `wN` is live; otherwise it changes nothing and
@@ -1412,12 +1395,12 @@ socket names, JSON fields and protocol identifiers retain their spellings.
   owning tab's launch directory.
 - **Target safety:** Invocation names the tab, entry and expected instance
   (absence means no instance exists). Focus-only and toggle intents are
-  distinct. Dismissal and chooser completion require the exact live instance;
+  distinct. Dismissal requires the exact live instance;
   a replaced instance cannot inherit an old request. Instance identities must
   not be reused after supervisor recovery. The runtime owner validates targets
   against its current Snapshot before applying lifecycle policy; decoding checks
-  syntax, not staleness. Ordinary `SetTabDirectory`
-  remains explicit retargeting, not chooser completion.
+  syntax, not staleness. `SetTabDirectory` is a pick on a pending tab and
+  explicit retargeting on an established one.
 - **Bounds/failures:** Preserve the 2 MiB envelope, 64 tabs, raw Unix directory
   and endpoint bytes. At most 32 enabled entries and 256 combined pane/popup
   terminals are represented. Reject malformed framing, invalid or aliased
@@ -1436,7 +1419,8 @@ socket names, JSON fields and protocol identifiers retain their spellings.
   provider selection, cwd and lifetime remain runtime policy and never cross EONW;
   the EON-C31 `app` that crosses is the program's own report, not Eon's
   provider selection. The
-  retired v4 picker opcode is unavailable; Project uses ordinary popup invocation.
+  retired v4 picker opcode and v30's `CommitDirectory` are unavailable;
+  Project invokes the tab's pair.
   There is no negotiation or adapter.
 - **Proof:** `795d735a8f61ef439c56d68e1cc4d3929af0dfcf`, `eon-monorepo-2oko.6`;
   exit statuses `eon-8mnr.1` and `eon-8mnr.3` (automated tier); calling-terminal
@@ -2036,7 +2020,9 @@ socket names, JSON fields and protocol identifiers retain their spellings.
 
 - **Status:** Partially proved. Amended on 2026-11-03 (approved by Lucca,
   relayed by eon-overseer) by `eon-quick-search-parity-23y9.3`: the Zoxide
-  visit of an accepted `SetTabDirectory`.
+  visit of an accepted `SetTabDirectory`. Amended on 2026-11-03 (approved by
+  Lucca, relayed by eon-overseer) by `eon-quick-search-parity-23y9.2`:
+  `SetTabDirectory` on a pending tab is a pick of EON-C18's pair.
 - **Consumer:** One local Eon workspace user creating tabs and panes.
 - **Trigger:** Eon creates or recovers a workspace, creates a tab or pane, or an
   approved same-user client explicitly retargets one live tab.
@@ -2046,16 +2032,17 @@ socket names, JSON fields and protocol identifiers retain their spellings.
   - Fresh `t1` validates the supervisor's absolute launch directory before any
     terminal recovery or startup. Later new tabs start at the current user's
     home directory, resolved by the native home-directory API and validated before creating the tab. EON-C18's
-    pending picker commits the selected first-pane directory or starts a pane
+    pending pair commits the selected first-pane directory or starts a pane
     at the tab's starting directory when dismissed.
-  - `SetTabDirectory` changes exactly one addressed tab. Later panes in that tab
-    start with the accepted directory; existing terminals and terminal CWDs do
-    not change. Each accepted `SetTabDirectory` then adds one Zoxide visit for
-    the accepted directory through Eon's packaged Zoxide, unless
-    `[shell] zoxide = false`. Zoxide's own exclusions apply: by default it
-    records no visit for the home directory. The visit runs beside the
-    supervisor; its failure is logged and changes nothing else. A refused
-    `SetTabDirectory` adds no visit.
+  - `SetTabDirectory` changes exactly one addressed tab. On an established tab,
+    later panes start with the accepted directory; existing terminals and
+    terminal CWDs do not change. On a pending tab it is a pick (EON-C18): it
+    commits the directory and starts exactly one first pane there. Each
+    accepted `SetTabDirectory` then adds one Zoxide visit for the accepted
+    directory through Eon's packaged Zoxide, unless `[shell] zoxide = false`.
+    Zoxide's own exclusions apply: by default it records no visit for the home
+    directory. The visit runs beside the supervisor; its failure is logged and
+    changes nothing else. A refused `SetTabDirectory` adds no visit.
   - Current EONW v7 returns the exact accepted raw path bytes. Venus derives a
     bounded `N  leaf` or `N  /` label while retaining `tN` for actions and
     exposing identity plus bounded path context to accessibility.
@@ -2091,133 +2078,126 @@ socket names, JSON fields and protocol identifiers retain their spellings.
 
 - **Status:** Proven for home-directory tabs, picker dismissal and shared popups
   on x86_64 Linux native Wayland; v7 multi-pending tabs are proven by the
-  automated tier.
+  automated tier. Amended on 2026-11-03 (approved by Lucca, relayed by
+  eon-overseer) by `eon-quick-search-parity-23y9.2`: the Project chooser and
+  Files become one directory pair. Re-proof is pending at v31 under this bead.
 - **Consumer:** One person starting or using full Eon.
 - **Trigger:** Eon needs the first pane for a new tab, or the person presses
-  Alt+Z in an existing tab.
+  Alt+Z or Alt+Shift+Y.
 - **Result:**
   - On a fresh full-Eon workspace, after Venus accepts the initial presentation,
-    Eon may play one short Anima animation in the initial transient Project
-    terminal before starting the normal directory picker. The default is enabled,
+    Eon may play one short Anima animation in the initial pair's terminal
+    before its Files Yazi starts. The default is enabled,
     a random native style, and three seconds; `[anima].enabled = false` skips it.
     Any key other than Anima's style-browsing keys dismisses playback without
-    becoming picker input. This step does not run for later tabs, attachment,
-    reconnection, same-boot recovery, or eonbase.
+    becoming quick-search input. This step does not run for later tabs,
+    attachment, reconnection, same-boot recovery, or eonbase.
   - A fresh workspace and every later new tab not created with a directory
     (EON-C10's `tab create --directory`) begin as one active pending tab
-    with no durable pane. Eon starts one transient Orbit terminal running the
-    exact packaged ranked-directory picker at that tab's starting directory
-    (the initial launch directory for t1, the user's home for later tabs).
-    Ambient fzf default options cannot alter its command, layout, or bindings.
-    Each picker instance has a distinct endpoint within that workspace, including
-    repeated retargeting of the same tab. A polling client can distinguish the
-    replacement even if it misses the intervening no-picker snapshot.
-  - Quick search ranks Zoxide history through fzf. Enter accepts one result;
-    Tab opens packaged Yazi without cancelling the picker; Esc and Ctrl+C cancel.
-    Every quick-search exit stops and reaps a still-running history query;
-    accepting, browsing and cancelling do not wait for the remaining results.
-    Empty history still shows the Browse action. Arrows move through results.
-  - Yazi begins at the tab's starting directory. Arrows/hjkl browse parent and
-    child directories; Shift+Z searches history and only moves the browser.
-    Enter uses the highlighted folder; Tab returns to quick search and preserves
-    the browser directory for the next visit. Esc, q, Q, and Ctrl+C cancel
-    from the main folder list. Within input and help, Esc follows Yazi's native
-    mode/filter handling before closing. Startup, new-tab and Alt+Z pickers
-    share these keys. Native browsing, find, sorting and previews remain.
-    `g h` reaches home, `g /` root, `g Space` accepts a typed path, and `.` toggles
-    hidden entries. `a` uses Yazi's native `create`: a plain name creates a file,
-    and a name ending in `/` creates a directory. Creation highlights the item
-    without accepting the picker; Enter accepts only directories. Native input
-    cancellation and existing-target confirmation remain. Cancelling the picker
-    leaves successful creations on disk; pinned Yazi returns quietly on failure.
-    The fixed chooser-mode open returns the highlighted path without invoking
-    a file opener. Creation is the only enabled file-management mutation.
-    External file opening, interactive shell commands and suspension remain excluded.
-    Files cannot be accepted as a tab directory or opened by the chooser.
-    Browsing does not add Zoxide history.
-    Yazi owns directory enumeration, navigation and creation; Eon performs no
-    recursive filesystem scan. A vanished or inaccessible final folder fails
-    EON-C17 validation without mutation.
-  - Each selection screen shows its own persistent footer: quick search offers
-    Use directory, Browse folders, and Cancel; Yazi offers Use highlighted folder,
-    Create, Quick search, Shift+Z Jump, Cancel, and Help; nested jump search
-    offers Jump and Back to folders. Browser shortcuts are absent from quick search. Eon's fixed Yazi
-    status configuration replaces file metadata with these picker actions.
-    Browser hints appear only while the folder list owns input; native Yazi
-    prompts and overlays hide them until the folder list regains focus.
-  - Accepting a valid choice atomically commits the tab directory and starts
-    exactly one first `pN` terminal there. Dismissing a pending picker keeps
-    the tab and starts its first pane at that tab's validated starting directory.
-    Explicitly closing a pending tab stops its picker and removes that tab
+    with no durable pane. Eon starts the tab's pair: the exact packaged Files
+    Yazi in one Orbit popup terminal at that tab's starting directory (the
+    initial launch directory for t1, the user's home for later tabs), showing
+    quick search first. The same terminal stays the tab's Files popup after the
+    tab gets its first pane. Ambient fzf default options cannot alter its
+    command, layout, or bindings. Other contracts call a pending tab's pair its
+    directory picker.
+  - The pair has two screens. Quick search ranks Zoxide history through fzf.
+    - In quick search, Enter picks the highlighted folder. Tab moves Files to
+      the highlighted result without picking; with empty history, Files stays
+      where it is. Esc and Ctrl+C close the pair. Every quick-search exit stops
+      and reaps a still-running history query.
+    - In Files, Enter on a hovered folder enters it, and Enter on a file opens
+      it. Alt+Enter picks the hovered folder, else Yazi's current folder. Tab
+      returns to quick search without moving Files. Shift+Tab spots the hovered
+      file. Esc and Ctrl+C first leave a visual mode, selection, filter, find
+      or search, and otherwise close the pair. Z, q and Q do nothing. Every
+      other key keeps Yazi's native behavior, including file operations.
+    - Quick search and Files each show one persistent footer: "Enter Use · Tab
+      Browse from here · Esc Close" and "Enter Open · Alt+Enter Use folder ·
+      Tab Search · Esc Close".
+  - Alt+Z shows the pair on quick search and Alt+Shift+Y shows it on Files;
+    each hides the pair when its own screen is already shown.
+  - A pick sets the owning tab's directory, as `eon tab directory` with its
+    `EON_TAB` would; Yazi does not move. It refuses when that tab no longer
+    lists the pair, as after a supervisor recovery. A notification reports a
+    refusal or failure, and a failure changes nothing.
+  - Closing the pair runs `eon popup hide` with its popup ID. A pair Yazi that
+    its tab no longer lists as a popup, as after a supervisor recovery, quits
+    instead.
+  - Opening, browsing, quick search, screen switches and closing add no Zoxide
+    history. A pick adds one visit, as EON-C17 describes.
+  - A pick on a pending tab atomically commits the tab directory, starts
+    exactly one first `pN` terminal there, and hides the pair. A pick on an
+    established tab changes its directory and leaves running panes alone.
+    Closing the pair on a pending tab is dismissal: the tab keeps the pair as
+    its Files popup and starts its first pane at the validated starting
+    directory. On an established tab, closing hides the pair and keeps its
+    state. Explicitly closing a pending tab stops its pair and removes that tab
     without starting a pane; when it is the final tab, the close acts as
     EON-C8's final-tab close.
-  - Alt+Z keeps the existing explicit retarget behavior after a tab has panes;
-    it never changes or restarts a running pane.
-  - `eon tab create --directory DIRECTORY` skips the picker: its tab is never
-    pending and its first pane starts at DIRECTORY (EON-C10). A bare
-    `eon tab create` and Venus's new-tab action keep the picker.
-  - Current EONW v7 exposes Project as a popup endpoint bound to one live
-    tab, never as a normal `pN` pane. The picker tab may remain live while
-    another durable tab is active. A picker-owned pending tab remains pane-free,
-    with an absent selected pane instead of a sentinel or placeholder process.
-    Lifecycle inspection and Stop may report zero durable terminals during the
-    initial picker; the transient picker remains excluded from that list.
+  - `eon tab create --directory DIRECTORY` skips the pending pair: its tab is
+    never pending and its first pane starts at DIRECTORY (EON-C10). A bare `eon
+    tab create` and Venus's new-tab action keep the pending pair.
+  - EONW v31 exposes the pair as the tab's `files` popup endpoint, never as a
+    normal `pN` pane; a pending tab holds exactly that one selected popup and
+    no pane. The pair tab may remain live while another durable tab is active.
+    A pair-owned pending tab remains pane-free, with an absent selected pane
+    instead of a sentinel or placeholder process. Lifecycle inspection and Stop
+    may report zero durable terminals during the initial pair; the pending pair
+    is a popup and is not counted among them.
   - Venus can start a full-Eon presentation from the workspace endpoint alone
-    while the initial tab is pending; the picker endpoint in its first snapshot
+    while the initial tab is pending; the pair's endpoint in its first snapshot
     is the sole terminal attachment.
-  - Venus keeps the tab bar visible and replaces the pane stack with the picker,
+  - Venus keeps the tab bar visible and replaces the pane stack with the pair,
     using Eon's fixed popup margins. The
     previous terminal is not composited underneath. Attach and recovery never
-    create an automatic picker; recovering only a stale initial picker stops it
-    and applies the validated launch-directory fallback.
+    create an automatic pair; recovering only a stale initial pending pair stops
+    it and applies the validated launch-directory fallback.
   - Left/right focus actions continue to traverse and wrap live tabs
-    while the picker stays bound to its original tab. Another active tab shows
-    its selected pane; returning shows the same picker for normal acceptance or
+    while the pair stays bound to its original tab. Another active tab shows
+    its selected pane; returning shows the same pair for normal acceptance or
     cancellation. Tab navigation by identity remains available. Other tabs
     allow pane creation, pane focus by direction or identity, pane/tab movement,
     explicit directory updates, and stable-target close. These actions preserve
-    the picker's binding and terminal. Mutations of the picker-bound tab remain
+    the pair's binding and terminal. Mutations of the pair-bound tab remain
     blocked except directory acceptance and closing its pending tab;
-    that close stops the transient terminal before removing the tab. Dismissing
-    a background pending picker starts that tab's first pane while leaving
+    that close stops the pair's terminal before removing the tab. Dismissing
+    a background pending pair starts that tab's first pane while leaving
     the selected tab in focus. Explicit tab close selects the nearest
     surviving tab. A workspace with no running terminals ends.
-    Pickers remain attached across tab switches; established tabs may open
-    their own popup while another picker remains live elsewhere. EONW v7 permits
-    multiple pending tabs, each retaining its exact Project picker across switches;
+    Pairs remain attached across tab switches; established tabs may open
+    their own popup while another pair remains live elsewhere. EONW v7 permits
+    multiple pending tabs, each retaining its pair across switches;
     CreateTab always creates a distinct tab. Alt+Shift+W closes the selected
-    pending tab and stops only its picker, ending the window when it is the
+    pending tab and stops only its pair, ending the window when it is the
     final tab.
-- **Important failures:** Unresolvable or invalid home, or a failed new-tab
-  picker launch, creates no tab. Invalid selection never commits its path;
-  duplicate or stale results cannot mutate another tab or its terminals.
-  Dismissal, picker exit or presentation detachment cleans the transient picker
-  and attempts the first pane at the pending tab's starting directory.
-  If presentation detachment cannot stop a picker, Eon reports the failure
-  once and keeps that picker in its tab for a retry at the next detachment;
-  it still cleans the other pickers, and the supervisor and other tabs remain.
-  If that pane cannot start, report the error and remove only the unstartable
-  tab; other tabs and terminals remain.
-  Left/right with only one live tab succeeds unchanged. A duplicate close
-  cannot stop the picker twice or remove another tab.
-  Invalid Anima settings fail before a fresh workspace starts. Missing, failed,
-  or timed-out playback reports a short diagnostic and continues to the picker.
-- **Owner:** Eon supplies picker/default policy and packaged commands; Eon
+- **Important failures:** Unresolvable or invalid home, or a failed new-tab pair
+  launch, creates no tab. Invalid selection never commits its path; duplicate or
+  stale results cannot mutate another tab or its terminals. Dismissal, pair exit
+  or presentation detachment dismisses the pending pair and attempts the first
+  pane at the pending tab's starting directory. If that pane cannot start,
+  report the error and remove only the unstartable tab; other tabs and terminals
+  remain. Left/right with only one live tab succeeds unchanged. A duplicate
+  close cannot stop the pair twice or remove another tab. Invalid Anima settings
+  fail before a fresh workspace starts. Missing, failed, or timed-out playback
+  reports a short diagnostic and continues to the pair.
+- **Owner:** Eon supplies pair/default policy and packaged commands; Eon
   Runtime owns tab binding, command selection, lifecycle, validation, mutation
   and cleanup. Venus owns full-Eon shortcut precedence,
   modal geometry, focus, input, notices, rendering, and accessibility. Orbit
-  owns the transient PTY and child. Zoxide owns ranking, fzf owns quick
-  selection, Yazi owns filesystem browsing, and Anima owns style selection,
-  rendering, input dismissal, playback timing, and terminal restoration. Eon
-  consumes one directory result without interpreting Yazi's navigation state.
-- **Consumes:** EON-C17, current EONW v7 popup/pending-tab values, Orbit's
+  owns the pair's PTY and child. Zoxide owns ranking, fzf owns quick selection,
+  Yazi owns filesystem browsing, and Anima owns style selection, rendering,
+  input dismissal, playback timing, and terminal restoration. Eon consumes one
+  picked directory per pick without interpreting Yazi's navigation state.
+- **Consumes:** EON-C17, current EONW v31 popup/pending-tab values, Orbit's
   accepted terminal startup/attachment/exit/stop contracts and the selected exact
   Venus consumer.
-- **Boundary:** No custom filesystem walker, editor/file-opening integration,
-  copied Nova plugin, normal-pane identity, client-supplied command,
-  simultaneous terminal composition, native Venus picker,
-  placeholder shell, pane replacement, current-process `cd`, persisted pending
-  tab, eonbase action, or additional platform.
+- **Boundary:** No custom filesystem walker, file opening from a pending tab's
+  pair (its `eon edit` is refused until the tab has a pane), copied Nova plugin,
+  normal-pane identity, client-supplied command, simultaneous terminal
+  composition, native Venus picker, placeholder shell, pane replacement,
+  current-process `cd`, persisted pending tab, eonbase action, or additional
+  platform.
 - **Proof:** `795d735a8f61ef439c56d68e1cc4d3929af0dfcf`, `eon-monorepo-2oko.6`.
   - **Environment:** Automated tier; installed tier.
   - **Evidence:** Picker lifecycle
@@ -2357,7 +2337,7 @@ socket names, JSON fields and protocol identifiers retain their spellings.
   tutorial, telemetry, momentary mode, dependency, or platform expansion.
   Venus derives overrides from the popup catalog it already receives over
   EONW. Exceptions: the viewer reads `sidebar` and each popup entry's override
-  from EONW v30.
+  from EONW v31.
 - **Proof:** `795d735a8f61ef439c56d68e1cc4d3929af0dfcf`, `eon-monorepo-2oko.6`.
   - **Environment:** Automated tier; installed tier.
   - **Evidence:** `popup_configuration_owns_defaults_overrides_and_collisions`;
@@ -2444,13 +2424,13 @@ socket names, JSON fields and protocol identifiers retain their spellings.
 - **Owner:** Eon owns the exact graph, product policy, profile delivery and
   installed acceptance; Eon Runtime owns workspace identity/actions. Venus
   owns header geometry, rendering, input, native drag, tooltips, and accessibility.
-- **Consumes:** Venus VEN-C21, EONW v7 (v30 for the EON-C31 tab attention
+- **Consumes:** Venus VEN-C21, EONW v7 (v31 for the EON-C31 tab attention
   marker) and Orbit terminals.
 - **Boundary:** EON-C27 separately owns the optional quota projection. The core
   header adds no Eon-rendered chrome, second row, widget framework, agent status,
   polling, configuration, protocol change, inactive-tab close, native window
   controls, macOS claim or distribution expansion. The one exception is the
-  EON-C31 tab attention marker, which Venus reads from the EONW v30 snapshot it
+  EON-C31 tab attention marker, which Venus reads from the EONW v31 snapshot it
   already polls.
 - **Proof:** `795d735a8f61ef439c56d68e1cc4d3929af0dfcf`, `eon-monorepo-2oko.6`.
   - **Environment:** Automated tier; installed tier.
@@ -2534,7 +2514,7 @@ socket names, JSON fields and protocol identifiers retain their spellings.
   completed inspection. Keeping it current wakes no idle process and sends
   nothing to another supervisor while nothing changes, and background
   inspection never removes another generation's files. Venus receives the
-  summary in every EONW v30 snapshot; the CLI prints it as `running`
+  summary in every EONW v31 snapshot; the CLI prints it as `running`
   (EON-C10).
   `eon window stop all` covers independent windows and attempts the caller's
   own window last; existing `eon stop all` remains scoped to the caller's
@@ -2659,7 +2639,7 @@ socket names, JSON fields and protocol identifiers retain their spellings.
 - **Ownership:** Pinned CodexBar owns provider collection and credential access;
   Runtime owns bounded subprocesses, validation, freshness and the stored
   readings; canonical EONW permits absent resets; Venus consumes typed facts
-  through its existing chip owners. Eon owns exact Nix composition. EONW v30
+  through its existing chip owners. Eon owns exact Nix composition. EONW v31
   carries each window's scope and each provider's last failure.
 - **Failure policy:** Each read has a ten-second deadline and 64 KiB output cap.
   A failed read keeps retained data unchanged; age alone marks it old after one
@@ -2825,13 +2805,12 @@ socket names, JSON fields and protocol identifiers retain their spellings.
 - **Boundary:** Not covered: how appearance and layout render; behavior that
   no document states; the ORBS and ORBF protocols, EONW beyond the lifecycle
   codecs kept above, and the component manifest format, which carry their own
-  versions; internal helpers that no document lists, such
-  as `eon-directory-picker`; the unprefixed tool names inside terminals;
-  Anima's styles and options; eonbase; the behavior of pinned tools such as
-  Helix, Yazi and Nushell when their pins update;
-  reattaching across presentation-incompatible releases, which needs the
-  earlier release's executable (EON-C11); and every platform other than
-  x86_64 Linux on native Wayland, including the macOS preview.
+  versions; internal helpers that no document lists; the unprefixed tool names
+  inside terminals; Anima's styles and options; eonbase; the behavior of pinned
+  tools such as Helix, Yazi and Nushell when their pins update; reattaching
+  across presentation-incompatible releases, which needs the earlier release's
+  executable (EON-C11); and every platform other than x86_64 Linux on native
+  Wayland, including the macOS preview.
 - **Proof:** None yet.
 - **Open proof:** Before v1.0.0, `eon-igae.11` adds these fixtures to the
   workspace suite (`nix develop -c eon-test`), so every 1.x build runs them: a
@@ -2894,8 +2873,8 @@ socket names, JSON fields and protocol identifiers retain their spellings.
 - **Result:**
   - **Polling.** A Runtime attention poller runs off the request path, on its own timer, at no
     more than 2 Hz.
-    - It polls only pane and popup terminals, of every workspace of the window, never
-      directory-picker sessions.
+    - It polls only pane and popup terminals, of every workspace of the window,
+      never a pending tab's pair.
     - It polls peers concurrently, each with a 250 ms deadline.
     - Each lease has exactly one reader and at most one request in flight. The EOF probe and
       Stop first drain or await an in-flight `ProgramStatus` reply, so no reply is ever read as
@@ -3154,8 +3133,8 @@ socket names, JSON fields and protocol identifiers retain their spellings.
     sidebar visibility and `[sidebar]` configuration.
   - **Orbit** owns the records, their neutral facts and the terminal title.
   - **Venus** owns presentation and hiding for width (VEN-C30).
-- **Consumes:** ORB-C15, ORB-C13 generation 5, EON-C8 topology, and EON-C10 (EONW v30, request
-  and response). EON-C39 plans a stream of its changes.
+- **Consumes:** ORB-C15, ORB-C13 generation 5, EON-C8 topology, and EON-C10
+  (EONW v31, request and response). EON-C39 plans a stream of its changes.
 - **Boundary:**
   - no hooks and no edits to agent configuration;
   - no provider parsing; the Runtime passes `app` and `name` through unchanged, and Venus maps
@@ -3863,13 +3842,12 @@ socket names, JSON fields and protocol identifiers retain their spellings.
 - **Boundary:** Not covered: how appearance and layout render; behavior that
   no document states; the ORBS and ORBF protocols, EONW beyond listing and
   stopping older generations above, and the component manifest format, which
-  carry their own versions; internal helpers that no document lists, such as
-  `eon-directory-picker`; the unprefixed tool names inside terminals; Anima's
-  styles and options; eonbase; the behavior of pinned tools such as Helix,
-  Yazi and Nushell when their pins update; reattaching across
-  presentation-incompatible releases, which needs the earlier release's
-  executable (EON-C11); and every platform other than x86_64 Linux on native
-  Wayland, including the macOS preview.
+  carry their own versions; internal helpers that no document lists; the
+  unprefixed tool names inside terminals; Anima's styles and options; eonbase;
+  the behavior of pinned tools such as Helix, Yazi and Nushell when their pins
+  update; reattaching across presentation-incompatible releases, which needs the
+  earlier release's executable (EON-C11); and every platform other than x86_64
+  Linux on native Wayland, including the macOS preview.
 - **Proof:** None yet.
 - **Open proof:** The config and state corpus test (`eon-embg6`) in
   `eon-test`, plus one installed skip-version observation (floor release to
@@ -3962,7 +3940,7 @@ socket names, JSON fields and protocol identifiers retain their spellings.
   - `eon pane wait TARGET --until done|needs-input|attention|ended
     [--timeout SECONDS] [--json]`.
 - **Result:**
-  - **One subscription.** The CLI sends one EONW v30 `Subscribe` request.
+  - **One subscription.** The CLI sends one EONW v31 `Subscribe` request.
     The supervisor either refuses it with an ordinary EONW `Failure` reply
     and closes the connection, or answers `SUBSCRIBED` and keeps the
     connection open for `TABS`, `EVENT`, `GAP` and `END` messages. A
@@ -4142,7 +4120,7 @@ socket names, JSON fields and protocol identifiers retain their spellings.
     subscriber, the attention poller or Stop.
 - **Owner:** Eon Runtime: the event projection, sequence, retained events,
   filters, subscriber bounds and CLI projection. Its canonical EONW package
-  owns the v30 `Subscribe` action and the `SUBSCRIBED`, `TABS`, `EVENT`,
+  owns the v31 `Subscribe` action and the `SUBSCRIBED`, `TABS`, `EVENT`,
   `GAP` and `END` messages.
 - **Consumes:** EON-C10 (EONW v30 from `eon-ciwn.6`, targeting, exit codes),
   EON-C31 (attention records, the queue and its CLI visibility), EON-C11

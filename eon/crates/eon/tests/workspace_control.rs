@@ -1,11 +1,10 @@
-use eon_workspace_protocol::v30::{
-    Action as ProtocolAction, Availability, Change, Column, Direction, End,
-    Failure as ProtocolFailure, Filter, HEADER_BYTES, InvokeIntent, LifecycleResponse,
-    MAX_SESSIONS, Pane, Popup, PopupGeometry, PopupTarget, Request, Response, Runtime, Screen,
-    Sent, Snapshot, Stopped, SubscriptionMessage, Tab, TabChange, TargetId, TerminalInput,
-    TerminalTarget, TerminalText, VERSION, WorkspaceAction as Action, declared_message_len,
-    decode_request, decode_response, decode_subscription_message, encode_lifecycle_response,
-    encode_request, encode_response,
+use eon_workspace_protocol::v31::{
+    Action as ProtocolAction, Availability, Change, Direction, End, Failure as ProtocolFailure,
+    Filter, HEADER_BYTES, InvokeIntent, LifecycleResponse, MAX_SESSIONS, Popup, PopupTarget,
+    Request, Response, Runtime, Screen, Sent, Snapshot, Stopped, SubscriptionMessage, Tab,
+    TabChange, TargetId, TerminalInput, TerminalTarget, TerminalText, VERSION,
+    WorkspaceAction as Action, declared_message_len, decode_request, decode_response,
+    decode_subscription_message, encode_lifecycle_response, encode_request, encode_response,
 };
 use orbit_protocol::management::{
     self as management, ClientMessage as ManagementClientMessage, EndpointIdentity, Failure,
@@ -131,18 +130,6 @@ fn configure_mock_desktop(config: &Path) {
         "[terminal]\nfont_fallbacks = []\n\n[anima]\nenabled = false\n",
     )
     .unwrap();
-}
-
-fn quick_picker_executable(path: &Path) {
-    executable(
-        path,
-        r#"#!/bin/sh
-[ -z "$FZF_DEFAULT_OPTS$FZF_DEFAULT_OPTS_FILE" ] || exit 99
-selection=$(cat)
-[ "$selection" != cancel ] || exit 130
-printf '\0%s\0' "$selection"
-"#,
-    );
 }
 
 #[test]
@@ -570,7 +557,7 @@ fn anima_command_preserves_child_arguments_status_and_avoids_workspace() {
 }
 
 #[test]
-fn anima_waits_for_native_readiness_then_hands_off_picker_and_popup_stops_on_dismissal() {
+fn anima_waits_for_native_readiness_then_hands_off_to_the_pair_and_popup_stops_on_dismissal() {
     let root = temporary_directory();
     let runtime = root.join("runtime");
     let config = root.join("config");
@@ -578,12 +565,12 @@ fn anima_waits_for_native_readiness_then_hands_off_picker_and_popup_stops_on_dis
     let orbit = root.join("orbit");
     let venus = root.join("venus");
     let anima = root.join("anima");
+    let yazi = root.join("yazi");
     let venus_started = root.join("venus-started");
     let venus_ready = root.join("venus-ready");
     let startup_started = root.join("startup-started");
     let startup_release = root.join("startup-release");
-    let picker_started = root.join("picker-started");
-    let picker_release = root.join("picker-release");
+    let files_started = root.join("files-started");
     let popup_pid = root.join("popup-pid");
     let popup_release = root.join("popup-release");
     let stop = root.join("stop");
@@ -598,16 +585,13 @@ fn anima_waits_for_native_readiness_then_hands_off_picker_and_popup_stops_on_dis
         "#!/bin/sh\nif [ \"$2\" = --duration-seconds ]; then\n  printf '%s|%s' \"$1\" \"$3\" > \"$EON_TEST_STARTUP_STARTED\"\n  while [ ! -e \"$EON_TEST_STARTUP_RELEASE\" ]; do sleep 0.01; done\nelse\n  printf '%s' \"$$\" > \"$EON_TEST_POPUP_PID\"\n  while [ ! -e \"$EON_TEST_POPUP_RELEASE\" ]; do sleep 0.01; done\nfi\n",
     );
     symlink(&anima, session_bin.join("anima")).unwrap();
+    // The pair's Yazi starts only once its terminal's Anima ends.
+    executable(
+        &yazi,
+        "#!/bin/sh\nprintf '%s|%s' \"$EON_FILES_START\" \"$*\" > \"$EON_TEST_FILES_STARTED\"\nwhile [ ! -e \"$EON_TEST_STOP\" ]; do sleep 0.01; done\n",
+    );
     let binary = PathBuf::from(env!("CARGO_BIN_EXE_eon"));
-    symlink(&binary, session_bin.join("eon-directory-picker")).unwrap();
-    executable(
-        &session_bin.join("zoxide"),
-        "#!/bin/sh\nprintf started > \"$EON_TEST_PICKER_STARTED\"\nprintf '/known\\n'\n",
-    );
-    executable(
-        &session_bin.join("fzf"),
-        "#!/bin/sh\ncat >/dev/null\nwhile [ ! -e \"$EON_TEST_PICKER_RELEASE\" ]; do sleep 0.01; done\nexit 130\n",
-    );
+    symlink(&binary, session_bin.join("eon-files")).unwrap();
     executable(
         &session_bin.join("eon-nu"),
         "#!/bin/sh\nwhile [ ! -e \"$EON_TEST_STOP\" ]; do sleep 0.01; done\n",
@@ -619,14 +603,15 @@ fn anima_waits_for_native_readiness_then_hands_off_picker_and_popup_stops_on_dis
         .env("EON_ORBIT", &orbit)
         .env("EON_VENUS", &venus)
         .env("EON_ANIMA", &anima)
+        .env("EON_YAZI", &yazi)
+        .env("EON_FILES_CONFIG", &root)
         .env("EON_SESSION_BIN", &session_bin)
         .env("EON_TEST_RUN_CHILD", "1")
         .env("EON_TEST_VENUS_STARTED", &venus_started)
         .env("EON_TEST_VENUS_READY", &venus_ready)
         .env("EON_TEST_STARTUP_STARTED", &startup_started)
         .env("EON_TEST_STARTUP_RELEASE", &startup_release)
-        .env("EON_TEST_PICKER_STARTED", &picker_started)
-        .env("EON_TEST_PICKER_RELEASE", &picker_release)
+        .env("EON_TEST_FILES_STARTED", &files_started)
         .env("EON_TEST_POPUP_PID", &popup_pid)
         .env("EON_TEST_POPUP_RELEASE", &popup_release)
         .env("EON_TEST_STOP", &stop)
@@ -641,22 +626,34 @@ fn anima_waits_for_native_readiness_then_hands_off_picker_and_popup_stops_on_dis
     wait_for(&venus_started);
     // Admission outlasts session start, so a slow native startup is not killed.
     thread::sleep(Duration::from_secs(6));
-    assert!(!startup_started.exists() && !picker_started.exists());
+    assert!(!startup_started.exists() && !files_started.exists());
     fs::write(&venus_ready, "ready").unwrap();
     wait_for(&startup_started);
     assert_eq!(fs::read_to_string(&startup_started).unwrap(), "random|3");
-    assert!(!picker_started.exists());
+    assert!(!files_started.exists());
     fs::write(&startup_release, "done").unwrap();
-    wait_for(&picker_started);
+    wait_for(&files_started);
+    let started = fs::read_to_string(&files_started).unwrap();
+    assert!(started.starts_with("quick|--client-id "), "{started}");
     let control = generation_runtime(&runtime).join("eon.sock");
     let Response::Snapshot(pending) = workspace_action(&control, "anima-pending", Action::Inspect)
     else {
-        panic!("initial picker snapshot missing");
+        panic!("initial pair snapshot missing");
     };
-    assert!(project_popup(&pending).is_some());
+    assert!(pending_pair(&pending).is_some());
     assert!(pending.tabs[0].columns.is_empty());
 
-    fs::write(&picker_release, "cancel").unwrap();
+    assert!(matches!(
+        protocol_action(
+            &control,
+            "pair-dismiss",
+            ProtocolAction::DismissPopup(PopupTarget {
+                tab: "t1".into(),
+                instance: "u1".into(),
+            }),
+        ),
+        Response::Snapshot(snapshot) if !snapshot.tabs[0].pending
+    ));
     wait_for(&generation_runtime(&runtime).join("orbit.sock"));
     let Response::Snapshot(opened) = protocol_action(
         &control,
@@ -687,7 +684,15 @@ fn anima_waits_for_native_readiness_then_hands_off_picker_and_popup_stops_on_dis
     ) else {
         panic!("Anima popup did not dismiss");
     };
-    assert!(dismissed.tabs[0].popups.is_empty());
+    // The kept pair stays as the tab's Files.
+    assert_eq!(
+        dismissed.tabs[0]
+            .popups
+            .iter()
+            .map(|popup| popup.entry.as_str())
+            .collect::<Vec<_>>(),
+        ["files"]
+    );
     assert_eq!(dismissed.tabs[0].selected_pane, selected_pane);
     wait_for_process_removal(
         fs::read_to_string(&popup_pid).unwrap().parse().unwrap(),
@@ -699,15 +704,19 @@ fn anima_waits_for_native_readiness_then_hands_off_picker_and_popup_stops_on_dis
 }
 
 #[test]
-fn failed_or_stuck_startup_anima_reports_and_continues_to_picker() {
+fn failed_or_stuck_startup_anima_reports_and_continues_to_quick_search() {
     let root = temporary_directory();
     let anima = root.join("anima");
     let pid = root.join("anima-pid");
+    let yazi = root.join("yazi");
+    let yazi_log = root.join("yazi.log");
     let bin = root.join("bin");
     fs::create_dir(&bin).unwrap();
-    executable(&bin.join("zoxide"), "#!/bin/sh\nprintf '/known\\n'\n");
-    executable(&bin.join("fzf"), "#!/bin/sh\ncat >/dev/null\nexit 130\n");
-    let binary = Path::new(env!("CARGO_BIN_EXE_eon"));
+    symlink(env!("CARGO_BIN_EXE_eon"), bin.join("eon-files")).unwrap();
+    executable(
+        &yazi,
+        "#!/bin/sh\nprintf '%s|%s\\n' \"$EON_FILES_START\" \"$*\" >> \"$EON_TEST_YAZI_LOG\"\n",
+    );
     for (program, expected) in [
         (root.join("missing"), "cannot launch pinned executable"),
         (anima.clone(), "timed out"),
@@ -719,31 +728,30 @@ fn failed_or_stuck_startup_anima_reports_and_continues_to_picker() {
             );
         }
         let started = Instant::now();
-        let output = eon_command(binary)
+        let output = eon_command(&bin.join("eon-files"))
             .args([
-                "__startup-anima",
+                "--eon-anima",
                 "random",
                 "1",
-                "/tmp/eon-test.sock",
-                "t1",
-                "u1",
+                "--eon-quick",
+                "--client-id",
+                "7",
             ])
             .env("EON_ANIMA", &program)
+            .env("EON_YAZI", &yazi)
+            .env("EON_FILES_CONFIG", &root)
+            .env("EON_CONFIG_HOME", root.join("config"))
             .env("EON_TEST_ANIMA_PID", &pid)
-            .env(
-                "PATH",
-                std::env::join_paths(
-                    std::iter::once(bin.clone())
-                        .chain(std::env::split_paths(&std::env::var_os("PATH").unwrap())),
-                )
-                .unwrap(),
-            )
+            .env("EON_TEST_YAZI_LOG", &yazi_log)
             .output()
             .unwrap();
-        assert_eq!(output.status.code(), Some(0));
-        assert!(String::from_utf8_lossy(&output.stderr).contains(expected));
+        assert_eq!(output.status.code(), Some(0), "{output:?}");
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        assert!(stderr.contains(expected), "{stderr}");
+        assert!(stderr.contains("continuing to quick search"), "{stderr}");
         assert!(started.elapsed() < Duration::from_secs(5));
     }
+    assert_eq!(log_lines(&yazi_log), ["quick|--client-id 7"; 2]);
     wait_for_process_removal(
         fs::read_to_string(&pid).unwrap().parse().unwrap(),
         "timed-out Anima kept running",
@@ -795,8 +803,8 @@ fn publish_management_record(path: &Path, record: &ManagementRecord) {
     claim.try_lock().unwrap();
     assert_eq!(object_identity(path), expected);
     claim.write_all(b"1").unwrap();
-    if matches!(record, ManagementRecord::Live(identity) if identity.session_id.starts_with("directory-picker"))
-        && let Some(delay) = std::env::var_os("EON_TEST_PICKER_READY_DELAY_MS")
+    if matches!(record, ManagementRecord::Live(identity) if identity.session_id == "session-2")
+        && let Some(delay) = std::env::var_os("EON_TEST_PAIR_READY_DELAY_MS")
     {
         thread::sleep(Duration::from_millis(
             delay.to_str().unwrap().parse().unwrap(),
@@ -1435,47 +1443,28 @@ fn protocol_action_from(
     decode_response(&response).unwrap()
 }
 
-fn project_popup(snapshot: &Snapshot) -> Option<(&Tab, &Popup)> {
-    snapshot.tabs.iter().find_map(|tab| {
-        tab.popups
-            .iter()
-            .find(|popup| popup.entry == "project")
-            .map(|popup| (tab, popup))
-    })
-}
-
-fn invoke_project(socket: &Path, id: &str) -> Response {
-    let Response::Snapshot(snapshot) =
-        workspace_action(socket, &format!("{id}-preflight"), Action::Inspect)
-    else {
-        panic!("cannot inspect Project popup precondition");
-    };
-    let tab = snapshot.active_tab.clone();
-    let expected_instance = snapshot
+/// The first pending tab's Files pair in `snapshot` (EON-C18).
+fn pending_pair(snapshot: &Snapshot) -> Option<(&Tab, &Popup)> {
+    snapshot
         .tabs
         .iter()
-        .find(|candidate| candidate.id == tab)
-        .and_then(|tab| tab.popups.iter().find(|popup| popup.entry == "project"))
-        .map(|popup| popup.id.clone());
-    protocol_action(
-        socket,
-        id,
-        ProtocolAction::InvokePopup {
-            tab,
-            entry: "project".into(),
-            expected_instance,
-            intent: InvokeIntent::Toggle,
-        },
-    )
+        .filter(|tab| tab.pending)
+        .find_map(|tab| {
+            tab.popups
+                .iter()
+                .find(|popup| popup.entry == "files")
+                .map(|popup| (tab, popup))
+        })
 }
 
-fn wait_for_picker_close(socket: &Path, directory: &Path) -> Snapshot {
+/// Waits until no tab is pending and the active tab's directory is `directory`.
+fn wait_for_commit(socket: &Path, directory: &Path) -> Snapshot {
     let deadline = Instant::now() + Duration::from_secs(5);
     let mut sequence = 0;
     loop {
         let response = workspace_action(
             socket,
-            &format!("picker-inspect-{sequence}"),
+            &format!("commit-inspect-{sequence}"),
             Action::Inspect,
         );
         let last_response = match response {
@@ -1485,7 +1474,7 @@ fn wait_for_picker_close(socket: &Path, directory: &Path) -> Snapshot {
                     .iter()
                     .find(|tab| tab.id == snapshot.active_tab)
                     .map(|tab| tab.directory.as_slice());
-                if project_popup(&snapshot).is_none()
+                if pending_pair(&snapshot).is_none()
                     && active_directory == Some(directory.as_os_str().as_bytes())
                 {
                     return snapshot;
@@ -1500,25 +1489,1048 @@ fn wait_for_picker_close(socket: &Path, directory: &Path) -> Snapshot {
         };
         assert!(
             Instant::now() < deadline,
-            "directory picker did not close: {last_response}"
+            "the pending tab did not commit: {last_response}"
         );
         sequence += 1;
         thread::sleep(Duration::from_millis(10));
     }
 }
 
-fn picker_endpoint(socket: &Path) -> PathBuf {
-    let id = format!(
-        "picker-endpoint-{}",
-        NEXT_TEST.fetch_add(1, Ordering::Relaxed)
+/// Waits for a snapshot that `ready` accepts.
+fn wait_for_snapshot(socket: &Path, what: &str, ready: impl Fn(&Snapshot) -> bool) -> Snapshot {
+    let deadline = Instant::now() + Duration::from_secs(5);
+    for sequence in 0.. {
+        if let Response::Snapshot(snapshot) =
+            workspace_action(socket, &format!("{what}-{sequence}"), Action::Inspect)
+        {
+            if ready(&snapshot) {
+                return snapshot;
+            }
+            assert!(Instant::now() < deadline, "{what}: {snapshot:?}");
+        }
+        thread::sleep(Duration::from_millis(10));
+    }
+    unreachable!()
+}
+
+fn log_lines(path: &Path) -> Vec<String> {
+    fs::read_to_string(path)
+        .unwrap_or_default()
+        .lines()
+        .map(str::to_owned)
+        .collect()
+}
+
+/// Waits until `path` holds at least `count` lines.
+fn wait_for_lines(path: &Path, count: usize) -> Vec<String> {
+    let deadline = Instant::now() + Duration::from_secs(5);
+    loop {
+        let lines = log_lines(path);
+        if lines.len() >= count {
+            return lines;
+        }
+        assert!(
+            Instant::now() < deadline,
+            "{} holds {lines:?}, want {count} lines",
+            path.display()
+        );
+        thread::sleep(Duration::from_millis(10));
+    }
+}
+
+/// How one pair's `eon-files` started: its tab, directory and arguments.
+struct PairLaunch {
+    tab: String,
+    directory: PathBuf,
+    arguments: Vec<String>,
+}
+
+impl PairLaunch {
+    fn client_id(&self) -> u64 {
+        let index = self
+            .arguments
+            .iter()
+            .position(|argument| argument == "--client-id")
+            .unwrap();
+        self.arguments[index + 1].parse().unwrap()
+    }
+}
+
+/// One full Eon window for the Files pair (EON-C18). Its fake Orbit runs each
+/// terminal's command: `eon-files` is a stub that logs its terminal, tab,
+/// directory and arguments and runs until `files-exit.SESSION` appears, `ya`
+/// and `zoxide` log their arguments, panes log their terminal and directory,
+/// and Venus stays until it is killed.
+struct PairWindow {
+    root: PathBuf,
+    runtime: PathBuf,
+    config: PathBuf,
+    launch: PathBuf,
+    home: PathBuf,
+    xdg: PathBuf,
+    stop: PathBuf,
+    venus_pid: PathBuf,
+    lease_released: PathBuf,
+    fail_stop_once: PathBuf,
+    files_log: PathBuf,
+    ya_log: PathBuf,
+    zoxide_log: PathBuf,
+    panes_log: PathBuf,
+    binary: PathBuf,
+}
+
+impl PairWindow {
+    fn new() -> Self {
+        let root = fs::canonicalize(temporary_directory()).unwrap();
+        let window = Self {
+            runtime: root.join("runtime"),
+            config: root.join("config"),
+            launch: root.join("launch"),
+            home: root.join("home"),
+            xdg: root.join("xdg"),
+            stop: root.join("stop"),
+            venus_pid: root.join("venus.pid"),
+            lease_released: root.join("lease-released"),
+            fail_stop_once: root.join("fail-stop-once"),
+            files_log: root.join("files.log"),
+            ya_log: root.join("ya.log"),
+            zoxide_log: root.join("zoxide.log"),
+            panes_log: root.join("panes.log"),
+            binary: PathBuf::from(env!("CARGO_BIN_EXE_eon")),
+            root,
+        };
+        configure_mock_desktop(&window.config);
+        let session_bin = window.root.join("session-bin");
+        for directory in [&window.launch, &window.home, &window.xdg, &session_bin] {
+            fs::create_dir(directory).unwrap();
+        }
+        managed_orbit_executable(&window.root.join("orbit"));
+        executable(
+            &window.root.join("venus"),
+            "#!/bin/sh\nprintf '%s' \"$$\" > \"$EON_TEST_VENUS_PID\"\ncat >/dev/null\n",
+        );
+        executable(
+            &session_bin.join("eon-files"),
+            r#"#!/bin/sh
+session=${EON_TERMINAL%%.*}
+printf '%s|%s|%s|%s\n' "$session" "$EON_TAB" "$(pwd -P)" "$*" >> "$EON_TEST_FILES_LOG"
+while [ ! -e "$EON_TEST_STOP" ] && [ ! -e "$EON_TEST_FILES_EXIT.$session" ]; do sleep 0.01; done
+"#,
+        );
+        executable(
+            &session_bin.join("ya"),
+            "#!/bin/sh\nprintf '%s\\n' \"$*\" >> \"$EON_TEST_YA_LOG\"\n",
+        );
+        executable(
+            &session_bin.join("zoxide"),
+            "#!/bin/sh\nprintf '%s\\n' \"$*\" >> \"$EON_TEST_ZOXIDE_LOG\"\n",
+        );
+        executable(
+            &session_bin.join("eon-nu"),
+            r#"#!/bin/sh
+printf '%s|%s\n' "${EON_TERMINAL%%.*}" "$(pwd -P)" >> "$EON_TEST_PANES_LOG"
+while [ ! -e "$EON_TEST_STOP" ]; do sleep 0.01; done
+"#,
+        );
+        window
+    }
+
+    /// Starts `eon run`, with `child` as `eon run -- CHILD` when given.
+    fn spawn(&self, child: &[&str]) -> TestProcess {
+        let process = self.start(self.command(child));
+        wait_for_connection(&self.control());
+        process
+    }
+
+    fn start(&self, mut command: Command) -> TestProcess {
+        TestProcess {
+            child: command.spawn().unwrap(),
+            stop: self.stop.clone(),
+        }
+    }
+
+    fn command(&self, child: &[&str]) -> Command {
+        let mut command = eon_command(&self.binary);
+        command.arg("run");
+        if !child.is_empty() {
+            command.arg("--").args(child);
+        }
+        command
+            .current_dir(&self.launch)
+            .env("HOME", &self.home)
+            .env("XDG_RUNTIME_DIR", &self.xdg)
+            .env("EON_RUNTIME_DIR", &self.runtime)
+            .env("EON_CONFIG_HOME", &self.config)
+            .env("EON_ORBIT", self.root.join("orbit"))
+            .env("EON_VENUS", self.root.join("venus"))
+            .env("EON_SESSION_BIN", self.root.join("session-bin"))
+            .env("EON_TEST_RUN_CHILD", "1")
+            .env("EON_TEST_STOP", &self.stop)
+            .env("EON_TEST_VENUS_PID", &self.venus_pid)
+            .env("EON_TEST_LEASE_RELEASED", &self.lease_released)
+            .env("EON_TEST_FAIL_STOP_ONCE", &self.fail_stop_once)
+            .env("EON_TEST_FILES_LOG", &self.files_log)
+            .env("EON_TEST_FILES_EXIT", self.root.join("files-exit"))
+            .env("EON_TEST_YA_LOG", &self.ya_log)
+            .env("EON_TEST_ZOXIDE_LOG", &self.zoxide_log)
+            .env("EON_TEST_PANES_LOG", &self.panes_log)
+            .stdout(Stdio::null())
+            .stderr(Stdio::null());
+        command
+    }
+
+    fn generation(&self) -> PathBuf {
+        generation_runtime(&self.runtime)
+    }
+
+    fn control(&self) -> PathBuf {
+        self.generation().join("eon.sock")
+    }
+
+    fn eon(&self, arguments: &[&str]) -> Output {
+        invoke(&self.binary, &self.runtime, &self.config, arguments)
+    }
+
+    fn inspect(&self, id: &str) -> Snapshot {
+        match workspace_action(&self.control(), id, Action::Inspect) {
+            Response::Snapshot(snapshot) => snapshot,
+            response => panic!("{id}: {response:?}"),
+        }
+    }
+
+    fn invoke_popup(&self, id: &str, entry: &str, expected: Option<&str>) -> Response {
+        protocol_action(
+            &self.control(),
+            id,
+            ProtocolAction::InvokePopup {
+                tab: self.inspect(&format!("{id}-tab")).active_tab,
+                entry: entry.into(),
+                expected_instance: expected.map(Into::into),
+                intent: InvokeIntent::Toggle,
+            },
+        )
+    }
+
+    /// How the pair of terminal `session` started.
+    fn pair_launch(&self, session: &str) -> PairLaunch {
+        let deadline = Instant::now() + Duration::from_secs(5);
+        loop {
+            if let Some(line) = log_lines(&self.files_log)
+                .into_iter()
+                .find(|line| line.starts_with(&format!("{session}|")))
+            {
+                let fields = line.split('|').collect::<Vec<_>>();
+                return PairLaunch {
+                    tab: fields[1].into(),
+                    directory: fields[2].into(),
+                    arguments: fields[3].split(' ').map(str::to_owned).collect(),
+                };
+            }
+            assert!(Instant::now() < deadline, "pair {session} did not start");
+            thread::sleep(Duration::from_millis(10));
+        }
+    }
+
+    fn visits(&self) -> Vec<String> {
+        log_lines(&self.zoxide_log)
+    }
+
+    fn stop_generation(&self, supervisor: &mut TestProcess) -> String {
+        let generation = self.generation();
+        let id = generation.file_name().unwrap().to_str().unwrap().to_owned();
+        let stopped = self.eon(&["stop", &id, "--json"]);
+        assert!(stopped.status.success(), "{}", stdout(&stopped));
+        wait_for_successful_exit(&mut supervisor.child);
+        stdout(&stopped).to_owned()
+    }
+}
+
+impl Drop for PairWindow {
+    fn drop(&mut self) {
+        let _ = fs::write(&self.stop, "");
+        if !thread::panicking() {
+            // Pair and pane stubs see the stop file before their directories go.
+            thread::sleep(Duration::from_millis(50));
+            let _ = fs::remove_dir_all(&self.root);
+        }
+    }
+}
+
+#[test]
+fn pending_tabs_host_the_files_pair_on_quick_search() {
+    let window = PairWindow::new();
+    let mut supervisor = window.spawn(&[]);
+    let generation = window.generation();
+    let control = window.control();
+    let first = window.pair_launch("session-2");
+    let snapshot = window.inspect("pending");
+    let (tab, pair) = pending_pair(&snapshot).unwrap();
+    assert_eq!(
+        (tab.id.as_str(), pair.id.as_str(), pair.session.as_str()),
+        ("t1", "u1", "session-2")
     );
-    let Response::Snapshot(snapshot) = workspace_action(socket, &id, Action::Inspect) else {
-        panic!("cannot inspect directory picker");
+    assert_eq!(tab.selected_popup.as_deref(), Some("u1"));
+    assert_eq!(tab.popups.len(), 1);
+    assert!(tab.columns.is_empty() && tab.selected_pane.is_none());
+    assert_eq!(
+        pair.endpoint,
+        generation.join("session-2.sock").as_os_str().as_bytes()
+    );
+    // session-1 and orbit.sock wait for the window's first pane.
+    assert!(!generation.join("orbit.sock").exists());
+    assert!(artifact_path(&generation.join("session-2.sock"), ".pending").exists());
+    assert_eq!(first.tab, "t1");
+    assert_eq!(first.directory, window.launch);
+    let id = first.client_id();
+    assert!((1 << 62..1 << 63).contains(&id), "{id}");
+    // fzf listens beside the pair's endpoint, in the window's own runtime.
+    let socket = generation.join("session-2.quick.sock");
+    assert_eq!(
+        first.arguments,
+        [
+            "--eon-notice",
+            control.to_str().unwrap(),
+            "--eon-quick",
+            "--eon-pair-socket",
+            socket.to_str().unwrap(),
+            "--client-id",
+            &id.to_string(),
+        ]
+    );
+
+    // Focusing the shown pair, or moving focus inside its pending tab, changes nothing.
+    assert_eq!(
+        protocol_action(
+            &control,
+            "pair-focus",
+            ProtocolAction::InvokePopup {
+                tab: "t1".into(),
+                entry: "project".into(),
+                expected_instance: Some("u1".into()),
+                intent: InvokeIntent::Focus,
+            },
+        ),
+        Response::Snapshot(snapshot.clone())
+    );
+    assert_eq!(
+        workspace_action(&control, "pair-singleton", Action::Focus(Direction::Left)),
+        Response::Snapshot(snapshot.clone())
+    );
+    // Tools other than the pair wait for the tab's directory.
+    assert!(matches!(
+        protocol_action(
+            &control,
+            "pending-agent",
+            ProtocolAction::InvokePopup {
+                tab: "t1".into(),
+                entry: "agent".into(),
+                expected_instance: None,
+                intent: InvokeIntent::Toggle,
+            },
+        ),
+        Response::Failure(failure) if failure.code == "choose-directory-first"
+    ));
+
+    // Later tabs and workspaces start their own pairs at home, without the notice.
+    assert!(window.eon(&["tab", "create"]).status.success());
+    let second = window.pair_launch("session-3");
+    assert_eq!(
+        (second.tab.as_str(), second.directory.as_path()),
+        ("t2", window.home.as_path())
+    );
+    let second_id = second.client_id();
+    assert_ne!(second_id, id);
+    assert_eq!(
+        second.arguments,
+        [
+            "--eon-quick",
+            "--eon-pair-socket",
+            generation.join("session-3.quick.sock").to_str().unwrap(),
+            "--client-id",
+            &second_id.to_string(),
+        ]
+    );
+    let snapshot = window.inspect("two-pending");
+    assert!(snapshot.tabs.iter().all(|tab| tab.pending));
+    assert_ne!(
+        snapshot.tabs[0].popups[0].endpoint,
+        snapshot.tabs[1].popups[0].endpoint
+    );
+    assert!(window.eon(&["workspace", "new"]).status.success());
+    let third = window.pair_launch("session-4");
+    assert_eq!(third.tab, "t3");
+    assert_eq!(third.arguments[0], "--eon-quick");
+
+    // Pending pairs are popups, not durable terminals: lifecycle inspection
+    // and Stop count none of them, and Stop still stops each (EON-C18).
+    let pairs = ["session-2", "session-3", "session-4"]
+        .map(|session| live_identity(&generation.join(format!("{session}.sock"))));
+    let inventory = window.eon(&["generations", "--json"]);
+    assert!(inventory.status.success(), "{}", stdout(&inventory));
+    assert!(
+        stdout(&inventory).contains("\"sessions\":[]"),
+        "{}",
+        stdout(&inventory)
+    );
+    let stopped = window.stop_generation(&mut supervisor);
+    assert!(stopped.contains("\"sessions\":[]"), "{stopped}");
+    for pair in pairs {
+        wait_for_process_removal(pair.process_id, "Stop left a pending pair running");
+    }
+}
+
+#[test]
+fn a_pick_commits_a_pending_tab_with_one_pane_and_keeps_its_pair() {
+    let window = PairWindow::new();
+    let [selected, left, right] = ["selected", "left", "right"].map(|name| {
+        let directory = window.root.join(name);
+        fs::create_dir(&directory).unwrap();
+        directory
+    });
+    let child_log = window.root.join("child.log");
+    let child = window.root.join("child");
+    executable(
+        &child,
+        format!(
+            "#!/bin/sh\nprintf '%s|%s\\n' \"${{EON_TERMINAL%%.*}}\" \"$(pwd -P)\" >> '{}'\nwhile [ ! -e \"$EON_TEST_STOP\" ]; do sleep 0.01; done\n",
+            child_log.display()
+        ),
+    );
+    let mut supervisor = window.spawn(&[child.to_str().unwrap()]);
+    let generation = window.generation();
+    window.pair_launch("session-2");
+
+    let picked = window.eon(&["tab", "directory", "t1", "--", selected.to_str().unwrap()]);
+    assert!(picked.status.success(), "{picked:?}");
+    let snapshot = window.inspect("picked");
+    let tab = &snapshot.tabs[0];
+    assert!(!tab.pending);
+    assert_eq!(tab.directory, selected.as_os_str().as_bytes());
+    assert!(tab.selected_popup.is_none(), "the pick hides the pair");
+    let panes = tab.panes().collect::<Vec<_>>();
+    assert_eq!(panes.len(), 1);
+    assert_eq!(
+        (panes[0].id.as_str(), panes[0].session.as_str()),
+        ("p1", "session-1")
+    );
+    assert_eq!(
+        panes[0].endpoint,
+        generation.join("orbit.sock").as_os_str().as_bytes()
+    );
+    assert_eq!(tab.popups.len(), 1);
+    assert_eq!(
+        (tab.popups[0].entry.as_str(), tab.popups[0].session.as_str()),
+        ("files", "session-2")
+    );
+    assert!(
+        generation.join("session-2.sock").exists(),
+        "the pair stays as Files"
+    );
+    assert!(!artifact_path(&generation.join("session-2.sock"), ".pending").exists());
+    // Committed, the pair counts as its window's Files popup terminal.
+    let inventory = stdout(&window.eon(&["generations", "--json"])).to_owned();
+    for session in ["session-1", "session-2"] {
+        assert!(inventory.contains(&format!("\"{session}\"")), "{inventory}");
+    }
+    // t1's first pane runs `eon run -- CHILD`.
+    assert_eq!(
+        wait_for_lines(&child_log, 1),
+        [format!("session-1|{}", selected.display())]
+    );
+    assert!(log_lines(&window.panes_log).is_empty());
+    let first_visit = vec![format!("add -- {}", selected.display())];
+    assert_eq!(wait_for_lines(&window.zoxide_log, 1), first_visit);
+
+    // Racing picks on a pending tab start one pane; the later one retargets.
+    assert!(window.eon(&["tab", "create"]).status.success());
+    window.pair_launch("session-3");
+    thread::scope(|scope| {
+        let picks = [&left, &right].map(|directory| {
+            let window = &window;
+            scope.spawn(move || {
+                window.eon(&["tab", "directory", "t2", "--", directory.to_str().unwrap()])
+            })
+        });
+        for pick in picks {
+            let output = pick.join().unwrap();
+            assert!(output.status.success(), "{output:?}");
+        }
+    });
+    let snapshot = window.inspect("raced");
+    assert!(!snapshot.tabs[1].pending);
+    assert_eq!(snapshot.tabs[1].panes().count(), 1);
+    let panes = wait_for_lines(&window.panes_log, 1);
+    assert_eq!(panes.len(), 1, "{panes:?}");
+    assert!(
+        [&left, &right]
+            .iter()
+            .any(|directory| panes[0] == format!("session-4|{}", directory.display())),
+        "{panes:?}"
+    );
+    assert_eq!(wait_for_lines(&window.zoxide_log, 3).len(), 3);
+
+    // A refused pick changes nothing and adds no visit.
+    assert!(window.eon(&["tab", "create"]).status.success());
+    window.pair_launch("session-5");
+    let refused = window.eon(&[
+        "tab",
+        "directory",
+        "t3",
+        "--",
+        window.root.join("missing").to_str().unwrap(),
+    ]);
+    assert!(!refused.status.success());
+    let snapshot = window.inspect("refused");
+    let (tab, pair) = pending_pair(&snapshot).unwrap();
+    assert_eq!(
+        (tab.id.as_str(), pair.session.as_str()),
+        ("t3", "session-5")
+    );
+    assert_eq!(tab.selected_popup.as_deref(), Some(pair.id.as_str()));
+    thread::sleep(Duration::from_millis(300));
+    assert_eq!(window.visits().len(), 3);
+    // Stop reports the committed tabs' terminals but not t3's pending pair.
+    let stopped = window.stop_generation(&mut supervisor);
+    for session in ["session-1", "session-2", "session-3", "session-4"] {
+        assert!(stopped.contains(&format!("\"{session}\"")), "{stopped}");
+    }
+    assert!(!stopped.contains("\"session-5\""), "{stopped}");
+}
+
+#[test]
+fn closing_a_pending_pair_dismisses_it_and_starts_the_first_pane() {
+    let window = PairWindow::new();
+    let mut supervisor = window.spawn(&[]);
+    let generation = window.generation();
+    let control = window.control();
+    window.pair_launch("session-2");
+
+    // The pair's Esc runs `eon popup hide`.
+    let hidden = window.eon(&["popup", "hide", "u1"]);
+    assert!(hidden.status.success(), "{hidden:?}");
+    let snapshot = window.inspect("dismissed");
+    let tab = &snapshot.tabs[0];
+    assert!(!tab.pending && tab.selected_popup.is_none());
+    assert_eq!(tab.directory, window.launch.as_os_str().as_bytes());
+    assert_eq!(
+        tab.panes()
+            .map(|pane| pane.session.as_str())
+            .collect::<Vec<_>>(),
+        ["session-1"]
+    );
+    assert_eq!(tab.popups[0].session, "session-2");
+    assert!(generation.join("session-2.sock").exists());
+    assert!(!artifact_path(&generation.join("session-2.sock"), ".pending").exists());
+    assert_eq!(
+        wait_for_lines(&window.panes_log, 1),
+        [format!("session-1|{}", window.launch.display())]
+    );
+
+    // A pending pair that exits is dismissed too.
+    assert!(window.eon(&["tab", "create"]).status.success());
+    window.pair_launch("session-3");
+    fs::write(window.root.join("files-exit.session-3"), "").unwrap();
+    let exited = wait_for_snapshot(&control, "pair-exit", |snapshot| {
+        snapshot.tabs.len() == 2 && !snapshot.tabs[1].pending
+    });
+    assert!(exited.tabs[1].popups.is_empty());
+    assert_eq!(exited.tabs[1].panes().count(), 1);
+    assert!(
+        wait_for_lines(&window.panes_log, 2)
+            .contains(&format!("session-4|{}", window.home.display()))
+    );
+
+    // Closing a pending tab stops its pair and starts no pane.
+    assert!(window.eon(&["tab", "create"]).status.success());
+    window.pair_launch("session-5");
+    assert!(matches!(
+        workspace_action(&control, "close-pending", Action::CloseTab { tab: "t3".into() }),
+        Response::Snapshot(snapshot) if snapshot.tabs.len() == 2 && snapshot.active_tab == "t2"
+    ));
+    wait_for_process_removal_of(&generation.join("session-5.sock"));
+    assert_eq!(log_lines(&window.panes_log).len(), 2);
+
+    // Presentation detachment dismisses a pending pair without stopping it.
+    assert!(window.eon(&["tab", "create"]).status.success());
+    window.pair_launch("session-6");
+    wait_for(&window.venus_pid);
+    let venus: i32 = fs::read_to_string(&window.venus_pid)
+        .unwrap()
+        .parse()
+        .unwrap();
+    // SAFETY: the PID came from this test's live Venus child.
+    assert_eq!(unsafe { libc::kill(venus, libc::SIGTERM) }, 0);
+    let detached = wait_for_snapshot(&control, "detached", |snapshot| {
+        snapshot.tabs.len() == 3 && !snapshot.tabs[2].pending
+    });
+    assert_eq!(detached.tabs[2].popups[0].session, "session-6");
+    assert_eq!(detached.tabs[2].panes().count(), 1);
+    assert!(generation.join("session-6.sock").exists());
+    assert!(supervisor.child.try_wait().unwrap().is_none());
+    assert!(window.visits().is_empty(), "closing adds no Zoxide history");
+
+    // A tab whose pair cannot stop stays, and a later close finishes it.
+    fs::write(&window.fail_stop_once, "session-2").unwrap();
+    assert!(window.eon(&["focus", "t1"]).status.success());
+    assert!(matches!(
+        workspace_action(&control, "close-t1-partial", Action::CloseTab { tab: "t1".into() }),
+        Response::Failure(failure)
+            if failure.code == "tab-close-failed" && failure.detail.contains("injected stop failure")
+    ));
+    assert!(matches!(
+        workspace_action(&control, "close-t1-partial", Action::CloseTab { tab: "t1".into() }),
+        Response::Failure(failure) if failure.code == "duplicate-request"
+    ));
+    let closed = window.eon(&["tab", "close", "t1", "--json"]);
+    assert!(closed.status.success(), "{}", stdout(&closed));
+
+    // A dismissal whose directory vanished stops the pair and drops its tab.
+    assert!(window.eon(&["tab", "create"]).status.success());
+    window.pair_launch("session-8");
+    fs::remove_dir(&window.home).unwrap();
+    let hidden = window.eon(&["popup", "hide", "u5"]);
+    assert!(!hidden.status.success(), "{hidden:?}");
+    let failed = wait_for_snapshot(&control, "vanished", |snapshot| {
+        snapshot.tabs.len() == 2 && pending_pair(snapshot).is_none()
+    });
+    assert!(failed.tabs.iter().all(|tab| tab.id != "t5"));
+    wait_for_process_removal_of(&generation.join("session-8.sock"));
+    assert!(supervisor.child.try_wait().unwrap().is_none());
+    window.stop_generation(&mut supervisor);
+}
+
+/// Waits until the terminal endpoint at `path` is gone.
+fn wait_for_process_removal_of(path: &Path) {
+    let deadline = Instant::now() + Duration::from_secs(5);
+    while path.exists() {
+        assert!(Instant::now() < deadline, "{} remained", path.display());
+        thread::sleep(Duration::from_millis(10));
+    }
+}
+
+/// A stand-in for a shown quick search's fzf: it accepts on the pair socket
+/// and answers each POST, keeping its body.
+struct QuickSearch {
+    path: PathBuf,
+    posts: std::sync::Arc<std::sync::Mutex<Vec<String>>>,
+    done: std::sync::Arc<std::sync::atomic::AtomicBool>,
+    server: Option<thread::JoinHandle<()>>,
+}
+
+impl QuickSearch {
+    fn listen(path: &Path) -> Self {
+        let listener = UnixListener::bind(path).unwrap();
+        listener.set_nonblocking(true).unwrap();
+        let posts = std::sync::Arc::new(std::sync::Mutex::new(Vec::new()));
+        let done = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
+        let server = {
+            let (posts, done) = (posts.clone(), done.clone());
+            thread::spawn(move || {
+                while !done.load(Ordering::Relaxed) {
+                    let Ok((mut stream, _)) = listener.accept() else {
+                        thread::sleep(Duration::from_millis(5));
+                        continue;
+                    };
+                    stream.set_nonblocking(false).unwrap();
+                    stream
+                        .set_read_timeout(Some(Duration::from_millis(500)))
+                        .unwrap();
+                    let mut request = Vec::new();
+                    let mut buffer = [0; 256];
+                    // A probe connects and closes without a request.
+                    while let Ok(count @ 1..) = stream.read(&mut buffer) {
+                        request.extend_from_slice(&buffer[..count]);
+                        if request.ends_with(b"become(exit 11)") {
+                            let _ =
+                                stream.write_all(b"HTTP/1.1 200 OK\r\nContent-Length: 0\r\n\r\n");
+                            posts
+                                .lock()
+                                .unwrap()
+                                .push(String::from_utf8_lossy(&request).into_owned());
+                            break;
+                        }
+                    }
+                }
+            })
+        };
+        Self {
+            path: path.to_path_buf(),
+            posts,
+            done,
+            server: Some(server),
+        }
+    }
+
+    fn wait_for_posts(&self, count: usize) -> Vec<String> {
+        let deadline = Instant::now() + Duration::from_secs(5);
+        loop {
+            let posts = self.posts.lock().unwrap().clone();
+            if posts.len() >= count {
+                return posts;
+            }
+            assert!(Instant::now() < deadline, "posts: {posts:?}");
+            thread::sleep(Duration::from_millis(10));
+        }
+    }
+}
+
+impl Drop for QuickSearch {
+    fn drop(&mut self) {
+        self.done.store(true, Ordering::Relaxed);
+        if let Some(server) = self.server.take() {
+            let _ = server.join();
+        }
+        let _ = fs::remove_file(&self.path);
+    }
+}
+
+#[test]
+fn hotkeys_switch_the_pair_screens_or_hide_it() {
+    let window = PairWindow::new();
+    let mut supervisor = window.spawn(&[]);
+    let launch = window.pair_launch("session-2");
+    let id = launch.client_id();
+    let socket = window.generation().join("session-2.quick.sock");
+    let emit = format!("emit-to {id} plugin quick-search");
+    assert!(
+        window
+            .eon(&[
+                "tab",
+                "directory",
+                "t1",
+                "--",
+                window.launch.to_str().unwrap()
+            ])
+            .status
+            .success()
+    );
+    let shown = |snapshot: &Response| match snapshot {
+        Response::Snapshot(snapshot) => snapshot.tabs[0].selected_popup.as_deref() == Some("u1"),
+        response => panic!("{response:?}"),
     };
-    Path::new(OsStr::from_bytes(
-        &project_popup(&snapshot).unwrap().1.endpoint,
-    ))
-    .to_path_buf()
+
+    // Project names the tab's Files pair as its observed instance.
+    assert!(matches!(
+        window.invoke_popup("project-stale", "project", None),
+        Response::Failure(failure) if failure.code == "stale-popup"
+    ));
+    // Alt+Z on the hidden pair shows it and asks it for quick search.
+    assert!(shown(&window.invoke_popup("z-show", "project", Some("u1"))));
+    assert_eq!(
+        wait_for_lines(&window.ya_log, 1),
+        std::slice::from_ref(&emit)
+    );
+
+    // While quick search is up, Alt+Z hides the pair and never emits again.
+    let quick = QuickSearch::listen(&socket);
+    assert!(!shown(&window.invoke_popup(
+        "z-hide",
+        "project",
+        Some("u1")
+    )));
+    // Alt+Shift+Y shows the hidden pair on Files, leaving quick search.
+    assert!(shown(&window.invoke_popup("y-show", "files", Some("u1"))));
+    assert!(quick.wait_for_posts(1)[0].starts_with("POST / HTTP/1.1\r\n"));
+    // On quick search, Alt+Shift+Y switches to Files and keeps the pair shown.
+    assert!(shown(&window.invoke_popup("y-switch", "files", Some("u1"))));
+    assert_eq!(quick.wait_for_posts(2).len(), 2);
+    drop(quick);
+
+    // On Files, Alt+Shift+Y hides the pair; on a hidden Files it shows it as is.
+    assert!(!shown(&window.invoke_popup("y-hide", "files", Some("u1"))));
+    assert!(shown(&window.invoke_popup(
+        "y-show-files",
+        "files",
+        Some("u1")
+    )));
+    // On Files, Alt+Z switches to quick search and keeps the pair shown.
+    assert!(shown(&window.invoke_popup(
+        "z-switch",
+        "project",
+        Some("u1")
+    )));
+    assert_eq!(
+        wait_for_lines(&window.ya_log, 2),
+        [emit.clone(), emit.clone()]
+    );
+    thread::sleep(Duration::from_millis(300));
+    assert_eq!(log_lines(&window.ya_log).len(), 2);
+
+    // Both keys work on a pending tab; its own screen's key dismisses it. A
+    // new tab starts on quick search, which counts as shown while its fzf is
+    // still starting: Alt+Shift+Y waits for it and switches to Files.
+    assert!(window.eon(&["tab", "create"]).status.success());
+    let pending = window.pair_launch("session-3");
+    let pending_socket = window.generation().join("session-3.quick.sock");
+    let still_pending = |snapshot: &Response| match snapshot {
+        Response::Snapshot(snapshot) => {
+            snapshot.tabs[1].pending && snapshot.tabs[1].selected_popup.as_deref() == Some("u2")
+        }
+        response => panic!("{response:?}"),
+    };
+    assert!(still_pending(&window.invoke_popup(
+        "pending-y",
+        "files",
+        Some("u2")
+    )));
+    thread::sleep(Duration::from_millis(300));
+    let starting = QuickSearch::listen(&pending_socket);
+    assert!(starting.wait_for_posts(1)[0].starts_with("POST / HTTP/1.1\r\n"));
+    drop(starting);
+    assert_eq!(log_lines(&window.ya_log).len(), 2);
+    // On Files, Alt+Z asks for quick search; while it starts, Alt+Z keeps
+    // the pair shown and asks for nothing more; once it is up, it dismisses.
+    assert!(still_pending(&window.invoke_popup(
+        "pending-z",
+        "project",
+        Some("u2")
+    )));
+    assert_eq!(
+        wait_for_lines(&window.ya_log, 3)[2],
+        format!("emit-to {} plugin quick-search", pending.client_id())
+    );
+    assert!(still_pending(&window.invoke_popup(
+        "pending-z-starting",
+        "project",
+        Some("u2")
+    )));
+    let up = QuickSearch::listen(&pending_socket);
+    assert!(matches!(
+        window.invoke_popup("pending-z-dismiss", "project", Some("u2")),
+        Response::Snapshot(snapshot)
+            if !snapshot.tabs[1].pending && snapshot.tabs[1].panes().count() == 1
+    ));
+    drop(up);
+    thread::sleep(Duration::from_millis(300));
+    assert_eq!(log_lines(&window.ya_log).len(), 3);
+    window.stop_generation(&mut supervisor);
+}
+
+/// A quick search closed with Esc before its fzf answered a key stops
+/// counting as starting once its pair is hidden: the next Alt+Z asks for
+/// quick search again, and Alt+Shift+Y shows Files without leaving a quick
+/// search that is not coming (EON-C18).
+#[test]
+fn hiding_a_starting_quick_search_lets_the_next_key_ask_again() {
+    let window = PairWindow::new();
+    let mut supervisor = window.spawn(&[]);
+    let launch = window.pair_launch("session-2");
+    let emit = format!("emit-to {} plugin quick-search", launch.client_id());
+    let socket = window.generation().join("session-2.quick.sock");
+    assert!(
+        window
+            .eon(&[
+                "tab",
+                "directory",
+                "t1",
+                "--",
+                window.launch.to_str().unwrap()
+            ])
+            .status
+            .success()
+    );
+    let shown = |snapshot: &Response| match snapshot {
+        Response::Snapshot(snapshot) => snapshot.tabs[0].selected_popup.as_deref() == Some("u1"),
+        response => panic!("{response:?}"),
+    };
+
+    // Alt+Z, Esc (the pair's `eon popup hide`), Alt+Z, all within 2 s.
+    assert!(shown(&window.invoke_popup("z-show", "project", Some("u1"))));
+    assert!(window.eon(&["popup", "hide", "u1"]).status.success());
+    assert!(shown(&window.invoke_popup(
+        "z-again",
+        "project",
+        Some("u1")
+    )));
+    assert_eq!(
+        wait_for_lines(&window.ya_log, 2),
+        [emit.clone(), emit.clone()]
+    );
+    // Esc, then Alt+Shift+Y: Files shows and no fzf is asked to leave.
+    assert!(window.eon(&["popup", "hide", "u1"]).status.success());
+    assert!(shown(&window.invoke_popup("y-show", "files", Some("u1"))));
+    let quick = QuickSearch::listen(&socket);
+    thread::sleep(Duration::from_millis(500));
+    assert_eq!(quick.posts.lock().unwrap().len(), 0);
+    drop(quick);
+    window.stop_generation(&mut supervisor);
+}
+
+/// The window's first pair plays the startup Anima before its Yazi starts,
+/// so its quick search can listen more than 2 s after launch. Alt+Shift+Y
+/// meanwhile keeps the pending tab and its pair shown, then switches the pair
+/// to Files once quick search listens (EON-C18).
+#[test]
+fn alt_shift_y_during_the_startup_anima_waits_for_quick_search() {
+    let (window, mut supervisor) = anima_window();
+    let socket = window.generation().join("session-2.quick.sock");
+
+    // The 3 s Anima is still playing.
+    thread::sleep(Duration::from_millis(2300));
+    assert!(still_pending(&window.invoke_popup(
+        "anima-y",
+        "files",
+        Some("u1")
+    )));
+    thread::sleep(Duration::from_millis(1000));
+    let quick = QuickSearch::listen(&socket);
+    assert!(quick.wait_for_posts(1)[0].starts_with("POST / HTTP/1.1\r\n"));
+    drop(quick);
+    assert!(pending_pair(&window.inspect("after-anima")).is_some());
+    window.stop_generation(&mut supervisor);
+}
+
+/// Alt+Z while the startup Anima plays shows the first tab's pair on the
+/// quick search that is still starting: it neither dismisses the pending tab
+/// nor asks for a second quick search. Once quick search is up, Alt+Z on it
+/// dismisses the tab (EON-C18).
+#[test]
+fn alt_z_during_the_startup_anima_keeps_the_pending_tab_on_quick_search() {
+    let (window, mut supervisor) = anima_window();
+    let socket = window.generation().join("session-2.quick.sock");
+    for (id, wait) in [("anima-z-early", 300), ("anima-z-late", 2000)] {
+        thread::sleep(Duration::from_millis(wait));
+        assert!(
+            still_pending(&window.invoke_popup(id, "project", Some("u1"))),
+            "{id}"
+        );
+    }
+    let quick = QuickSearch::listen(&socket);
+    assert!(matches!(
+        window.invoke_popup("anima-z-dismiss", "project", Some("u1")),
+        Response::Snapshot(snapshot)
+            if !snapshot.tabs[0].pending && snapshot.tabs[0].panes().count() == 1
+    ));
+    drop(quick);
+    assert!(log_lines(&window.ya_log).is_empty());
+    window.stop_generation(&mut supervisor);
+}
+
+/// A window whose first pair plays a 3 s startup Anima, once that pair started.
+fn anima_window() -> (PairWindow, TestProcess) {
+    let window = PairWindow::new();
+    fs::write(
+        window.config.join("config.toml"),
+        "[terminal]\nfont_fallbacks = []\n\n[anima]\nenabled = true\nduration_seconds = 3\n",
+    )
+    .unwrap();
+    // Anima waits for a ready Venus.
+    executable(
+        &window.root.join("venus"),
+        "#!/bin/sh\nprintf '%s' \"$$\" > \"$EON_TEST_VENUS_PID\"\nprintf ready-v1\ncat >/dev/null\n",
+    );
+    let supervisor = window.spawn(&[]);
+    let launch = window.pair_launch("session-2");
+    assert!(
+        launch.arguments.starts_with(&["--eon-anima".into()]),
+        "{:?}",
+        launch.arguments
+    );
+    (window, supervisor)
+}
+
+/// Whether t1 is still pending with its pair `u1` shown.
+fn still_pending(snapshot: &Response) -> bool {
+    match snapshot {
+        Response::Snapshot(snapshot) => {
+            snapshot.tabs[0].pending && snapshot.tabs[0].selected_popup.as_deref() == Some("u1")
+        }
+        response => panic!("{response:?}"),
+    }
+}
+
+#[test]
+fn recovery_stops_a_pending_pair_and_keeps_a_committed_files() {
+    for committed in [false, true] {
+        let window = PairWindow::new();
+        let mut first = window.spawn(&[]);
+        let generation = window.generation();
+        // The supervisor holds the pair's lease once it answers.
+        assert!(pending_pair(&window.inspect("started")).is_some());
+        let pair = live_identity(&generation.join("session-2.sock"));
+        if committed {
+            assert!(
+                window
+                    .eon(&[
+                        "tab",
+                        "directory",
+                        "t1",
+                        "--",
+                        window.home.to_str().unwrap()
+                    ])
+                    .status
+                    .success()
+            );
+            live_identity(&generation.join("orbit.sock"));
+        }
+        first.child.kill().unwrap();
+        assert!(!first.child.wait().unwrap().success());
+        wait_for(&window.lease_released);
+
+        let mut replacement = window.spawn(&[]);
+        let recovered = window.inspect("recovered");
+        assert!(pending_pair(&recovered).is_none());
+        assert!(recovered.tabs[0].popups.is_empty());
+        let sessions = recovered.tabs[0]
+            .panes()
+            .map(|pane| pane.session.as_str())
+            .collect::<Vec<_>>();
+        if committed {
+            // A committed tab's Files recovers as today's Files does, as a pane.
+            assert_eq!(sessions, ["session-1", "session-2"]);
+            assert!(process::exists(pair.process_id));
+        } else {
+            // A still-pending pair is stopped and the launch directory's pane starts.
+            assert_eq!(sessions, ["session-1"]);
+            wait_for_process_removal(pair.process_id, "the pending pair was adopted");
+            assert!(
+                wait_for_lines(&window.panes_log, 1)
+                    .contains(&format!("session-1|{}", window.launch.display()))
+            );
+        }
+        assert!(!artifact_path(&generation.join("session-2.sock"), ".pending").exists());
+        window.stop_generation(&mut replacement);
+    }
+}
+
+#[test]
+fn a_pending_pair_left_by_a_failed_rollback_is_stopped_by_recovery() {
+    let window = PairWindow::new();
+    // The pair publishes Ready after its start and rollback deadlines, so its
+    // failed start cannot confirm that rollback stopped it.
+    let mut command = window.command(&[]);
+    command.env("EON_TEST_PAIR_READY_DELAY_MS", "5100");
+    let mut first = window.start(command);
+    let generation = window.generation();
+    let deadline = Instant::now() + Duration::from_secs(10);
+    while !generation.join("orbit.sock").exists() {
+        assert!(Instant::now() < deadline, "the fallback pane did not start");
+        thread::sleep(Duration::from_millis(10));
+    }
+    wait_for_connection(&window.control());
+    let pair = live_identity(&generation.join("session-2.sock"));
+    let marker = artifact_path(&generation.join("session-2.sock"), ".pending");
+    let marked = marker.exists();
+
+    first.child.kill().unwrap();
+    assert!(!first.child.wait().unwrap().success());
+    wait_for(&window.lease_released);
+    let mut replacement = window.spawn(&[]);
+    let recovered = window.inspect("recovered");
+    assert_eq!(recovered.tabs.len(), 1);
+    assert!(recovered.tabs[0].popups.is_empty());
+    assert_eq!(
+        recovered.tabs[0]
+            .panes()
+            .map(|pane| pane.session.as_str())
+            .collect::<Vec<_>>(),
+        ["session-1"],
+        "recovery adopted the failed pair as a pane"
+    );
+    wait_for_process_removal(pair.process_id, "recovery left the failed pair running");
+    assert!(marked, "the failed start cleared the pair's marker");
+    assert!(!marker.exists());
+    window.stop_generation(&mut replacement);
 }
 
 fn eon_command(binary: &Path) -> Command {
@@ -1547,795 +2559,6 @@ fn eon_command(binary: &Path) -> Command {
         .env_remove("EON_SESSION_BIN")
         .env("PATH", std::env::join_paths(path).unwrap());
     command
-}
-
-#[test]
-fn directory_picker_browse_preserves_raw_directory_and_cancellation() {
-    let root = temporary_directory();
-    let socket = root.join("eon.sock");
-    let listener = UnixListener::bind(&socket).unwrap();
-    fs::set_permissions(&socket, fs::Permissions::from_mode(0o600)).unwrap();
-    listener.set_nonblocking(true).unwrap();
-    executable(&root.join("zoxide"), "#!/bin/sh\nprintf '/known\\n'\n");
-    executable(
-        &root.join("fzf"),
-        "#!/bin/sh\ncat >/dev/null\nprintf 'tab\\0'\nexit 1\n",
-    );
-    let mut path = vec![root.clone()];
-    path.extend(std::env::split_paths(&std::env::var_os("PATH").unwrap()));
-    let mut command = Command::new(env!("CARGO_BIN_EXE_eon"));
-    command
-        .args([
-            OsStr::new("__directory-picker"),
-            socket.as_os_str(),
-            OsStr::new("t1"),
-            OsStr::new("u1"),
-        ])
-        .env("PATH", std::env::join_paths(path).unwrap())
-        .env("EON_YAZI", root.join("yazi"))
-        .env("EON_DIRECTORY_PICKER_CONFIG", &root)
-        .stdout(Stdio::null())
-        .stderr(Stdio::null());
-    let returned = root.join("browser-returned");
-    command.env("EON_TEST_BROWSER_RETURNED", &returned);
-    executable(
-        &root.join("yazi"),
-        r#"#!/bin/sh
-[ "$1" = --cwd-file ] || exit 2
-[ "$2" = /dev/stdout ] || exit 2
-[ "$3" = --chooser-file ] || exit 2
-[ "$5" = -- ] || exit 2
-
-if [ ! -e "$EON_TEST_BROWSER_RETURNED" ]; then
-  touch "$EON_TEST_BROWSER_RETURNED"
-  printf '/browsed-\377\n'
-  exit 10
-fi
-
-[ "$6." = "$(printf '/browsed-\377\n.')" ] || exit 2
-printf '/parent-\377\n'
-printf '/selected-\377\n' > "$4"
-"#,
-    );
-    let mut child = TestProcess {
-        child: command.spawn().unwrap(),
-        stop: root.join("stop"),
-    };
-    let deadline = Instant::now() + Duration::from_secs(5);
-    let mut stream = loop {
-        if let Ok((stream, _)) = listener.accept() {
-            // macOS hands out accepted streams nonblocking like their listener.
-            stream.set_nonblocking(false).unwrap();
-            stream
-                .set_read_timeout(Some(Duration::from_secs(5)))
-                .unwrap();
-            break stream;
-        }
-        assert!(
-            Instant::now() < deadline,
-            "picker did not submit its directory"
-        );
-        thread::sleep(Duration::from_millis(10));
-    };
-    let mut request = vec![0; HEADER_BYTES];
-    stream.read_exact(&mut request).unwrap();
-    request.resize(declared_message_len(&request).unwrap(), 0);
-    stream.read_exact(&mut request[HEADER_BYTES..]).unwrap();
-    let request = decode_request(&request).unwrap();
-    assert_eq!(
-        request.action,
-        ProtocolAction::CommitDirectory {
-            target: PopupTarget {
-                tab: "t1".into(),
-                instance: "u1".into(),
-            },
-            directory: b"/selected-\xff\n".to_vec(),
-        }
-    );
-    let response = encode_response(&Response::Snapshot(Snapshot {
-        workspace: "w1".into(),
-        active_workspace: "w1".into(),
-        workspaces: vec![eon_workspace_protocol::v30::WorkspaceInfo {
-            id: "w1".into(),
-            name: None,
-            tab_count: 1,
-            attention: None,
-            recency: 0,
-        }],
-        active_tab: "t1".into(),
-        geometry: PopupGeometry {
-            side_margin: 0.0,
-            vertical_margin: 0.0,
-        },
-        entries: Vec::new(),
-        tabs: vec![Tab {
-            id: "t1".into(),
-            directory: b"/untracked-\xff\n".to_vec(),
-            pending: false,
-            selected_pane: Some("p1".into()),
-            selected_popup: None,
-            columns: vec![Column {
-                panes: vec![Pane {
-                    label: "p1".into(),
-                    pinned_name: None,
-                    id: "p1".into(),
-                    session: "session-1".into(),
-                    endpoint: b"/test.sock".to_vec(),
-                    live: true,
-                    attention: None,
-                }],
-                expanded: "p1".into(),
-            }],
-            popups: Vec::new(),
-            attention_rollup: None,
-        }],
-        codex_quota: None,
-        claude_quota: None,
-        codex_quota_failure: None,
-        claude_quota_failure: None,
-        running: None,
-        busy: None,
-        sidebar: eon_workspace_protocol::v30::Sidebar::Open,
-        attention_queue: Vec::new(),
-    }))
-    .unwrap();
-    stream.write_all(&response).unwrap();
-    wait_for_successful_exit(&mut child.child);
-    for program in ["fzf", "yazi"] {
-        executable(&root.join(program), "#!/bin/sh\nexit 130\n");
-        let mut child = TestProcess {
-            child: command.spawn().unwrap(),
-            stop: root.join("stop"),
-        };
-        wait_for_successful_exit(&mut child.child);
-        assert!(
-            listener.accept().is_err(),
-            "cancellation sent a directory action"
-        );
-        executable(
-            &root.join("fzf"),
-            "#!/bin/sh\ncat >/dev/null\nprintf 'tab\\0'\nexit 1\n",
-        );
-    }
-    let history_pid = root.join("history-pid");
-    let browser_started = root.join("browser-started");
-    command
-        .env("EON_TEST_HISTORY_PID", &history_pid)
-        .env("EON_TEST_BROWSER_STARTED", &browser_started);
-    executable(
-        &root.join("zoxide"),
-        "#!/bin/sh\necho $$ > \"$EON_TEST_HISTORY_PID\"\nexec sleep 30\n",
-    );
-    executable(
-        &root.join("yazi"),
-        "#!/bin/sh\ntouch \"$EON_TEST_BROWSER_STARTED\"\nexit 130\n",
-    );
-    for (mode, finish) in [
-        ("cancel", "exit 130"),
-        ("browse", "printf 'tab\\0'\nexit 1"),
-        ("accept", "printf '\\0/known\\0'"),
-        ("failure", "exit 2"),
-    ] {
-        let _ = fs::remove_file(&history_pid);
-        let _ = fs::remove_file(&browser_started);
-        executable(
-            &root.join("fzf"),
-            format!(
-                "#!/bin/sh\nwhile [ ! -s \"$EON_TEST_HISTORY_PID\" ]; do sleep 0.01; done\n{finish}\n"
-            ),
-        );
-        let mut child = TestProcess {
-            child: command.stderr(Stdio::piped()).spawn().unwrap(),
-            stop: root.join("stop"),
-        };
-        // Picker errors remain visible for two seconds before the process exits.
-        let deadline = Instant::now() + Duration::from_secs(4);
-        let mut submitted = false;
-        let finished = loop {
-            if let Ok((mut stream, _)) = listener.accept() {
-                // macOS hands out accepted streams nonblocking like their listener.
-                stream.set_nonblocking(false).unwrap();
-                stream
-                    .set_read_timeout(Some(Duration::from_secs(1)))
-                    .unwrap();
-                let mut request = vec![0; HEADER_BYTES];
-                stream.read_exact(&mut request).unwrap();
-                request.resize(declared_message_len(&request).unwrap(), 0);
-                stream.read_exact(&mut request[HEADER_BYTES..]).unwrap();
-                assert_eq!(
-                    decode_request(&request).unwrap().action,
-                    ProtocolAction::CommitDirectory {
-                        target: PopupTarget {
-                            tab: "t1".into(),
-                            instance: "u1".into(),
-                        },
-                        directory: b"/known".to_vec(),
-                    }
-                );
-                assert!(!submitted, "selection was submitted twice");
-                submitted = true;
-                stream.write_all(&response).unwrap();
-            }
-            if let Some(status) = child.child.try_wait().unwrap() {
-                break Some(status.success());
-            }
-            if Instant::now() >= deadline {
-                break None;
-            }
-            thread::sleep(Duration::from_millis(10));
-        };
-        let pid: i32 = fs::read_to_string(&history_pid)
-            .unwrap()
-            .trim()
-            .parse()
-            .unwrap();
-        // SAFETY: the PID belongs to this test's history child.
-        let history_reaped = unsafe { libc::kill(pid, 0) } == -1;
-        if !history_reaped {
-            unsafe { libc::kill(pid, libc::SIGKILL) };
-        }
-        if finished.is_none() {
-            let _ = child.child.kill();
-        }
-        wait_for_exit(&mut child.child);
-        let mut error = String::new();
-        child
-            .child
-            .stderr
-            .take()
-            .unwrap()
-            .read_to_string(&mut error)
-            .unwrap();
-        assert!(
-            finished == Some(mode != "failure") && history_reaped,
-            "{mode}: result {finished:?}, history reaped {history_reaped}: {error}"
-        );
-        assert_eq!(submitted, mode == "accept");
-        assert_eq!(browser_started.exists(), mode == "browse");
-        assert!(listener.accept().is_err());
-        if mode == "failure" {
-            assert!(
-                error.contains("packaged directory picker exited"),
-                "{error}"
-            );
-        }
-    }
-    for (program, script, message) in [
-        (
-            "yazi",
-            "#!/bin/sh\nexit 2\n",
-            "packaged folder browser exited",
-        ),
-        (
-            "fzf",
-            "#!/bin/sh\ncat >/dev/null\nprintf 'unexpected\\0'\n",
-            "directory picker returned an invalid selection",
-        ),
-        (
-            "zoxide",
-            "#!/bin/sh\nexit 2\n",
-            "packaged directory history exited",
-        ),
-    ] {
-        executable(&root.join("zoxide"), "#!/bin/sh\nprintf '/known\\n'\n");
-        executable(
-            &root.join("fzf"),
-            "#!/bin/sh\ncat >/dev/null\nprintf 'tab\\0'\nexit 1\n",
-        );
-        executable(
-            &root.join("yazi"),
-            "#!/bin/sh\nprintf '/untracked-\\377\n'\n",
-        );
-        executable(&root.join(program), script);
-        let mut child = TestProcess {
-            child: command.stderr(Stdio::piped()).spawn().unwrap(),
-            stop: root.join("stop"),
-        };
-        assert!(!wait_for_exit(&mut child.child).success());
-        let mut error = String::new();
-        child
-            .child
-            .stderr
-            .take()
-            .unwrap()
-            .read_to_string(&mut error)
-            .unwrap();
-        assert!(error.contains(message), "{error}");
-        assert!(
-            listener.accept().is_err(),
-            "failure sent a directory action"
-        );
-    }
-    fs::remove_dir_all(root).unwrap();
-}
-
-#[test]
-fn directory_picker_retargets_cancels_and_stops_with_venus() {
-    let root = temporary_directory();
-    let runtime = root.join("runtime");
-    let config = root.join("config");
-    configure_mock_desktop(&config);
-    let initial = root.join("initial");
-    let home = root.join("home");
-    fs::create_dir(&home).unwrap();
-    let selected = root.join("selected");
-    let stop = root.join("stop");
-    let stop_delay = root.join("stop-delay");
-    let fail_stop_once = root.join("fail-stop-once");
-    let release = root.join("picker-release");
-    let selection = root.join("picker-selection");
-    let orbit_log = root.join("orbit-cwd.log");
-    let venus_pid = root.join("venus.pid");
-    let picker_child_pid = root.join("picker-child.pid");
-    let venus_args = root.join("venus.args");
-    let orbit = root.join("orbit");
-    let venus = root.join("venus");
-    let session_bin = root.join("session-bin");
-    fs::create_dir(&initial).unwrap();
-    fs::create_dir(&selected).unwrap();
-    fs::create_dir(&session_bin).unwrap();
-    managed_orbit_executable(&orbit);
-    executable(
-        &venus,
-        r#"#!/bin/sh
-printf '%s' "$$" > "$EON_TEST_VENUS_PID"
-printf '%s' "$*" > "$EON_TEST_VENUS_ARGS"
-cat >/dev/null
-"#,
-    );
-    executable(
-        &session_bin.join("zoxide"),
-        "#!/bin/sh\nprintf '%s' \"$$\" > \"$EON_TEST_PICKER_CHILD_PID\"\nwhile [ ! -e \"$EON_TEST_PICKER_RELEASE\" ]; do sleep 0.01; done\ncat \"$EON_TEST_PICKER_SELECTION\"\n",
-    );
-    executable(
-        &session_bin.join("eon-nu"),
-        "#!/bin/sh\nwhile [ ! -e \"$EON_TEST_STOP\" ]; do sleep 0.01; done\n",
-    );
-    let binary = PathBuf::from(env!("CARGO_BIN_EXE_eon"));
-    symlink(&binary, session_bin.join("eon-directory-picker")).unwrap();
-    quick_picker_executable(&session_bin.join("fzf"));
-    fs::write(&selection, selected.as_os_str().as_bytes()).unwrap();
-
-    let child = eon_command(&binary)
-        .arg("run")
-        .current_dir(&initial)
-        .env("HOME", &home)
-        .env("EON_RUNTIME_DIR", &runtime)
-        .env("EON_CONFIG_HOME", &config)
-        .env("EON_ORBIT", &orbit)
-        .env("EON_VENUS", &venus)
-        .env("EON_SESSION_BIN", &session_bin)
-        .env("EON_TEST_RUN_CHILD", "1")
-        .env("EON_TEST_STOP", &stop)
-        .env("EON_TEST_FAIL_STOP_ONCE", &fail_stop_once)
-        .env("EON_TEST_NATURAL_EXIT_ON_STOP", "session-1")
-        .env("EON_TEST_PICKER_RELEASE", &release)
-        .env("EON_TEST_PICKER_SELECTION", &selection)
-        .env("EON_TEST_PICKER_CHILD_PID", &picker_child_pid)
-        .env("FZF_DEFAULT_OPTS", "--preview=cat {}")
-        .env("FZF_DEFAULT_OPTS_FILE", root.join("ambient-fzf-opts"))
-        .env("EON_TEST_ORBIT_CWD_LOG", &orbit_log)
-        .env("EON_TEST_VENUS_PID", &venus_pid)
-        .env("EON_TEST_VENUS_ARGS", &venus_args)
-        .env("EON_TEST_STOP_DELAY", &stop_delay)
-        .stdout(Stdio::null())
-        .stderr(Stdio::null())
-        .spawn()
-        .unwrap();
-    let mut supervisor = TestProcess {
-        child,
-        stop: stop.clone(),
-    };
-    let generation = generation_runtime(&runtime);
-    let control = generation.join("eon.sock");
-    wait_for_connection(&control);
-    wait_for(&venus_pid);
-    wait_for(&venus_args);
-    let args = fs::read_to_string(&venus_args).unwrap();
-    assert!(args.contains(&format!("--workspace {}", control.display())));
-    assert!(!args.contains("orbit.sock"));
-
-    let opened = workspace_action(&control, "picker-open", Action::Inspect);
-    let Response::Snapshot(opened) = opened else {
-        panic!("picker open did not return a snapshot");
-    };
-    let (picker_tab, picker) = project_popup(&opened).unwrap();
-    assert_eq!(picker_tab.id, "t1");
-    let initial_picker = Path::new(OsStr::from_bytes(&picker.endpoint)).to_path_buf();
-    assert_eq!(initial_picker.parent(), Some(generation.as_path()));
-    assert!(opened.tabs[0].columns.is_empty());
-    assert!(opened.tabs[0].selected_pane.is_none());
-    assert!(!generation.join("orbit.sock").exists());
-    assert_eq!(
-        protocol_action(
-            &control,
-            "picker-focus",
-            ProtocolAction::InvokePopup {
-                tab: "t1".into(),
-                entry: "project".into(),
-                expected_instance: Some(picker.id.clone()),
-                intent: InvokeIntent::Focus,
-            },
-        ),
-        Response::Snapshot(opened.clone())
-    );
-    assert_eq!(
-        workspace_action(&control, "picker-singleton", Action::Focus(Direction::Left)),
-        Response::Snapshot(opened)
-    );
-
-    let two_pending = match workspace_action(&control, "second-pending", Action::CreateTab) {
-        Response::Snapshot(snapshot) => snapshot,
-        response => panic!("second pending tab failed: {response:?}"),
-    };
-    assert_eq!(two_pending.active_tab, "t2");
-    assert_eq!(two_pending.tabs.len(), 2);
-    assert_eq!(
-        two_pending.tabs[0].directory,
-        fs::canonicalize(&initial).unwrap().as_os_str().as_bytes()
-    );
-    assert_eq!(two_pending.tabs[1].directory, home.as_os_str().as_bytes());
-    assert!(fs::read_to_string(&orbit_log).unwrap().contains(&format!(
-        "directory-picker-2 {}",
-        fs::canonicalize(&home).unwrap().display()
-    )));
-    assert!(two_pending.tabs.iter().all(|tab| tab.pending));
-    let second_picker = two_pending.tabs[1].popups[0].endpoint.clone();
-    assert_ne!(two_pending.tabs[0].popups[0].endpoint, second_picker);
-    assert!(matches!(
-        workspace_action(&control, "return-to-first-pending", Action::FocusId("t1".into())),
-        Response::Snapshot(snapshot)
-            if snapshot.active_tab == "t1" && snapshot.tabs[0].popups[0] == two_pending.tabs[0].popups[0]
-    ));
-    assert!(matches!(
-        workspace_action(&control, "return-to-second-pending", Action::FocusId("t2".into())),
-        Response::Snapshot(snapshot) if snapshot.active_tab == "t2"
-    ));
-    assert!(matches!(
-        workspace_action(&control, "close-second-pending", Action::CloseTab { tab: "t2".into() }),
-        Response::Snapshot(snapshot) if snapshot.active_tab == "t1" && snapshot.tabs.len() == 1
-    ));
-    assert!(!Path::new(OsStr::from_bytes(&second_picker)).exists());
-
-    fs::write(&release, "").unwrap();
-    let retargeted = wait_for_picker_close(&control, &selected);
-    assert_eq!(retargeted.tabs[0].panes().count(), 1);
-    assert_eq!(retargeted.tabs[0].selected_pane.as_deref(), Some("p1"));
-    assert!(!initial_picker.exists());
-    assert!(!artifact_path(&initial_picker, ".record").exists());
-
-    let created = workspace_action(
-        &control,
-        "pane-after-picker",
-        Action::CreatePane { focus: true },
-    );
-    assert!(
-        matches!(&created, Response::Snapshot(snapshot) if snapshot.tabs[0].panes().count() == 2),
-        "pane creation after picker failed: {created:?}"
-    );
-    wait_for(&orbit_log);
-    let launches = fs::read_to_string(&orbit_log).unwrap();
-    assert!(launches.contains(&format!(
-        "session-2 {}",
-        fs::canonicalize(&selected).unwrap().display()
-    )));
-
-    fs::remove_file(&release).unwrap();
-    fs::write(&selection, "cancel").unwrap();
-    assert!(matches!(
-        invoke_project(&control, "picker-cancel"),
-        Response::Snapshot(snapshot) if project_popup(&snapshot).is_some()
-    ));
-    fs::write(&release, "").unwrap();
-    wait_for_picker_close(&control, &selected);
-
-    fs::remove_file(&release).unwrap();
-    assert!(matches!(
-        workspace_action(&control, "new-tab-cancel", Action::CreateTab),
-        Response::Snapshot(snapshot)
-            if snapshot.active_tab == "t3"
-                && snapshot.tabs[1].columns.is_empty()
-                && snapshot.tabs[1].selected_pane.is_none()
-    ));
-    let pending_picker = picker_endpoint(&control);
-    assert_ne!(pending_picker, initial_picker);
-    assert!(matches!(
-        workspace_action(
-            &control,
-            "close-pending-tab",
-            Action::CloseTab { tab: "t3".into() },
-        ),
-        Response::Snapshot(snapshot)
-            if snapshot.active_tab == "t1" && snapshot.tabs.len() == 1
-    ));
-    assert!(!pending_picker.exists());
-
-    fs::write(&selection, selected.as_os_str().as_bytes()).unwrap();
-    let traversed_picker = match workspace_action(&control, "new-tab-accept", Action::CreateTab) {
-        Response::Snapshot(snapshot)
-            if snapshot.active_tab == "t4" && snapshot.tabs[1].columns.is_empty() =>
-        {
-            project_popup(&snapshot).unwrap().1.clone()
-        }
-        _ => panic!("new tab did not open its picker"),
-    };
-    assert!(matches!(
-        workspace_action(&control, "picker-traverse-left", Action::Focus(Direction::Left)),
-        Response::Snapshot(snapshot)
-            if snapshot.active_tab == "t1"
-                && project_popup(&snapshot).is_some_and(|(_, popup)| popup == &traversed_picker)
-                && snapshot.tabs[0].selected_pane.as_deref() == Some("p2")
-    ));
-    assert!(matches!(
-        workspace_action(&control, "picker-traverse-right", Action::Focus(Direction::Right)),
-        Response::Snapshot(snapshot)
-            if snapshot.active_tab == "t4"
-                && project_popup(&snapshot).is_some_and(|(_, popup)| popup == &traversed_picker)
-                && snapshot.tabs[1].columns.is_empty()
-                && snapshot.tabs[1].selected_pane.is_none()
-    ));
-    fs::write(&release, "").unwrap();
-    let accepted = wait_for_picker_close(&control, &selected);
-    assert_eq!(accepted.active_tab, "t4");
-    assert_eq!(accepted.tabs[1].selected_pane.as_deref(), Some("p3"));
-
-    let invoke_ok = |arguments: &[&str]| {
-        let output = invoke(&binary, &runtime, &config, arguments);
-        assert!(output.status.success());
-        output
-    };
-    let moved_tab = invoke_ok(&["tab", "move", "left", "--json"]);
-    assert!(stdout(&moved_tab).contains("\"active_tab\":\"t4\""));
-    assert!(stdout(&moved_tab).contains("\"tabs\":[{\"id\":\"t4\""));
-    invoke_ok(&["tab", "move", "right", "--json"]);
-    invoke_ok(&["focus", "t1", "--json"]);
-    let moved_pane = invoke_ok(&["pane", "move", "up", "--json"]);
-    assert!(stdout(&moved_pane).contains("\"panes\":[{\"id\":\"p2\""));
-    invoke_ok(&["pane", "move", "down", "--json"]);
-
-    fs::write(&selection, root.join("missing").as_os_str().as_bytes()).unwrap();
-    assert!(matches!(
-        invoke_project(&control, "picker-invalid"),
-        Response::Snapshot(snapshot) if project_popup(&snapshot).is_some()
-    ));
-    thread::sleep(Duration::from_millis(100));
-    assert!(matches!(
-        workspace_action(&control, "picker-invalid-visible", Action::Inspect),
-        Response::Snapshot(snapshot)
-            if project_popup(&snapshot).is_some()
-                && snapshot.tabs[1].directory == selected.as_os_str().as_bytes()
-    ));
-    wait_for_picker_close(&control, &selected);
-
-    fs::remove_file(&release).unwrap();
-    fs::remove_file(&picker_child_pid).unwrap();
-    fs::write(&selection, initial.as_os_str().as_bytes()).unwrap();
-    assert!(matches!(
-        invoke_project(&control, "picker-client-loss"),
-        Response::Snapshot(snapshot) if project_popup(&snapshot).is_some()
-    ));
-    let lost_client_picker = picker_endpoint(&control);
-    wait_for(&picker_child_pid);
-    let picker_child = fs::read_to_string(&picker_child_pid)
-        .unwrap()
-        .parse::<u32>()
-        .unwrap();
-    let pid = fs::read_to_string(&venus_pid)
-        .unwrap()
-        .parse::<i32>()
-        .unwrap();
-    // SAFETY: the PID came from this test's live Venus child.
-    assert_eq!(unsafe { libc::kill(pid, libc::SIGTERM) }, 0);
-    wait_for_picker_close(&control, &selected);
-    assert!(!lost_client_picker.exists());
-    let deadline = Instant::now() + Duration::from_secs(5);
-    while process::exists(picker_child) && Instant::now() < deadline {
-        thread::sleep(Duration::from_millis(10));
-    }
-    if process::exists(picker_child) {
-        // Release the leaked probe before reporting the regression.
-        fs::write(&release, "").unwrap();
-        wait_for_process_removal(picker_child, "released picker child did not exit");
-        panic!("mock terminal Stop left its picker descendant running");
-    }
-
-    fs::write(&fail_stop_once, "session-2").unwrap();
-    assert!(matches!(
-        workspace_action(
-            &control,
-            "close-t1-partial",
-            Action::CloseTab { tab: "t1".into() },
-        ),
-        Response::Failure(failure)
-            if failure.code == "tab-close-failed" && failure.detail.contains("injected stop failure")
-    ));
-    assert!(matches!(
-        workspace_action(&control, "close-t1-partial", Action::CloseTab { tab: "t1".into() }),
-        Response::Failure(failure) if failure.code == "duplicate-request"
-    ));
-    assert!(matches!(
-        workspace_action(&control, "close-partial-inspect", Action::Inspect),
-        Response::Snapshot(snapshot)
-            if snapshot.active_tab == "t1"
-                && snapshot.tabs[0].panes().count() == 1
-                && snapshot.tabs[0].panes().next().unwrap().session == "session-2"
-                && snapshot.tabs[1].panes().next().unwrap().session == "session-3"
-    ));
-    let closed = invoke(
-        &binary,
-        &runtime,
-        &config,
-        &["tab", "close", "t1", "--json"],
-    );
-    assert!(closed.status.success(), "{}", stdout(&closed));
-    assert!(stdout(&closed).contains("\"active_tab\":\"t4\""));
-
-    fs::write(&selection, "cancel").unwrap();
-    let before_cancel = match workspace_action(&control, "home-tab", Action::CreateTab) {
-        Response::Snapshot(snapshot) => snapshot,
-        other => panic!("home tab failed: {other:?}"),
-    };
-    assert_eq!(before_cancel.active_tab, "t5");
-    assert_eq!(before_cancel.tabs[1].directory, home.as_os_str().as_bytes());
-    fs::write(&release, "").unwrap();
-    let cancelled = wait_for_picker_close(&control, &home);
-    assert_eq!(cancelled.active_tab, "t5");
-    assert_eq!(cancelled.tabs.len(), 2);
-    assert_eq!(
-        stable_tabs(&cancelled.tabs)[0],
-        stable_tabs(&before_cancel.tabs)[0]
-    );
-    assert!(!cancelled.tabs[1].pending);
-    assert_eq!(cancelled.tabs[1].panes().count(), 1);
-    assert!(fs::read_to_string(&orbit_log).unwrap().contains(&format!(
-        "session-4 {}",
-        fs::canonicalize(&home).unwrap().display()
-    )));
-    assert!(
-        matches!(workspace_action(&control, "close-home-tab", Action::CloseTab { tab: "t5".into() }), Response::Snapshot(snapshot) if snapshot.tabs.len() == 1)
-    );
-    let supervisor_log = fs::read_dir(std::env::temp_dir().join("eon-test-state/eon/logs"))
-        .unwrap()
-        .map(|entry| entry.unwrap().path())
-        .find(|path| {
-            path.to_string_lossy()
-                .ends_with(&format!("-{}.log", supervisor.child.id()))
-        })
-        .unwrap();
-    let supervisor_log = fs::read_to_string(supervisor_log).unwrap();
-    assert!(supervisor_log.contains("tab t1 close failed after"));
-    assert!(supervisor_log.contains("injected stop failure"));
-    assert!(supervisor_log.contains("closed tab t5 in"));
-
-    fs::remove_file(&release).unwrap();
-    assert!(
-        matches!(workspace_action(&control, "vanishing-home", Action::CreateTab), Response::Snapshot(snapshot) if snapshot.active_tab == "t6")
-    );
-    fs::remove_dir(&home).unwrap();
-    fs::write(&release, "").unwrap();
-    let failed = wait_for_picker_close(&control, &selected);
-    assert_eq!(
-        stable_tabs(&failed.tabs)[0],
-        stable_tabs(&before_cancel.tabs)[0]
-    );
-    assert_eq!(failed.tabs.len(), 1);
-    assert_eq!(failed.active_tab, "t4");
-    assert!(supervisor.child.try_wait().unwrap().is_none());
-    fs::create_dir(&home).unwrap();
-    fs::remove_file(&release).unwrap();
-
-    assert!(matches!(
-        invoke_project(&control, "picker-before-stop"),
-        Response::Snapshot(snapshot) if project_popup(&snapshot).is_some()
-    ));
-    fs::write(&stop_delay, "3500").unwrap();
-    let generation_id = generation.file_name().unwrap().to_str().unwrap();
-    let stopped = invoke(
-        &binary,
-        &runtime,
-        &config,
-        &["stop", generation_id, "--json"],
-    );
-    assert!(stopped.status.success(), "{}", stdout(&stopped));
-    assert!(stdout(&stopped).contains("\"sessions\":[\"session-3\"]"));
-    wait_for_successful_exit(&mut supervisor.child);
-    assert!(!generation.exists());
-    fs::remove_dir_all(root).unwrap();
-}
-
-#[test]
-fn failed_directory_picker_stop_on_detach_keeps_the_supervisor_and_picker() {
-    let root = temporary_directory();
-    let runtime = root.join("runtime");
-    let config = root.join("config");
-    configure_mock_desktop(&config);
-    let stop = root.join("stop");
-    let fail_stop_once = root.join("fail-stop-once");
-    let venus_pid = root.join("venus.pid");
-    let orbit = root.join("orbit");
-    let venus = root.join("venus");
-    let session_bin = root.join("session-bin");
-    fs::create_dir(&session_bin).unwrap();
-    managed_orbit_executable(&orbit);
-    executable(
-        &venus,
-        "#!/bin/sh\nprintf '%s' \"$$\" > \"$EON_TEST_VENUS_PID\"\ncat >/dev/null\n",
-    );
-    executable(
-        &session_bin.join("zoxide"),
-        "#!/bin/sh\nwhile [ ! -e \"$EON_TEST_STOP\" ]; do sleep 0.01; done\n",
-    );
-    executable(
-        &session_bin.join("eon-nu"),
-        "#!/bin/sh\nwhile [ ! -e \"$EON_TEST_STOP\" ]; do sleep 0.01; done\n",
-    );
-    let binary = PathBuf::from(env!("CARGO_BIN_EXE_eon"));
-    symlink(&binary, session_bin.join("eon-directory-picker")).unwrap();
-    quick_picker_executable(&session_bin.join("fzf"));
-
-    let child = eon_command(&binary)
-        .arg("run")
-        .env("EON_RUNTIME_DIR", &runtime)
-        .env("EON_CONFIG_HOME", &config)
-        .env("EON_ORBIT", &orbit)
-        .env("EON_VENUS", &venus)
-        .env("EON_SESSION_BIN", &session_bin)
-        .env("EON_TEST_RUN_CHILD", "1")
-        .env("EON_TEST_STOP", &stop)
-        .env("EON_TEST_FAIL_STOP_ONCE", &fail_stop_once)
-        .env("EON_TEST_VENUS_PID", &venus_pid)
-        .stdout(Stdio::null())
-        .stderr(Stdio::null())
-        .spawn()
-        .unwrap();
-    let mut supervisor = TestProcess {
-        child,
-        stop: stop.clone(),
-    };
-    let generation = generation_runtime(&runtime);
-    let control = generation.join("eon.sock");
-    wait_for_connection(&control);
-    wait_for(&venus_pid);
-    assert!(matches!(
-        workspace_action(&control, "picker", Action::Inspect),
-        Response::Snapshot(snapshot)
-            if project_popup(&snapshot).is_some() && snapshot.tabs[0].columns.is_empty()
-    ));
-    let picker = live_identity(&picker_endpoint(&control));
-    fs::write(&fail_stop_once, "directory-picker-1").unwrap();
-    let venus = fs::read_to_string(&venus_pid).unwrap().parse().unwrap();
-    // SAFETY: the PID came from this test's live Venus child.
-    assert_eq!(unsafe { libc::kill(venus, libc::SIGTERM) }, 0);
-
-    // The picker's stop fails on detachment: it stays in its pending tab and
-    // the supervisor keeps running (EON-C18).
-    let deadline = Instant::now() + Duration::from_secs(5);
-    while fail_stop_once.exists() {
-        assert!(Instant::now() < deadline, "the picker stop was never sent");
-        thread::sleep(Duration::from_millis(10));
-    }
-    assert!(matches!(
-        workspace_action(&control, "kept", Action::Inspect),
-        Response::Snapshot(snapshot)
-            if project_popup(&snapshot).is_some() && snapshot.tabs[0].pending
-    ));
-    assert!(supervisor.child.try_wait().unwrap().is_none());
-    assert!(process::exists(picker.process_id));
-
-    // Stopping the generation still stops the kept picker.
-    let generation_id = generation.file_name().unwrap().to_str().unwrap();
-    let stopped = invoke(
-        &binary,
-        &runtime,
-        &config,
-        &["stop", generation_id, "--json"],
-    );
-    assert!(stopped.status.success(), "{}", stdout(&stopped));
-    wait_for_successful_exit(&mut supervisor.child);
-    wait_for_process_removal(picker.process_id, "the kept picker did not stop");
-    assert!(!generation.exists());
-    fs::write(&stop, "").unwrap();
-    fs::remove_dir_all(root).unwrap();
 }
 
 fn stdout(output: &Output) -> &str {
@@ -2374,7 +2597,7 @@ fn stable_workspace_json(output: &Output) -> serde_json::Value {
 }
 
 #[test]
-fn stop_accounts_for_late_ready_picker_and_retains_partial_cleanup_owner() {
+fn stop_accounts_for_late_ready_pair_and_retains_partial_cleanup_owner() {
     let root = temporary_directory();
     let runtime = root.join("runtime");
     let config = root.join("config");
@@ -2386,7 +2609,7 @@ fn stop_accounts_for_late_ready_picker_and_retains_partial_cleanup_owner() {
     let venus_pid = root.join("venus.pid");
     let bin = root.join("bin");
     fs::create_dir(&bin).unwrap();
-    executable(&bin.join("eon-directory-picker"), "#!/bin/sh\ncat\n");
+    executable(&bin.join("eon-files"), "#!/bin/sh\ncat\n");
     executable(&bin.join("eon-nu"), "#!/bin/sh\ncat\n");
     managed_orbit_executable(&orbit);
     executable(
@@ -2404,7 +2627,7 @@ fn stop_accounts_for_late_ready_picker_and_retains_partial_cleanup_owner() {
             .env("EON_TEST_VENUS_PID", &venus_pid)
             .env("EON_SESSION_BIN", &bin)
             .env("EON_TEST_STOP", &stop)
-            .env("EON_TEST_PICKER_READY_DELAY_MS", "5100")
+            .env("EON_TEST_PAIR_READY_DELAY_MS", "5100")
             .env("EON_TEST_FAIL_STOP_ONCE", &fail)
             .stdout(Stdio::null())
             .stderr(Stdio::null())
@@ -2422,15 +2645,16 @@ fn stop_accounts_for_late_ready_picker_and_retains_partial_cleanup_owner() {
         );
         thread::sleep(Duration::from_millis(10));
     }
-    let picker = live_identity(&generation.join("k1.sock"));
+    let pair = live_identity(&generation.join("session-2.sock"));
     let first = live_identity(&generation.join("orbit.sock"));
     assert!(
         invoke(binary, &runtime, &config, &["pane", "create", "--json"])
             .status
             .success()
     );
-    let second = live_identity(&generation.join("session-2.sock"));
-    fs::write(&fail, "session-2").unwrap();
+    // The late pair keeps session-2, so the next terminal never reuses it.
+    let second = live_identity(&generation.join("session-3.sock"));
+    fs::write(&fail, "session-3").unwrap();
     let id = generation.file_name().unwrap().to_str().unwrap();
     let failed = invoke(binary, &runtime, &config, &["stop", id, "--json"]);
     assert_eq!(failed.status.code(), Some(1), "{}", stdout(&failed));
@@ -2439,7 +2663,7 @@ fn stop_accounts_for_late_ready_picker_and_retains_partial_cleanup_owner() {
         supervisor.child.try_wait().unwrap().is_none(),
         "partial Stop discarded its owner"
     );
-    wait_for_process_removal(picker.process_id, "late Ready picker survived Stop");
+    wait_for_process_removal(pair.process_id, "late Ready pair survived Stop");
     wait_for_process_removal(first.process_id, "completed terminal survived Stop");
     let venus_pid: u32 = fs::read_to_string(venus_pid).unwrap().parse().unwrap();
     // SAFETY: this is the unreaped presentation child recorded by this test's supervisor.
@@ -2448,7 +2672,7 @@ fn stop_accounts_for_late_ready_picker_and_retains_partial_cleanup_owner() {
     let inventory = invoke(binary, &runtime, &config, &["generations", "--json"]);
     assert!(inventory.status.success(), "{}", stdout(&inventory));
     assert!(
-        stdout(&inventory).contains("\"sessions\":[\"session-2\"]"),
+        stdout(&inventory).contains("\"sessions\":[\"session-3\"]"),
         "{}",
         stdout(&inventory)
     );
@@ -2637,14 +2861,27 @@ fn a_stalled_subscriber_never_delays_requests_another_subscriber_or_stop() {
     wait_for_connection(&control);
     let id = generation.file_name().unwrap().to_str().unwrap().to_owned();
     let deadline = Instant::now() + Duration::from_secs(10);
+    let mut dismissed = false;
     let tab = loop {
-        if let Response::Snapshot(snapshot) = workspace_action(&control, "ready", Action::Inspect)
-            && snapshot
+        if let Response::Snapshot(snapshot) = workspace_action(&control, "ready", Action::Inspect) {
+            if snapshot
                 .tabs
                 .iter()
                 .any(|tab| tab.id == snapshot.active_tab && !tab.pending)
-        {
-            break snapshot.active_tab;
+            {
+                break snapshot.active_tab;
+            }
+            // Dismissing t1's pending pair starts its first pane (EON-C18).
+            if let Some((pending, pair)) = pending_pair(&snapshot)
+                && !dismissed
+            {
+                let target = PopupTarget {
+                    tab: pending.id.clone(),
+                    instance: pair.id.clone(),
+                };
+                protocol_action(&control, "dismiss", ProtocolAction::DismissPopup(target));
+                dismissed = true;
+            }
         }
         assert!(
             Instant::now() < deadline,
@@ -5414,7 +5651,6 @@ fn tab_directory_retargets_future_sessions_without_crossing_tabs() {
     let orbit = root.join("orbit");
     let venus = root.join("venus");
     let reporter = root.join("report-cwd");
-    let picker_release = root.join("picker-release");
     let session_bin = root.join("session-bin");
     for directory in [&first, &second, &disappearing, &config] {
         fs::create_dir(directory).unwrap();
@@ -5428,9 +5664,10 @@ fn tab_directory_retargets_future_sessions_without_crossing_tabs() {
         &reporter,
         "#!/bin/sh\nprintf '%s\\n' \"$PWD\" >> \"$EON_TEST_CHILD_CWD_LOG\"\nwhile test ! -e \"$EON_TEST_STOP\"; do sleep 0.01; done\n",
     );
+    executable(&session_bin.join("zoxide"), "#!/bin/sh\nexit 0\n");
     executable(
-        &session_bin.join("zoxide"),
-        "#!/bin/sh\nwhile test ! -e \"$EON_TEST_PICKER_RELEASE\"; do sleep 0.01; done\nprintf '%s\\n' \"$EON_TEST_PICKER_SELECTION\"\n",
+        &session_bin.join("eon-files"),
+        "#!/bin/sh\nwhile test ! -e \"$EON_TEST_STOP\"; do sleep 0.01; done\n",
     );
     fs::write(
         config.join("config.toml"),
@@ -5442,8 +5679,6 @@ fn tab_directory_retargets_future_sessions_without_crossing_tabs() {
     .unwrap();
 
     let binary = PathBuf::from(env!("CARGO_BIN_EXE_eon"));
-    symlink(&binary, session_bin.join("eon-directory-picker")).unwrap();
-    quick_picker_executable(&session_bin.join("fzf"));
     struct SupervisorLog(PathBuf);
     impl Drop for SupervisorLog {
         fn drop(&mut self) {
@@ -5464,8 +5699,6 @@ fn tab_directory_retargets_future_sessions_without_crossing_tabs() {
         .env("EON_VENUS", &venus)
         .env("EON_SESSION_BIN", &session_bin)
         .env("EON_TEST_STOP", &stop)
-        .env("EON_TEST_PICKER_RELEASE", &picker_release)
-        .env("EON_TEST_PICKER_SELECTION", &first)
         .env("EON_TEST_ORBIT_CWD_LOG", &orbit_log)
         .env("EON_TEST_CHILD_CWD_LOG", &child_log)
         .env("EON_TEST_RUN_CHILD", "1")
@@ -5480,17 +5713,25 @@ fn tab_directory_retargets_future_sessions_without_crossing_tabs() {
     let generation = generation_runtime(&runtime);
     let control = generation.join("eon.sock");
     wait_for_connection(&control);
-    // Let the exiting Venus stub cancel the picker before release so the tab keeps
-    // its launch directory.
-    wait_for_picker_close(&control, &first_directory);
-    fs::write(&picker_release, "").unwrap();
+    // The exiting Venus stub dismisses t1's pair, so the tab keeps its launch directory.
+    wait_for_commit(&control, &first_directory);
 
     assert!(
         invoke(&binary, &runtime, &config, &["tab", "create"])
             .status
             .success()
     );
-    wait_for_picker_close(&control, &first);
+    assert!(
+        invoke(
+            &binary,
+            &runtime,
+            &config,
+            &["tab", "directory", "t2", "--", first.to_str().unwrap()],
+        )
+        .status
+        .success()
+    );
+    wait_for_commit(&control, &first);
     assert!(
         invoke(
             &binary,
@@ -5552,15 +5793,16 @@ fn tab_directory_retargets_future_sessions_without_crossing_tabs() {
         stable_workspace_json(&before),
         stable_workspace_json(&after)
     );
-    assert!(!generation.join("session-5.sock").exists());
-    assert!(!artifact_path(&generation.join("session-5.sock"), ".record").exists());
+    // Pairs took session-2 and session-3, panes session-1 and 4 to 6.
+    assert!(!generation.join("session-7.sock").exists());
+    assert!(!artifact_path(&generation.join("session-7.sock"), ".record").exists());
 
     let deadline = Instant::now() + Duration::from_secs(5);
     while fs::read_to_string(&orbit_log)
         .unwrap_or_default()
         .lines()
         .count()
-        < 4
+        < 6
         || fs::read_to_string(&child_log)
             .unwrap_or_default()
             .lines()
@@ -5577,8 +5819,9 @@ fn tab_directory_retargets_future_sessions_without_crossing_tabs() {
     for expected in [
         format!("session-1 {}", first_directory.display()),
         format!("session-2 {}", first_directory.display()),
-        format!("session-3 {}", second_directory.display()),
         format!("session-4 {}", first_directory.display()),
+        format!("session-5 {}", second_directory.display()),
+        format!("session-6 {}", first_directory.display()),
     ] {
         assert!(orbit_directories.lines().any(|line| line == expected));
     }
@@ -5613,7 +5856,6 @@ fn tab_directory_records_one_zoxide_visit_unless_disabled() {
     let config = root.join("config");
     let stop = root.join("stop");
     let zoxide_log = root.join("zoxide.log");
-    let picker_release = root.join("picker-release");
     let session_bin = root.join("session-bin");
     for directory in [&launch, &visited, &unrecorded, &config, &session_bin] {
         fs::create_dir(directory).unwrap();
@@ -5626,20 +5868,17 @@ fn tab_directory_records_one_zoxide_visit_unless_disabled() {
     let venus = root.join("venus");
     managed_orbit_executable(&orbit);
     executable(&venus, "#!/bin/sh\nexit 0\n");
-    // The startup picker's history query waits so the exiting Venus stub cancels it.
     executable(
         &session_bin.join("zoxide"),
         format!(
-            "#!/bin/sh\nprintf '%s\\n' \"$*\" >> '{}'\nif test \"$1\" = query; then\n  while test ! -e '{}'; do sleep 0.01; done\nfi\nexit 0\n",
-            zoxide_log.display(),
-            picker_release.display()
+            "#!/bin/sh\nprintf '%s\\n' \"$*\" >> '{}'\n",
+            zoxide_log.display()
         ),
     );
+    executable(&session_bin.join("eon-files"), "#!/bin/sh\ncat\n");
     let settings = "[terminal]\nfont_fallbacks = []\n\n[anima]\nenabled = false\n";
     fs::write(config.join("config.toml"), settings).unwrap();
     let binary = PathBuf::from(env!("CARGO_BIN_EXE_eon"));
-    symlink(&binary, session_bin.join("eon-directory-picker")).unwrap();
-    quick_picker_executable(&session_bin.join("fzf"));
     let child = eon_command(&binary)
         .arg("run")
         .current_dir(&launch)
@@ -5659,8 +5898,8 @@ fn tab_directory_records_one_zoxide_visit_unless_disabled() {
     };
     let control = generation_runtime(&runtime).join("eon.sock");
     wait_for_connection(&control);
-    let mut snapshot = wait_for_picker_close(&control, &launch_directory);
-    fs::write(&picker_release, "").unwrap();
+    // The exiting Venus stub dismisses the pair, which records no visit.
+    let mut snapshot = wait_for_commit(&control, &launch_directory);
     let deadline = Instant::now() + Duration::from_secs(5);
     while snapshot.tabs[0].panes().next().is_none() {
         assert!(Instant::now() < deadline, "t1 has no pane: {snapshot:?}");
@@ -6319,93 +6558,6 @@ fn replacement_reconciles_exact_tombstone_endpoints_without_deleting_replacement
     assert!(stopped.status.success(), "{}", stdout(&stopped));
     wait_for_successful_exit(&mut recovered.child);
     assert!(!generation.exists());
-    fs::remove_dir_all(root).unwrap();
-}
-
-#[test]
-fn replacement_with_only_a_stale_initial_picker_falls_back_without_reopening_it() {
-    let root = temporary_directory();
-    let runtime = root.join("runtime");
-    let config = root.join("config");
-    configure_mock_desktop(&config);
-    let stop = root.join("stop");
-    let lease_released = root.join("lease-released");
-    let orbit = root.join("orbit");
-    let venus = root.join("venus");
-    let session_bin = root.join("session-bin");
-    fs::create_dir(&session_bin).unwrap();
-    managed_orbit_executable(&orbit);
-    executable(&venus, "#!/bin/sh\ncat >/dev/null\n");
-    executable(
-        &session_bin.join("zoxide"),
-        "#!/bin/sh\nwhile test ! -e \"$EON_TEST_STOP\"; do sleep 0.01; done\n",
-    );
-    executable(
-        &session_bin.join("eon-nu"),
-        "#!/bin/sh\nwhile test ! -e \"$EON_TEST_STOP\"; do sleep 0.01; done\n",
-    );
-    let binary = PathBuf::from(env!("CARGO_BIN_EXE_eon"));
-    symlink(&binary, session_bin.join("eon-directory-picker")).unwrap();
-    quick_picker_executable(&session_bin.join("fzf"));
-    let launch = || {
-        eon_command(&binary)
-            .arg("run")
-            .env("EON_RUNTIME_DIR", &runtime)
-            .env("EON_CONFIG_HOME", &config)
-            .env("EON_ORBIT", &orbit)
-            .env("EON_VENUS", &venus)
-            .env("EON_SESSION_BIN", &session_bin)
-            .env("EON_TEST_RUN_CHILD", "1")
-            .env("EON_TEST_STOP", &stop)
-            .env("EON_TEST_LEASE_RELEASED", &lease_released)
-            .stdout(Stdio::null())
-            .stderr(Stdio::null())
-            .spawn()
-            .unwrap()
-    };
-
-    let mut first = TestProcess {
-        child: launch(),
-        stop: stop.clone(),
-    };
-    let generation = generation_runtime(&runtime);
-    let control = generation.join("eon.sock");
-    wait_for_connection(&control);
-    let pending = workspace_action(&control, "pending", Action::Inspect);
-    assert!(matches!(
-        pending,
-        Response::Snapshot(snapshot)
-            if project_popup(&snapshot).is_some() && snapshot.tabs[0].columns.is_empty()
-    ));
-    let picker = live_identity(&picker_endpoint(&control));
-    first.child.kill().unwrap();
-    assert!(!first.child.wait().unwrap().success());
-    wait_for(&lease_released);
-
-    let mut replacement = TestProcess {
-        child: launch(),
-        stop: stop.clone(),
-    };
-    wait_for_connection(&control);
-    let recovered = workspace_action(&control, "recovered", Action::Inspect);
-    assert!(matches!(
-        recovered,
-        Response::Snapshot(snapshot)
-            if project_popup(&snapshot).is_none()
-                && snapshot.tabs[0].selected_pane.as_deref() == Some("p1")
-                && snapshot.tabs[0].panes().count() == 1
-    ));
-    assert!(!process::exists(picker.process_id));
-
-    let generation_id = generation.file_name().unwrap().to_str().unwrap();
-    let stopped = invoke(
-        &binary,
-        &runtime,
-        &config,
-        &["stop", generation_id, "--json"],
-    );
-    assert!(stopped.status.success(), "{}", stdout(&stopped));
-    wait_for_successful_exit(&mut replacement.child);
     fs::remove_dir_all(root).unwrap();
 }
 
@@ -7691,7 +7843,7 @@ fn quit_all_stops_the_default_namespace_and_every_window_caller_last() {
 }
 
 #[test]
-fn fresh_window_picker_counts_other_running_windows_and_attach_shows_none() {
+fn fresh_window_pair_counts_other_running_windows_and_attach_shows_none() {
     // Independent windows need short socket paths on macOS too.
     let root = (0_u32..)
         .map(|n| std::env::temp_dir().join(format!("ep{n:x}")))
@@ -7711,16 +7863,14 @@ fn fresh_window_picker_counts_other_running_windows_and_attach_shows_none() {
     fs::create_dir(&bin).unwrap();
     fs::create_dir(&logs).unwrap();
     let binary = PathBuf::from(env!("CARGO_BIN_EXE_eon"));
-    symlink(&binary, bin.join("eon-directory-picker")).unwrap();
-    executable(&bin.join("zoxide"), "#!/bin/sh\nprintf '/known\\n'\n");
+    symlink(&binary, bin.join("eon-files")).unwrap();
+    // Each pair's Yazi logs its arguments and its quick search's notice.
     executable(
-        &bin.join("fzf"),
+        &root.join("yazi"),
         r#"#!/bin/sh
-cat >/dev/null
-printf '%s\n' "$@" > "$EON_TEST_FZF_LOG.$$.tmp"
-mv "$EON_TEST_FZF_LOG.$$.tmp" "$EON_TEST_FZF_LOG.$$"
+printf '%s\n' "$*" "$EON_FILES_NOTICE" > "$EON_TEST_YAZI_LOG.$$.tmp"
+mv "$EON_TEST_YAZI_LOG.$$.tmp" "$EON_TEST_YAZI_LOG.$$"
 while [ ! -e "$EON_TEST_STOP" ]; do sleep 0.01; done
-exit 130
 "#,
     );
     let command = || {
@@ -7729,7 +7879,9 @@ exit 130
             .current_dir(&root)
             .env("EON_SESSION_BIN", &bin)
             .env("EON_TEST_RUN_CHILD", "1")
-            .env("EON_TEST_FZF_LOG", logs.join("fzf"));
+            .env("EON_YAZI", root.join("yazi"))
+            .env("EON_FILES_CONFIG", &root)
+            .env("EON_TEST_YAZI_LOG", logs.join("yazi"));
         command
     };
     let mut first = TestProcess {
@@ -7742,7 +7894,7 @@ exit 130
     };
     let control = generation_runtime(&runtime).join("eon.sock");
     wait_for_connection(&control);
-    let picker_logs = || {
+    let pair_logs = || {
         fs::read_dir(&logs)
             .unwrap()
             .map(|entry| entry.unwrap().path())
@@ -7750,18 +7902,18 @@ exit 130
             .map(|path| fs::read_to_string(path).unwrap())
             .collect::<Vec<_>>()
     };
-    let wait_for_pickers = |count| {
+    let wait_for_pairs = |count| {
         let deadline = Instant::now() + Duration::from_secs(5);
         loop {
-            let logs = picker_logs();
+            let logs = pair_logs();
             if logs.len() == count {
                 break logs;
             }
-            assert!(Instant::now() < deadline, "picker logs: {logs:?}");
+            assert!(Instant::now() < deadline, "pair logs: {logs:?}");
             thread::sleep(Duration::from_millis(10));
         }
     };
-    assert!(!wait_for_pickers(1)[0].contains("--header"));
+    assert!(!wait_for_pairs(1)[0].contains("still running"));
     let name = root.file_name().unwrap().to_str().unwrap();
     let hint = "See them: eon workspace · Quit one: attach to it, then Commands > Quit this window";
     let mut windows = Vec::new();
@@ -7769,30 +7921,32 @@ exit 130
         let output = command().args(["window", "new"]).output().unwrap();
         assert!(output.status.success(), "{output:?}");
         windows.push(stdout(&output).trim().to_owned());
-        let logs = wait_for_pickers(count + 1);
+        let logs = wait_for_pairs(count + 1);
         let text = if count == 1 {
-            format!("--header=1 other Eon window is still running: {name}\n{hint}")
+            format!("1 other Eon window is still running: {name}\n{hint}")
         } else {
-            format!("--header=2 other Eon windows are still running: {name}, {name}\n{hint}")
+            format!("2 other Eon windows are still running: {name}, {name}\n{hint}")
         };
         assert!(logs.iter().any(|log| log.contains(&text)), "{logs:?}");
     }
-    // A later tab's picker stays plain, in window A, which already lists D.
+    // A later tab's pair stays plain, in window A, which already lists D.
     let output = command()
         .args(["tab", "create", "--window", &windows[0]])
         .output()
         .unwrap();
     assert!(output.status.success(), "{output:?}");
-    let logs = wait_for_pickers(4);
+    let logs = wait_for_pairs(4);
     assert_eq!(
-        logs.iter().filter(|log| log.contains("--header")).count(),
+        logs.iter()
+            .filter(|log| log.contains("still running"))
+            .count(),
         2,
         "{logs:?}"
     );
     for args in [vec!["window", "attach", &windows[0]], vec!["attach"]] {
         let output = command().args(args).output().unwrap();
         assert!(output.status.success(), "{output:?}");
-        assert_eq!(picker_logs().len(), 4);
+        assert_eq!(pair_logs().len(), 4);
     }
     for window in &windows {
         let output = command()
@@ -8122,7 +8276,7 @@ fn running_windows_name_each_other_and_refresh_on_start_and_end() {
         }
         let response = read_request(&mut stream);
         assert!(matches!(
-            eon_workspace_protocol::v30::decode_lifecycle_response(&response).unwrap(),
+            eon_workspace_protocol::v31::decode_lifecycle_response(&response).unwrap(),
             LifecycleResponse::Runtime(_)
         ));
     }

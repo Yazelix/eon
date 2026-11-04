@@ -136,8 +136,9 @@ const STEPS: &[Spec] = &[
         name: "picker",
         needs: KEYS,
         requires: &["launch"],
-        proves: "Escape dismisses the first tab's directory picker, which has no CLI path, and \
-                 its terminal runs the scenario's driver in the launch directory",
+        proves: "Escape in quick search dismisses the first tab's Files pair, as a person \
+                 closes it, and the tab's first pane runs the scenario's driver in the launch \
+                 directory",
         window: true,
         timeout: Duration::from_secs(2 * 60),
         body: picker,
@@ -293,8 +294,8 @@ mac-proof scenario: launch full Eon on this Mac's screen and drive it, mostly th
 is logged in to the Mac's screen. Accessibility, which lets the tool post key events, and
 Screen Recording must be granted once, by a click in System Settings > Privacy & Security, to
 the program that runs the tool (for SSH, the SSH server); nothing grants them silently. Without
-Accessibility only launch, identity, retina and stop run, since the first tab's picker takes a
-key. The key steps bring Eon's window to the front, then post US-layout key codes to Venus's
+Accessibility only launch, identity, retina and stop run, since the first tab's Files pair takes
+a key. The key steps bring Eon's window to the front, then post US-layout key codes to Venus's
 process: posting alone would leave the desktop's focus alone, but whether Venus takes Option and
 Command chords while inactive is unproven on a Mac. A step whose need is missing is skipped
 and listed for Yu in summary.txt, as are steps whose missing prerequisites are all left for
@@ -1114,7 +1115,7 @@ impl Scenario {
 
     /// Ends `venus` by `end`, then checks that the terminals outlived it and
     /// that `eon attach` shows them again. Venus's end may add one: it
-    /// cancels the pending picker of the tab that `panes` created, which
+    /// dismisses the pending pair of the tab that `panes` created, which
     /// starts that tab's terminal (EON-C18).
     fn restart_venus(
         &mut self,
@@ -1556,7 +1557,7 @@ fn launch(scenario: &mut Scenario, log: &mut Log, deadline: Instant) -> Outcome 
     let failed = |error: io::Error| Failure::Check(format!("preparing the scenario: {error}"));
     scenario.prepare()?;
     let config = scenario.home().join(".config/eon");
-    // Anima would delay the picker by three seconds.
+    // Anima would delay the first tab's pair by three seconds.
     fs::write(
         config.join("config.toml"),
         format!(
@@ -1910,7 +1911,7 @@ fn settle(result: Outcome, cleanup: Outcome) -> Outcome {
 
 fn picker(scenario: &mut Scenario, log: &mut Log, deadline: Instant) -> Outcome {
     let ready = scenario.exchange().join("ready");
-    // The picker may not take keys yet when the window first shows.
+    // The pair's quick search may not take keys yet when the window first shows.
     while !ready.is_file() {
         scenario.press(&[ESCAPE], log, deadline)?;
         log.line("mac-proof: waiting for the driver to start");

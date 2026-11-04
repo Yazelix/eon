@@ -3,11 +3,8 @@
 //! finished and what has been seen. Orbit owns the records; this owns their
 //! meaning.
 
-use super::{
-    sessions::{self, ProgramStatusRead, RunningSession},
-    workspace::is_directory_picker_session,
-};
-use eon_workspace_protocol::v30::{
+use super::sessions::{self, ProgramStatusRead, RunningSession};
+use eon_workspace_protocol::v31::{
     self as eonw, Action, AttentionKind, AttentionRecord, AttentionState as State, Sidebar,
     Snapshot,
 };
@@ -47,15 +44,19 @@ impl Target {
 }
 
 /// The pane and popup terminals of every workspace, given in window order,
-/// never a directory picker, and the session of the focused one: the shown
+/// and the session of the focused one: the shown
 /// popup, else the selected pane, of the shown workspace's active tab
-/// (EON-C33).
+/// (EON-C33). A pending tab's pair is never a target until its tab commits
+/// (EON-C31).
 pub(super) fn targets(workspaces: &[Snapshot]) -> (Vec<Target>, Option<String>) {
     let mut targets = Vec::new();
     let mut focus = None;
     for (workspace, snapshot) in workspaces.iter().enumerate() {
         let shown = snapshot.workspace == snapshot.active_workspace;
         for (index, tab) in snapshot.tabs.iter().enumerate() {
+            if tab.pending {
+                continue;
+            }
             let active = shown && tab.id == snapshot.active_tab;
             let panes = tab.panes().map(|pane| {
                 let focused =
@@ -66,13 +67,9 @@ pub(super) fn targets(workspaces: &[Snapshot]) -> (Vec<Target>, Option<String>) 
                 let focused = tab.selected_popup.as_ref() == Some(&popup.id);
                 (&popup.id, &popup.session, Some(&popup.entry), focused)
             });
-            let mut position = 0;
-            for (id, session, entry, focused) in panes.chain(popups) {
+            for (position, (id, session, entry, focused)) in panes.chain(popups).enumerate() {
                 if active && focused {
                     focus = Some(session.clone());
-                }
-                if is_directory_picker_session(session) {
-                    continue;
                 }
                 targets.push(Target {
                     workspace,
@@ -82,7 +79,6 @@ pub(super) fn targets(workspaces: &[Snapshot]) -> (Vec<Target>, Option<String>) 
                     session: session.clone(),
                     entry: entry.cloned(),
                 });
-                position += 1;
             }
         }
     }
@@ -769,7 +765,7 @@ impl Attention {
 mod tests {
     use super::*;
     use ProgramState::{Blocked, Done, Error, Idle, Working};
-    use eon_workspace_protocol::v30::{Column, Pane, Popup, PopupGeometry, Tab};
+    use eon_workspace_protocol::v31::{Column, Pane, Popup, PopupGeometry, Tab};
     use std::{fs, slice, thread};
 
     /// A record created at its change `changed`.
@@ -850,7 +846,7 @@ mod tests {
         Snapshot {
             workspace: "w1".into(),
             active_workspace: "w1".into(),
-            workspaces: vec![eon_workspace_protocol::v30::WorkspaceInfo {
+            workspaces: vec![eon_workspace_protocol::v31::WorkspaceInfo {
                 id: "w1".into(),
                 name: None,
                 tab_count: tabs.len(),
@@ -900,14 +896,10 @@ mod tests {
     }
 
     #[test]
-    fn targets_skip_pickers_and_name_the_focused_terminal() {
+    fn targets_list_panes_then_popups_and_name_the_focused_terminal() {
         let tabs = vec![
-            tab(
-                "t1",
-                &["s1", "s2"],
-                &[("project", "directory-picker-1")],
-                None,
-            ),
+            // An established tab's Files pair is an ordinary popup.
+            tab("t1", &["s1", "s2"], &[("files", "s5")], None),
             tab("t2", &["s3"], &[("agent", "s4")], Some("s4")),
         ];
         let (found, focus) = targets(&[snapshot("t2", tabs.clone())]);
@@ -927,12 +919,37 @@ mod tests {
             [
                 (0, 0, "pane-s1", false),
                 (0, 1, "pane-s2", false),
+                (0, 2, "popup-s5", false),
                 (1, 0, "pane-s3", false),
                 (1, 1, "popup-s4", true),
             ]
         );
         assert_eq!(focus.as_deref(), Some("s4"));
         assert_eq!(targets(&[snapshot("t1", tabs)]).1.as_deref(), Some("s1"));
+    }
+
+    #[test]
+    fn a_pending_tabs_pair_is_polled_only_once_its_tab_commits() {
+        // A pending tab: no panes and exactly one selected Files pair.
+        let pending = Tab {
+            pending: true,
+            selected_pane: None,
+            selected_popup: Some("popup-s2".into()),
+            columns: Vec::new(),
+            ..tab("t2", &["s2"], &[("files", "s2")], Some("s2"))
+        };
+        let established = tab("t1", &["s1"], &[], None);
+        let (found, focus) = targets(&[snapshot("t2", vec![established.clone(), pending.clone()])]);
+        let sessions: Vec<_> = found.iter().map(|target| target.session.as_str()).collect();
+        assert_eq!(sessions, ["s1"]);
+        assert_eq!(focus, None);
+
+        // A pick commits the tab: its first pane starts and the pair stays as Files.
+        let committed = tab("t2", &["s3"], &[("files", "s2")], None);
+        let (found, focus) = targets(&[snapshot("t2", vec![established, committed])]);
+        let sessions: Vec<_> = found.iter().map(|target| target.session.as_str()).collect();
+        assert_eq!(sessions, ["s1", "s3", "s2"]);
+        assert_eq!(focus.as_deref(), Some("s3"));
     }
 
     #[test]
@@ -1563,7 +1580,7 @@ mod tests {
                     tab(
                         "t1",
                         &["finished", "working", "idle", "background", "seen"],
-                        &[("agent", "unavailable"), ("project", "directory-picker-1")],
+                        &[("agent", "unavailable")],
                         None,
                     ),
                     tab("t2", &["error", "equal-a", "equal-b"], &[], None),
@@ -1727,9 +1744,9 @@ mod tests {
     fn cross_workspace_focus_sees_the_finish_and_resets_the_queue_cursor() {
         use crate::{
             managed_environment::{PopupCatalog, PopupCommand, PopupDefinition},
-            workspace::{Session, SessionEnd, WorkspaceSet},
+            workspace::{Session, WorkspaceSet},
         };
-        use eon_workspace_protocol::v30::{PopupKey, WorkspaceAction};
+        use eon_workspace_protocol::v31::{PopupKey, WorkspaceAction};
         let mut window = WorkspaceSet::with_recovered_sessions(
             "/runtime".into(),
             "/".into(),
@@ -1754,7 +1771,7 @@ mod tests {
                     id: "project".into(),
                     label: "Project".into(),
                     shortcut: PopupKey::Unbound,
-                    command: PopupCommand::Project,
+                    command: PopupCommand::Argv(Vec::new()),
                     keep_alive: false,
                 }],
             },
@@ -1772,10 +1789,7 @@ mod tests {
                 |_| Ok(()),
             )
             .unwrap();
-        let picker = window.transient_sessions()[0].clone();
-        window
-            .session_ended(&picker, SessionEnd::Exited, |_| Ok(()))
-            .unwrap();
+        // Without a Files entry, the new workspace starts its first pane at once.
         let before = window.snapshots();
         let hidden = before[1].tabs[0].panes().next().unwrap();
         let (targets, focus) = targets(&before);
@@ -1940,7 +1954,7 @@ mod tests {
         // carries its own rollup.
         let mut reply = before[1].clone();
         reply.workspaces = ["w1", "w2"]
-            .map(|id| eon_workspace_protocol::v30::WorkspaceInfo {
+            .map(|id| eon_workspace_protocol::v31::WorkspaceInfo {
                 id: id.into(),
                 ..reply.workspaces[0].clone()
             })
@@ -2188,7 +2202,7 @@ mod tests {
     #[test]
     fn a_subscriber_reads_attention_in_the_turn_that_applies_it() {
         use crate::{events::Projection, subscriptions::Subscribers};
-        use eon_workspace_protocol::v30::{
+        use eon_workspace_protocol::v31::{
             Change, EventKind, Filter, HEADER_BYTES, SubscriptionMessage, declared_message_len,
             decode_subscription_message,
         };
@@ -2378,7 +2392,7 @@ mod tests {
 
     #[test]
     fn busy_needs_the_default_shell_a_child_foreground_and_a_fresh_reply() {
-        use eon_workspace_protocol::v30::{PopupEntry, PopupKey, TargetId};
+        use eon_workspace_protocol::v31::{PopupEntry, PopupKey, TargetId};
         let root = crate::supervisor::temporary_directory();
         let mut sessions: Vec<_> = (1..=12)
             .map(|number| {
@@ -2409,7 +2423,6 @@ mod tests {
                     ("files", "session-7"),
                     ("git", "session-8"),
                     ("commands", "session-9"),
-                    ("project", "directory-picker-1"),
                 ],
                 None,
             )],

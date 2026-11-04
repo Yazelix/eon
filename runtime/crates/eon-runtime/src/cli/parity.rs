@@ -4,7 +4,7 @@
 //! in the test too.
 
 use super::*;
-use eon_workspace_protocol::v30::{Filter, InvokeIntent, TerminalInput};
+use eon_workspace_protocol::v31::{Filter, InvokeIntent, TerminalInput};
 
 enum CliPath {
     /// These arguments parse to exactly this action.
@@ -85,12 +85,6 @@ fn cli_path(action: &Action) -> CliPath {
             return Exception("eon-agent-parity-a9g0.1 adds popup commands");
         }
         Action::DismissPopup(target) => return Hide(words(&["popup", "hide", &target.instance])),
-        Action::CommitDirectory { .. } => {
-            return Exception(
-                "the directory picker completes its own popup; `tab directory` retargets a tab, \
-                 and eon-quick-search-parity-23y9.5 makes it pick for a pending tab",
-            );
-        }
         Action::CreateColumn
         | Action::ToggleSidebar
         | Action::FocusAttention { .. }
@@ -217,11 +211,7 @@ fn every_eonw_action_has_a_cli_path_or_a_named_exception() {
             expected_instance: None,
             intent: InvokeIntent::Toggle,
         },
-        Action::DismissPopup(popup.clone()),
-        Action::CommitDirectory {
-            target: popup,
-            directory: b"/tmp".to_vec(),
-        },
+        Action::DismissPopup(popup),
         Action::CreateColumn,
         Action::ClosePane { pane: text("p3") },
         Action::RenamePane {

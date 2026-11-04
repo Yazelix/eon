@@ -74,7 +74,7 @@ the workspace, by name or `wN`, and its footer reads `Enter Close`.
 | Alt+Shift+N | Open an independent Eon window when supervised by Eon |
 | Alt+Shift+D | Detach: hide the window, keep terminals running |
 | Alt+Shift+Q | Quit: close the window, stop its terminals; asks first while a terminal is busy, and is absent without Eon's running-windows summary |
-| Alt+Z | Open Project; Eon supplies other popup shortcuts |
+| Alt+Z | Show or hide quick search, Eon's `project` popup entry; Eon supplies other popup shortcuts |
 | Alt+/ | Open or close Shortcuts |
 | Alt+Shift+B | Show or hide the bottom shortcut hints |
 | Alt+Shift+H | Show or hide the agent sidebar, unless Eon turned it off |

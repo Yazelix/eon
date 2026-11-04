@@ -1,4 +1,4 @@
-//! Eon-owned values and bounded EONW v30 codec for local workspace clients.
+//! Eon-owned values and bounded EONW v31 codec for local workspace clients.
 //!
 //! Every message is a 12-byte header (`EONW`, little-endian version, kind,
 //! zero flags, little-endian payload length) followed by its payload.
@@ -16,7 +16,7 @@ pub use subscription::{
     decode_subscription_message, encode_subscription_message,
 };
 
-pub const VERSION: u16 = 30;
+pub const VERSION: u16 = 31;
 pub const HEADER_BYTES: usize = 12;
 const MAGIC: &[u8; 4] = b"EONW";
 const MAX_MESSAGE_BYTES: usize = 2 * 1024 * 1024;
@@ -67,7 +67,10 @@ pub const MAX_PASTE_BYTES: usize = 64 * 1024;
 pub const MAX_TERMINAL_METADATA_BYTES: usize = 8 * 1024;
 /// The longest `[agents] send_enter_delay_ms`.
 pub const MAX_ENTER_DELAY_MS: u16 = 5000;
+/// Project's entry: it has no popup of its own and invokes its tab's Files pair.
 pub const PROJECT_ENTRY: &str = "project";
+/// The Files pair's entry, the one popup a pending tab holds (EON-C18).
+pub const FILES_ENTRY: &str = "files";
 pub const SHIFT: u8 = 1;
 pub const CTRL: u8 = 2;
 pub const ALT: u8 = 4;
@@ -84,7 +87,6 @@ const SENT: u8 = 135;
 
 const INVOKE_POPUP: u8 = 19;
 const DISMISS_POPUP: u8 = 20;
-const COMMIT_DIRECTORY: u8 = 21;
 const CREATE_COLUMN: u8 = 22;
 const CLOSE_PANE: u8 = 23;
 const RENAME_PANE: u8 = 36;
@@ -146,7 +148,7 @@ pub enum WorkspaceAction {
     Stop {
         generation: String,
     },
-    /// Explicit retargeting, not chooser completion.
+    /// A pick on a pending tab (EON-C18); explicit retargeting on an established one.
     SetTabDirectory {
         tab: String,
         directory: Vec<u8>,
@@ -184,10 +186,6 @@ pub enum Action {
         intent: InvokeIntent,
     },
     DismissPopup(PopupTarget),
-    CommitDirectory {
-        target: PopupTarget,
-        directory: Vec<u8>,
-    },
     /// Add a column right of the selected column with one new pane.
     CreateColumn,
     /// Stop the terminal of one pane in the active tab.
@@ -793,6 +791,17 @@ impl std::error::Error for Error {}
 
 pub type Result<T> = std::result::Result<T, Error>;
 
+/// The popup of `tab` that invoking `entry` acts on: Project invokes the tab's
+/// Files pair, and every other entry its own popup.
+pub fn entry_popup<'a>(tab: &'a Tab, entry: &str) -> Option<&'a Popup> {
+    let entry = if entry == PROJECT_ENTRY {
+        FILES_ENTRY
+    } else {
+        entry
+    };
+    tab.popups.iter().find(|popup| popup.entry == entry)
+}
+
 /// Check popup preconditions against the owner's current, valid snapshot
 /// immediately before mutation. This does not execute lifecycle policy or
 /// validate ordinary workspace actions. Decoding alone cannot detect staleness.
@@ -811,25 +820,14 @@ pub fn check_popup_action(snapshot: &Snapshot, action: &Action) -> Result<()> {
                     .iter()
                     .find(|item| item.id == *tab)
                     .is_some_and(|tab| {
-                        tab.popups
-                            .iter()
-                            .find(|popup| popup.entry == *entry)
-                            .map(|popup| &popup.id)
-                            == expected_instance.as_ref()
+                        entry_popup(tab, entry).map(|popup| &popup.id) == expected_instance.as_ref()
                     })
         }
-        Action::DismissPopup(target) | Action::CommitDirectory { target, .. } => snapshot
+        Action::DismissPopup(target) => snapshot
             .tabs
             .iter()
             .find(|tab| tab.id == target.tab)
-            .is_some_and(|tab| {
-                tab.popups.iter().any(|popup| {
-                    popup.id == target.instance
-                        && (!matches!(action, Action::CommitDirectory { .. })
-                            || (popup.entry == PROJECT_ENTRY
-                                && tab.selected_popup.as_ref() == Some(&popup.id)))
-                })
-            }),
+            .is_some_and(|tab| tab.popups.iter().any(|popup| popup.id == target.instance)),
         _ => return Ok(()),
     };
     if matches {
@@ -871,12 +869,6 @@ pub fn encode_request(request: &Request) -> Result<Vec<u8>> {
             payload.byte(DISMISS_POPUP);
             payload.string(&target.tab);
             payload.string(&target.instance);
-        }
-        Action::CommitDirectory { target, directory } => {
-            payload.byte(COMMIT_DIRECTORY);
-            payload.string(&target.tab);
-            payload.string(&target.instance);
-            payload.raw(directory);
         }
         Action::CreateColumn => payload.byte(CREATE_COLUMN),
         Action::ClosePane { pane } => {
@@ -1175,20 +1167,10 @@ pub fn decode_request(bytes: &[u8]) -> Result<Request> {
                 }
             },
         },
-        DISMISS_POPUP | COMMIT_DIRECTORY => {
-            let target = PopupTarget {
-                tab: decoder.string("tab id", MAX_ID_BYTES)?,
-                instance: decoder.string("popup id", MAX_ID_BYTES)?,
-            };
-            if tag == DISMISS_POPUP {
-                Action::DismissPopup(target)
-            } else {
-                Action::CommitDirectory {
-                    target,
-                    directory: decoder.raw("directory", MAX_DIRECTORY_BYTES)?.to_vec(),
-                }
-            }
-        }
+        DISMISS_POPUP => Action::DismissPopup(PopupTarget {
+            tab: decoder.string("tab id", MAX_ID_BYTES)?,
+            instance: decoder.string("popup id", MAX_ID_BYTES)?,
+        }),
         tag => Action::Workspace(decode_workspace_action(&mut decoder, tag)?),
     };
     decoder.finish()?;
@@ -1390,12 +1372,9 @@ fn validate_popup_action(action: &Action) -> Result<()> {
                 identity("popup id", id)?;
             }
         }
-        Action::DismissPopup(target) | Action::CommitDirectory { target, .. } => {
+        Action::DismissPopup(target) => {
             identity("tab id", &target.tab)?;
             identity("popup id", &target.instance)?;
-            if let Action::CommitDirectory { directory, .. } = action {
-                validate_directory(directory)?;
-            }
         }
         Action::Workspace(_)
         | Action::CreateColumn
@@ -2260,7 +2239,7 @@ fn validate_tabs(tabs: &[WireTab], entries: Option<&HashSet<&str>>) -> Result<()
         if tab.pending
             && (!tab.panes.is_empty()
                 || tab.popups.len() != 1
-                || tab.popups[0].entry != PROJECT_ENTRY
+                || tab.popups[0].entry != FILES_ENTRY
                 || tab.selected_popup.as_ref() != Some(&tab.popups[0].id))
         {
             return Err(Error::InvalidSnapshot {
@@ -2272,7 +2251,9 @@ fn validate_tabs(tabs: &[WireTab], entries: Option<&HashSet<&str>>) -> Result<()
             if entries.is_none() {
                 entry_id(&popup.entry)?;
             }
+            // Project shows the tab's Files pair and never has a popup of its own.
             if entries.is_some_and(|entries| !entries.contains(popup.entry.as_str()))
+                || popup.entry == PROJECT_ENTRY
                 || !tab_entries.insert(popup.entry.as_str())
             {
                 return Err(Error::InvalidSnapshot {
@@ -3565,7 +3546,7 @@ mod tests {
         let pending = |id: &str, popup_id: &str| Tab {
             pending: true,
             selected_popup: Some(popup_id.into()),
-            ..tab(id, vec![], vec![popup(popup_id, PROJECT_ENTRY)])
+            ..tab(id, vec![], vec![popup(popup_id, FILES_ENTRY)])
         };
         let mut asking = attention(AttentionState::NeedsInput);
         let record = asking.as_mut().unwrap().record.as_mut().unwrap();
@@ -3620,7 +3601,11 @@ mod tests {
                 side_margin: 8.5,
                 vertical_margin: 4.0,
             },
-            entries: vec![entry(PROJECT_ENTRY, "KeyZ"), entry("agent", "KeyL")],
+            entries: vec![
+                entry(PROJECT_ENTRY, "KeyZ"),
+                entry("agent", "KeyL"),
+                entry(FILES_ENTRY, "KeyY"),
+            ],
             tabs: vec![
                 Tab {
                     selected_pane: Some("p3".into()),
@@ -4132,7 +4117,7 @@ mod tests {
     #[test]
     fn terminal_text_is_bounded_plain_text_on_both_sides() {
         let text = |text: String| TerminalText {
-            target: terminal_target(TargetId::Popup("u1".into()), "directory-picker-1"),
+            target: terminal_target(TargetId::Popup("u1".into()), "session-2"),
             caller: Some(terminal_target(TargetId::Pane("p1".into()), "session-1")),
             revision: u64::MAX,
             screen: Screen::Primary,
@@ -4292,21 +4277,17 @@ mod tests {
 
     #[test]
     fn messages_keep_their_wire_bytes() {
-        let target = PopupTarget {
-            tab: "t1".into(),
-            instance: "u1".into(),
-        };
         for (action, expected) in [
             (
                 Action::Workspace(WorkspaceAction::CloseTab { tab: "t1".into() }),
-                "454f4e571e0001000a00000002007231001202007431",
+                "454f4e571f0001000a00000002007231001202007431",
             ),
             (
                 Action::Workspace(WorkspaceAction::SetTabDirectory {
                     tab: "t1".into(),
                     directory: b"/tmp".to_vec(),
                 }),
-                "454f4e571e0001001000000002007231000c0200743104002f746d70",
+                "454f4e571f0001001000000002007231000c0200743104002f746d70",
             ),
             (
                 Action::InvokePopup {
@@ -4315,36 +4296,29 @@ mod tests {
                     expected_instance: Some("u1".into()),
                     intent: InvokeIntent::Focus,
                 },
-                "454f4e571e00010015000000020072310013020074310300676974010200753101",
+                "454f4e571f00010015000000020072310013020074310300676974010200753101",
             ),
-            (
-                Action::CommitDirectory {
-                    target,
-                    directory: b"/tmp".to_vec(),
-                },
-                "454f4e571e00010014000000020072310015020074310200753104002f746d70",
-            ),
-            (Action::CreateColumn, "454f4e571e00010006000000020072310016"),
+            (Action::CreateColumn, "454f4e571f00010006000000020072310016"),
             (
                 Action::ClosePane { pane: "p2".into() },
-                "454f4e571e0001000a00000002007231001702007032",
+                "454f4e571f0001000a00000002007231001702007032",
             ),
             (
                 Action::MovePaneSideways(Side::Right),
-                "454f4e571e00010006000000020072310019",
+                "454f4e571f00010006000000020072310019",
             ),
             (
                 Action::Edit {
                     file: b"/tmp/a".to_vec(),
                 },
-                "454f4e571e0001000e00000002007231001a06002f746d702f61",
+                "454f4e571f0001000e00000002007231001a06002f746d702f61",
             ),
             (
                 Action::CreateCommandPane {
                     argv: vec![b"hx".to_vec(), b"a".to_vec()],
                     focus: false,
                 },
-                "454f4e571e0001001000000002007231001b00020002006878010061",
+                "454f4e571f0001001000000002007231001b00020002006878010061",
             ),
             (
                 Action::LaunchTab {
@@ -4352,7 +4326,7 @@ mod tests {
                     argv: vec![],
                     focus: true,
                 },
-                "454f4e571e0001000f00000002007231002504002f746d70000001",
+                "454f4e571f0001000f00000002007231002504002f746d70000001",
             ),
             (
                 Action::LaunchTab {
@@ -4360,32 +4334,32 @@ mod tests {
                     argv: vec![b"hx".to_vec(), b"a".to_vec()],
                     focus: false,
                 },
-                "454f4e571e0001001600000002007231002504002f746d7002000200687801006100",
+                "454f4e571f0001001600000002007231002504002f746d7002000200687801006100",
             ),
             (
                 Action::ToggleSidebar,
-                "454f4e571e0001000600000002007231001c",
+                "454f4e571f0001000600000002007231001c",
             ),
             (
                 Action::FocusAttention {
                     tab: "t1".into(),
                     target: "p2".into(),
                 },
-                "454f4e571e0001000e00000002007231001d0200743102007032",
+                "454f4e571f0001000e00000002007231001d0200743102007032",
             ),
             (
                 Action::NextAttention,
-                "454f4e571e0001000600000002007231001e",
+                "454f4e571f0001000600000002007231001e",
             ),
             (
                 Action::PreviousAttention,
-                "454f4e571e0001000600000002007231001f",
+                "454f4e571f0001000600000002007231001f",
             ),
             (
                 Action::ReadTerminal {
                     target: "p2".into(),
                 },
-                "454f4e571e0001000a00000002007231002602007032",
+                "454f4e571f0001000a00000002007231002602007032",
             ),
             (
                 Action::SendTerminal {
@@ -4393,14 +4367,14 @@ mod tests {
                     input: TerminalInput::Paste("hi".into()),
                 },
                 // v27's u32-length paste.
-                "454f4e571e000100110000000200723100270200703200020000006869",
+                "454f4e571f000100110000000200723100270200703200020000006869",
             ),
             (
                 Action::SendTerminal {
                     target: "u1".into(),
                     input: TerminalInput::Enter,
                 },
-                "454f4e571e0001000b0000000200723100270200753101",
+                "454f4e571f0001000b0000000200723100270200753101",
             ),
         ] {
             let request = Request {
@@ -4420,7 +4394,7 @@ mod tests {
         let bytes = encode_request(&request).unwrap();
         assert_eq!(
             hex(&bytes),
-            "454f4e571e0001001600000002007231010d0073657373696f6e2d322e392d310201",
+            "454f4e571f0001001600000002007231010d0073657373696f6e2d322e392d310201",
         );
         assert_eq!(decode_request(&bytes).unwrap(), request);
         for caller in ["", "session 2"] {
@@ -4535,7 +4509,7 @@ mod tests {
             (
                 snapshot,
                 concat!(
-                    "454f4e571e0081001c0100000100020002000100010000000200743100000041",
+                    "454f4e571f0081001c0100000100020002000100010000000200743100000041",
                     "00008040010003006769740300476974000404004b6579470100020074310400",
                     "2f746d700001020070330102007531030002007031030073703103002f703101",
                     "02007031000002007032030073703203002f7032010200703200000200703303",
@@ -4552,7 +4526,7 @@ mod tests {
                     "00000000",
                 ),
             ),
-            (failure, "454f4e571e0082000a00000004006275737902006e6f"),
+            (failure, "454f4e571f0082000a00000004006275737902006e6f"),
             (
                 Response::Text(TerminalText {
                     target: terminal_target(TargetId::Pane("p2".into()), "session-2"),
@@ -4567,7 +4541,7 @@ mod tests {
                     text: "a\nb".into(),
                 }),
                 concat!(
-                    "454f4e571e00860037000000",
+                    "454f4e571f00860037000000",
                     // Workspace, tab, pane p2 and its terminal; no caller.
                     "02007731020074310002007032090073657373696f6e2d3200",
                     // Revision, alternate screen, 24x80, title, directory,
@@ -4583,7 +4557,7 @@ mod tests {
                     enter_delay_ms: 300,
                 }),
                 concat!(
-                    "454f4e571e00870034000000",
+                    "454f4e571f00870034000000",
                     "02007731020074310002007032090073657373696f6e2d32",
                     "0102007731020074310102007531090073657373696f6e2d33",
                     "012c01",
@@ -4593,7 +4567,7 @@ mod tests {
                 Response::Ended(Ended {
                     generation: "g1".into(),
                 }),
-                "454f4e571e0085000400000002006731",
+                "454f4e571f0085000400000002006731",
             ),
         ] {
             let bytes = encode_response(&response).unwrap();
@@ -4622,7 +4596,7 @@ mod tests {
                     busy: None,
                 }),
                 concat!(
-                    "454f4e571e00830030000000020067310500302e392e301e0002006f6b010002",
+                    "454f4e571f00830030000000020067310500302e392e301f0002006f6b010002",
                     "007331010500726561647900040062757379",
                     // v28: absent name, supervisor start in Unix milliseconds.
                     "000000000000000000",
@@ -4635,7 +4609,7 @@ mod tests {
                     generation: "g1".into(),
                     sessions: vec![],
                 }),
-                "454f4e571e00840006000000020067310000",
+                "454f4e571f00840006000000020067310000",
             ),
         ] {
             let bytes = encode_lifecycle_response(&response).unwrap();
@@ -4714,7 +4688,7 @@ mod tests {
         assert_eq!(
             hex(&bytes),
             concat!(
-                "454f4e571e0081008a00000001000100010000000100740000000000000000",
+                "454f4e571f0081008a00000001000100010000000100740000000000000000",
                 "0000010001007401002f00010100700001000100700200737002002f700101007000",
                 "010128000000000000000001000000000000000000000000010000000002",
                 "02007731020077310100020077310001000100",
@@ -4754,7 +4728,7 @@ mod tests {
         assert_eq!(
             hex(&bytes),
             concat!(
-                "454f4e571e008100bb0000000100010001000000010074000000000000000000",
+                "454f4e571f008100bb0000000100010001000000010074000000000000000000",
                 "00010001007401002f00010100700001000100700200737002002f7001010070",
                 "0001012800000000000000000100000000000000000000000001000000000202",
                 "0077310200773101000200773100010001000100020077310100740100700101",
@@ -4826,7 +4800,7 @@ mod tests {
         assert_eq!(
             hex(&bytes),
             concat!(
-                "454f4e571e00830063000000020067310500302e392e301e0002006f6b0000",
+                "454f4e571f00830063000000020067310500302e392e301f0002006f6b0000",
                 "01050072656164790105007265616479",
                 "000000000000000000",
             )
@@ -4989,7 +4963,7 @@ mod tests {
         }
 
         // Neither side accepts what the other would reject.
-        let invalid: [(&str, Action, &[u8], &str); 19] = [
+        let invalid: [(&str, Action, &[u8], &str); 18] = [
             ("r 1", w(WorkspaceAction::Inspect), &[0], "request id"),
             (
                 "r1",
@@ -5046,15 +5020,6 @@ mod tests {
                 Action::DismissPopup(target("u 1")),
                 &[20, 2, 0, b't', b'1', 3, 0, b'u', b' ', b'1'],
                 "popup id",
-            ),
-            (
-                "r1",
-                Action::CommitDirectory {
-                    target: target("u1"),
-                    directory: b"/a\0".to_vec(),
-                },
-                &[21, 2, 0, b't', b'1', 2, 0, b'u', b'1', 3, 0, b'/', b'a', 0],
-                "directory",
             ),
             (
                 "r1",
@@ -5146,13 +5111,23 @@ mod tests {
             assert_eq!(field(decoded), expected, "{request:?}");
         }
 
-        let decode_only: [(&[u8], Error); 13] = [
+        let decode_only: [(&[u8], Error); 14] = [
             // The retired picker opcode.
             (
                 &[13],
                 Error::InvalidTag {
                     field: "action",
                     value: 13,
+                },
+            ),
+            // v30's CommitDirectory: a pick is SetTabDirectory (EON-C18).
+            (
+                &[
+                    21, 2, 0, b't', b'1', 2, 0, b'u', b'1', 4, 0, b'/', b't', b'm', b'p',
+                ],
+                Error::InvalidTag {
+                    field: "action",
+                    value: 21,
                 },
             ),
             (
@@ -5234,16 +5209,12 @@ mod tests {
             expected_instance: expected.map(Into::into),
             intent,
         };
-        let commit = |tab: &str, instance: &str| Action::CommitDirectory {
-            target: target(tab, instance),
-            directory: b"/tmp/\xfe".to_vec(),
-        };
         let mut state = snapshot();
         let observed = [
             invoke("agent", Some("u1"), InvokeIntent::Toggle),
             invoke("agent", Some("u1"), InvokeIntent::Focus),
             Action::DismissPopup(target("t1", "u1")),
-            commit("t2", "u2"),
+            Action::DismissPopup(target("t2", "u2")),
         ];
         for action in &observed {
             assert_eq!(check_popup_action(&state, action), Ok(()), "{action:?}");
@@ -5251,7 +5222,7 @@ mod tests {
 
         // A replacement has a fresh id, so requests aimed at the old instance fail.
         state.tabs[0].popups[0] = popup("u5", "agent");
-        state.tabs[1].popups[0] = popup("u6", PROJECT_ENTRY);
+        state.tabs[1].popups[0] = popup("u6", FILES_ENTRY);
         state.tabs[1].selected_popup = Some("u6".into());
         for action in &observed {
             assert!(check_popup_action(&state, action).is_err(), "{action:?}");
@@ -5267,25 +5238,28 @@ mod tests {
             &state,
             &[
                 (invoke(PROJECT_ENTRY, None, InvokeIntent::Toggle), true),
+                (invoke(FILES_ENTRY, None, InvokeIntent::Toggle), true),
                 (invoke("agent", None, InvokeIntent::Toggle), false),
                 (invoke("missing", None, InvokeIntent::Toggle), false),
-                (commit("t2", "u6"), true),
-                (commit("t1", "u5"), false),
+                (Action::DismissPopup(target("t2", "u6")), true),
                 (Action::DismissPopup(target("t3", "u3")), true),
                 (Action::DismissPopup(target("t1", "u3")), false),
             ],
         );
-        // Only the selected project popup commits a directory.
-        state.tabs[0].popups.push(popup("u7", PROJECT_ENTRY));
+        // Project and Files both observe the tab's one Files pair.
+        state.tabs[0].popups.push(popup("u7", FILES_ENTRY));
         checks(
             &state,
             &[
                 (invoke(PROJECT_ENTRY, None, InvokeIntent::Toggle), false),
-                (commit("t1", "u7"), false),
+                (invoke(FILES_ENTRY, None, InvokeIntent::Toggle), false),
+                (
+                    invoke(PROJECT_ENTRY, Some("u7"), InvokeIntent::Toggle),
+                    true,
+                ),
+                (invoke(FILES_ENTRY, Some("u7"), InvokeIntent::Focus), true),
             ],
         );
-        state.tabs[0].selected_popup = Some("u7".into());
-        checks(&state, &[(commit("t1", "u7"), true)]);
     }
 
     #[test]
@@ -5473,7 +5447,7 @@ mod tests {
             }
         }
         type Change = fn(&mut Snapshot);
-        let invalid: [(&str, &[Change]); 28] = [
+        let invalid: [(&str, &[Change]); 29] = [
             // Every tab, pane and popup owns its identity, session and endpoint.
             (
                 "surface identity",
@@ -5508,7 +5482,7 @@ mod tests {
             ),
             ("empty tab", &[|s| s.tabs[2].popups.clear()]),
             ("active tab", &[|s| s.active_tab = "t5".into()]),
-            // A pending tab holds exactly one selected project popup.
+            // A pending tab holds exactly one selected Files pair.
             (
                 "pending tab",
                 &[
@@ -5516,6 +5490,11 @@ mod tests {
                     |s| s.tabs[1].selected_popup = None,
                     |s| s.tabs[1].popups[0].entry = "agent".into(),
                 ],
+            ),
+            // Project never has a popup of its own.
+            (
+                "popup entry",
+                &[|s| s.tabs[0].popups[0].entry = PROJECT_ENTRY.into()],
             ),
             // Bound shortcuts are unique, and an overriding entry is another
             // listed one bound to the overridden default.

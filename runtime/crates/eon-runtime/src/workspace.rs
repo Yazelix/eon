@@ -1,11 +1,11 @@
 use super::managed_environment::{PopupCatalog, PopupCommand, PopupDefinition};
-use eon_workspace_protocol::v30::{
+use eon_workspace_protocol::v31::{
     Action, Attention, AttentionKind, AttentionState, BusyTerminals, ClaudeQuotaState,
-    CodexQuotaState, Column as SnapshotColumn, Direction, Failure, InvokeIntent, MAX_COLUMNS,
-    MAX_DIRECTORY_BYTES, MAX_SESSIONS, MAX_TABS, Pane as SnapshotPane, Popup as SnapshotPopup,
-    PopupEntry as SnapshotEntry, PopupKey, PopupTarget, QuotaFailure, QuotaWindow, Screen, Sent,
-    Side, Sidebar, Snapshot, Tab as SnapshotTab, TargetId, TerminalTarget, TerminalText,
-    WorkspaceAction, check_popup_action,
+    CodexQuotaState, Column as SnapshotColumn, Direction, FILES_ENTRY, Failure, InvokeIntent,
+    MAX_COLUMNS, MAX_DIRECTORY_BYTES, MAX_SESSIONS, MAX_TABS, PROJECT_ENTRY, Pane as SnapshotPane,
+    Popup as SnapshotPopup, PopupEntry as SnapshotEntry, PopupKey, PopupTarget, QuotaFailure,
+    QuotaWindow, Screen, Sent, Side, Sidebar, Snapshot, Tab as SnapshotTab, TargetId,
+    TerminalTarget, TerminalText, WorkspaceAction, check_popup_action,
 };
 use std::{
     collections::VecDeque,
@@ -19,21 +19,6 @@ const MAX_RECENT_REQUESTS: usize = 256;
 /// The packaged Helix on Eon's terminal PATH, which `eon edit` runs.
 const EDITOR: &str = "hx";
 
-pub(crate) fn is_directory_picker_session(id: &str) -> bool {
-    id.strip_prefix("directory-picker-")
-        .and_then(canonical_number)
-        .is_some()
-}
-
-pub(crate) fn is_directory_picker_endpoint(name: &str) -> bool {
-    name == "pick.sock"
-        || name
-            .strip_prefix('k')
-            .and_then(|name| name.strip_suffix(".sock"))
-            .and_then(canonical_number)
-            .is_some()
-}
-
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub(crate) struct Session {
     pub(crate) id: String,
@@ -43,7 +28,13 @@ pub(crate) struct Session {
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub(crate) enum LaunchCommand {
     Pane,
-    Project { tab: String, instance: String },
+    /// The tab's Files pair (EON-C18): `quick` starts it on quick search, and
+    /// `pending` marks the pair of a pending tab until that tab commits.
+    Files {
+        argv: Vec<OsString>,
+        quick: bool,
+        pending: bool,
+    },
     Tool(Vec<OsString>),
 }
 
@@ -64,6 +55,8 @@ pub(crate) enum SessionOperation {
         tab: Option<String>,
     },
     Stop(String),
+    /// The pending pair `session` stays on as its committed tab's Files.
+    SettlePair(String),
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -131,6 +124,9 @@ pub(crate) struct IdAllocator {
     next_pane: usize,
     next_session: usize,
     next_popup: usize,
+    /// session-1, whose endpoint is orbit.sock, waits for the window's first
+    /// pane after the first pending tab's pair took the next terminal.
+    first_reserved: bool,
 }
 
 impl IdAllocator {
@@ -142,36 +138,47 @@ impl IdAllocator {
             next_pane: 1,
             next_session: 1,
             next_popup: 1,
+            first_reserved: false,
+        }
+    }
+
+    fn pane_number(&self) -> usize {
+        if self.first_reserved {
+            1
+        } else {
+            self.next_session
         }
     }
 
     fn pane_session(&self) -> Session {
+        let number = self.pane_number();
         Session {
-            id: format!("session-{}", self.next_session),
-            endpoint: self.runtime.join(if self.next_session == 1 {
+            id: format!("session-{number}"),
+            endpoint: self.runtime.join(if number == 1 {
                 "orbit.sock".into()
             } else {
-                format!("session-{}.sock", self.next_session)
+                format!("session-{number}.sock")
             }),
         }
     }
 
-    fn popup_session(&self, project: bool) -> Session {
-        let number = if project {
-            self.next_popup
+    fn commit_pane_session(&mut self) {
+        if self.first_reserved {
+            self.first_reserved = false;
         } else {
-            self.next_session
-        };
-        let id = if project {
-            format!("directory-picker-{number}")
-        } else {
-            format!("session-{number}")
-        };
-        let endpoint = self.runtime.join(if project {
-            format!("k{number}.sock")
-        } else {
-            format!("{id}.sock")
-        });
+            self.next_session += 1;
+        }
+    }
+
+    /// A popup never takes session-1: it stays the first pane's, which
+    /// `eon run -- COMMAND` starts in (EON-C18).
+    fn popup_session(&mut self) -> Session {
+        if self.next_session == 1 {
+            self.next_session = 2;
+            self.first_reserved = true;
+        }
+        let id = format!("session-{}", self.next_session);
+        let endpoint = self.runtime.join(format!("{id}.sock"));
         Session { id, endpoint }
     }
 }
@@ -304,7 +311,7 @@ impl WorkspaceSet {
         snapshot.workspaces = self
             .workspaces
             .iter()
-            .map(|workspace| eon_workspace_protocol::v30::WorkspaceInfo {
+            .map(|workspace| eon_workspace_protocol::v31::WorkspaceInfo {
                 id: workspace.id.clone(),
                 name: workspace.name.clone(),
                 tab_count: workspace.tabs.len(),
@@ -348,6 +355,36 @@ impl WorkspaceSet {
             .flat_map(|tab| &tab.columns)
             .flat_map(|column| &column.panes)
             .map(|pane| pane.session.clone())
+            .collect()
+    }
+
+    /// Each tab's Files pair terminal, and whether its tab shows it (EON-C18).
+    pub(crate) fn pairs(&self) -> impl Iterator<Item = (&str, bool)> {
+        self.workspaces
+            .iter()
+            .flat_map(|workspace| &workspace.tabs)
+            .flat_map(|tab| {
+                tab.popups
+                    .iter()
+                    .filter(|popup| popup.entry == FILES_ENTRY)
+                    .map(move |popup| {
+                        (
+                            popup.session.id.as_str(),
+                            tab.selected_popup.as_deref() == Some(&popup.id),
+                        )
+                    })
+            })
+    }
+
+    /// The terminals of pending tabs' pairs. Lifecycle inspection and Stop
+    /// do not count them: each is a popup, not a durable terminal (EON-C18).
+    pub(crate) fn pending_pair_sessions(&self) -> Vec<String> {
+        self.workspaces
+            .iter()
+            .flat_map(|workspace| &workspace.tabs)
+            .filter(|tab| tab.pending)
+            .flat_map(|tab| &tab.popups)
+            .map(|popup| popup.session.id.clone())
             .collect()
     }
 
@@ -416,13 +453,13 @@ impl WorkspaceSet {
         });
         name.chars()
             .map(|character| {
-                if eon_workspace_protocol::v30::pane_label_character(character) {
+                if eon_workspace_protocol::v31::pane_label_character(character) {
                     character
                 } else {
                     '\u{fffd}'
                 }
             })
-            .take(eon_workspace_protocol::v30::MAX_WINDOW_NAME_CHARS)
+            .take(eon_workspace_protocol::v31::MAX_WINDOW_NAME_CHARS)
             .collect()
     }
 
@@ -433,7 +470,7 @@ impl WorkspaceSet {
     }
 
     fn resolve_workspace(&self, target: &str) -> Result<usize, Failure> {
-        eon_workspace_protocol::v30::validate_workspace_name(target)
+        eon_workspace_protocol::v31::validate_workspace_name(target)
             .map_err(|error| action_error("malformed-action", error.to_string()))?;
         resolve_selector(
             self.workspaces
@@ -564,7 +601,7 @@ impl WorkspaceSet {
                     .map(str::trim)
                     .filter(|name| !name.is_empty());
                 if let Some(name) = name {
-                    eon_workspace_protocol::v30::validate_pane_name(name)
+                    eon_workspace_protocol::v31::validate_pane_name(name)
                         .map_err(|error| action_error("malformed-action", error.to_string()))?;
                 }
                 let target = self.workspaces[index]
@@ -580,10 +617,10 @@ impl WorkspaceSet {
             }
             Action::Workspace(WorkspaceAction::NewWorkspace { name, focus }) => {
                 if let Some(name) = &name {
-                    eon_workspace_protocol::v30::validate_workspace_name(name)
+                    eon_workspace_protocol::v31::validate_workspace_name(name)
                         .map_err(|error| action_error("malformed-action", error.to_string()))?;
                 }
-                if self.workspaces.len() >= eon_workspace_protocol::v30::MAX_WORKSPACES {
+                if self.workspaces.len() >= eon_workspace_protocol::v31::MAX_WORKSPACES {
                     return Err(action_error(
                         "workspace-limit",
                         "a window holds at most 32 workspaces",
@@ -616,7 +653,7 @@ impl WorkspaceSet {
             }
             Action::Workspace(WorkspaceAction::RenameWorkspace { workspace, name }) => {
                 if !name.is_empty() {
-                    eon_workspace_protocol::v30::validate_workspace_name(&name)
+                    eon_workspace_protocol::v31::validate_workspace_name(&name)
                         .map_err(|error| action_error("malformed-action", error.to_string()))?;
                 }
                 let target = workspace
@@ -724,11 +761,45 @@ impl WorkspaceSet {
         result
     }
 
-    pub(crate) fn transient_sessions(&self) -> Vec<String> {
-        self.workspaces
-            .iter()
-            .flat_map(Workspace::transient_sessions)
-            .collect()
+    /// Dismisses every pending tab's pair, as presentation detachment does
+    /// (EON-C18): each stays on as its tab's Files and the tab's first pane
+    /// starts. Every pair is attempted; the first failure is returned.
+    pub(crate) fn dismiss_pending_pairs(
+        &mut self,
+        mut operate: impl FnMut(SessionOperation) -> Result<(), String>,
+    ) -> Result<(), Failure> {
+        let mut result = Ok(());
+        for index in 0..self.workspaces.len() {
+            for target in self.workspaces[index].pending_pairs() {
+                let allowance = self.allowance(index);
+                let dismissed = self.workspaces[index].dismiss_popup(
+                    &mut self.ids,
+                    allowance,
+                    &target,
+                    &mut operate,
+                );
+                if result.is_ok() {
+                    result = dismissed;
+                }
+            }
+        }
+        self.prune_empty();
+        result
+    }
+
+    /// The terminal of the Files pair that invoking `entry` in `tab` of the
+    /// caller's workspace acts on, and whether it is shown; none for other
+    /// entries or a tab without a pair.
+    pub(crate) fn pair(
+        &self,
+        caller: Option<&str>,
+        tab: &str,
+        entry: &str,
+    ) -> Option<(String, bool)> {
+        if !matches!(entry, PROJECT_ENTRY | FILES_ENTRY) {
+            return None;
+        }
+        self.workspaces[self.caller_workspace(caller).ok()?].pair(tab)
     }
 
     fn reject_duplicate(&self, request_id: &str) -> Result<(), Failure> {
@@ -802,7 +873,7 @@ impl Workspace {
                 ids,
                 allowance,
                 0,
-                "project",
+                FILES_ENTRY,
                 &mut prepare,
                 &mut operate,
                 true,
@@ -852,7 +923,7 @@ impl Workspace {
         Snapshot {
             workspace: self.id.clone(),
             active_workspace: self.id.clone(),
-            workspaces: vec![eon_workspace_protocol::v30::WorkspaceInfo {
+            workspaces: vec![eon_workspace_protocol::v31::WorkspaceInfo {
                 id: self.id.clone(),
                 name: self.name.clone(),
                 tab_count: self.tabs.len(),
@@ -1052,9 +1123,6 @@ impl Workspace {
             Action::DismissPopup(target) => {
                 self.dismiss_popup(ids, allowance, &target, &mut operate)?
             }
-            Action::CommitDirectory { target, directory } => {
-                self.commit_directory(ids, allowance, &target, directory, &mut operate)?
-            }
             // A tab without columns gains its first one exactly as a new pane would.
             Action::CreateColumn if self.tabs[self.active].columns.is_empty() => self
                 .dispatch_workspace(
@@ -1181,7 +1249,7 @@ impl Workspace {
             }
             WorkspaceAction::Move(direction) => self.move_direction(target, direction)?,
             WorkspaceAction::SetTabDirectory { tab, directory } => {
-                self.set_tab_directory(ids, &tab, directory)?;
+                self.set_tab_directory(ids, allowance, &tab, directory, operate)?;
             }
         }
         Ok(())
@@ -1256,7 +1324,7 @@ impl Workspace {
         });
         let index = self.tabs.len() - 1;
         if let Err(error) =
-            self.open_popup(ids, allowance, index, "project", prepare, operate, true)
+            self.open_popup(ids, allowance, index, FILES_ENTRY, prepare, operate, true)
         {
             self.tabs.pop();
             return Err(error);
@@ -1347,24 +1415,29 @@ impl Workspace {
                 "popup target is not the active tab",
             ));
         }
-        if self.tabs[tab_index].pending && entry != "project" {
+        // Project and Files both show the tab's one pair (EON-C18).
+        let pair = matches!(entry, PROJECT_ENTRY | FILES_ENTRY);
+        if self.tabs[tab_index].pending && !pair {
             return Err(action_error(
                 "choose-directory-first",
                 "choose the pending tab directory before opening a tool",
             ));
         }
-        let definition = self.definition(entry)?.clone();
+        self.definition(entry)?;
+        let shown_entry = if pair { FILES_ENTRY } else { entry };
+        let definition = self.definition(shown_entry)?.clone();
         if let Some(index) = self.tabs[tab_index]
             .popups
             .iter()
-            .position(|popup| popup.entry == entry)
+            .position(|popup| popup.entry == shown_entry)
         {
             let popup = self.tabs[tab_index].popups[index].clone();
             // Files keeps its Yazi, and its location, across tab-directory changes.
             if popup.entry != "files" && popup.launch_directory != self.tabs[tab_index].directory {
                 let candidate =
                     self.popup_candidate(ids, allowance, tab_index, &definition, true)?;
-                let launch = self.prepare_launch(tab_index, &candidate, &definition, prepare)?;
+                let launch =
+                    self.prepare_launch(tab_index, &candidate, &definition, false, prepare)?;
                 if let Some(index) = self.displaced_transient(tab_index, Some(&popup.id))? {
                     self.stop_popup(tab_index, index, operate)?;
                 }
@@ -1413,16 +1486,26 @@ impl Workspace {
         operate: &mut impl FnMut(SessionOperation) -> Result<(), String>,
         pending: bool,
     ) -> Result<(), Failure> {
+        // Project opens the pair on quick search, as a pending tab does.
+        let quick = pending || entry == PROJECT_ENTRY;
+        let entry = if entry == PROJECT_ENTRY {
+            FILES_ENTRY
+        } else {
+            entry
+        };
         let definition = self.definition(entry)?.clone();
         let displaced = self.displaced_transient(tab_index, None)?;
         let stops_selected = displaced.is_some();
         let candidate =
             self.popup_candidate(ids, allowance, tab_index, &definition, stops_selected)?;
-        let launch = self.prepare_launch(tab_index, &candidate, &definition, prepare)?;
+        let launch = self.prepare_launch(tab_index, &candidate, &definition, quick, prepare)?;
         if let Some(index) = displaced {
             self.stop_popup(tab_index, index, operate)?;
         }
         if let Err(detail) = operate(launch) {
+            // A start that timed out can still leave its terminal live under
+            // this identity, so a later terminal never reuses it.
+            ids.next_session += 1;
             if stops_selected {
                 self.remove_empty_tab(tab_index);
             }
@@ -1475,11 +1558,10 @@ impl Workspace {
                 "workspace exhausted terminal identities",
             ));
         }
-        let project = matches!(definition.command, PopupCommand::Project);
         Ok(Popup {
             id: format!("u{}", ids.next_popup),
             entry: definition.id.clone(),
-            session: ids.popup_session(project),
+            session: ids.popup_session(),
             launch_directory: self.tabs[tab_index].directory.clone(),
         })
     }
@@ -1489,17 +1571,19 @@ impl Workspace {
         tab_index: usize,
         popup: &Popup,
         definition: &PopupDefinition,
+        quick: bool,
         prepare: &mut impl FnMut(&PopupCommand, &Path) -> Result<Vec<OsString>, String>,
     ) -> Result<SessionOperation, Failure> {
-        let command = match &definition.command {
-            PopupCommand::Project => LaunchCommand::Project {
-                tab: self.tabs[tab_index].id.clone(),
-                instance: popup.id.clone(),
-            },
-            command => LaunchCommand::Tool(
-                prepare(command, &popup.launch_directory)
-                    .map_err(|detail| action_error("popup-command", detail))?,
-            ),
+        let argv = prepare(&definition.command, &popup.launch_directory)
+            .map_err(|detail| action_error("popup-command", detail))?;
+        let command = if definition.id == FILES_ENTRY {
+            LaunchCommand::Files {
+                argv,
+                quick,
+                pending: self.tabs[tab_index].pending,
+            }
+        } else {
+            LaunchCommand::Tool(argv)
         };
         Ok(SessionOperation::Start {
             session: popup.session.clone(),
@@ -1510,13 +1594,10 @@ impl Workspace {
     }
 
     fn commit_popup(&mut self, ids: &mut IdAllocator, tab_index: usize, popup: Popup) {
-        let project = is_directory_picker_session(&popup.session.id);
         self.tabs[tab_index].selected_popup = Some(popup.id.clone());
         self.tabs[tab_index].popups.push(popup);
         ids.next_popup += 1;
-        if !project {
-            ids.next_session += 1;
-        }
+        ids.next_session += 1;
     }
 
     fn dismiss_popup(
@@ -1537,43 +1618,23 @@ impl Workspace {
             .position(|popup| popup.id == target.instance)
             .ok_or_else(|| action_error("stale-popup", "popup instance is no longer live"))?;
         let popup = &self.tabs[tab_index].popups[popup_index];
+        // Closing a pending tab's pair is dismissal: its first pane starts at
+        // the tab directory (EON-C18).
+        let pending = self.tabs[tab_index].pending;
         if self.definition(&popup.entry)?.keep_alive {
             if self.tabs[tab_index].selected_popup.as_deref() == Some(&popup.id) {
                 self.tabs[tab_index].selected_popup = None;
             }
+            if pending {
+                self.finish_pending_tab(ids, allowance, tab_index, operate)?;
+            }
             return Ok(());
         }
-        let project = popup.entry == "project";
         self.stop_popup(tab_index, popup_index, operate)?;
-        if project && self.tabs[tab_index].pending {
+        if pending {
             self.finish_pending_tab(ids, allowance, tab_index, operate)?;
         } else {
             self.remove_empty_tab(tab_index);
-        }
-        Ok(())
-    }
-
-    fn commit_directory(
-        &mut self,
-        ids: &mut IdAllocator,
-        allowance: usize,
-        target: &PopupTarget,
-        directory: Vec<u8>,
-        operate: &mut impl FnMut(SessionOperation) -> Result<(), String>,
-    ) -> Result<(), Failure> {
-        let tab_index = self
-            .tabs
-            .iter()
-            .position(|tab| tab.id == target.tab)
-            .ok_or_else(|| action_error("stale-popup", "chooser tab is no longer live"))?;
-        let directory = validated_directory(directory)?;
-        if self.tabs[tab_index].pending {
-            self.start_pane_at(ids, allowance, tab_index, &directory, operate)
-                .map_err(|detail| action_error("session-start", detail))?;
-            self.tabs[tab_index].directory = directory;
-            self.tabs[tab_index].pending = false;
-        } else {
-            self.retarget(ids, tab_index, directory)?;
         }
         Ok(())
     }
@@ -1594,9 +1655,9 @@ impl Workspace {
                     .map(|popup| (tab, popup))
             })
         {
-            let project = self.tabs[tab_index].popups[popup_index].entry == "project";
+            // A pending tab's pair that exits is dismissed (EON-C18).
             self.remove_popup(tab_index, popup_index);
-            if project && self.tabs[tab_index].pending && end == SessionEnd::Exited {
+            if self.tabs[tab_index].pending && end == SessionEnd::Exited {
                 self.finish_pending_tab(ids, allowance, tab_index, &mut operate)?;
             } else {
                 self.remove_empty_tab(tab_index);
@@ -1639,13 +1700,28 @@ impl Workspace {
         Ok(())
     }
 
-    pub(crate) fn transient_sessions(&self) -> Vec<String> {
+    /// The pair of each pending tab, which presentation detachment dismisses.
+    pub(crate) fn pending_pairs(&self) -> Vec<PopupTarget> {
         self.tabs
             .iter()
-            .flat_map(|tab| &tab.popups)
-            .filter(|popup| popup.entry == "project")
-            .map(|popup| popup.session.id.clone())
+            .filter(|tab| tab.pending)
+            .flat_map(|tab| {
+                tab.popups.iter().map(|popup| PopupTarget {
+                    tab: tab.id.clone(),
+                    instance: popup.id.clone(),
+                })
+            })
             .collect()
+    }
+
+    /// The terminal of `tab`'s Files pair and whether it is shown.
+    fn pair(&self, tab: &str) -> Option<(String, bool)> {
+        let tab = self.tabs.iter().find(|item| item.id == tab)?;
+        let popup = tab.popups.iter().find(|popup| popup.entry == FILES_ENTRY)?;
+        Some((
+            popup.session.id.clone(),
+            tab.selected_popup.as_deref() == Some(&popup.id),
+        ))
     }
 
     pub(crate) fn prepare_close_tab(&mut self, id: &str) -> Result<Vec<String>, Failure> {
@@ -1808,7 +1884,7 @@ impl Workspace {
             tab: None,
         })?;
         ids.next_pane += 1;
-        ids.next_session += 1;
+        ids.commit_pane_session();
         let tab = &mut self.tabs[tab_index];
         match tab.selected_column {
             Some(selected) if !new_column => {
@@ -1840,10 +1916,27 @@ impl Workspace {
     ) -> Result<(), Failure> {
         self.tabs[tab_index].pending = false;
         if let Err(detail) = self.start_pane(ids, allowance, tab_index, operate) {
+            // A tab whose first pane cannot start goes, its pair with it.
+            while !self.tabs[tab_index].popups.is_empty()
+                && self.stop_popup(tab_index, 0, operate).is_ok()
+            {}
             self.remove_empty_tab(tab_index);
             return Err(action_error("session-start", detail));
         }
+        self.settle_pair(tab_index, operate);
         Ok(())
+    }
+
+    /// The pair of a tab that just committed stays on as its Files.
+    fn settle_pair(
+        &self,
+        tab_index: usize,
+        operate: &mut impl FnMut(SessionOperation) -> Result<(), String>,
+    ) {
+        for popup in &self.tabs[tab_index].popups {
+            // The supervisor logs a failure; it changes nothing else.
+            let _ = operate(SessionOperation::SettlePair(popup.session.id.clone()));
+        }
     }
 
     /// Refuses a caller's pane action, before anything changes, when dismissing
@@ -1930,8 +2023,7 @@ impl Workspace {
 
     /// Focuses the exact pane or popup `target` of `tab` (EON-C31). A shown
     /// keep-alive popup that is not the target is hidden first; a shown
-    /// transient one, a pending picker included, is left alone, and only the
-    /// tab is selected.
+    /// transient one is left alone, and only the tab is selected.
     fn focus_attention(&mut self, tab: &str, target: &str) -> Result<(), Failure> {
         let stale = || action_error("stale-target", format!("{tab} holds no terminal {target}"));
         let tab_index = self
@@ -2140,8 +2232,10 @@ impl Workspace {
     fn set_tab_directory(
         &mut self,
         ids: &mut IdAllocator,
+        allowance: usize,
         id: &str,
         directory: Vec<u8>,
+        operate: &mut impl FnMut(SessionOperation) -> Result<(), String>,
     ) -> Result<(), Failure> {
         if tab_number(id).is_none() {
             return Err(action_error(
@@ -2154,13 +2248,20 @@ impl Workspace {
             .iter()
             .position(|tab| tab.id == id)
             .ok_or_else(|| action_error("unknown-tab", format!("tab {id} is not live")))?;
-        if self.tabs[tab_index].pending {
-            return Err(action_error(
-                "choose-directory-first",
-                "the pending tab requires its exact Project chooser result",
-            ));
+        let directory = validated_directory(directory)?;
+        if !self.tabs[tab_index].pending {
+            return self.retarget(ids, tab_index, directory);
         }
-        self.retarget(ids, tab_index, validated_directory(directory)?)
+        // A pick on a pending tab commits it: one first pane at the directory,
+        // and the pair hides (EON-C18).
+        self.start_pane_at(ids, allowance, tab_index, &directory, operate)
+            .map_err(|detail| action_error("session-start", detail))?;
+        let tab = &mut self.tabs[tab_index];
+        tab.directory = directory;
+        tab.pending = false;
+        tab.selected_popup = None;
+        self.settle_pair(tab_index, operate);
+        Ok(())
     }
 
     /// Changes an established tab's directory and parks a live Agent launched
@@ -2822,8 +2923,8 @@ pub(crate) fn json(snapshot: &Snapshot) -> String {
     output
 }
 
-fn window_state(state: eon_workspace_protocol::v30::WindowState) -> &'static str {
-    use eon_workspace_protocol::v30::WindowState;
+fn window_state(state: eon_workspace_protocol::v31::WindowState) -> &'static str {
+    use eon_workspace_protocol::v31::WindowState;
     match state {
         WindowState::Live => "live",
         WindowState::Incompatible => "incompatible",
@@ -2833,7 +2934,7 @@ fn window_state(state: eon_workspace_protocol::v30::WindowState) -> &'static str
 
 fn json_window(
     output: &mut String,
-    entry: &eon_workspace_protocol::v30::WindowEntry,
+    entry: &eon_workspace_protocol::v31::WindowEntry,
     include_state: bool,
 ) {
     output.push_str("{\"window\":");
@@ -3118,13 +3219,13 @@ fn action_error(code: &'static str, detail: impl Into<String>) -> Failure {
     }
 }
 
-fn shortcut_text(shortcut: &eon_workspace_protocol::v30::Shortcut) -> String {
+fn shortcut_text(shortcut: &eon_workspace_protocol::v31::Shortcut) -> String {
     let mut parts = Vec::new();
     for (bit, name) in [
-        (eon_workspace_protocol::v30::CTRL, "Ctrl"),
-        (eon_workspace_protocol::v30::ALT, "Alt"),
-        (eon_workspace_protocol::v30::SHIFT, "Shift"),
-        (eon_workspace_protocol::v30::SUPER, "Super"),
+        (eon_workspace_protocol::v31::CTRL, "Ctrl"),
+        (eon_workspace_protocol::v31::ALT, "Alt"),
+        (eon_workspace_protocol::v31::SHIFT, "Shift"),
+        (eon_workspace_protocol::v31::SUPER, "Super"),
     ] {
         if shortcut.modifiers & bit != 0 {
             parts.push(name.to_string());
@@ -3184,7 +3285,7 @@ pub(crate) fn json_escape(value: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use eon_workspace_protocol::v30::{ALT, PopupGeometry, QuotaFailureReason, Shortcut};
+    use eon_workspace_protocol::v31::{ALT, PopupGeometry, QuotaFailureReason, Shortcut};
 
     fn two_workspace_set(
         mut operate: impl FnMut(SessionOperation) -> Result<(), String>,
@@ -3207,9 +3308,10 @@ mod tests {
         )
         .unwrap();
         for index in 0..2 {
-            let picker = set.workspaces[index].transient_sessions()[0].clone();
+            // Its pair exits, which dismisses it and starts the first pane.
+            let pair = set.workspaces[index].tabs[0].popups[0].session.id.clone();
             set.shown = index;
-            set.session_ended(&picker, SessionEnd::Exited, &mut operate)
+            set.session_ended(&pair, SessionEnd::Exited, &mut operate)
                 .unwrap();
         }
         set.shown = 0;
@@ -3396,7 +3498,7 @@ mod tests {
             },
         )
         .unwrap();
-        // Replaying a creation neither allocates another workspace nor starts a picker.
+        // Replaying a creation neither allocates another workspace nor starts a pair.
         assert_eq!(
             apply(
                 "new",
@@ -3428,7 +3530,7 @@ mod tests {
             ["w1", "w3", "w4", "w2"]
         );
         assert!(shown.tabs[0].pending);
-        assert_eq!(shown.tabs[0].popups[0].entry, "project");
+        assert_eq!(shown.tabs[0].popups[0].entry, FILES_ENTRY);
         let caller_view = set
             .snapshot_in(set.caller_workspace_id(Some(&caller)).unwrap().as_deref())
             .unwrap();
@@ -3440,8 +3542,8 @@ mod tests {
             ("w1", "w3")
         );
         assert_eq!(caller_view.tabs, original);
-        eon_workspace_protocol::v30::encode_response(
-            &eon_workspace_protocol::v30::Response::Snapshot(caller_view),
+        eon_workspace_protocol::v31::encode_response(
+            &eon_workspace_protocol::v31::Response::Snapshot(caller_view),
         )
         .unwrap();
 
@@ -3532,7 +3634,7 @@ mod tests {
             .code,
             "malformed-action"
         );
-        while set.workspaces.len() < eon_workspace_protocol::v30::MAX_WORKSPACES {
+        while set.workspaces.len() < eon_workspace_protocol::v31::MAX_WORKSPACES {
             set.dispatch(
                 &format!("new-{}", set.workspaces.len()),
                 None,
@@ -3567,7 +3669,7 @@ mod tests {
     #[test]
     fn popup_dismissal_prunes_an_empty_workspace_and_final_emptying_keeps_an_owner() {
         let mut set = two_workspace_set(|_| Ok(()));
-        set.dispatch("project", None, invoke("t1", "project"), prepared, |_| {
+        set.dispatch("commands", None, invoke("t1", "commands"), prepared, |_| {
             Ok(())
         })
         .unwrap();
@@ -3588,8 +3690,8 @@ mod tests {
         )
         .unwrap();
         let snapshot = set.snapshot();
-        eon_workspace_protocol::v30::encode_response(
-            &eon_workspace_protocol::v30::Response::Snapshot(snapshot.clone()),
+        eon_workspace_protocol::v31::encode_response(
+            &eon_workspace_protocol::v31::Response::Snapshot(snapshot.clone()),
         )
         .unwrap();
         assert_eq!(snapshot.workspaces.len(), 1);
@@ -3614,16 +3716,16 @@ mod tests {
     }
 
     #[test]
-    fn failed_pending_picker_exit_prunes_the_workspace() {
-        assert_failed_pending_picker_prunes_workspace(true);
+    fn failed_pending_pair_exit_prunes_the_workspace() {
+        assert_failed_pending_pair_prunes_workspace(true);
     }
 
     #[test]
-    fn failed_pending_picker_dismissal_prunes_the_workspace() {
-        assert_failed_pending_picker_prunes_workspace(false);
+    fn failed_pending_pair_dismissal_prunes_the_workspace() {
+        assert_failed_pending_pair_prunes_workspace(false);
     }
 
-    fn assert_failed_pending_picker_prunes_workspace(exited: bool) {
+    fn assert_failed_pending_pair_prunes_workspace(exited: bool) {
         let mut set = two_workspace_set(|_| Ok(()));
         set.dispatch(
             "new",
@@ -3641,7 +3743,7 @@ mod tests {
         let popup = &pending.tabs[0].popups[0];
         let fail_start = |operation| match operation {
             SessionOperation::Start { .. } => Err("start failed".into()),
-            SessionOperation::Stop(_) => Ok(()),
+            SessionOperation::Stop(_) | SessionOperation::SettlePair(_) => Ok(()),
         };
         let error = if exited {
             set.session_ended(&popup.session, SessionEnd::Exited, fail_start)
@@ -3661,8 +3763,8 @@ mod tests {
         assert_eq!(error.code, "session-start");
         assert_eq!(error.detail, "start failed");
         let snapshot = set.snapshot();
-        eon_workspace_protocol::v30::encode_response(
-            &eon_workspace_protocol::v30::Response::Snapshot(snapshot.clone()),
+        eon_workspace_protocol::v31::encode_response(
+            &eon_workspace_protocol::v31::Response::Snapshot(snapshot.clone()),
         )
         .unwrap();
         assert_eq!(snapshot.workspace, "w1");
@@ -3924,7 +4026,7 @@ mod tests {
         .unwrap();
         let survivor = set.snapshot_in(Some("w1")).unwrap().tabs;
         let closing = set.prepare_close_workspace("close", None, "w3").unwrap();
-        assert_eq!(closing.len(), 1, "a fresh workspace has only its picker");
+        assert_eq!(closing.len(), 1, "a fresh workspace has only its pair");
         assert_eq!(
             set.prepare_close_workspace("close", None, "w3")
                 .unwrap_err()
@@ -4500,7 +4602,7 @@ mod tests {
 
     #[test]
     fn cli_json_carries_running_windows() {
-        use eon_workspace_protocol::v30::{RunningWindows, WindowEntry, WindowState};
+        use eon_workspace_protocol::v31::{RunningWindows, WindowEntry, WindowState};
         let set = WorkspaceSet::with_recovered_sessions(
             "/runtime".into(),
             "/".into(),
@@ -4569,7 +4671,7 @@ mod tests {
 
     #[test]
     fn cli_json_carries_busy_terminals() {
-        use eon_workspace_protocol::v30::{BusyTerminal, BusyTerminals};
+        use eon_workspace_protocol::v31::{BusyTerminal, BusyTerminals};
         let set = WorkspaceSet::with_recovered_sessions(
             "/runtime".into(),
             "/".into(),
@@ -4630,7 +4732,7 @@ mod tests {
 
     #[test]
     fn cli_json_carries_the_full_attention_record_and_quotas_but_human_output_does_not() {
-        use eon_workspace_protocol::v30::{
+        use eon_workspace_protocol::v31::{
             AttentionKind, AttentionRecord, ClaudeQuota, ClaudeQuotaState, CodexQuota,
             CodexQuotaState, QuotaWindow,
         };
@@ -4735,7 +4837,7 @@ mod tests {
             reason: QuotaFailureReason::InvalidWindow,
         });
         snapshot.attention_queue = vec![
-            eon_workspace_protocol::v30::QueueEntry {
+            eon_workspace_protocol::v31::QueueEntry {
                 workspace: "w1".into(),
                 tab: "t1".into(),
                 target: "p1".into(),
@@ -4744,7 +4846,7 @@ mod tests {
                     .clone()
                     .unwrap(),
             },
-            eon_workspace_protocol::v30::QueueEntry {
+            eon_workspace_protocol::v31::QueueEntry {
                 workspace: "w2".into(),
                 tab: "t\"2".into(),
                 target: "p\\2".into(),
@@ -4811,7 +4913,7 @@ mod tests {
                         modifiers: ALT,
                         key: "KeyZ".into(),
                     }),
-                    command: PopupCommand::Project,
+                    command: PopupCommand::Argv(Vec::new()),
                     keep_alive: false,
                 },
                 PopupDefinition {
@@ -4844,6 +4946,13 @@ mod tests {
                     command: PopupCommand::Argv(vec!["files".into()]),
                     keep_alive: true,
                 },
+                PopupDefinition {
+                    id: "commands".into(),
+                    label: "Commands".into(),
+                    shortcut: PopupKey::Unbound,
+                    command: PopupCommand::Argv(vec!["commands".into()]),
+                    keep_alive: false,
+                },
             ],
         }
     }
@@ -4851,7 +4960,6 @@ mod tests {
     fn prepared(command: &PopupCommand, _: &Path) -> Result<Vec<OsString>, String> {
         match command {
             PopupCommand::Argv(argv) => Ok(argv.clone()),
-            PopupCommand::Project => Ok(Vec::new()),
             PopupCommand::AgentAuto => unreachable!(),
         }
     }
@@ -4875,9 +4983,9 @@ mod tests {
         )
         .unwrap();
         let ok = |_| Ok(());
-        let project = |tab: &str| Action::InvokePopup {
+        let transient = |tab: &str| Action::InvokePopup {
             tab: tab.into(),
-            entry: "project".into(),
+            entry: "commands".into(),
             expected_instance: None,
             intent: InvokeIntent::Toggle,
         };
@@ -4895,12 +5003,12 @@ mod tests {
                 ok,
             )
             .unwrap();
-        let picker = workspace.snapshot().tabs[1].popups[0].session.clone();
+        let pair = workspace.snapshot().tabs[1].popups[0].session.clone();
         workspace
-            .session_ended(&picker, SessionEnd::Exited, ok)
+            .session_ended(&pair, SessionEnd::Exited, ok)
             .unwrap();
         workspace
-            .dispatch("open", None, project("t2"), prepared, ok)
+            .dispatch("open", None, transient("t2"), prepared, ok)
             .unwrap();
         let pane = workspace.snapshot().tabs[1].columns[0].panes[0]
             .session
@@ -4917,8 +5025,8 @@ mod tests {
         let after = workspace.snapshot();
         assert_eq!(after.tabs.len(), 1);
         assert_eq!(after.tabs[0].columns.len(), MAX_COLUMNS);
-        eon_workspace_protocol::v30::encode_response(
-            &eon_workspace_protocol::v30::Response::Snapshot(after),
+        eon_workspace_protocol::v31::encode_response(
+            &eon_workspace_protocol::v31::Response::Snapshot(after),
         )
         .unwrap();
         fs::remove_dir_all(root).unwrap();
@@ -4952,18 +5060,18 @@ mod tests {
                 ok,
             )
             .unwrap();
-        let picker = workspace.snapshot().tabs[1].popups[0].session.clone();
+        let pair = workspace.snapshot().tabs[1].popups[0].session.clone();
         workspace
-            .session_ended(&picker, SessionEnd::Exited, ok)
+            .session_ended(&pair, SessionEnd::Exited, ok)
             .unwrap();
-        let project = Action::InvokePopup {
+        let transient = Action::InvokePopup {
             tab: "t2".into(),
-            entry: "project".into(),
+            entry: "commands".into(),
             expected_instance: None,
             intent: InvokeIntent::Toggle,
         };
         workspace
-            .dispatch("open", None, project, prepared, ok)
+            .dispatch("open", None, transient, prepared, ok)
             .unwrap();
         let pane = workspace.snapshot().tabs[1].columns[0].panes[0]
             .session
@@ -5648,20 +5756,17 @@ mod tests {
             Action::Workspace(WorkspaceAction::CreateTab),
         );
         assert_eq!(refused(&mut workspace, "x6", "p1").code, "not-active");
-        let picker = workspace.snapshot().tabs[1].popups[0].clone();
+        let pair = workspace.snapshot().tabs[1].popups[0].clone();
         request(
             &mut workspace,
             "t2-dir",
-            Action::CommitDirectory {
-                target: PopupTarget {
-                    tab: "t2".into(),
-                    instance: picker.id,
-                },
+            Action::Workspace(WorkspaceAction::SetTabDirectory {
+                tab: "t2".into(),
                 directory: b"/".to_vec(),
-            },
+            }),
         );
         workspace
-            .session_ended(&picker.session, SessionEnd::Exited, ok)
+            .session_ended(&pair.session, SessionEnd::Exited, ok)
             .unwrap();
         let pane = workspace.snapshot().tabs[1].selected_pane.clone().unwrap();
         close(&mut workspace, "x7", &pane).unwrap();
@@ -5714,22 +5819,19 @@ mod tests {
             Action::Workspace(WorkspaceAction::CreateTab),
         )
         .unwrap();
-        let picker = workspace.snapshot().tabs[1].popups[0].clone();
+        let pair = workspace.snapshot().tabs[1].popups[0].clone();
         request(
             &mut workspace,
             "t2-dir",
             None,
-            Action::CommitDirectory {
-                target: PopupTarget {
-                    tab: "t2".into(),
-                    instance: picker.id,
-                },
+            Action::Workspace(WorkspaceAction::SetTabDirectory {
+                tab: "t2".into(),
                 directory: b"/".to_vec(),
-            },
+            }),
         )
         .unwrap();
         workspace
-            .session_ended(&picker.session, SessionEnd::Exited, |_| Ok(()))
+            .session_ended(&pair.session, SessionEnd::Exited, |_| Ok(()))
             .unwrap();
         let panes = |workspace: &WorkspaceSet, tab: &str| {
             let snapshot = workspace.snapshot();
@@ -6289,6 +6391,7 @@ mod tests {
                 .map(|operation| match operation {
                     SessionOperation::Start { directory, .. } => directory.clone(),
                     SessionOperation::Stop(id) => PathBuf::from(format!("stop {id}")),
+                    SessionOperation::SettlePair(id) => PathBuf::from(format!("settle {id}")),
                 })
                 .collect::<Vec<_>>(),
             [
@@ -6344,7 +6447,9 @@ mod tests {
                     prepared,
                     |operation| match operation {
                         SessionOperation::Stop(_) => Err("stop failed".into()),
-                        SessionOperation::Start { .. } => Ok(()),
+                        SessionOperation::Start { .. } | SessionOperation::SettlePair(_) => {
+                            Ok(())
+                        }
                     }
                 )
                 .unwrap_err()
@@ -6363,7 +6468,7 @@ mod tests {
                     invoke("git", Some(&live_git.id)),
                     prepared,
                     |operation| match operation {
-                        SessionOperation::Stop(_) => Ok(()),
+                        SessionOperation::Stop(_) | SessionOperation::SettlePair(_) => Ok(()),
                         SessionOperation::Start { .. } => Err("start failed".into()),
                     }
                 )
@@ -6424,9 +6529,9 @@ mod tests {
             .unwrap();
         workspace
             .dispatch(
-                "project-open",
+                "commands-open",
                 None,
-                invoke("project", None),
+                invoke("commands", None),
                 prepared,
                 &mut operate,
             )
@@ -6449,7 +6554,7 @@ mod tests {
         assert_eq!(snapshot.tabs[0].selected_popup.as_ref(), Some(&agent.id));
         assert!(matches!(
             operations.last(),
-            Some(SessionOperation::Stop(id)) if id == "directory-picker-2"
+            Some(SessionOperation::Stop(id)) if id == "session-3"
         ));
 
         workspace.workspaces[0].tabs.push(Tab {
@@ -6473,9 +6578,9 @@ mod tests {
         });
         workspace
             .dispatch(
-                "project-again",
+                "commands-again",
                 None,
-                invoke("project", None),
+                invoke("commands", None),
                 prepared,
                 |_| Ok(()),
             )
@@ -6486,7 +6591,7 @@ mod tests {
         workspace
             .session_ended("session-1", SessionEnd::Exited, |_| Ok(()))
             .unwrap();
-        assert_eq!(workspace.snapshot().tabs[0].popups[0].entry, "project");
+        assert_eq!(workspace.snapshot().tabs[0].popups[0].entry, "commands");
 
         let failure = workspace
             .dispatch(
@@ -6495,7 +6600,7 @@ mod tests {
                 invoke("agent", None),
                 prepared,
                 |operation| match operation {
-                    SessionOperation::Stop(_) => Ok(()),
+                    SessionOperation::Stop(_) | SessionOperation::SettlePair(_) => Ok(()),
                     SessionOperation::Start { .. } => Err("start failed".into()),
                 },
             )
@@ -6504,60 +6609,382 @@ mod tests {
         assert_eq!(workspace.snapshot().tabs[0].id, "t2");
     }
 
+    /// A pick on a pending tab (EON-C18) commits it atomically: a refused
+    /// directory or a failed first pane changes nothing, and a success starts
+    /// exactly one first pane at the directory, hides the pair, keeps it as
+    /// the tab's Files and settles its pending marker.
     #[test]
-    fn chooser_result_requires_its_exact_live_invocation() {
-        let root = std::env::temp_dir().join(format!("eon-chooser-{}", std::process::id()));
+    fn a_pick_commits_a_pending_tab_with_one_first_pane_and_keeps_its_pair() {
+        let root = std::env::temp_dir().join(format!("eon-pick-{}", std::process::id()));
         let selected = root.join("selected");
         fs::create_dir_all(&selected).unwrap();
+        let mut launches = Vec::new();
         let mut workspace = WorkspaceSet::pending(
             root.clone(),
             root.clone(),
             Some(root.clone()),
             catalog(),
             prepared,
-            |_| Ok(()),
+            |operation| {
+                launches.push(operation);
+                Ok(())
+            },
         )
         .unwrap();
-        let project = workspace.snapshot().tabs[0].popups[0].clone();
-        let commit = || Action::CommitDirectory {
-            target: PopupTarget {
+        // The pair takes session-2: session-1 waits for the first pane.
+        assert_eq!(
+            launches,
+            [SessionOperation::Start {
+                session: Session {
+                    id: "session-2".into(),
+                    endpoint: root.join("session-2.sock"),
+                },
+                directory: root.clone(),
+                command: LaunchCommand::Files {
+                    argv: vec!["files".into()],
+                    quick: true,
+                    pending: true,
+                },
+                tab: Some("t1".into()),
+            }]
+        );
+        let pending = workspace.snapshot();
+        let pair = pending.tabs[0].popups[0].clone();
+        assert_eq!(pair.entry, FILES_ENTRY);
+        assert_eq!(pending.tabs[0].selected_popup.as_ref(), Some(&pair.id));
+        let pick = |directory: &Path| {
+            Action::Workspace(WorkspaceAction::SetTabDirectory {
                 tab: "t1".into(),
-                instance: project.id.clone(),
-            },
-            directory: selected.as_os_str().as_bytes().to_vec(),
+                directory: directory.as_os_str().as_bytes().to_vec(),
+            })
         };
+        for (id, directory) in [
+            ("relative", Path::new("selected")),
+            ("missing", &root.join("x")),
+        ] {
+            assert_eq!(
+                workspace
+                    .dispatch(id, None, pick(directory), prepared, |_| {
+                        panic!("a refused pick started a terminal")
+                    })
+                    .unwrap_err()
+                    .code,
+                "invalid-directory"
+            );
+            assert_eq!(workspace.snapshot(), pending);
+        }
         assert_eq!(
             workspace
-                .dispatch("commit-fails", None, commit(), prepared, |_| {
+                .dispatch("pick-fails", None, pick(&selected), prepared, |_| {
                     Err("start failed".into())
                 })
                 .unwrap_err()
                 .code,
             "session-start"
         );
-        let unchanged = workspace.snapshot();
-        assert!(unchanged.tabs[0].pending);
-        assert_eq!(unchanged.tabs[0].directory, root.as_os_str().as_bytes());
-        assert!(unchanged.tabs[0].columns.is_empty());
+        assert_eq!(workspace.snapshot(), pending);
+        let mut operations = Vec::new();
         workspace
-            .dispatch("commit", None, commit(), prepared, |_| Ok(()))
+            .dispatch("pick", None, pick(&selected), prepared, |operation| {
+                operations.push(operation);
+                Ok(())
+            })
             .unwrap();
-        assert!(!workspace.snapshot().tabs[0].pending);
+        assert_eq!(
+            operations,
+            [
+                SessionOperation::Start {
+                    session: Session {
+                        id: "session-1".into(),
+                        endpoint: root.join("orbit.sock"),
+                    },
+                    directory: selected.clone(),
+                    command: LaunchCommand::Pane,
+                    tab: None,
+                },
+                SessionOperation::SettlePair("session-2".into()),
+            ]
+        );
+        let tab = &workspace.snapshot().tabs[0];
+        assert!(!tab.pending);
+        assert_eq!(tab.directory, selected.as_os_str().as_bytes());
+        assert_eq!(tab.panes().count(), 1);
+        assert_eq!(tab.popups, std::slice::from_ref(&pair));
+        assert_eq!(tab.selected_popup, None);
+
+        // A second, racing pick finds an established tab and only retargets it.
+        workspace
+            .dispatch("pick-again", None, pick(&root), prepared, |_| {
+                panic!("a pick on an established tab started a terminal")
+            })
+            .unwrap();
+        let tab = &workspace.snapshot().tabs[0];
+        assert_eq!(tab.panes().count(), 1);
+        assert_eq!(tab.directory, root.as_os_str().as_bytes());
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    /// Closing a pending tab's pair is dismissal (EON-C18): the pair stays
+    /// alive as the tab's hidden Files and the first pane starts at the tab
+    /// directory; a pair that exits instead is dismissed too.
+    #[test]
+    fn dismissing_or_exiting_a_pending_pair_starts_the_first_pane() {
+        for exited in [false, true] {
+            let mut workspace = WorkspaceSet::pending(
+                "/runtime".into(),
+                "/start".into(),
+                Some("/".into()),
+                catalog(),
+                prepared,
+                |_| Ok(()),
+            )
+            .unwrap();
+            let pair = workspace.snapshot().tabs[0].popups[0].clone();
+            let mut operations = Vec::new();
+            let operate = |operation| {
+                operations.push(operation);
+                Ok(())
+            };
+            if exited {
+                workspace
+                    .session_ended(&pair.session, SessionEnd::Exited, operate)
+                    .unwrap();
+            } else {
+                workspace
+                    .dispatch(
+                        "hide",
+                        None,
+                        Action::DismissPopup(PopupTarget {
+                            tab: "t1".into(),
+                            instance: pair.id.clone(),
+                        }),
+                        prepared,
+                        operate,
+                    )
+                    .unwrap();
+            }
+            let start = SessionOperation::Start {
+                session: Session {
+                    id: "session-1".into(),
+                    endpoint: "/runtime/orbit.sock".into(),
+                },
+                directory: "/start".into(),
+                command: LaunchCommand::Pane,
+                tab: None,
+            };
+            let tab = &workspace.snapshot().tabs[0];
+            assert!(!tab.pending);
+            assert_eq!(tab.directory, b"/start");
+            assert_eq!(tab.panes().count(), 1);
+            assert_eq!(tab.selected_popup, None);
+            if exited {
+                assert_eq!(operations, [start]);
+                assert!(tab.popups.is_empty());
+            } else {
+                assert_eq!(
+                    operations,
+                    [start, SessionOperation::SettlePair(pair.session.clone())]
+                );
+                assert_eq!(tab.popups, [pair]);
+            }
+        }
+    }
+
+    /// Detachment dismisses every pending pair in every workspace and keeps
+    /// each alive (EON-C18).
+    #[test]
+    fn detachment_dismisses_every_pending_pair_and_keeps_it() {
+        let mut workspace = WorkspaceSet::pending(
+            "/runtime".into(),
+            "/".into(),
+            Some("/".into()),
+            catalog(),
+            prepared,
+            |_| Ok(()),
+        )
+        .unwrap();
+        for (id, action) in [
+            ("t2", WorkspaceAction::CreateTab),
+            (
+                "w2",
+                WorkspaceAction::NewWorkspace {
+                    name: None,
+                    focus: false,
+                },
+            ),
+        ] {
+            workspace
+                .dispatch(id, None, Action::Workspace(action), prepared, |_| Ok(()))
+                .unwrap();
+        }
+        let mut operations = Vec::new();
+        workspace
+            .dismiss_pending_pairs(|operation| {
+                operations.push(operation);
+                Ok(())
+            })
+            .unwrap();
+        let starts = operations
+            .iter()
+            .filter(|operation| matches!(operation, SessionOperation::Start { .. }))
+            .count();
+        let settled = operations
+            .iter()
+            .filter_map(|operation| match operation {
+                SessionOperation::SettlePair(id) => Some(id.as_str()),
+                _ => None,
+            })
+            .collect::<Vec<_>>();
+        assert_eq!(starts, 3);
+        assert_eq!(settled, ["session-2", "session-3", "session-4"]);
         assert!(
+            !operations
+                .iter()
+                .any(|operation| matches!(operation, SessionOperation::Stop(_)))
+        );
+        for snapshot in workspace.snapshots() {
+            for tab in &snapshot.tabs {
+                assert!(!tab.pending);
+                assert_eq!(tab.panes().count(), 1);
+                assert_eq!(tab.popups.len(), 1);
+                assert_eq!(tab.selected_popup, None);
+            }
+        }
+    }
+
+    /// Alt+Z and Alt+Shift+Y both reach a pending tab's one pair, other
+    /// entries stay refused there, and Alt+Z on a tab without a pair opens
+    /// Files on quick search (EON-C18).
+    #[test]
+    fn project_and_files_invoke_the_tabs_one_pair() {
+        let mut workspace = WorkspaceSet::pending(
+            "/runtime".into(),
+            "/".into(),
+            Some("/".into()),
+            catalog(),
+            prepared,
+            |_| Ok(()),
+        )
+        .unwrap();
+        let pair = workspace.snapshot().tabs[0].popups[0].clone();
+        assert_eq!(
+            workspace.pair(None, "t1", "project"),
+            Some((pair.session.clone(), true))
+        );
+        assert_eq!(
+            workspace.pair(None, "t1", "files"),
+            Some((pair.session.clone(), true))
+        );
+        assert_eq!(workspace.pair(None, "t1", "agent"), None);
+        assert_eq!(workspace.pair(None, "t9", "files"), None);
+        let invoke = |entry: &str, expected: Option<&str>, intent| Action::InvokePopup {
+            tab: "t1".into(),
+            entry: entry.into(),
+            expected_instance: expected.map(Into::into),
+            intent,
+        };
+        let refused = workspace
+            .dispatch(
+                "agent",
+                None,
+                invoke("agent", None, InvokeIntent::Toggle),
+                prepared,
+                |_| panic!("a pending tab opened a tool"),
+            )
+            .unwrap_err();
+        assert_eq!(refused.code, "choose-directory-first");
+        // Project's observed instance is the pair.
+        assert_eq!(
             workspace
                 .dispatch(
                     "stale",
                     None,
-                    Action::DismissPopup(PopupTarget {
-                        tab: "t1".into(),
-                        instance: "u999".into(),
-                    }),
+                    invoke("project", None, InvokeIntent::Focus),
                     prepared,
                     |_| Ok(()),
                 )
-                .is_err()
+                .unwrap_err()
+                .code,
+            "stale-popup"
         );
-        fs::remove_dir_all(root).unwrap();
+        let before = workspace.snapshot();
+        for (id, entry) in [("focus-z", "project"), ("focus-y", "files")] {
+            workspace
+                .dispatch(
+                    id,
+                    None,
+                    invoke(entry, Some(&pair.id), InvokeIntent::Focus),
+                    prepared,
+                    |_| panic!("focusing the pair started or stopped a terminal"),
+                )
+                .unwrap();
+            assert_eq!(workspace.snapshot(), before);
+        }
+        // Toggling the shown pair closes it: dismissal.
+        workspace
+            .dispatch(
+                "toggle-z",
+                None,
+                invoke("project", Some(&pair.id), InvokeIntent::Toggle),
+                prepared,
+                |_| Ok(()),
+            )
+            .unwrap();
+        let tab = &workspace.snapshot().tabs[0];
+        assert!(!tab.pending);
+        assert_eq!(tab.selected_popup, None);
+        assert_eq!(
+            workspace.pair(None, "t1", "project"),
+            Some((pair.session, false))
+        );
+
+        // On an established tab without a pair, Alt+Z opens Files on quick search.
+        let mut workspace = WorkspaceSet::with_recovered_sessions(
+            "/runtime".into(),
+            "/".into(),
+            Some("/".into()),
+            vec![(
+                1,
+                Session {
+                    id: "session-1".into(),
+                    endpoint: "/runtime/orbit.sock".into(),
+                },
+            )],
+            catalog(),
+        )
+        .unwrap();
+        for (entry, quick) in [("project", true), ("files", false)] {
+            let mut launches = Vec::new();
+            workspace
+                .dispatch(
+                    entry,
+                    None,
+                    invoke(entry, None, InvokeIntent::Toggle),
+                    prepared,
+                    |operation| {
+                        launches.push(operation);
+                        Ok(())
+                    },
+                )
+                .unwrap();
+            assert!(
+                matches!(
+                    &launches[..],
+                    [SessionOperation::Start {
+                        command: LaunchCommand::Files { quick: started, pending: false, .. },
+                        ..
+                    }] if *started == quick
+                ),
+                "{entry}: {launches:?}"
+            );
+            let tab = &workspace.snapshot().tabs[0];
+            assert_eq!(tab.popups.len(), 1);
+            assert_eq!(tab.popups[0].entry, FILES_ENTRY);
+            let session = tab.popups[0].session.clone();
+            workspace
+                .session_ended(&session, SessionEnd::Exited, |_| Ok(()))
+                .unwrap();
+        }
     }
 
     #[test]
@@ -6786,7 +7213,7 @@ mod tests {
     }
 
     #[test]
-    fn chooser_retarget_parks_a_hidden_agent_as_the_first_pane_of_a_paneless_tab() {
+    fn a_pick_parks_a_hidden_agent_as_the_first_pane_of_a_paneless_tab() {
         let root = std::env::temp_dir().join(format!("eon-park-{}", std::process::id()));
         let next = root.join("next");
         fs::create_dir_all(&next).unwrap();
@@ -6835,20 +7262,17 @@ mod tests {
         let project = workspace.snapshot().tabs[0]
             .popups
             .iter()
-            .find(|popup| popup.entry == "project")
+            .find(|popup| popup.entry == FILES_ENTRY)
             .unwrap()
             .clone();
         workspace
             .dispatch(
                 "commit",
                 None,
-                Action::CommitDirectory {
-                    target: PopupTarget {
-                        tab: "t1".into(),
-                        instance: project.id.clone(),
-                    },
+                Action::Workspace(WorkspaceAction::SetTabDirectory {
+                    tab: "t1".into(),
                     directory: next.as_os_str().as_bytes().to_vec(),
-                },
+                }),
                 prepared,
                 |_| Err("parking starts and stops nothing".into()),
             )
@@ -6898,17 +7322,17 @@ mod tests {
             root.as_os_str().as_bytes()
         );
         assert!(
-            matches!(&launches[..], [SessionOperation::Start { directory, command: LaunchCommand::Project { .. }, .. }] if directory == &root)
+            matches!(&launches[..], [SessionOperation::Start { directory, command: LaunchCommand::Files { quick: true, pending: true, .. }, .. }] if directory == &root)
         );
 
-        let picker = workspace.snapshot().tabs[1].popups[0].session.clone();
+        let pair = workspace.snapshot().tabs[1].popups[0].session.clone();
         let error = workspace
-            .session_ended(&picker, SessionEnd::Exited, |_| Err("start failed".into()))
+            .session_ended(&pair, SessionEnd::Exited, |_| Err("start failed".into()))
             .unwrap_err();
         assert_eq!(error.code, "session-start");
         assert_eq!(workspace.snapshot(), initial);
-        eon_workspace_protocol::v30::encode_response(
-            &eon_workspace_protocol::v30::Response::Snapshot(workspace.snapshot()),
+        eon_workspace_protocol::v31::encode_response(
+            &eon_workspace_protocol::v31::Response::Snapshot(workspace.snapshot()),
         )
         .unwrap();
 
@@ -6931,7 +7355,7 @@ mod tests {
     }
 
     #[test]
-    fn a_keyless_project_still_opens_for_a_pending_tab() {
+    fn a_keyless_project_still_leaves_a_pending_tab_its_pair() {
         let overridden = PopupKey::Overridden {
             default: Shortcut {
                 modifiers: ALT,
@@ -6939,15 +7363,13 @@ mod tests {
             },
             by: "agent".into(),
         };
-        for (key, text, json_key) in [
+        for (key, json_key) in [
             (
                 PopupKey::Unbound,
-                "key=none",
                 r#""keybinding":null,"overridden_by":null,"default_keybinding":null}"#,
             ),
             (
                 overridden,
-                "key=none",
                 r#""keybinding":null,"overridden_by":"agent","default_keybinding":"Alt+A"}"#,
             ),
         ] {
@@ -6964,24 +7386,24 @@ mod tests {
             .unwrap();
             let state = workspace.snapshot();
             assert!(state.tabs[0].pending);
-            assert_eq!(state.tabs[0].popups[0].entry, "project");
+            assert_eq!(state.tabs[0].popups[0].entry, FILES_ENTRY);
             assert_eq!(state.entries[0].shortcut, key);
-            assert!(human(&state).contains(&format!("entry=project label=Project {text} ")));
+            assert!(human(&state).contains("entry=files label=Files key=Alt+Y "));
             assert!(
                 json(&state).contains(&format!(r#"{{"id":"project","label":"Project",{json_key}"#))
             );
             assert!(json(&state).contains(
                 r#"{"id":"agent","label":"Agent","keybinding":"Alt+A","overridden_by":null,"default_keybinding":null}"#
             ));
-            eon_workspace_protocol::v30::encode_response(
-                &eon_workspace_protocol::v30::Response::Snapshot(state),
+            eon_workspace_protocol::v31::encode_response(
+                &eon_workspace_protocol::v31::Response::Snapshot(state),
             )
             .unwrap();
         }
     }
 
     #[test]
-    fn pending_tabs_keep_independent_pickers_and_close_only_the_selected_tab() {
+    fn pending_tabs_keep_independent_pairs_and_close_only_the_selected_tab() {
         let mut workspace = WorkspaceSet::pending(
             "/runtime".into(),
             "/".into(),
@@ -7035,13 +7457,10 @@ mod tests {
                 .dispatch(
                     "stale-t1",
                     None,
-                    Action::CommitDirectory {
-                        target: PopupTarget {
-                            tab: "t1".into(),
-                            instance: first.id,
-                        },
+                    Action::Workspace(WorkspaceAction::SetTabDirectory {
+                        tab: "t1".into(),
                         directory: b"/".to_vec(),
-                    },
+                    }),
                     prepared,
                     |_| Ok(()),
                 )
@@ -7087,13 +7506,10 @@ mod tests {
             .dispatch(
                 "accept-t2",
                 None,
-                Action::CommitDirectory {
-                    target: PopupTarget {
-                        tab: "t2".into(),
-                        instance: second.id,
-                    },
+                Action::Workspace(WorkspaceAction::SetTabDirectory {
+                    tab: "t2".into(),
                     directory: b"/".to_vec(),
-                },
+                }),
                 prepared,
                 |_| Ok(()),
             )
@@ -7103,7 +7519,7 @@ mod tests {
     }
 
     #[test]
-    fn background_pending_picker_exit_keeps_the_selected_tab() {
+    fn background_pending_pair_exit_keeps_the_selected_tab() {
         let mut workspace = WorkspaceSet::pending(
             "/runtime".into(),
             "/".into(),
@@ -7124,9 +7540,9 @@ mod tests {
                 )
                 .unwrap();
         }
-        let second_picker = workspace.snapshot().tabs[1].popups[0].session.clone();
+        let second_pair = workspace.snapshot().tabs[1].popups[0].session.clone();
         workspace
-            .session_ended(&second_picker, SessionEnd::Exited, |_| Ok(()))
+            .session_ended(&second_pair, SessionEnd::Exited, |_| Ok(()))
             .unwrap();
         let snapshot = workspace.snapshot();
         assert_eq!(snapshot.active_tab, "t3");

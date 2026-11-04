@@ -195,8 +195,8 @@ is unavailable, the marker falls back to ` · zoom`. The marker
 and `, zoomed` accessible name show while zoom is visible, and the pane panel
 is named `Zoomed pane <label>`. Popups cover zoom and hide its marker until they close.
 
-A fresh workspace or tab can begin with a Project popup and no pane. Tool popups
-and the chooser draw as one card over every column, with Eon's
+A fresh workspace or tab can begin with its Files popup, on quick search, and no
+pane. Popups draw as one card over every column, with Eon's
 logical margins around their terminal. Tabs remain available. A tab with only hidden popups has an
 empty body and keeps focus on its tab until a catalog shortcut reopens work.
 Venus recovers retryable socket loss and detaches without ending Sessions.
@@ -242,7 +242,7 @@ Venus                   -> native presentation, interaction, client failure UX
 Orbit                   -> PTYs, terminal state, session lifetime, wire authority
 ```
 
-Venus consumes EONW v30 through the in-tree `eon-workspace-protocol` 0.1.0
+Venus consumes EONW v31 through the in-tree `eon-workspace-protocol` 0.1.0
 crate. Eon supplies popup definitions,
 commands and geometry defaults. The runtime validates configuration and owns
 live workspace and popup state, Session mappings, and provider quota collection

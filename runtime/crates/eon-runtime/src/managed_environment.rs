@@ -17,7 +17,7 @@ use std::{
     time::{Duration, Instant},
 };
 
-use eon_workspace_protocol::v30::{
+use eon_workspace_protocol::v31::{
     ALT, CTRL, MAX_ENTER_DELAY_MS, MAX_ENTRIES, MAX_ENTRY_ID_BYTES, MAX_LABEL_BYTES, PopupGeometry,
     PopupKey, SHIFT, SUPER, Shortcut,
 };
@@ -354,7 +354,6 @@ enum PopupCommandSetting {
 pub enum PopupCommand {
     AgentAuto,
     Argv(Vec<OsString>),
-    Project,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -484,10 +483,10 @@ pub(crate) fn print_defaults(defaults: &Defaults, json: bool) -> Result<String, 
             );
         }
         let mut settings = json!({ "label": entry.label, "keybinding": keys.join("+") });
-        if entry.id != "project" {
+        if !matches!(entry.id.as_str(), "project" | "files") {
             settings["enabled"] = true.into();
         }
-        if !matches!(entry.id.as_str(), "project" | "anima") {
+        if !matches!(entry.id.as_str(), "project" | "files" | "anima") {
             settings["keep_alive"] = entry.keep_alive.into();
             settings["command"] = match &entry.command {
                 PopupCommand::AgentAuto => "auto".into(),
@@ -502,7 +501,6 @@ pub(crate) fn print_defaults(defaults: &Defaults, json: bool) -> Result<String, 
                         .collect::<Result<Vec<_>, _>>()?;
                     json!(argv)
                 }
-                PopupCommand::Project => return Err("Project's command is Eon-owned".into()),
             };
         }
         popups.insert(entry.id.clone(), settings);
@@ -567,7 +565,9 @@ fn defaults_table(
 ) -> Result<(), String> {
     output.push_str(&format!("\n[{section}]\n"));
     if section == "popups.project" {
-        output.push_str("# Project is the required chooser.\n");
+        output.push_str("# Project is required and shows the tab's Files on quick search.\n");
+    } else if section == "popups.files" {
+        output.push_str("# Files is required: it is the tab's directory pair.\n");
     } else if section == "popups.anima" {
         output.push_str("# command and keep_alive are Eon-owned.\n");
     }
@@ -893,17 +893,26 @@ pub(crate) fn popup_catalog(
     let mut configured = Vec::new();
     for builtin in &defaults.popups.entries {
         let id = builtin.id.as_str();
-        let settings = config.popups.remove(id).unwrap_or_default();
+        let mut settings = config.popups.remove(id).unwrap_or_default();
         if id == "project" {
             if settings.command.is_some() {
                 return Err("popups.project.command is Eon-owned".into());
             }
             if settings.enabled == Some(false) {
-                return Err("popups.project.enabled cannot disable Eon's required chooser".into());
+                return Err(
+                    "popups.project.enabled cannot disable Eon's required quick search".into(),
+                );
             }
             if settings.keep_alive.is_some_and(|value| value) {
                 return Err("popups.project.keep_alive must remain false".into());
             }
+        }
+        // Every tab's Files pair is the packaged, enabled, keep-alive Yazi; a pending
+        // tab starts on it (EON-C18). `config_warnings` names each setting ignored here.
+        if id == "files" {
+            settings.command = None;
+            settings.enabled = None;
+            settings.keep_alive = None;
         }
         if id == "anima" && settings.command.is_some() {
             return Err("popups.anima.command is Eon-owned".into());
@@ -1167,6 +1176,8 @@ pub(crate) fn prepare_popup_command(
     defaults: &Defaults,
 ) -> Result<Vec<OsString>, String> {
     match command {
+        // Project, which shows the tab's Files instead.
+        PopupCommand::Argv(argv) if argv.is_empty() => Err("this popup has no command".into()),
         PopupCommand::Argv(argv) => {
             if !popup_executable(&argv[0], session_bin, directory)? {
                 return Err(format!(
@@ -1176,7 +1187,6 @@ pub(crate) fn prepare_popup_command(
             }
             Ok(argv.clone())
         }
-        PopupCommand::Project => Ok(Vec::new()),
         PopupCommand::AgentAuto => {
             for candidate in defaults.agent_commands {
                 let argv = candidate.iter().map(OsString::from).collect::<Vec<_>>();
@@ -1428,11 +1438,40 @@ pub(crate) fn session_path(prefix: &Path) -> Result<OsString, String> {
     prepend_path(prefix, env::var_os("PATH").as_deref(), "Eon terminal")
 }
 
+/// `quick` when the Files pair starts on quick search (EON-C18).
+pub(crate) const FILES_START_VARIABLE: &str = "EON_FILES_START";
+/// The socket the pair's quick search listens on, for the runtime's screen switches.
+pub(crate) const PAIR_SOCKET_VARIABLE: &str = "EON_PAIR_SOCKET";
+/// The startup pair's "other windows" notice, its first quick search's header.
+pub(crate) const FILES_NOTICE_VARIABLE: &str = "EON_FILES_NOTICE";
+
+/// Applies the runtime's pair launch flags, ahead of Yazi's own arguments, to
+/// the Files `command`, which inherits no other pair's, and returns the rest.
+fn pair_launch_flags<'a>(command: &mut Command, mut arguments: &'a [OsString]) -> &'a [OsString] {
+    command
+        .env_remove(FILES_START_VARIABLE)
+        .env_remove(PAIR_SOCKET_VARIABLE)
+        .env_remove(FILES_NOTICE_VARIABLE);
+    loop {
+        match arguments {
+            [flag, rest @ ..] if flag == "--eon-quick" => {
+                command.env(FILES_START_VARIABLE, "quick");
+                arguments = rest;
+            }
+            [flag, socket, rest @ ..] if flag == "--eon-pair-socket" => {
+                command.env(PAIR_SOCKET_VARIABLE, socket);
+                arguments = rest;
+            }
+            _ => return arguments,
+        }
+    }
+}
+
 pub(crate) fn command(
     tool: Tool,
     programs: &ManagedPrograms,
     config: &Path,
-    arguments: &[OsString],
+    mut arguments: &[OsString],
     defaults: &Defaults,
 ) -> Result<Command, String> {
     // The supervisor marks only the default shell it starts, after warning about unknown
@@ -1493,6 +1532,7 @@ pub(crate) fn command(
                 .env("YAZI_CONFIG_HOME", files)
                 .env("EON_FILES_CLI", eon)
                 .env_remove("PWD");
+            arguments = pair_launch_flags(&mut command, arguments);
         }
         Tool::LazyGit => {
             command
@@ -1698,9 +1738,25 @@ fn config_warnings(config: &EonConfig, path: &Path) -> Vec<String> {
             )
         }
     });
+    // Files is always the packaged Yazi (EON-C18), which earlier releases let a
+    // configuration replace, disable or stop when hidden.
+    let files = config.popups.get("files").into_iter().flat_map(|settings| {
+        [
+            settings.command.is_some().then_some("command"),
+            (settings.enabled == Some(false)).then_some("enabled"),
+            (settings.keep_alive == Some(false)).then_some("keep_alive"),
+        ]
+        .into_iter()
+        .flatten()
+        .map(|key| {
+            format!(
+                "eon: ignoring popups.files.{key} in {path}: Files is Eon's packaged Yazi; move a custom Yazi to its own popup, such as [popups.yazi] command = [\"eon-yazi\"]"
+            )
+        })
+    });
     let focus = config.popups.iter().filter_map(|(id, settings)| {
         let keybinding = settings.keybinding.as_deref()?;
-        (settings.enabled != Some(false)
+        ((settings.enabled != Some(false) || id == "files")
             && parse_shortcut("", keybinding).is_ok_and(|shortcut| focus_shortcut(&shortcut)))
         .then(|| {
             format!(
@@ -1710,7 +1766,11 @@ fn config_warnings(config: &EonConfig, path: &Path) -> Vec<String> {
             )
         })
     });
-    unknown.chain(deprecated).chain(focus).collect()
+    unknown
+        .chain(deprecated)
+        .chain(files)
+        .chain(focus)
+        .collect()
 }
 
 /// Parses the configuration, reading deprecated keys as their replacements,
@@ -1761,7 +1821,7 @@ mod tests {
     use super::{
         ALT, ManagedPrograms, PopupCommand, PopupDefinition, PopupKey, SHIFT, Shortcut, Tool,
         animate_working_badge, command as managed_command, disk_path, integration_mask,
-        popup_catalog, prepare_popup_command, prepend_path, read_shell_config,
+        pair_launch_flags, popup_catalog, prepare_popup_command, prepend_path, read_shell_config,
         remove_agent_environment, remove_agent_session, sidebar_enabled, startup_animation,
         terminal_presentation, tool, user_manager_environment, warning_close_last_tab,
     };
@@ -1834,6 +1894,13 @@ mod tests {
             let parsed: toml::Value = toml::from_str(&toml).unwrap();
             assert_eq!(serde_json::to_value(parsed).unwrap(), json);
             assert!(json["popups"]["project"].get("command").is_none());
+            // Files is Eon's packaged Yazi: only its key and label are settings.
+            for key in ["command", "enabled", "keep_alive"] {
+                assert!(json["popups"]["files"].get(key).is_none(), "{key}");
+            }
+            assert!(toml.contains(
+                "[popups.files]\n# Files is required: it is the tab's directory pair.\n"
+            ));
             assert!(json["popups"]["anima"].get("command").is_none());
             assert!(json["popups"]["anima"].get("keep_alive").is_none());
             assert_eq!(json["terminal"].get("font_family").is_some(), explicit);
@@ -2660,7 +2727,7 @@ nested = { value = true }
                 .iter()
                 .map(|entry| entry.id.as_str())
                 .collect::<Vec<_>>(),
-            ["project", "git", "agent", "anima"]
+            ["project", "git", "agent", "files", "anima"]
         );
         assert_eq!(
             (
@@ -2680,10 +2747,8 @@ command = ["opencode", "--continue"]
 keybinding = "Super+A"
 
 [popups.files]
-command = ["eon-yazi"]
 keybinding = "Alt+Shift+F"
-label = "Files"
-keep_alive = false
+label = "Browse"
 "#,
         )
         .unwrap();
@@ -2694,20 +2759,16 @@ keep_alive = false
                 .iter()
                 .map(|entry| entry.id.as_str())
                 .collect::<Vec<_>>(),
-            ["project", "agent", "anima", "files"]
+            ["project", "agent", "files", "anima"]
         );
-
-        fs::write(
-            root.join("config.toml"),
-            "[popups.files]\nenabled = false\n",
-        )
-        .unwrap();
+        let files = &configured.entries[2];
         assert_eq!(
-            popup_catalog(&root, &inputs.defaults, None)
-                .unwrap()
-                .entries
-                .len(),
-            4
+            (files.label.as_str(), &files.command, files.keep_alive),
+            (
+                "Browse",
+                &PopupCommand::Argv(vec!["fixture-files".into()]),
+                true
+            )
         );
 
         for (source, expected) in [
@@ -2840,6 +2901,66 @@ keep_alive = false
                 popup_catalog(&root, &inputs.defaults, None)
                     .unwrap_err()
                     .contains(expected)
+            );
+        }
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    /// Every tab's Files pair is Eon's packaged Yazi (EON-C18): the settings
+    /// earlier releases let replace, disable or stop it are ignored with a
+    /// warning, and its key and label stay configurable.
+    #[test]
+    fn files_ignores_command_enabled_and_keep_alive_with_a_warning() {
+        let inputs = crate::fixtures::inputs();
+        let root = crate::supervisor::temporary_directory();
+        let packaged = PopupCommand::Argv(vec!["fixture-files".into()]);
+        let warning = |key: &str| {
+            format!(
+                "eon: ignoring popups.files.{key} in config.toml: Files is Eon's packaged Yazi; move a custom Yazi to its own popup, such as [popups.yazi] command = [\"eon-yazi\"]"
+            )
+        };
+        for (source, ignored) in [
+            (
+                "[popups.files]\ncommand = ['eon-yazi']\nenabled = false\nkeep_alive = false\nlabel = 'Browse'\n",
+                &["command", "enabled", "keep_alive"][..],
+            ),
+            (
+                "[popups.files]\ncommand = ['eon-yazi']\nlabel = 'Browse'\n",
+                &["command"][..],
+            ),
+            (
+                "[popups.files]\nenabled = false\nlabel = 'Browse'\n",
+                &["enabled"][..],
+            ),
+            (
+                "[popups.files]\nkeep_alive = false\nlabel = 'Browse'\n",
+                &["keep_alive"][..],
+            ),
+            // Values that keep Files as it is need no warning.
+            (
+                "[popups.files]\nenabled = true\nkeep_alive = true\nlabel = 'Browse'\n",
+                &[][..],
+            ),
+        ] {
+            fs::write(root.join("config.toml"), source).unwrap();
+            let catalog = popup_catalog(&root, &inputs.defaults, None).unwrap();
+            let files = catalog
+                .entries
+                .iter()
+                .find(|entry| entry.id == "files")
+                .expect("Files stays enabled");
+            assert_eq!(
+                (files.label.as_str(), &files.command, files.keep_alive),
+                ("Browse", &packaged, true),
+                "{source}"
+            );
+            assert_eq!(
+                super::config_warnings(
+                    &super::parse_config(&root, &inputs.defaults).unwrap(),
+                    Path::new("config.toml"),
+                ),
+                ignored.iter().map(|key| warning(key)).collect::<Vec<_>>(),
+                "{source}"
             );
         }
         fs::remove_dir_all(root).unwrap();
@@ -2988,6 +3109,44 @@ keep_alive = false
             ]
         );
         fs::remove_dir_all(root).unwrap();
+    }
+
+    /// The pair's launch flags become its Yazi's environment, never Yazi
+    /// arguments, and a Files started inside another pair inherits none of
+    /// that pair's (EON-C18).
+    #[test]
+    fn pair_launch_flags_set_the_pair_environment_and_pass_the_rest_to_yazi() {
+        let arguments = [
+            "--eon-quick",
+            "--eon-pair-socket",
+            "/run/eon-pair-1.sock",
+            "--client-id",
+            "4611686018427387905",
+        ]
+        .map(OsString::from);
+        let mut command = Command::new("yazi");
+        let rest = pair_launch_flags(&mut command, &arguments);
+        assert_eq!(rest, &arguments[3..]);
+        assert_eq!(
+            command_environment(&command, "EON_FILES_START"),
+            Some(Some(OsStr::new("quick")))
+        );
+        assert_eq!(
+            command_environment(&command, "EON_PAIR_SOCKET"),
+            Some(Some(OsStr::new("/run/eon-pair-1.sock")))
+        );
+        assert_eq!(
+            command_environment(&command, "EON_FILES_NOTICE"),
+            Some(None)
+        );
+
+        // A plain `eon-files DIR` clears what a parent pair exported.
+        let plain = [OsString::from("dir")];
+        let mut command = Command::new("yazi");
+        assert_eq!(pair_launch_flags(&mut command, &plain), &plain[..]);
+        for variable in ["EON_FILES_START", "EON_PAIR_SOCKET", "EON_FILES_NOTICE"] {
+            assert_eq!(command_environment(&command, variable), Some(None));
+        }
     }
 
     #[test]

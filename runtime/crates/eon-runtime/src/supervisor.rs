@@ -10,7 +10,7 @@ use super::{
     events::Projection,
     generation::{current_generation, generation_directory, record_launcher, remove_launcher},
     managed_environment::{self, TerminalAccess, nonempty_environment_path},
-    notification, platform, quota,
+    notification, pair, platform, quota,
     running::Running,
     sessions::{
         self, AttachName, RunningSession, TAB_VARIABLE, TERMINAL_VARIABLE,
@@ -20,10 +20,10 @@ use super::{
     subscriptions::{Subscriber, Subscribers},
     workspace::{self, LaunchCommand, SessionEnd, SessionOperation, WorkspaceSet},
 };
-use eon_workspace_protocol::v30::{
-    Action, Availability, BusyTerminals, Ended, Failure, LifecycleResponse, Request, Response,
-    Runtime, Screen, Sent, Snapshot, Stopped, TerminalInput, TerminalText, VERSION, WindowEntry,
-    WindowState, WorkspaceAction,
+use eon_workspace_protocol::v31::{
+    Action, Availability, BusyTerminals, Ended, FILES_ENTRY, Failure, LifecycleResponse, Request,
+    Response, Runtime, Screen, Sent, Snapshot, Stopped, TerminalInput, TerminalText, VERSION,
+    WindowEntry, WindowState, WorkspaceAction,
 };
 use orbit_protocol::management::{LeaseInput, Screen as OrbitScreen};
 use std::{
@@ -600,7 +600,7 @@ impl PresentationProcess {
                 };
                 if let Some(snapshot) = snapshot {
                     let bytes =
-                        eon_workspace_protocol::v30::encode_response(&Response::Snapshot(snapshot))
+                        eon_workspace_protocol::v31::encode_response(&Response::Snapshot(snapshot))
                             .map_err(|error| format!("cannot encode startup workspace: {error}"))?;
                     let mut remaining = bytes.as_slice();
                     while !remaining.is_empty() {
@@ -787,9 +787,7 @@ fn recovered_workspace_sessions(
         .iter()
         .map(|session| {
             Ok((
-                session
-                    .number
-                    .ok_or("recovered a transient terminal as a durable pane")?,
+                session.number,
                 workspace::Session {
                     id: session.id.clone(),
                     endpoint: session.endpoint.clone(),
@@ -862,7 +860,7 @@ fn supervise(
         geometry: inputs.defaults.popups.geometry,
         entries: Vec::new(),
     });
-    let (mut sessions, recovered_picker) = recover_sessions(
+    let (mut sessions, recovered_pair) = recover_sessions(
         runtime,
         mode,
         generation,
@@ -880,10 +878,10 @@ fn supervise(
             |session| session.endpoint.clone(),
         )
     };
-    let fresh_animation = startup_animation.is_some() && sessions.is_empty() && !recovered_picker;
+    let fresh_animation = startup_animation.is_some() && sessions.is_empty() && !recovered_pair;
     let admitted = if terminal.requires_startup_admission() || fresh_animation {
         let snapshot = if mode == LaunchMode::Workspace {
-            let workspaces = if sessions.is_empty() && !recovered_picker {
+            let workspaces = if sessions.is_empty() && !recovered_pair {
                 WorkspaceSet::pending(
                     runtime.to_path_buf(),
                     launch_directory.clone(),
@@ -921,7 +919,9 @@ fn supervise(
                         generation: generation.into(),
                         name: Some(workspaces.window_name()),
                         started_at: Some(started_at),
-                        live_terminals: Some(live_sessions(&sessions).count() as u16),
+                        live_terminals: Some(
+                            live_sessions(&sessions, Some(&workspaces)).count() as u16
+                        ),
                         state: WindowState::Live,
                     },
                 );
@@ -966,7 +966,7 @@ fn supervise(
     } else {
         Vec::new()
     };
-    if sessions.is_empty() && (mode == LaunchMode::Terminal || recovered_picker) {
+    if sessions.is_empty() && (mode == LaunchMode::Terminal || recovered_pair) {
         sessions.push(start_orbit(
             inputs,
             config,
@@ -1006,7 +1006,7 @@ fn supervise(
                         &mut sessions,
                         &mut initial_child,
                         operation,
-                        PickerStart::Fresh(startup_animation.as_ref()),
+                        PairStart::Fresh(startup_animation.as_ref()),
                         admitted.as_ref().and_then(|venus| venus.name),
                     )
                 },
@@ -1139,17 +1139,10 @@ fn supervise(
     if let Some(process) = state.venus.take() {
         drop(process);
     }
-    let popup_cleanup = stop_transient_popups(&mut state);
     state.notices.close_and_wait(NOTICE_CLOSE_TIMEOUT);
     remove_launcher(runtime);
     let _ = fs::remove_dir(runtime);
-    match (status, popup_cleanup) {
-        (Ok(code), Ok(())) => Ok(code),
-        (Err(error), Ok(())) | (Ok(_), Err(error)) => Err(error),
-        (Err(error), Err(cleanup)) => Err(format!(
-            "{error}; cannot clean up transient popups: {cleanup}"
-        )),
-    }
+    status
 }
 
 struct SupervisorState {
@@ -1197,7 +1190,9 @@ impl SupervisorState {
             generation: self.component_generation.clone(),
             name: Some(self.workspaces.as_ref()?.window_name()),
             started_at: Some(self.started_at),
-            live_terminals: Some(live_sessions(&self.sessions).count() as u16),
+            live_terminals: Some(
+                live_sessions(&self.sessions, self.workspaces.as_ref()).count() as u16,
+            ),
             state: WindowState::Live,
         })
     }
@@ -1309,12 +1304,22 @@ impl SupervisorState {
                             .as_ref()
                             .expect("full Eon has a workspace")
                             .window_name(),
-                        live_sessions(&self.sessions).count() as u16,
+                        live_sessions(&self.sessions, self.workspaces.as_ref()).count() as u16,
                     )
                 });
             }
             if let Some(workspaces) = &self.workspaces {
                 self.pane_labels.reconcile(&workspaces.pane_sessions());
+                // A starting quick search stops counting as shown once its fzf
+                // listens or its pair is hidden (EON-C18).
+                if pair::any_starting() {
+                    for (session, shown) in workspaces.pairs() {
+                        if let Some(running) = self.sessions.iter().find(|item| item.id == session)
+                        {
+                            pair::settle_starting(&pair::socket(&running.endpoint), shown);
+                        }
+                    }
+                }
             }
         } else {
             self.pane_labels.reconcile(&[]);
@@ -1353,7 +1358,7 @@ impl SupervisorState {
 fn report_session_end(result: Result<(), Failure>, log: &DiagnosticLog) -> Result<(), String> {
     match result {
         Err(error) if error.code == "session-start" => {
-            // A failed picker fallback must not tear down other tabs' terminals.
+            // A pending tab whose first pane fails must not tear down other tabs' terminals.
             log.note(&format!(
                 "Cannot start the tab's first pane: {}",
                 error.detail
@@ -1436,7 +1441,7 @@ fn reap_finished_sessions(
                             sessions,
                             initial_child,
                             operation,
-                            PickerStart::Later,
+                            PairStart::Later,
                             venus,
                         )
                     });
@@ -1610,7 +1615,7 @@ fn stop_closed_sessions(
 
 /// A close that stopped the window's last terminal ends its generation, and
 /// leaves no workspace to snapshot. As Stop does, it first stops any run of
-/// the generation that no tab tracks, such as a picker that became ready
+/// the generation that no tab tracks, such as a terminal that became ready
 /// after its start timed out; failing that, it fails as Stop does.
 fn closed_response(
     state: &mut SupervisorState,
@@ -1690,6 +1695,11 @@ fn stop_generation_sessions(
         deadline,
     )?;
     state.sessions.extend(untracked);
+    // Stop stops a pending tab's pair but does not report it (EON-C18).
+    let pending = state
+        .workspaces
+        .as_ref()
+        .map_or_else(Vec::new, WorkspaceSet::pending_pair_sessions);
     let running = state
         .sessions
         .iter()
@@ -1720,7 +1730,10 @@ fn stop_generation_sessions(
     }
     let stopped = result.map_err(|error| format!("{error}{orbit_logs}"))?;
     state.sessions.clear();
-    Ok(stopped)
+    Ok(stopped
+        .into_iter()
+        .filter(|session| !pending.contains(session))
+        .collect())
 }
 
 /// The live terminal session a request's `EON_TERMINAL` caller names; a
@@ -1757,37 +1770,57 @@ fn caller_session(
         })
 }
 
-enum PickerStart<'a> {
+/// Whether a pair starts the window: then its terminal plays the startup
+/// Anima first and its quick search names the other running windows.
+enum PairStart<'a> {
     Fresh(Option<&'a managed_environment::StartupAnimation>),
     Later,
 }
 
-fn directory_picker_command(
-    inputs: &Inputs,
-    runtime: &Path,
-    tab: &str,
-    instance: &str,
-    start: PickerStart<'_>,
+/// The packaged Files pair's command for terminal `session`, from its
+/// configured `argv`. The product's Files is always the packaged `eon-files`
+/// (EON-C10); only test fixtures' stand-in commands run as given.
+fn pair_command(
+    argv: Vec<OsString>,
+    quick: bool,
+    session: &workspace::Session,
+    start: PairStart<'_>,
 ) -> Result<Vec<OsString>, String> {
-    let session_bin = inputs
-        .managed
-        .shell_bin
-        .as_ref()
-        .ok_or("the installed Eon package has no directory picker")?;
-    let mut command = vec![session_bin.join("eon-directory-picker").into_os_string()];
-    match start {
-        PickerStart::Fresh(Some(animation)) => command.extend([
-            OsString::from("__startup-anima"),
-            animation.style.clone().into(),
-            animation.duration_seconds.to_string().into(),
-        ]),
-        PickerStart::Fresh(None) => command.push("__startup-picker".into()),
-        PickerStart::Later => command.push("__directory-picker".into()),
+    if argv != [OsStr::new("eon-files")] {
+        return Ok(argv);
     }
+    let runtime = session
+        .endpoint
+        .parent()
+        .ok_or("pair endpoint has no runtime directory")?;
+    let mut command = argv;
+    let mut delay = Duration::ZERO;
+    if let PairStart::Fresh(animation) = start {
+        // Its Yazi, and so quick search, starts once these end.
+        delay = pair::fresh_start(animation.map(|animation| animation.duration_seconds));
+        if let Some(animation) = animation {
+            command.extend([
+                OsString::from("--eon-anima"),
+                animation.style.clone().into(),
+                animation.duration_seconds.to_string().into(),
+            ]);
+        }
+        command.extend([
+            OsString::from("--eon-notice"),
+            runtime.join("eon.sock").into_os_string(),
+        ]);
+    }
+    let socket = pair::socket(&session.endpoint);
+    if quick {
+        command.push("--eon-quick".into());
+        pair::quick_search_requested(&socket, delay);
+    }
+    let id = pair::client_id(&session.endpoint);
     command.extend([
-        runtime.join("eon.sock").into_os_string(),
-        tab.into(),
-        instance.into(),
+        OsString::from("--eon-pair-socket"),
+        socket.into_os_string(),
+        OsString::from("--client-id"),
+        id.to_string().into(),
     ]);
     Ok(command)
 }
@@ -1835,7 +1868,7 @@ fn apply_session_operation(
     sessions: &mut Vec<RunningSession>,
     initial_child: &mut Vec<OsString>,
     operation: SessionOperation,
-    picker_start: PickerStart<'_>,
+    pair_start: PairStart<'_>,
     venus: Option<AttachName>,
 ) -> Result<(), String> {
     let (session, directory, command, tab) = match operation {
@@ -1846,23 +1879,34 @@ fn apply_session_operation(
             tab,
         } => (session, directory, command, tab),
         SessionOperation::Stop(id) => return stop_owned_session(sessions, &id, log).map(|_| ()),
+        SessionOperation::SettlePair(id) => {
+            if let Some(session) = sessions.iter().find(|session| session.id == id)
+                && let Err(error) = sessions::settle_pending_pair(&session.endpoint)
+            {
+                // Recovery would stop this Files instead of adopting it.
+                log.record(&error);
+            }
+            return Ok(());
+        }
     };
+    let mut pending = false;
     let child = match command {
-        LaunchCommand::Project { tab, instance } => directory_picker_command(
-            inputs,
-            session
-                .endpoint
-                .parent()
-                .ok_or("directory picker endpoint has no runtime directory")?,
-            &tab,
-            &instance,
-            picker_start,
-        )?,
+        LaunchCommand::Files {
+            argv,
+            quick,
+            pending: marked,
+        } => {
+            pending = marked;
+            pair_command(argv, quick, &session, pair_start)?
+        }
         LaunchCommand::Tool(argv) => argv,
         LaunchCommand::Pane if session.id == "session-1" => initial_child.clone(),
         LaunchCommand::Pane => Vec::new(),
     };
-    let mut running = start_orbit(
+    if pending {
+        sessions::mark_pending_pair(&session.endpoint)?;
+    }
+    let started = start_orbit(
         inputs,
         config,
         &session.endpoint,
@@ -1873,7 +1917,22 @@ fn apply_session_operation(
         tab.as_deref(),
         log,
         Instant::now() + SESSION_START_TIMEOUT,
-    )?;
+    );
+    let mut running = match started {
+        Ok(running) => running,
+        Err(error) => {
+            // A rollback that could not confirm its cleanup may leave the pair
+            // running: its marker stays, so a recovery stops it rather than
+            // adopting it, and the record's cleanup removes the marker later.
+            if pending
+                && !sessions::launch_record_remains(&session.endpoint)
+                && let Err(marker) = sessions::settle_pending_pair(&session.endpoint)
+            {
+                log.record(&marker);
+            }
+            return Err(error);
+        }
+    };
     // Before the reply that shows Venus the terminal (EON-C11).
     name_presentation(std::slice::from_mut(&mut running), venus, true, log);
     sessions.push(running);
@@ -1899,70 +1958,40 @@ fn stop_owned_session(
     Ok(status)
 }
 
-fn cancel_transient_popups(
+/// Dismisses every pending tab's pair after presentation detachment
+/// (EON-C18): each stays on as its tab's Files, and its tab's first pane
+/// starts.
+fn dismiss_pending_pairs(
     state: &mut SupervisorState,
     inputs: &Inputs,
     config: &Path,
 ) -> Result<(), String> {
-    let ids = state
-        .workspaces
-        .as_ref()
-        .map(WorkspaceSet::transient_sessions)
-        .unwrap_or_default();
-    for id in ids {
-        if let Some(index) = state.sessions.iter().position(|session| session.id == id) {
-            // A picker that cannot be stopped stays in its tab, where the reap
-            // and the next detachment retry it, and must not end the
-            // supervisor or keep the other pickers from being cleaned
-            // (EON-C18).
-            if let Err(error) = stop_workspace_session(&mut state.sessions[index], &state.log) {
-                report_kept_terminal(&mut state.sessions[index], &state.log, &error);
-                continue;
-            }
-            state.sessions.remove(index);
-        }
-        let venus = state.presentation_name();
-        let SupervisorState {
+    let venus = state.presentation_name();
+    let SupervisorState {
+        component_generation,
+        workspaces,
+        sessions,
+        initial_child,
+        log,
+        ..
+    } = state;
+    let Some(workspaces) = workspaces.as_mut() else {
+        return Ok(());
+    };
+    let result = workspaces.dismiss_pending_pairs(|operation| {
+        apply_session_operation(
+            inputs,
+            config,
+            log,
             component_generation,
-            workspaces,
             sessions,
             initial_child,
-            log,
-            ..
-        } = state;
-        let result = workspaces
-            .as_mut()
-            .ok_or("transient popup has no workspace owner")?
-            .session_ended(&id, SessionEnd::Exited, |operation| {
-                apply_session_operation(
-                    inputs,
-                    config,
-                    log,
-                    component_generation,
-                    sessions,
-                    initial_child,
-                    operation,
-                    PickerStart::Later,
-                    venus,
-                )
-            });
-        report_session_end(result, log)?;
-    }
-    Ok(())
-}
-
-fn stop_transient_popups(state: &mut SupervisorState) -> Result<(), String> {
-    let ids = state
-        .workspaces
-        .as_ref()
-        .map(WorkspaceSet::transient_sessions)
-        .unwrap_or_default();
-    for id in ids {
-        if state.sessions.iter().any(|session| session.id == id) {
-            stop_owned_session(&mut state.sessions, &id, &state.log)?;
-        }
-    }
-    Ok(())
+            operation,
+            PairStart::Later,
+            venus,
+        )
+    });
+    report_session_end(result, log)
 }
 
 fn reap_presentation(
@@ -1979,8 +2008,8 @@ fn reap_presentation(
     };
     state.venus = None;
     if !state.stopping {
-        // Dismissing a pending picker can start its tab's first terminal.
-        cancel_transient_popups(state, inputs, config)?;
+        // Dismissing a pending pair starts its tab's first terminal.
+        dismiss_pending_pairs(state, inputs, config)?;
         // Full Eon's clean exit is a detach; a crash is not (EON-C8).
         if status.success()
             && let Some(window) = state.notice_window()
@@ -2320,13 +2349,10 @@ fn dispatch_control_request(
             let result = stop_generation_sessions(state, runtime, mode);
             let shutdown = result.is_ok();
             let response = match result {
-                Ok(mut sessions) => {
-                    sessions.retain(|session| !workspace::is_directory_picker_session(session));
-                    LifecycleResponse::Stopped(Stopped {
-                        generation: generation.into(),
-                        sessions,
-                    })
-                }
+                Ok(sessions) => LifecycleResponse::Stopped(Stopped {
+                    generation: generation.into(),
+                    sessions,
+                }),
                 Err(detail) => LifecycleResponse::Failure(failure("stop-failed", detail)),
             };
             (ControlResponse::Lifecycle(response), shutdown)
@@ -2382,7 +2408,7 @@ fn dispatch_control_request(
             // A queue jump is the FocusAttention of its target in the target's
             // workspace, which it shows; an empty queue is rejected and changes
             // nothing (EON-C31, EON-C33).
-            let (action, jump) = match (request.action, &state.attention) {
+            let (mut action, jump) = match (request.action, &state.attention) {
                 (action @ (Action::NextAttention | Action::PreviousAttention), Some(attention)) => {
                     let Some((target_workspace, action, key)) = attention.jump(
                         &workspace.snapshots(),
@@ -2406,9 +2432,43 @@ fn dispatch_control_request(
             )
             .then(|| action.clone());
             let visit = match &action {
-                Action::Workspace(WorkspaceAction::SetTabDirectory { directory, .. }) => {
-                    Some(directory.clone())
+                Action::Workspace(WorkspaceAction::SetTabDirectory { tab, directory }) => {
+                    // A pick ends a starting quick search's grace: it came from
+                    // quick search, which has then ended, or from Files or the CLI.
+                    let pair = workspace
+                        .pair(caller.as_deref(), tab, FILES_ENTRY)
+                        .and_then(|(session, _)| {
+                            state.sessions.iter().find(|running| running.id == session)
+                        })
+                        .map(|running| pair::socket(&running.endpoint));
+                    Some((directory.clone(), pair))
                 }
+                _ => None,
+            };
+            // Alt+Z and Alt+Shift+Y on a live pair switch its screen or hide it
+            // (EON-C18).
+            let pair_switch = match &mut action {
+                Action::InvokePopup {
+                    tab, entry, intent, ..
+                } => workspace
+                    .pair(caller.as_deref(), tab, entry)
+                    .and_then(|(session, shown)| {
+                        // The identity the pair was launched with (pair_command).
+                        let endpoint = &state
+                            .sessions
+                            .iter()
+                            .find(|running| running.id == session)?
+                            .endpoint;
+                        let id = pair::client_id(endpoint);
+                        let socket = pair::socket(endpoint);
+                        let quick = pair::quick_search_shown(&socket);
+                        // Only a quick search whose fzf has not answered yet.
+                        let starting = quick && pair::starting(&socket).is_some();
+                        let (dispatched, switch) =
+                            pair::plan(entry, *intent, shown, quick, starting);
+                        *intent = dispatched;
+                        Some((switch, id, socket))
+                    }),
                 _ => None,
             };
             let direct_cross_workspace = jump.is_none()
@@ -2452,16 +2512,25 @@ fn dispatch_control_request(
                             sessions,
                             initial_child,
                             operation,
-                            PickerStart::Later,
+                            PairStart::Later,
                             venus,
                         )
                     },
                 ),
             };
             if result.is_ok()
-                && let Some(directory) = visit
+                && let Some((directory, pair)) = visit
             {
+                if let Some(socket) = pair {
+                    pair::quick_search_settled(&socket);
+                }
                 record_visit(inputs, config, log, &directory);
+            }
+            if result.is_ok()
+                && let Some((switch, id, socket)) = pair_switch
+            {
+                let ya = inputs.managed.shell_bin.as_ref().map(|bin| bin.join("ya"));
+                pair::run(switch, ya.as_deref(), id, socket, log);
             }
             // Only shown focus sees. A direct cross-workspace focus resets the cursor even
             // when a hidden caller named the terminal already focused in the shown workspace.
@@ -2582,10 +2651,16 @@ fn closed(result: Result<Response, Failure>) -> (ControlResponse, bool) {
     (ControlResponse::Workspace(response), ended)
 }
 
-fn live_sessions(sessions: &[RunningSession]) -> impl Iterator<Item = &RunningSession> {
-    sessions.iter().filter(|session| {
-        !session.is_finished() && !workspace::is_directory_picker_session(&session.id)
-    })
+/// The live terminals lifecycle inspection counts: all but pending tabs'
+/// pairs, which are popups and not durable terminals (EON-C18).
+fn live_sessions<'a>(
+    sessions: &'a [RunningSession],
+    workspaces: Option<&WorkspaceSet>,
+) -> impl Iterator<Item = &'a RunningSession> + 'a {
+    let pending = workspaces.map_or_else(Vec::new, WorkspaceSet::pending_pair_sessions);
+    sessions
+        .iter()
+        .filter(move |session| !session.is_finished() && !pending.contains(&session.id))
 }
 
 fn runtime_status(
@@ -2605,7 +2680,7 @@ fn runtime_status(
         eon_version: inputs.version.into(),
         workspace_protocol: VERSION,
         component_report: inputs.component_report()?.to_owned(),
-        sessions: live_sessions(&state.sessions)
+        sessions: live_sessions(&state.sessions, state.workspaces.as_ref())
             .map(|session| session.id.clone())
             .collect(),
         attach: Availability {
@@ -2638,11 +2713,13 @@ pub(super) fn status_code(status: ExitStatus) -> i32 {
 #[cfg(test)]
 mod tests {
     use super::{
-        Action, DiagnosticLog, Dispatched, LaunchMode, SupervisorState, WorkspaceAction,
-        WorkspaceSet, cancel_transient_popups, effective_uid, prepare_configuration,
-        prepare_runtime, reap_finished_sessions, stop_generation_sessions, stop_owned_session,
-        temporary_directory, venus_command, window_bar, xdg_path,
+        Action, DiagnosticLog, Dispatched, LaunchMode, PairStart, SupervisorState, WorkspaceSet,
+        effective_uid, pair_command, prepare_configuration, prepare_runtime,
+        reap_finished_sessions, stop_generation_sessions, stop_owned_session, temporary_directory,
+        venus_command, window_bar, xdg_path,
     };
+    #[cfg(target_os = "linux")]
+    use super::{WorkspaceAction, apply_session_operation};
     use crate::sessions::{
         self,
         tests::{leased_orbit, orbit_pid, script},
@@ -2738,16 +2815,16 @@ mod tests {
         state
             .subscribers
             .attach(stream, *subscriber, Instant::now());
-        let mut message = vec![0; eon_workspace_protocol::v30::HEADER_BYTES];
+        let mut message = vec![0; eon_workspace_protocol::v31::HEADER_BYTES];
         peer.read_exact(&mut message).unwrap();
         message.resize(
-            eon_workspace_protocol::v30::declared_message_len(&message).unwrap(),
+            eon_workspace_protocol::v31::declared_message_len(&message).unwrap(),
             0,
         );
-        peer.read_exact(&mut message[eon_workspace_protocol::v30::HEADER_BYTES..])
+        peer.read_exact(&mut message[eon_workspace_protocol::v31::HEADER_BYTES..])
             .unwrap();
-        let eon_workspace_protocol::v30::SubscriptionMessage::Subscribed(subscribed) =
-            eon_workspace_protocol::v30::decode_subscription_message(&message).unwrap()
+        let eon_workspace_protocol::v31::SubscriptionMessage::Subscribed(subscribed) =
+            eon_workspace_protocol::v31::decode_subscription_message(&message).unwrap()
         else {
             panic!("no SUBSCRIBED");
         };
@@ -2763,7 +2840,7 @@ mod tests {
         assert_eq!(state.workspace_snapshot_in(None).unwrap(), before);
         assert!(state.venus.is_none());
 
-        let missing = eon_workspace_protocol::v30::Filter {
+        let missing = eon_workspace_protocol::v31::Filter {
             workspaces: vec!["w9".into()],
             ..Default::default()
         };
@@ -2811,8 +2888,8 @@ mod tests {
     #[cfg(target_os = "linux")]
     fn subscription_messages(
         peer: &mut UnixStream,
-    ) -> Vec<eon_workspace_protocol::v30::SubscriptionMessage> {
-        use eon_workspace_protocol::v30::{declared_message_len, decode_subscription_message};
+    ) -> Vec<eon_workspace_protocol::v31::SubscriptionMessage> {
+        use eon_workspace_protocol::v31::{declared_message_len, decode_subscription_message};
         peer.set_nonblocking(true).unwrap();
         let mut bytes = Vec::new();
         let mut buffer = [0; 65536];
@@ -2840,7 +2917,7 @@ mod tests {
     #[cfg(target_os = "linux")]
     #[test]
     fn attention_reaches_subscribers_in_the_loop_turn_that_polls_it() {
-        use eon_workspace_protocol::v30::{AttentionState, Change, SubscriptionMessage};
+        use eon_workspace_protocol::v31::{AttentionState, Change, SubscriptionMessage};
         let root = temporary_directory();
         let inputs = crate::fixtures::inputs();
         let session = leased_orbit(
@@ -2888,8 +2965,8 @@ mod tests {
                 id: "subscribe-1".into(),
                 caller: None,
                 action: Action::Subscribe {
-                    filter: eon_workspace_protocol::v30::Filter {
-                        kinds: vec![eon_workspace_protocol::v30::EventKind::Attention],
+                    filter: eon_workspace_protocol::v31::Filter {
+                        kinds: vec![eon_workspace_protocol::v31::EventKind::Attention],
                         ..Default::default()
                     },
                     after: None,
@@ -3024,10 +3101,10 @@ mod tests {
 
     #[cfg(target_os = "linux")]
     #[test]
-    fn detach_notice_counts_the_terminal_started_by_picker_cleanup() {
+    fn detach_notice_counts_the_terminal_started_by_pair_dismissal() {
         let root = temporary_directory();
         fs::set_permissions(&root, fs::Permissions::from_mode(0o700)).unwrap();
-        let picker_root = temporary_directory();
+        let pair_root = temporary_directory();
         let mut inputs = crate::fixtures::inputs();
         inputs.orbit = std::env::var_os("ORBIT_BIN").unwrap().into();
         let workspace = WorkspaceSet::pending(
@@ -3039,8 +3116,9 @@ mod tests {
             |_| Ok(()),
         )
         .unwrap();
-        let mut picker = leased_orbit(&picker_root, "exec sleep 30");
-        picker.id = "directory-picker-1".into();
+        // The pending tab's pair, which detachment dismisses and keeps.
+        let mut pair = leased_orbit(&pair_root, "exec sleep 30");
+        pair.id = "session-2".into();
         let log = DiagnosticLog::open_in(Ok(root.join("logs")), "g1-test", "workspace");
         let mut command = Command::new("/bin/sh");
         command.args(["-c", "exit 0"]);
@@ -3063,7 +3141,7 @@ mod tests {
             application_id: String::new(),
             decorations: false,
             workspaces: Some(workspace),
-            sessions: vec![picker],
+            sessions: vec![pair],
             venus: Some(venus),
             initial_child: ["/bin/sh", "-c", "exec sleep 30"]
                 .into_iter()
@@ -3079,16 +3157,21 @@ mod tests {
             subscribers: crate::subscriptions::Subscribers::new("g1-test"),
             log,
         };
+        // The pending pair is a popup and not counted (EON-C18).
         assert_eq!(state.this_window().unwrap().live_terminals, Some(0));
         assert!(super::reap_presentation(&mut state, &inputs, &root).unwrap());
         let shown = take_show();
         let after = state.this_window().unwrap();
         let expected = crate::notification::NoticeWindow::new(&after);
+        let tab = state.workspaces.as_ref().unwrap().snapshot().tabs[0].clone();
         stop_generation_sessions(&mut state, &root, LaunchMode::Workspace).unwrap();
         drop(state);
         fs::remove_dir_all(root).unwrap();
-        fs::remove_dir_all(picker_root).unwrap();
-        assert_eq!(after.live_terminals, Some(1));
+        fs::remove_dir_all(pair_root).unwrap();
+        assert!(!tab.pending);
+        assert_eq!(tab.popups.len(), 1);
+        assert_eq!(tab.selected_popup, None);
+        assert_eq!(after.live_terminals, Some(2));
         assert_eq!(shown, Some(expected));
     }
 
@@ -3513,133 +3596,200 @@ mod tests {
         fs::remove_dir_all(root).unwrap();
     }
 
+    /// A pending pair's command carries the runtime's launch flags only for
+    /// the packaged Files, the startup flags only for the window's first pair,
+    /// and the DDS client ID its screen switches use (EON-C18).
     #[test]
-    fn a_picker_whose_stop_fails_on_detach_stays_only_in_its_tab() {
-        fn prepared(_: &crate::PopupCommand, _: &Path) -> Result<Vec<OsString>, String> {
-            Ok(Vec::new())
-        }
-        let roots = [
-            temporary_directory(),
-            temporary_directory(),
-            temporary_directory(),
-        ];
-        let runtime = temporary_directory();
-        let inputs = crate::fixtures::inputs();
-        let mut workspace = WorkspaceSet::pending(
-            runtime.clone(),
-            runtime.clone(),
-            Some(runtime.clone()),
-            inputs.defaults.popups.clone(),
-            prepared,
-            |_| Ok(()),
-        )
-        .unwrap();
-        workspace
-            .dispatch(
-                "t2",
-                None,
-                Action::Workspace(WorkspaceAction::CreateTab),
-                prepared,
-                |_| Ok(()),
-            )
-            .unwrap();
-        assert_eq!(
-            workspace.transient_sessions(),
-            ["directory-picker-1", "directory-picker-2"]
-        );
-        let mut sessions = roots
-            .iter()
-            .map(|root| leased_orbit(root, "exec sleep 30"))
-            .collect::<Vec<_>>();
-        sessions[0].id = "directory-picker-1".into();
-        sessions[1].id = "directory-picker-2".into();
-        sessions[2].id = "session-3".into();
-        // A record that no longer validates makes the first picker's stop fail.
-        let record = sessions::tests::record(&sessions[0]).to_path_buf();
-        fs::set_permissions(&record, fs::Permissions::from_mode(0o644)).unwrap();
-        let mut state = SupervisorState {
-            started_at: 1,
-            window: None,
-            running: None,
-            component_generation: "component-1".into(),
-            application_id: String::new(),
-            decorations: false,
-            workspaces: Some(workspace),
-            sessions,
-            venus: None,
-            initial_child: Vec::new(),
-            initial_status: None,
-            stopping: false,
-            quotas: None,
-            attention: None,
-            pane_labels: super::super::pane_labels::Labels::default(),
-            agents: window_agents(),
-            notices: crate::notification::Notices::default(),
-            subscribers: crate::subscriptions::Subscribers::new("g1-test"),
-            log: DiagnosticLog::open_in(Ok(roots[0].join("logs")), "g1-test", "workspace"),
+    fn pair_commands_carry_quick_start_socket_and_client_id_only_for_packaged_files() {
+        let session = crate::workspace::Session {
+            id: "session-2".into(),
+            endpoint: "/runtime/g1/session-2.sock".into(),
         };
-        let ids = |state: &SupervisorState| {
-            state
-                .sessions
-                .iter()
-                .map(|session| session.id.clone())
+        let id = crate::pair::client_id(&session.endpoint);
+        let socket = crate::pair::socket(&session.endpoint);
+        assert_eq!(socket, Path::new("/runtime/g1/session-2.quick.sock"));
+        let animation = crate::managed_environment::StartupAnimation {
+            enabled: true,
+            style: "wave".into(),
+            duration_seconds: 3,
+        };
+        let text = |argv: Vec<OsString>| {
+            argv.into_iter()
+                .map(|argument| argument.into_string().unwrap())
                 .collect::<Vec<_>>()
         };
-        for _ in 0..2 {
-            assert_eq!(
-                cancel_transient_popups(&mut state, &inputs, &runtime),
-                Ok(())
-            );
-        }
-        // The other picker was cleaned and its tab, whose fixture first pane
-        // cannot start, removed; the failed picker keeps its pending tab.
-        assert_eq!(ids(&state), ["directory-picker-1", "session-3"]);
-        let snapshot = state.workspaces.as_ref().unwrap().snapshot();
-        assert_eq!(snapshot.tabs.len(), 1);
-        assert!(snapshot.tabs[0].pending);
-        assert_eq!(snapshot.tabs[0].popups.len(), 1);
-        // The failed first-pane start left an Orbit log directory beside the
-        // supervisor's log.
-        let log = fs::read_dir(roots[0].join("logs"))
-            .unwrap()
-            .map(|entry| entry.unwrap().path())
-            .filter(|path| path.is_file())
-            .map(|path| fs::read_to_string(path).unwrap())
-            .collect::<String>();
+        let tail = [
+            "--eon-pair-socket".to_owned(),
+            socket.to_str().unwrap().to_owned(),
+            "--client-id".to_owned(),
+            id.to_string(),
+        ];
+        let files = || vec![OsString::from("eon-files")];
         assert_eq!(
-            log.matches("terminal directory-picker-1 stays in its tab after a failed stop")
-                .count(),
-            1
+            text(
+                pair_command(files(), true, &session, PairStart::Fresh(Some(&animation))).unwrap()
+            ),
+            [
+                &[
+                    "eon-files",
+                    "--eon-anima",
+                    "wave",
+                    "3",
+                    "--eon-notice",
+                    "/runtime/g1/eon.sock",
+                    "--eon-quick"
+                ][..],
+                &tail.iter().map(String::as_str).collect::<Vec<_>>(),
+            ]
+            .concat()
         );
+        assert_eq!(
+            text(pair_command(files(), true, &session, PairStart::Fresh(None)).unwrap()),
+            [
+                &[
+                    "eon-files",
+                    "--eon-notice",
+                    "/runtime/g1/eon.sock",
+                    "--eon-quick"
+                ][..],
+                &tail.iter().map(String::as_str).collect::<Vec<_>>(),
+            ]
+            .concat()
+        );
+        assert_eq!(
+            text(pair_command(files(), false, &session, PairStart::Later).unwrap()),
+            [
+                &["eon-files"][..],
+                &tail.iter().map(String::as_str).collect::<Vec<_>>(),
+            ]
+            .concat()
+        );
+        // A test fixture's stand-in Files command runs exactly as given.
+        let replaced = vec![OsString::from("my-files"), OsString::from("--flag")];
+        assert_eq!(
+            pair_command(replaced.clone(), true, &session, PairStart::Fresh(None)).unwrap(),
+            replaced
+        );
+    }
 
-        // Once the record validates again, a later detachment cleans it after
-        // its stopped run ends; each retry takes one look.
-        fs::set_permissions(&record, fs::Permissions::from_mode(0o600)).unwrap();
-        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(5);
-        while state.sessions.len() > 1 {
-            assert!(
-                std::time::Instant::now() < deadline,
-                "the failed picker was never cleaned"
-            );
-            assert_eq!(
-                cancel_transient_popups(&mut state, &inputs, &runtime),
-                Ok(())
-            );
-            std::thread::sleep(std::time::Duration::from_millis(10));
-        }
-        assert_eq!(ids(&state), ["session-3"]);
-        assert_eq!(
-            stop_owned_session(&mut state.sessions, "session-3", &state.log),
-            Ok(None)
+    /// The window's first pair plays its startup Anima, then reads the
+    /// notice, before its Yazi can start quick search: a key pressed in that
+    /// time, and up to the startup grace after it, acts on the quick search
+    /// still to come (EON-C18).
+    #[test]
+    fn a_startup_pairs_quick_search_counts_as_starting_through_its_anima() {
+        let session = |name: &str| crate::workspace::Session {
+            id: "session-2".into(),
+            endpoint: format!("/runtime/{name}/session-2.sock").into(),
+        };
+        let animation = crate::managed_environment::StartupAnimation {
+            enabled: true,
+            style: "wave".into(),
+            duration_seconds: 3,
+        };
+        let files = || vec![OsString::from("eon-files")];
+        let grace = |session: &crate::workspace::Session| {
+            crate::pair::starting(&crate::pair::socket(&session.endpoint))
+                .unwrap()
+                .saturating_duration_since(Instant::now())
+        };
+        let animated = session("g-anima-on");
+        pair_command(files(), true, &animated, PairStart::Fresh(Some(&animation))).unwrap();
+        // Anima 3 s, its 2.25 s overrun bound, the 1 s notice, then 2 s.
+        assert!(
+            grace(&animated) > Duration::from_secs(8),
+            "{:?}",
+            grace(&animated)
         );
-        for root in roots.into_iter().chain([runtime]) {
+        let still = session("g-anima-off");
+        pair_command(files(), true, &still, PairStart::Fresh(None)).unwrap();
+        assert!(grace(&still) > Duration::from_millis(2500));
+        assert!(grace(&still) <= Duration::from_secs(3));
+        let later = session("g-later");
+        pair_command(files(), true, &later, PairStart::Later).unwrap();
+        assert!(grace(&later) <= Duration::from_secs(2));
+    }
+
+    /// A pending tab's pair carries a marker until its tab commits: recovery
+    /// stops a marked pair and reports it, so the launch-directory fallback
+    /// applies, adopts an unmarked (committed) one as before, and removes
+    /// stale markers (EON-C18).
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn recovery_stops_a_pending_pair_but_adopts_a_committed_one() {
+        for pending in [true, false] {
+            let root = temporary_directory();
+            let mut session = leased_orbit(&root, "exec sleep 30");
+            let endpoint = session.endpoint.clone();
+            let marker = sessions::pending_pair_marker(&endpoint);
+            sessions::mark_pending_pair(&endpoint).unwrap();
+            // A commit settles the marker through the supervisor.
+            let inputs = crate::fixtures::inputs();
+            let log = DiagnosticLog::open_in(Ok(root.join("logs")), "g1-test", "workspace");
+            let mut owned = vec![session];
+            apply_session_operation(
+                &inputs,
+                &root,
+                &log,
+                "component-1",
+                &mut owned,
+                &mut Vec::new(),
+                crate::workspace::SessionOperation::SettlePair("session-1".into()),
+                PairStart::Later,
+                None,
+            )
+            .unwrap();
+            assert!(!marker.exists());
+            session = owned.pop().unwrap();
+            if pending {
+                sessions::mark_pending_pair(&endpoint).unwrap();
+            }
+            let stale = sessions::pending_pair_marker(&root.join("session-9.sock"));
+            sessions::mark_pending_pair(&root.join("session-9.sock")).unwrap();
+            drop(session);
+            let deadline = std::time::Instant::now() + std::time::Duration::from_secs(5);
+            let (mut recovered, pair) = loop {
+                match sessions::recover_sessions(
+                    &root,
+                    LaunchMode::Workspace,
+                    "component-1",
+                    None,
+                    deadline,
+                ) {
+                    Ok(result) => break result,
+                    Err(error)
+                        if (error.ends_with("is already managed")
+                            || error.ends_with(
+                                "cannot validate terminal management peer credentials",
+                            ))
+                            && std::time::Instant::now() < deadline =>
+                    {
+                        std::thread::sleep(std::time::Duration::from_millis(10));
+                    }
+                    Err(error) => panic!("{error}"),
+                }
+            };
+            assert_eq!(pair, pending);
+            assert!(!marker.exists());
+            assert!(!stale.exists());
+            if pending {
+                assert!(recovered.is_empty());
+                assert!(!endpoint.exists());
+            } else {
+                assert_eq!(recovered.len(), 1);
+                assert_eq!(recovered[0].id, "session-1");
+                assert_eq!(
+                    stop_owned_session(&mut recovered, "session-1", &log),
+                    Ok(None)
+                );
+            }
             fs::remove_dir_all(root).unwrap();
         }
     }
 
     #[test]
     fn startup_snapshot_transfer_uses_the_admission_deadline() {
-        use eon_workspace_protocol::v30::{
+        use eon_workspace_protocol::v31::{
             Column, Pane, PopupGeometry, Response, Snapshot, Tab, encode_response,
         };
         use std::time::{Duration, Instant};
@@ -3648,7 +3798,7 @@ mod tests {
         let snapshot = Snapshot {
             workspace: "w1".into(),
             active_workspace: "w1".into(),
-            workspaces: vec![eon_workspace_protocol::v30::WorkspaceInfo {
+            workspaces: vec![eon_workspace_protocol::v31::WorkspaceInfo {
                 id: "w1".into(),
                 name: None,
                 tab_count: 64,
@@ -3690,7 +3840,7 @@ mod tests {
             claude_quota_failure: None,
             running: None,
             busy: None,
-            sidebar: eon_workspace_protocol::v30::Sidebar::Open,
+            sidebar: eon_workspace_protocol::v31::Sidebar::Open,
             attention_queue: Vec::new(),
         };
         let expected = encode_response(&Response::Snapshot(snapshot.clone())).unwrap();

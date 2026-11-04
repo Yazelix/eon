@@ -1,7 +1,7 @@
 use super::{
     control::{
         ControlResponse, EndpointFailure, EndpointFailureKind, Error, failure, report_failure,
-        send_action, send_action_from, send_action_from_until, validate_action, write_stdout,
+        send_action_from, send_action_from_until, validate_action, write_stdout,
     },
     generation::{
         Ask, WorkspaceTarget, attach_generation, confirm, current_generation, generations_command,
@@ -20,21 +20,20 @@ use super::{
         list_human, list_json, resolve_selector, terminal_sent_json, terminal_text_json,
     },
 };
-use eon_workspace_protocol::v30::{
+use eon_workspace_protocol::v31::{
     Action, AttentionState, Direction, Failure, MAX_PASTE_BYTES, PopupTarget, Response, Side,
     Snapshot, TerminalInput, VERSION, WorkspaceAction, WorkspaceInfo, valid_caller, validate_paste,
 };
 use std::{
     env,
     ffi::{OsStr, OsString},
-    fs,
     io::{IsTerminal, Read, Write},
     os::unix::{
         ffi::{OsStrExt, OsStringExt},
-        process::{CommandExt, ExitStatusExt},
+        process::CommandExt,
     },
     path::{Path, PathBuf},
-    process::{Command, Output, Stdio},
+    process::{Command, Stdio},
     thread,
     time::{Duration, Instant},
 };
@@ -67,26 +66,7 @@ impl Inputs {
 pub fn run(inputs: Inputs) -> (&'static str, Result<i32, Error>) {
     let mut arguments = env::args_os();
     let invocation = arguments.next().unwrap_or_default();
-    let mut arguments: Vec<OsString> = arguments.collect();
-    if arguments.first().is_some_and(|argument| {
-        argument == OsStr::new("__directory-picker") || argument == OsStr::new("__startup-picker")
-    }) {
-        let startup = arguments.remove(0) == OsStr::new("__startup-picker");
-        return (
-            "eon-directory-picker",
-            directory_picker(&inputs, arguments, startup).map_err(Error::from),
-        );
-    }
-    if arguments
-        .first()
-        .is_some_and(|argument| argument == OsStr::new("__startup-anima"))
-    {
-        arguments.remove(0);
-        return (
-            "eon-directory-picker",
-            startup_anima(&inputs, arguments).map_err(Error::from),
-        );
-    }
+    let arguments: Vec<OsString> = arguments.collect();
     match Path::new(&invocation).file_name().and_then(OsStr::to_str) {
         Some("eonbase") => ("eonbase", execute_eonbase(&inputs, arguments)),
         Some("eon-commands") => ("eon-commands", Ok(command_runner(&inputs))),
@@ -416,27 +396,6 @@ fn parse_name_output(output: &[u8]) -> Result<&str, String> {
     std::str::from_utf8(text).map_err(|_| "name is not UTF-8".into())
 }
 
-fn startup_anima(inputs: &Inputs, arguments: Vec<OsString>) -> Result<i32, String> {
-    let [style, seconds, socket, tab, instance] = arguments.as_slice() else {
-        return Err(
-            "usage: eon-directory-picker __startup-anima STYLE SECONDS EON_SOCKET TAB POPUP".into(),
-        );
-    };
-    let duration: u64 = seconds
-        .to_str()
-        .and_then(|value| value.parse().ok())
-        .filter(|value| (1..=30).contains(value))
-        .ok_or("invalid internal Anima duration")?;
-    if let Err(error) = play_startup_anima(inputs, style, duration) {
-        eprintln!("eon: startup Anima: {error}; continuing to the directory picker");
-    }
-    directory_picker(
-        inputs,
-        vec![socket.clone(), tab.clone(), instance.clone()],
-        true,
-    )
-}
-
 fn play_startup_anima(inputs: &Inputs, style: &OsStr, seconds: u64) -> Result<(), String> {
     let mut terminal = std::mem::MaybeUninit::<libc::termios>::uninit();
     let terminal = (unsafe { libc::tcgetattr(libc::STDIN_FILENO, terminal.as_mut_ptr()) } == 0)
@@ -488,8 +447,8 @@ fn play_startup_anima(inputs: &Inputs, style: &OsStr, seconds: u64) -> Result<()
     result
 }
 
-/// The packaged fzf with the look the Project picker and Commands share, ignoring the
-/// user's own fzf options.
+/// The packaged fzf with the look Commands and Workspaces share, ignoring the user's
+/// own fzf options.
 fn packaged_fzf(prompt: &str, footer: &str) -> Command {
     let mut fzf = Command::new("fzf");
     fzf.args([
@@ -531,191 +490,6 @@ fn startup_notice(socket: &Path) -> Option<String> {
     }
 }
 
-fn directory_picker(
-    inputs: &Inputs,
-    arguments: Vec<OsString>,
-    startup: bool,
-) -> Result<i32, String> {
-    let [socket, tab, instance] = arguments.as_slice() else {
-        return Err("usage: eon-directory-picker EON_SOCKET TAB POPUP".into());
-    };
-    let tab = tab
-        .to_str()
-        .ok_or_else(|| "directory picker tab identity must be UTF-8".to_string())?;
-    let instance = instance
-        .to_str()
-        .ok_or_else(|| "directory picker popup identity must be UTF-8".to_string())?;
-    let chooser_file = Path::new(socket)
-        .parent()
-        .ok_or("directory picker socket has no runtime directory")?
-        .join(format!(
-            ".directory-picker-selection-{}",
-            std::process::id()
-        ));
-    let mut browse_from = PathBuf::from(".");
-    let header = if startup {
-        startup_notice(Path::new(socket))
-    } else {
-        None
-    };
-    let directory = loop {
-        let mut history = Command::new("zoxide")
-            .args(["query", "--list"])
-            .stdout(Stdio::piped())
-            .spawn()
-            .map_err(|error| format!("cannot launch packaged directory history: {error}"))?;
-        let mut picker = packaged_fzf(
-            "Quick search > ",
-            "Enter Use directory · Tab Browse folders · Esc/Ctrl+C Cancel",
-        );
-        if let Some(header) = &header {
-            picker.arg(format!("--header={header}"));
-        }
-        let output = picker
-            .args([
-                "--exact",
-                "--no-sort",
-                "--keep-right",
-                "--tabstop=1",
-                "--expect=tab",
-                "--print0",
-            ])
-            .stdin(
-                history
-                    .stdout
-                    .take()
-                    .expect("directory history stdout is piped"),
-            )
-            .output();
-        // No quick-search exit needs more input, including early Enter and Tab.
-        let history_stopped = history.kill().is_ok();
-        let history_status = history
-            .wait()
-            .map_err(|error| format!("cannot reap directory history: {error}"))?;
-        let output =
-            output.map_err(|error| format!("cannot launch packaged directory picker: {error}"))?;
-        if output.status.code() == Some(130) {
-            return Ok(0);
-        }
-        if !(history_status.success()
-            || history_stopped && history_status.signal() == Some(libc::SIGKILL))
-        {
-            return Err(format!(
-                "packaged directory history exited with status {history_status}"
-            ));
-        }
-        let fields: Vec<_> = output.stdout.split(|byte| *byte == 0).collect();
-        match (output.status.code(), fields.as_slice()) {
-            // fzf reports status 1 for an expected key when the result list is empty.
-            (Some(0 | 1), [b"tab", b""] | [b"tab", _, b""]) => {
-                let output = browse_directory(inputs, &browse_from, &chooser_file)?;
-                if output.status.code() == Some(130) {
-                    return Ok(0);
-                }
-                if output.status.success() {
-                    break output.stdout;
-                }
-                browse_from = PathBuf::from(OsStr::from_bytes(&output.stdout));
-            }
-            (Some(0), [b"", directory, b""]) if !directory.is_empty() => break directory.to_vec(),
-            (Some(0), _) => return Err("directory picker returned an invalid selection".into()),
-            _ => {
-                return Err(format!(
-                    "packaged directory picker exited with status {}",
-                    output.status
-                ));
-            }
-        }
-    };
-    match send_action(
-        Path::new(socket),
-        Action::CommitDirectory {
-            target: PopupTarget {
-                tab: tab.into(),
-                instance: instance.into(),
-            },
-            directory,
-        },
-    ) {
-        Ok(ControlResponse::Workspace(Response::Snapshot(_))) => Ok(0),
-        Ok(ControlResponse::Workspace(Response::Failure(failure))) => Err(format!(
-            "cannot retarget tab: {}: {}",
-            failure.code, failure.detail
-        )),
-        Ok(
-            ControlResponse::Workspace(Response::Ended(_) | Response::Text(_) | Response::Sent(_))
-            | ControlResponse::Lifecycle(_),
-        ) => Err("Eon returned the wrong result for the directory picker".into()),
-        Err(error) => Err(format!("cannot retarget tab: {}", error.detail)),
-    }
-}
-
-fn browse_directory(
-    inputs: &Inputs,
-    directory: &Path,
-    chooser_file: &Path,
-) -> Result<Output, String> {
-    let config = env::var_os("EON_DIRECTORY_PICKER_CONFIG")
-        .ok_or("the installed Eon package has no folder browser configuration")?;
-    match fs::remove_file(chooser_file) {
-        Err(error) if error.kind() != std::io::ErrorKind::NotFound => {
-            return Err(format!(
-                "cannot reset folder browser selection {}: {error}",
-                chooser_file.display()
-            ));
-        }
-        _ => {}
-    }
-    let mut output = Command::new(&inputs.managed.yazi)
-        // Yazi draws through its terminal handle; stdout carries its raw CWD.
-        .args(["--cwd-file", "/dev/stdout", "--chooser-file"])
-        .arg(chooser_file)
-        .arg("--")
-        .arg(directory)
-        // Yazi prefers PWD even when it disagrees with the terminal's actual CWD.
-        .env_remove("PWD")
-        .env("YAZI_CONFIG_HOME", config)
-        .env(
-            "YAZI_ZOXIDE_OPTS",
-            "--no-preview --border=none --footer='Enter Jump · Esc Back to folders' --footer-border=none --color=footer:-1",
-        )
-        .env_remove("FZF_DEFAULT_OPTS")
-        .env_remove("FZF_DEFAULT_OPTS_FILE")
-        .stdin(Stdio::inherit())
-        .stderr(Stdio::inherit())
-        .output()
-        .map_err(|error| format!("cannot launch packaged folder browser: {error}"))?;
-    if output.status.code() == Some(130) {
-        return Ok(output);
-    }
-    // The packaged Yazi Tab binding returns its CWD without accepting it.
-    if !matches!(output.status.code(), Some(0 | 10)) {
-        return Err(format!(
-            "packaged folder browser exited with status {}",
-            output.status
-        ));
-    }
-    if output.status.success() {
-        // In chooser mode, native Yazi `open` writes the hovered path separately.
-        output.stdout = fs::read(chooser_file).map_err(|error| {
-            format!(
-                "cannot read folder browser selection {}: {error}",
-                chooser_file.display()
-            )
-        })?;
-        fs::remove_file(chooser_file).map_err(|error| {
-            format!(
-                "cannot clear folder browser selection {}: {error}",
-                chooser_file.display()
-            )
-        })?;
-    }
-    if output.stdout.is_empty() {
-        return Err("folder browser returned no directory".into());
-    }
-    Ok(output)
-}
-
 fn launch_managed(
     inputs: &Inputs,
     tool: managed_environment::Tool,
@@ -723,8 +497,37 @@ fn launch_managed(
 ) -> Result<i32, String> {
     let config = configuration_directory()?;
     prepare_configuration(&config)?;
+    let mut arguments = arguments;
+    let mut notice = None;
+    if tool == managed_environment::Tool::Files {
+        // The startup pair plays Anima in its terminal before Yazi starts, and
+        // its quick search names the other running windows (EON-C18).
+        while let Some(flag) = arguments.first().and_then(|flag| flag.to_str()) {
+            match (flag, arguments.as_slice()) {
+                ("--eon-anima", [_, style, seconds, ..]) => {
+                    let seconds = seconds
+                        .to_str()
+                        .and_then(|value| value.parse().ok())
+                        .filter(|value| (1..=30).contains(value))
+                        .ok_or("invalid internal Anima duration")?;
+                    if let Err(error) = play_startup_anima(inputs, style, seconds) {
+                        eprintln!("eon: startup Anima: {error}; continuing to quick search");
+                    }
+                    arguments.drain(..3);
+                }
+                ("--eon-notice", [_, socket, ..]) => {
+                    notice = startup_notice(Path::new(socket));
+                    arguments.drain(..2);
+                }
+                _ => break,
+            }
+        }
+    }
     let mut command =
         managed_environment::command(tool, &inputs.managed, &config, &arguments, &inputs.defaults)?;
+    if let Some(notice) = notice {
+        command.env(managed_environment::FILES_NOTICE_VARIABLE, notice);
+    }
     let program = command.get_program().to_string_lossy().into_owned();
     let error = command.exec();
     Err(format!("cannot launch {program}: {error}"))
@@ -944,7 +747,7 @@ const HELP_SECTIONS: &[(&str, &[(&str, &str)])] = &[
             ("tab create [--json]", "Choose a directory for a new tab"),
             (
                 "tab create --directory DIRECTORY",
-                "Start a tab without the picker",
+                "Start a tab without quick search",
             ),
             (
                 "  [--json] [--no-focus] [-- COMMAND...]",
@@ -1313,7 +1116,7 @@ fn control(
     // by Runtime's rule; a WS that resolves to none or several fails unasked.
     // After a yes it checks again that the wN is live before closing it, since
     // Runtime would read a departed wN as another workspace's name; the check
-    // and the close are not atomic. v30 lists only
+    // and the close are not atomic. v31 lists only
     // the caller's or shown workspace's terminals, so the prompt names none.
     if let Action::Workspace(WorkspaceAction::CloseWorkspace { workspace }) = &mut action
         && !json
@@ -1992,7 +1795,7 @@ fn parse_pane_rename_arguments(arguments: &[OsString]) -> Result<(Action, bool),
         _ => return Err(Error::usage(EON_USAGE)),
     };
     if let Some(name) = name {
-        eon_workspace_protocol::v30::validate_pane_name(name)
+        eon_workspace_protocol::v31::validate_pane_name(name)
             .map_err(|error| Error::usage(error.to_string()))?;
     }
     Ok((
@@ -2181,7 +1984,7 @@ fn parse_command_pane_arguments(arguments: &[OsString]) -> Result<Option<(Action
     )))
 }
 
-/// Directory-based tab creation leaves bare `tab create` on the picker path.
+/// Directory-based tab creation leaves bare `tab create` on the pending pair.
 fn parse_tab_create_arguments(arguments: &[OsString]) -> Result<Option<(Action, bool)>, Error> {
     let [command, operation, rest @ ..] = arguments else {
         return Ok(None);

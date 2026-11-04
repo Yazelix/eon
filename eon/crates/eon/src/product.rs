@@ -2,7 +2,7 @@ use eon_runtime::{
     BarLoad, Defaults, Inputs, ManagedPrograms, PaddingColor, PopupCatalog, PopupCommand,
     PopupDefinition, ShellConfig, StartupAnimation, TerminalAccess, TerminalConfig,
 };
-use eon_workspace_protocol::v30::{ALT, PopupGeometry, PopupKey, SHIFT, Shortcut};
+use eon_workspace_protocol::v31::{ALT, PopupGeometry, PopupKey, SHIFT, Shortcut};
 
 pub(crate) fn inputs() -> Inputs {
     const MANIFEST: &str = include_str!("../../../../components/eon-v5.json");
@@ -74,12 +74,14 @@ pub(crate) fn inputs() -> Inputs {
                     vertical_margin: 4.0,
                 },
                 entries: [
+                    // Project has no command of its own: it shows the tab's Files pair
+                    // on quick search (EON-C18).
                     (
                         "project",
-                        "Project",
+                        "Quick search",
                         "KeyZ",
                         ALT,
-                        PopupCommand::Project,
+                        PopupCommand::Argv(Vec::new()),
                         false,
                     ),
                     (

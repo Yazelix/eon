@@ -2,6 +2,11 @@
 
 ## Unreleased
 
+- Consume EONW v31, in which a pending tab holds its Files popup instead of a
+  Project popup (`eon-quick-search-parity-23y9.2`). Venus renders it as any
+  selected popup and presents nothing new; its Project shortcut now names the
+  tab's Files popup as the expected instance.
+
 - Consume EONW v30, which adds the EON-C39 event subscription messages
   (`eon-ciwn.6`). Venus keeps polling `Inspect` and presents nothing new.
 

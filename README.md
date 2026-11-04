@@ -26,9 +26,9 @@ left it.
   starts the first installed of Codex, Grok, OpenCode, Pi or Claude and keeps
   its session while hidden. When you're signed in, Codex and Claude quota appear
   in the top bar.
-- **A tab per project.** Each tab starts in a directory you pick with Zoxide or
-  browse to in Yazi. New panes open there, and the tab's Git popup runs LazyGit
-  in it.
+- **A tab per project.** Each tab starts in a directory you pick with Zoxide
+  quick search or in Yazi, and that Yazi stays as the tab's Files popup. New
+  panes open there, and the tab's Git popup runs LazyGit in it.
 - **One pinned tool set.** Nushell, Helix, Yazi, LazyGit and Anima are pinned
   together, so every install gets the same tools.
 - **One terminal emulator, natively drawn.** Unlike tmux inside another
@@ -45,7 +45,8 @@ nix profile add --refresh github:Yazelix/eon/v0.1.12
 ```
 
 Run `eon`. After a short animation (most keys skip it), pick a directory: press
-Enter for a Zoxide match or Tab to browse with Yazi. A terminal opens there.
+Enter for a Zoxide match, or Tab to browse with Yazi and Alt+Enter to use a
+folder. A terminal opens there.
 
 | Shortcut | Action |
 |---|---|
