@@ -97,6 +97,8 @@ struct Tab {
     selected_column: Option<usize>,
     popups: Vec<Popup>,
     selected_popup: Option<String>,
+    /// The popup a shown transient popup covers, shown again when it ends.
+    covered_popup: Option<String>,
 }
 
 impl Tab {
@@ -863,6 +865,7 @@ impl Workspace {
                 selected_column: None,
                 popups: Vec::new(),
                 selected_popup: None,
+                covered_popup: None,
             }],
             active: 0,
         };
@@ -912,6 +915,7 @@ impl Workspace {
                 selected_column: Some(0),
                 popups: Vec::new(),
                 selected_popup: None,
+                covered_popup: None,
             }],
             active: 0,
         }
@@ -1319,6 +1323,7 @@ impl Workspace {
             selected_column: None,
             popups: Vec::new(),
             selected_popup: None,
+            covered_popup: None,
         });
         let index = self.tabs.len() - 1;
         if let Err(error) =
@@ -1376,6 +1381,7 @@ impl Workspace {
             selected_column: None,
             popups: Vec::new(),
             selected_popup: None,
+            covered_popup: None,
         });
         let index = self.tabs.len() - 1;
         if let Err(detail) =
@@ -1466,6 +1472,9 @@ impl Workspace {
             }
             if let Some(index) = self.displaced_transient(tab_index, Some(&popup.id))? {
                 self.stop_popup(tab_index, index, operate)?;
+            }
+            if !selected {
+                self.tabs[tab_index].covered_popup = None;
             }
             self.tabs[tab_index].selected_popup = Some(popup.id.clone());
             return Ok(());
@@ -1592,8 +1601,13 @@ impl Workspace {
     }
 
     fn commit_popup(&mut self, ids: &mut IdAllocator, tab_index: usize, popup: Popup) {
-        self.tabs[tab_index].selected_popup = Some(popup.id.clone());
-        self.tabs[tab_index].popups.push(popup);
+        let transient = self
+            .definition(&popup.entry)
+            .is_ok_and(|definition| !definition.keep_alive);
+        let tab = &mut self.tabs[tab_index];
+        let covered = tab.selected_popup.replace(popup.id.clone());
+        tab.covered_popup = covered.filter(|_| transient);
+        tab.popups.push(popup);
         ids.next_popup += 1;
         ids.next_session += 1;
     }
@@ -1622,6 +1636,9 @@ impl Workspace {
         if self.definition(&popup.entry)?.keep_alive {
             if self.tabs[tab_index].selected_popup.as_deref() == Some(&popup.id) {
                 self.tabs[tab_index].selected_popup = None;
+            }
+            if self.tabs[tab_index].covered_popup.as_deref() == Some(&target.instance) {
+                self.tabs[tab_index].covered_popup = None;
             }
             if pending {
                 self.finish_pending_tab(ids, allowance, tab_index, operate)?;
@@ -1973,8 +1990,11 @@ impl Workspace {
         let Some(instance) = self.tabs[tab_index].selected_popup.clone() else {
             return Ok(tab_index);
         };
+        // The action shows a pane, not the popup a transient one covered; a
+        // failed dismissal changes nothing, so the tab keeps it.
+        let covered = self.tabs[tab_index].covered_popup.take();
         let tab = self.tabs[tab_index].id.clone();
-        self.dismiss_popup(
+        if let Err(error) = self.dismiss_popup(
             ids,
             allowance,
             &PopupTarget {
@@ -1982,7 +2002,10 @@ impl Workspace {
                 instance,
             },
             operate,
-        )?;
+        ) {
+            self.tabs[tab_index].covered_popup = covered;
+            return Err(error);
+        }
         Ok(self
             .tabs
             .iter()
@@ -2043,6 +2066,9 @@ impl Workspace {
             return Ok(());
         }
         let tab = &mut self.tabs[tab_index];
+        if tab.selected_popup.as_deref() != Some(target) {
+            tab.covered_popup = None;
+        }
         match pane {
             Some((column, pane)) => {
                 tab.selected_popup = None;
@@ -2258,6 +2284,7 @@ impl Workspace {
         tab.directory = directory;
         tab.pending = false;
         tab.selected_popup = None;
+        tab.covered_popup = None;
         self.settle_pair(tab_index, operate);
         Ok(())
     }
@@ -2292,6 +2319,7 @@ impl Workspace {
         let shown = tab.selected_popup.as_deref() == Some(&popup.id);
         if shown {
             tab.selected_popup = None;
+            tab.covered_popup = None;
         }
         let pane = Pane {
             pinned_name: None,
@@ -2327,9 +2355,14 @@ impl Workspace {
     }
 
     fn remove_popup(&mut self, tab_index: usize, popup_index: usize) {
-        let removed = self.tabs[tab_index].popups.remove(popup_index);
-        if self.tabs[tab_index].selected_popup.as_deref() == Some(&removed.id) {
-            self.tabs[tab_index].selected_popup = None;
+        let tab = &mut self.tabs[tab_index];
+        let removed = tab.popups.remove(popup_index);
+        if tab.selected_popup.as_deref() == Some(&removed.id) {
+            // A transient popup that ends shows the popup it covered again.
+            tab.selected_popup = tab
+                .covered_popup
+                .take()
+                .filter(|covered| tab.popups.iter().any(|popup| &popup.id == covered));
         }
     }
 
@@ -6574,6 +6607,7 @@ mod tests {
             selected_column: Some(0),
             popups: Vec::new(),
             selected_popup: None,
+            covered_popup: None,
         });
         workspace
             .dispatch(
@@ -6606,6 +6640,108 @@ mod tests {
             .unwrap_err();
         assert_eq!(failure.code, "popup-start");
         assert_eq!(workspace.snapshot().tabs[0].id, "t2");
+    }
+
+    /// A transient popup that ends, after a workspace switch or in place,
+    /// shows the keep-alive popup it covered again; over a pane it returns to
+    /// the pane.
+    #[test]
+    fn an_ended_transient_popup_shows_the_popup_it_covered_again() {
+        let mut set = two_workspace_set(|_| Ok(()));
+        let request = |set: &mut WorkspaceSet, id: &str, action: Action| {
+            set.dispatch(id, None, action, prepared, |_| Ok(()))
+                .unwrap();
+            set.snapshot().tabs.remove(0)
+        };
+        let switch = |workspace: &str| {
+            Action::Workspace(WorkspaceAction::SwitchWorkspace {
+                workspace: workspace.into(),
+            })
+        };
+        // Opens the picker over the shown terminal and returns its terminal.
+        let picker = |set: &mut WorkspaceSet, id: &str| {
+            let tab = request(set, id, invoke("t1", "commands"));
+            let picker = tab.popups.last().unwrap();
+            assert_eq!(picker.entry, "commands");
+            assert_eq!(tab.selected_popup.as_ref(), Some(&picker.id));
+            picker.session.clone()
+        };
+        let ended = |set: &mut WorkspaceSet, session: &str| {
+            set.session_ended(session, SessionEnd::Exited, |_| Ok(()))
+                .unwrap();
+            set.snapshot().tabs.remove(0)
+        };
+        let pane = set.snapshot().tabs[0].selected_pane.clone();
+        let agent = request(&mut set, "agent", invoke("t1", "agent")).popups[0]
+            .id
+            .clone();
+
+        // The picker switches away and exits; switching back shows Agent.
+        let session = picker(&mut set, "switch");
+        request(&mut set, "away", switch("w2"));
+        ended(&mut set, &session);
+        let tab = request(&mut set, "back", switch("w1"));
+        assert_eq!(tab.selected_popup.as_ref(), Some(&agent));
+
+        // Esc exits the picker in place.
+        let session = picker(&mut set, "esc");
+        let tab = ended(&mut set, &session);
+        assert_eq!(tab.selected_popup.as_ref(), Some(&agent));
+
+        // A pane action whose picker stop fails changes nothing, so the
+        // picker's later exit still shows Agent.
+        let session = picker(&mut set, "focus-fails");
+        let focus = Action::Workspace(WorkspaceAction::FocusId(pane.clone().unwrap()));
+        let failed = set
+            .dispatch(
+                "focus",
+                None,
+                focus,
+                prepared,
+                |operation| match operation {
+                    SessionOperation::Stop(_) => Err("stop failed".into()),
+                    SessionOperation::Start { .. } | SessionOperation::SettlePair(_) => Ok(()),
+                },
+            )
+            .unwrap_err();
+        assert_eq!(failed.code, "popup-stop");
+        let tab = ended(&mut set, &session);
+        assert_eq!(tab.selected_popup.as_ref(), Some(&agent));
+
+        // `eon popup hide` on the picker shows Agent again (EON-C10).
+        picker(&mut set, "hide-picker");
+        let shown = set.snapshot().tabs[0].selected_popup.clone().unwrap();
+        let dismiss = Action::DismissPopup(PopupTarget {
+            tab: "t1".into(),
+            instance: shown,
+        });
+        let tab = request(&mut set, "dismiss", dismiss);
+        assert_eq!(tab.selected_popup.as_ref(), Some(&agent));
+
+        // Over a pane, the picker returns to the pane.
+        let hide = Action::InvokePopup {
+            tab: "t1".into(),
+            entry: "agent".into(),
+            expected_instance: Some(agent.clone()),
+            intent: InvokeIntent::Toggle,
+        };
+        let tab = request(&mut set, "hide", hide.clone());
+        assert_eq!(tab.selected_popup, None);
+        let session = picker(&mut set, "over-pane");
+        let tab = ended(&mut set, &session);
+        assert_eq!(tab.selected_popup, None);
+        assert_eq!(tab.selected_pane, pane);
+        assert_eq!(tab.popups.len(), 1);
+
+        // A pane action over the picker shows the pane, not Agent.
+        let tab = request(&mut set, "show", hide);
+        assert_eq!(tab.selected_popup.as_ref(), Some(&agent));
+        picker(&mut set, "focus");
+        let focus = Action::Workspace(WorkspaceAction::FocusId(pane.clone().unwrap()));
+        let tab = request(&mut set, "focus-pane", focus);
+        assert_eq!(tab.selected_popup, None);
+        assert_eq!(tab.selected_pane, pane);
+        assert_eq!(tab.popups.len(), 1);
     }
 
     /// A pick on a pending tab (EON-C18) commits it atomically: a refused

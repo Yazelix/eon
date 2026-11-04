@@ -1057,7 +1057,9 @@ socket names, JSON fields and protocol identifiers retain their spellings.
   `eon popup hide`. Amended on 2026-11-03 (approved by Lucca, relayed by
   eon-overseer) by `eon-quick-search-parity-23y9.2`: Project and Files show
   the tab's pair (EON-C18), and `eon tab directory` on a pending tab is a
-  pick.
+  pick. Amended on 2026-11-04 (approved by Lucca, relayed by eon-overseer) by
+  `eon-knowp`: a stopped transient popup's tab shows again the popup it
+  covered.
 - **Consumer:** One local CLI or approved composition controlling a live Eon
   supervisor.
 - **Trigger:** The client submits one versioned workspace or supervisor-lifecycle
@@ -1182,8 +1184,10 @@ socket names, JSON fields and protocol identifiers retain their spellings.
     - dismissing a pending tab's pair starts its first pane (EON-C18).
 
     The CLI reads the owning tab from workspace inspection, then sends EONW
-    `DismissPopup`. It changes no other tab, pane, popup or desktop focus. A
-    POPUP that the addressed workspace does not list fails with
+    `DismissPopup`. It changes no other tab, pane, popup or desktop focus,
+    except that a stopped transient popup's tab shows again the popup it
+    covered, as the window's own dismissal does (EON-C33). A POPUP that the
+    addressed workspace does not list fails with
     `unknown-popup`; one that leaves between the read and the dismissal fails
     with `stale-popup`. Both exit 3 and change nothing.
   - `eon tab close TAB` and `eon pane close PANE` may name the final tab or
@@ -1569,6 +1573,12 @@ socket names, JSON fields and protocol identifiers retain their spellings.
       ran `eon pane create --no-focus --json`.
     - p2 and p3 joined column 1, and the active tab t1 and the selected pane p1
       stayed.
+  - **Covered popup (`eon-knowp`):** an ended transient popup shows again the
+    popup it covered, after a workspace switch and in place, keeps it when a
+    pane action's stop of the transient fails, shows it after `eon popup hide`
+    of the transient, and returns to the pane when it covered none or a pane
+    action dismissed the transient
+    (`an_ended_transient_popup_shows_the_popup_it_covered_again`).
 
 ## EON-C11 — Runtime generations and presentation
 

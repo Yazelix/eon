@@ -310,7 +310,9 @@ directory changes, a running Agent moves out of its popup into a pane of the
 tab, with its conversation and old directory intact, and the next Alt+Shift+L
 starts a fresh agent in the new directory. Git restarts in the new directory
 the next time you open it. Anima is transient:
-closing its popup stops playback and returns to the tab.
+closing its popup stops playback. Closing a transient popup such as Commands,
+Workspaces or Anima, including after a workspace switch, returns to the popup
+it covered, such as Agent, or to the pane when it covered none.
 
 Each tab has one Files popup, Yazi at the tab's directory, with two screens:
 quick search over recent folders, and Files itself. Alt+Z shows quick search

@@ -5,6 +5,10 @@ installation, and proven contract changes.
 
 ## Unreleased
 
+- Closing Commands, Workspaces or Anima, by key or with `eon popup hide`,
+  returns to the popup it covered (`eon-knowp`, EON-C33, EON-C10). Switching
+  workspaces from the picker over the Agent popup and back, or Esc in the
+  picker, showed the tab's pane instead of Agent.
 - Closing a tab, pane or workspace stops its terminals together, under one
   shared five-second bound, instead of one at a time (`eon-8wh7h`, EON-C8).
   The window and `eon` commands waited while the stops ran; a tab of
