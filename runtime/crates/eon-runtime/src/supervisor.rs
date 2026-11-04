@@ -410,6 +410,7 @@ fn venus_command(
     decorations: bool,
     warning_close_last_tab: bool,
     animate_working_badge: bool,
+    number_keys: bool,
 ) -> Command {
     let mut command = Command::new(&inputs.venus);
     managed_environment::remove_agent_session(&mut command)
@@ -514,6 +515,8 @@ fn venus_command(
             .arg(warning_close_last_tab.to_string())
             .arg("--animate-working-badge")
             .arg(animate_working_badge.to_string())
+            .arg("--number-keys")
+            .arg(number_keys.to_string())
             .arg("--workspace");
     }
     command.arg(socket);
@@ -845,6 +848,7 @@ fn supervise(
         managed_environment::warning_close_last_tab(config, &inputs.defaults, Some(log))?;
     let animate_working_badge =
         managed_environment::animate_working_badge(config, &inputs.defaults, Some(log))?;
+    let number_keys = managed_environment::number_keys(config, &inputs.defaults, Some(log))?;
     let agents = managed_environment::agents(config, &inputs.defaults, Some(log))?;
     // Each edit rereads `[editor]`; a malformed one fails the start as other settings do.
     if mode == LaunchMode::Workspace {
@@ -953,6 +957,7 @@ fn supervise(
             decorations,
             warning_close_last_tab,
             animate_working_badge,
+            number_keys,
         );
         Some(PresentationProcess::start(
             command,
@@ -1065,6 +1070,7 @@ fn supervise(
                 decorations,
                 warning_close_last_tab,
                 animate_working_badge,
+                number_keys,
             ),
             false,
             None,
@@ -2405,6 +2411,7 @@ fn dispatch_control_request(
                         &inputs.defaults,
                         Some(&state.log),
                     )?,
+                    managed_environment::number_keys(config, &inputs.defaults, Some(&state.log))?,
                 );
                 if let Some(quotas) = &mut state.quotas {
                     quotas.show(&bar.widgets);
@@ -4405,6 +4412,7 @@ mod tests {
                 true,
                 true,
                 true,
+                true,
             );
             let args = command.get_args().collect::<Vec<_>>();
             args.windows(2)
@@ -4661,6 +4669,7 @@ rows = 30
                 true,
                 true,
                 true,
+                true,
             );
             let args = command
                 .get_args()
@@ -4715,6 +4724,7 @@ rows = 30
                     true,
                     true,
                     true,
+                    true,
                 );
                 let args = command.get_args().collect::<Vec<_>>();
                 assert!(
@@ -4751,6 +4761,7 @@ rows = 30
                     true,
                     true,
                     true,
+                    true,
                 );
                 let args = command.get_args().collect::<Vec<_>>();
                 assert!(
@@ -4775,6 +4786,7 @@ rows = 30
                 &terminal,
                 &inputs.defaults.bar(),
                 "eon",
+                true,
                 true,
                 true,
                 true,
@@ -4814,6 +4826,7 @@ rows = 30
                     &terminal,
                     &inputs.defaults.bar(),
                     "eon",
+                    true,
                     true,
                     true,
                     true,
@@ -4880,6 +4893,7 @@ rows = 30
                         true,
                         true,
                         true,
+                        true,
                     );
                     let args = command.get_args().collect::<Vec<_>>();
                     assert_eq!(
@@ -4937,6 +4951,7 @@ rows = 30
                     true,
                     true,
                     true,
+                    true,
                 );
                 let args = command.get_args().collect::<Vec<_>>();
                 assert_eq!(
@@ -4974,6 +4989,7 @@ rows = 30
                 true,
                 true,
                 true,
+                true,
             );
             assert!(
                 command
@@ -5008,6 +5024,7 @@ rows = 30
                     &terminal,
                     &inputs.defaults.bar(),
                     "eon",
+                    true,
                     true,
                     true,
                     true,
@@ -5061,6 +5078,7 @@ rows = 30
             true,
             false,
             false,
+            false,
         );
         assert_eq!(
             workspace.get_args().map(OsString::from).collect::<Vec<_>>(),
@@ -5084,6 +5102,8 @@ rows = 30
                 "false",
                 "--animate-working-badge",
                 "false",
+                "--number-keys",
+                "false",
                 "--workspace",
                 "/runtime/eon.sock",
             ]
@@ -5098,6 +5118,7 @@ rows = 30
             &terminal_presentation(1.0, false),
             &inputs.defaults.bar(),
             "eonbase",
+            true,
             true,
             true,
             true,
@@ -5139,6 +5160,7 @@ rows = 30
             &inputs.defaults.bar(),
             "eonova",
             false,
+            true,
             true,
             true,
         );

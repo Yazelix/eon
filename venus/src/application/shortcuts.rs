@@ -33,6 +33,7 @@ pub(super) enum NativeShortcutAction {
     Detach,
     Quit,
     FocusTabPosition,
+    ShowWorkspacePosition,
     NextTab,
     PreviousTab,
     Focus(WorkspaceDirection),
@@ -55,6 +56,7 @@ pub(super) enum NativeShortcutAction {
 pub(super) enum NativeShortcutTrigger {
     Key(KeyCode, session::Modifiers),
     AltDigits,
+    AltShiftDigits,
     Copy,
     Paste,
     OpenLink,
@@ -71,6 +73,10 @@ impl NativeShortcutTrigger {
             Self::AltDigits => match platform {
                 NativePlatform::Linux => "Alt+1…9 / Alt+0".into(),
                 NativePlatform::Macos => "Option+1…9 / Option+0".into(),
+            },
+            Self::AltShiftDigits => match platform {
+                NativePlatform::Linux => "Alt+Shift+1…9 / Alt+Shift+0".into(),
+                NativePlatform::Macos => "Option+Shift+1…9 / Option+Shift+0".into(),
             },
             Self::Copy => physical_shortcut_label_for(
                 platform,
@@ -158,6 +164,12 @@ pub(super) static FIXED_SHORTCUTS: &[NativeShortcut] = &[
         label: "Focus tab by position",
         trigger: NativeShortcutTrigger::AltDigits,
         action: NativeShortcutAction::FocusTabPosition,
+    },
+    NativeShortcut {
+        group: "Navigate",
+        label: "Show workspace by position",
+        trigger: NativeShortcutTrigger::AltShiftDigits,
+        action: NativeShortcutAction::ShowWorkspacePosition,
     },
     NativeShortcut::key(
         "Navigate",
@@ -405,23 +417,9 @@ impl NativeShortcut {
                 key == PhysicalKey::Code(code) && modifiers == expected
             }
             NativeShortcutTrigger::AltDigits => {
-                modifiers == session::Modifiers::ALT
-                    && matches!(
-                        key,
-                        PhysicalKey::Code(
-                            KeyCode::Digit0
-                                | KeyCode::Digit1
-                                | KeyCode::Digit2
-                                | KeyCode::Digit3
-                                | KeyCode::Digit4
-                                | KeyCode::Digit5
-                                | KeyCode::Digit6
-                                | KeyCode::Digit7
-                                | KeyCode::Digit8
-                                | KeyCode::Digit9
-                        )
-                    )
+                modifiers == session::Modifiers::ALT && digit_key(key)
             }
+            NativeShortcutTrigger::AltShiftDigits => modifiers == ALT_SHIFT && digit_key(key),
             NativeShortcutTrigger::Copy => {
                 key == PhysicalKey::Code(KeyCode::KeyC)
                     && modifiers == copy_paste_modifiers(platform)
@@ -458,6 +456,26 @@ impl NativeShortcut {
         popup_entry(entries, code, modifiers)
     }
 
+    /// Each workspace position key a configured popup takes, as "<key> overridden by <popup>";
+    /// the binding keeps the other positions (VEN-C20).
+    fn taken_positions(self, platform: NativePlatform, entries: &[PopupEntry]) -> Vec<String> {
+        if !matches!(self.trigger, NativeShortcutTrigger::AltShiftDigits) {
+            return Vec::new();
+        }
+        DIGIT_KEYS
+            .iter()
+            .filter_map(|code| {
+                let entry = popup_entry(entries, *code, ALT_SHIFT)?;
+                let key = physical_shortcut_label_for(
+                    platform,
+                    wire_modifiers(ALT_SHIFT),
+                    &format!("{code:?}"),
+                );
+                Some(format!("{key} overridden by {}", entry.label))
+            })
+            .collect()
+    }
+
     fn matches_pointer(
         self,
         platform: NativePlatform,
@@ -492,7 +510,8 @@ pub(super) fn native_key_shortcut(
     native_key_shortcut_for(NATIVE_PLATFORM, key, modifiers, entries)
 }
 
-/// The fixed binding a key triggers, unless a configured popup takes that key.
+/// The fixed binding a key triggers, unless a configured popup takes that key. A popup takes any
+/// one of the workspace position keys and leaves the others bound (VEN-C8).
 pub(super) fn native_key_shortcut_for(
     platform: NativePlatform,
     key: PhysicalKey,
@@ -500,9 +519,38 @@ pub(super) fn native_key_shortcut_for(
     entries: &[PopupEntry],
 ) -> Option<&'static NativeShortcut> {
     FIXED_SHORTCUTS.iter().find(|shortcut| {
+        let position_taken = || match key {
+            PhysicalKey::Code(code) => popup_entry(entries, code, modifiers).is_some(),
+            PhysicalKey::Unidentified(_) => false,
+        };
         shortcut.matches_key(platform, key, modifiers)
             && shortcut.overriding_popup(platform, entries).is_none()
+            && !(matches!(shortcut.trigger, NativeShortcutTrigger::AltShiftDigits)
+                && position_taken())
     })
+}
+
+/// The digit keys in the positions they name: 1..9, then 0 for the tenth.
+const DIGIT_KEYS: [KeyCode; 10] = [
+    KeyCode::Digit1,
+    KeyCode::Digit2,
+    KeyCode::Digit3,
+    KeyCode::Digit4,
+    KeyCode::Digit5,
+    KeyCode::Digit6,
+    KeyCode::Digit7,
+    KeyCode::Digit8,
+    KeyCode::Digit9,
+    KeyCode::Digit0,
+];
+
+/// The zero-based position a digit key names.
+fn digit_position(code: KeyCode) -> Option<usize> {
+    DIGIT_KEYS.iter().position(|digit| *digit == code)
+}
+
+fn digit_key(key: PhysicalKey) -> bool {
+    matches!(key, PhysicalKey::Code(code) if digit_position(code).is_some())
 }
 
 /// The detach chord's label, unless a configured popup takes its key.
@@ -539,15 +587,28 @@ pub(super) fn shortcut_groups(
     entries: &[PopupEntry],
     sidebar: Sidebar,
     running: bool,
+    number_keys: bool,
 ) -> Vec<ShortcutGroup> {
-    shortcut_groups_for(NATIVE_PLATFORM, entries, sidebar, running)
+    shortcut_groups_with(NATIVE_PLATFORM, entries, sidebar, running, number_keys)
 }
 
+#[cfg(test)]
 pub(super) fn shortcut_groups_for(
     platform: NativePlatform,
     entries: &[PopupEntry],
     sidebar: Sidebar,
     running: bool,
+) -> Vec<ShortcutGroup> {
+    shortcut_groups_with(platform, entries, sidebar, running, true)
+}
+
+/// The viewer's groups; `number_keys = false` leaves out the workspace position keys (VEN-C8).
+fn shortcut_groups_with(
+    platform: NativePlatform,
+    entries: &[PopupEntry],
+    sidebar: Sidebar,
+    running: bool,
+    number_keys: bool,
 ) -> Vec<ShortcutGroup> {
     let mut groups = ["Navigate", "Tabs and panes", "Host"]
         .into_iter()
@@ -556,7 +617,12 @@ pub(super) fn shortcut_groups_for(
                 title,
                 FIXED_SHORTCUTS
                     .iter()
-                    .filter(|shortcut| shortcut.group == title && shortcut.bound(sidebar, running))
+                    .filter(|shortcut| {
+                        shortcut.group == title
+                            && shortcut.bound(sidebar, running)
+                            && (number_keys
+                                || shortcut.action != NativeShortcutAction::ShowWorkspacePosition)
+                    })
                     .map(|shortcut| {
                         ShortcutRow::new(
                             shortcut.trigger.display_label_for(platform),
@@ -564,7 +630,10 @@ pub(super) fn shortcut_groups_for(
                                 Some(entry) => {
                                     format!("{} (overridden by {})", shortcut.label, entry.label)
                                 }
-                                None => shortcut.label.into(),
+                                None => match shortcut.taken_positions(platform, entries) {
+                                    taken if taken.is_empty() => shortcut.label.into(),
+                                    taken => format!("{} ({})", shortcut.label, taken.join("; ")),
+                                },
                             },
                         )
                     })
@@ -841,19 +910,7 @@ pub(super) fn tab_shortcut_target(
 ) -> Option<Option<&Tab>> {
     let shortcut = native_key_shortcut(PhysicalKey::Code(code), modifiers, &snapshot.entries)?;
     let index = match shortcut.action {
-        NativeShortcutAction::FocusTabPosition => match code {
-            KeyCode::Digit1 => 0,
-            KeyCode::Digit2 => 1,
-            KeyCode::Digit3 => 2,
-            KeyCode::Digit4 => 3,
-            KeyCode::Digit5 => 4,
-            KeyCode::Digit6 => 5,
-            KeyCode::Digit7 => 6,
-            KeyCode::Digit8 => 7,
-            KeyCode::Digit9 => 8,
-            KeyCode::Digit0 => 9,
-            _ => return None,
-        },
+        NativeShortcutAction::FocusTabPosition => digit_position(code)?,
         NativeShortcutAction::NextTab | NativeShortcutAction::PreviousTab => {
             let count = snapshot.tabs.len();
             let Some(active) = snapshot
@@ -877,6 +934,37 @@ pub(super) fn tab_shortcut_target(
         _ => return None,
     };
     Some(snapshot.tabs.get(index))
+}
+
+/// The action a tab or workspace position key takes, resolved from the accepted snapshot: a tab
+/// in the tab order, or a workspace in the window's workspace order (VEN-C8). `Some(None)`
+/// consumes the key without an action: a missing position, the shown workspace's own, or the
+/// next tab of a lone tab. `None` leaves the key to popups, other bindings and the terminal, as
+/// `number_keys = false` does for the workspace position keys.
+pub(super) fn position_key_action(
+    code: KeyCode,
+    modifiers: orbit_protocol::session::Modifiers,
+    snapshot: &Snapshot,
+    number_keys: bool,
+) -> Option<Option<WorkspaceAction>> {
+    if let Some(tab) = tab_shortcut_target(code, modifiers, snapshot) {
+        return Some(
+            tab.map(|tab| WorkspaceAction::Workspace(CommonAction::FocusId(tab.id.clone()))),
+        );
+    }
+    let shortcut = native_key_shortcut(PhysicalKey::Code(code), modifiers, &snapshot.entries)?;
+    if !number_keys || shortcut.action != NativeShortcutAction::ShowWorkspacePosition {
+        return None;
+    }
+    let workspace = snapshot
+        .workspaces
+        .get(digit_position(code)?)
+        .filter(|workspace| workspace.id != snapshot.active_workspace);
+    Some(workspace.map(|workspace| {
+        WorkspaceAction::Workspace(CommonAction::SwitchWorkspace {
+            workspace: workspace.id.clone(),
+        })
+    }))
 }
 
 pub(super) fn popup_shortcut(
@@ -957,6 +1045,7 @@ fn popup_entry(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use eon_workspace_protocol::v31::WorkspaceInfo;
 
     #[test]
     fn direct_workspace_shortcuts_use_stable_eon_actions() {
@@ -1420,6 +1509,7 @@ mod tests {
                         | NativeShortcutAction::OpenLink
                         | NativeShortcutAction::NextAttention
                         | NativeShortcutAction::PreviousAttention
+                        | NativeShortcutAction::ShowWorkspacePosition
                 )
             }) {
                 let chord = shortcut.trigger.display_label_for(platform);
@@ -1763,6 +1853,95 @@ mod tests {
             target_id(KeyCode::Digit1, session::Modifiers::empty(), &snapshot),
             None
         );
+    }
+
+    #[test]
+    fn alt_shift_digits_show_workspace_list_positions_unless_a_popup_takes_the_key() {
+        use eon_workspace_protocol::v31::{ALT, SHIFT, Shortcut};
+        let ids = ["w3", "w2", "w1", "w4", "w5", "w6", "w7", "w8", "w9", "w10"];
+        let mut snapshot = tabs_snapshot(&["t1"], "t1");
+        assert_eq!(snapshot.active_workspace, "w1");
+        // Recency runs against the list: the shown w1 first, then the list backwards.
+        let recency = [9, 8, 0, 7, 6, 5, 4, 3, 2, 1];
+        snapshot.workspaces = ids
+            .iter()
+            .zip(recency)
+            .map(|(id, recency)| WorkspaceInfo {
+                id: (*id).into(),
+                name: None,
+                tab_count: 1,
+                attention: None,
+                recency,
+            })
+            .collect();
+        let switch = |id: &str| {
+            Some(Some(WorkspaceAction::Workspace(
+                CommonAction::SwitchWorkspace {
+                    workspace: id.into(),
+                },
+            )))
+        };
+        let action = |code, modifiers, snapshot: &Snapshot| {
+            position_key_action(code, modifiers, snapshot, true)
+        };
+        // The list's order, not recency, and Alt+Shift+0 for the tenth.
+        for (key, id) in [
+            (KeyCode::Digit1, "w3"),
+            (KeyCode::Digit2, "w2"),
+            (KeyCode::Digit0, "w10"),
+        ] {
+            assert_eq!(action(key, ALT_SHIFT, &snapshot), switch(id));
+        }
+        // `number_keys = false` leaves every position key to the terminal.
+        for key in [KeyCode::Digit2, KeyCode::Digit3] {
+            assert_eq!(position_key_action(key, ALT_SHIFT, &snapshot, false), None);
+            assert_eq!(popup_shortcut(key, ALT_SHIFT, &snapshot, true), None);
+        }
+        // The shown workspace's own position and a missing one are consumed without an action.
+        assert_eq!(action(KeyCode::Digit3, ALT_SHIFT, &snapshot), Some(None));
+        snapshot.workspaces.truncate(2);
+        assert_eq!(action(KeyCode::Digit9, ALT_SHIFT, &snapshot), Some(None));
+        // Alt+digits stay tab positions, and a popup on Alt+Shift+1 takes only that key.
+        assert_eq!(
+            action(KeyCode::Digit1, session::Modifiers::ALT, &snapshot),
+            Some(Some(WorkspaceAction::Workspace(CommonAction::FocusId(
+                "t1".into()
+            ))))
+        );
+        snapshot.entries = vec![PopupEntry {
+            id: "first".into(),
+            label: "First".into(),
+            shortcut: PopupKey::Bound(Shortcut {
+                modifiers: ALT | SHIFT,
+                key: "Digit1".into(),
+            }),
+        }];
+        assert_eq!(action(KeyCode::Digit1, ALT_SHIFT, &snapshot), None);
+        assert!(popup_shortcut(KeyCode::Digit1, ALT_SHIFT, &snapshot, true).is_some());
+        assert_eq!(action(KeyCode::Digit2, ALT_SHIFT, &snapshot), switch("w2"));
+        // The viewer names the taken key, and `--number-keys false` leaves the row out.
+        let row = |entries: &[PopupEntry], number_keys| {
+            shortcut_groups_with(
+                NativePlatform::Linux,
+                entries,
+                Sidebar::Open,
+                true,
+                number_keys,
+            )
+            .iter()
+            .flat_map(|group| &group.rows)
+            .find(|row| row.action.starts_with("Show workspace by position"))
+            .map(|row| row.action.clone())
+        };
+        assert_eq!(
+            row(&snapshot.entries, true).as_deref(),
+            Some("Show workspace by position (Alt+Shift+1 overridden by First)")
+        );
+        assert_eq!(
+            row(&[], true).as_deref(),
+            Some("Show workspace by position")
+        );
+        assert_eq!(row(&[], false), None);
     }
 
     #[test]

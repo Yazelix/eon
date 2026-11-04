@@ -23,7 +23,7 @@ const CURSOR_COLOR_PRESETS: [(&str, Color); 8] = [
     ("nebula", rgb(0xa970ff)),
     ("bubblegum", rgb(0xff5da2)),
 ];
-const USAGE: &str = "usage: yazelix-venus [--application-id ID] [--no-decorations] [--pane-frames true|false] [--focus-color preset:NAME|custom:#RRGGBB] [--border-width 1..3] [--focus-border-width 1..3] [--warning-close-last-tab true|false] [--animate-working-badge true|false] [--eon-version VERSION] [--eon-icon ABSOLUTE_PATH] [--bar-items ITEM,...] [--ram-warning-percent 1..100] [--ram-critical-percent 1..100] [--cpu-warning-percent 1..100] [--cpu-average-seconds 2..600] [--disk-warning-percent 1..100] [--disk-critical-percent 1..100] [--disk-path ABSOLUTE_PATH] [--background-opacity VALUE] [--background-blur] [--padding-color extend|extend-always|background] [--cursor-trail-color random|preset:NAME|custom:#RRGGBB] [--cursor-effect-v1 none|tail] [--cursor-trail-color-v1 #RRGGBB] [--cursor-trail-duration-v1 0|0.25..4.0] [--font-family FAMILY] [--font-fallback FAMILY] [--font-size 6..96] [--line-height 1..3] [--columns N] [--rows N] [ORBIT_SOCKET | --workspace EON_WORKSPACE_SOCKET]";
+const USAGE: &str = "usage: yazelix-venus [--application-id ID] [--no-decorations] [--pane-frames true|false] [--focus-color preset:NAME|custom:#RRGGBB] [--border-width 1..3] [--focus-border-width 1..3] [--warning-close-last-tab true|false] [--animate-working-badge true|false] [--number-keys true|false] [--eon-version VERSION] [--eon-icon ABSOLUTE_PATH] [--bar-items ITEM,...] [--ram-warning-percent 1..100] [--ram-critical-percent 1..100] [--cpu-warning-percent 1..100] [--cpu-average-seconds 2..600] [--disk-warning-percent 1..100] [--disk-critical-percent 1..100] [--disk-path ABSOLUTE_PATH] [--background-opacity VALUE] [--background-blur] [--padding-color extend|extend-always|background] [--cursor-trail-color random|preset:NAME|custom:#RRGGBB] [--cursor-effect-v1 none|tail] [--cursor-trail-color-v1 #RRGGBB] [--cursor-trail-duration-v1 0|0.25..4.0] [--font-family FAMILY] [--font-fallback FAMILY] [--font-size 6..96] [--line-height 1..3] [--columns N] [--rows N] [ORBIT_SOCKET | --workspace EON_WORKSPACE_SOCKET]";
 
 #[derive(Debug)]
 pub(super) struct LaunchArguments {
@@ -39,6 +39,8 @@ pub(super) struct LaunchArguments {
     pub(super) focus_border_width: u8,
     pub(super) warning_close_last_tab: bool,
     pub(super) animate_working_badge: bool,
+    /// Whether Alt+Shift+1..9 and Alt+Shift+0 show workspaces 1..10 (VEN-C8).
+    pub(super) number_keys: bool,
     pub(super) eon_version: Option<String>,
     /// The file holding the Eon icon's RGBA image: `--eon-icon`, read once at startup.
     pub(super) eon_icon: Option<PathBuf>,
@@ -71,6 +73,7 @@ pub(super) fn launch_arguments(
     let mut focus_border_width = None;
     let mut warning_close_last_tab = None;
     let mut animate_working_badge = None;
+    let mut number_keys = None;
     let mut eon_version = None;
     let mut eon_icon: Option<PathBuf> = None;
     let mut bar_items = None;
@@ -212,6 +215,8 @@ pub(super) fn launch_arguments(
             option_value(&mut warning_close_last_tab, arguments.next())?;
         } else if argument == "--animate-working-badge" {
             option_value(&mut animate_working_badge, arguments.next())?;
+        } else if argument == "--number-keys" {
+            option_value(&mut number_keys, arguments.next())?;
         } else if argument == "--application-id" {
             if application_id.is_some() {
                 return Err(USAGE.into());
@@ -392,6 +397,7 @@ pub(super) fn launch_arguments(
         focus_border_width: focus_border_width.unwrap_or(1),
         warning_close_last_tab: warning_close_last_tab.unwrap_or(true),
         animate_working_badge: animate_working_badge.unwrap_or(true),
+        number_keys: number_keys.unwrap_or(true),
         eon_version,
         eon_icon,
         bar_items: bar_items.unwrap_or_else(|| BarItem::DEFAULT.into()),
@@ -808,19 +814,30 @@ mod tests {
                 arguments.pane_frames,
                 arguments.warning_close_last_tab,
                 arguments.animate_working_badge,
+                arguments.number_keys,
             )
         };
         assert_eq!(
             read(parse(&["--workspace", "eon.sock"]).unwrap()),
-            (true, true, true)
+            (true, true, true, true)
         );
         for (flag, value, expected) in [
-            ("--pane-frames", "false", (false, true, true)),
-            ("--pane-frames", "true", (true, true, true)),
-            ("--warning-close-last-tab", "false", (true, false, true)),
-            ("--warning-close-last-tab", "true", (true, true, true)),
-            ("--animate-working-badge", "false", (true, true, false)),
-            ("--animate-working-badge", "true", (true, true, true)),
+            ("--pane-frames", "false", (false, true, true, true)),
+            ("--pane-frames", "true", (true, true, true, true)),
+            (
+                "--warning-close-last-tab",
+                "false",
+                (true, false, true, true),
+            ),
+            ("--warning-close-last-tab", "true", (true, true, true, true)),
+            (
+                "--animate-working-badge",
+                "false",
+                (true, true, false, true),
+            ),
+            ("--animate-working-badge", "true", (true, true, true, true)),
+            ("--number-keys", "false", (true, true, true, false)),
+            ("--number-keys", "true", (true, true, true, true)),
         ] {
             assert_eq!(
                 read(parse(&[flag, value, "--workspace", "eon.sock"]).unwrap()),
@@ -831,6 +848,7 @@ mod tests {
             "--pane-frames",
             "--warning-close-last-tab",
             "--animate-working-badge",
+            "--number-keys",
         ] {
             for args in [
                 vec![flag],

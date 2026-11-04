@@ -65,6 +65,7 @@ pub(crate) fn inputs() -> Inputs {
             },
             warning_close_last_tab: true,
             animate_working_badge: true,
+            number_keys: true,
             sidebar_enabled: true,
             terminal_access: TerminalAccess::Window,
             send_enter_delay_ms: 300,

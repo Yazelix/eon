@@ -126,6 +126,14 @@ fn shortcut_viewer_uses_live_rows_and_captures_its_local_sequence() {
                     ));
                 }
             }
+            NativeShortcutTrigger::AltShiftDigits => {
+                for code in [KeyCode::Digit1, KeyCode::Digit9, KeyCode::Digit0] {
+                    assert!(std::ptr::eq(
+                        key_shortcut(PhysicalKey::Code(code), ALT_SHIFT),
+                        shortcut
+                    ));
+                }
+            }
             NativeShortcutTrigger::Copy => {
                 assert!(std::ptr::eq(
                     key_shortcut(PhysicalKey::Code(KeyCode::KeyC), CTRL_SHIFT),

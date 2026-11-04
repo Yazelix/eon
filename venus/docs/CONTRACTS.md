@@ -564,9 +564,10 @@ re-proved when that platform or feature is next touched.
 
 ## VEN-C8 — Eon workspace presentation
 
-- **Status:** Partially proved. Amended on 2026-11-04 (approved under
-  Lucca's standing approval rule, relayed by eon-overseer) by `eon-8wh7h`: the
-  slow notice and product text for unavailable notices.
+- **Status:** Partially proved. Amended on 2026-11-04 under Lucca's standing
+  approval rule, relayed by eon-overseer: by `eon-8wh7h`, the slow notice and
+  product text for unavailable notices; by `eon-hbpkq`, Alt+Shift+1..9 and
+  Alt+Shift+0 show workspace positions.
 - **Consumer:** One Venus surface controlled by an Eon workspace.
 - **Trigger:** Outside visible `VEN-C18` popup presentation, Eon supplies
   durable topology, a workspace action changes tab, pane, focus, order,
@@ -704,6 +705,13 @@ re-proved when that platform or feature is next touched.
     snapshot and sends the existing stable `tN` through `FocusId`. A missing
     position is consumed without an action or terminal input. Alt+H/L remains
     the traversal path for tabs after position 10.
+  - Physical Alt+Shift+1 through Alt+Shift+9 show the corresponding workspace
+    position in the accepted snapshot's workspace order; Alt+Shift+0 shows
+    position 10. Venus sends that workspace's stable ID through
+    `SwitchWorkspace`. A missing position, or the shown workspace's own, is
+    consumed without an action or terminal input. With
+    `[workspace] number_keys = false`, passed at launch, the keys reach the
+    terminal. A configured popup on one of them takes it (VEN-C20).
   - Physical Ctrl+Tab and Ctrl+Shift+Tab, with terminal or chrome focus, focus
     the tab after or before the active one in the accepted snapshot's order,
     wrapping from the last tab to the first and from the first to the last.
@@ -1321,7 +1329,10 @@ re-proved when that platform or feature is next touched.
 
 ## VEN-C20 — Native shortcut viewer
 
-- **Status:** Proved
+- **Status:** Proved.
+  Amended on 2026-11-04 (approved by eon-overseer under Lucca's standing
+  rule) by `eon-hbpkq`: a popup on one workspace position key takes only that
+  key.
 - **Consumer:** One person using a Venus surface attached to an Eon workspace.
 - **Trigger:** Physical Alt+Slash toggles the viewer; Escape closes it.
 - **Result:** Venus presents one ephemeral, read-only native dialog containing
@@ -1333,7 +1344,9 @@ re-proved when that platform or feature is next touched.
   shortcut otherwise has no row. A popup on the key of a fixed binding other than Alt+Slash,
   Alt+0 through Alt+9, and Alt+H, Alt+J, Alt+K and Alt+L takes that key: dispatch invokes the
   popup, the footer omits the fixed hint, and the viewer row reads "<action>
-  (overridden by <popup label>)". Wheel and navigation keys scroll bounded content. Opening,
+  (overridden by <popup label>)". A popup on one of Alt+Shift+0 through
+  Alt+Shift+9 takes only that key; the other positions stay bound, and the row
+  reads "Show workspace by position (<key> overridden by <popup label>)". Wheel and navigation keys scroll bounded content. Opening,
   refreshing, scrolling, and closing send no terminal bytes or workspace
   action; matching releases remain captured and prior terminal/chrome focus is
   restored on dismissal. The title, subtitle, and first group heading occupy

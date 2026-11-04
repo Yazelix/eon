@@ -42,6 +42,7 @@ duration_seconds = 3
 [workspace]
 warning_close_last_tab = true
 animate_working_badge = true
+number_keys = true
 
 [sidebar]
 enabled = true
@@ -106,6 +107,7 @@ style = "random" # Startup animation style.
 
 [workspace]
 animate_working_badge = true # Animate the working badge; false keeps it still.
+number_keys = true # Alt+Shift+1..9 and Alt+Shift+0 show workspaces 1..10; false leaves the keys to the terminal.
 warning_close_last_tab = true # Ask before stopping the final tab's terminals.
 
 [sidebar]
@@ -335,6 +337,12 @@ in the agent sidebar, through the braille dots ⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏ te
 second. `false` keeps it still at ⠋, for people who prefer no motion. Without
 GPU rendering (a software graphics adapter) the badge is always still. The
 window reads the setting when it starts.
+
+`number_keys = true` makes Alt+Shift+1 through Alt+Shift+9 show the window's
+first through ninth workspace, in `eon workspaces` order, and Alt+Shift+0 the
+tenth. `false` leaves those keys to the program in the terminal, for example
+Emacs's M-% on Alt+Shift+5. A popup configured on one of them takes only that
+key either way; with `true`, Alt+/ lists that key as overridden. The window reads the setting when it starts.
 
 `[sidebar] enabled = true` offers the agent sidebar, which lists
 the coding agents in the window's tabs that report their status. `false` turns

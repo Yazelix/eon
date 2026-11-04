@@ -58,8 +58,8 @@ use scroll::{PendingViewportRequest, SelectionAutoscroll, TerminalScroll, finish
 use shortcuts::{
     NativeShortcutAction, NativeShortcutTrigger, WORKSPACES_ENTRY, copy_paste_modifiers,
     detach_chord, invoke_popup, native_key_shortcut, native_key_shortcut_for,
-    native_pointer_shortcut, paste_shortcut, popup_shortcut, shortcut_groups, shortcut_hints_for,
-    sideways_move_opens_column, tab_shortcut_target, workspace_picker_tooltip, workspace_shortcut,
+    native_pointer_shortcut, paste_shortcut, popup_shortcut, position_key_action, shortcut_groups,
+    shortcut_hints_for, sideways_move_opens_column, workspace_picker_tooltip, workspace_shortcut,
 };
 
 const BLINK_INTERVAL: Duration = Duration::from_millis(500);
@@ -985,6 +985,8 @@ struct Application {
     focus_border_width: u8,
     /// Whether working badges may turn; Eon's `--animate-working-badge` (VEN-C21).
     animate_working_badge: bool,
+    /// Whether Alt+Shift+1..9 and Alt+Shift+0 show workspaces; Eon's `--number-keys` (VEN-C8).
+    number_keys: bool,
     eon_version: Option<String>,
     /// The Eon icon's RGBA image, read once at startup; none when Eon supplied no readable one.
     eon_icon: Option<Arc<[u8]>>,
@@ -1083,6 +1085,7 @@ impl Application {
             focus_border_width,
             warning_close_last_tab,
             animate_working_badge,
+            number_keys,
             eon_version,
             eon_icon,
             bar_items,
@@ -1124,6 +1127,7 @@ impl Application {
             border_width,
             focus_border_width,
             animate_working_badge,
+            number_keys,
             eon_version,
             eon_icon,
             bar_items,
@@ -1524,6 +1528,7 @@ impl Application {
                     self.workspace_model
                         .snapshot()
                         .is_some_and(|snapshot| snapshot.running.is_some()),
+                    self.number_keys,
                 ),
                 state.renderer.size(),
                 state.renderer.metrics(),
@@ -3102,12 +3107,10 @@ impl Application {
             .tabs
             .iter()
             .find(|tab| tab.id == snapshot.active_tab);
-        let tab_target = tab_shortcut_target(code, modifiers, snapshot);
-        let action = match tab_target {
-            Some(tab) => {
-                tab.map(|tab| WorkspaceAction::Workspace(CommonAction::FocusId(tab.id.clone())))
-            }
-            None => popup_shortcut(
+        let position = position_key_action(code, modifiers, snapshot, self.number_keys);
+        let positional = position.is_some();
+        let action = position.unwrap_or_else(|| {
+            popup_shortcut(
                 code,
                 modifiers,
                 snapshot,
@@ -3123,8 +3126,8 @@ impl Application {
                     selected_pane,
                     snapshot.sidebar,
                 )
-            }),
-        };
+            })
+        });
         let opens_column = match &action {
             Some(WorkspaceAction::CreateColumn) => true,
             Some(WorkspaceAction::MovePaneSideways(side)) => {
@@ -3144,7 +3147,7 @@ impl Application {
                 || toggles_zoom
                 || cycles_focus
                 || returns_to_terminal
-                || tab_target.is_some()
+                || positional
                 || closes_pane
                 || action.is_some(),
         ) {

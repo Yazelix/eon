@@ -86,6 +86,8 @@ pub struct Defaults {
     pub warning_close_last_tab: bool,
     /// Whether the working badge animates on a hardware graphics adapter.
     pub animate_working_badge: bool,
+    /// Whether Alt+Shift+1..9 and Alt+Shift+0 show workspaces 1..10 (EON-C33).
+    pub number_keys: bool,
     /// Whether full Eon offers the agent sidebar (EON-C31).
     pub sidebar_enabled: bool,
     /// Whether `eon pane read` and `eon pane send` reach the window's
@@ -295,6 +297,7 @@ struct AnimationSettings {
 struct WorkspaceSettings {
     warning_close_last_tab: Option<bool>,
     animate_working_badge: Option<bool>,
+    number_keys: Option<bool>,
     #[serde(flatten)]
     unknown: BTreeMap<String, toml::Value>,
 }
@@ -537,6 +540,7 @@ pub(crate) fn print_defaults(defaults: &Defaults, json: bool) -> Result<String, 
         "workspace": {
             "warning_close_last_tab": defaults.warning_close_last_tab,
             "animate_working_badge": defaults.animate_working_badge,
+            "number_keys": defaults.number_keys,
         },
         "sidebar": { "enabled": defaults.sidebar_enabled },
         "agents": {
@@ -630,6 +634,9 @@ fn defaults_table(
             "duration_seconds" => "Startup animation duration in seconds.",
             "warning_close_last_tab" => "Ask before stopping the final tab's terminals.",
             "animate_working_badge" => "Animate the working badge; false keeps it still.",
+            "number_keys" => {
+                "Alt+Shift+1..9 and Alt+Shift+0 show workspaces 1..10; false leaves the keys to the terminal."
+            }
             "send_enter_delay_ms" => "Wait between `eon pane send` text and its --enter.",
             "terminal_access" => {
                 "Let `eon pane read` and `eon pane send` reach this window's terminals; \"none\" refuses both."
@@ -787,6 +794,17 @@ pub(crate) fn animate_working_badge(
         .workspace
         .animate_working_badge
         .unwrap_or(defaults.animate_working_badge))
+}
+
+pub(crate) fn number_keys(
+    root: &Path,
+    defaults: &Defaults,
+    log: Option<&DiagnosticLog>,
+) -> Result<bool, String> {
+    Ok(read_config(root, defaults, log)?
+        .workspace
+        .number_keys
+        .unwrap_or(defaults.number_keys))
 }
 
 pub(crate) fn sidebar_enabled(
@@ -1871,9 +1889,10 @@ mod tests {
     use super::{
         ALT, ManagedPrograms, PopupCommand, PopupDefinition, PopupKey, SHIFT, Shortcut, Tool,
         animate_working_badge, command as managed_command, disk_path, integration_mask,
-        pair_launch_flags, popup_catalog, prepare_popup_command, prepend_path, read_shell_config,
-        remove_agent_environment, remove_agent_session, sidebar_enabled, startup_animation,
-        terminal_presentation, tool, user_manager_environment, warning_close_last_tab,
+        number_keys, pair_launch_flags, popup_catalog, prepare_popup_command, prepend_path,
+        read_shell_config, remove_agent_environment, remove_agent_session, sidebar_enabled,
+        startup_animation, terminal_presentation, tool, user_manager_environment,
+        warning_close_last_tab,
     };
     use std::{
         ffi::{OsStr, OsString},
@@ -1930,6 +1949,7 @@ mod tests {
                 defaults.terminal.rows = Some(30);
                 defaults.anima.enabled = false;
                 defaults.animate_working_badge = false;
+                defaults.number_keys = false;
                 defaults.terminal_access = super::TerminalAccess::None;
                 defaults.send_enter_delay_ms = 0;
                 defaults.popups.entries[1].command = PopupCommand::Argv(vec![
@@ -1970,6 +1990,7 @@ mod tests {
                     super::bar(root, &defaults, None).unwrap(),
                     warning_close_last_tab(root, &defaults, None).unwrap(),
                     animate_working_badge(root, &defaults, None).unwrap(),
+                    number_keys(root, &defaults, None).unwrap(),
                     sidebar_enabled(root, &defaults, None).unwrap(),
                     super::agents(root, &defaults, None).unwrap(),
                     super::editor_command(root, &defaults, None).unwrap(),
@@ -2010,6 +2031,7 @@ mod tests {
             anima: anima.clone().unwrap_or_else(|| defaults.anima.clone()),
             warning_close_last_tab: warning_close_last_tab(root, defaults, None)?,
             animate_working_badge: animate_working_badge(root, defaults, None)?,
+            number_keys: number_keys(root, defaults, None)?,
             sidebar_enabled: sidebar_enabled(root, defaults, None)?,
             terminal_access: agents.terminal_access,
             send_enter_delay_ms: agents.send_enter_delay_ms,
@@ -2151,6 +2173,7 @@ new_field = true
 [workspace]
 warning_close_last_tab = false
 animate_working_badge = false
+number_keys = false
 new_field = true
 [sidebar]
 enabled = false
@@ -2182,6 +2205,7 @@ nested = { value = true }
         assert_eq!(config.anima.enabled, Some(false));
         assert_eq!(config.workspace.warning_close_last_tab, Some(false));
         assert_eq!(config.workspace.animate_working_badge, Some(false));
+        assert_eq!(config.workspace.number_keys, Some(false));
         assert_eq!(config.sidebar.enabled, Some(false));
         assert_eq!(
             config.popups["agent"].label.as_deref(),

@@ -165,6 +165,7 @@ one, and clicking another column's terminal selects it.
 | Alt+G / Alt+Shift+G | Jump to the next or previous agent needing attention |
 | F6 | Move keyboard focus: terminal, agent sidebar, tabs, panes |
 | Alt+1 … Alt+9, Alt+0 | Select tab positions 1 … 10 |
+| Alt+Shift+1 … Alt+Shift+9, Alt+Shift+0 | Show workspaces 1 … 10, in `eon workspaces` order (`[workspace] number_keys`) |
 | Ctrl+Tab / Ctrl+Shift+Tab | Select the next or previous tab, wrapping around |
 | Alt+H / Alt+L | Select the column to the left or right, continuing into the previous or next tab |
 | Alt+K / Alt+J | Select the previous or next pane in the column |
@@ -359,7 +360,9 @@ workspaces most recently shown first, each by name or ID with its tab count and
 ` · needs input` when one of its agents needs input, the shown one last and
 marked, so Alt+Shift+S then Enter returns to the previous workspace. In the
 picker Alt+Shift+S works as Enter, so pressing it twice, like a double
-Alt+Tab, switches back and forth between two workspaces. Type to filter by
+Alt+Tab, switches back and forth between two workspaces. Alt+Shift+1 through
+Alt+Shift+9 show a workspace by its position in the window's list, the one the
+Eon Bar label counts (`notes 2/3`), and Alt+Shift+0 the tenth. Type to filter by
 name. Enter shows the highlighted workspace, and Enter on a name that
 matches no workspace creates a workspace with that name and shows it. A name
 that is part of an existing one matches it, so create that workspace with

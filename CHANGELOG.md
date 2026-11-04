@@ -5,6 +5,10 @@ installation, and proven contract changes.
 
 ## Unreleased
 
+- Alt+Shift+1 through Alt+Shift+9 show the first through ninth workspace, and
+  Alt+Shift+0 the tenth, in `eon workspaces` order (`eon-hbpkq`, EON-C33, VEN-C8). A
+  position with no workspace does nothing. `[workspace] number_keys = false`
+  leaves those keys to the terminal, and a popup configured on one takes it.
 - When Eon is slow to answer, the window says so instead of freezing
   silently (`eon-8wh7h`, VEN-C8). After two seconds without an answer the
   status line shows "Eon is slow to answer.", and the next answer clears it;

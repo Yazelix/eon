@@ -87,6 +87,7 @@
     },
     "workspace": {
       "animate_working_badge": true,
+      "number_keys": true,
       "warning_close_last_tab": false
     }
   },

@@ -2342,7 +2342,10 @@ socket names, JSON fields and protocol identifiers retain their spellings.
 
 ## EON-C20 — Discoverable native shortcuts
 
-- **Status:** Proven
+- **Status:** Proven.
+  Amended on 2026-11-04 (approved by eon-overseer under Lucca's standing
+  rule) by `eon-hbpkq`: a popup on one workspace position key takes only that
+  key.
 - **Consumer:** One installed full-Eon user on native Linux Wayland.
 - **Trigger:** The user presses physical Alt+Slash from the Eon workspace.
 - **Result:** The exact accepted Venus client toggles one native, read-only
@@ -2354,6 +2357,9 @@ socket names, JSON fields and protocol identifiers retain their spellings.
   popup shortcut on the key of any other fixed binding, except Alt+H, Alt+J,
   Alt+K and Alt+L, takes that key; the fixed binding is unbound while that
   configuration is active, and the viewer lists it as overridden by the popup.
+  On Alt+Shift+0 through Alt+Shift+9 a popup takes only its own key: the other
+  workspace position keys stay bound, and the viewer names the taken key as
+  overridden by the popup.
   A built-in popup whose default key a configured popup holds is listed with
   that key as overridden by the configured popup; a popup configured without a
   key has no row. The fixed bindings include
@@ -3423,9 +3429,13 @@ socket names, JSON fields and protocol identifiers retain their spellings.
   picker closes the highlighted workspace.
   Amended on 2026-11-04 (approved by eon-overseer under Lucca's standing
   rule) by `eon-vhhon`: the picker's own key confirms the highlighted row.
+  Amended on 2026-11-04 (approved by eon-overseer under Lucca's standing
+  rule) by `eon-hbpkq`: Alt+Shift+1..9 and Alt+Shift+0 show the workspace at
+  list position N.
 - **Consumer:** One full-Eon user, or an agent working for them, who keeps
   several separate sets of work in one Eon window.
-- **Trigger:** Alt+Shift+S or Commands > Switch workspace; Commands > New
+- **Trigger:** Alt+Shift+S or Commands > Switch workspace; Alt+Shift+1
+  through Alt+Shift+9 and Alt+Shift+0; Commands > New
   workspace, Rename workspace or Close this workspace; `eon workspaces` or
   `eon workspace new|switch|rename|close`; the final close or last exit in one
   workspace; an attention jump to a terminal in a hidden workspace; detach,
@@ -3471,7 +3481,12 @@ socket names, JSON fields and protocol identifiers retain their spellings.
   - **Switch.** `eon workspace switch WS` shows WS. Switching to the shown
     workspace returns the unchanged snapshot (EON-C10). Each workspace keeps
     its active tab, selected pane and popups across switches; zoom ends, as on
-    any tab change (EON-C8).
+    any tab change (EON-C8). Alt+Shift+1 through Alt+Shift+9 show the window's
+    first through ninth workspace in `eon workspaces` order, and Alt+Shift+0
+    the tenth, as `eon workspace switch` with that workspace's ID does; a
+    position with no workspace, or the shown workspace's own, changes nothing.
+    `[workspace] number_keys = false` leaves those keys to the terminal, and a
+    popup configured on one of them takes it.
   - **Rename.** `eon workspace rename [WS] NAME` and Commands > Rename
     workspace set the name; an empty NAME clears it. Without WS it renames the
     caller's workspace.
