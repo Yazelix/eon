@@ -16,8 +16,6 @@ use std::{
 };
 
 const MAX_RECENT_REQUESTS: usize = 256;
-/// The packaged Helix on Eon's terminal PATH, which `eon edit` runs.
-const EDITOR: &str = "hx";
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub(crate) struct Session {
@@ -1151,7 +1149,7 @@ impl Workspace {
             Action::Edit { file } => {
                 self.require_established(target)?;
                 let argv = prepare(
-                    &PopupCommand::Argv(vec![EDITOR.into(), OsString::from_vec(file)]),
+                    &PopupCommand::Edit(OsString::from_vec(file)),
                     &self.tabs[target].directory,
                 )
                 .map_err(|detail| action_error("edit-command", detail))?;
@@ -4960,6 +4958,7 @@ mod tests {
     fn prepared(command: &PopupCommand, _: &Path) -> Result<Vec<OsString>, String> {
         match command {
             PopupCommand::Argv(argv) => Ok(argv.clone()),
+            PopupCommand::Edit(file) => Ok(vec!["editor".into(), file.clone()]),
             PopupCommand::AgentAuto => unreachable!(),
         }
     }
@@ -7095,7 +7094,7 @@ mod tests {
                 "missing",
                 Some(&files.session),
                 edit(),
-                |_, _| Err("no hx".into()),
+                |_, _| Err("no editor".into()),
                 |_| Err("nothing starts".into()),
             )
             .unwrap_err();
@@ -7129,7 +7128,10 @@ mod tests {
         assert_eq!(directory, &root);
         assert_eq!(
             argv,
-            &["hx".into(), OsString::from_vec(b"/src/\xff.rs".to_vec())]
+            &[
+                "editor".into(),
+                OsString::from_vec(b"/src/\xff.rs".to_vec())
+            ]
         );
         // The editor is the tab's selected pane, and Files is hidden but kept.
         let tab = &workspace.snapshot().tabs[0];

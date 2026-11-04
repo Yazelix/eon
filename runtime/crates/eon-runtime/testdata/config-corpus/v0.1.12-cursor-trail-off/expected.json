@@ -27,6 +27,11 @@
         "version"
       ]
     },
+    "editor": {
+      "command": [
+        "fixture-editor"
+      ]
+    },
     "popups": {
       "agent": {
         "command": "auto",

@@ -38,6 +38,7 @@ struct EonConfig {
     workspace: WorkspaceSettings,
     sidebar: SidebarSettings,
     agents: AgentSettings,
+    editor: EditorSettings,
     popups: BTreeMap<String, PopupEntrySettings>,
     #[serde(flatten)]
     unknown: BTreeMap<String, toml::Value>,
@@ -59,6 +60,7 @@ impl EonConfig {
             ("workspace.", &self.workspace.unknown),
             ("sidebar.", &self.sidebar.unknown),
             ("agents.", &self.agents.unknown),
+            ("editor.", &self.editor.unknown),
         ] {
             keys.extend(unknown.keys().map(|key| format!("{prefix}{key}")));
         }
@@ -92,6 +94,8 @@ pub struct Defaults {
     /// How long `eon pane send --enter` waits after the text (EON-C36).
     pub send_enter_delay_ms: u16,
     pub popups: PopupCatalog,
+    /// The editor's argv, before the file, while `[editor] command` is unset.
+    pub editor: &'static [&'static str],
     pub custom_popup_keep_alive: bool,
     pub ansi_palette: &'static str,
     pub agent_commands: &'static [&'static [&'static str]],
@@ -333,6 +337,14 @@ pub(crate) struct Agents {
 
 #[derive(Debug, Default, Deserialize)]
 #[serde(default)]
+struct EditorSettings {
+    command: Option<PopupCommandSetting>,
+    #[serde(flatten)]
+    unknown: BTreeMap<String, toml::Value>,
+}
+
+#[derive(Debug, Default, Deserialize)]
+#[serde(default)]
 struct PopupEntrySettings {
     command: Option<PopupCommandSetting>,
     keybinding: Option<String>,
@@ -354,6 +366,8 @@ enum PopupCommandSetting {
 pub enum PopupCommand {
     AgentAuto,
     Argv(Vec<OsString>),
+    /// The configured editor on this file, as `eon edit` opens it.
+    Edit(OsString),
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -501,6 +515,7 @@ pub(crate) fn print_defaults(defaults: &Defaults, json: bool) -> Result<String, 
                         .collect::<Result<Vec<_>, _>>()?;
                     json!(argv)
                 }
+                PopupCommand::Edit(_) => return Err("a default popup cannot edit a file".into()),
             };
         }
         popups.insert(entry.id.clone(), settings);
@@ -528,6 +543,7 @@ pub(crate) fn print_defaults(defaults: &Defaults, json: bool) -> Result<String, 
             "send_enter_delay_ms": defaults.send_enter_delay_ms,
             "terminal_access": defaults.terminal_access,
         },
+        "editor": { "command": defaults.editor },
         "popups": popups,
     });
     if json {
@@ -549,6 +565,7 @@ pub(crate) fn print_defaults(defaults: &Defaults, json: bool) -> Result<String, 
         "workspace",
         "sidebar",
         "agents",
+        "editor",
     ] {
         defaults_table(&mut output, section, &config[section])?;
     }
@@ -598,6 +615,9 @@ fn defaults_table(
             "rows" => "Let the window choose initial rows when omitted.",
             "command" if section == "shell" => {
                 "Direct argv for terminals without an explicit command."
+            }
+            "command" if section == "editor" => {
+                "Direct argv that `eon edit` and Files run with the file appended."
             }
             "command" => "Direct argv, or auto for Agent's command selection.",
             "starship" => "Enable the managed Starship prompt integration.",
@@ -686,6 +706,29 @@ pub(crate) fn shell_command(
     log: Option<&DiagnosticLog>,
 ) -> Result<Vec<String>, String> {
     Ok(read_shell_config(root, defaults, log)?.command)
+}
+
+/// The editor's argv before the file (`[editor] command`), reread for each edit.
+pub(crate) fn editor_command(
+    root: &Path,
+    defaults: &Defaults,
+    log: Option<&DiagnosticLog>,
+) -> Result<Vec<OsString>, String> {
+    let argv = match read_config(root, defaults, log)?.editor.command {
+        None => defaults
+            .editor
+            .iter()
+            .map(|&argument| argument.into())
+            .collect(),
+        Some(PopupCommandSetting::Argv(argv)) => argv,
+        Some(PopupCommandSetting::Named(_)) => {
+            return Err(
+                "editor.command must be a direct argv array, such as command = [\"nvim\"]".into(),
+            );
+        }
+    };
+    validate_argv("editor.command", &argv)?;
+    Ok(argv.into_iter().map(Into::into).collect())
 }
 
 pub(crate) fn zoxide_enabled(
@@ -987,7 +1030,7 @@ fn configured_popup_command(
             if id == "agent" { " or \"auto\"" } else { "" }
         )),
         PopupCommandSetting::Argv(argv) => {
-            validate_popup_argv(id, &argv)?;
+            validate_argv(&format!("popups.{id}.command"), &argv)?;
             Ok(PopupCommand::Argv(
                 argv.into_iter().map(Into::into).collect(),
             ))
@@ -995,20 +1038,18 @@ fn configured_popup_command(
     }
 }
 
-fn validate_popup_argv(id: &str, argv: &[String]) -> Result<(), String> {
+fn validate_argv(key: &str, argv: &[String]) -> Result<(), String> {
     if argv.is_empty() || argv[0].is_empty() {
-        return Err(format!(
-            "popups.{id}.command requires a nonempty executable"
-        ));
+        return Err(format!("{key} requires a nonempty executable"));
     }
     if argv.len() > 128 {
-        return Err(format!("popups.{id}.command accepts at most 128 arguments"));
+        return Err(format!("{key} accepts at most 128 arguments"));
     }
     if argv.iter().any(|argument| argument.contains('\0')) {
-        return Err(format!("popups.{id}.command must not contain NUL"));
+        return Err(format!("{key} must not contain NUL"));
     }
     if argv.iter().map(String::len).sum::<usize>() > 64 * 1024 {
-        return Err(format!("popups.{id}.command exceeds 64 KiB"));
+        return Err(format!("{key} exceeds 64 KiB"));
     }
     Ok(())
 }
@@ -1173,19 +1214,21 @@ pub(crate) fn prepare_popup_command(
     command: &PopupCommand,
     session_bin: Option<&Path>,
     directory: &Path,
+    config: &Path,
     defaults: &Defaults,
+    log: Option<&DiagnosticLog>,
 ) -> Result<Vec<OsString>, String> {
-    match command {
+    let argv = match command {
         // Project, which shows the tab's Files instead.
-        PopupCommand::Argv(argv) if argv.is_empty() => Err("this popup has no command".into()),
-        PopupCommand::Argv(argv) => {
-            if !popup_executable(&argv[0], session_bin, directory)? {
-                return Err(format!(
-                    "executable {:?} is unavailable on Eon's terminal PATH",
-                    argv[0]
-                ));
-            }
-            Ok(argv.clone())
+        PopupCommand::Argv(argv) if argv.is_empty() => {
+            return Err("this popup has no command".into());
+        }
+        PopupCommand::Argv(argv) => argv.clone(),
+        // An unavailable editor fails the edit rather than falling back to Helix.
+        PopupCommand::Edit(file) => {
+            let mut argv = editor_command(config, defaults, log)?;
+            argv.push(file.clone());
+            argv
         }
         PopupCommand::AgentAuto => {
             for candidate in defaults.agent_commands {
@@ -1194,9 +1237,16 @@ pub(crate) fn prepare_popup_command(
                     return Ok(argv);
                 }
             }
-            Err("no supported Agent executable is available on Eon's terminal PATH; install codex, grok, opencode, pi, or claude, or configure popups.agent.command".into())
+            return Err("no supported Agent executable is available on Eon's terminal PATH; install codex, grok, opencode, pi, or claude, or configure popups.agent.command".into());
         }
+    };
+    if !popup_executable(&argv[0], session_bin, directory)? {
+        return Err(format!(
+            "executable {:?} is unavailable on Eon's terminal PATH",
+            argv[0]
+        ));
     }
+    Ok(argv)
 }
 
 fn popup_executable(
@@ -1524,7 +1574,7 @@ pub(crate) fn command(
             let files = env::var_os("EON_FILES_CONFIG")
                 .ok_or("the installed Eon package has no Files popup configuration")?;
             // Its Alt+Enter and edit opener call this same Eon build, to set the
-            // popup's tab directory and to open files in Helix panes.
+            // popup's tab directory and to open files in editor panes.
             let eon = env::current_exe()
                 .map_err(|error| format!("cannot find the running Eon executable: {error}"))?;
             // Yazi prefers PWD even when it disagrees with the terminal's actual CWD.
@@ -1922,6 +1972,7 @@ mod tests {
                     animate_working_badge(root, &defaults, None).unwrap(),
                     sidebar_enabled(root, &defaults, None).unwrap(),
                     super::agents(root, &defaults, None).unwrap(),
+                    super::editor_command(root, &defaults, None).unwrap(),
                 )
             };
             assert_eq!(policy(&empty), policy(&printed));
@@ -1963,6 +2014,12 @@ mod tests {
             terminal_access: agents.terminal_access,
             send_enter_delay_ms: agents.send_enter_delay_ms,
             popups: popup_catalog(root, defaults, None)?,
+            editor: Box::leak(
+                super::editor_command(root, defaults, None)?
+                    .into_iter()
+                    .map(|argument| &*argument.into_string().unwrap().leak())
+                    .collect(),
+            ),
             custom_popup_keep_alive: defaults.custom_popup_keep_alive,
             ansi_palette: defaults.ansi_palette,
             agent_commands: defaults.agent_commands,
@@ -3061,10 +3118,12 @@ label = "Browse"
         let command = PopupCommand::Argv(vec!["./tool".into()]);
 
         assert_eq!(
-            prepare_popup_command(&command, None, &launch, &inputs.defaults).unwrap(),
+            prepare_popup_command(&command, None, &launch, &root, &inputs.defaults, None).unwrap(),
             [OsString::from("./tool")]
         );
-        assert!(prepare_popup_command(&command, None, &root, &inputs.defaults).is_err());
+        assert!(
+            prepare_popup_command(&command, None, &root, &root, &inputs.defaults, None).is_err()
+        );
         fs::create_dir(launch.join("bin")).unwrap();
         let path_tool = launch.join("bin/path-tool");
         fs::write(&path_tool, "#!/bin/sh\n").unwrap();
@@ -3074,7 +3133,9 @@ label = "Browse"
                 &PopupCommand::Argv(vec!["path-tool".into()]),
                 Some(Path::new("bin")),
                 &launch,
-                &inputs.defaults
+                &root,
+                &inputs.defaults,
+                None
             )
             .unwrap(),
             [OsString::from("path-tool")]
@@ -3084,7 +3145,9 @@ label = "Browse"
                 &PopupCommand::Argv(vec![path_tool.into_os_string()]),
                 Some(Path::new("invalid:path")),
                 &launch,
-                &inputs.defaults
+                &root,
+                &inputs.defaults,
+                None
             )
             .unwrap_err()
             .contains("cannot construct Eon terminal PATH")
@@ -3095,19 +3158,74 @@ label = "Browse"
             &["./tool", "--fallback"],
         ];
         assert_eq!(
-            prepare_popup_command(&PopupCommand::AgentAuto, None, &launch, &defaults).unwrap(),
+            prepare_popup_command(
+                &PopupCommand::AgentAuto,
+                None,
+                &launch,
+                &root,
+                &defaults,
+                None
+            )
+            .unwrap(),
             [OsString::from("./tool"), OsString::from("--fallback")]
         );
         let preferred = launch.join("preferred-agent");
         fs::write(&preferred, "#!/bin/sh\n").unwrap();
         fs::set_permissions(&preferred, fs::Permissions::from_mode(0o700)).unwrap();
         assert_eq!(
-            prepare_popup_command(&PopupCommand::AgentAuto, None, &launch, &defaults).unwrap(),
+            prepare_popup_command(
+                &PopupCommand::AgentAuto,
+                None,
+                &launch,
+                &root,
+                &defaults,
+                None
+            )
+            .unwrap(),
             [
                 OsString::from("./preferred-agent"),
                 OsString::from("--preferred")
             ]
         );
+
+        // The configured editor runs on the file, reread for each edit, and an
+        // unavailable or malformed one fails the edit rather than running Helix.
+        let edit = |config: &str| {
+            fs::write(root.join("config.toml"), config).unwrap();
+            prepare_popup_command(
+                &PopupCommand::Edit("/src/a b.rs".into()),
+                None,
+                &launch,
+                &root,
+                &inputs.defaults,
+                None,
+            )
+        };
+        assert_eq!(
+            edit("[editor]\ncommand = [\"./tool\", \"--wait\"]\n").unwrap(),
+            ["./tool", "--wait", "/src/a b.rs"].map(OsString::from)
+        );
+        assert!(
+            edit("")
+                .unwrap_err()
+                .contains("\"fixture-editor\" is unavailable")
+        );
+        for (config, error) in [
+            (
+                "[editor]\ncommand = [\"./missing\"]\n",
+                "\"./missing\" is unavailable",
+            ),
+            (
+                "[editor]\ncommand = \"./tool\"\n",
+                "editor.command must be a direct argv array, such as command = [\"nvim\"]",
+            ),
+            (
+                "[editor]\ncommand = []\n",
+                "editor.command requires a nonempty executable",
+            ),
+        ] {
+            assert!(edit(config).unwrap_err().contains(error), "{config}");
+        }
         fs::remove_dir_all(root).unwrap();
     }
 

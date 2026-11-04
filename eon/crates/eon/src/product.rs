@@ -150,6 +150,8 @@ pub(crate) fn inputs() -> Inputs {
             },
             ansi_palette: "000000,cd0000,00cd00,cdcd00,1093f5,cd00cd,00cdcd,faebd7,404040,ff0000,00ff00,ffff00,11b5f6,ff00ff,00ffff,ffffff",
             custom_popup_keep_alive: true,
+            // The packaged Helix on Eon's terminal PATH.
+            editor: &["hx"],
             agent_commands: &[
                 &["codex", "resume"],
                 &["grok"],

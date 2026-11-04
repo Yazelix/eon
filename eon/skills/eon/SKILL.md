@@ -49,7 +49,8 @@ the person's selected pane; it does not identify the new pane.
 ## Open files, tabs and workspaces
 
 When asked to open a file for the person, run `eon edit --json -- FILE` to open
-Helix in a new pane, selecting the new pane in your tab and dismissing that tab's popup.
+the person's configured editor in a new pane, selecting the new pane in your
+tab and dismissing that tab's popup.
 For a work tab, read `eon workspace --json` first, then run
 `eon tab create --no-focus --json --directory DIR`. This starts a tab at DIR
 without quick search and leaves the person's view alone. Append `-- COMMAND ARGS...`

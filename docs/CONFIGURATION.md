@@ -115,6 +115,9 @@ enabled = true # Enable this feature or popup.
 send_enter_delay_ms = 300 # Wait between `eon pane send` text and its --enter.
 terminal_access = "window" # Let `eon pane read` and `eon pane send` reach this window's terminals; "none" refuses both.
 
+[editor]
+command = ["hx"] # Direct argv that `eon edit` and Files run with the file appended.
+
 [popups.agent]
 command = "auto" # Direct argv, or auto for Agent's command selection.
 enabled = true # Enable this feature or popup.
@@ -462,6 +465,25 @@ Set `EON_CONFIG_HOME` to select another configuration root and `EON_RUNTIME_DIR`
 to select another runtime root. Relative `EON_CONFIG_HOME` values resolve once
 against the launch directory. Eon otherwise uses the standard XDG locations and
 private per-user fallbacks.
+
+## Editor
+
+`eon edit FILE`, and Enter on a text file in Files, open the file in a new pane
+running `[editor] command` with the file's absolute path appended. The default,
+`["hx"]`, is Eon's packaged Helix. Any terminal editor works:
+
+```toml
+[editor]
+command = ["nvim"]
+```
+
+`command` is a direct argv array, like a popup's: no shell runs it, so write
+`["emacs", "-nw"]` rather than `"emacs -nw"`. A bare name resolves through the
+terminal PATH, as popup commands do, and a relative path such as `./bin/ed`
+against the tab's directory. Each edit reads the setting again, so a
+change applies to the next file you open without restarting the window. When
+the editor is not on the terminal PATH, the edit fails with `edit-command` and
+opens no pane; Eon does not fall back to Helix.
 
 ## Managed tools
 

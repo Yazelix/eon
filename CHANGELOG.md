@@ -12,6 +12,12 @@ installation, and proven contract changes.
   showed "Cannot read Eon workspace response header". If a stop fails, Eon
   still stops the close's other terminals; only the terminals whose end it
   could not confirm stay in the tab.
+- `eon edit` and Enter on a text file in Files open your configured editor
+  (`eon-ecupy`): `[editor] command`, a direct argv such as `["nvim"]`, runs
+  with the file's path appended. The default, `["hx"]`, is Eon's packaged
+  Helix. Each edit reads the setting again; an editor missing from the
+  terminal PATH fails the edit with `edit-command` instead of falling back to
+  Helix.
 - The Project directory picker and the Files popup are one Yazi per tab
   (`eon-quick-search-parity-23y9.2`). A fresh window, a new tab (Alt+Shift+T,
   `eon tab create`, `eon workspace new`) and Alt+Z show the tab's Files on

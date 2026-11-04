@@ -497,7 +497,7 @@
           };
 
           # The Files popup's Yazi and its quick search: the EON-C18 pair, which a pending tab
-          # opens on quick search, with files opening in a new Helix pane. Nothing writes
+          # opens on quick search, with files opening in a new editor pane. Nothing writes
           # Zoxide history; Eon records a pick. The runtime switches screens through
           # `ya emit-to` and the fzf socket in $EON_PAIR_SOCKET.
           filesPopupConfig = pkgs.runCommand "eon-files-popup-config" { } ''
@@ -506,7 +506,7 @@
             # Text files open through `eon edit`; a failure stays on screen until Enter.
             [opener]
             edit = [
-              { run = '"$EON_FILES_CLI" edit -- %s1 >/dev/null || { printf "Press Enter to return to Files"; read _; }', block = true, desc = "Edit in a new Helix pane", for = "unix" },
+              { run = '"$EON_FILES_CLI" edit -- %s1 >/dev/null || { printf "Press Enter to return to Files"; read _; }', block = true, desc = "Edit in a new editor pane", for = "unix" },
             ]
             EOF
             cat > "$out/keymap.toml" <<'EOF'

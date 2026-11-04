@@ -1134,11 +1134,12 @@ socket names, JSON fields and protocol identifiers retain their spellings.
     ahead of any installed one, so `eon` run by name there acts on that
     terminal's own window and generation after the installed profile changes.
     An `eon` run by path, or put first by a shell or script, is that build's.
-  - `eon edit [--json] -- FILE` opens FILE in the packaged Helix in a new
+  - `eon edit [--json] -- FILE` opens FILE in the configured editor in a new
     pane, as `pane create` would for the same caller, with the tab directory
-    as its working directory. A relative FILE resolves against the caller's
-    working directory. The editor's argv is runtime policy and does not cross
-    EONW.
+    as its working directory: the pane runs `[editor] command` with FILE's
+    absolute path appended as its last argument. A relative FILE resolves
+    against the caller's working directory. The editor's argv is runtime
+    policy and does not cross EONW.
   - `eon pane create [--json] -- COMMAND [ARGS...]`, run from an Eon terminal,
     opens a new pane exactly where `pane create` would for that caller, with
     the tab directory as its working directory, running COMMAND and its
@@ -1338,8 +1339,8 @@ socket names, JSON fields and protocol identifiers retain their spellings.
   across tab-directory changes; only after its process exits does the next
   invocation start a fresh instance at the tab directory.
   In Files, Yazi's edit opener runs `eon edit`, so Enter on a text file opens
-  it in a new Helix pane and hides the popup. Enter on a folder enters it,
-  and other file types keep Yazi's default openers. For
+  it in a new pane running the configured editor and hides the popup. Enter
+  on a folder enters it, and other file types keep Yazi's default openers. For
   Git and other keep-alive popups except Files, retargeting changes no process
   until the next invocation, which stops the exact old terminal before starting
   a fresh one at the new directory. A stop failure preserves the old instance;
@@ -1402,6 +1403,10 @@ socket names, JSON fields and protocol identifiers retain their spellings.
   `tab create --directory DIRECTORY -- COMMAND`. Bare executables resolve
   through the terminal PATH; relative executable paths resolve against the
   owning tab's launch directory.
+  `[editor] command` is a direct argv, by default `["hx"]`, the packaged
+  Helix, with the bounds of a popup command; each `eon edit` rereads it. An
+  editor executable that is unavailable on the terminal PATH refuses the
+  edit with `edit-command` and opens no pane; Eon never falls back to Helix.
 - **Target safety:** Invocation names the tab, entry and expected instance
   (absence means no instance exists). Focus-only and toggle intents are
   distinct. Dismissal requires the exact live instance;
@@ -1437,7 +1442,9 @@ socket names, JSON fields and protocol identifiers retain their spellings.
   retarget `eon-tbn1` (automated and installed tiers); the Files popup
   `eon-ecne.1` (automated and installed tiers); `EON_TAB` and Files Alt+Enter
   `eon-ecne.4` (automated and installed tiers); `eon edit` and Files Enter
-  `eon-ecne.2` (automated and installed tiers); `pane create -- COMMAND`
+  `eon-ecne.2` (automated and installed tiers); the configured editor
+  (`[editor] command`) for `eon edit` and Files Enter `eon-ecupy` (automated
+  and installed tiers); `pane create -- COMMAND`
   `eon-n6ga` (automated and installed tiers); `pane create --no-focus`
   `eon-zhjj` (automated and installed tiers); UTF-8 paths as JSON strings
   `eon-readable-windows-and-child-notices-jf6f` (automated and installed
@@ -1471,6 +1478,7 @@ socket names, JSON fields and protocol identifiers retain their spellings.
     `callers_act_in_their_own_tab_without_changing_the_active_tab`,
     `a_transient_popup_caller_never_removes_its_paneless_tab`,
     `commands_from_a_terminal_target_its_column_and_stale_callers_change_nothing`,
+    `edit_from_files_runs_the_configured_editor_in_its_tab_and_hides_files`,
     `edit_parser_sends_one_absolute_opaque_file`,
     `command_pane_parser_passes_the_argv_through`,
     `command_panes_bound_their_argv`,
@@ -1503,6 +1511,11 @@ socket names, JSON fields and protocol identifiers retain their spellings.
     in Files, Enter on a folder entered it; Enter on a text file opened a new
     selected pane running the packaged Helix on that file at the tab
     directory and hid Files, which reopened at the same place. Installed
+    `eon-ecupy` observation on isolated headless Sway, with `[editor] command
+    = ["<root>/my-editor", "--wait"]` naming a recording stand-in editor: in
+    Files, Enter on a text file opened a new selected pane p2 running
+    `my-editor --wait <absolute path>` at the tab directory and hid Files,
+    which stayed in the tab. Installed
     `eon-n6ga` observation on isolated headless Sway: `eon pane create --json
     -- sh -c ...` without a calling terminal exited 1 with `caller-required`;
     as the first pane's `EON_TERMINAL` it added selected pane p2 in that

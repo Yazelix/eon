@@ -120,6 +120,7 @@ pub(crate) fn inputs() -> Inputs {
             },
             ansi_palette: "111111,111111,111111,111111,111111,111111,111111,111111,111111,111111,111111,111111,111111,111111,111111,111111",
             custom_popup_keep_alive: true,
+            editor: &["fixture-editor"],
             agent_commands: &[],
         },
         orbit: "fixture-orbit".into(),

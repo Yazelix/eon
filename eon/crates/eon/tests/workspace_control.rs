@@ -1998,6 +1998,113 @@ fn a_pick_commits_a_pending_tab_with_one_pane_and_keeps_its_pair() {
 }
 
 #[test]
+fn edit_from_files_runs_the_configured_editor_in_its_tab_and_hides_files() {
+    let window = PairWindow::new();
+    // A stand-in editor records its arguments and stays open, as an editor does.
+    let record = window.root.join("editor.log");
+    let editor = window.root.join("fake-editor");
+    executable(
+        &editor,
+        format!(
+            "#!/bin/sh\nprintf '%s\\n' \"$@\" >> '{}'\nwhile [ ! -e \"$EON_TEST_STOP\" ]; do sleep 0.01; done\n",
+            record.display()
+        ),
+    );
+    let settings = window.config.join("config.toml");
+    let base = fs::read_to_string(&settings).unwrap();
+    let configure = |command: &str| {
+        fs::write(
+            &settings,
+            format!("{base}\n[editor]\ncommand = {command}\n"),
+        )
+        .unwrap()
+    };
+    configure(&format!(r#"["{}", "--wait"]"#, editor.display()));
+    let mut supervisor = window.spawn(&[]);
+    window.pair_launch("session-2");
+    let picked = window.eon(&[
+        "tab",
+        "directory",
+        "t1",
+        "--",
+        window.launch.to_str().unwrap(),
+    ]);
+    assert!(picked.status.success(), "{picked:?}");
+
+    // Alt+Shift+Y shows t1's Files; `eon edit` runs as its terminal, as Yazi's opener does.
+    assert!(matches!(
+        window.invoke_popup("y-show", "files", Some("u1")),
+        Response::Snapshot(snapshot) if snapshot.tabs[0].selected_popup.as_deref() == Some("u1")
+    ));
+    let files = live_identity(&window.generation().join("session-2.sock")).process_id;
+    let caller = process::environ(files)
+        .split(|byte| *byte == 0)
+        .find_map(|entry| entry.strip_prefix(b"EON_TERMINAL="))
+        .map(|token| String::from_utf8(token.to_vec()).unwrap())
+        .unwrap();
+    let file = window.root.join("notes.txt");
+    fs::write(&file, "").unwrap();
+    let edit = || {
+        eon_command(&window.binary)
+            .args(["edit", "--json", "--", "notes.txt"])
+            .current_dir(&window.root)
+            .env("EON_RUNTIME_DIR", &window.runtime)
+            .env("EON_CONFIG_HOME", &window.config)
+            .env("EON_TERMINAL", &caller)
+            .output()
+            .unwrap()
+    };
+    let edited = edit();
+    assert!(edited.status.success(), "{}", stdout(&edited));
+    // The editor runs with its configured argument and the file's absolute path last.
+    assert_eq!(
+        wait_for_lines(&record, 2),
+        ["--wait", file.to_str().unwrap()]
+    );
+    // Its pane joins Files' tab, selected and running the editor; Files hides but stays.
+    let stable = |mut snapshot: Snapshot| {
+        snapshot.tabs = stable_tabs(&snapshot.tabs);
+        for terminal in snapshot
+            .busy
+            .iter_mut()
+            .flat_map(|busy| &mut busy.terminals)
+        {
+            terminal.name.clear();
+        }
+        snapshot
+    };
+    let snapshot = stable(window.inspect("after-edit"));
+    let tab = &snapshot.tabs[0];
+    let pane = tab.panes().find(|pane| pane.id != "p1").unwrap();
+    assert_eq!(tab.panes().count(), 2);
+    assert_eq!(tab.selected_pane.as_deref(), Some(pane.id.as_str()));
+    let endpoint = Path::new(OsStr::from_bytes(&pane.endpoint));
+    let orbit_arguments = process::cmdline(live_identity(endpoint).process_id);
+    assert!(
+        orbit_arguments.ends_with(&[b"--wait\0", file.as_os_str().as_bytes(), b"\0"].concat()),
+        "{}",
+        String::from_utf8_lossy(&orbit_arguments)
+    );
+    assert_eq!(
+        tab.popups
+            .iter()
+            .map(|popup| popup.entry.as_str())
+            .collect::<Vec<_>>(),
+        ["files"]
+    );
+    assert!(tab.selected_popup.is_none(), "the edit hides Files");
+
+    // The editor setting is reread on each edit: a missing one fails and changes nothing.
+    configure(r#"["missing-editor"]"#);
+    let missing = edit();
+    assert_eq!(missing.status.code(), Some(1), "{}", stdout(&missing));
+    assert!(stdout(&missing).contains("edit-command"));
+    assert_eq!(stable(window.inspect("after-missing-editor")), snapshot);
+    assert_eq!(log_lines(&record).len(), 2);
+    window.stop_generation(&mut supervisor);
+}
+
+#[test]
 fn closing_a_pending_pair_dismisses_it_and_starts_the_first_pane() {
     let window = PairWindow::new();
     let mut supervisor = window.spawn(&[]);
@@ -5180,7 +5287,7 @@ fn commands_from_a_terminal_target_its_column_and_stale_callers_change_nothing()
     assert!(!stdout(&closed).contains("\"id\":\"p3\""));
 
     // `eon edit` opens a relative file from the caller's directory in Helix,
-    // in a new pane beside the calling terminal.
+    // the default editor, in a new pane beside the calling terminal.
     let edited = eon_command(&binary)
         .args(["edit", "--json", "--", "notes.txt"])
         .current_dir(&root)
@@ -5311,6 +5418,32 @@ fn commands_from_a_terminal_target_its_column_and_stale_callers_change_nothing()
     assert_eq!(invalid.status.code(), Some(1), "{}", stdout(&invalid));
     assert!(stdout(&invalid).contains("invalid-directory"));
     assert_eq!(inspect("after-invalid-tab"), after);
+
+    // The next `eon edit` runs a newly configured editor with the file last.
+    let settings = fs::read_to_string(config.join("config.toml")).unwrap();
+    fs::write(
+        config.join("config.toml"),
+        format!("{settings}\n[editor]\ncommand = [\"my-editor\", \"--wait\"]\n"),
+    )
+    .unwrap();
+    executable(&root.join("editor/my-editor"), "#!/bin/sh\nexit 0\n");
+    let file = fs::canonicalize(&root).unwrap().join("notes.txt");
+    let edited = from(&caller, &["edit", "--json", "--", file.to_str().unwrap()]);
+    assert!(edited.status.success(), "{}", stdout(&edited));
+    let edited = inspect("after-configured-edit");
+    let tab = &edited.tabs[0];
+    let pane = tab
+        .panes()
+        .find(|pane| Some(pane.id.as_str()) == tab.selected_pane.as_deref())
+        .unwrap();
+    let endpoint = Path::new(OsStr::from_bytes(&pane.endpoint));
+    let orbit_arguments = process::cmdline(live_identity(endpoint).process_id);
+    assert!(
+        orbit_arguments
+            .ends_with(&[b"my-editor\0--wait\0", file.as_os_str().as_bytes(), b"\0"].concat()),
+        "{}",
+        String::from_utf8_lossy(&orbit_arguments)
+    );
 
     fs::write(&stop, "").unwrap();
     wait_for_successful_exit(&mut supervisor.child);

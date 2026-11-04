@@ -767,7 +767,7 @@ const HELP_SECTIONS: &[(&str, &[(&str, &str)])] = &[
                 "pane create [--json] -- COMMAND...",
                 "Run COMMAND in a new pane",
             ),
-            ("edit [--json] -- FILE", "Open FILE in Helix in a new pane"),
+            ("edit [--json] -- FILE", "Open FILE in a new editor pane"),
             ("pane close PANE [--json]", "Close a pane of the active tab"),
             (
                 "pane rename PANE NAME [--json]",

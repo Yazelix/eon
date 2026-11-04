@@ -846,6 +846,10 @@ fn supervise(
     let animate_working_badge =
         managed_environment::animate_working_badge(config, &inputs.defaults, Some(log))?;
     let agents = managed_environment::agents(config, &inputs.defaults, Some(log))?;
+    // Each edit rereads `[editor]`; a malformed one fails the start as other settings do.
+    if mode == LaunchMode::Workspace {
+        managed_environment::editor_command(config, &inputs.defaults, Some(log))?;
+    }
     // Full Eon only; eonbase has no poller and no sidebar (EON-C31).
     let mut attention = if mode == LaunchMode::Workspace {
         Some(Attention::new(managed_environment::sidebar_enabled(
@@ -994,7 +998,9 @@ fn supervise(
                         command,
                         inputs.managed.shell_bin.as_deref(),
                         directory,
+                        config,
                         &inputs.defaults,
+                        Some(log),
                     )
                 },
                 |operation| {
@@ -2581,7 +2587,9 @@ fn dispatch_control_request(
                             command,
                             inputs.managed.shell_bin.as_deref(),
                             directory,
+                            config,
                             &inputs.defaults,
+                            Some(log),
                         )
                     },
                     |operation| {
