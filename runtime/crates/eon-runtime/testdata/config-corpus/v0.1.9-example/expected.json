@@ -18,8 +18,6 @@
       "ram_critical_percent": 90,
       "ram_warning_percent": 80,
       "widgets": [
-        "codex_quota",
-        "claude_quota",
         "cpu",
         "ram",
         "clock",
@@ -107,5 +105,8 @@
       "warning_close_last_tab": true
     }
   },
-  "warnings": []
+  "warnings": [
+    "eon: ignoring unknown bar.widgets name \"codex_quota\" in config.toml",
+    "eon: ignoring unknown bar.widgets name \"claude_quota\" in config.toml"
+  ]
 }

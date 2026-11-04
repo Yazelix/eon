@@ -1959,10 +1959,10 @@ mod tests {
         let full = project(&crate::BarItem::DEFAULT);
         let scene = project(&[
             crate::BarItem::Clock,
-            crate::BarItem::ClaudeQuota,
+            crate::BarItem::ClaudeQuota5h,
             crate::BarItem::Version,
             crate::BarItem::Cpu,
-            crate::BarItem::CodexQuota,
+            crate::BarItem::CodexQuota5h,
         ]);
         assert_eq!(scene.tabs, full.tabs);
         assert_eq!(scene.controls, full.controls);
@@ -2084,7 +2084,7 @@ mod tests {
                 vec![("3h/5h 74% old", five_hour.1, five_hour.2)],
             ),
             (
-                "unusual durations",
+                "unselected duration",
                 quota(
                     CodexQuotaState::Fresh,
                     vec![
@@ -2097,14 +2097,7 @@ mod tests {
                         },
                     ],
                 ),
-                vec![
-                    (
-                        "0m/90m 50%",
-                        "90m window: 50% remaining; observed 0m into 90m.",
-                        "5h",
-                    ),
-                    (five_hour.0, five_hour.1, "90m"),
-                ],
+                vec![(five_hour.0, five_hour.1, "90m")],
             ),
             (
                 "equal durations preserve order",
@@ -2191,7 +2184,8 @@ mod tests {
                 .as_ref()
                 .map_or_else(Vec::new, |quota| quota.windows.clone());
             sorted_windows.sort_by_key(|window| window.duration_minutes);
-            if sorted_windows.len() == 2
+            if expected.len() == 2
+                && sorted_windows.len() == 2
                 && sorted_windows[0].duration_minutes != sorted_windows[1].duration_minutes
             {
                 let size = PhysicalSize::new(800, 600);

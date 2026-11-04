@@ -73,7 +73,7 @@ impl EonConfig {
 }
 
 pub struct Defaults {
-    /// Every Eon Bar widget name, in the order shown when `[bar] widgets` is omitted.
+    /// Eon Bar widgets shown, in order, when `[bar] widgets` is omitted.
     pub bar_widgets: &'static [&'static str],
     /// When the Eon Bar's CPU, RAM and disk chips colour, and the CPU hover's averaging window.
     pub bar_load: BarLoad,
@@ -162,6 +162,14 @@ struct BarSettings {
     disk_path: Option<String>,
     #[serde(flatten)]
     unknown: BTreeMap<String, toml::Value>,
+}
+
+fn bar_widget(name: &str, defaults: &Defaults) -> Option<&'static str> {
+    defaults
+        .bar_widgets
+        .iter()
+        .copied()
+        .find(|widget| *widget == name)
 }
 
 /// The absolute path `value` names: itself when absolute, or under `home` for `~` and `~/...`.
@@ -264,11 +272,8 @@ pub(crate) fn bar(
     };
     let mut widgets = Vec::with_capacity(names.len());
     for name in names {
-        let Some(&widget) = defaults.bar_widgets.iter().find(|widget| **widget == name) else {
-            return Err(format!(
-                "bar.widgets has unknown widget {name:?}; use {}",
-                defaults.bar_widgets.join(", ")
-            ));
+        let Some(widget) = bar_widget(&name, defaults) else {
+            continue;
         };
         if widgets.contains(&widget) {
             return Err(format!("bar.widgets repeats {name:?}"));
@@ -594,7 +599,9 @@ fn defaults_table(
     }
     for (key, value) in settings.as_object().unwrap() {
         let comment = match key.as_str() {
-            "widgets" => "Eon Bar widgets, in display order.",
+            "widgets" => {
+                "Eon Bar widgets, in display order. Each quota widget selects a window; claude_quota_scoped selects all model-scoped Claude windows."
+            }
             "ram_warning_percent" => "RAM use from which the RAM chip turns orange.",
             "ram_critical_percent" => "RAM use from which the RAM chip turns red.",
             "cpu_warning_percent" => "CPU use from which the CPU chip turns orange.",
@@ -1772,7 +1779,7 @@ fn read_config(
     log: Option<&DiagnosticLog>,
 ) -> Result<EonConfig, String> {
     let config = parse_config(root, defaults)?;
-    for warning in config_warnings(&config, &root.join(CONFIG_FILE)) {
+    for warning in config_warnings(&config, &root.join(CONFIG_FILE), defaults) {
         if let Some(log) = log {
             log.note_once(&warning);
         } else {
@@ -1784,7 +1791,7 @@ fn read_config(
 
 /// One warning per unknown or deprecated key of the configuration read from `path`,
 /// and per popup it configures on a focus key.
-fn config_warnings(config: &EonConfig, path: &Path) -> Vec<String> {
+fn config_warnings(config: &EonConfig, path: &Path, defaults: &Defaults) -> Vec<String> {
     let path = path.to_string_lossy();
     let path = path.escape_debug();
     let unknown = config.unknown_keys().into_iter().map(|key| {
@@ -1806,6 +1813,13 @@ fn config_warnings(config: &EonConfig, path: &Path) -> Vec<String> {
             )
         }
     });
+    let widgets = config
+        .bar
+        .widgets
+        .iter()
+        .flatten()
+        .filter(|name| bar_widget(name, defaults).is_none())
+        .map(|name| format!("eon: ignoring unknown bar.widgets name {name:?} in {path}"));
     // Files is always the packaged Yazi (EON-C18), which earlier releases let a
     // configuration replace, disable or stop when hidden.
     let files = config.popups.get("files").into_iter().flat_map(|settings| {
@@ -1835,6 +1849,7 @@ fn config_warnings(config: &EonConfig, path: &Path) -> Vec<String> {
         })
     });
     unknown
+        .chain(widgets)
         .chain(deprecated)
         .chain(files)
         .chain(focus)
@@ -2011,6 +2026,7 @@ mod tests {
         let warnings = super::config_warnings(
             &super::parse_config(root, defaults)?,
             Path::new("config.toml"),
+            defaults,
         );
         let bar = super::bar(root, defaults, None)?;
         let agents = super::agents(root, defaults, None)?;
@@ -2314,6 +2330,50 @@ nested = { value = true }
     }
 
     #[test]
+    fn quota_window_widgets_and_unknown_names() {
+        let root = crate::supervisor::temporary_directory();
+        let defaults = crate::fixtures::inputs().defaults;
+        fs::write(root.join("config.toml"),
+            "[bar]\nwidgets = ['claude_quota_7d', 'cpu', 'claude_quota_5h', 'claude_quota_scoped', 'codex_quota_5h', 'codex_quota_7d', 'codex_quota', 'claude_quota', 'future_quota']\n"
+        ).unwrap();
+        let bar = super::bar(&root, &defaults, None).unwrap();
+        assert_eq!(
+            bar.widgets,
+            [
+                "claude_quota_7d",
+                "cpu",
+                "claude_quota_5h",
+                "claude_quota_scoped",
+                "codex_quota_5h",
+                "codex_quota_7d"
+            ]
+        );
+        assert_eq!(
+            super::config_warnings(
+                &super::parse_config(&root, &defaults).unwrap(),
+                Path::new("config.toml"),
+                &defaults,
+            ),
+            [
+                "eon: ignoring unknown bar.widgets name \"codex_quota\" in config.toml",
+                "eon: ignoring unknown bar.widgets name \"claude_quota\" in config.toml",
+                "eon: ignoring unknown bar.widgets name \"future_quota\" in config.toml",
+            ]
+        );
+        fs::write(
+            root.join("config.toml"),
+            "[bar]\nwidgets = ['claude_quota_5h', 'claude_quota_5h']\n",
+        )
+        .unwrap();
+        assert!(
+            super::bar(&root, &defaults, None)
+                .unwrap_err()
+                .contains("repeats")
+        );
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
     fn deprecated_show_version_reads_as_bar_widgets() {
         let root = crate::supervisor::temporary_directory();
         let defaults = crate::fixtures::inputs().defaults;
@@ -2322,6 +2382,7 @@ nested = { value = true }
             let warnings = super::config_warnings(
                 &super::parse_config(&root, &defaults)?,
                 Path::new("config.toml"),
+                &defaults,
             );
             Ok::<_, String>((super::bar(&root, &defaults, None)?.widgets, warnings))
         };
@@ -2948,6 +3009,7 @@ label = "Browse"
                 super::config_warnings(
                     &super::parse_config(&root, &inputs.defaults).unwrap(),
                     Path::new("config.toml"),
+                    &inputs.defaults,
                 ),
                 ["extra", "project"].map(|id| format!(
                     "eon: popups.{id}.keybinding {keybinding} in config.toml is reserved for moving focus; popup {id} loads without a key"
@@ -3039,6 +3101,7 @@ label = "Browse"
                 super::config_warnings(
                     &super::parse_config(&root, &inputs.defaults).unwrap(),
                     Path::new("config.toml"),
+                    &inputs.defaults,
                 ),
                 ignored.iter().map(|key| warning(key)).collect::<Vec<_>>(),
                 "{source}"

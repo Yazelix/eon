@@ -8,7 +8,7 @@ empty-configuration default:
 
 ```toml
 [bar]
-widgets = ["codex_quota", "claude_quota", "cpu", "ram", "disk", "clock", "version"]
+widgets = ["codex_quota_5h", "codex_quota_7d", "claude_quota_5h", "claude_quota_7d", "claude_quota_scoped", "cpu", "ram", "disk", "clock", "version"]
 
 [terminal]
 background_opacity = 0.80
@@ -73,7 +73,7 @@ disk_path = "~" # Path whose filesystem the disk chip measures.
 disk_warning_percent = 85 # Disk use from which the disk chip turns orange.
 ram_critical_percent = 90 # RAM use from which the RAM chip turns red.
 ram_warning_percent = 80 # RAM use from which the RAM chip turns orange.
-widgets = ["codex_quota", "claude_quota", "cpu", "ram", "disk", "clock", "version"] # Eon Bar widgets, in display order.
+widgets = ["codex_quota_5h", "codex_quota_7d", "claude_quota_5h", "claude_quota_7d", "claude_quota_scoped", "cpu", "ram", "disk", "clock", "version"] # Eon Bar widgets, in display order. Each quota widget selects a window; claude_quota_scoped selects all model-scoped Claude windows.
 
 [terminal]
 background_blur = true # Request compositor background blur.
@@ -187,12 +187,12 @@ RAM and disk use, the local clock and `EON <version>`. The Eon logo at the
 bar's left end is not a widget and shows whatever the list holds. Each name
 appears at most once. A widget left out doesn't show, `widgets = []` leaves
 only the logo, the tabs and the buttons, and omitting the key uses the built-in
-list above. The list applies when a window next opens or reopens, and an
-unknown or repeated name is a configuration error. Narrow windows hide the Eon
+list above. The list applies when a window next opens or reopens. Unknown names
+are ignored with a warning; repeated known names are a configuration error. Narrow windows hide the Eon
 logo first, then the clock, then disk, RAM, CPU and the version, whatever the
 order, then quota chips one by one, the one closest to the tabs first. The logo
 also hides whenever the tabs would not all fit beside it, however wide the
-window, and it leaves room for a chip for each window each provider's latest
+window, and it leaves room for a chip for each selected window each provider's latest
 read reported and for every reading, all at their widest, so their changing
 values and a window's reset never show or hide it; it can change once when a
 provider's quota first appears or goes away (as it does when all its windows
@@ -382,12 +382,30 @@ selection and its local authentication/cache mechanisms.
 
 Codex and Claude show one chip per available window, five-hour then seven-day.
 Claude's model-scoped weekly windows, such as `Fable`, follow as their own
-chips; `claude_quota` covers them.
+chips. Choose chips with `codex_quota_5h`, `codex_quota_7d`,
+`claude_quota_5h`, `claude_quota_7d` or `claude_quota_scoped` in `[bar] widgets`.
+The duration names select unscoped windows only; `claude_quota_scoped` selects
+all model-scoped Claude windows, in provider order. All five widgets are listed
+by default. Codex's 5h widget also shows its blocked or unknown observation
+when no windows are available.
+Unscoped Codex windows of other durations remain in workspace JSON but have no bar widget.
+For example, to leave out Fable
+and other scoped Claude chips:
+
+```toml
+[bar]
+widgets = ["codex_quota_5h", "codex_quota_7d", "claude_quota_5h", "claude_quota_7d", "cpu", "ram", "disk", "clock", "version"]
+```
+
+Selection affects the bar, its hover and accessibility, and the logo's room
+reservation only. `eon workspace --json` still reports every window read for
+each enabled provider, including hidden scoped windows.
 Only reported windows appear; an idle Claude window can lack a reset time.
 Hover and accessible labels report that absence. Narrow windows hide quota
 chips one by one, the one closest to the tabs first, before tabs and controls.
 
-Eon reads a provider's quota only while `[bar] widgets` lists its chip, checked
+Eon reads a provider's quota only while `[bar] widgets` lists at least one of
+its quota widgets, checked
 when a window opens or reopens. A chip listed again shows its provider's
 stored reading at once, if there is one, and otherwise appears after its
 provider's next read.

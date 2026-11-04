@@ -1,0 +1,2 @@
+[bar]
+widgets = ["codex_quota", "claude_quota_5h", "claude_quota_7d", "cpu", "ram", "disk", "clock", "version", "future_quota"]

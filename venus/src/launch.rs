@@ -436,8 +436,11 @@ fn parse_bar_items(list: &str) -> Option<Vec<BarItem>> {
     let mut items = Vec::new();
     for name in list.split(',').filter(|_| !list.is_empty()) {
         let item = match name {
-            "codex_quota" => BarItem::CodexQuota,
-            "claude_quota" => BarItem::ClaudeQuota,
+            "codex_quota_5h" => BarItem::CodexQuota5h,
+            "codex_quota_7d" => BarItem::CodexQuota7d,
+            "claude_quota_5h" => BarItem::ClaudeQuota5h,
+            "claude_quota_7d" => BarItem::ClaudeQuota7d,
+            "claude_quota_scoped" => BarItem::ClaudeQuotaScoped,
             "cpu" => BarItem::Cpu,
             "ram" => BarItem::Ram,
             "disk" => BarItem::Disk,
@@ -586,17 +589,34 @@ mod tests {
         };
         assert_eq!(parse(&[]).unwrap().bar_items, BarItem::DEFAULT);
         assert_eq!(
-            parse(&["--bar-items", "clock,claude_quota,cpu"])
+            parse(&["--bar-items", "clock,claude_quota_5h,cpu"])
                 .unwrap()
                 .bar_items,
-            [BarItem::Clock, BarItem::ClaudeQuota, BarItem::Cpu]
+            [BarItem::Clock, BarItem::ClaudeQuota5h, BarItem::Cpu]
         );
         assert_eq!(
             parse(&["--bar-items", "disk,ram"]).unwrap().bar_items,
             [BarItem::Disk, BarItem::Ram]
         );
         assert!(parse(&["--bar-items", ""]).unwrap().bar_items.is_empty());
+        assert_eq!(
+            parse(&[
+                "--bar-items",
+                "claude_quota_7d,claude_quota_5h,claude_quota_scoped,codex_quota_5h,codex_quota_7d"
+            ])
+            .unwrap()
+            .bar_items,
+            [
+                BarItem::ClaudeQuota7d,
+                BarItem::ClaudeQuota5h,
+                BarItem::ClaudeQuotaScoped,
+                BarItem::CodexQuota5h,
+                BarItem::CodexQuota7d
+            ]
+        );
         for items in [
+            vec!["--bar-items", "codex_quota"],
+            vec!["--bar-items", "claude_quota"],
             vec!["--bar-items", "gpu"],
             vec!["--bar-items", "CPU"],
             vec!["--bar-items", "cpu,cpu"],

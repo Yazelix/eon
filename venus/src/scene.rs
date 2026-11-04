@@ -522,13 +522,6 @@ pub(crate) enum QuotaProvider {
 }
 
 impl QuotaProvider {
-    fn item(self) -> BarItem {
-        match self {
-            Self::Codex => BarItem::CodexQuota,
-            Self::Claude => BarItem::ClaudeQuota,
-        }
-    }
-
     pub(crate) fn name(self) -> &'static str {
         match self {
             Self::Codex => "Codex",
@@ -541,6 +534,7 @@ impl QuotaProvider {
 #[derive(Clone, Debug, PartialEq)]
 pub(crate) struct WorkspaceQuota {
     pub(crate) provider: QuotaProvider,
+    item: BarItem,
     /// The chip's one window identity, or none for blocked or unknown observations.
     pub(crate) window: Option<QuotaWindowIdentity>,
     pub(crate) rect: SceneRect,
@@ -639,8 +633,11 @@ pub enum HeaderText<'a> {
 /// One item Eon may place in the Eon Bar between the drag region and Shortcuts.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum BarItem {
-    CodexQuota,
-    ClaudeQuota,
+    CodexQuota5h,
+    CodexQuota7d,
+    ClaudeQuota5h,
+    ClaudeQuota7d,
+    ClaudeQuotaScoped,
     Cpu,
     Ram,
     Disk,
@@ -649,10 +646,32 @@ pub enum BarItem {
 }
 
 impl BarItem {
+    fn provider(self) -> Option<QuotaProvider> {
+        match self {
+            Self::CodexQuota5h | Self::CodexQuota7d => Some(QuotaProvider::Codex),
+            Self::ClaudeQuota5h | Self::ClaudeQuota7d | Self::ClaudeQuotaScoped => {
+                Some(QuotaProvider::Claude)
+            }
+            _ => None,
+        }
+    }
+
+    fn selects(self, scope: Option<&str>, minutes: u32) -> bool {
+        match self {
+            Self::CodexQuota5h | Self::ClaudeQuota5h => scope.is_none() && minutes == 300,
+            Self::CodexQuota7d | Self::ClaudeQuota7d => scope.is_none() && minutes == 10080,
+            Self::ClaudeQuotaScoped => scope.is_some(),
+            _ => false,
+        }
+    }
+
     /// Every item, in the order Venus shows them when Eon names none.
-    pub const DEFAULT: [Self; 7] = [
-        Self::CodexQuota,
-        Self::ClaudeQuota,
+    pub const DEFAULT: [Self; 10] = [
+        Self::CodexQuota5h,
+        Self::CodexQuota7d,
+        Self::ClaudeQuota5h,
+        Self::ClaudeQuota7d,
+        Self::ClaudeQuotaScoped,
         Self::Cpu,
         Self::Ram,
         Self::Disk,
@@ -2754,7 +2773,7 @@ impl WorkspaceScene {
             .items
             .iter()
             .flat_map(|item| match item {
-                BarItem::CodexQuota => snapshot
+                BarItem::CodexQuota5h | BarItem::CodexQuota7d => snapshot
                     .codex_quota
                     .iter()
                     .flat_map(|quota| match quota.state {
@@ -2764,6 +2783,9 @@ impl WorkspaceScene {
                             windows
                                 .iter()
                                 .enumerate()
+                                .filter(|(_, window)| {
+                                    item.selects(window.scope.as_deref(), window.duration_minutes)
+                                })
                                 .map(|(index, window)| {
                                     // EONW permits at most two windows; stable sorting keeps ties in wire order.
                                     let occurrence = u8::from(
@@ -2772,6 +2794,7 @@ impl WorkspaceScene {
                                                 == window.duration_minutes,
                                     );
                                     (
+                                        *item,
                                         QuotaProvider::Codex,
                                         Some(QuotaWindowIdentity::Codex {
                                             duration: window.duration_minutes,
@@ -2787,57 +2810,75 @@ impl WorkspaceScene {
                                 })
                                 .collect::<Vec<_>>()
                         }
-                        CodexQuotaState::Blocked | CodexQuotaState::Unknown => vec![(
-                            QuotaProvider::Codex,
-                            None,
-                            quota_text(QuotaProvider::Codex, quota.state, quota.observed_at, None),
-                        )],
+                        CodexQuotaState::Blocked | CodexQuotaState::Unknown
+                            if *item == BarItem::CodexQuota5h =>
+                        {
+                            vec![(
+                                *item,
+                                QuotaProvider::Codex,
+                                None,
+                                quota_text(
+                                    QuotaProvider::Codex,
+                                    quota.state,
+                                    quota.observed_at,
+                                    None,
+                                ),
+                            )]
+                        }
+                        CodexQuotaState::Blocked | CodexQuotaState::Unknown => Vec::new(),
                     })
                     .collect::<Vec<_>>(),
                 // Claude gets one chip per window, five-hour then seven-day, then its scoped
                 // windows in EONW order.
-                BarItem::ClaudeQuota => snapshot
-                    .claude_quota
-                    .iter()
-                    .flat_map(|quota| {
-                        let state = match quota.state {
-                            ClaudeQuotaState::Fresh => CodexQuotaState::Fresh,
-                            ClaudeQuotaState::Stale => CodexQuotaState::Stale,
-                        };
-                        let mut windows = quota.windows.iter().collect::<Vec<_>>();
-                        windows.sort_by_key(|window| window.scope.is_some());
-                        windows[..quota.windows.iter().filter(|w| w.scope.is_none()).count()]
-                            .sort_by_key(|window| window.duration_minutes);
-                        let mut scoped = 0;
-                        windows.into_iter().map(move |window| {
-                            let identity = if window.scope.is_some() {
-                                scoped += 1;
-                                QuotaWindowIdentity::ClaudeScoped(scoped - 1)
-                            } else {
-                                QuotaWindowIdentity::Claude(window.duration_minutes)
+                BarItem::ClaudeQuota5h | BarItem::ClaudeQuota7d | BarItem::ClaudeQuotaScoped => {
+                    snapshot
+                        .claude_quota
+                        .iter()
+                        .flat_map(|quota| {
+                            let state = match quota.state {
+                                ClaudeQuotaState::Fresh => CodexQuotaState::Fresh,
+                                ClaudeQuotaState::Stale => CodexQuotaState::Stale,
                             };
-                            (
-                                QuotaProvider::Claude,
-                                Some(identity),
-                                quota_text(
-                                    QuotaProvider::Claude,
-                                    state,
-                                    quota.observed_at,
-                                    Some(window),
-                                ),
-                            )
+                            let mut windows = quota.windows.iter().collect::<Vec<_>>();
+                            windows.sort_by_key(|window| window.scope.is_some());
+                            windows[..quota.windows.iter().filter(|w| w.scope.is_none()).count()]
+                                .sort_by_key(|window| window.duration_minutes);
+                            let mut scoped = 0;
+                            windows.into_iter().filter_map(move |window| {
+                                let identity = if window.scope.is_some() {
+                                    scoped += 1;
+                                    QuotaWindowIdentity::ClaudeScoped(scoped - 1)
+                                } else {
+                                    QuotaWindowIdentity::Claude(window.duration_minutes)
+                                };
+                                item.selects(window.scope.as_deref(), window.duration_minutes)
+                                    .then(|| {
+                                        (
+                                            *item,
+                                            QuotaProvider::Claude,
+                                            Some(identity),
+                                            quota_text(
+                                                QuotaProvider::Claude,
+                                                state,
+                                                quota.observed_at,
+                                                Some(window),
+                                            ),
+                                        )
+                                    })
+                            })
                         })
-                    })
-                    .collect(),
+                        .collect()
+                }
                 _ => Vec::new(),
             })
             .collect::<Vec<_>>();
         let quota_padding = metrics.padding * 2.0 + metrics.font_size + metrics.padding / 2.0;
         let mut quotas = quota_texts
             .into_iter()
-            .map(|(provider, window, text)| {
+            .map(|(item, provider, window, text)| {
                 let (label, width) = header_text(HeaderText::Fact, &text.label);
                 WorkspaceQuota {
+                    item,
                     provider,
                     window,
                     rect: SceneRect {
@@ -2898,20 +2939,23 @@ impl WorkspaceScene {
             };
             let mut reserved = Vec::new();
             for item in bar.items {
-                let (provider, current, read) =
-                    match (item, &snapshot.codex_quota, &snapshot.claude_quota) {
-                        (BarItem::CodexQuota, Some(quota), _) => (
-                            QuotaProvider::Codex,
-                            &quota.windows,
-                            &bar.quota_windows.codex,
-                        ),
-                        (BarItem::ClaudeQuota, _, Some(quota)) => (
-                            QuotaProvider::Claude,
-                            &quota.windows,
-                            &bar.quota_windows.claude,
-                        ),
-                        _ => continue,
-                    };
+                let (provider, current, read) = match (
+                    item.provider(),
+                    &snapshot.codex_quota,
+                    &snapshot.claude_quota,
+                ) {
+                    (Some(QuotaProvider::Codex), Some(quota), _) => (
+                        QuotaProvider::Codex,
+                        &quota.windows,
+                        &bar.quota_windows.codex,
+                    ),
+                    (Some(QuotaProvider::Claude), _, Some(quota)) => (
+                        QuotaProvider::Claude,
+                        &quota.windows,
+                        &bar.quota_windows.claude,
+                    ),
+                    _ => continue,
+                };
                 let mut windows = current
                     .iter()
                     .map(|window| (window.scope.as_deref(), window.duration_minutes))
@@ -2922,12 +2966,17 @@ impl WorkspaceScene {
                         .iter()
                         .map(|(scope, minutes)| (scope.as_deref(), *minutes)),
                 );
-                let widths = if windows.is_empty() {
+                let widths = if windows.is_empty() && *item == BarItem::CodexQuota5h {
                     vec![no_window]
                 } else {
-                    windows.into_iter().map(&mut widest_text).collect()
+                    windows
+                        .into_iter()
+                        .filter(|(scope, minutes)| item.selects(*scope, *minutes))
+                        .map(&mut widest_text)
+                        .collect()
                 };
                 reserved.extend(widths.into_iter().map(|width| WorkspaceQuota {
+                    item: *item,
                     provider,
                     window: None,
                     rect: SceneRect {
@@ -3227,10 +3276,7 @@ impl WorkspaceScene {
                 label.rect.left = left;
                 left = label.rect.right();
             } else {
-                for quota in quotas
-                    .iter_mut()
-                    .filter(|quota| quota.provider.item() == *item)
-                {
+                for quota in quotas.iter_mut().filter(|quota| quota.item == *item) {
                     quota.rect.left = left;
                     quota.logo.left = left + metrics.padding;
                     left = quota.rect.right();

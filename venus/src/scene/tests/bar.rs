@@ -2278,7 +2278,7 @@ fn reserved_chips_take_the_widest_text() {
         WorkspaceScene::from_snapshot_with_bar(
             snapshot,
             EonBar {
-                items: &[BarItem::CodexQuota],
+                items: &[BarItem::CodexQuota5h, BarItem::CodexQuota7d],
                 icon: true,
                 ..EonBar::default()
             },
@@ -2291,7 +2291,7 @@ fn reserved_chips_take_the_widest_text() {
         )
     };
     let even = |text: &str| text.chars().count() as f32 * 10.0;
-    // A 25-hour window 23 hours 59 minutes in shows `23h`, longer than its last minute's `1d`.
+    // Both supported window lengths retain their widest text.
     for (snapshot, measure) in [
         (
             codex(
@@ -2300,7 +2300,7 @@ fn reserved_chips_take_the_widest_text() {
             ),
             &zero as &dyn Fn(&str) -> f32,
         ),
-        (codex(CodexQuotaState::Stale, vec![window(1500, 61)]), &even),
+        (codex(CodexQuotaState::Stale, vec![window(300, 61)]), &even),
     ] {
         let mut seen = [false; 2];
         for logical_width in 300..=1600 {
@@ -2332,4 +2332,179 @@ fn reserved_chips_take_the_widest_text() {
         toggled[usize::from(shown[0])] = true;
     }
     assert_eq!(toggled, [true; 2]);
+}
+
+#[test]
+fn quota_window_widgets_filter_order_and_reserve_only_selected_windows() {
+    use eon_workspace_protocol::v31::{
+        ClaudeQuota, ClaudeQuotaState, CodexQuota, Pane, PopupGeometry, Tab,
+    };
+    let mut snapshot = Snapshot {
+        workspace: "w1".into(),
+        active_workspace: "w1".into(),
+        workspaces: Vec::new(),
+        active_tab: "t1".into(),
+        geometry: PopupGeometry {
+            side_margin: 8.0,
+            vertical_margin: 4.0,
+        },
+        entries: Vec::new(),
+        tabs: vec![Tab {
+            id: "t1".into(),
+            directory: b"/tmp".to_vec(),
+            pending: false,
+            selected_pane: Some("p1".into()),
+            selected_popup: None,
+            columns: vec![eon_workspace_protocol::v31::Column {
+                panes: vec![Pane {
+                    label: "p1".into(),
+                    pinned_name: None,
+                    id: "p1".into(),
+                    session: "s1".into(),
+                    endpoint: b"/tmp/p1.sock".to_vec(),
+                    live: true,
+                    attention: None,
+                }],
+                expanded: "p1".into(),
+            }],
+            popups: Vec::new(),
+            attention_rollup: None,
+        }],
+        codex_quota: None,
+        claude_quota: None,
+        codex_quota_failure: None,
+        claude_quota_failure: None,
+        running: None,
+        busy: None,
+        sidebar: eon_workspace_protocol::v31::Sidebar::Open,
+        attention_queue: Vec::new(),
+    };
+    let window = |duration_minutes, scope: Option<&str>| QuotaWindow {
+        duration_minutes,
+        remaining_percent: 50,
+        resets_at: None,
+        scope: scope.map(Into::into),
+    };
+    snapshot.claude_quota = Some(ClaudeQuota {
+        state: ClaudeQuotaState::Fresh,
+        observed_at: 100,
+        windows: vec![
+            window(300, None),
+            window(10080, None),
+            window(10080, Some("Fable")),
+        ],
+    });
+    snapshot.codex_quota = Some(CodexQuota {
+        state: CodexQuotaState::Fresh,
+        observed_at: 100,
+        windows: vec![window(300, None), window(10080, None)],
+    });
+    let mut remembered = crate::QuotaWindows::default();
+    remembered.observe(
+        snapshot.codex_quota.as_ref(),
+        snapshot.claude_quota.as_ref(),
+    );
+    let cpu = crate::CpuUse {
+        percent: 12,
+        label: "CPU 12%".into(),
+        description: "CPU".into(),
+        load: Load::Normal,
+    };
+    let render =
+        |snapshot: &Snapshot, items: &[BarItem], width, remembered: &crate::QuotaWindows| {
+            WorkspaceScene::from_snapshot_with_bar(
+                snapshot,
+                EonBar {
+                    items,
+                    icon: true,
+                    cpu: Some(&cpu),
+                    quota_windows: remembered,
+                    ..EonBar::default()
+                },
+                PhysicalSize::new(width, 600),
+                CellMetrics::for_scale(1.0),
+                0.0,
+                0.0,
+                |_, text| (text.to_owned(), text.chars().count() as f32 * 10.0),
+                None,
+            )
+        };
+    let project =
+        |snapshot: &Snapshot, items: &[BarItem], width| render(snapshot, items, width, &remembered);
+    let selected = [BarItem::ClaudeQuota7d, BarItem::Cpu, BarItem::ClaudeQuota5h];
+    let scene = project(&snapshot, &selected, 3000);
+    assert_eq!(
+        scene
+            .quotas
+            .iter()
+            .map(|q| q.label.as_str())
+            .collect::<Vec<_>>(),
+        ["7d 50%", "5h 50%"]
+    );
+    assert!(scene.quotas[0].rect.right() <= scene.cpu.as_ref().unwrap().rect.left);
+    assert!(scene.cpu.as_ref().unwrap().rect.right() <= scene.quotas[1].rect.left);
+    assert!(
+        scene
+            .quotas
+            .iter()
+            .all(|q| !q.accessible_label.contains("Fable") && !q.description.contains("Fable"))
+    );
+    assert_eq!(snapshot.claude_quota.as_ref().unwrap().windows.len(), 3);
+    let all = project(
+        &snapshot,
+        &[
+            BarItem::ClaudeQuota7d,
+            BarItem::ClaudeQuota5h,
+            BarItem::ClaudeQuotaScoped,
+        ],
+        3000,
+    );
+    assert_eq!(
+        all.quotas
+            .iter()
+            .map(|q| q.label.as_str())
+            .collect::<Vec<_>>(),
+        ["7d 50%", "5h 50%", "Fable 7d 50%"]
+    );
+    let scoped = project(&snapshot, &[BarItem::ClaudeQuotaScoped], 3000);
+    assert_eq!(scoped.quotas.len(), 1);
+    assert_eq!(
+        scoped.quotas[0].window,
+        Some(QuotaWindowIdentity::ClaudeScoped(0))
+    );
+    let codex = project(
+        &snapshot,
+        &[BarItem::CodexQuota7d, BarItem::CodexQuota5h],
+        3000,
+    );
+    assert_eq!(
+        codex
+            .quotas
+            .iter()
+            .map(|q| q.label.as_str())
+            .collect::<Vec<_>>(),
+        ["7d 50%", "5h 50%"]
+    );
+    // An unselected scoped window must consume no reserved room, even after its reset.
+    let mut without_scoped = snapshot.clone();
+    without_scoped
+        .claude_quota
+        .as_mut()
+        .unwrap()
+        .windows
+        .retain(|w| w.scope.is_none());
+    for width in (500..1800).step_by(10) {
+        assert_eq!(
+            project(&snapshot, &selected, width).eon_icon.is_some(),
+            render(
+                &without_scoped,
+                &selected,
+                width,
+                &crate::QuotaWindows::default()
+            )
+            .eon_icon
+            .is_some(),
+            "{width}"
+        );
+    }
 }

@@ -15,8 +15,11 @@ pub(crate) fn inputs() -> Inputs {
         assembly: b"fixture-assembly",
         defaults: Defaults {
             bar_widgets: &[
-                "codex_quota",
-                "claude_quota",
+                "codex_quota_5h",
+                "codex_quota_7d",
+                "claude_quota_5h",
+                "claude_quota_7d",
+                "claude_quota_scoped",
                 "cpu",
                 "ram",
                 "disk",

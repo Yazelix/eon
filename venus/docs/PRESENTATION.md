@@ -24,7 +24,7 @@ order, selection, and popups; Venus draws the visible scene.
   from the window's left edge as the bar's centre line is below the window top,
   and the next item starts as far after it as it is from the left edge. It is
   decorative, with no action, hover or accessible node. It shows only while
-  everything else in the bar would show with it: a chip for each window each
+  everything else in the bar would show with it: a chip for each selected window each
   provider's latest read reported, each at the widest that window's chip can
   be, or Codex's one blocked or unknown chip; each reading and the clock at
   its widest; and every tab unscrolled at its full width. So it hides before
@@ -120,7 +120,12 @@ order, selection, and popups; Venus draws the visible scene.
 - Eon's `[bar] widgets` chooses which of these items show and their order, left
   to right between the drag region and Shortcuts; the version always sits
   between Shortcuts and Close. By default the order
-  is Codex quota, Claude quota, CPU, RAM, disk, clock and version. A left-out
+  is Codex 5h and 7d, Claude 5h and 7d then its scoped windows, CPU, RAM, disk,
+  clock and version. A left-out quota window takes no room, including the
+  logo's reserved room. `_5h` and `_7d` select only unscoped windows
+  of those durations, and `claude_quota_scoped` selects every model-scoped
+  Claude window. Codex's 5h widget also shows its one blocked or unknown
+  observation when no windows are available. A left-out
   item has no chip, hover or accessible node, and a left-out CPU, RAM, disk or
   clock is never read and never wakes Venus. Accessibility order follows the
   visual order. The items use only spare drag-region space and keep its minimum.

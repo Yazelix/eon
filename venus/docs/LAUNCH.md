@@ -90,9 +90,12 @@ window.
 
 The supervising Eon may also pass `--bar-items ITEM,...` to choose which Eon
 Bar items show and in what order ([Eon Bar](PRESENTATION.md#eon-bar)). Items
-are `codex_quota`, `claude_quota`, `cpu`, `ram`, `disk`, `clock` and `version`,
-each at most once; an empty value shows none, and absence keeps all seven in
-that order. An item
+are `codex_quota_5h`, `codex_quota_7d`,
+`claude_quota_5h`, `claude_quota_7d`, `claude_quota_scoped`, `cpu`, `ram`,
+`disk`, `clock` and `version`,
+each at most once; an empty value shows none, and absence keeps all ten in
+the order above. Duration names select unscoped windows only, and
+`claude_quota_scoped` selects all scoped Claude windows. An item
 without data, such as a version Eon did not pass, still shows nothing. The input
 is workspace-only, and a missing value, an unknown, repeated or empty item, or a
 repeated flag fails before window creation.

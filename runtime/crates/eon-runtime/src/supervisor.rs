@@ -4423,7 +4423,7 @@ mod tests {
         for (source, widgets, visible) in [
             (
                 "",
-                "codex_quota,claude_quota,cpu,ram,disk,clock,version",
+                "codex_quota_5h,codex_quota_7d,claude_quota_5h,claude_quota_7d,claude_quota_scoped,cpu,ram,disk,clock,version",
                 true,
             ),
             (
@@ -4432,19 +4432,19 @@ mod tests {
                 true,
             ),
             (
-                "[bar]\nwidgets = ['cpu', 'codex_quota']\n",
-                "cpu,codex_quota",
+                "[bar]\nwidgets = ['cpu', 'codex_quota_5h']\n",
+                "cpu,codex_quota_5h",
                 false,
             ),
             ("[bar]\nwidgets = []\n", "", false),
             (
                 "[bar]\nshow_version = false\n",
-                "codex_quota,claude_quota,cpu,ram,disk,clock",
+                "codex_quota_5h,codex_quota_7d,claude_quota_5h,claude_quota_7d,claude_quota_scoped,cpu,ram,disk,clock",
                 false,
             ),
             (
                 "[bar]\nshow_version = true\n",
-                "codex_quota,claude_quota,cpu,ram,disk,clock,version",
+                "codex_quota_5h,codex_quota_7d,claude_quota_5h,claude_quota_7d,claude_quota_scoped,cpu,ram,disk,clock,version",
                 true,
             ),
         ] {
@@ -4545,18 +4545,15 @@ mod tests {
             launch_input(&inputs, LaunchMode::Workspace, "--bar-items"),
             ["ram,clock"]
         );
-        // Names are checked only where the bar launches; malformed input fails every read.
+        for source in ["[bar]\nwidgets = ['gpu']\n", "[bar]\nwidgets = ['RAM']\n"] {
+            fs::write(root.join("config.toml"), source).unwrap();
+            assert_eq!(
+                launch_input(&inputs, LaunchMode::Workspace, "--bar-items"),
+                [""]
+            );
+        }
+        // Known names are checked where the bar launches; malformed input fails every read.
         for (source, error, every_read) in [
-            (
-                "[bar]\nwidgets = ['gpu']\n",
-                "unknown widget \"gpu\"",
-                false,
-            ),
-            (
-                "[bar]\nwidgets = ['RAM']\n",
-                "unknown widget \"RAM\"",
-                false,
-            ),
             (
                 "[bar]\nwidgets = ['ram', 'ram']\n",
                 "repeats \"ram\"",

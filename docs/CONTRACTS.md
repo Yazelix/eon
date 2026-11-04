@@ -904,6 +904,8 @@ socket names, JSON fields and protocol identifiers retain their spellings.
   - An Eon build ignores a configuration key it does not know, with one warning
     naming the key and file, so a newer setting never breaks an older running
     window. A known key with a wrong type or value still fails.
+  - An unknown name in `[bar] widgets` is ignored with a warning naming the
+    value and file; known repeated names and wrong types still fail.
   - When mise is enabled and the inherited PATH has a `mise` executable, an
     interactive managed shell evaluates that host mise's own `mise activate`
     output after Eon's other integrations, so mise-managed tools and
@@ -2659,8 +2661,8 @@ socket names, JSON fields and protocol identifiers retain their spellings.
   observation is pending re-proof in this repository.
 - **Consumer, trigger and result:** Full Eon reads quota through independent,
   noninteractive CodexBar CLI calls for Codex (`--source cli`) and Claude
-  (`--source oauth`) only while `[bar] widgets` (EON-C32) lists that
-  provider's chip. The list is checked whenever a window opens or reopens: a
+  (`--source oauth`) only while `[bar] widgets` (EON-C32) lists at least one of
+  that provider's quota widgets. The list is checked whenever a window opens or reopens: a
   newly listed provider starts reading, and a newly unlisted one stops, ending
   any read in progress, and drops its last reading. Codex reads start at least
   one minute apart and Claude reads at least five minutes apart, including
@@ -2676,8 +2678,8 @@ socket names, JSON fields and protocol identifiers retain their spellings.
   than two hours, is ignored, and a supervisor that cannot read, lock or write
   it keeps its own schedule. Codex reads stay per supervisor and never back
   off.
-  The native chips show every supplied supported window and remaining
-  percentage, one chip per window for each provider
+  The native chips show each selected supplied supported window and its remaining
+  percentage, one chip per window, in `[bar] widgets` order
   ([Eon Bar](../venus/docs/PRESENTATION.md#eon-bar)), with provider periods,
   optional resets and observation time. Claude's model-scoped weekly windows,
   the CodexBar `extraRateWindows` entries whose `id` starts with
@@ -3325,10 +3327,14 @@ socket names, JSON fields and protocol identifiers retain their spellings.
 - **Consumer:** Full-Eon workspace users.
 - **Trigger:** A workspace window opens or reopens.
 - **Result:** `[bar] widgets` is an ordered list of unique names from
-  `codex_quota`, `claude_quota`, `cpu`, `ram`, `disk`, `clock` and `version`.
+  `codex_quota_5h`, `codex_quota_7d`,
+  `claude_quota_5h`, `claude_quota_7d`, `claude_quota_scoped`, `cpu`, `ram`,
+  `disk`, `clock` and `version`. `_5h` and `_7d` select only unscoped five-hour and seven-day
+  windows, and `claude_quota_scoped` selects every model-scoped Claude window.
+  Unknown names warn and are ignored.
   The Eon Bar shows the listed widgets left to right in that order, between the
   drag region and Shortcuts, except `version`, which sits between Shortcuts and
-  Close. `codex_quota` and `claude_quota` are the quota chips (EON-C27), `cpu`
+  Close. The quota widgets select Codex and Claude windows (EON-C27), `cpu`
   and `ram` the whole-machine CPU and memory use labels, `disk` the used
   percentage of the filesystem holding the configured path, `clock` the local
   24-hour clock, and `version` the read-only `EON <version>` label of the
@@ -3336,7 +3342,8 @@ socket names, JSON fields and protocol identifiers retain their spellings.
   edge is not a widget: whatever the list, it shows when Eon has one and the
   bar has room for it (VEN-C21). A widget left out doesn't show, and
   `widgets = []` leaves only the icon, tabs and controls. Omitting the
-  key shows all seven in that order. A listed widget without data still shows
+  key shows the ten default widgets in the order documented in
+  [Configuration](CONFIGURATION.md). A listed widget without data still shows
   nothing, as [Eon Bar](../venus/docs/PRESENTATION.md#eon-bar) describes for
   each widget. Narrow windows keep the fixed hiding priority it gives, whatever
   the order. `ram_warning_percent` and `ram_critical_percent` set the RAM use,
@@ -3357,23 +3364,24 @@ socket names, JSON fields and protocol identifiers retain their spellings.
   warning naming `bar.widgets`: `false` reads as the default list without
   `version`, `true` as the default list, and a `widgets` key set beside it
   wins.
-- **Important failures:** An unknown or repeated name, a non-string entry, a
+- **Important failures:** A repeated known name, a non-string entry, a
   value that is not a list, a load level that is not a whole number in its
   range, a critical level below its warning level, a `disk_path` other than
   `~`, a path starting with `~/` or an absolute path, or a `[bar] show_version`
   that is not true or false fails through the existing startup and replacement
   handling, preserving live terminals.
 - **Owner:** Eon owns the settings, their names and defaults. Runtime parses
-  and validates them and passes the list to Venus unchanged as `--bar-items`,
+  and validates them and passes the recognized list to Venus as `--bar-items`,
   with `--eon-version` only when `version` is listed, the Eon icon's path
   (`--eon-icon`) whenever Eon has one, the RAM levels only when
   `ram` is listed, the CPU levels only when `cpu` is listed, and the disk
   levels and resolved path only when `disk` is listed. Venus owns placement,
   fitting, colour, hover and accessibility.
-- **Boundary:** No per-widget option beyond the CPU, RAM and disk load levels
-  and the disk widget, configurable hiding priority, new widget, live reload,
-  settings UI, EONW change or platform expansion. Leaving out a quota chip also
-  stops Runtime reading that provider (EON-C27).
+- **Boundary:** No configurable hiding priority, live reload, settings UI,
+  EONW change or platform expansion. Runtime reads a provider while at least
+  one of its quota widgets is listed (EON-C27). Selection affects only
+  presentation and its logo-room reservation; `eon workspace --json` retains
+  every reported window.
 - **Proof:** `eon-igae.14.2`, for the load levels `eon-hjtns` and
   `eon-0oh9v`, for the disk widget `eon-d7itl`, and for the leftover
   `show_version` alias `eon-wc119`

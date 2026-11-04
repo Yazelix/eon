@@ -3502,7 +3502,6 @@ fn invalid_presentation_configuration_precedes_supervisor_generation_and_childre
             "[bar]\nshow_version = 'no'\n",
             "bar.show_version must be true or false",
         ),
-        ("[bar]\nwidgets = ['gpu']\n", "unknown widget"),
         ("[bar]\nwidgets = ['cpu', 'cpu']\n", "repeats"),
         (
             "[terminal]\nbackground_opacity = 1.01\n",
@@ -3627,7 +3626,7 @@ fn bare_eon_attaches_only_to_the_live_current_generation() {
     assert_eq!(
         fs::read_to_string(log).unwrap(),
         format!(
-            "--no-decorations\n--application-id\neon\n--background-opacity\n0.8\n--padding-color\nextend\n--background-blur\n--cursor-trail-duration-v1\n1.5\n--eon-version\n{}\n--eon-icon\n/fixture/eon-icon.rgba\n--ram-warning-percent\n80\n--ram-critical-percent\n90\n--cpu-warning-percent\n90\n--cpu-average-seconds\n30\n--disk-warning-percent\n85\n--disk-critical-percent\n95\n--disk-path\n{}\n--bar-items\ncodex_quota,claude_quota,cpu,ram,disk,clock,version\n--pane-frames\ntrue\n--warning-close-last-tab\ntrue\n--animate-working-badge\ntrue\n--number-keys\ntrue\n--workspace\n{}\n",
+            "--no-decorations\n--application-id\neon\n--background-opacity\n0.8\n--padding-color\nextend\n--background-blur\n--cursor-trail-duration-v1\n1.5\n--eon-version\n{}\n--eon-icon\n/fixture/eon-icon.rgba\n--ram-warning-percent\n80\n--ram-critical-percent\n90\n--cpu-warning-percent\n90\n--cpu-average-seconds\n30\n--disk-warning-percent\n85\n--disk-critical-percent\n95\n--disk-path\n{}\n--bar-items\ncodex_quota_5h,codex_quota_7d,claude_quota_5h,claude_quota_7d,claude_quota_scoped,cpu,ram,disk,clock,version\n--pane-frames\ntrue\n--warning-close-last-tab\ntrue\n--animate-working-badge\ntrue\n--number-keys\ntrue\n--workspace\n{}\n",
             env!("CARGO_PKG_VERSION"),
             std::env::temp_dir().display(),
             control.display(),

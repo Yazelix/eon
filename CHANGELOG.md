@@ -5,6 +5,11 @@ installation, and proven contract changes.
 
 ## Unreleased
 
+- Choose quota chips individually in `[bar] widgets` with `codex_quota_5h`,
+  `codex_quota_7d`, `claude_quota_5h`, `claude_quota_7d` and
+  `claude_quota_scoped`. All five are listed by default. Leave out
+  `claude_quota_scoped` to hide chips such as Fable; workspace JSON keeps all
+  readings. Unknown widget names warn and are ignored (`eon-8r9a4`).
 - Alt+Shift+1 through Alt+Shift+9 show the first through ninth workspace, and
   Alt+Shift+0 the tenth, in `eon workspaces` order (`eon-hbpkq`, EON-C33, VEN-C8). A
   position with no workspace does nothing. `[workspace] number_keys = false`
