@@ -76,8 +76,8 @@ eon attach
 ```
 
 Press **Alt+/** inside Eon to open the native Shortcuts dialog. It includes the
-fixed workspace bindings and every enabled popup binding. Escape or Alt+/ closes
-it.
+fixed workspace bindings and every enabled popup binding. Escape, Alt+/ or a
+click outside it closes it.
 
 ### Stop terminals
 

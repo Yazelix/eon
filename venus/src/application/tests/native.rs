@@ -213,9 +213,7 @@ fn native_startup(explicit_grid: bool) {
 #[ignore = "requires an isolated native Wayland display and Vulkan renderer"]
 fn live_output_keeps_application_input_admitted_before_repaint() {
     use eon_workspace_protocol::v32 as workspace;
-    use orbit_protocol::{
-        Capabilities, Colors, Cursor, CursorShape, Dimensions, Frame, Rgb, Screen,
-    };
+    use orbit_protocol::{Dimensions, Screen};
     use std::{
         os::unix::net::{UnixListener, UnixStream},
         sync::{Barrier, mpsc},
@@ -224,33 +222,6 @@ fn live_output_keeps_application_input_admitted_before_repaint() {
         event::{DeviceId, TouchPhase},
         platform::wayland::EventLoopBuilderExtWayland,
     };
-
-    fn frame(revision: u64, screen: Screen) -> TransportEvent {
-        TransportEvent::Server(ServerMessage::Frame(Box::new(Frame {
-            revision,
-            dimensions: Dimensions { cols: 0, rows: 0 },
-            screen,
-            scroll_position: orbit_protocol::ScrollPosition::default(),
-            title: format!("output {revision}"),
-            working_directory: String::new(),
-            capabilities: Capabilities { hyperlinks: true },
-            colors: Colors {
-                background: Rgb::BLACK,
-                foreground: Rgb::BLACK,
-                cursor: None,
-                palette: [Rgb::BLACK; orbit_protocol::PALETTE_LEN],
-            },
-            cursor: Cursor {
-                visible: false,
-                blinking: false,
-                password_input: false,
-                shape: CursorShape::Block,
-                viewport: None,
-            },
-            rows: Vec::new(),
-            graphics: None,
-        })))
-    }
 
     fn linked_frame(revision: u64, uri: &str) -> TransportEvent {
         use orbit_protocol::{Cell, CellStyle, CellWidth, Row, StyleColor, Underline};
@@ -1711,6 +1682,153 @@ fn a_close_request_quits_as_alt_shift_q_does() {
         close(app);
         assert!(event_loop.exiting());
         assert!(actions.recv_timeout(Duration::from_millis(750)).is_err());
+    });
+}
+
+/// An empty Orbit frame at `revision`.
+#[cfg(target_os = "linux")]
+fn frame(revision: u64, screen: orbit_protocol::Screen) -> TransportEvent {
+    use orbit_protocol::{Capabilities, Colors, Cursor, CursorShape, Dimensions, Frame, Rgb};
+
+    TransportEvent::Server(ServerMessage::Frame(Box::new(Frame {
+        revision,
+        dimensions: Dimensions { cols: 0, rows: 0 },
+        screen,
+        scroll_position: orbit_protocol::ScrollPosition::default(),
+        title: format!("output {revision}"),
+        working_directory: String::new(),
+        capabilities: Capabilities { hyperlinks: true },
+        colors: Colors {
+            background: Rgb::BLACK,
+            foreground: Rgb::BLACK,
+            cursor: None,
+            palette: [Rgb::BLACK; orbit_protocol::PALETTE_LEN],
+        },
+        cursor: Cursor {
+            visible: false,
+            blinking: false,
+            password_input: false,
+            shape: CursorShape::Block,
+            viewport: None,
+        },
+        rows: Vec::new(),
+        graphics: None,
+    })))
+}
+
+/// A press outside the shortcut viewer, over the presented terminal, closes it and restores
+/// terminal focus; that press and its release, from any button, reach no terminal and send no
+/// workspace action. A press inside keeps the viewer open. The same presses with the viewer
+/// closed do reach the terminal.
+#[test]
+#[cfg(target_os = "linux")]
+#[ignore = "requires an isolated native Wayland display and Vulkan renderer"]
+fn a_press_outside_the_shortcut_viewer_closes_it_and_reaches_nothing() {
+    use winit::{event::DeviceId, keyboard::ModifiersState};
+
+    run_quit_probe("viewer-press", |app, event_loop, _, actions, terminal| {
+        let id = app.window.as_ref().unwrap().window.id();
+        let device_id = DeviceId::dummy();
+        let move_to = |app: &mut Application, (x, y): (f32, f32)| {
+            let position = PhysicalPosition::new(f64::from(x), f64::from(y));
+            app.window_event(
+                event_loop,
+                id,
+                WindowEvent::CursorMoved {
+                    device_id,
+                    position,
+                },
+            );
+        };
+        let mouse = |app: &mut Application, button, state| {
+            app.window_event(
+                event_loop,
+                id,
+                WindowEvent::MouseInput {
+                    device_id,
+                    state,
+                    button,
+                },
+            );
+        };
+        let click = |app: &mut Application, at, button| {
+            move_to(app, at);
+            mouse(app, button, ElementState::Pressed);
+            mouse(app, button, ElementState::Released);
+        };
+        let sent = || {
+            std::iter::from_fn(|| terminal.recv_timeout(Duration::from_millis(300)).ok())
+                .collect::<Vec<_>>()
+        };
+        app.handle_transport(TransportEvent::Server(ServerMessage::Attached));
+        app.handle_transport(frame(1, orbit_protocol::Screen::Primary));
+        app.render();
+        assert_eq!(app.presentation.presented_revision(), Some(1));
+        app.window_event(event_loop, id, WindowEvent::Focused(true));
+        sent();
+        let screen = app.workspace_scene().unwrap().terminal;
+        let outside = (screen.right() - 4.0, screen.top + screen.height / 2.0);
+        assert!(screen.contains(outside.0, outside.1));
+        let buttons = [MouseButton::Left, MouseButton::Middle, MouseButton::Right];
+        for button in buttons {
+            app.input.set_modifiers(ModifiersState::ALT);
+            assert!(press_shortcut(app, event_loop, KeyCode::Slash));
+            assert!(release_shortcut(app, event_loop, KeyCode::Slash));
+            app.input.set_modifiers(ModifiersState::empty());
+            assert!(app.shortcut_viewer.open);
+            assert_eq!(sent(), [ClientMessage::Focus(session::FocusEvent::Lost)]);
+            let bounds = app.dialog_scene().unwrap().bounds;
+            assert!(!bounds.contains(outside.0, outside.1), "{bounds:?}");
+
+            let inside = (
+                bounds.left + bounds.width / 2.0,
+                bounds.top + bounds.height / 2.0,
+            );
+            click(app, inside, button);
+            assert!(
+                app.shortcut_viewer.open,
+                "{button:?} inside closed the viewer"
+            );
+            assert_eq!(sent(), [], "{button:?} inside reached the terminal");
+
+            move_to(app, outside);
+            mouse(app, button, ElementState::Pressed);
+            assert!(
+                !app.shortcut_viewer.open,
+                "{button:?} outside kept the viewer"
+            );
+            mouse(app, button, ElementState::Released);
+            assert_eq!(
+                sent(),
+                [ClientMessage::Focus(session::FocusEvent::Gained)],
+                "{button:?} reached the terminal"
+            );
+            assert!(actions.recv_timeout(Duration::from_millis(300)).is_err());
+        }
+        // The fixture sees terminal input: with the viewer closed, each press reaches it, as a
+        // press of that button or, for the left one, the start of a selection.
+        for (button, expected) in buttons.into_iter().zip([
+            session::MouseButton::Left,
+            session::MouseButton::Middle,
+            session::MouseButton::Right,
+        ]) {
+            click(app, outside, button);
+            let messages = sent();
+            assert!(
+                messages.iter().any(|message| match message {
+                    ClientMessage::Mouse(event) => {
+                        event.action == session::MouseAction::Press
+                            && event.button == Some(expected)
+                    }
+                    ClientMessage::Selection(SelectionAction::Begin { .. }) => {
+                        button == MouseButton::Left
+                    }
+                    _ => false,
+                }),
+                "{button:?} with the viewer closed sent {messages:?}"
+            );
+        }
+        event_loop.exit();
     });
 }
 

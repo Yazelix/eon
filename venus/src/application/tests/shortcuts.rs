@@ -218,6 +218,55 @@ fn shortcut_viewer_uses_live_rows_and_captures_its_local_sequence() {
 }
 
 #[test]
+fn shortcut_viewer_closes_on_a_press_outside_and_captures_its_release() {
+    use ElementState::{Pressed, Released};
+
+    // A press inside the dialog keeps the viewer open and holds nothing.
+    let mut dismissal = None;
+    assert_eq!(
+        viewer_button(&mut dismissal, MouseButton::Left, Pressed, false),
+        ViewerButton::Pass
+    );
+    assert_eq!(dismissal, None);
+    // A press outside closes it, and its release reaches no terminal, then the hold ends.
+    for button in [MouseButton::Left, MouseButton::Middle, MouseButton::Right] {
+        assert_eq!(
+            viewer_button(&mut dismissal, button, Pressed, true),
+            ViewerButton::Dismiss
+        );
+        assert_eq!(dismissal, Some(button));
+        let other = if button == MouseButton::Left {
+            MouseButton::Right
+        } else {
+            MouseButton::Left
+        };
+        assert_eq!(
+            viewer_button(&mut dismissal, other, Released, false),
+            ViewerButton::Pass,
+            "only the dismissing button's release is captured"
+        );
+        assert_eq!(
+            viewer_button(&mut dismissal, button, Released, false),
+            ViewerButton::Capture
+        );
+        assert_eq!(
+            viewer_button(&mut dismissal, button, Released, false),
+            ViewerButton::Pass
+        );
+    }
+    // A release lost with focus leaves no hold on the next press of that button.
+    viewer_button(&mut dismissal, MouseButton::Left, Pressed, true);
+    assert_eq!(
+        viewer_button(&mut dismissal, MouseButton::Left, Pressed, false),
+        ViewerButton::Pass
+    );
+    assert_eq!(
+        viewer_button(&mut dismissal, MouseButton::Left, Released, false),
+        ViewerButton::Pass
+    );
+}
+
+#[test]
 fn macos_uses_command_for_standard_host_actions_only() {
     use orbit_protocol::session::Modifiers;
 

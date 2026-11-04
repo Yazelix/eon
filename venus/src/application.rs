@@ -463,6 +463,8 @@ enum HeaderPress {
 struct ShortcutViewerState {
     open: bool,
     scroll: f32,
+    /// The pointer button whose press closed the viewer, held until its release.
+    dismissal: Option<MouseButton>,
 }
 
 #[derive(Debug, Default)]
@@ -1535,6 +1537,18 @@ impl Application {
                 self.shortcut_viewer.scroll,
             )
         })
+    }
+
+    /// Whether the shortcut viewer is the dialog shown and the pointer is outside it.
+    /// The inbox and the close prompt draw over it, as in `dialog_scene`.
+    fn pointer_outside_viewer(&self) -> bool {
+        !self.attention_inbox.open
+            && self.close_prompt.is_none()
+            && self.shortcut_viewer_scene().is_some_and(|dialog| {
+                !dialog
+                    .bounds
+                    .contains(self.cursor.x as f32, self.cursor.y as f32)
+            })
     }
 
     fn set_shortcut_viewer(&mut self, open: bool) {
@@ -4430,6 +4444,13 @@ impl ApplicationHandler<UserEvent> for Application {
         let workspace = self.workspace_scene();
         let workspace_focus = self.workspace_focus;
         let dialog_open = self.dialog_open();
+        let outside_viewer = matches!(
+            event,
+            WindowEvent::MouseInput {
+                state: ElementState::Pressed,
+                ..
+            }
+        ) && self.pointer_outside_viewer();
         let candidate = self.presentation_candidate(workspace.as_ref());
         let presentation_current = self.presentation.has_presented_geometry();
         let presented_revision = self.presentation.presented_revision();
@@ -4711,6 +4732,19 @@ impl ApplicationHandler<UserEvent> for Application {
             } => {
                 if button == MouseButton::Left {
                     self.terminal.selection_scroll.cancel();
+                }
+                match viewer_button(
+                    &mut self.shortcut_viewer.dismissal,
+                    button,
+                    button_state,
+                    outside_viewer,
+                ) {
+                    ViewerButton::Dismiss => {
+                        self.set_shortcut_viewer(false);
+                        return;
+                    }
+                    ViewerButton::Capture => return,
+                    ViewerButton::Pass => {}
                 }
                 if dialog_open {
                     if self.attention_inbox.open
@@ -5581,6 +5615,39 @@ fn button_reaches_terminal(
     presentation_current: bool,
 ) -> bool {
     state == ElementState::Released || presentation_current && (!workspace || terminal_hit)
+}
+
+/// What a pointer button does around the shortcut viewer (VEN-C20).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum ViewerButton {
+    /// A press outside the viewer's dialog closes it and reaches no other target.
+    Dismiss,
+    /// The release of the press that closed the viewer reaches nothing either.
+    Capture,
+    /// Every other button event keeps its route.
+    Pass,
+}
+
+/// Routes `button` around the shortcut viewer; `outside` is whether the viewer is the dialog
+/// shown and the pointer is outside it. `dismissal` holds the closing button until its
+/// release, and another press of that button ends a hold whose release never came.
+fn viewer_button(
+    dismissal: &mut Option<MouseButton>,
+    button: MouseButton,
+    state: ElementState,
+    outside: bool,
+) -> ViewerButton {
+    if *dismissal == Some(button) {
+        *dismissal = None;
+        if state == ElementState::Released {
+            return ViewerButton::Capture;
+        }
+    }
+    if outside && state == ElementState::Pressed {
+        *dismissal = Some(button);
+        return ViewerButton::Dismiss;
+    }
+    ViewerButton::Pass
 }
 
 fn scrollback_button(

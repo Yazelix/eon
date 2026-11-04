@@ -1332,9 +1332,11 @@ re-proved when that platform or feature is next touched.
 - **Status:** Proved.
   Amended on 2026-11-04 (approved by eon-overseer under Lucca's standing
   rule) by `eon-hbpkq`: a popup on one workspace position key takes only that
-  key.
+  key. Amended on 2026-11-04 (approved by eon-overseer under Lucca's standing
+  rule) by `eon-gl1xo`: a pointer press outside the dialog closes it.
 - **Consumer:** One person using a Venus surface attached to an Eon workspace.
-- **Trigger:** Physical Alt+Slash toggles the viewer; Escape closes it.
+- **Trigger:** Physical Alt+Slash toggles the viewer; Escape or a pointer
+  press outside the dialog closes it, and that press reaches no other target.
 - **Result:** Venus presents one ephemeral, read-only native dialog containing
   grouped native workspace, host, and current Eon popup shortcuts. Fixed
   bindings share their descriptor owner with dispatch; popup rows use the exact
@@ -1416,6 +1418,20 @@ re-proved when that platform or feature is next touched.
     the viewer listed `Alt+Shift+Q` `Quit: close the window, stop its
     terminals` under Host, and "(overridden by Monitor)" while a popup took
     the key.
+  - **Outside-press dismissal (`eon-gl1xo`):**
+    `shortcut_viewer_closes_on_a_press_outside_and_captures_its_release` in the
+    workspace suite (release capture, which no terminal output can show, since
+    Venus drops a release whose press it never recorded), and
+    `a_press_outside_the_shortcut_viewer_closes_it_and_reaches_nothing`, run on
+    a private headless Sway (left, middle and right presses inside keep the
+    viewer, outside close it with only the terminal's focus-in sent and no
+    workspace action, and the same clicks with the viewer closed do reach the
+    terminal). Isolated dogfood of the built package on a private headless Sway
+    (1600x900), with p1 running a probe that turns on SGR mouse reporting and
+    echoes its input: each outside left, middle and right click closed the
+    viewer and `eon pane read p1` was unchanged; with p1 focused, a key after
+    an outside click reached p1; a click with the viewer closed echoed
+    `^[[<0;120;21M^[[<0;120;21m`.
 - **Open proof:** Pending re-proof in this repository: AT-SPI dialog traversal
   and tiny-surface clipping.
 

@@ -126,8 +126,9 @@ the terminal. With terminal focus, Escape, Ctrl+C, Tab, and Enter reach Orbit as
 ordinary input.
 
 Shortcuts shows fixed bindings and enabled popup entries. Wheel, arrow keys,
-Page Up/Down, Home, and End scroll it. Closing with Escape or Alt+/ restores the
-previous focus without sending a terminal key or workspace action.
+Page Up/Down, Home, and End scroll it. Closing with Escape, Alt+/ or a click
+outside the dialog restores the previous focus without sending a terminal key,
+pointer event or workspace action.
 Alt+Shift+N also works while Shortcuts is open. A failed new-window request
 appears as a local notice in the current window.
 

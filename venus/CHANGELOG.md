@@ -2,9 +2,11 @@
 
 ## Unreleased
 
+- VEN-C20: a pointer press outside the shortcut viewer's dialog closes it, as
+  Escape does; that press and its matching release, from any button, reach no
+  other target (`eon-gl1xo`). No wire change.
 - Consume EONW v32, which adds `SendTerminal`'s force flag (`eon-buys1.2`,
   EON-C36). No Venus behavior change.
-
 - VEN-C8: physical Alt+Shift+1 through Alt+Shift+9 and Alt+Shift+0 show
   workspace positions 1 to 10 through `SwitchWorkspace`, unless
   `--number-keys false` leaves them to the terminal or a configured popup takes
