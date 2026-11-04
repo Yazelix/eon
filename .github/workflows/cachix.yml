@@ -28,6 +28,17 @@ jobs:
             exit 1
           fi
 
+      # The runner's root filesystem also holds /nix; drop preinstalled
+      # toolchains Eon never uses so the package build has room.
+      - name: Free runner disk space
+        run: |
+          df -h /
+          sudo rm -rf /usr/share/dotnet /usr/local/lib/android /opt/ghc \
+            /usr/local/.ghcup /opt/hostedtoolcache/CodeQL /usr/local/share/boost \
+            /opt/microsoft /usr/local/share/powershell
+          sudo docker image prune --all --force || true
+          df -h /
+
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
       - uses: cachix/install-nix-action@13d8dd58da0234aa297dedd986986ccb8e7f3e24 # v31
       - uses: cachix/cachix-action@38b082610b782e7e93e209c35fd730d399dee866 # v17
