@@ -195,6 +195,9 @@ installation, and proven contract changes.
   `CLAUDE_CODE_HOST_WORKTREE` pair, as it removes the other session names.
   EON-C9 lists them. Only supervisors started after the update remove them
   (`eon-yxo2y`).
+- Fresh Nix installs no longer fail when an upstream Helix grammar repository
+  disappears or goes offline. Pinned grammar downloads try hash-verified
+  Yazelix-owned archives first, with upstream as a fallback (`eon-5y25o`).
 
 ## v0.1.12 (2026-11-02)
 

@@ -16,7 +16,7 @@
       inputs.kinestra.follows = "kinestra";
     };
     helix = {
-      url = "github:Yazelix/nova-helix/cd4890783fd43a99097721422ec08ea05978b7fe";
+      url = "github:Yazelix/nova-helix/af9acb1335d4e0b15f9f5725327afe79e94edee5";
       inputs.nixpkgs.follows = "nixpkgs";
     };
     yazi = {
@@ -1070,6 +1070,7 @@
           packages.${system} = {
             default = eonPackage;
             eonbase = eonbasePackage;
+            helix-grammar-sources = helix.packages.${system}.grammar-sources;
           } // lib.optionalAttrs pkgs.stdenv.isLinux {
             installer = import ./nix/installer.nix { inherit pkgs; };
             manual-bundle = import ./nix/linux-bundle.nix {

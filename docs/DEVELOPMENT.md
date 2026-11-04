@@ -242,8 +242,13 @@ state, keeping lifecycle records and sockets off the builder's disk journal.
 Sources and compilation stay in the ordinary build directory.
 
 `nix build --no-link .#checks.x86_64-linux.helix-grammars` runs the pinned
-Helix source-delivery check. It rejects evaluation-time Codeberg and SourceHut
-fetches and compiles all all bundled grammars through Helix's production builder.
+Helix source-delivery check. It rejects built-in evaluator source fetches and
+compiles every selected grammar through Helix's production builder. Grammar
+sources use fixed-output fetchers with owned immutable archive URLs first and
+upstream archive URLs second. `nix build --no-link .#helix-grammar-sources`
+builds the complete source closure, including disabled grammars. The cache job
+publishes and pins it separately from runtime closures so source outputs remain
+available for substitution.
 
 Every build loads the configuration corpus in
 `runtime/crates/eon-runtime/testdata/config-corpus`: `config.toml` fixtures from

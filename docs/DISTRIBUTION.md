@@ -252,18 +252,29 @@ the new hints or guaranteed cache coverage.
 Before activating `.github/workflows/cachix.yml`, a repository maintainer must
 add the cache owner's per-cache write token as the `CACHIX_AUTH_TOKEN` Actions
 repository secret. Never put the token in Git, an issue, or a pull request. Cache
-reads are public; only the credential check and upload step receive the token.
+reads are public; the credential check and the two upload steps receive the token.
 A missing secret fails before installing tools or building the package.
 
-A push to `edge` or a manual dispatch first runs the pinned Helix grammar check,
-which rejects Codeberg and SourceHut evaluation fetches and compiles their bundled
-sources. It then builds `packages.x86_64-linux.default`
-and `packages.x86_64-linux.eonbase` with their required package checks. An explicit
-`cachix push` publishes both outputs and their runtime dependencies. Paths
-already available from `cache.nixos.org` remain there rather than being copied
-into Cachix; keep that standard cache and its signing key configured alongside
-Eon's cache. See the [Cachix FAQ](https://docs.cachix.org/faq).
-It does not upload every compiler, build intermediate, or unrelated store path.
+A push to `edge` or a manual dispatch first runs the pinned Helix grammar check.
+The check rejects all five evaluator source-fetch builtins (`fetchTree`,
+`fetchGit`, `fetchMercurial`, `fetchTarball` and `fetchurl`) and compiles every
+selected grammar through Helix's builder. The job then builds
+`packages.x86_64-linux.helix-grammar-sources`, including disabled grammars, and
+pushes that source closure with `cachix push`. It pins the aggregate as
+`helix-grammar-sources-<helix rev>`, using the exact Helix revision in
+`flake.lock` and `cachix pin --keep-forever` to retain it.
+
+The job then builds `packages.x86_64-linux.default` and
+`packages.x86_64-linux.eonbase` with their required package checks. A second
+`cachix push` publishes both outputs and their runtime dependencies. Grammar
+sources are the build inputs this job publishes; it does not upload the whole
+store, compilers or unrelated build intermediates.
+
+Cachix skips paths that `cache.nixos.org` already serves, including grammar
+sources with the same store identity. Eon's Cachix pin does not retain those
+copies: they remain available from the owned source archives and
+`cache.nixos.org`. Keep that standard cache and its signing key configured
+alongside Eon's cache. See the [Cachix FAQ](https://docs.cachix.org/faq).
 No pull-request event runs the workflow, and forks cannot publish through it.
 Maintain repository write access carefully: trusted workflow editors can expose
 Actions secrets.
@@ -279,10 +290,14 @@ job if builds repeatedly exceed the timeout, the cache donation ends, or free
 public-runner eligibility changes. Local `nix build .#default .#eonbase` remains
 canonical.
 
-To verify publication, check both exact outputs' `.narinfo` records at the cache
-URL and realise them in a fresh Nix store with both caches and signing keys
-configured, signatures required, and local builds disabled. A local build alone
-does not prove upload or fresh-store substitution.
+To verify publication, check both exact product outputs' `.narinfo` records at
+the cache URL. Check that `helix-grammar-sources-<helix rev>` points to the source
+aggregate from that revision, with permanent retention, and inspect a catalog
+source output's `.narinfo` at the cache serving it. For a source Cachix skipped,
+check `cache.nixos.org` instead. Realise the products and source aggregate in a
+fresh Nix store with both caches and signing keys configured, signatures required
+and local builds disabled. A local build alone does not prove upload, retention
+or fresh-store source substitution.
 
 ## Canonical release input
 
