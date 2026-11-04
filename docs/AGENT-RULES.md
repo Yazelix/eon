@@ -212,9 +212,10 @@ labels and documentation derive from it rather than repeating it. Eon Runtime
 parses configuration and sends resolved values; Venus parses none. Open gaps:
 `eon-configurability-qkq8`.
 
-A change that renames or removes a configuration key adds an alias or
-tombstone with a warning that names the replacement, and a corpus fixture; it
-never makes a leftover key fail startup unless ignoring it is unsafe.
+A change that renames or removes a configuration key or value adds no alias
+and no compatibility path: the old name stops working in the same change. It
+adds a tombstone, a warning that names the replacement, and a corpus fixture;
+it never makes a leftover key fail startup unless ignoring it is unsafe.
 Migration code and its fixtures go only when the release's declared floor
 passes them. A file Eon persists outside a generation directory carries a
 format version; caches discard on mismatch, durable state migrates on read
