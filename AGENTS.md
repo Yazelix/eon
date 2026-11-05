@@ -79,6 +79,9 @@ Eon composes these and keeps their ownership intact.
   end of each session.
 - Git: work on `edge` by default, in one linear history. No merge commits or
   promotion without explicit user direction.
+- Agent sessions: start each pane agent with `rota launch`
+  ([Yazelix/rota](https://github.com/Yazelix/rota)), which picks the backend
+  and enforces its caps. Never start a backend CLI by hand to dodge a cap.
 
 ## Rules that bite
 
