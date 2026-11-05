@@ -98,7 +98,7 @@ let
       (do $eon_prompt_is_default $env.PROMPT_COMMAND_RIGHT?)
     ) {
       try {
-        overlay use ($_eon_shell_init | path join starship-nu)
+        source ($_eon_shell_init | path join starship-nu)
       } catch {|error|
         print --stderr $"eon: cannot initialize Starship: ($error.msg)"
       }

@@ -5,6 +5,8 @@ installation, and proven contract changes.
 
 ## Unreleased
 
+- Fixed: Tab completion after `cd` in managed Nushell listed the startup directory's entries
+  (issue #4, `eon-gkeae`).
 - The Eon Bar's quota pace colours are less forgiving and end in a true red
   (`eon-w1h7c`). A window that would run out a twentieth of a window before
   its reset is yellow, a tenth orange, and a quarter or more full red, where

@@ -54,6 +54,13 @@ pkgs.runCommand "eon-managed-command-path-check" { } ''
     || fail "Nushell alias clc is not clip copy"
   test "$(eon-nu --config ${eonPackage}/libexec/eon/shell/nu/0/eon.nu -c 'scope aliases | where name == "clp" | get expansion.0')" = 'clip paste' \
     || fail "Nushell alias clp is not clip paste"
+  # A scoped overlay leaves directory completion's working directory stale.
+  eon-nu --config ${eonPackage}/libexec/eon/shell/nu/15/eon.nu -c '
+    use std/assert
+    assert equal (overlay list | get name) [zero]
+    assert equal $env.STARSHIP_SHELL nu
+    assert equal ($env.PROMPT_COMMAND | describe) closure' \
+    || fail "Nushell Starship activation changes overlays or loses its prompt"
   managed_bash "$PATH" 'for tool in starship zoxide atuin carapace; do name=_eon_$tool; test -x "''${!name}" || exit 1; done' \
     || fail "managed Bash did not set up Starship, Zoxide, Atuin and Carapace"
   if ${pkgs.gnugrep}/bin/grep -rl ${builtins.storeDir} ${eonPackage}/libexec/eon/shell; then
