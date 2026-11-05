@@ -3,8 +3,16 @@
 This file records user-visible runtime, command, configuration, packaging,
 installation, and proven contract changes.
 
-## Unreleased
+## v0.1.16 (2026-11-05)
 
+- Install from `github:Yazelix/eon/main`, which always holds the latest
+  release, or from `github:Yazelix/eon/edge` for fixes before they are
+  released (`eon-8lycf`). Both update in place with
+  `nix profile upgrade --refresh eon`; open a new window afterwards, since
+  windows already running keep their version until closed. Tags such as
+  `v0.1.12` name one exact release and never update: move a tag install once
+  with `nix profile remove eon`, then
+  `nix profile add --refresh github:Yazelix/eon/main`.
 - Fixed: Tab completion after `cd` in managed Nushell listed the startup directory's entries
   (issue #4, `eon-gkeae`).
 - The Eon Bar's quota pace colours are less forgiving and end in a true red

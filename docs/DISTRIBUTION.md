@@ -41,8 +41,9 @@ end of beta. `eon-igae` holds its scope, and
 Orbit, Venus and Eon Runtime keep their own package versions, and EONW its
 protocol version, as compatibility identities.
 
-A release bumps the product version and tags that commit `vX.Y.Z`
-(`eon-versioning-beta-bfyf`, decided 2026-10-16). The earlier
+A release bumps the product version, tags that commit `vX.Y.Z`
+(`eon-versioning-beta-bfyf`, decided 2026-10-16) and advances `main` to it
+([Git Workflow](AGENT-RULES.md#git-workflow)). The earlier
 `linux-alpha-2026-10-14` tag is version 0.1.0, and the first numbered
 release is `v0.1.1`. Installing without Nix is a delivery milestone within
 0.x, not a stage.

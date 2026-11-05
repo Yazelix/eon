@@ -29,11 +29,16 @@ machine ends live terminal process state.
 
 ## Install and start
 
-Install the latest release, 0.1.12:
+Install the latest release, 0.1.16:
 
 ```sh
-nix profile add --refresh github:Yazelix/eon/v0.1.12
+nix profile add --refresh github:Yazelix/eon/main
 ```
+
+`main` always holds the latest release. To get fixes before they are released,
+install `github:Yazelix/eon/edge` instead; it gets every change as it lands.
+Tags such as `github:Yazelix/eon/v0.1.16` name one exact release and never
+update. See [Update](#update).
 
 Run `eon` to start. `eon versions` shows the generation of the in-tree build and
 each exact external component revision; Orbit, Venus and Eon Runtime report
@@ -78,6 +83,22 @@ eon attach
 Press **Alt+/** inside Eon to open the native Shortcuts dialog. It includes the
 fixed workspace bindings and every enabled popup binding. Escape, Alt+/ or a
 click outside it closes it.
+
+### Update
+
+Update a `main` or `edge` install with:
+
+```sh
+nix profile upgrade --refresh eon
+```
+
+Then open a new window. Windows already running keep their version until you
+close them. A tag install never updates; move it to `main` once with:
+
+```sh
+nix profile remove eon
+nix profile add --refresh github:Yazelix/eon/main
+```
 
 ### Stop terminals
 

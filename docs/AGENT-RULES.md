@@ -186,9 +186,27 @@ History keeps this ancestry invariant:
 stable ⊆ main ⊆ edge
 ```
 
-All tracked changes originate on `edge`. The `main` and `stable` branches are
-promotion-only channels, created at the first promotion; until then, releases
-are tags on `edge`.
+All tracked changes originate on `edge`, the dogfood channel. `main` is the
+release channel: each release tags its exact `edge` commit with an immutable
+`vX.Y.Z` and fast-forwards `main` to it, with no merges, cherry-picks or direct
+commits. A promotion carries every commit since the last one; review that whole
+range, and revert unaccepted work on `edge` first. Roll back with a revert on
+`edge`, released normally; never move `main` backward. `stable` stays deferred
+until the user wants a slower channel.
+
+Promote only on the user's go for that release, once the release's delivery
+proof covers that exact commit and `edge` and the tag are pushed. The first
+promotion fetches only `edge`, skips the first check and uses the previous
+tag in place of `origin/main`:
+
+```sh
+git fetch origin edge main
+git merge-base --is-ancestor origin/main <sha>
+git merge-base --is-ancestor <sha> origin/edge
+git log --oneline origin/main..<sha>
+git diff origin/main <sha>
+git push origin <sha>:refs/heads/main
+```
 
 ## Humans and Agents
 

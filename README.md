@@ -38,11 +38,19 @@ left it.
 ## Get started
 
 You need **x86_64 Linux on native Wayland**, Git, and Nix with flakes enabled.
-Install the latest release, 0.1.12:
+Install the latest release, 0.1.16:
 
 ```sh
-nix profile add --refresh github:Yazelix/eon/v0.1.12
+nix profile add --refresh github:Yazelix/eon/main
 ```
+
+`main` always holds the latest release. For fixes before they are released,
+install `github:Yazelix/eon/edge` instead; it gets every change as it lands.
+
+To update, run `nix profile upgrade --refresh eon`, then open a new window.
+Windows already running keep their version until you close them. Tags such as
+`v0.1.12` name one exact release and never update; if you installed from one,
+run `nix profile remove eon` once, then the install line above.
 
 Run `eon`. After a short animation (most keys skip it), pick a directory: press
 Enter for a Zoxide match, or Tab to browse with Yazi and Alt+Enter to use a
