@@ -245,6 +245,11 @@ let
       env.ORBIT_BASH = bash;
     }
     {
+      name = "history-text";
+      timeout = "120s";
+      env.ORBIT_BASH = bash;
+    }
+    {
       name = "lease-input";
       timeout = "60s";
       env.ORBIT_BASH = bash;

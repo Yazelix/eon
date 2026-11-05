@@ -1006,8 +1006,9 @@ def ticked(
             }
           )
 
-# A ReadVisible request carries whether the child runs and whether a
-# synchronized update is held, and lease input whether the child runs.
+# A text read (ReadVisible or ReadHistory) carries whether the child runs and
+# whether a synchronized update is held, and lease input whether the child
+# runs.
 def management_signal(event: Boundary.ManagementEvent, live: Bool, held: Bool) -> Management.Signal:
   match event:
     case Boundary.ManagementEventConnect{}:
@@ -1065,7 +1066,7 @@ def managed(answer: Management.Answer, session: Session) -> Next():
       (session, [Boundary.ManageProgramStatus{}])
     case Management.Refuse{}:
       (session, [Boundary.ManageRefuse{}])
-    case Management.Visible{}:
+    case Management.Readout{}:
       (session, [Boundary.ManageRead{unstamped()}])
     case Management.Write{}:
       (session, [Boundary.ManageInput{}])
@@ -1089,7 +1090,7 @@ def management(+signal: Management.Signal, session: Session) -> Next():
         Session{life, written, observer, explicit, waiting, pointer, Management.next(manage, signal)}
       )
 
-# A management event; a ReadVisible request reads whether the child runs and
+# A management event; a text read reads whether the child runs and
 # whether a synchronized update is held, and lease input whether it runs.
 def management_event(
   event: Boundary.ManagementEvent, +flags: Boundary.Flags, session: Session

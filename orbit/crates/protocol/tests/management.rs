@@ -1,8 +1,8 @@
 use orbit_protocol::management::{
-    self, ClientMessage, EndpointIdentity, Error, Failure, FailureCode, Foreground, LeaseInput,
-    LiveIdentity, ObjectIdentity, ProcessOutcome, ProgramKind, ProgramRecord, ProgramState,
-    ProgramStatus, Record, Refusal, Screen, ServerMessage, TerminationReason, Tombstone,
-    VisibleText,
+    self, ClientMessage, EndpointIdentity, Error, Failure, FailureCode, Foreground, HistoryText,
+    LeaseInput, LiveIdentity, ObjectIdentity, ProcessOutcome, ProgramKind, ProgramRecord,
+    ProgramState, ProgramStatus, Record, Refusal, Screen, ServerMessage, TerminationReason,
+    Tombstone, VisibleText,
 };
 
 fn program_record(id: &str, state: ProgramState) -> ProgramRecord {
@@ -64,6 +64,21 @@ fn visible() -> VisibleText {
     }
 }
 
+fn history() -> HistoryText {
+    HistoryText {
+        revision: 12,
+        screen: Screen::Primary,
+        rows: 24,
+        columns: 80,
+        title: "build 🪐".into(),
+        directory: b"/home/user/project".to_vec(),
+        omitted_lines: 0,
+        cut_bytes: 0,
+        lossy: true,
+        text: "$ seq 3\n1\n2\n3\n   Compiling 漢字 e\u{301}".into(),
+    }
+}
+
 fn tombstone() -> Tombstone {
     Tombstone {
         identity: live_identity(),
@@ -87,6 +102,7 @@ fn management_messages_and_records_round_trip_canonically() {
         ClientMessage::Stop,
         ClientMessage::ProgramStatus,
         ClientMessage::ReadVisible,
+        ClientMessage::ReadHistory,
         ClientMessage::Input {
             input: LeaseInput::Paste("echo ok\tdone\r\n🪐\u{1b}".into()),
             quiet_ms: 0,
@@ -147,6 +163,16 @@ fn management_messages_and_records_round_trip_canonically() {
             omitted_rows: 7,
             text: String::new(),
             ..visible()
+        }),
+        ServerMessage::History(history()),
+        ServerMessage::History(HistoryText {
+            screen: Screen::Alternate,
+            title: String::new(),
+            directory: b"/tmp/\xff".to_vec(),
+            omitted_lines: 7,
+            cut_bytes: u32::MAX,
+            text: String::new(),
+            ..history()
         }),
         ServerMessage::Input { bracketed: true },
         ServerMessage::Input { bracketed: false },
@@ -365,14 +391,15 @@ fn program_status_replies_keep_their_bounds() {
     ));
 }
 
-/// Management v4's new messages keep their exact bytes under generation 6,
-/// except lease input, which carries its quiet window after its kind: the
-/// header's generation, each kind's tag, and its payload.
+/// Management v4's new messages keep their exact bytes under generation 7,
+/// except lease input, which carries its quiet window after its kind (since
+/// v6), and v7 adds ReadHistory and History: the header's generation, each
+/// kind's tag, and its payload.
 #[test]
-fn management_v6_messages_have_canonical_bytes() {
-    assert_eq!(management::VERSION, 6);
+fn management_v7_messages_have_canonical_bytes() {
+    assert_eq!(management::VERSION, 7);
     let framed = |kind: u8, payload: &[u8]| {
-        let mut bytes = b"ORBM\x06\x00".to_vec();
+        let mut bytes = b"ORBM\x07\x00".to_vec();
         bytes.extend([kind, 0]);
         bytes.extend((payload.len() as u32).to_le_bytes());
         bytes.extend(payload);
@@ -381,6 +408,7 @@ fn management_v6_messages_have_canonical_bytes() {
     let client = |message| management::encode_client_message(&message).unwrap();
     let server = |message| management::encode_server_message(&message).unwrap();
     assert_eq!(client(ClientMessage::ReadVisible), framed(5, &[]));
+    assert_eq!(client(ClientMessage::ReadHistory), framed(8, &[]));
     assert_eq!(
         client(ClientMessage::Input {
             input: LeaseInput::Enter,
@@ -447,6 +475,34 @@ fn management_v6_messages_have_canonical_bytes() {
         })),
         framed(72, &payload)
     );
+    let mut payload = 3u64.to_le_bytes().to_vec();
+    payload.push(1);
+    payload.extend(2u16.to_le_bytes());
+    payload.extend(4u16.to_le_bytes());
+    payload.extend(1u32.to_le_bytes());
+    payload.push(b't');
+    payload.extend(2u32.to_le_bytes());
+    payload.extend(b"/x");
+    payload.extend(5u32.to_le_bytes());
+    payload.extend(6u32.to_le_bytes());
+    payload.push(1);
+    payload.extend(3u32.to_le_bytes());
+    payload.extend(b"a\nb");
+    assert_eq!(
+        server(ServerMessage::History(HistoryText {
+            revision: 3,
+            screen: Screen::Primary,
+            rows: 2,
+            columns: 4,
+            title: "t".into(),
+            directory: b"/x".to_vec(),
+            omitted_lines: 5,
+            cut_bytes: 6,
+            lossy: true,
+            text: "a\nb".into(),
+        })),
+        framed(76, &payload)
+    );
 }
 
 /// A `ProgramStatus` reply carries the terminal's foreground as one byte
@@ -471,7 +527,7 @@ fn program_status_carries_the_foreground() {
     payload.push(b't');
     payload.extend(1u16.to_le_bytes());
     payload.extend(4u64.to_le_bytes());
-    let mut golden = b"ORBM\x06\x00".to_vec();
+    let mut golden = b"ORBM\x07\x00".to_vec();
     golden.extend([71, 0]);
     golden.extend((payload.len() as u32).to_le_bytes());
     golden.extend(&payload);
@@ -502,8 +558,8 @@ fn program_status_carries_the_foreground() {
     ));
 }
 
-/// A paste is bounded at 64 KiB and a Visible reply's text at 1 MiB, each by
-/// its own kind's frame bound; every other message keeps 4 KiB, unknown kinds
+/// A paste is bounded at 64 KiB, a Visible reply's text at 1 MiB and a
+/// History reply's at 8 MiB, each by its own kind's frame bound; every other message keeps 4 KiB, unknown kinds
 /// included, so they arrive whole and are refused by the decoder.
 #[test]
 fn management_v4_bounds_are_per_kind() {
@@ -554,7 +610,7 @@ fn management_v4_bounds_are_per_kind() {
         Err(Error::PayloadTooLarge { .. })
     ));
     let small = management::MAX_MESSAGE_BYTES - management::HEADER_BYTES;
-    for kind in [1, 4, 5, 7, 200] {
+    for kind in [1, 4, 5, 7, 8, 200] {
         assert_eq!(
             management::client_message_len(&header(kind, small)).unwrap(),
             Some(management::MAX_MESSAGE_BYTES)
@@ -613,6 +669,54 @@ fn management_v4_bounds_are_per_kind() {
         }),
         Error::ValueTooLarge {
             field: "visible title and directory",
+            ..
+        }
+    ));
+
+    let history_payload = management::MAX_HISTORY_MESSAGE_BYTES - management::HEADER_BYTES;
+    assert_eq!(
+        management::server_message_len(&header(76, history_payload)).unwrap(),
+        Some(management::MAX_HISTORY_MESSAGE_BYTES)
+    );
+    assert!(matches!(
+        management::server_message_len(&header(76, history_payload + 1)),
+        Err(Error::PayloadTooLarge { .. })
+    ));
+    // The largest History reply: 8 MiB of text beside the largest title and
+    // directory; one byte more is refused.
+    let largest = HistoryText {
+        title: "t".repeat(orbit_protocol::session::MAX_METADATA_BYTES / 2),
+        directory: vec![b'/'; orbit_protocol::session::MAX_METADATA_BYTES / 2],
+        text: "a".repeat(management::MAX_HISTORY_TEXT_BYTES),
+        ..history()
+    };
+    let bytes =
+        management::encode_server_message(&ServerMessage::History(largest.clone())).unwrap();
+    assert_eq!(bytes.len(), management::MAX_HISTORY_MESSAGE_BYTES);
+    assert_eq!(
+        management::decode_server_message(&bytes).unwrap(),
+        ServerMessage::History(largest.clone())
+    );
+    let refused = |history: HistoryText| {
+        management::encode_server_message(&ServerMessage::History(history)).unwrap_err()
+    };
+    assert!(matches!(
+        refused(HistoryText {
+            text: largest.text.clone() + "a",
+            ..largest.clone()
+        }),
+        Error::ValueTooLarge {
+            field: "history text",
+            ..
+        }
+    ));
+    assert!(matches!(
+        refused(HistoryText {
+            directory: [largest.directory.clone(), b"/".to_vec()].concat(),
+            ..largest.clone()
+        }),
+        Error::ValueTooLarge {
+            field: "history title and directory",
             ..
         }
     ));
@@ -685,6 +789,50 @@ fn management_v4_decoders_reject_invalid_values() {
         ));
     }
 
+    // A History reply's lossy byte follows the two counts; its text holds no
+    // control character but line feed either.
+    let plain = history();
+    let lossy_at = management::HEADER_BYTES
+        + 8
+        + 1
+        + 2
+        + 2
+        + 4
+        + plain.title.len()
+        + 4
+        + plain.directory.len()
+        + 4
+        + 4;
+    let mut bytes = encoded(ServerMessage::History(plain.clone()));
+    assert_eq!(bytes[lossy_at], 1);
+    bytes[lossy_at] = 0;
+    assert!(matches!(
+        management::decode_server_message(&bytes),
+        Err(Error::InvalidValue { field: "lossy" })
+    ));
+    for control in ['\u{1b}', '\r', '\t', '\u{85}'] {
+        let text = format!("a{control}b");
+        assert!(
+            management::encode_server_message(&ServerMessage::History(HistoryText {
+                text: text.clone(),
+                ..plain.clone()
+            }))
+            .is_err()
+        );
+        let mut bytes = encoded(ServerMessage::History(HistoryText {
+            text: "a".repeat(text.len()),
+            ..plain.clone()
+        }));
+        let at = bytes.len() - text.len();
+        bytes[at..].copy_from_slice(text.as_bytes());
+        assert!(matches!(
+            management::decode_server_message(&bytes),
+            Err(Error::InvalidValue {
+                field: "history text"
+            })
+        ));
+    }
+
     let mut bracketed = encoded(ServerMessage::Input { bracketed: true });
     *bracketed.last_mut().unwrap() = 2;
     assert!(matches!(
@@ -724,13 +872,15 @@ fn management_v4_decoders_reject_invalid_values() {
             field: "process start identity"
         })
     ));
-    let mut with_payload = client(ClientMessage::ReadVisible).unwrap();
-    with_payload[8..12].copy_from_slice(&1u32.to_le_bytes());
-    with_payload.push(0);
-    assert!(matches!(
-        management::decode_client_message(&with_payload),
-        Err(Error::TrailingBytes { count: 1 })
-    ));
+    for read in [ClientMessage::ReadVisible, ClientMessage::ReadHistory] {
+        let mut with_payload = client(read).unwrap();
+        with_payload[8..12].copy_from_slice(&1u32.to_le_bytes());
+        with_payload.push(0);
+        assert!(matches!(
+            management::decode_client_message(&with_payload),
+            Err(Error::TrailingBytes { count: 1 })
+        ));
+    }
 
     let input = |input| ClientMessage::Input { input, quiet_ms: 0 };
     let mut paste = client(input(LeaseInput::Paste("ab".into()))).unwrap();

@@ -6,11 +6,11 @@ use std::fmt;
 const MESSAGE_MAGIC: [u8; 4] = *b"ORBM";
 const RECORD_MAGIC: [u8; 4] = *b"ORBR";
 
-pub const VERSION: u16 = 6;
+pub const VERSION: u16 = 7;
 pub const RECORD_GENERATION: u16 = 1;
 pub const HEADER_BYTES: usize = 12;
-/// Every message's bound, except a `Visible` reply's and an `Input`
-/// request's.
+/// Every message's bound, except a `Visible` or `History` reply's and an
+/// `Input` request's.
 pub const MAX_MESSAGE_BYTES: usize = 4 * 1024;
 pub const MAX_RECORD_BYTES: usize = 4 * 1024;
 pub const MAX_ID_BYTES: usize = 128;
@@ -36,6 +36,15 @@ const VISIBLE_FIXED_BYTES: usize = 8 + 1 + 2 + 2 + 4 + 4 + 4 + 1 + 4;
 /// stay within ORBS's `Metadata` bound.
 pub const MAX_VISIBLE_MESSAGE_BYTES: usize =
     HEADER_BYTES + VISIBLE_FIXED_BYTES + MAX_METADATA_BYTES + MAX_VISIBLE_TEXT_BYTES;
+/// The bound on a `History` reply's text (ORB-C17).
+pub const MAX_HISTORY_TEXT_BYTES: usize = 8 * 1024 * 1024;
+/// The bytes a `History` reply's payload takes besides its title, working
+/// directory and text.
+const HISTORY_FIXED_BYTES: usize = 8 + 1 + 2 + 2 + 4 + 4 + 4 + 4 + 1 + 4;
+/// The bound on a `History` reply, whose title and working directory together
+/// stay within ORBS's `Metadata` bound.
+pub const MAX_HISTORY_MESSAGE_BYTES: usize =
+    HEADER_BYTES + HISTORY_FIXED_BYTES + MAX_METADATA_BYTES + MAX_HISTORY_TEXT_BYTES;
 /// The bound on a lease paste's text (ORB-C5).
 pub const MAX_INPUT_PASTE_BYTES: usize = 64 * 1024;
 /// The bound on an `Input` request: its tag, quiet window and pasted text.
@@ -48,6 +57,7 @@ const CLIENT_PROGRAM_STATUS: u8 = 4;
 const CLIENT_READ_VISIBLE: u8 = 5;
 const CLIENT_INPUT: u8 = 6;
 const CLIENT_ATTACH_ALLOW: u8 = 7;
+const CLIENT_READ_HISTORY: u8 = 8;
 const SERVER_LEASE: u8 = 64;
 const SERVER_STATUS: u8 = 65;
 const SERVER_BUSY: u8 = 66;
@@ -58,6 +68,7 @@ const SERVER_VISIBLE: u8 = 72;
 const SERVER_INPUT: u8 = 73;
 const SERVER_ALLOWED: u8 = 74;
 const SERVER_REFUSED: u8 = 75;
+const SERVER_HISTORY: u8 = 76;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct ObjectIdentity {
@@ -220,6 +231,32 @@ pub struct VisibleText {
     pub text: String,
 }
 
+/// The `History` reply (ORB-C17): one snapshot of the active screen's
+/// retained history followed by its live area, oldest first, as lossy plain
+/// text at one presentation revision.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct HistoryText {
+    pub revision: u64,
+    pub screen: Screen,
+    pub rows: u16,
+    pub columns: u16,
+    /// The terminal's title, as ORBS's `Metadata` carries it.
+    pub title: String,
+    /// The terminal's raw working directory.
+    pub directory: Vec<u8>,
+    /// How many leading lines the 8 MiB bound left out.
+    pub omitted_lines: u32,
+    /// How many leading bytes the bound cut from the newest line when that
+    /// line alone exceeds it, else 0.
+    pub cut_bytes: u32,
+    /// Always true: the text drops styles, colours, hyperlinks, images,
+    /// cursor and selection.
+    pub lossy: bool,
+    /// One line per logical line, soft wraps joined, joined by line feeds; it
+    /// holds no other control character.
+    pub text: String,
+}
+
 /// One lease input request (ORB-C5).
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum LeaseInput {
@@ -242,7 +279,7 @@ pub enum Refusal {
     InvalidInput,
     /// The PTY input queue cannot take the input whole.
     InputFull,
-    /// Extracting the visible text failed.
+    /// Extracting the visible text or the history failed.
     ReadFailed,
     /// The PTY has closed, so it takes no input, while the child may still
     /// run.
@@ -262,6 +299,7 @@ pub enum ClientMessage {
     Stop,
     ProgramStatus,
     ReadVisible,
+    ReadHistory,
     /// Lease input, refused while an attached client's typing waits for the
     /// PTY or reached it less than `quiet_ms` milliseconds ago; 0 never
     /// refuses for typing (ORB-C5).
@@ -286,6 +324,7 @@ pub enum ServerMessage {
     Failure(Failure),
     ProgramStatus(ProgramStatus),
     Visible(VisibleText),
+    History(HistoryText),
     /// The paste or Enter was written; `bracketed` tells whether the paste
     /// was wrapped in bracketed-paste markers, and is false for Enter.
     Input {
@@ -386,6 +425,7 @@ fn client_bound(kind: u8) -> usize {
 fn server_bound(kind: u8) -> usize {
     match kind {
         SERVER_VISIBLE => MAX_VISIBLE_MESSAGE_BYTES,
+        SERVER_HISTORY => MAX_HISTORY_MESSAGE_BYTES,
         _ => MAX_MESSAGE_BYTES,
     }
 }
@@ -412,6 +452,7 @@ pub fn encode_client_message(message: &ClientMessage) -> Result<Vec<u8>> {
         ClientMessage::Stop => client(CLIENT_STOP, &|_| Ok(())),
         ClientMessage::ProgramStatus => client(CLIENT_PROGRAM_STATUS, &|_| Ok(())),
         ClientMessage::ReadVisible => client(CLIENT_READ_VISIBLE, &|_| Ok(())),
+        ClientMessage::ReadHistory => client(CLIENT_READ_HISTORY, &|_| Ok(())),
         ClientMessage::Input { input, quiet_ms } => client(CLIENT_INPUT, &|out| {
             match input {
                 LeaseInput::Paste(text) => {
@@ -450,6 +491,7 @@ pub fn decode_client_message(bytes: &[u8]) -> Result<ClientMessage> {
         CLIENT_STOP => ClientMessage::Stop,
         CLIENT_PROGRAM_STATUS => ClientMessage::ProgramStatus,
         CLIENT_READ_VISIBLE => ClientMessage::ReadVisible,
+        CLIENT_READ_HISTORY => ClientMessage::ReadHistory,
         CLIENT_INPUT => {
             let kind = input.u8()?;
             let quiet_ms = input.u16()?;
@@ -516,6 +558,9 @@ pub fn encode_server_message(message: &ServerMessage) -> Result<Vec<u8>> {
         ServerMessage::Visible(visible) => {
             server(SERVER_VISIBLE, &|out| encode_visible(out, visible))
         }
+        ServerMessage::History(history) => {
+            server(SERVER_HISTORY, &|out| encode_history(out, history))
+        }
         ServerMessage::Input { bracketed } => server(SERVER_INPUT, &|out| {
             out.u8(u8::from(*bracketed));
             Ok(())
@@ -558,6 +603,7 @@ pub fn decode_server_message(bytes: &[u8]) -> Result<ServerMessage> {
         }),
         SERVER_PROGRAM_STATUS => ServerMessage::ProgramStatus(decode_program_status(&mut input)?),
         SERVER_VISIBLE => ServerMessage::Visible(decode_visible(&mut input)?),
+        SERVER_HISTORY => ServerMessage::History(decode_history(&mut input)?),
         SERVER_INPUT => ServerMessage::Input {
             bracketed: decode_bool(&mut input, "bracketed")?,
         },
@@ -615,38 +661,78 @@ fn decode_bool(input: &mut Decoder<'_>, field: &'static str) -> Result<bool> {
 }
 
 fn validate_visible(visible: &VisibleText) -> Result<()> {
-    if !visible.lossy {
+    validate_snapshot(
+        visible.lossy,
+        &visible.title,
+        &visible.directory,
+        ("visible title and directory", "visible text"),
+        &visible.text,
+        MAX_VISIBLE_TEXT_BYTES,
+    )
+}
+
+fn validate_history(history: &HistoryText) -> Result<()> {
+    validate_snapshot(
+        history.lossy,
+        &history.title,
+        &history.directory,
+        ("history title and directory", "history text"),
+        &history.text,
+        MAX_HISTORY_TEXT_BYTES,
+    )
+}
+
+/// A text reply is lossy, its title and working directory together stay
+/// within ORBS's `Metadata` bound, and its text within `maximum` holds no
+/// control character but line feed.
+fn validate_snapshot(
+    lossy: bool,
+    title: &str,
+    directory: &[u8],
+    (metadata_field, text_field): (&'static str, &'static str),
+    text: &str,
+    maximum: usize,
+) -> Result<()> {
+    if !lossy {
         return Err(Error::InvalidValue { field: "lossy" });
     }
-    let metadata = visible.title.len() + visible.directory.len();
+    let metadata = title.len() + directory.len();
     if metadata > MAX_METADATA_BYTES {
         return Err(Error::ValueTooLarge {
-            field: "visible title and directory",
+            field: metadata_field,
             size: metadata,
             maximum: MAX_METADATA_BYTES,
         });
     }
-    validate_bytes(
-        "visible text",
-        visible.text.as_bytes(),
-        MAX_VISIBLE_TEXT_BYTES,
-        true,
-    )?;
-    if !visible.text.chars().all(|c| c == '\n' || !c.is_control()) {
-        return Err(Error::InvalidValue {
-            field: "visible text",
-        });
+    validate_bytes(text_field, text.as_bytes(), maximum, true)?;
+    if !text.chars().all(|c| c == '\n' || !c.is_control()) {
+        return Err(Error::InvalidValue { field: text_field });
     }
     Ok(())
+}
+
+fn encode_screen(out: &mut Encoder, screen: Screen) {
+    out.u8(match screen {
+        Screen::Primary => 1,
+        Screen::Alternate => 2,
+    });
+}
+
+fn decode_screen(input: &mut Decoder<'_>) -> Result<Screen> {
+    match input.u8()? {
+        1 => Ok(Screen::Primary),
+        2 => Ok(Screen::Alternate),
+        value => Err(Error::InvalidTag {
+            field: "screen",
+            value,
+        }),
+    }
 }
 
 fn encode_visible(out: &mut Encoder, visible: &VisibleText) -> Result<()> {
     validate_visible(visible)?;
     out.u64(visible.revision);
-    out.u8(match visible.screen {
-        Screen::Primary => 1,
-        Screen::Alternate => 2,
-    });
+    encode_screen(out, visible.screen);
     out.u16(visible.rows);
     out.u16(visible.columns);
     out.long_bytes(visible.title.as_bytes());
@@ -659,16 +745,7 @@ fn encode_visible(out: &mut Encoder, visible: &VisibleText) -> Result<()> {
 
 fn decode_visible(input: &mut Decoder<'_>) -> Result<VisibleText> {
     let revision = input.u64()?;
-    let screen = match input.u8()? {
-        1 => Screen::Primary,
-        2 => Screen::Alternate,
-        value => {
-            return Err(Error::InvalidTag {
-                field: "screen",
-                value,
-            });
-        }
-    };
+    let screen = decode_screen(input)?;
     let rows = input.u16()?;
     let columns = input.u16()?;
     let title = input.long_text("visible title", MAX_METADATA_BYTES)?;
@@ -689,6 +766,48 @@ fn decode_visible(input: &mut Decoder<'_>) -> Result<VisibleText> {
     };
     validate_visible(&visible)?;
     Ok(visible)
+}
+
+fn encode_history(out: &mut Encoder, history: &HistoryText) -> Result<()> {
+    validate_history(history)?;
+    out.u64(history.revision);
+    encode_screen(out, history.screen);
+    out.u16(history.rows);
+    out.u16(history.columns);
+    out.long_bytes(history.title.as_bytes());
+    out.long_bytes(&history.directory);
+    out.u32(history.omitted_lines);
+    out.u32(history.cut_bytes);
+    out.u8(u8::from(history.lossy));
+    out.long_bytes(history.text.as_bytes());
+    Ok(())
+}
+
+fn decode_history(input: &mut Decoder<'_>) -> Result<HistoryText> {
+    let revision = input.u64()?;
+    let screen = decode_screen(input)?;
+    let rows = input.u16()?;
+    let columns = input.u16()?;
+    let title = input.long_text("history title", MAX_METADATA_BYTES)?;
+    let directory = input.long_bytes("history directory", MAX_METADATA_BYTES)?;
+    let omitted_lines = input.u32()?;
+    let cut_bytes = input.u32()?;
+    let lossy = decode_bool(input, "lossy")?;
+    let text = input.long_text("history text", MAX_HISTORY_TEXT_BYTES)?;
+    let history = HistoryText {
+        revision,
+        screen,
+        rows,
+        columns,
+        title,
+        directory,
+        omitted_lines,
+        cut_bytes,
+        lossy,
+        text,
+    };
+    validate_history(&history)?;
+    Ok(history)
 }
 
 pub fn encode_record(record: &Record) -> Result<Vec<u8>> {

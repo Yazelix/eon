@@ -37,6 +37,7 @@ checks!(
     guardian_containment,
     held_attach,
     history,
+    history_text,
     interactive_pressure,
     key_live,
     kitty_cap,

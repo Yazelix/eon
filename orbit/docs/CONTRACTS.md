@@ -151,8 +151,8 @@ PTY pixel size rule needs no wire change.
   and Eon consume it in this repository.
 - **Boundary:** Visible text over ORBS, agent observation, multiple observers,
   multiple interactive clients, remote access, and process authority are
-  excluded. The management lease holder reads visible text through ORB-C17
-  and sends paste and Enter input through ORB-C5, without either ORBS role.
+  excluded. The management lease holder reads visible text and history
+  through ORB-C17 and sends paste and Enter input through ORB-C5, without either ORBS role.
   Admission tells processes apart, not people or agents: same-user code that
   controls the named process or the lease holder is out of scope, since no
   same-UID sandbox is promised (ORB-C13).
@@ -293,7 +293,7 @@ PTY pixel size rule needs no wire change.
   selection policy for the pointer route, and its Rust host's libghostty input
   encoding.
 - **Consumes:** Canonical ORBS v9 semantic input, preserved through ORBS v14,
-  and management v6 lease input; Venus and Eon consume it in this repository.
+  and management v7 lease input; Venus and Eon consume it in this repository.
 - **Boundary:** Candidate-list IME and native input quality remain Venus-owned.
   Lease input carries no other keys, chords, mouse, focus or resize; raw bytes
   are never written. Orbit tells an attached client's input from lease input,
@@ -835,7 +835,8 @@ PTY pixel size rule needs no wire change.
   - Lease disconnect before Stop is non-destructive. Two replacements produce
     one winner and one Busy loser; accepted Stop is not cancelled by disconnect.
   - Management carries only bounded identity, live status, the ORB-C15
-    `ProgramStatus` request, the ORB-C17 `ReadVisible` request, the ORB-C5
+    `ProgramStatus` request, the ORB-C17 `ReadVisible` and `ReadHistory`
+    requests, the ORB-C5
     lease input request with its quiet window, the ORB-C3 `AttachAllow`
     request, and explicit Stop,
     with one request and response in flight.
@@ -858,7 +859,8 @@ PTY pixel size rule needs no wire change.
     - Eon start and recovery: five seconds;
     - Orbit incomplete handshake: one second;
     - each management message and record: 4 KiB, except one ORB-C17
-      `ReadVisible` reply, whose text is at most 1 MiB, and one ORB-C5 lease
+      `ReadVisible` reply, whose text is at most 1 MiB, one ORB-C17
+      `History` reply, whose text is at most 8 MiB, and one ORB-C5 lease
       input request, whose pasted text is at most 64 KiB;
     - each identity: 128 UTF-8 bytes;
     - failure detail: 1 KiB.
@@ -869,7 +871,7 @@ PTY pixel size rule needs no wire change.
     PTY, presentation, child observation, or shutdown.
 - **Owner:** Orbit's private management owner and canonical protocol package;
   platform mechanics remain isolated, while Eon owns consumer policy.
-- **Consumes:** Canonical management v6, ORB-C12, ORB-C3, ORB-C5 and ORB-C17.
+- **Consumes:** Canonical management v7, ORB-C12, ORB-C3, ORB-C5 and ORB-C17.
 - **Boundary:**
   - The contract is per live Orbit run. Eon retains topology, enumeration,
     cleanup, and recovery policy.
@@ -885,8 +887,9 @@ PTY pixel size rule needs no wire change.
   `eon-agent-parity-a9g0.15` commit (`9c90032`) for the management v4
   requests, proved installed by the `eon-agent-parity-a9g0.19` commit, and
   the `eon-7cf0y.8` commit for management v5 (the `ProgramStatus`
-  foreground), and the `eon-buys1.1` commit for management v6 (the lease
-  input quiet window)
+  foreground), the `eon-buys1.1` commit for management v6 (the lease
+  input quiet window), and the `eon-u5bvd.2` commit for management v7
+  (`ReadHistory`)
   - **Environment:** x86_64 Linux; `nix flake check -L` (`orbit-laws`,
     `orbit-boundary`, `orbit-terminfo`, every `orbit-<name>` real-PTY
     check); sandboxed `nix develop -c eon-test` (workspace and installer;
@@ -1499,12 +1502,13 @@ PTY pixel size rule needs no wire change.
     and size, and one retirement for each replaced image; the bead records the
     measurements.
 
-## ORB-C17 — Bounded visible-text reads
+## ORB-C17 — Bounded terminal text reads
 
 - **Status:** Proved
 - **Consumer:** The one validated management lease holder (ORB-C13); in Eon,
   Eon Runtime acting for `eon pane read`.
-- **Trigger:** The lease holder sends one management `ReadVisible` request.
+- **Trigger:** The lease holder sends one management `ReadVisible` or
+  `ReadHistory` request.
 - **Result:**
   - Orbit answers with one snapshot of the terminal at one presentation
     revision N. It holds:
@@ -1513,19 +1517,39 @@ PTY pixel size rule needs no wire change.
     - the terminal's rows and columns;
     - its title and raw working directory, as ORB-C3 reports them;
     - the active screen's live area as plain UTF-8 text.
-  - **What the text covers.** The live area is the rows a client at live
-    bottom would see, whatever any client's scroll position.
-  - **How the text is laid out.**
+
+    For `ReadHistory`, `omitted_lines` and `cut_bytes` replace
+    `omitted_rows`.
+  - **What the text covers.** `ReadVisible`: the rows a client at live
+    bottom would see, whatever any client's scroll position. `ReadHistory`:
+    the active screen's retained history followed by its live area, oldest
+    first, as one text. On the alternate screen, which retains no history,
+    that is its live area alone, and the reply names the alternate screen.
+    Output that the ORB-C8 history budget already evicted is not part of
+    the terminal and is not reported.
+  - **How the text is laid out.** `ReadVisible`:
     - one line per display row, top to bottom, separated by line feeds;
     - trailing blanks are trimmed;
     - a soft-wrapped row ends in a line break like a hard one;
     - wide-cell spacers are omitted.
-  - **What the text drops.** Styles, colours, hyperlinks, images, cursor,
-    selection and history are dropped, and the reply says the text is lossy.
-    The text holds no control characters other than line feeds.
-  - **Size bound.** The text is at most 1 MiB. When the live area exceeds
-    that, Orbit keeps the last whole rows that fit and reports how many
-    leading rows it omitted.
+
+    `ReadHistory`: one line per logical line, so a soft-wrapped line is
+    joined into one; a hard line break ends a line; trailing blanks on each
+    line and trailing blank lines are trimmed; wide-cell spacers are
+    omitted; combining marks and other grapheme parts are kept.
+  - **What the text drops.** Styles, colours, hyperlinks, images, cursor and
+    selection are dropped, and `ReadVisible` also drops history; the reply
+    says the text is lossy. The text holds no control characters other than
+    line feeds.
+  - **Size bound.** `ReadVisible` text is at most 1 MiB; `ReadHistory` text
+    at most 8 MiB. When the text would exceed its bound, Orbit keeps the
+    last whole rows (`ReadVisible`) or lines (`ReadHistory`) that fit and
+    reports how many leading ones it omitted, so the earliest retained
+    lines are the ones left out. When the newest line alone exceeds the
+    `ReadHistory` bound, Orbit keeps that line's last part, cut at a
+    character boundary to fit, omits every earlier line, and reports both
+    the omitted lines and the bytes cut from that line (`cut_bytes`, else
+    0). The text is never empty because of the bound.
   - **No side effects.** Reading sends nothing to the PTY and changes no
     terminal, viewport, selection, presentation or lifecycle state.
   - **No partial updates.** While a synchronized update is held, the read
@@ -1545,12 +1569,12 @@ PTY pixel size rule needs no wire change.
     reply;
   - its Rust host, which extracts the text with libghostty's plain-text
     formatter;
-  - canonical `orbit-protocol` management v6.
+  - canonical `orbit-protocol` management v7.
 - **Consumes:** ORB-C13 (lease, validation, slow-peer rule), ORB-C4 (held
   updates), ORB-C3 (title and directory values).
 - **Boundary:**
-  - No history, scrollback, semantic command regions, escapes, styles, raw PTY
-    bytes or ORBF frames.
+  - No primary history while the alternate screen is active, semantic
+    command regions, escapes, styles, raw PTY bytes or ORBF frames.
   - No input, resize, scroll or process authority; lease input is ORB-C5's.
   - No reader other than the lease holder, and no secret redaction.
   - The text cannot prove ORB-C6 fidelity.
@@ -1580,6 +1604,31 @@ PTY pixel size rule needs no wire change.
       109 ms, each at a later revision; while the flood ran, Venus drew
       keystrokes in the pane beside it within 82 to 86 ms (bounded by the
       screen captures that measured it).
+- **Proof (`ReadHistory`):** the `eon-u5bvd.2` commit
+  - **Environment:** x86_64 Linux; `nix build --keep-going` of every
+    `orbit-*` check on that commit's tree; sandboxed `nix develop -c
+    eon-test`, with a release Orbit for the real-PTY runs, as
+    `eon-u5bvd.2` records
+  - **Evidence:**
+    - Real-PTY check
+      [`orbit-history-text`](../tests/real_pty/history_text.rs): history then
+      the live area, a wrapped line joined, wide and combining text kept,
+      the alternate screen alone and the primary history back, the client's
+      scroll position and the PTY untouched, a held update waited for; a
+      16 MiB history of four-byte characters at 200 columns read as 7.45 MB
+      in 87 to 156 ms; a 3.75 MB answer left unread did not hold the PTY or
+      the client and lost the lease within its bound; and keystroke echo in
+      another Orbit stayed at most 12.9 ms, below the slowest read, during
+      back-to-back full reads of up to 181 ms, idle and with 12 CPU burners
+      (load 7.95 to 10.17)
+    - [`orbit-lease-input`](../tests/real_pty/lease_input.rs), which refuses
+      a pipelined `ReadHistory` under the lease
+    - The unit tests in [`src/history.rs`](../src/history.rs) (order,
+      unwrap, a combining mark on a space, eviction, the alternate screen, the 8 MiB bound and the cut
+      newest line) and the management protocol tests in
+      [`crates/protocol/tests/management.rs`](../crates/protocol/tests/management.rs)
+    - Law [`management_read_needs_a_live_settled_lease`](../LAWS.bend)
+      (`orbit-laws`), which covers both reads
 
 ## Focused terminal conformance corpus
 

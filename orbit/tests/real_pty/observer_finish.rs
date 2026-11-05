@@ -7,7 +7,7 @@ use orbit_protocol::{
 };
 use std::time::Instant;
 
-const MANAGED: [&str; 4] = ["--management-v6", "session-1", "run-1", "component-1"];
+const MANAGED: [&str; 4] = ["--management-v7", "session-1", "run-1", "component-1"];
 
 fn observe(path: &std::path::Path) -> Peer {
     let mut observer = Peer::connect(path, 10.0);

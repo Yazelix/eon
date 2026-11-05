@@ -65,12 +65,16 @@ fn row_text(terminal: &Terminal<'static, '_>, y: u16, columns: u16) -> Option<St
     let options = FormatOptions::new()
         .with_emit_format(Format::Plain)
         .with_unwrap(false)
-        .with_trim(true)
+        // The formatter's own trim drops a combining mark on a blank cell, so
+        // only real spaces are trimmed below.
+        .with_trim(false)
         .with_selection(&selection);
     let bytes = terminal.format_selection_alloc(None, options).ok()?;
     let bytes = bytes.as_deref().unwrap_or_default();
     let text = std::str::from_utf8(bytes).ok()?;
-    Some(sanitized(text.trim_end_matches('\n')))
+    Some(sanitized(
+        text.trim_end_matches(['\n', '\r']).trim_end_matches(' '),
+    ))
 }
 
 /// The row with every control character, line feeds included, as U+FFFD, so
@@ -117,6 +121,15 @@ mod tests {
         assert_eq!(visible.screen, Screen::Primary);
         assert_eq!((visible.revision, visible.omitted_rows), (7, 0));
         assert!(visible.lossy);
+    }
+
+    /// A combining mark on a space is grapheme content, kept inside a row
+    /// and at its end, while real trailing spaces still go.
+    #[test]
+    fn space_backed_combining_marks_are_kept() {
+        let mut terminal = Terminal::new(10, 3).unwrap();
+        terminal.vt_write("A \u{301}B\r\nC \u{301}\r\nD \u{301}  ".as_bytes());
+        assert_eq!(text(&terminal).text, "A \u{301}B\nC \u{301}\nD \u{301}");
     }
 
     /// The live area ignores the viewport: a terminal scrolled into history

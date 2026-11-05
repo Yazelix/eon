@@ -1956,7 +1956,7 @@ fn managed_run_survives_launcher_loss_and_has_one_replacement_owner() -> TestRes
     orbit
         .arg(&socket)
         .args([
-            "--management-v6",
+            "--management-v7",
             "session-1",
             "run-1",
             "component-1",
@@ -2121,7 +2121,7 @@ fn management_authority_negatives_fail_closed_without_stopping_session() -> Test
         server_command()
             .arg(&socket)
             .args([
-                "--management-v6",
+                "--management-v7",
                 "session-negative",
                 "run-negative",
                 "component-negative",

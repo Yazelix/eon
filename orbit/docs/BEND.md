@@ -67,7 +67,7 @@ file must be laid out ([GUIDE.md][guide], [WONTFIX.txt][wontfix], here):
   must not collide with Base's (`None`, `Some`, `Con`, `U32`, `Key`, `Text`,
   `Scroll`, ...), even inside an imported module (here). A collision fails the
   check with `expected : a fresh constructor name (duplicate declaration:
-  Text)`; management v4's answer for a read is `Visible` for that reason.
+  Text)`; management's answer for a text read is `Readout` for that reason.
 - `Maybe<(U32 & U32)>`: a compound type argument takes parentheses (#1110).
 - `@+x: A -> B` is not `A -> B`: pass `x => f(x)` where a plain function is
   expected (#1111).

@@ -252,14 +252,17 @@ fn refused_requests_keep_the_lease() {
     let tag = encoded(&paste)[management::HEADER_BYTES];
     assert_eq!(run.lease.send_bytes(&reframed(&paste, &[tag, 0, 0])), invalid);
     let read = encoded(&ClientMessage::ReadVisible);
+    let history = encoded(&ClientMessage::ReadHistory);
     let status = encoded(&ClientMessage::Status);
-    let pipelined = [read.as_slice(), read.as_slice(), &status[..5]].concat();
-    assert_eq!(run.lease.send_bytes(&pipelined), invalid);
-    let reply = run.lease.send_bytes(&status[5..]);
-    assert!(
-        matches!(reply, Reply::Message(ServerMessage::Status(_))),
-        "{reply:?}"
-    );
+    for first in [&read, &history] {
+        let pipelined = [first.as_slice(), read.as_slice(), &status[..5]].concat();
+        assert_eq!(run.lease.send_bytes(&pipelined), invalid);
+        let reply = run.lease.send_bytes(&status[5..]);
+        assert!(
+            matches!(reply, Reply::Message(ServerMessage::Status(_))),
+            "{reply:?}"
+        );
+    }
 
     // Over the bound.
     assert!(

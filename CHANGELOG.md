@@ -3,6 +3,16 @@
 This file records user-visible runtime, command, configuration, packaging,
 installation, and proven contract changes.
 
+## Unreleased
+
+- Orbit can export a terminal's retained history and its screen as plain text,
+  oldest first, up to 8 MiB, with the oldest lines dropped and counted past
+  that (ORB-C17, `eon-u5bvd.2`). This is the first step of opening a pane's
+  scrollback in the configured editor; `eon pane history` and the window key
+  follow. Orbit's management protocol moves to generation 7; windows started
+  before this change keep their own supervisor and Orbit runs, as with every
+  management change, and EONW is unchanged.
+
 ## v0.1.16 (2026-11-05)
 
 - Install from `github:Yazelix/eon/main`, which always holds the latest

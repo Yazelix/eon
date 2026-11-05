@@ -11,8 +11,9 @@ use crate::{
     cli::{self, Serve},
     errno,
     frame::{title_and_directory, viewport_preview},
+    history,
     input::wheel_direction,
-    management::Owner as Management,
+    management::{Owner as Management, TextRead},
     platform::{self, signal},
     pty::{Orbit, PtyRead, status_code},
     socket::{
@@ -631,7 +632,7 @@ impl Host {
     /// keeps writing cannot hold the run open (ORB-C12).
     fn drain_exited(&mut self) -> io::Result<Fact> {
         self.child_exited = true;
-        // A held ReadVisible request ends with the run (ORB-C17).
+        // A held text read ends with the run (ORB-C17).
         if let Some(management) = self.management.as_mut() {
             management.drop_held_read();
         }
@@ -698,9 +699,9 @@ impl Host {
         {
             return Ok(Some(Fact::Management(event)));
         }
-        // A ReadVisible request held for a synchronized update is reported
-        // once none is held: the PTY ended it, or Bend's watchdog Release did
-        // (ORB-C17), and once any refusal sent meanwhile is written.
+        // A text read held for a synchronized update is reported once none
+        // is held: the PTY ended it, or Bend's watchdog Release did (ORB-C17),
+        // and once any refusal sent meanwhile is written.
         if self.management.as_ref().is_some_and(Management::read_waits)
             && !self.orbit.synchronized(self.bounds.sync_ms)?
         {
@@ -723,9 +724,9 @@ impl Host {
         if let Some(management) = &self.management {
             if let Some(connection) = &management.connection {
                 // One request at a time: a request that arrives while a
-                // ReadVisible request waits for a synchronized update, or
-                // before the answer is written, is read and declined as in
-                // flight; nothing more is read while that refusal waits.
+                // text read waits for a synchronized update, or before the
+                // answer is written, is read and declined as in flight;
+                // nothing more is read while that refusal waits.
                 let events = if connection.writing() {
                     platform::POLLOUT
                 } else {
@@ -1479,8 +1480,16 @@ impl Host {
                 }
                 Decision::ManageRefuse => self.managed()?.refuse()?,
                 Decision::ManageRead { revision } => {
-                    let visible = visible::read(&self.orbit.terminal, revision);
-                    self.managed()?.visible(visible)?
+                    match self.managed()?.take_read().ok_or_else(protocol)? {
+                        TextRead::Visible => {
+                            let visible = visible::read(&self.orbit.terminal, revision);
+                            self.managed()?.visible(visible)?
+                        }
+                        TextRead::History => {
+                            let history = history::read(&self.orbit.terminal, revision);
+                            self.managed()?.history(history)?
+                        }
+                    }
                 }
                 Decision::ManageInput => {
                     let (input, quiet_ms) = self.managed()?.take_input().ok_or_else(protocol)?;

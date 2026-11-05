@@ -87,8 +87,8 @@ law management_program_status_needs_a_live_lease:
   for live: Bool
   {Management.is_records(Management.answer(slot, Management.ProgramStatus{live})) == Bool.and(Management.is_leased(slot), live) : Bool}
 
-# ORB-C17: a ReadVisible request gets the visible text exactly under the
-# lease while the child runs and no synchronized update is held.
+# ORB-C17: a ReadVisible or ReadHistory request gets its text exactly under
+# the lease while the child runs and no synchronized update is held.
 law management_read_needs_a_live_settled_lease:
   for slot: Management.Slot
   for live: Bool
@@ -1674,7 +1674,7 @@ def reply(
     case Boundary.ManageStop{}:
       Management.Shutdown{} <> rest
     case Boundary.ManageRead{revision}:
-      Management.Visible{} <> rest
+      Management.Readout{} <> rest
     case Boundary.ManageInput{}:
       Management.Write{} <> rest
     case Boundary.ManageAllow{}:
@@ -1701,7 +1701,7 @@ type Lease is Data:
   # A decision broke the contract.
   Breached{}
 
-# The lease is kept only while the child runs, so a ReadVisible request or
+# The lease is kept only while the child runs, so a text read or
 # lease input here is live; a read carries whether a synchronized update is
 # held.
 def management_signal(event: Boundary.ManagementEvent, held: Bool) -> Management.Signal:

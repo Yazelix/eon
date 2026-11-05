@@ -55,7 +55,7 @@ blind to the schema.
 `yazelix-orbit` takes this command line:
 
 ```sh
-yazelix-orbit serve [SOCKET] [--management-v6 SESSION_ID RUN_ID COMPONENT_GENERATION]
+yazelix-orbit serve [SOCKET] [--management-v7 SESSION_ID RUN_ID COMPONENT_GENERATION]
                   [--ansi-palette-v1 RGB,...] [-- COMMAND ...]
 ```
 
@@ -123,7 +123,7 @@ same way.
 
 ## Management record
 
-`--management-v6` makes the run managed (ORB-C13).
+`--management-v7` makes the run managed (ORB-C13).
 Each identity has 1 to 128 UTF-8 bytes. Before the child starts, Rust opens a
 private management socket at `SOCKET.management`; at Ready it publishes an
 exact user-owned 0600 live record at `SOCKET.record` naming the three
@@ -168,7 +168,8 @@ otherwise; it must acquire the lease within one second; Acquire is granted only
 when Rust found the expected identity, the record's exact inode and contents,
 the peer's UID and both sockets all equal to this run's, and fails with
 `InvalidIdentity` and closes otherwise; Status, ProgramStatus,
-[ReadVisible](#visible-text), [lease input](#lease-input),
+[ReadVisible](#visible-text), [ReadHistory](#history-text),
+[lease input](#lease-input),
 [AttachAllow](#interactive-admission) and Stop are answered only under the
 lease. A request out of place, or one that breaks framing, with a bad header
 or more than its kind's bound (4 KiB, or one lease paste), fails with
@@ -280,9 +281,11 @@ sends a client nothing. A request that arrives while a synchronized update is
 held waits for its release or the watchdog ([HOST.md](HOST.md#decisions)), and
 one still waiting when the run ends gets no text. A request that arrives while
 it waits is in flight beside it and gets `Refused(InvalidRequest)`; the read
-stays held. The unit tests in [src/visible.rs](../src/visible.rs) cover the row
-layout, a viewport scrolled into history, the alternate screen, the 1 MiB cut
-and the replacement of control characters.
+stays held. Orbit trims only real trailing spaces, since the formatter's own
+trim drops a combining mark that sits on a blank cell. The unit tests in
+[src/visible.rs](../src/visible.rs) cover the row layout, a combining mark on
+a space inside and at the end of a row, a viewport scrolled into history, the
+alternate screen, the 1 MiB cut and the replacement of control characters.
 
 The real-PTY visible-text check, with no client attached, reads a title, a
 directory, trailing blanks, wide and combining text and a soft-wrapped row,
@@ -314,6 +317,51 @@ answer is written (the paste ran), no bound on writing an answer (the lease
 stayed), writing `Stopped` without the rest of the answer (the answer did not
 decode), and holding the owner loop until an unread answer's bound passed
 (the title came after 1.04 s).
+
+### History text
+
+A `ReadHistory` request (ORB-C17) is admitted, held for a synchronized update
+and answered exactly as `ReadVisible` is: Bend decides both reads alike as
+event `Read`, and the host keeps which text the request asked for. The answer
+is one snapshot at the presentation revision of its decision with the same
+screen, size, title and working directory, and the active screen's retained
+history followed by its live area, oldest first, as plain text: one line per
+logical line, so a soft-wrapped line is joined, trailing blanks and trailing
+blank lines trimmed, wide-cell spacers left out and combining marks kept,
+every control character but line feeds replaced by U+FFFD, and marked lossy.
+The alternate screen retains no history, so it reads its live area alone, and
+output the history budget evicted is not reported. Past 8 MiB, the leading
+whole lines are left out and counted (`omitted_lines`); when the newest line
+alone passes 8 MiB, its tail is kept from a character boundary and the bytes
+cut from it are reported (`cut_bytes`), so the text is never empty because of
+the bound. The host extracts it with one pass of libghostty's plain-text
+formatter over the whole screen ([src/history.rs](../src/history.rs)); a
+failure is refused with `Refused(ReadFailed)`. The unit tests in
+[src/history.rs](../src/history.rs) cover the order and layout, a combining
+mark on a space inside and at the end of a line, empty history,
+a viewport scrolled to the top, the alternate screen, eviction at the earliest
+retained line, the 8 MiB cut of leading lines, and the cut newest line with a
+three-byte character straddling the cut.
+
+The real-PTY history-text check reads sixty lines, a 100-cell line wrapped on
+an 80-column screen as one line, wide and combining text, the title and the
+directory, at the revision of an attached client's latest frame; it reads the
+same text while that client is scrolled ten rows into history, sends it
+nothing, finds its viewport still there and the PTY input empty; it reads the
+alternate screen's line alone and the primary history whole after it. A
+history read during a held update stays unanswered for 0.3 s, a `ReadVisible`
+sent then gets `Refused(InvalidRequest)`, and the read then sees the whole
+update. On a 200 by 50 terminal filled with 16,000 lines of four-byte
+characters, the history budget keeps 9,476 lines, 7,448,135 bytes of text with
+none omitted, read in 87 to 156 ms (idle, and beside 12 CPU burners at load
+7.95 to 10.17). Filled with two-byte characters, the 3,752,495-byte answer left
+unread lets a title the child sets once the answer begins to arrive reach the
+attached client within a second of asking, and the holder loses its
+connection between 0.9 and 2.5 s after asking. During back-to-back full reads
+of up to 181 ms, keystroke echo in another Orbit took at most 12.9 ms, against
+at most 5.3 ms idle; the check fails when an echo takes as long as the slowest
+read, or a read takes 2 s. The lease-input check refuses a `ReadHistory`
+pipelined before another request.
 
 ### Lease input
 
@@ -1093,7 +1141,7 @@ encodes that reply and refuses an eighth omitted sequence, and
 it and refuses any other tag. Orbit gives the foreground no status meaning.
 
 The real-PTY program-status check reads the records through a
-`--management-v6` lease:
+`--management-v7` lease:
 
 - One write carrying `working`, `blocked` and `done` reports, a prompt mark
   and a `working` report leaves the `done` record and the last report. The
@@ -1914,7 +1962,8 @@ ORB_BASELINE_CPUS=6-11 ORB_BASELINE_GRID="54 90" \
   slow-observer, observer-finish, stale-socket, clipboard, clipboard-pressure,
   command-line, palette-reset, selection, selection-tick, refused-flush,
   management-record, management-lease, program-status, attach-allow,
-  visible-text, lease-input, terminal-identity and stopped-client-exit.
+  visible-text, history-text, lease-input, terminal-identity and
+  stopped-client-exit.
 
 Building the package runs the Rust unit tests. The real-PTY checks are Rust
 integration tests in [tests/real_pty](../tests/real_pty). They encode every

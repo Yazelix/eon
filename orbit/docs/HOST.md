@@ -239,9 +239,10 @@ negotiation bound, timed apart from that bound; a peer that does not read it
 loses the connection, which is event `Gone`, so Bend frees the slot and the
 named process with it. A slow peer delays nothing else.
 
-A `ReadVisible` request is event `Read` with the fact's `held` flag. The host
-reports it only once no synchronized update is held: a request read during
-one is held and reported once the PTY ends the update or the host carries out
+A `ReadVisible` or `ReadHistory` request is event `Read` with the fact's
+`held` flag; the host keeps which text the request asked for, and answers
+Bend's `ManageRead` with that text (ORB-C17). The host reports it only once
+no synchronized update is held: a request read during one is held and reported once the PTY ends the update or the host carries out
 Bend's watchdog `Release`, and once the connection's output is written, so
 its answer never meets a pending refusal. Meanwhile the host still reads the
 connection: a request that arrives is event `Invalid`, which Bend declines
@@ -336,7 +337,7 @@ none holds session state that Bend decides from.
   each management connection's buffers.
 - Timers and loop scheduling: the peer's negotiation deadline, the half-close
   probe, the synchronized-output watchdog and whether it is armed, the
-  management connection's one-second bound, a `ReadVisible` request held
+  management connection's one-second bound, a text read held
   until no synchronized update is and its connection's output is written, the
   source the next wait starts from, and each client's output bound. Bend
   chooses every bound.

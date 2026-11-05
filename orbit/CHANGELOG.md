@@ -6,6 +6,25 @@ remain canonical in `docs/CONTRACTS.md`, dependency decisions in
 
 ## Unreleased
 
+- Management moves to generation 7, a breaking change with no compatibility
+  window (`eon-u5bvd.2`). It adds the `ReadHistory` request (8) and its
+  `History` reply (76): the active screen's retained history followed by its
+  live area, oldest first, as lossy plain text, one line per logical line with
+  soft wraps joined, at one presentation revision, with the `Visible` reply's
+  screen, size, title and directory. The alternate screen reads its live area
+  alone. The text is at most 8 MiB; past it the leading whole lines are left
+  out and counted in `omitted_lines`, and when the newest line alone passes
+  it, its tail is kept from a character boundary and `cut_bytes` counts what
+  was cut. The reply's frame bound is the header, its fixed fields, the
+  `Metadata` bound and 8 MiB; every other bound is unchanged. ORBS and ORBF
+  are unchanged. `--management-v6` becomes `--management-v7`, so Eon Runtime
+  moves to generation 7 in the same change; Venus does not use management.
+  As before, a new Eon Runtime cannot acquire or recover the lease of an
+  Orbit run that an older build started (ORB-C13), and a live window an
+  older build started keeps its own supervisor. ORB-C17 becomes "Bounded
+  terminal text reads" and covers both reads; ORB-C13 lists the request and
+  its bound.
+
 - Management moves to generation 6, a breaking change with no compatibility
   window (`eon-buys1.1`). The lease `Input` request carries a quiet window, a
   little-endian `u16` of milliseconds after its kind byte, and `Refused` gains

@@ -1,6 +1,7 @@
 # The management lease of ORB-C13: one management connection at a time, one
-# validated lease, and Stop, ORB-C15's ProgramStatus, ORB-C17's ReadVisible,
-# ORB-C5's lease input and ORB-C3's AttachAllow only through it. Rust
+# validated lease, and Stop, ORB-C15's ProgramStatus, ORB-C17's ReadVisible
+# and ReadHistory, ORB-C5's lease input and ORB-C3's AttachAllow only through
+# it. Rust
 # owns the record, the management socket and every identity check, reports
 # each event, and carries out each answer; these pure functions decide every
 # answer and are proved in PROOF.bend.
@@ -24,9 +25,9 @@ type Signal is Data:
   # A ProgramStatus request (ORB-C15), and whether the child still runs: once
   # a stop has begun or the child exited, its records end with the run.
   ProgramStatus{live: Bool}
-  # A ReadVisible request (ORB-C17), whether the child still runs, and
-  # whether a synchronized update is held; the host reports it only once none
-  # is.
+  # A ReadVisible or ReadHistory request (ORB-C17), whether the child still
+  # runs, and whether a synchronized update is held; the host reports it only
+  # once none is.
   Read{live: Bool, held: Bool}
   # A lease input request (ORB-C5), and whether the child still runs.
   Input{live: Bool}
@@ -56,8 +57,8 @@ type Answer is Data:
   Records{}
   # Answer Busy on the lease, which stays.
   Refuse{}
-  # Answer Visible with the visible text (ORB-C17).
-  Visible{}
+  # Answer the read with its text: Visible or History (ORB-C17).
+  Readout{}
   # Write the lease input and answer Input (ORB-C5).
   Write{}
   # Record the named process and answer Allowed (ORB-C13).
@@ -82,9 +83,9 @@ def unleased(slot: Slot) -> Answer:
       Quiet{}
 
 # A request is admitted only in the state it belongs to: Acquire while
-# negotiating, Status, ProgramStatus, ReadVisible, lease input, AttachAllow
+# negotiating, Status, ProgramStatus, a text read, lease input, AttachAllow
 # and Stop under the lease. ProgramStatus and lease input are answered while
-# the child runs and refused Busy after, and ReadVisible also while a
+# the child runs and refused Busy after, and a text read also while a
 # synchronized update is held; none waits. A request that does not decode, or
 # a pipelined one, is declined and keeps the lease.
 def decide(signal: Signal, slot: Slot) -> Answer:
@@ -166,7 +167,7 @@ def decide(signal: Signal, slot: Slot) -> Answer:
     case Read{live, held}:
       match live held slot:
         case True{} False{} Leased{}:
-          Visible{}
+          Readout{}
         case _ _ Leased{}:
           Refuse{}
         case _ _ other:
@@ -223,7 +224,7 @@ def is_records(answer: Answer) -> Bool:
 
 def is_text(answer: Answer) -> Bool:
   match answer:
-    case Visible{}:
+    case Readout{}:
       True{}
     case _:
       False{}
@@ -270,7 +271,7 @@ def after(answer: Answer, signal: Signal, slot: Slot) -> Slot:
       slot
     case Refuse{}:
       slot
-    case Visible{}:
+    case Readout{}:
       slot
     case Write{}:
       slot
@@ -301,7 +302,7 @@ def replay(events: List<&2, Signal>, +slot: Slot) -> Slot:
 # connection is admitted only into a free slot and is Busy otherwise, a lease
 # is granted only for a valid identity during negotiation, Status and Stop are
 # carried out only under the lease, ProgramStatus is answered only under the
-# lease while the child runs and refused Busy under it after, ReadVisible
+# lease while the child runs and refused Busy under it after, a text read
 # likewise and also refused while a synchronized update is held, lease input
 # is written only under the lease while the child runs and refused Busy under
 # it after, AttachAllow names a process only under the lease, a request that
@@ -345,7 +346,7 @@ def audit_program(live: Bool, slot: Slot, answer: Answer) -> Audit:
 
 def audit_read(live: Bool, held: Bool, slot: Slot, answer: Answer) -> Audit:
   match live held slot answer:
-    case True{} False{} Leased{} Visible{}:
+    case True{} False{} Leased{} Readout{}:
       Clean{Leased{}}
     case _ True{} Leased{} Refuse{}:
       Clean{Leased{}}

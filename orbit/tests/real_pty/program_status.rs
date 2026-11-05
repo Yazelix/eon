@@ -11,7 +11,7 @@ use std::{
     time::{Duration, Instant},
 };
 
-const MANAGED: [&str; 4] = ["--management-v6", "session-3", "run-3", "component-3"];
+const MANAGED: [&str; 4] = ["--management-v7", "session-3", "run-3", "component-3"];
 
 /// A managed run of a bash script, with `env` and a lease on its management
 /// socket.

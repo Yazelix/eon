@@ -7,6 +7,7 @@ use std::{
 mod boundary;
 mod cli;
 mod frame;
+mod history;
 pub mod host;
 mod input;
 mod management;

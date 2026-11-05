@@ -116,8 +116,8 @@ pub(crate) enum ManagementEvent {
     Bad = 6,
     /// The connection closed, was refused, or outlived its one-second bound.
     Gone = 7,
-    /// A ReadVisible request (ORB-C17), reported only once no synchronized
-    /// update is held.
+    /// A ReadVisible or ReadHistory request (ORB-C17), reported only once no
+    /// synchronized update is held.
     Read = 8,
     /// A lease input request (ORB-C5).
     Input = 9,
@@ -440,7 +440,7 @@ fn halves(revision: u64) -> String {
 
 /// The line the worker writes before its first answer, naming the schema
 /// it was generated from; the host refuses a worker that names another.
-pub(crate) const SCHEMA: &str = "schema 1fb6dafe7e2c4ce3";
+pub(crate) const SCHEMA: &str = "schema da609153e1a3aebd";
 
 /// The line that ends each of the worker's answers.
 pub(crate) const END: &str = "end";
@@ -600,10 +600,11 @@ pub(crate) enum Decision {
     /// announcement, and queues its chunks as the resource queue's bound allows. A
     /// resource whose copy fails is not started and loses its number.
     Transfer { start: bool, retire: bool },
-    /// Answers the connection Visible with the active screen's live area as plain
-    /// text, the screen, its size, title and working directory, at `revision`
-    /// (ORB-C17); an extraction that fails answers Refused(ReadFailed). The lease
-    /// stays.
+    /// Answers the connection's text read at `revision` (ORB-C17): ReadVisible with
+    /// Visible, the active screen's live area as plain text, and ReadHistory with
+    /// History, its retained history and live area as plain text, each with the
+    /// screen, its size, title and working directory; an extraction that fails
+    /// answers Refused(ReadFailed). The lease stays.
     ManageRead { revision: u64 },
     /// Writes the lease input request to the PTY input queue whole, encoded as an
     /// attached client's paste or Enter would be, and answers Input, or answers

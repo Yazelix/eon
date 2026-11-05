@@ -5,9 +5,9 @@
 //! replaces the record when the run ends. Every path and identity is
 //! checked here; Bend decides every answer (src/management.bend), including
 //! whether ORB-C15's `ProgramStatus` gets the records, ORB-C17's
-//! `ReadVisible` the visible text and ORB-C5's lease input the PTY. The
-//! connection also holds the process its lease holder names for ORB-C3's
-//! admission.
+//! `ReadVisible` and `ReadHistory` their text and ORB-C5's lease input the
+//! PTY. The connection also holds the process its lease holder names for
+//! ORB-C3's admission.
 
 use crate::{
     Timer,
@@ -16,9 +16,9 @@ use crate::{
     socket::Listener,
 };
 use orbit_protocol::management::{
-    self as protocol, ClientMessage, EndpointIdentity, Failure, FailureCode, LeaseInput,
-    LiveIdentity, ObjectIdentity, ProcessOutcome, ProgramStatus, Record, Refusal, ServerMessage,
-    TerminationReason, Tombstone, VisibleText,
+    self as protocol, ClientMessage, EndpointIdentity, Failure, FailureCode, HistoryText,
+    LeaseInput, LiveIdentity, ObjectIdentity, ProcessOutcome, ProgramStatus, Record, Refusal,
+    ServerMessage, TerminationReason, Tombstone, VisibleText,
 };
 use std::{
     ffi::OsStr,
@@ -42,7 +42,7 @@ pub(crate) const NEGOTIATION_MS: u32 = 1000;
 
 static NEXT_ARTIFACT: AtomicU64 = AtomicU64::new(0);
 
-/// The identities `--management-v6` names.
+/// The identities `--management-v7` names.
 #[derive(Debug, PartialEq, Eq)]
 pub(crate) struct Launch {
     pub(crate) session_id: String,
@@ -135,10 +135,13 @@ pub(crate) struct Connection {
     refusal: Option<String>,
     /// The decoded lease input or name Bend is deciding on.
     pending: Option<Pending>,
-    /// A ReadVisible request read while a synchronized update was held; the
-    /// host reports it once none is and the output is written, and declines
-    /// a request read meanwhile.
+    /// A ReadVisible or ReadHistory request read while a synchronized update
+    /// was held; the host reports it once none is and the output is written,
+    /// and declines a request read meanwhile.
     held_read: bool,
+    /// The text the last read request asked for, which a refusal sent while
+    /// that read is held leaves in place; the next read replaces it.
+    read: Option<TextRead>,
     /// The process, by process ID and start identity, that the lease holder
     /// named as the only peer ORB-C3 admits; it dies with the connection.
     name: Option<(u32, u64)>,
@@ -148,6 +151,13 @@ pub(crate) struct Connection {
 enum Pending {
     Input(LeaseInput, u16),
     Allow(u32, u64),
+}
+
+/// Which text an ORB-C17 read asks for; Bend decides both alike.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum TextRead {
+    Visible,
+    History,
 }
 
 impl Prepared {
@@ -220,6 +230,7 @@ impl Owner {
             refusal: None,
             pending: None,
             held_read: false,
+            read: None,
             name: None,
         });
         Ok(())
@@ -253,8 +264,8 @@ impl Owner {
     /// the PTY's foreground group sampled as it is read. A request that breaks
     /// framing is Bad; a whole one that does not decode, or a read that brings
     /// more than one whole request, is Invalid, and the whole requests are
-    /// dropped. A ReadVisible read while a synchronized update is `held` waits
-    /// until none is (ORB-C17).
+    /// dropped. A ReadVisible or ReadHistory read while a synchronized update
+    /// is `held` waits until none is (ORB-C17).
     pub(crate) fn read(
         &mut self,
         foreground: impl FnOnce() -> Foreground,
@@ -330,9 +341,9 @@ impl Owner {
         }
         let message = protocol::decode_client_message(&connection.input);
         connection.input.clear();
-        // A request that arrives while a ReadVisible request waits, or before
-        // the last answer is written, is in flight beside it: it is declined,
-        // and the held read or the answer stays.
+        // A request that arrives while a text read waits, or before the last
+        // answer is written, is in flight beside it: it is declined, and the
+        // held read or the answer stays.
         if connection.held_read || connection.writing() {
             return Ok(Some(Ok(connection.invalid(
                 "a management request arrived while another was in flight",
@@ -361,11 +372,17 @@ impl Owner {
             ClientMessage::Status => Event::Status,
             ClientMessage::Stop => Event::Stop,
             ClientMessage::ProgramStatus => return Ok(Some(Err(ProgramStatusRequest))),
-            ClientMessage::ReadVisible if held => {
-                connection.held_read = true;
-                return Ok(None);
+            ClientMessage::ReadVisible | ClientMessage::ReadHistory => {
+                connection.read = Some(match message {
+                    ClientMessage::ReadHistory => TextRead::History,
+                    _ => TextRead::Visible,
+                });
+                if held {
+                    connection.held_read = true;
+                    return Ok(None);
+                }
+                Event::Read
             }
-            ClientMessage::ReadVisible => Event::Read,
             ClientMessage::Input { input, quiet_ms } => {
                 connection.pending = Some(Pending::Input(input, quiet_ms));
                 Event::Input
@@ -380,16 +397,16 @@ impl Owner {
         })))
     }
 
-    /// Whether a ReadVisible request waits for a synchronized update to end
-    /// and no answer is being written, so it can be reported once no update
-    /// is held.
+    /// Whether a text read waits for a synchronized update to end and no
+    /// answer is being written, so it can be reported once no update is
+    /// held.
     pub(crate) fn read_waits(&self) -> bool {
         self.connection
             .as_ref()
             .is_some_and(|c| c.held_read && c.output.is_empty())
     }
 
-    /// Reports the held ReadVisible request, once no update is held and the
+    /// Reports the held text read, once no update is held and the
     /// connection's output is written, so its answer never meets a pending
     /// refusal.
     pub(crate) fn release_read(&mut self) -> Option<Event> {
@@ -401,7 +418,7 @@ impl Owner {
         Some(Event::Read)
     }
 
-    /// Forgets a held ReadVisible request, as the run ends.
+    /// Forgets a held text read, as the run ends.
     pub(crate) fn drop_held_read(&mut self) {
         if let Some(connection) = self.connection.as_mut() {
             connection.held_read = false;
@@ -455,11 +472,25 @@ impl Owner {
         self.respond(&ServerMessage::Busy)
     }
 
+    /// The text read Bend decided to answer.
+    pub(crate) fn take_read(&mut self) -> Option<TextRead> {
+        self.connection.as_mut()?.read.take()
+    }
+
     /// Answers ReadVisible with the visible text, or refuses it when the
     /// extraction failed (ORB-C17).
     pub(crate) fn visible(&mut self, visible: Option<VisibleText>) -> io::Result<()> {
         self.respond(&match visible {
             Some(visible) => ServerMessage::Visible(visible),
+            None => ServerMessage::Refused(Refusal::ReadFailed),
+        })
+    }
+
+    /// Answers ReadHistory with the history text, or refuses it when the
+    /// extraction failed (ORB-C17).
+    pub(crate) fn history(&mut self, history: Option<HistoryText>) -> io::Result<()> {
+        self.respond(&match history {
+            Some(history) => ServerMessage::History(history),
             None => ServerMessage::Refused(Refusal::ReadFailed),
         })
     }
