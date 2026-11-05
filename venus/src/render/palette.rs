@@ -92,10 +92,10 @@ pub(super) const QUOTA_PACE: [(f32, SceneColor); 5] = [
     (-0.25, rgb(96, 196, 96)),
     // Exactly on pace: a light green 30% of the way to yellow.
     (0.0, rgb(144, 196, 93)),
-    (0.10, rgb(255, 196, 87)),
-    (0.25, rgb(255, 150, 70)),
-    // Half a window early or more.
-    (0.50, rgb(255, 107, 107)),
+    (0.05, rgb(255, 196, 87)),
+    (0.10, rgb(255, 150, 70)),
+    // A quarter of a window early or more: a saturated red at 5.5:1 on the bar.
+    (0.25, rgb(255, 59, 59)),
 ];
 /// CPU, RAM and disk chips under load (`docs/PRESENTATION.md`, Eon Bar): the pace scale's orange
 /// and red.

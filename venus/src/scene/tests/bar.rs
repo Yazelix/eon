@@ -113,9 +113,9 @@ fn quota_shortfall_projects_linear_pace_with_a_basis_only() {
     for (elapsed, remaining, expected) in [
         (0.5, 60, -0.25),  // comfortably under pace: full green
         (0.5, 50, 0.0),    // exactly on pace
-        (0.45, 50, 0.1),   // yellow
-        (0.375, 50, 0.25), // orange
-        (0.25, 50, 0.5),   // full red
+        (0.45, 50, 0.1),   // orange
+        (0.375, 50, 0.25), // full red
+        (0.25, 50, 0.5),   // still full red
         (0.1, 50, 0.8),    // the first judged instant
         (0.5, 100, -1.0),  // nothing used never runs out
         (0.05, 0, 0.95),   // used up, even in a young window

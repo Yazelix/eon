@@ -2066,9 +2066,20 @@ mod tests {
     fn quota_pace_gradient_is_ordered_readable_and_colors_only_judged_windows() {
         for (shortfall, color) in palette::QUOTA_PACE {
             assert_eq!(quota_pace_color(shortfall), color);
+            assert!(
+                contrast(color, palette::BAR_BACKGROUND) >= 4.5,
+                "{shortfall}"
+            );
         }
         assert_eq!(quota_pace_color(-1.0), palette::QUOTA_PACE[0].1);
         assert_eq!(quota_pace_color(1.0), palette::QUOTA_PACE[4].1);
+        // On pace is a light green; a window a quarter early is already the full red.
+        let rgb = |r, g, b| SceneColor { r, g, b };
+        assert_eq!(quota_pace_color(0.0), rgb(144, 196, 93));
+        assert_eq!(quota_pace_color(0.05), rgb(255, 196, 87));
+        assert_eq!(quota_pace_color(0.10), rgb(255, 150, 70));
+        assert_eq!(quota_pace_color(0.25), rgb(255, 59, 59));
+        assert_eq!(palette::LOAD_CRITICAL, rgb(255, 59, 59));
         // More shortfall is never greener, and every shade stays readable on the bar.
         let mut previous = quota_pace_color(-1.0);
         for step in -100..=100 {
@@ -2086,7 +2097,7 @@ mod tests {
             buffer.set_text(label, &attrs, shaping(label), None);
             buffer.shape_until_scroll(&mut fonts, false);
             let before = buffer.layout_runs().next().unwrap().line_w;
-            color_quota_pace(&mut buffer, &mut fonts, label, 0.5);
+            color_quota_pace(&mut buffer, &mut fonts, label, 0.25);
             let run = buffer.layout_runs().next().unwrap();
             assert_eq!(run.line_w, before);
             let red = palette::QUOTA_PACE[4].1;

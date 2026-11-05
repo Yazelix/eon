@@ -5,6 +5,12 @@ installation, and proven contract changes.
 
 ## Unreleased
 
+- The Eon Bar's quota pace colours are less forgiving and end in a true red
+  (`eon-w1h7c`). A window that would run out a twentieth of a window before
+  its reset is yellow, a tenth orange, and a quarter or more full red, where
+  full colour used to wait for half a window. The red is a saturated
+  rgb(255, 59, 59) instead of a light coral, at 5.5:1 on the bar; RAM and disk
+  chips at their red level use it too.
 - A click outside the shortcut viewer (Alt+/) closes it, as Escape does
   (`eon-gl1xo`, VEN-C20). The click does nothing else: it does not focus,
   select, paste into or open a link in what lies under the viewer. A click
