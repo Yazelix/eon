@@ -8,13 +8,15 @@ use super::{
         validate_private_directory,
     },
 };
-use eon_workspace_protocol::v32::{
-    Failure, MAX_PASTE_BYTES, MAX_SESSIONS, MAX_TERMINAL_METADATA_BYTES, MAX_TERMINAL_TEXT_BYTES,
+use eon_workspace_protocol::v33::{
+    Failure, MAX_HISTORY_TEXT_BYTES, MAX_PASTE_BYTES, MAX_SESSIONS, MAX_TERMINAL_METADATA_BYTES,
+    MAX_TERMINAL_TEXT_BYTES,
 };
 use orbit_protocol::management::{
-    self as management, ClientMessage as ManagementClientMessage, EndpointIdentity, LeaseInput,
-    LiveIdentity, ObjectIdentity, ProcessOutcome, ProgramStatus, Record as ManagementRecord,
-    Refusal, ServerMessage as ManagementServerMessage, TerminationReason, Tombstone, VisibleText,
+    self as management, ClientMessage as ManagementClientMessage, EndpointIdentity, HistoryText,
+    LeaseInput, LiveIdentity, ObjectIdentity, ProcessOutcome, ProgramStatus,
+    Record as ManagementRecord, Refusal, ServerMessage as ManagementServerMessage,
+    TerminationReason, Tombstone, VisibleText,
 };
 use std::{
     collections::HashSet,
@@ -974,6 +976,7 @@ const ATTACH_ALLOW_RETRY: Duration = Duration::from_millis(500);
 const TERMINAL_DEADLINE: Duration = Duration::from_secs(2);
 const _: () = assert!(MAX_PASTE_BYTES == management::MAX_INPUT_PASTE_BYTES);
 const _: () = assert!(MAX_TERMINAL_TEXT_BYTES == management::MAX_VISIBLE_TEXT_BYTES);
+const _: () = assert!(MAX_HISTORY_TEXT_BYTES == management::MAX_HISTORY_TEXT_BYTES);
 const _: () = assert!(MAX_TERMINAL_METADATA_BYTES == orbit_protocol::session::MAX_METADATA_BYTES);
 
 enum ReplyProgress {
@@ -1353,6 +1356,18 @@ pub(super) fn read_visible(
 ) -> Result<VisibleText, Failure> {
     match terminal_request(session, &ManagementClientMessage::ReadVisible, log)? {
         ManagementServerMessage::Visible(visible) => Ok(visible),
+        _ => Err(unavailable(session, "Orbit returned the wrong result")),
+    }
+}
+
+/// Reads the target's retained history and live area through ORB-C17
+/// (EON-C35).
+pub(super) fn read_history(
+    session: &mut RunningSession,
+    log: &DiagnosticLog,
+) -> Result<HistoryText, Failure> {
+    match terminal_request(session, &ManagementClientMessage::ReadHistory, log)? {
+        ManagementServerMessage::History(history) => Ok(history),
         _ => Err(unavailable(session, "Orbit returned the wrong result")),
     }
 }
@@ -3075,7 +3090,7 @@ pub(crate) mod tests {
         let (mut session, peer, tombstone) =
             tombstoned_session(&root, 1, TerminationReason::NaturalExit);
         let code =
-            |result: Result<bool, eon_workspace_protocol::v32::Failure>| result.unwrap_err().code;
+            |result: Result<bool, eon_workspace_protocol::v33::Failure>| result.unwrap_err().code;
         let paste = || LeaseInput::Paste("hi".into());
 
         let orbit = answer(

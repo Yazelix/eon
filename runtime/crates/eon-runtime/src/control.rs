@@ -7,18 +7,21 @@ use super::{
     },
     workspace,
 };
-use eon_workspace_protocol::v32::{
+use eon_workspace_protocol::v33::{
     Action, Error as ProtocolError, Failure, HEADER_BYTES, LifecycleResponse, MAX_DETAIL_BYTES,
     Request, Response, Runtime, VERSION, WorkspaceAction, declared_message_len,
-    decode_lifecycle_response, decode_request, decode_response, encode_lifecycle_response,
-    encode_request, encode_response,
+    declared_response_len, decode_lifecycle_response, decode_request, decode_response,
+    encode_lifecycle_response, encode_request, encode_response,
 };
 use std::{
     fs,
     io::{Read, Write},
-    os::unix::{
-        fs::{FileTypeExt, MetadataExt, PermissionsExt},
-        net::{UnixListener, UnixStream},
+    os::{
+        fd::AsRawFd,
+        unix::{
+            fs::{FileTypeExt, MetadataExt, PermissionsExt},
+            net::{UnixListener, UnixStream},
+        },
     },
     path::{Path, PathBuf},
     time::{Duration, Instant},
@@ -29,6 +32,15 @@ use std::{
 pub(super) const CONTROL_TIMEOUT: Duration = PRESENTATION_ADMISSION_TIMEOUT
     .saturating_add(SESSION_START_TIMEOUT)
     .saturating_add(Duration::from_secs(1));
+
+/// How long one client's request read or reply write may block the supervisor.
+const CLIENT_IO_TIMEOUT: Duration = Duration::from_millis(250);
+/// How long the supervisor writes one reply in all before it drops the client.
+/// A `History` reply is up to 8 MiB, so a client that drains it slowly would
+/// otherwise hold the supervisor for as long as each write makes progress
+/// within `CLIENT_IO_TIMEOUT`. Fixed, as the 2 s bound on a terminal read's
+/// answer is: a performance budget for every pane's window actions.
+const REPLY_DEADLINE: Duration = Duration::from_secs(2);
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(super) enum EndpointFailureKind {
@@ -289,7 +301,7 @@ fn send_prepared_action(
 
     let mut response = vec![0; HEADER_BYTES];
     read_exact(&mut response)?;
-    let length = declared_message_len(&response).map_err(protocol_endpoint_failure)?;
+    let length = declared_response_len(&response).map_err(protocol_endpoint_failure)?;
     response.resize(length, 0);
     read_exact(&mut response[HEADER_BYTES..])?;
     if lifecycle {
@@ -444,7 +456,9 @@ pub(super) fn probe_launch_mode(socket: &Path) -> Result<LaunchMode, EndpointFai
                 failure.detail
             ),
         )),
-        ControlResponse::Workspace(Response::Ended(_) | Response::Text(_) | Response::Sent(_))
+        ControlResponse::Workspace(
+            Response::Ended(_) | Response::Text(_) | Response::Sent(_) | Response::History(_),
+        )
         | ControlResponse::Lifecycle(_) => Err(EndpointFailure::new(
             EndpointFailureKind::Corrupt,
             "supervisor returned the wrong EONW result for launch-mode inspection",
@@ -559,7 +573,7 @@ fn handle_client<D: Into<Dispatched>>(
     if stream.set_nonblocking(false).is_err() {
         return unserved;
     }
-    let timeout = Some(Duration::from_millis(250));
+    let timeout = Some(CLIENT_IO_TIMEOUT);
     if bound_io(&stream, stream.set_read_timeout(timeout)).is_err()
         || bound_io(&stream, stream.set_write_timeout(timeout)).is_err()
     {
@@ -583,9 +597,57 @@ fn handle_client<D: Into<Dispatched>>(
             format!("cannot encode Eon workspace result: {error}"),
         )))
     }) {
-        let _ = stream.write_all(&encoded);
+        write_reply(&mut stream, &encoded, Instant::now() + REPLY_DEADLINE);
     }
     Accepted::Replied { shutdown }
+}
+
+/// Writes `reply` until `deadline`, and drops the client once it has accepted
+/// nothing for `CLIENT_IO_TIMEOUT`. A client that stalls or drains too slowly
+/// gets a truncated reply and a closed connection. The writes do not block: a
+/// blocking Unix socket write renews its timeout whenever the peer reads, so
+/// one write of a large reply could last as long as the peer drains it.
+fn write_reply(stream: &mut UnixStream, mut reply: &[u8], deadline: Instant) {
+    if stream.set_nonblocking(true).is_err() {
+        return;
+    }
+    let mut progress = Instant::now();
+    while !reply.is_empty() {
+        // Checked before every write, so a client that keeps taking bytes
+        // stops at the deadline too.
+        if Instant::now() >= deadline {
+            return;
+        }
+        match stream.write(reply) {
+            Ok(0) => return,
+            Ok(written) => {
+                reply = &reply[written..];
+                progress = Instant::now();
+                continue;
+            }
+            Err(error) if error.kind() == std::io::ErrorKind::Interrupted => continue,
+            Err(error) if error.kind() == std::io::ErrorKind::WouldBlock => {}
+            Err(_) => return,
+        }
+        // Only a write that finds no room ends a stall: the client may have
+        // read since the last poll without waking it.
+        let Some(wait) = deadline
+            .min(progress + CLIENT_IO_TIMEOUT)
+            .checked_duration_since(Instant::now())
+            .filter(|wait| !wait.is_zero())
+        else {
+            return;
+        };
+        let mut writable = libc::pollfd {
+            fd: stream.as_raw_fd(),
+            events: libc::POLLOUT,
+            revents: 0,
+        };
+        // Poll's readiness waits for more room than a write needs, so the
+        // write is tried again however poll returns.
+        // SAFETY: writable is one valid pollfd for this borrowed live stream.
+        unsafe { libc::poll(&mut writable, 1, wait.as_millis().max(1) as libc::c_int) };
+    }
 }
 
 fn read_request(stream: &mut impl Read) -> Result<Request, Failure> {
@@ -799,6 +861,100 @@ mod tests {
         let peer_result = peer.join();
         assert!(shutdown, "delayed request was not dispatched");
         peer_result.unwrap();
+    }
+
+    #[test]
+    fn a_slow_reader_holds_the_supervisor_no_longer_than_the_reply_deadline() {
+        let history = |text: String| {
+            super::Response::History(eon_workspace_protocol::v33::TerminalHistory {
+                target: eon_workspace_protocol::v33::TerminalTarget {
+                    workspace: "w1".into(),
+                    tab: "t1".into(),
+                    id: eon_workspace_protocol::v33::TargetId::Pane("p1".into()),
+                    terminal: "session-1".into(),
+                },
+                caller: None,
+                revision: 1,
+                screen: eon_workspace_protocol::v33::Screen::Primary,
+                rows: 24,
+                columns: 80,
+                title: String::new(),
+                directory: Vec::new(),
+                omitted_lines: 0,
+                cut_bytes: 0,
+                text,
+            })
+        };
+        let request = |id: &str| {
+            super::encode_request(&super::Request {
+                id: id.into(),
+                caller: None,
+                action: super::Action::ReadTerminalHistory {
+                    target: "p1".into(),
+                },
+            })
+            .unwrap()
+        };
+        // An 8 MiB reply, drained 64 KiB every 100 ms: whole, it would take
+        // about 13 s.
+        let full = history("a".repeat(8 * 1024 * 1024));
+        let size = super::encode_response(&full).unwrap().len();
+        let (stream, mut peer) = UnixStream::pair().unwrap();
+        peer.write_all(&request("slow")).unwrap();
+        let slow = thread::spawn(move || {
+            let mut received = 0;
+            let mut chunk = vec![0; 64 * 1024];
+            loop {
+                match peer.read(&mut chunk) {
+                    Ok(0) | Err(_) => return received,
+                    Ok(read) => received += read,
+                }
+                thread::sleep(Duration::from_millis(100));
+            }
+        });
+        let start = Instant::now();
+        super::handle_client(stream, |_| (super::ControlResponse::Workspace(full), false));
+        let held = start.elapsed();
+        assert!(
+            held >= super::REPLY_DEADLINE
+                && held < super::REPLY_DEADLINE + Duration::from_millis(500),
+            "{held:?}"
+        );
+        assert!(slow.join().unwrap() < size);
+        // The supervisor then serves the next client whole.
+        let small = history("next".into());
+        let expected = super::encode_response(&small).unwrap();
+        let (stream, mut peer) = UnixStream::pair().unwrap();
+        peer.write_all(&request("next")).unwrap();
+        super::handle_client(stream, |_| {
+            (super::ControlResponse::Workspace(small), false)
+        });
+        let mut received = Vec::new();
+        peer.read_to_end(&mut received).unwrap();
+        assert_eq!(received, expected);
+    }
+
+    #[test]
+    fn a_reply_past_its_deadline_stops_even_while_the_client_takes_bytes() {
+        // The socket has room for the whole reply, so every write would
+        // succeed; the deadline alone stops it.
+        let (mut stream, mut peer) = UnixStream::pair().unwrap();
+        super::write_reply(&mut stream, b"reply", Instant::now());
+        drop(stream);
+        let mut received = Vec::new();
+        peer.read_to_end(&mut received).unwrap();
+        assert!(received.is_empty(), "{received:?}");
+        // Within its deadline the same reply arrives whole.
+        let (mut stream, mut peer) = UnixStream::pair().unwrap();
+        super::write_reply(
+            &mut stream,
+            b"reply",
+            Instant::now() + super::REPLY_DEADLINE,
+        );
+        drop(stream);
+        let mut received = Vec::new();
+        peer.read_to_end(&mut received).unwrap();
+        assert_eq!(received, b"reply");
     }
 
     #[test]

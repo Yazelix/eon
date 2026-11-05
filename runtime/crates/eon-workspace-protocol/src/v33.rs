@@ -1,9 +1,10 @@
-//! Eon-owned values and bounded EONW v32 codec for local workspace clients.
+//! Eon-owned values and bounded EONW v33 codec for local workspace clients.
 //!
 //! Every message is a 12-byte header (`EONW`, little-endian version, kind,
 //! zero flags, little-endian payload length) followed by its payload.
 //! Strings and byte fields carry a little-endian `u16` length prefix, except
-//! pasted and visible terminal text, which carry a `u32` one.
+//! pasted, visible and history terminal text, which carry a `u32` one. Every
+//! message is at most 2 MiB, except a `History` response.
 
 use std::{collections::HashSet, fmt, str};
 
@@ -16,7 +17,7 @@ pub use subscription::{
     decode_subscription_message, encode_subscription_message,
 };
 
-pub const VERSION: u16 = 32;
+pub const VERSION: u16 = 33;
 pub const HEADER_BYTES: usize = 12;
 const MAGIC: &[u8; 4] = b"EONW";
 const MAX_MESSAGE_BYTES: usize = 2 * 1024 * 1024;
@@ -60,6 +61,8 @@ const MAX_STATUS_MESSAGE_BYTES: usize = 256;
 const MAX_OTHER_RECORDS: u16 = 255;
 /// The bound on a terminal's visible text (EON-C35, ORB-C17).
 pub const MAX_TERMINAL_TEXT_BYTES: usize = 1024 * 1024;
+/// The bound on a terminal's history text (EON-C35, ORB-C17).
+pub const MAX_HISTORY_TEXT_BYTES: usize = 8 * 1024 * 1024;
 /// The bound on one paste (EON-C36, ORB-C5).
 pub const MAX_PASTE_BYTES: usize = 64 * 1024;
 /// The bound on a terminal's title and working directory together, as ORBS
@@ -67,6 +70,26 @@ pub const MAX_PASTE_BYTES: usize = 64 * 1024;
 pub const MAX_TERMINAL_METADATA_BYTES: usize = 8 * 1024;
 /// The longest `[agents] send_enter_delay_ms`.
 pub const MAX_ENTER_DELAY_MS: u16 = 5000;
+/// The largest encoded terminal target: four strings and the pane or popup tag.
+const MAX_TARGET_BYTES: usize = 4 * (2 + MAX_ID_BYTES) + 1;
+/// The largest `History` response, the one message over `MAX_MESSAGE_BYTES`:
+/// the target, the caller, revision, screen, rows, columns, title,
+/// directory, omitted lines, cut bytes and the text with their prefixes.
+const MAX_HISTORY_MESSAGE_BYTES: usize = HEADER_BYTES
+    + MAX_TARGET_BYTES
+    + 1
+    + MAX_TARGET_BYTES
+    + 8
+    + 1
+    + 2
+    + 2
+    + 2
+    + 2
+    + MAX_TERMINAL_METADATA_BYTES
+    + 4
+    + 4
+    + 4
+    + MAX_HISTORY_TEXT_BYTES;
 /// Project's entry: it has no popup of its own and invokes its tab's Files pair.
 pub const PROJECT_ENTRY: &str = "project";
 /// The Files pair's entry, the one popup a pending tab holds (EON-C18).
@@ -84,6 +107,7 @@ const STOPPED: u8 = 132;
 const ENDED: u8 = 133;
 const TEXT: u8 = 134;
 const SENT: u8 = 135;
+const HISTORY: u8 = 141;
 
 const INVOKE_POPUP: u8 = 19;
 const DISMISS_POPUP: u8 = 20;
@@ -101,6 +125,7 @@ const NEXT_ATTENTION: u8 = 30;
 const PREVIOUS_ATTENTION: u8 = 31;
 const READ_TERMINAL: u8 = 38;
 const SEND_TERMINAL: u8 = 39;
+const READ_TERMINAL_HISTORY: u8 = 41;
 const NO_PROGRESS: u8 = 255;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -231,6 +256,11 @@ pub enum Action {
     /// Read the visible text of the pane or popup `target`, in any workspace
     /// of the window (EON-C35).
     ReadTerminal {
+        target: String,
+    },
+    /// Read the retained history and live area of the pane or popup
+    /// `target`, in any workspace of the window (EON-C35).
+    ReadTerminalHistory {
         target: String,
     },
     /// Send `input` to the pane or popup `target`, in any workspace of the
@@ -635,6 +665,7 @@ pub enum Response {
     Ended(Ended),
     Text(TerminalText),
     Sent(Sent),
+    History(TerminalHistory),
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -682,6 +713,30 @@ pub struct TerminalText {
     pub omitted_rows: u32,
     /// One line per display row joined by line feeds, with no other control
     /// character.
+    pub text: String,
+}
+
+/// One read of a terminal's retained history and live area as lossy plain
+/// text (EON-C35, ORB-C17).
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct TerminalHistory {
+    pub target: TerminalTarget,
+    /// The calling terminal, when the request named one.
+    pub caller: Option<TerminalTarget>,
+    pub revision: u64,
+    pub screen: Screen,
+    pub rows: u16,
+    pub columns: u16,
+    pub title: String,
+    /// The raw working directory.
+    pub directory: Vec<u8>,
+    /// How many leading lines the text bound left out.
+    pub omitted_lines: u32,
+    /// How many leading bytes the bound cut from the newest line when that
+    /// line alone exceeds it, else 0.
+    pub cut_bytes: u32,
+    /// One line per logical line, oldest first, joined by line feeds, with no
+    /// other control character.
     pub text: String,
 }
 
@@ -745,7 +800,7 @@ pub enum Error {
     InvalidMagic,
     UnsupportedVersion { version: u16 },
     InvalidFlags { value: u8 },
-    MessageTooLarge { size: usize },
+    MessageTooLarge { size: usize, maximum: usize },
     Truncated,
     TrailingBytes { count: usize },
     InvalidKind { value: u8 },
@@ -764,9 +819,9 @@ impl fmt::Display for Error {
                 write!(formatter, "unsupported EONW version {version}")
             }
             Self::InvalidFlags { value } => write!(formatter, "invalid EONW flags {value:#x}"),
-            Self::MessageTooLarge { size } => write!(
+            Self::MessageTooLarge { size, maximum } => write!(
                 formatter,
-                "EONW message is {size} bytes; maximum is {MAX_MESSAGE_BYTES}"
+                "EONW message is {size} bytes; maximum is {maximum}"
             ),
             Self::Truncated => formatter.write_str("truncated EONW message"),
             Self::TrailingBytes { count } => {
@@ -936,6 +991,11 @@ pub fn encode_request(request: &Request) -> Result<Vec<u8>> {
             payload.byte(READ_TERMINAL);
             payload.string(target);
         }
+        Action::ReadTerminalHistory { target } => {
+            identity("terminal target", target)?;
+            payload.byte(READ_TERMINAL_HISTORY);
+            payload.string(target);
+        }
         Action::SendTerminal {
             target,
             input,
@@ -1098,6 +1158,9 @@ pub fn decode_request(bytes: &[u8]) -> Result<Request> {
         READ_TERMINAL => Some(Action::ReadTerminal {
             target: decoder.string("terminal target", MAX_ID_BYTES)?,
         }),
+        READ_TERMINAL_HISTORY => Some(Action::ReadTerminalHistory {
+            target: decoder.string("terminal target", MAX_ID_BYTES)?,
+        }),
         SEND_TERMINAL => Some(Action::SendTerminal {
             target: decoder.string("terminal target", MAX_ID_BYTES)?,
             force: decode_bool(&mut decoder, "force")?,
@@ -1143,7 +1206,9 @@ pub fn decode_request(bytes: &[u8]) -> Result<Request> {
                 identity("tab id", tab)?;
                 identity("attention target", target)?;
             }
-            Action::ReadTerminal { target } => identity("terminal target", target)?,
+            Action::ReadTerminal { target } | Action::ReadTerminalHistory { target } => {
+                identity("terminal target", target)?
+            }
             Action::SendTerminal { target, input, .. } => {
                 identity("terminal target", target)?;
                 if let TerminalInput::Paste(text) = input {
@@ -1396,6 +1461,7 @@ fn validate_popup_action(action: &Action) -> Result<()> {
         | Action::NextAttention
         | Action::PreviousAttention
         | Action::ReadTerminal { .. }
+        | Action::ReadTerminalHistory { .. }
         | Action::SendTerminal { .. }
         | Action::Subscribe { .. } => (),
     }
@@ -1513,6 +1579,30 @@ pub fn encode_response(response: &Response) -> Result<Vec<u8>> {
             payload.long_raw(text.text.as_bytes());
             TEXT
         }
+        Response::History(history) => {
+            validate_terminal_history(history)?;
+            encode_target(&mut payload, &history.target);
+            encode_caller(&mut payload, history.caller.as_ref());
+            payload
+                .bytes
+                .extend_from_slice(&history.revision.to_le_bytes());
+            payload.byte(match history.screen {
+                Screen::Primary => 0,
+                Screen::Alternate => 1,
+            });
+            payload.number(history.rows);
+            payload.number(history.columns);
+            payload.string(&history.title);
+            payload.raw(&history.directory);
+            payload
+                .bytes
+                .extend_from_slice(&history.omitted_lines.to_le_bytes());
+            payload
+                .bytes
+                .extend_from_slice(&history.cut_bytes.to_le_bytes());
+            payload.long_raw(history.text.as_bytes());
+            HISTORY
+        }
         Response::Sent(sent) => {
             validate_target(&sent.target)?;
             if let Some(caller) = &sent.caller {
@@ -1588,33 +1678,63 @@ fn decode_caller(decoder: &mut Decoder<'_>) -> Result<Option<TerminalTarget>> {
 }
 
 fn validate_terminal_text(text: &TerminalText) -> Result<()> {
-    validate_target(&text.target)?;
-    if let Some(caller) = &text.caller {
+    validate_terminal_read(
+        &text.target,
+        text.caller.as_ref(),
+        text.title.len() + text.directory.len(),
+        ("terminal text", &text.text, MAX_TERMINAL_TEXT_BYTES),
+    )
+}
+
+fn validate_terminal_history(history: &TerminalHistory) -> Result<()> {
+    validate_terminal_read(
+        &history.target,
+        history.caller.as_ref(),
+        history.title.len() + history.directory.len(),
+        ("history text", &history.text, MAX_HISTORY_TEXT_BYTES),
+    )
+}
+
+fn validate_terminal_read(
+    target: &TerminalTarget,
+    caller: Option<&TerminalTarget>,
+    metadata: usize,
+    (field, text, bound): (&'static str, &str, usize),
+) -> Result<()> {
+    validate_target(target)?;
+    if let Some(caller) = caller {
         validate_target(caller)?;
     }
-    let metadata = text.title.len() + text.directory.len();
     if metadata > MAX_TERMINAL_METADATA_BYTES {
         return Err(Error::FieldTooLong {
             field: "terminal title and directory",
             length: metadata,
         });
     }
-    if text.text.len() > MAX_TERMINAL_TEXT_BYTES {
+    if text.len() > bound {
         return Err(Error::FieldTooLong {
-            field: "terminal text",
-            length: text.text.len(),
+            field,
+            length: text.len(),
         });
     }
     if text
-        .text
         .chars()
         .any(|character| character.is_control() && character != '\n')
     {
-        return Err(Error::InvalidValue {
-            field: "terminal text",
-        });
+        return Err(Error::InvalidValue { field });
     }
     Ok(())
+}
+
+fn decode_screen(decoder: &mut Decoder<'_>) -> Result<Screen> {
+    match decoder.byte()? {
+        0 => Ok(Screen::Primary),
+        1 => Ok(Screen::Alternate),
+        value => Err(Error::InvalidTag {
+            field: "screen",
+            value,
+        }),
+    }
 }
 
 fn validate_enter_delay(delay: u16) -> Result<()> {
@@ -1647,16 +1767,7 @@ pub fn decode_response(bytes: &[u8]) -> Result<Response> {
             target: decode_target(&mut decoder)?,
             caller: decode_caller(&mut decoder)?,
             revision: decode_u64(&mut decoder)?,
-            screen: match decoder.byte()? {
-                0 => Screen::Primary,
-                1 => Screen::Alternate,
-                value => {
-                    return Err(Error::InvalidTag {
-                        field: "screen",
-                        value,
-                    });
-                }
-            },
+            screen: decode_screen(&mut decoder)?,
             rows: decoder.number()?,
             columns: decoder.number()?,
             title: decoder.string("terminal title", MAX_TERMINAL_METADATA_BYTES)?,
@@ -1669,6 +1780,26 @@ pub fn decode_response(bytes: &[u8]) -> Result<Response> {
         decoder.finish()?;
         validate_terminal_text(&text)?;
         return Ok(Response::Text(text));
+    }
+    if kind == HISTORY {
+        let history = TerminalHistory {
+            target: decode_target(&mut decoder)?,
+            caller: decode_caller(&mut decoder)?,
+            revision: decode_u64(&mut decoder)?,
+            screen: decode_screen(&mut decoder)?,
+            rows: decoder.number()?,
+            columns: decoder.number()?,
+            title: decoder.string("terminal title", MAX_TERMINAL_METADATA_BYTES)?,
+            directory: decoder
+                .raw("terminal directory", MAX_TERMINAL_METADATA_BYTES)?
+                .to_vec(),
+            omitted_lines: decode_u32(&mut decoder)?,
+            cut_bytes: decode_u32(&mut decoder)?,
+            text: decoder.long_string("history text", MAX_HISTORY_TEXT_BYTES)?,
+        };
+        decoder.finish()?;
+        validate_terminal_history(&history)?;
+        return Ok(Response::History(history));
     }
     if kind == SENT {
         let sent = Sent {
@@ -3186,25 +3317,53 @@ fn nonempty(field: &'static str, value: &str, maximum: usize) -> Result<()> {
     Ok(())
 }
 
-/// Returns the bounded length declared by a complete EONW header.
+/// Returns the bounded length declared by a complete EONW header, at most
+/// 2 MiB whatever its kind.
 pub fn declared_message_len(header: &[u8]) -> Result<usize> {
+    declared_len(header, MAX_MESSAGE_BYTES)
+}
+
+/// Returns the bounded length declared by a complete EONW response header.
+/// Unlike [`declared_message_len`], it admits a `History` response up to its
+/// own bound; only the CLI's reply reader uses it.
+pub fn declared_response_len(header: &[u8]) -> Result<usize> {
+    declared_len(
+        header,
+        message_bound(*header.get(6).ok_or(Error::Truncated)?),
+    )
+}
+
+fn declared_len(header: &[u8], maximum: usize) -> Result<usize> {
     if header.len() < HEADER_BYTES {
         return Err(Error::Truncated);
     }
     let payload_len = u32::from_le_bytes(header[8..12].try_into().unwrap()) as usize;
     let size = HEADER_BYTES
         .checked_add(payload_len)
-        .ok_or(Error::MessageTooLarge { size: usize::MAX })?;
-    if size > MAX_MESSAGE_BYTES {
-        return Err(Error::MessageTooLarge { size });
+        .ok_or(Error::MessageTooLarge {
+            size: usize::MAX,
+            maximum,
+        })?;
+    if size > maximum {
+        return Err(Error::MessageTooLarge { size, maximum });
     }
     Ok(size)
 }
 
+/// The longest message of `kind`: 2 MiB for all but a `History` response.
+fn message_bound(kind: u8) -> usize {
+    if kind == HISTORY {
+        MAX_HISTORY_MESSAGE_BYTES
+    } else {
+        MAX_MESSAGE_BYTES
+    }
+}
+
 fn frame(kind: u8, payload: Vec<u8>) -> Result<Vec<u8>> {
     let size = HEADER_BYTES + payload.len();
-    if size > MAX_MESSAGE_BYTES {
-        return Err(Error::MessageTooLarge { size });
+    let maximum = message_bound(kind);
+    if size > maximum {
+        return Err(Error::MessageTooLarge { size, maximum });
     }
     let mut message = Vec::with_capacity(size);
     message.extend_from_slice(MAGIC);
@@ -3217,11 +3376,15 @@ fn frame(kind: u8, payload: Vec<u8>) -> Result<Vec<u8>> {
 }
 
 fn unframe(bytes: &[u8]) -> Result<(u8, &[u8])> {
-    if bytes.len() > MAX_MESSAGE_BYTES {
-        return Err(Error::MessageTooLarge { size: bytes.len() });
-    }
     if bytes.len() < HEADER_BYTES {
         return Err(Error::Truncated);
+    }
+    let maximum = message_bound(bytes[6]);
+    if bytes.len() > maximum {
+        return Err(Error::MessageTooLarge {
+            size: bytes.len(),
+            maximum,
+        });
     }
     if &bytes[..4] != MAGIC {
         return Err(Error::InvalidMagic);
@@ -3233,7 +3396,7 @@ fn unframe(bytes: &[u8]) -> Result<(u8, &[u8])> {
     if bytes[7] != 0 {
         return Err(Error::InvalidFlags { value: bytes[7] });
     }
-    let declared = declared_message_len(bytes)?;
+    let declared = declared_len(bytes, maximum)?;
     if bytes.len() < declared {
         return Err(Error::Truncated);
     }
@@ -4037,6 +4200,111 @@ mod tests {
     }
 
     #[test]
+    fn history_alone_exceeds_two_mib_and_only_where_asked() {
+        let longest = |id: char| id.to_string().repeat(MAX_ID_BYTES);
+        let history = |text: String| TerminalHistory {
+            target: TerminalTarget {
+                workspace: longest('w'),
+                tab: longest('t'),
+                id: TargetId::Popup(longest('u')),
+                terminal: longest('s'),
+            },
+            caller: Some(TerminalTarget {
+                workspace: longest('w'),
+                tab: longest('t'),
+                id: TargetId::Pane(longest('p')),
+                terminal: longest('s'),
+            }),
+            revision: u64::MAX,
+            screen: Screen::Alternate,
+            rows: u16::MAX,
+            columns: u16::MAX,
+            title: "t".repeat(MAX_TERMINAL_METADATA_BYTES / 2),
+            directory: vec![0xff; MAX_TERMINAL_METADATA_BYTES / 2],
+            omitted_lines: u32::MAX,
+            cut_bytes: u32::MAX,
+            text,
+        };
+        // The largest history is exactly the bound, and only the response
+        // reader admits it.
+        let largest = Response::History(history("\u{4e00}\n".repeat(MAX_HISTORY_TEXT_BYTES / 4)));
+        let bytes = encode_response(&largest).unwrap();
+        assert_eq!(bytes.len(), MAX_HISTORY_MESSAGE_BYTES);
+        assert_eq!(declared_response_len(&bytes), Ok(bytes.len()));
+        assert_eq!(
+            declared_message_len(&bytes),
+            Err(Error::MessageTooLarge {
+                size: bytes.len(),
+                maximum: MAX_MESSAGE_BYTES,
+            })
+        );
+        assert_eq!(decode_response(&bytes), Ok(largest));
+        let mut over = bytes.clone();
+        over.push(0);
+        let payload = (over.len() - HEADER_BYTES) as u32;
+        over[8..12].copy_from_slice(&payload.to_le_bytes());
+        let too_large = Error::MessageTooLarge {
+            size: MAX_HISTORY_MESSAGE_BYTES + 1,
+            maximum: MAX_HISTORY_MESSAGE_BYTES,
+        };
+        assert_eq!(declared_response_len(&over), Err(too_large.clone()));
+        assert_eq!(decode_response(&over), Err(too_large));
+        // Every other response keeps 2 MiB.
+        let mut text = over;
+        text[6] = TEXT;
+        assert_eq!(
+            declared_response_len(&text),
+            Err(Error::MessageTooLarge {
+                size: MAX_HISTORY_MESSAGE_BYTES + 1,
+                maximum: MAX_MESSAGE_BYTES,
+            })
+        );
+
+        let mut short = history("a".into());
+        short.target = terminal_target(TargetId::Pane("p1".into()), "session-1");
+        short.caller = None;
+        let forge = |history: &TerminalHistory| {
+            let mut payload = Encoder::default();
+            encode_target(&mut payload, &history.target);
+            encode_caller(&mut payload, history.caller.as_ref());
+            payload
+                .bytes
+                .extend_from_slice(&history.revision.to_le_bytes());
+            payload.byte(1);
+            payload.number(history.rows);
+            payload.number(history.columns);
+            payload.string(&history.title);
+            payload.raw(&history.directory);
+            payload
+                .bytes
+                .extend_from_slice(&history.omitted_lines.to_le_bytes());
+            payload
+                .bytes
+                .extend_from_slice(&history.cut_bytes.to_le_bytes());
+            payload.long_raw(history.text.as_bytes());
+            frame(HISTORY, payload.bytes).unwrap()
+        };
+        assert_eq!(
+            decode_response(&forge(&short)),
+            Ok(Response::History(short.clone()))
+        );
+        for text in ["a".repeat(MAX_HISTORY_TEXT_BYTES + 1), "a\u{1b}[0m".into()] {
+            let invalid = TerminalHistory {
+                text,
+                ..short.clone()
+            };
+            assert_eq!(
+                encode_response(&Response::History(invalid.clone())).map_err(field),
+                Err("history text")
+            );
+            assert_eq!(
+                decode_response(&forge(&invalid)).map_err(field),
+                Err("history text")
+            );
+        }
+    }
+
+    #[test]
     fn terminal_requests_bound_their_paste_on_both_sides() {
         let request = |input| Request {
             id: "r1".into(),
@@ -4110,6 +4378,9 @@ mod tests {
         for target in ["", "p 1"] {
             for action in [
                 Action::ReadTerminal {
+                    target: target.into(),
+                },
+                Action::ReadTerminalHistory {
                     target: target.into(),
                 },
                 Action::SendTerminal {
@@ -4297,14 +4568,14 @@ mod tests {
         for (action, expected) in [
             (
                 Action::Workspace(WorkspaceAction::CloseTab { tab: "t1".into() }),
-                "454f4e57200001000a00000002007231001202007431",
+                "454f4e57210001000a00000002007231001202007431",
             ),
             (
                 Action::Workspace(WorkspaceAction::SetTabDirectory {
                     tab: "t1".into(),
                     directory: b"/tmp".to_vec(),
                 }),
-                "454f4e57200001001000000002007231000c0200743104002f746d70",
+                "454f4e57210001001000000002007231000c0200743104002f746d70",
             ),
             (
                 Action::InvokePopup {
@@ -4313,29 +4584,29 @@ mod tests {
                     expected_instance: Some("u1".into()),
                     intent: InvokeIntent::Focus,
                 },
-                "454f4e572000010015000000020072310013020074310300676974010200753101",
+                "454f4e572100010015000000020072310013020074310300676974010200753101",
             ),
-            (Action::CreateColumn, "454f4e572000010006000000020072310016"),
+            (Action::CreateColumn, "454f4e572100010006000000020072310016"),
             (
                 Action::ClosePane { pane: "p2".into() },
-                "454f4e57200001000a00000002007231001702007032",
+                "454f4e57210001000a00000002007231001702007032",
             ),
             (
                 Action::MovePaneSideways(Side::Right),
-                "454f4e572000010006000000020072310019",
+                "454f4e572100010006000000020072310019",
             ),
             (
                 Action::Edit {
                     file: b"/tmp/a".to_vec(),
                 },
-                "454f4e57200001000e00000002007231001a06002f746d702f61",
+                "454f4e57210001000e00000002007231001a06002f746d702f61",
             ),
             (
                 Action::CreateCommandPane {
                     argv: vec![b"hx".to_vec(), b"a".to_vec()],
                     focus: false,
                 },
-                "454f4e57200001001000000002007231001b00020002006878010061",
+                "454f4e57210001001000000002007231001b00020002006878010061",
             ),
             (
                 Action::LaunchTab {
@@ -4343,7 +4614,7 @@ mod tests {
                     argv: vec![],
                     focus: true,
                 },
-                "454f4e57200001000f00000002007231002504002f746d70000001",
+                "454f4e57210001000f00000002007231002504002f746d70000001",
             ),
             (
                 Action::LaunchTab {
@@ -4351,32 +4622,38 @@ mod tests {
                     argv: vec![b"hx".to_vec(), b"a".to_vec()],
                     focus: false,
                 },
-                "454f4e57200001001600000002007231002504002f746d7002000200687801006100",
+                "454f4e57210001001600000002007231002504002f746d7002000200687801006100",
             ),
             (
                 Action::ToggleSidebar,
-                "454f4e57200001000600000002007231001c",
+                "454f4e57210001000600000002007231001c",
             ),
             (
                 Action::FocusAttention {
                     tab: "t1".into(),
                     target: "p2".into(),
                 },
-                "454f4e57200001000e00000002007231001d0200743102007032",
+                "454f4e57210001000e00000002007231001d0200743102007032",
             ),
             (
                 Action::NextAttention,
-                "454f4e57200001000600000002007231001e",
+                "454f4e57210001000600000002007231001e",
             ),
             (
                 Action::PreviousAttention,
-                "454f4e57200001000600000002007231001f",
+                "454f4e57210001000600000002007231001f",
             ),
             (
                 Action::ReadTerminal {
                     target: "p2".into(),
                 },
-                "454f4e57200001000a00000002007231002602007032",
+                "454f4e57210001000a00000002007231002602007032",
+            ),
+            (
+                Action::ReadTerminalHistory {
+                    target: "p2".into(),
+                },
+                "454f4e57210001000a00000002007231002902007032",
             ),
             (
                 Action::SendTerminal {
@@ -4385,7 +4662,7 @@ mod tests {
                     input: TerminalInput::Paste("hi".into()),
                 },
                 // v27's u32-length paste.
-                "454f4e572000010012000000020072310027020070320000020000006869",
+                "454f4e572100010012000000020072310027020070320000020000006869",
             ),
             (
                 Action::SendTerminal {
@@ -4393,7 +4670,7 @@ mod tests {
                     force: true,
                     input: TerminalInput::Enter,
                 },
-                "454f4e57200001000c000000020072310027020075310101",
+                "454f4e57210001000c000000020072310027020075310101",
             ),
         ] {
             let request = Request {
@@ -4413,7 +4690,7 @@ mod tests {
         let bytes = encode_request(&request).unwrap();
         assert_eq!(
             hex(&bytes),
-            "454f4e57200001001600000002007231010d0073657373696f6e2d322e392d310201",
+            "454f4e57210001001600000002007231010d0073657373696f6e2d322e392d310201",
         );
         assert_eq!(decode_request(&bytes).unwrap(), request);
         for caller in ["", "session 2"] {
@@ -4528,7 +4805,7 @@ mod tests {
             (
                 snapshot,
                 concat!(
-                    "454f4e57200081001c0100000100020002000100010000000200743100000041",
+                    "454f4e57210081001c0100000100020002000100010000000200743100000041",
                     "00008040010003006769740300476974000404004b6579470100020074310400",
                     "2f746d700001020070330102007531030002007031030073703103002f703101",
                     "02007031000002007032030073703203002f7032010200703200000200703303",
@@ -4545,7 +4822,7 @@ mod tests {
                     "00000000",
                 ),
             ),
-            (failure, "454f4e57200082000a00000004006275737902006e6f"),
+            (failure, "454f4e57210082000a00000004006275737902006e6f"),
             (
                 Response::Text(TerminalText {
                     target: terminal_target(TargetId::Pane("p2".into()), "session-2"),
@@ -4560,12 +4837,35 @@ mod tests {
                     text: "a\nb".into(),
                 }),
                 concat!(
-                    "454f4e572000860037000000",
+                    "454f4e572100860037000000",
                     // Workspace, tab, pane p2 and its terminal; no caller.
                     "02007731020074310002007032090073657373696f6e2d3200",
                     // Revision, alternate screen, 24x80, title, directory,
                     // omitted rows, then the u32-length text.
                     "0700000000000000011800500001007401002f0000000003000000610a62",
+                ),
+            ),
+            (
+                Response::History(TerminalHistory {
+                    target: terminal_target(TargetId::Pane("p2".into()), "session-2"),
+                    caller: None,
+                    revision: 7,
+                    screen: Screen::Primary,
+                    rows: 24,
+                    columns: 80,
+                    title: "t".into(),
+                    directory: b"/".to_vec(),
+                    omitted_lines: 2,
+                    cut_bytes: 1,
+                    text: "a\nb".into(),
+                }),
+                concat!(
+                    "454f4e5721008d003b000000",
+                    "02007731020074310002007032090073657373696f6e2d3200",
+                    // Revision, primary screen, 24x80, title, directory,
+                    // omitted lines, cut bytes, then the u32-length text.
+                    "0700000000000000001800500001007401002f",
+                    "020000000100000003000000610a62",
                 ),
             ),
             (
@@ -4576,7 +4876,7 @@ mod tests {
                     enter_delay_ms: 300,
                 }),
                 concat!(
-                    "454f4e572000870034000000",
+                    "454f4e572100870034000000",
                     "02007731020074310002007032090073657373696f6e2d32",
                     "0102007731020074310102007531090073657373696f6e2d33",
                     "012c01",
@@ -4586,7 +4886,7 @@ mod tests {
                 Response::Ended(Ended {
                     generation: "g1".into(),
                 }),
-                "454f4e57200085000400000002006731",
+                "454f4e57210085000400000002006731",
             ),
         ] {
             let bytes = encode_response(&response).unwrap();
@@ -4615,7 +4915,7 @@ mod tests {
                     busy: None,
                 }),
                 concat!(
-                    "454f4e572000830030000000020067310500302e392e30200002006f6b010002",
+                    "454f4e572100830030000000020067310500302e392e30210002006f6b010002",
                     "007331010500726561647900040062757379",
                     // v28: absent name, supervisor start in Unix milliseconds.
                     "000000000000000000",
@@ -4628,7 +4928,7 @@ mod tests {
                     generation: "g1".into(),
                     sessions: vec![],
                 }),
-                "454f4e572000840006000000020067310000",
+                "454f4e572100840006000000020067310000",
             ),
         ] {
             let bytes = encode_lifecycle_response(&response).unwrap();
@@ -4707,7 +5007,7 @@ mod tests {
         assert_eq!(
             hex(&bytes),
             concat!(
-                "454f4e57200081008a00000001000100010000000100740000000000000000",
+                "454f4e57210081008a00000001000100010000000100740000000000000000",
                 "0000010001007401002f00010100700001000100700200737002002f700101007000",
                 "010128000000000000000001000000000000000000000000010000000002",
                 "02007731020077310100020077310001000100",
@@ -4747,7 +5047,7 @@ mod tests {
         assert_eq!(
             hex(&bytes),
             concat!(
-                "454f4e5720008100bb0000000100010001000000010074000000000000000000",
+                "454f4e5721008100bb0000000100010001000000010074000000000000000000",
                 "00010001007401002f00010100700001000100700200737002002f7001010070",
                 "0001012800000000000000000100000000000000000000000001000000000202",
                 "0077310200773101000200773100010001000100020077310100740100700101",
@@ -4819,7 +5119,7 @@ mod tests {
         assert_eq!(
             hex(&bytes),
             concat!(
-                "454f4e572000830063000000020067310500302e392e30200002006f6b0000",
+                "454f4e572100830063000000020067310500302e392e30210002006f6b0000",
                 "01050072656164790105007265616479",
                 "000000000000000000",
             )
@@ -4854,6 +5154,7 @@ mod tests {
                 edit(8, &u32::MAX.to_le_bytes()),
                 Error::MessageTooLarge {
                     size: HEADER_BYTES + u32::MAX as usize,
+                    maximum: MAX_MESSAGE_BYTES,
                 },
             ),
             (
@@ -4864,6 +5165,7 @@ mod tests {
                 vec![0; MAX_MESSAGE_BYTES + 1],
                 Error::MessageTooLarge {
                     size: MAX_MESSAGE_BYTES + 1,
+                    maximum: MAX_MESSAGE_BYTES,
                 },
             ),
         ] {
@@ -5150,10 +5452,10 @@ mod tests {
                 },
             ),
             (
-                &[41],
+                &[42],
                 Error::InvalidTag {
                     field: "action",
-                    value: 41,
+                    value: 42,
                 },
             ),
             (

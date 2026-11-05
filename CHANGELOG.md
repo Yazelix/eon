@@ -5,6 +5,15 @@ installation, and proven contract changes.
 
 ## Unreleased
 
+- `eon pane history TARGET [--json]` prints a pane's or popup's retained
+  history followed by its screen, oldest first, as plain text with wrapped
+  lines joined (`eon-u5bvd.3`, EON-C35). Past 8 MiB it leaves out the earliest
+  lines, or the start of the newest line when that line alone is longer, and
+  says so on standard error; `--json` reports them as `omitted_lines` and
+  `cut_bytes`. `[agents] terminal_access` governs it as it
+  governs `eon pane read`. EONW moves to v33: windows started before this
+  change keep running, but an `eon` from this version cannot reach them;
+  restart them to use it.
 - Orbit can export a terminal's retained history and its screen as plain text,
   oldest first, up to 8 MiB, with the oldest lines dropped and counted past
   that (ORB-C17, `eon-u5bvd.2`). This is the first step of opening a pane's

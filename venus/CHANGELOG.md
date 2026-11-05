@@ -2,6 +2,9 @@
 
 ## Unreleased
 
+- Consume EONW v33, which adds `ReadTerminalHistory` and its `History` reply
+  (`eon-u5bvd.3`, EON-C35). Venus still reads every message under the 2 MiB
+  bound. No Venus behavior change.
 - VEN-C20: a pointer press outside the shortcut viewer's dialog closes it, as
   Escape does; that press and its matching release, from any button, reach no
   other target (`eon-gl1xo`). No wire change.

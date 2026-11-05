@@ -1,14 +1,14 @@
-use eon_workspace_protocol::v32::{
+use eon_workspace_protocol::v33::{
     Action as ProtocolAction, Availability, Change, Direction, End, Failure as ProtocolFailure,
     Filter, HEADER_BYTES, InvokeIntent, LifecycleResponse, MAX_SESSIONS, Popup, PopupTarget,
     Request, Response, Runtime, Screen, Sent, Snapshot, Stopped, SubscriptionMessage, Tab,
-    TabChange, TargetId, TerminalInput, TerminalTarget, TerminalText, VERSION,
+    TabChange, TargetId, TerminalHistory, TerminalInput, TerminalTarget, TerminalText, VERSION,
     WorkspaceAction as Action, declared_message_len, decode_request, decode_response,
     decode_subscription_message, encode_lifecycle_response, encode_request, encode_response,
 };
 use orbit_protocol::management::{
     self as management, ClientMessage as ManagementClientMessage, EndpointIdentity, Failure,
-    FailureCode, Foreground, LeaseInput, LiveIdentity, ObjectIdentity, ProcessOutcome,
+    FailureCode, Foreground, HistoryText, LeaseInput, LiveIdentity, ObjectIdentity, ProcessOutcome,
     ProgramStatus, Record as ManagementRecord, Refusal, Screen as OrbitScreen,
     ServerMessage as ManagementServerMessage, TerminationReason, Tombstone, VisibleText,
 };
@@ -1046,6 +1046,7 @@ fn managed_orbit_helper() {
                             (
                                 "busy",
                                 ManagementClientMessage::ReadVisible
+                                | ManagementClientMessage::ReadHistory
                                 | ManagementClientMessage::Input { .. },
                             )
                             | (
@@ -1058,6 +1059,7 @@ fn managed_orbit_helper() {
                             (
                                 "closed",
                                 ManagementClientMessage::ReadVisible
+                                | ManagementClientMessage::ReadHistory
                                 | ManagementClientMessage::Input { .. },
                             ) => Some(ManagementServerMessage::Refused(Refusal::Closed)),
                             (
@@ -1149,6 +1151,39 @@ fn managed_orbit_helper() {
                                     text: format!("screen of {}", identity.session_id),
                                 }),
                             ),
+                            // `long-history` answers with more than EONW's
+                            // 2 MiB, and `cut-history` with a newest line
+                            // the bound cut.
+                            ManagementClientMessage::ReadHistory if *leased => {
+                                let (omitted_lines, cut_bytes, text) = match reply.trim() {
+                                    "long-history" => (5, 0, "h\n".repeat(3 << 19) + "end"),
+                                    "cut-history" => (1, 7, "line".into()),
+                                    "empty-history" => (0, 0, String::new()),
+                                    _ => (
+                                        0,
+                                        0,
+                                        format!(
+                                            "history of {0}\nscreen of {0}",
+                                            identity.session_id
+                                        ),
+                                    ),
+                                };
+                                write_management(
+                                    stream,
+                                    ManagementServerMessage::History(HistoryText {
+                                        revision: 2,
+                                        screen: OrbitScreen::Alternate,
+                                        rows: 24,
+                                        columns: 80,
+                                        title: identity.session_id.clone(),
+                                        directory: b"/fake".to_vec(),
+                                        omitted_lines,
+                                        cut_bytes,
+                                        lossy: true,
+                                        text,
+                                    }),
+                                )
+                            }
                             ManagementClientMessage::Input { input, .. } if *leased => {
                                 if let Some(log) = std::env::var_os("EON_TEST_INPUT_LOG") {
                                     let line = format!("{} {input:?}\n", identity.session_id);
@@ -8546,7 +8581,7 @@ fn running_windows_name_each_other_and_refresh_on_start_and_end() {
         }
         let response = read_request(&mut stream);
         assert!(matches!(
-            eon_workspace_protocol::v32::decode_lifecycle_response(&response).unwrap(),
+            eon_workspace_protocol::v33::decode_lifecycle_response(&response).unwrap(),
             LifecycleResponse::Runtime(_)
         ));
     }
@@ -10181,6 +10216,28 @@ fn terminal_reads_and_sends_reach_a_hidden_workspace_and_change_nothing() {
             ..read
         })
     );
+    assert_eq!(
+        protocol_action(
+            &control,
+            "history",
+            ProtocolAction::ReadTerminalHistory {
+                target: pane.id.clone(),
+            },
+        ),
+        Response::History(TerminalHistory {
+            target: target.clone(),
+            caller: None,
+            revision: 2,
+            screen: Screen::Alternate,
+            rows: 24,
+            columns: 80,
+            title: "session-1".into(),
+            directory: b"/fake".to_vec(),
+            omitted_lines: 0,
+            cut_bytes: 0,
+            text: "history of session-1\nscreen of session-1".into(),
+        })
+    );
     let send = |id: &str, input| {
         protocol_action(
             &control,
@@ -10244,6 +10301,12 @@ fn terminal_access_none_refuses_every_read_and_send() {
         (
             "read",
             ProtocolAction::ReadTerminal {
+                target: "p1".into(),
+            },
+        ),
+        (
+            "history",
+            ProtocolAction::ReadTerminalHistory {
                 target: "p1".into(),
             },
         ),
@@ -10430,6 +10493,189 @@ fn pane_read_prints_the_text_or_json_and_exits_by_failure() {
     assert!(stdout(&refused).contains("\"code\":\"terminal-access-off\""));
     assert!(!stdout(&refused).contains("screen of"));
     let refused = eon(&off).args(["pane", "read", "p1"]).output().unwrap();
+    assert_eq!(refused.status.code(), Some(1));
+    assert!(refused.stdout.is_empty());
+    assert!(String::from_utf8_lossy(&refused.stderr).starts_with("error terminal-access-off: "));
+    fs::write(&supervisor.stop, "").unwrap();
+    wait_for_successful_exit(&mut supervisor.child);
+    fs::remove_dir_all(off).unwrap();
+}
+
+#[test]
+fn pane_history_prints_the_text_or_json_and_names_what_the_bound_left_out() {
+    let root = temporary_directory();
+    let (mut supervisor, generation, control) = terminal_access_workspace(&root, "");
+    let eon = |root: &Path| {
+        let mut command = eon_command(Path::new(env!("CARGO_BIN_EXE_eon")));
+        command
+            .env("EON_RUNTIME_DIR", root.join("runtime"))
+            .env("EON_CONFIG_HOME", root.join("config"));
+        command
+    };
+    let run = |arguments: &[&str]| eon(&root).args(arguments).output().unwrap();
+    let json = |output: &Output| serde_json::from_str::<serde_json::Value>(stdout(output)).unwrap();
+    let before = stable_workspace_json(&run(&["workspace", "--json"]));
+    let human = run(&["pane", "history", "p1"]);
+    assert_eq!(human.status.code(), Some(0));
+    assert_eq!(
+        stdout(&human),
+        "history of session-1\nscreen of session-1\n"
+    );
+    assert!(human.stderr.is_empty());
+    let id = generation.file_name().unwrap().to_str().unwrap();
+    let read = run(&["pane", "history", "p1", "--json"]);
+    assert_eq!(read.status.code(), Some(0));
+    assert!(read.stderr.is_empty());
+    assert_eq!(
+        json(&read),
+        serde_json::json!({
+            "generation": id,
+            "window": null,
+            "workspace": "w1",
+            "tab": "t1",
+            "pane": "p1",
+            "popup": null,
+            "terminal": "session-1",
+            "caller": null,
+            "revision": 2,
+            "screen": "alternate",
+            "rows": 24,
+            "columns": 80,
+            "title": "session-1",
+            "directory": "/fake",
+            "text": "history of session-1\nscreen of session-1",
+            "omitted_lines": 0,
+            "cut_bytes": 0,
+            "lossy": true,
+        })
+    );
+    // An answer over EONW's general 2 MiB reaches the CLI whole; the notice
+    // goes to standard error, and only in human output.
+    fs::write(root.join("orbit-reply"), "long-history").unwrap();
+    let long = run(&["pane", "history", "p1"]);
+    assert_eq!(long.status.code(), Some(0));
+    assert!(long.stdout.len() > 2 * 1024 * 1024);
+    assert_eq!(long.stdout, ("h\n".repeat(3 << 19) + "end\n").into_bytes());
+    assert_eq!(
+        String::from_utf8_lossy(&long.stderr),
+        "eon: the history is over its 8 MiB bound; left out the 5 earliest lines\n"
+    );
+    let long = run(&["pane", "history", "p1", "--json"]);
+    assert_eq!(long.status.code(), Some(0));
+    assert!(long.stderr.is_empty());
+    assert_eq!(
+        (&json(&long)["omitted_lines"], &json(&long)["cut_bytes"]),
+        (&serde_json::json!(5), &serde_json::json!(0))
+    );
+    fs::write(root.join("orbit-reply"), "cut-history").unwrap();
+    let cut = run(&["pane", "history", "p1"]);
+    assert_eq!((cut.status.code(), stdout(&cut)), (Some(0), "line\n"));
+    assert_eq!(
+        String::from_utf8_lossy(&cut.stderr),
+        "eon: the history is over its 8 MiB bound; left out the earliest line and the first 7 \
+         bytes of the newest line\n"
+    );
+    fs::write(root.join("orbit-reply"), "empty-history").unwrap();
+    let empty = run(&["pane", "history", "p1"]);
+    assert_eq!((empty.status.code(), stdout(&empty)), (Some(0), "\n"));
+    assert!(empty.stderr.is_empty());
+    for (arguments, status, code) in [
+        (&["pane", "history", "p99"][..], 3, Some("unknown-target")),
+        (&["pane", "history", "bad/id"], 2, Some("malformed-action")),
+        (&["pane", "history"], 2, None),
+        (&["pane", "history", "p1", "p2"], 2, None),
+    ] {
+        let human = run(arguments);
+        assert_eq!(human.status.code(), Some(status), "{arguments:?}");
+        assert!(human.stdout.is_empty(), "{arguments:?}");
+        let json = run(&[arguments, &["--json"]].concat());
+        assert_eq!(json.status.code(), Some(status), "{arguments:?}");
+        if let Some(code) = code {
+            assert!(String::from_utf8_lossy(&human.stderr).starts_with(&format!("error {code}: ")));
+            assert!(
+                stdout(&json).contains(&format!("\"code\":\"{code}\"")),
+                "{arguments:?}"
+            );
+        }
+    }
+    // Orbit's refusals reach the CLI as exit 1 without terminal content.
+    for (reply, code) in [
+        ("closed", "terminal-ended"),
+        ("busy", "terminal-unavailable"),
+    ] {
+        fs::write(root.join("orbit-reply"), reply).unwrap();
+        let human = run(&["pane", "history", "p1"]);
+        let json = run(&["pane", "history", "p1", "--json"]);
+        assert_eq!(
+            (human.status.code(), json.status.code()),
+            (Some(1), Some(1)),
+            "{reply}"
+        );
+        assert!(human.stdout.is_empty(), "{reply}");
+        assert!(String::from_utf8_lossy(&human.stderr).starts_with(&format!("error {code}: ")));
+        assert!(
+            stdout(&json).contains(&format!("\"code\":\"{code}\"")),
+            "{reply}"
+        );
+        assert!(!stdout(&json).contains("of session"), "{reply}");
+    }
+    fs::remove_file(root.join("orbit-reply")).unwrap();
+    // Reading changed nothing a person sees.
+    assert_eq!(
+        stable_workspace_json(&run(&["workspace", "--json"])),
+        before
+    );
+    // A popup's history, named by its uN.
+    let Response::Snapshot(opened) = protocol_action(
+        &control,
+        "open",
+        ProtocolAction::InvokePopup {
+            tab: "t1".into(),
+            entry: "commands".into(),
+            expected_instance: None,
+            intent: InvokeIntent::Toggle,
+        },
+    ) else {
+        panic!("the Commands popup did not open");
+    };
+    let popup = opened.tabs[0]
+        .popups
+        .iter()
+        .find(|popup| popup.entry == "commands")
+        .unwrap()
+        .clone();
+    let read = run(&["pane", "history", &popup.id, "--json"]);
+    assert_eq!(read.status.code(), Some(0));
+    let read = json(&read);
+    assert_eq!(
+        (
+            &read["pane"],
+            &read["popup"],
+            &read["terminal"],
+            &read["text"]
+        ),
+        (
+            &serde_json::Value::Null,
+            &serde_json::json!(popup.id),
+            &serde_json::json!(popup.session),
+            &serde_json::json!(format!("history of {0}\nscreen of {0}", popup.session)),
+        )
+    );
+    fs::write(&supervisor.stop, "").unwrap();
+    wait_for_successful_exit(&mut supervisor.child);
+    fs::remove_dir_all(&root).unwrap();
+
+    let off = temporary_directory();
+    let (mut supervisor, _, _) =
+        terminal_access_workspace(&off, "\n[agents]\nterminal_access = \"none\"\n");
+    let refused = eon(&off)
+        .args(["pane", "history", "p1", "--json"])
+        .output()
+        .unwrap();
+    assert_eq!(refused.status.code(), Some(1));
+    assert!(stdout(&refused).contains("\"code\":\"terminal-access-off\""));
+    assert!(!stdout(&refused).contains("of session"));
+    let refused = eon(&off).args(["pane", "history", "p1"]).output().unwrap();
     assert_eq!(refused.status.code(), Some(1));
     assert!(refused.stdout.is_empty());
     assert!(String::from_utf8_lossy(&refused.stderr).starts_with("error terminal-access-off: "));

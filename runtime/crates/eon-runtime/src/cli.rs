@@ -17,12 +17,14 @@ use super::{
     windows,
     workspace::{
         caller_output, failure_human, human as human_output, json as json_output, json_escape,
-        list_human, list_json, resolve_selector, terminal_sent_json, terminal_text_json,
+        list_human, list_json, resolve_selector, terminal_history_json, terminal_sent_json,
+        terminal_text_json,
     },
 };
-use eon_workspace_protocol::v32::{
-    Action, AttentionState, Direction, Failure, MAX_PASTE_BYTES, PopupTarget, Response, Side,
-    Snapshot, TerminalInput, VERSION, WorkspaceAction, WorkspaceInfo, valid_caller, validate_paste,
+use eon_workspace_protocol::v33::{
+    Action, AttentionState, Direction, Failure, MAX_HISTORY_TEXT_BYTES, MAX_PASTE_BYTES,
+    PopupTarget, Response, Side, Snapshot, TerminalHistory, TerminalInput, VERSION,
+    WorkspaceAction, WorkspaceInfo, valid_caller, validate_paste,
 };
 use std::{
     env,
@@ -834,6 +836,10 @@ const HELP_SECTIONS: &[(&str, &[(&str, &str)])] = &[
                 "Print a pane's or popup's text",
             ),
             (
+                "pane history PANE|POPUP [--json]",
+                "Print a pane's or popup's history",
+            ),
+            (
                 "pane send PANE|POPUP [--enter] [--force]",
                 "Paste TEXT, then Enter if asked",
             ),
@@ -990,8 +996,9 @@ WS is a workspace ID (w1, w2, ...) or its exact name.
 workspace new --name NAME names the new workspace; created gives its ID.
 With --no-focus, workspace new keeps the shown workspace, and either
 pane create keeps the selected pane and any popup.
-pane read and send reach hidden workspaces; [agents] terminal_access
-governs both. pane send --enter waits [agents] send_enter_delay_ms first.
+pane read, history and send reach hidden workspaces; [agents]
+terminal_access governs all three. pane send --enter waits
+[agents] send_enter_delay_ms first.
 pane send refuses while a person is typing; --force bypasses the typing check.
 Where shown, {command}--json{reset} prints JSON and skips confirmation.
 Without a terminal, a confirmation needs yes or exits 1 (not-confirmed).
@@ -1168,7 +1175,7 @@ fn control(
     // by Runtime's rule; a WS that resolves to none or several fails unasked.
     // After a yes it checks again that the wN is live before closing it, since
     // Runtime would read a departed wN as another workspace's name; the check
-    // and the close are not atomic. v32 lists only
+    // and the close are not atomic. v33 lists only
     // the caller's or shown workspace's terminals, so the prompt names none.
     if let Action::Workspace(WorkspaceAction::CloseWorkspace { workspace }) = &mut action
         && !json
@@ -1317,11 +1324,47 @@ fn control(
             })?;
             Ok(0)
         }
+        ControlResponse::Workspace(Response::History(history)) => {
+            write_stdout(if json {
+                format!(
+                    "{{\"generation\":\"{}\",\"window\":{window},{}",
+                    json_escape(generation),
+                    &terminal_history_json(&history)[1..]
+                )
+            } else {
+                format!("{}\n", history.text)
+            })?;
+            if let Some(notice) = history_notice(&history).filter(|_| !json) {
+                eprintln!("{notice}");
+            }
+            Ok(0)
+        }
         // Only `eon pane send` asks for this, through `send_terminal`.
         ControlResponse::Workspace(Response::Sent(_)) => {
             Err("Eon supervisor returned a terminal result for a workspace action".into())
         }
     }
+}
+
+/// What the 8 MiB bound left out of `eon pane history`'s text (EON-C35),
+/// when it left out anything.
+fn history_notice(history: &TerminalHistory) -> Option<String> {
+    let lines = match history.omitted_lines {
+        0 => None,
+        1 => Some("the earliest line".to_owned()),
+        lines => Some(format!("the {lines} earliest lines")),
+    };
+    let cut = (history.cut_bytes > 0)
+        .then(|| format!("the first {} bytes of the newest line", history.cut_bytes));
+    let left_out = match (lines, cut) {
+        (None, None) => return None,
+        (Some(part), None) | (None, Some(part)) => part,
+        (Some(lines), Some(cut)) => format!("{lines} and {cut}"),
+    };
+    Some(format!(
+        "eon: the history is over its {} MiB bound; left out {left_out}",
+        MAX_HISTORY_TEXT_BYTES / (1024 * 1024)
+    ))
 }
 
 /// A result's `window`: its ID, or null for the default namespace.
@@ -1821,6 +1864,9 @@ fn parse_control_arguments(arguments: &[OsString]) -> Result<(Action, bool), Err
         ["pane", "read", target] => Action::ReadTerminal {
             target: (*target).into(),
         },
+        ["pane", "history", target] => Action::ReadTerminalHistory {
+            target: (*target).into(),
+        },
         ["pane", "move", "up"] => Action::Workspace(WorkspaceAction::Move(Direction::Up)),
         ["pane", "move", "down"] => Action::Workspace(WorkspaceAction::Move(Direction::Down)),
         ["pane", "move", "left"] => Action::MovePaneSideways(Side::Left),
@@ -1858,7 +1904,7 @@ fn parse_pane_rename_arguments(arguments: &[OsString]) -> Result<(Action, bool),
         _ => return Err(Error::usage(EON_USAGE)),
     };
     if let Some(name) = name {
-        eon_workspace_protocol::v32::validate_pane_name(name)
+        eon_workspace_protocol::v33::validate_pane_name(name)
             .map_err(|error| Error::usage(error.to_string()))?;
     }
     Ok((
@@ -2807,30 +2853,37 @@ mod tests {
     }
 
     #[test]
-    fn pane_read_takes_one_target_and_an_optional_json_flag() {
-        let read = |target: &str| Action::ReadTerminal {
-            target: target.into(),
-        };
-        assert_eq!(
-            parse_control_arguments(&["pane", "read", "u2", "--json"].map(Into::into)).unwrap(),
-            (read("u2"), true)
-        );
-        assert_eq!(
-            parse_control_arguments(&["pane", "read", "p1"].map(Into::into)).unwrap(),
-            (read("p1"), false)
-        );
-        for args in [
-            &["pane", "read"][..],
-            &["pane", "read", "p1", "p2"],
-            &["pane", "read", "--", "p1"],
-            &["pane", "read", "p1", "--no-focus"],
-            &["pane", "read", "p1", "--json", "--json"],
-        ] {
-            assert!(
-                parse_control_arguments(&args.iter().map(OsString::from).collect::<Vec<_>>())
-                    .is_err(),
-                "{args:?}"
+    fn pane_read_and_history_take_one_target_and_an_optional_json_flag() {
+        for verb in ["read", "history"] {
+            let action = |target: &str| {
+                let target = target.into();
+                if verb == "read" {
+                    Action::ReadTerminal { target }
+                } else {
+                    Action::ReadTerminalHistory { target }
+                }
+            };
+            assert_eq!(
+                parse_control_arguments(&["pane", verb, "u2", "--json"].map(Into::into)).unwrap(),
+                (action("u2"), true)
             );
+            assert_eq!(
+                parse_control_arguments(&["pane", verb, "p1"].map(Into::into)).unwrap(),
+                (action("p1"), false)
+            );
+            for args in [
+                &["pane", verb][..],
+                &["pane", verb, "p1", "p2"],
+                &["pane", verb, "--", "p1"],
+                &["pane", verb, "p1", "--no-focus"],
+                &["pane", verb, "p1", "--json", "--json"],
+            ] {
+                assert!(
+                    parse_control_arguments(&args.iter().map(OsString::from).collect::<Vec<_>>())
+                        .is_err(),
+                    "{args:?}"
+                );
+            }
         }
     }
 

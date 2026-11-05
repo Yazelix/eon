@@ -17,7 +17,7 @@ use std::{
     time::{Duration, Instant},
 };
 
-use eon_workspace_protocol::v32::{
+use eon_workspace_protocol::v33::{
     ALT, CTRL, MAX_ENTER_DELAY_MS, MAX_ENTRIES, MAX_ENTRY_ID_BYTES, MAX_LABEL_BYTES, PopupGeometry,
     PopupKey, SHIFT, SUPER, Shortcut,
 };
@@ -656,7 +656,7 @@ fn defaults_table(
                 "Refuse unforced sends within this many ms of typing; 0 disables (0 to 60000)."
             }
             "terminal_access" => {
-                "Let `eon pane read` and `eon pane send` reach this window's terminals; \"none\" refuses both."
+                "Let `eon pane read`, `history` and `send` reach this window's terminals; \"none\" refuses all three."
             }
             "label" => "Popup display name.",
             "keybinding" => "Popup shortcut using physical keys.",

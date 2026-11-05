@@ -4,7 +4,7 @@
 //! in the test too.
 
 use super::*;
-use eon_workspace_protocol::v32::{Filter, InvokeIntent, TerminalInput};
+use eon_workspace_protocol::v33::{Filter, InvokeIntent, TerminalInput};
 
 enum CliPath {
     /// These arguments parse to exactly this action.
@@ -98,6 +98,7 @@ fn cli_path(action: &Action) -> CliPath {
             return Exception("eon-ciwn.8 adds `eon events` and eon-ciwn.9 `eon pane wait`");
         }
         Action::ReadTerminal { target } => words(&["pane", "read", target]),
+        Action::ReadTerminalHistory { target } => words(&["pane", "history", target]),
         Action::SendTerminal {
             target,
             input,
@@ -258,6 +259,7 @@ fn every_eonw_action_has_a_cli_path_or_a_named_exception() {
         Action::NextAttention,
         Action::PreviousAttention,
         Action::ReadTerminal { target: text("p1") },
+        Action::ReadTerminalHistory { target: text("u1") },
         Action::SendTerminal {
             target: text("u1"),
             force: false,

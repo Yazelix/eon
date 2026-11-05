@@ -117,7 +117,7 @@ enabled = true # Enable this feature or popup.
 [agents]
 send_enter_delay_ms = 300 # Wait between `eon pane send` text and its --enter.
 send_typing_quiet_ms = 2000 # Refuse unforced sends within this many ms of typing; 0 disables (0 to 60000).
-terminal_access = "window" # Let `eon pane read` and `eon pane send` reach this window's terminals; "none" refuses both.
+terminal_access = "window" # Let `eon pane read`, `history` and `send` reach this window's terminals; "none" refuses all three.
 
 [editor]
 command = ["hx"] # Direct argv that `eon edit` and Files run with the file appended.
@@ -353,13 +353,13 @@ setting when it starts. Alt+Shift+H shows or hides the sidebar; it also steps
 aside while the window leaves fewer than 80 cells for the terminals beside it.
 See [Agent sidebar](USAGE.md#agent-sidebar).
 
-`[agents] terminal_access` decides whether `eon pane read` and `eon pane send`
-may reach this window's terminals.
+`[agents] terminal_access` decides whether `eon pane read`, `eon pane history`
+and `eon pane send` may reach this window's terminals.
 
 - `"window"`, the default, lets any process running as you read or send to any
   pane or popup of the window, in any workspace, shown or hidden.
-- `"none"` refuses both with `terminal-access-off` and reveals no terminal
-  content.
+- `"none"` refuses all three with `terminal-access-off` and reveals no
+  terminal content.
 
 The window reads the setting when it starts. It is a preference and a kill
 switch, not a security boundary: Eon's socket is private to your user, whose

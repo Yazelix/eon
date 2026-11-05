@@ -1,5 +1,5 @@
 use super::*;
-use eon_workspace_protocol::v32::Pane;
+use eon_workspace_protocol::v33::Pane;
 
 mod bar;
 mod links;
