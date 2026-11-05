@@ -787,7 +787,7 @@ fn write_management_record(path: &Path, record: &ManagementRecord) {
     fs::rename(temporary, path).unwrap();
 }
 
-fn publish_management_record(path: &Path, record: &ManagementRecord) {
+fn publish_management_record(path: &Path, record: &ManagementRecord, ready_delay: Option<u64>) {
     let mut claim = fs::OpenOptions::new()
         .read(true)
         .write(true)
@@ -803,12 +803,8 @@ fn publish_management_record(path: &Path, record: &ManagementRecord) {
     claim.try_lock().unwrap();
     assert_eq!(object_identity(path), expected);
     claim.write_all(b"1").unwrap();
-    if matches!(record, ManagementRecord::Live(identity) if identity.session_id == "session-2")
-        && let Some(delay) = std::env::var_os("EON_TEST_PAIR_READY_DELAY_MS")
-    {
-        thread::sleep(Duration::from_millis(
-            delay.to_str().unwrap().parse().unwrap(),
-        ));
+    if let Some(delay) = ready_delay {
+        thread::sleep(Duration::from_millis(delay));
     }
     if std::env::var_os("EON_TEST_REPLACE_READY_RECORD").is_some() {
         fs::remove_file(path).unwrap();
@@ -943,7 +939,38 @@ fn managed_orbit_helper() {
         presentation: endpoint_identity(&presentation),
         management: endpoint_identity(&management_path),
     };
-    publish_management_record(&record_path, &ManagementRecord::Live(identity.clone()));
+    let command = arguments
+        .iter()
+        .rposition(|argument| argument == OsStr::new("--"))
+        .map(|separator| &arguments[separator + 1..])
+        .unwrap_or(&[]);
+    // A Scrollback editor, whose snapshot must already name its terminal.
+    let snapshot = command
+        .last()
+        .filter(|argument| argument.as_bytes().ends_with(b"-scrollback.txt"))
+        .map(Path::new);
+    if let (Some(file), Some(log)) = (snapshot, std::env::var_os("EON_TEST_SNAPSHOT_LOG")) {
+        let marker = fs::read_to_string(file.with_file_name(".terminal")).unwrap_or_default();
+        let mut log = fs::OpenOptions::new()
+            .create(true)
+            .append(true)
+            .open(log)
+            .unwrap();
+        writeln!(log, "{}|{marker}", identity.session_id).unwrap();
+    }
+    let ready_delay = if identity.session_id == "session-2" {
+        std::env::var("EON_TEST_PAIR_READY_DELAY_MS").ok()
+    } else if snapshot.is_some() {
+        std::env::var_os("EON_TEST_EDITOR_READY_DELAY")
+            .and_then(|path| fs::read_to_string(path).ok())
+    } else {
+        None
+    };
+    publish_management_record(
+        &record_path,
+        &ManagementRecord::Live(identity.clone()),
+        ready_delay.map(|delay| delay.trim().parse().unwrap()),
+    );
     if let Some(log) = std::env::var_os("EON_TEST_ORBIT_LOG") {
         let mut log = fs::OpenOptions::new()
             .create(true)
@@ -970,11 +997,6 @@ fn managed_orbit_helper() {
         fs::remove_dir(std::env::current_dir().unwrap()).unwrap();
     }
 
-    let command = arguments
-        .iter()
-        .rposition(|argument| argument == OsStr::new("--"))
-        .map(|separator| &arguments[separator + 1..])
-        .unwrap_or(&[]);
     let mut child = std::env::var_os("EON_TEST_RUN_CHILD").map(|_| {
         ManagedChild(
             Command::new(&command[0])
@@ -1155,6 +1177,11 @@ fn managed_orbit_helper() {
                             // 2 MiB, and `cut-history` with a newest line
                             // the bound cut.
                             ManagementClientMessage::ReadHistory if *leased => {
+                                // `slow-history` answers after the supervisor's
+                                // 2 s terminal deadline.
+                                if reply.trim() == "slow-history" {
+                                    thread::sleep(Duration::from_millis(2500));
+                                }
                                 let (omitted_lines, cut_bytes, text) = match reply.trim() {
                                     "long-history" => (5, 0, "h\n".repeat(3 << 19) + "end"),
                                     "cut-history" => (1, 7, "line".into()),
@@ -10290,6 +10317,408 @@ fn terminal_reads_and_sends_reach_a_hidden_workspace_and_change_nothing() {
     fs::write(&supervisor.stop, "").unwrap();
     wait_for_successful_exit(&mut supervisor.child);
     fs::remove_dir_all(root).unwrap();
+}
+
+/// A window with `configuration` added whose configured editor logs the file
+/// it opens and runs until the editor release file exists, with its first
+/// tab committed.
+fn scrollback_window(window: &PairWindow, configuration: &str) -> TestProcess {
+    let editor = window.root.join("editor");
+    executable(
+        &editor,
+        r#"#!/bin/sh
+printf '%s\n' "$1" >> "$EON_TEST_EDITOR_LOG"
+while [ ! -e "$EON_TEST_EDITOR_RELEASE" ] && [ ! -e "$EON_TEST_STOP" ]; do sleep 0.01; done
+"#,
+    );
+    fs::OpenOptions::new()
+        .append(true)
+        .open(window.config.join("config.toml"))
+        .unwrap()
+        .write_all(
+            format!(
+                "\n[editor]\ncommand = [\"{}\"]\n{configuration}",
+                editor.display()
+            )
+            .as_bytes(),
+        )
+        .unwrap();
+    let supervisor = window.spawn_scrollback();
+    window.pair_launch("session-2");
+    let home = window.home.to_str().unwrap();
+    assert!(
+        window
+            .eon(&["tab", "directory", "t1", "--", home])
+            .status
+            .success()
+    );
+    live_identity(&window.generation().join("orbit.sock"));
+    supervisor
+}
+
+impl PairWindow {
+    fn scrollback_command(&self) -> Command {
+        let mut command = self.command(&[]);
+        command
+            .env("EON_TEST_ORBIT_REPLY", self.root.join("orbit-reply"))
+            .env("EON_TEST_EDITOR_LOG", self.root.join("editor.log"))
+            .env("EON_TEST_EDITOR_RELEASE", self.root.join("editor-release"))
+            .env("EON_TEST_SNAPSHOT_LOG", self.root.join("snapshot.log"))
+            .env(
+                "EON_TEST_EDITOR_READY_DELAY",
+                self.root.join("editor-ready-delay"),
+            );
+        command
+    }
+
+    fn spawn_scrollback(&self) -> TestProcess {
+        let process = self.start(self.scrollback_command());
+        wait_for_connection(&self.control());
+        process
+    }
+
+    /// Presses the active tab's Scrollback key and returns the new popup and
+    /// the snapshot its editor opened, which named the popup's terminal
+    /// before its Orbit started.
+    fn open_scrollback(&self, id: &str) -> (Popup, PathBuf) {
+        let opened = log_lines(&self.root.join("editor.log")).len();
+        let Response::Snapshot(snapshot) = self.invoke_popup(id, "scrollback", None) else {
+            panic!("{id}: Scrollback did not open");
+        };
+        let tab = snapshot
+            .tabs
+            .iter()
+            .find(|tab| tab.id == snapshot.active_tab)
+            .unwrap();
+        let popup = tab.popups.last().unwrap().clone();
+        assert_eq!(
+            (popup.entry.as_str(), tab.selected_popup.as_ref()),
+            ("scrollback", Some(&popup.id))
+        );
+        let file =
+            PathBuf::from(&wait_for_lines(&self.root.join("editor.log"), opened + 1)[opened]);
+        assert!(
+            log_lines(&self.root.join("snapshot.log")).contains(&format!("{0}|{0}", popup.session)),
+            "{id}"
+        );
+        (popup, file)
+    }
+
+    fn snapshot_directories(&self) -> Vec<PathBuf> {
+        fs::read_dir(self.generation().join("snapshots"))
+            .map(|entries| entries.map(|entry| entry.unwrap().path()).collect())
+            .unwrap_or_default()
+    }
+}
+
+fn wait_for_removal(path: &Path) {
+    let deadline = Instant::now() + Duration::from_secs(5);
+    while fs::symlink_metadata(path).is_ok() {
+        assert!(Instant::now() < deadline, "{} remained", path.display());
+        thread::sleep(Duration::from_millis(10));
+    }
+}
+
+/// Scrollback writes the shown terminal's history to a private snapshot,
+/// opens it in the configured editor over that terminal, and removes it when
+/// the popup's terminal ends: by the editor's exit, a dismissal, or its tab's
+/// close. A failed export or a missing editor starts nothing and leaves no
+/// snapshot (EON-C10).
+#[test]
+fn scrollback_opens_a_private_snapshot_and_removes_it_when_its_popup_ends() {
+    let window = PairWindow::new();
+    let mut supervisor = scrollback_window(&window, "");
+    let generation = window.generation();
+    let snapshots = generation.join("snapshots");
+    let release = window.root.join("editor-release");
+    let mode = |path: &Path| fs::symlink_metadata(path).unwrap().permissions().mode() & 0o7777;
+
+    // The fake Orbit's history is on the alternate screen, so the snapshot
+    // starts with that notice; then the text as `eon pane history` prints it.
+    let (popup, file) = window.open_scrollback("open");
+    let directory = file.parent().unwrap().to_owned();
+    assert_eq!(directory.parent().unwrap(), snapshots);
+    assert_eq!(file.file_name().unwrap(), "p1-scrollback.txt");
+    assert_eq!(
+        [&snapshots, &directory, &file].map(|path| mode(path)),
+        [0o700, 0o700, 0o600]
+    );
+    assert_eq!(
+        fs::read_to_string(&file).unwrap(),
+        "This pane is in a full-screen app; Eon shows only its screen. Quit the app to see the history.\nhistory of session-1\nscreen of session-1\n"
+    );
+    let history = window.eon(&["pane", "history", "p1"]);
+    assert_eq!(
+        stdout(&history),
+        "history of session-1\nscreen of session-1\n"
+    );
+    // The editor's exit ends the popup, shows the pane and removes the snapshot.
+    fs::write(&release, "").unwrap();
+    wait_for_removal(&directory);
+    let tab = window.inspect("after-exit").tabs.remove(0);
+    assert!(tab.popups.iter().all(|item| item.id != popup.id));
+    assert_eq!(
+        (tab.selected_popup, tab.selected_pane.as_deref()),
+        (None, Some("p1"))
+    );
+    wait_for_removal(&snapshots);
+    fs::remove_file(&release).unwrap();
+
+    // A dismissal removes it too; the bound's notice comes first.
+    fs::write(window.root.join("orbit-reply"), "cut-history").unwrap();
+    let (popup, file) = window.open_scrollback("cut");
+    assert_eq!(
+        fs::read_to_string(&file).unwrap(),
+        "Eon left out the earliest line and the first 7 bytes of the newest line to keep this snapshot within its 8 MiB bound. This pane is in a full-screen app; Eon shows only its screen. Quit the app to see the history.\nline\n"
+    );
+    fs::remove_file(window.root.join("orbit-reply")).unwrap();
+    assert!(matches!(
+        window.invoke_popup("dismiss", "scrollback", Some(&popup.id)),
+        Response::Snapshot(snapshot) if snapshot.tabs[0].popups.iter().all(|item| item.id != popup.id)
+    ));
+    wait_for_removal(file.parent().unwrap());
+
+    // Closing its tab removes it too.
+    assert!(window.eon(&["tab", "create"]).status.success());
+    let pair = window.inspect("tab-two").tabs[1].popups[0].session.clone();
+    window.pair_launch(&pair);
+    let home = window.home.to_str().unwrap();
+    assert!(
+        window
+            .eon(&["tab", "directory", "t2", "--", home])
+            .status
+            .success()
+    );
+    let (_, file) = window.open_scrollback("second");
+    assert!(file.exists());
+    assert!(matches!(
+        workspace_action(&window.control(), "close-t2", Action::CloseTab { tab: "t2".into() }),
+        Response::Snapshot(snapshot) if snapshot.tabs.len() == 1
+    ));
+    wait_for_removal(file.parent().unwrap());
+
+    // An export that fails or misses the terminal deadline, and a missing
+    // editor, show the popup start-failure notice and leave no snapshot.
+    let tab = window.inspect("before-failures").tabs.remove(0);
+    // The timed-out read goes last: its late answer holds the lease's slot.
+    for (id, reply, editor, code) in [
+        ("busy", "busy", None, "popup-start"),
+        (
+            "missing",
+            "",
+            Some(window.root.join("missing")),
+            "popup-command",
+        ),
+        ("slow", "slow-history", None, "popup-start"),
+    ] {
+        fs::write(window.root.join("orbit-reply"), reply).unwrap();
+        if let Some(editor) = &editor {
+            fs::write(
+                window.config.join("config.toml"),
+                format!(
+                    "[terminal]\nfont_fallbacks = []\n\n[anima]\nenabled = false\n\n[editor]\ncommand = [\"{}\"]\n",
+                    editor.display()
+                ),
+            )
+            .unwrap();
+        }
+        assert!(
+            matches!(
+                window.invoke_popup(id, "scrollback", None),
+                Response::Failure(failure) if failure.code == code
+            ),
+            "{id}"
+        );
+        assert_eq!(window.snapshot_directories(), Vec::<PathBuf>::new(), "{id}");
+        assert_eq!(window.inspect(&format!("{id}-after")).tabs[0], tab, "{id}");
+    }
+    window.stop_generation(&mut supervisor);
+    assert!(!snapshots.exists());
+}
+
+/// A recovering supervisor removes the snapshots of supervisors no longer
+/// running but adopts its recovered Scrollback terminal's, and removes that
+/// one when the terminal ends (EON-C10).
+#[test]
+fn recovery_adopts_a_live_scrollback_snapshot_and_sweeps_stale_ones() {
+    let window = PairWindow::new();
+    let mut first = scrollback_window(&window, "");
+    let (popup, file) = window.open_scrollback("open");
+    let stale = window
+        .generation()
+        .join("snapshots")
+        .join(format!("{}-1-1", u32::MAX));
+    fs::create_dir(&stale).unwrap();
+    fs::write(stale.join("p9-scrollback.txt"), "old").unwrap();
+    first.child.kill().unwrap();
+    assert!(!first.child.wait().unwrap().success());
+    wait_for(&window.lease_released);
+
+    let mut replacement = window.spawn_scrollback();
+    let recovered = window.inspect("recovered");
+    assert!(
+        recovered.tabs[0]
+            .panes()
+            .any(|pane| pane.session == popup.session)
+    );
+    assert!(!stale.exists());
+    assert!(file.exists());
+    fs::write(window.root.join("editor-release"), "").unwrap();
+    wait_for_removal(file.parent().unwrap());
+    window.stop_generation(&mut replacement);
+}
+
+/// A recovering supervisor whose Venus cannot start stops the terminals it
+/// adopted and removes their snapshots with them (EON-C10).
+#[test]
+fn recovery_whose_venus_cannot_start_removes_adopted_snapshots() {
+    let window = PairWindow::new();
+    let mut first = scrollback_window(&window, "");
+    let (_, file) = window.open_scrollback("open");
+    let snapshots = window.generation().join("snapshots");
+    first.child.kill().unwrap();
+    assert!(!first.child.wait().unwrap().success());
+    wait_for(&window.lease_released);
+
+    let mut command = window.scrollback_command();
+    command.env("EON_VENUS", window.root.join("missing-venus"));
+    let mut replacement = window.start(command);
+    assert!(!wait_for_exit(&mut replacement.child).success());
+    assert!(!file.parent().unwrap().exists());
+    assert!(!snapshots.exists());
+}
+
+/// With `[agents] terminal_access = "none"`, a calling terminal cannot
+/// snapshot a terminal, but the window's key still opens Scrollback; stopping
+/// the window with it live removes its snapshot and the store (EON-C10).
+#[test]
+fn scrollback_refuses_callers_without_terminal_access_and_ends_with_its_window() {
+    let window = PairWindow::new();
+    let mut supervisor = scrollback_window(&window, "\n[agents]\nterminal_access = \"none\"\n");
+    let snapshots = window.generation().join("snapshots");
+    let caller =
+        process::environ(live_identity(&window.generation().join("orbit.sock")).process_id)
+            .split(|byte| *byte == 0)
+            .find_map(|entry| entry.strip_prefix(b"EON_TERMINAL="))
+            .map(|token| String::from_utf8(token.to_vec()).unwrap())
+            .unwrap();
+    let tab = window.inspect("before").tabs.remove(0);
+    assert!(matches!(
+        protocol_action_from(
+            &window.control(),
+            "caller",
+            Some(&caller),
+            ProtocolAction::InvokePopup {
+                tab: tab.id.clone(),
+                entry: "scrollback".into(),
+                expected_instance: None,
+                intent: InvokeIntent::Toggle,
+            },
+        ),
+        Response::Failure(failure) if failure.code == "terminal-access-off"
+    ));
+    assert_eq!(window.snapshot_directories(), Vec::<PathBuf>::new());
+    assert_eq!(
+        stable_tabs(&window.inspect("after-caller").tabs),
+        stable_tabs(std::slice::from_ref(&tab))
+    );
+
+    // A shown Scrollback is refused to the terminal too, whatever the intent.
+    let (popup, file) = window.open_scrollback("key");
+    let shown = window.inspect("shown").tabs.remove(0);
+    for (id, expected, intent) in [
+        ("toggle", Some(popup.id.clone()), InvokeIntent::Toggle),
+        ("focus", None, InvokeIntent::Focus),
+    ] {
+        assert!(
+            matches!(
+                protocol_action_from(
+                    &window.control(),
+                    id,
+                    Some(&caller),
+                    ProtocolAction::InvokePopup {
+                        tab: shown.id.clone(),
+                        entry: "scrollback".into(),
+                        expected_instance: expected,
+                        intent,
+                    },
+                ),
+                Response::Failure(failure) if failure.code == "terminal-access-off"
+            ),
+            "{id}"
+        );
+        assert_eq!(
+            stable_tabs(&window.inspect(&format!("{id}-after")).tabs),
+            stable_tabs(std::slice::from_ref(&shown)),
+            "{id}"
+        );
+    }
+    window.stop_generation(&mut supervisor);
+    assert!(!file.parent().unwrap().exists());
+    assert!(!snapshots.exists());
+}
+
+/// Fails a Scrollback press whose editor's Orbit publishes Ready after its
+/// start and rollback deadlines, and returns the running editor's terminal
+/// and its snapshot, which stays.
+fn unconfirmed_scrollback(window: &PairWindow) -> (String, PathBuf) {
+    let delay = window.root.join("editor-ready-delay");
+    fs::write(&delay, "5100").unwrap();
+    assert!(matches!(
+        window.invoke_popup("late", "scrollback", None),
+        Response::Failure(failure) if failure.code == "popup-start"
+    ));
+    fs::remove_file(&delay).unwrap();
+    let file = PathBuf::from(&wait_for_lines(&window.root.join("editor.log"), 1)[0]);
+    assert_eq!(
+        window.snapshot_directories(),
+        [file.parent().unwrap().to_owned()]
+    );
+    let (session, recorded) = log_lines(&window.root.join("snapshot.log"))[0]
+        .split_once('|')
+        .map(|(session, recorded)| (session.to_owned(), recorded.to_owned()))
+        .unwrap();
+    assert_eq!(recorded, session);
+    // Later turns keep it while the editor may run.
+    window.inspect("later");
+    assert!(file.exists());
+    (session, file)
+}
+
+/// A Scrollback start that fails without confirming its rollback may leave
+/// its editor running, so its recorded snapshot stays: a stop that ends the
+/// editor removes it and the store, and a recovery that adopts the editor
+/// removes it when the editor ends (EON-C10).
+#[test]
+fn a_scrollback_start_whose_rollback_is_unconfirmed_keeps_its_snapshot() {
+    let window = PairWindow::new();
+    let mut supervisor = scrollback_window(&window, "");
+    let snapshots = window.generation().join("snapshots");
+    let (_, file) = unconfirmed_scrollback(&window);
+    window.stop_generation(&mut supervisor);
+    assert!(!file.parent().unwrap().exists());
+    assert!(!snapshots.exists());
+}
+
+#[test]
+fn a_recovery_adopts_the_snapshot_of_an_unconfirmed_scrollback_start() {
+    let window = PairWindow::new();
+    let mut first = scrollback_window(&window, "");
+    let (session, file) = unconfirmed_scrollback(&window);
+
+    first.child.kill().unwrap();
+    assert!(!first.child.wait().unwrap().success());
+    wait_for(&window.lease_released);
+    let mut replacement = window.spawn_scrollback();
+    assert!(
+        window.inspect("recovered").tabs[0]
+            .panes()
+            .any(|pane| pane.session == session)
+    );
+    assert!(file.exists());
+    fs::write(window.root.join("editor-release"), "").unwrap();
+    wait_for_removal(file.parent().unwrap());
+    window.stop_generation(&mut replacement);
 }
 
 #[test]

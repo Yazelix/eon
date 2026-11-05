@@ -1065,7 +1065,9 @@ socket names, JSON fields and protocol identifiers retain their spellings.
   standing rule) by `eon-vhhon`: a Toggle of the selected `eon-workspaces`
   popup presses Enter in it. Amended on 2026-11-05 (approved by Lucca,
   relayed by eon-overseer, `eon-u5bvd.1` record 03) by `eon-u5bvd.3`: EONW
-  carries EON-C35's read of retained history.
+  carries EON-C35's read of retained history. Amended on 2026-11-05 (approved
+  by Lucca, relayed by eon-overseer, `eon-u5bvd.1` record 03) by
+  `eon-u5bvd.4`: the Scrollback popup and its private snapshot.
 - **Consumer:** One local CLI or approved composition controlling a live Eon
   supervisor.
 - **Trigger:** The client submits one versioned workspace or supervisor-lifecycle
@@ -1323,7 +1325,8 @@ socket names, JSON fields and protocol identifiers retain their spellings.
   plugin/MCP API, authorization framework, durable restoration, terminal
   content (except a program's own EON-C31 status report text and terminal
   title, EON-C35's read of visible text, retained history, title and working
-  directory, and EON-C36's input), or direct
+  directory, the Scrollback popup's private snapshot, and EON-C36's input), or
+  direct
   child-protocol escape hatch.
 - **Package owner:** The canonical EONW crate lives in
   `runtime/crates/eon-workspace-protocol` with its accepted package/API and
@@ -1360,6 +1363,31 @@ socket names, JSON fields and protocol identifiers retain their spellings.
   Anima defaults to Alt+Shift+A and launches the pinned random native animation
   as a transient popup. A dismissal, replacement, or tab close stops its Orbit
   terminal, restores the prior tab focus, and leaves no hidden animation running.
+  Scrollback defaults to Alt+Shift+E. Pressed in the active tab, the
+  supervisor exports the terminal the tab shows (its shown popup, else its
+  selected pane) through ORB-C17's `ReadHistory`, writes that text to a new
+  private file, and then opens a transient popup over it whose command,
+  built for that press, is `[editor] command` with the file's path
+  appended, as `eon edit` builds it. The file is mode 0600 in a fresh
+  mode-0700 directory under the window's private runtime directory. Its first
+  line is a notice when the text was truncated (how many earlier lines were
+  left out, and any cut of the newest line), or when the terminal was on the
+  alternate screen ("This pane is in a full-screen app; Eon shows only its
+  screen. Quit the app to see the history."). It is a snapshot: edits change
+  no terminal, and the file is not kept. When the popup's terminal ends
+  (the editor exits, or the popup is dismissed, replaced, hidden, or its tab
+  or window closes), the supervisor removes that directory without following
+  links, and the popup it covered, or the pane, shows again. Dismissing or
+  replacing the popup stops the editor, discarding unsaved edits; to keep
+  them, save under another name first. A supervisor removes, when it starts,
+  every snapshot directory whose supervisor is no longer running, except one
+  that belongs to a popup it adopts in recovery, which it removes when that
+  popup ends. A tab showing no terminal changes nothing. If the export fails
+  or times out, or the editor is missing, no popup starts, the window shows
+  the existing popup start-failure notice, and no snapshot is left. The window
+  key is the person's own action, and `[agents] terminal_access` does not
+  govern it; a Scrollback request a terminal sends is an agent's read, which
+  `terminal_access = "none"` refuses with `terminal-access-off`.
   Commands defaults to Alt+Shift+M and runs a transient fzf list of existing
   `eon` commands: tab, pane and window creation, closing or moving the popup's
   own tab, quitting this window, switching, creating, renaming or closing a
@@ -1424,7 +1452,9 @@ socket names, JSON fields and protocol identifiers retain their spellings.
   malformed shortcuts, reserved shortcuts, two configured popups on one
   shortcut, unbounded values and unavailable executables before mutating
   workspace state; a configured popup on Alt+H, Alt+J, Alt+K or Alt+L instead
-  loads without a key (EON-C20). It does
+  loads without a key (EON-C20). Scrollback accepts `keybinding`, `label`
+  and `enabled`, and rejects `command` and `keep_alive = true`, as Anima
+  does. Its command is not part of the popup catalog. It does
   not install providers, cache selection, interpret shell strings, or expose
   commands over EONW beyond a calling terminal's `pane create -- COMMAND` and
   `tab create --directory DIRECTORY -- COMMAND`. Bare executables resolve
@@ -1598,6 +1628,51 @@ socket names, JSON fields and protocol identifiers retain their spellings.
     of the transient, and returns to the pane when it covered none or a pane
     action dismissed the transient
     (`an_ended_transient_popup_shows_the_popup_it_covered_again`).
+  - **Scrollback (`eon-u5bvd.4`, automated tier):** the source is the active
+    tab's shown popup, else its selected pane; a live Scrollback, a hidden or
+    pending tab name none, and its key again hides it
+    (`scrollback_snapshots_the_shown_terminal_and_covers_it_as_a_transient`).
+    The snapshot is a 0600 file in a fresh 0700 directory of a 0700 store,
+    and a link planted at the store or the next directory refuses the write
+    (`snapshots_are_private_and_a_planted_link_refuses`); the notice line
+    names the bound's cut and the alternate screen
+    (`a_notice_line_names_the_bound_cut_and_the_alternate_screen`). The start
+    sweep removes dead supervisors' snapshots, keeps a running one's and an
+    adopted terminal's, and an owned snapshot goes when its terminal ends
+    (`the_start_sweep_keeps_adopted_and_running_snapshots_and_ends_remove_them`).
+    The catalog rejects `command` and `keep_alive = true` and yields
+    Alt+Shift+E to a configured popup
+    (`scrollback_owns_its_command_and_yields_its_default_key`). Through a
+    real supervisor and fake Orbit, the editor opens the snapshot of the
+    shown pane, which is gone after the editor's exit, a dismissal and its
+    tab's close; a failed or timed-out export and a
+    missing editor fail with `popup-start` or `popup-command`, change nothing
+    and leave no snapshot
+    (`scrollback_opens_a_private_snapshot_and_removes_it_when_its_popup_ends`);
+    the editor's Orbit finds its snapshot already naming its terminal when
+    it launches (every Scrollback process test). A recovering supervisor
+    sweeps a dead supervisor's snapshot and adopts its recovered Scrollback
+    terminal's, removing it when the editor exits
+    (`recovery_adopts_a_live_scrollback_snapshot_and_sweeps_stale_ones`), and
+    one whose Venus cannot start stops the adopted editor and removes its
+    snapshot (`recovery_whose_venus_cannot_start_removes_adopted_snapshots`).
+    A start that fails without confirming its rollback keeps its recorded
+    snapshot while the editor may run: a stop that ends the editor removes
+    it and the store
+    (`a_scrollback_start_whose_rollback_is_unconfirmed_keeps_its_snapshot`),
+    and the recovery adopting that editor removes it when it ends
+    (`a_recovery_adopts_the_snapshot_of_an_unconfirmed_scrollback_start`).
+    With `terminal_access = "none"`, a terminal's request, for a new or a
+    shown Scrollback, fails with `terminal-access-off` and leaves no
+    snapshot while the window key still opens Scrollback, and stopping the
+    window with it live removes the snapshot and the store
+    (`scrollback_refuses_callers_without_terminal_access_and_ends_with_its_window`).
+    The record precedes the editor's start, a record that cannot be written
+    starts nothing and leaves no snapshot, and only a failed start whose
+    rollback confirmed cleanup discards its snapshot
+    (`a_scrollback_record_precedes_its_editor_and_only_a_confirmed_failure_discards`);
+    a failed removal is retried on later turns
+    (`a_failed_removal_is_retried_on_later_turns`).
 
 ## EON-C11 — Runtime generations and presentation
 

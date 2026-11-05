@@ -9,9 +9,10 @@ use super::{
     diagnostics::DiagnosticLog,
     events::Projection,
     generation::{current_generation, generation_directory, record_launcher, remove_launcher},
-    managed_environment::{self, TerminalAccess, nonempty_environment_path},
+    managed_environment::{self, PopupCommand, TerminalAccess, nonempty_environment_path},
     notification, pair, platform, quota,
     running::Running,
+    scrollback::{self, Snapshots},
     sessions::{
         self, AttachName, RunningSession, TAB_VARIABLE, TERMINAL_VARIABLE,
         acquire_generation_sessions, bound_io, name_presentation, recover_sessions,
@@ -876,6 +877,8 @@ fn supervise(
         log.orbit_directory().ok(),
         Instant::now() + SESSION_START_TIMEOUT,
     )?;
+    let mut scrollback = Snapshots::new(runtime);
+    scrollback.sweep(sessions.iter().map(|session| session.id.as_str()), log);
     let control_listener = ControlListener::bind(&runtime.join("eon.sock"))?;
     let initial_endpoint = runtime.join("orbit.sock");
     let initial_session_id = "session-1";
@@ -1055,6 +1058,7 @@ fn supervise(
         agents,
         notices: notification::Notices::default(),
         subscribers: Subscribers::new(generation),
+        scrollback,
         log: Arc::clone(log),
     };
     let presentation = match admitted {
@@ -1084,6 +1088,9 @@ fn supervise(
         Ok(venus) => Some(venus),
         Err(error) => {
             let session_cleanup = stop_managed_sessions(&mut state.sessions, SESSION_START_TIMEOUT);
+            // A recovered Scrollback editor that stopped leaves no snapshot.
+            state.retain_snapshots();
+            state.scrollback.remove_empty_root();
             drop(control_listener);
             if session_cleanup.is_ok() {
                 remove_launcher(runtime);
@@ -1155,6 +1162,8 @@ fn supervise(
         drop(process);
     }
     state.notices.close_and_wait(NOTICE_CLOSE_TIMEOUT);
+    state.retain_snapshots();
+    state.scrollback.remove_empty_root();
     remove_launcher(runtime);
     let _ = fs::remove_dir(runtime);
     status
@@ -1183,6 +1192,8 @@ struct SupervisorState {
     notices: notification::Notices,
     /// Event subscribers and the stream they read (EON-C39).
     subscribers: Subscribers,
+    /// Scrollback popups' private snapshots (EON-C10).
+    scrollback: Snapshots,
     log: Arc<DiagnosticLog>,
 }
 
@@ -1303,10 +1314,26 @@ impl SupervisorState {
         Some(Projection::new(&prepared, busy))
     }
 
+    /// Removes the snapshots of Scrollback popups whose terminals ended
+    /// (EON-C10).
+    fn retain_snapshots(&mut self) {
+        let sessions = &self.sessions;
+        self.scrollback.retain(
+            |terminal, uncertain| {
+                sessions
+                    .iter()
+                    .any(|session| session.id == terminal && !session.is_finished())
+                    || uncertain.is_some_and(sessions::launch_record_remains)
+            },
+            &self.log,
+        );
+    }
+
     /// The loop turn's work before its control request: follows the window's
     /// terminals, focus and attention. The turn publishes it to subscribers
     /// once, with its action's change (EON-C39).
     fn tend(&mut self, now: Instant) {
+        self.retain_snapshots();
         if !self.stopping {
             sessions::drain_given_up_requests(&mut self.sessions);
             // The backstop for a naming that failed or came late.
@@ -2595,6 +2622,51 @@ fn dispatch_control_request(
                     .inspect(|_| *intent = InvokeIntent::Focus),
                 _ => None,
             };
+            // Scrollback reads the tab's shown terminal and writes its
+            // snapshot before its popup starts the editor on it (EON-C10).
+            // The window key is the person's; a terminal's request is an
+            // agent's read, which `[agents] terminal_access` governs.
+            let snapshot = match &action {
+                Action::InvokePopup { tab, entry, .. } => {
+                    if caller.is_some()
+                        && state.agents.terminal_access == TerminalAccess::None
+                        && workspace.is_scrollback(caller.as_deref(), entry)
+                    {
+                        return (
+                            ControlResponse::Workspace(Response::Failure(failure(
+                                "terminal-access-off",
+                                "[agents] terminal_access is \"none\" for this window",
+                            ))),
+                            false,
+                        );
+                    }
+                    match workspace.scrollback_source(caller.as_deref(), tab, entry) {
+                        Some((target, terminal)) => match scrollback_snapshot(
+                            &mut state.sessions,
+                            &mut state.scrollback,
+                            &target,
+                            &terminal,
+                            &state.log,
+                        ) {
+                            Ok(snapshot) => Some(snapshot),
+                            Err(detail) => {
+                                return (
+                                    ControlResponse::Workspace(Response::Failure(failure(
+                                        "popup-start",
+                                        detail,
+                                    ))),
+                                    false,
+                                );
+                            }
+                        },
+                        None => None,
+                    }
+                }
+                _ => None,
+            };
+            // The terminal Scrollback's popup starts as, once its snapshot
+            // records it.
+            let mut marked = None;
             let direct_cross_workspace = jump.is_none()
                 && accepted.as_ref().is_some_and(|action| {
                     matches!(action, Action::FocusAttention { tab, .. }
@@ -2620,6 +2692,14 @@ fn dispatch_control_request(
                     caller.as_deref(),
                     action,
                     |command, directory| {
+                        let edit;
+                        let command = match (command, &snapshot) {
+                            (PopupCommand::Scrollback, Some(snapshot)) => {
+                                edit = PopupCommand::Edit(snapshot.file.clone().into_os_string());
+                                &edit
+                            }
+                            _ => command,
+                        };
                         managed_environment::prepare_popup_command(
                             command,
                             inputs.managed.shell_bin.as_deref(),
@@ -2630,20 +2710,32 @@ fn dispatch_control_request(
                         )
                     },
                     |operation| {
-                        apply_session_operation(
-                            inputs,
-                            config,
-                            log,
-                            component_generation,
-                            sessions,
-                            initial_child,
-                            operation,
-                            PairStart::Later,
-                            venus,
-                        )
+                        mark_before_start(snapshot.as_ref(), &mut marked, operation, |operation| {
+                            apply_session_operation(
+                                inputs,
+                                config,
+                                log,
+                                component_generation,
+                                sessions,
+                                initial_child,
+                                operation,
+                                PairStart::Later,
+                                venus,
+                            )
+                        })
                     },
                 ),
             };
+            if let Some(snapshot) = snapshot {
+                settle_snapshot(
+                    &mut state.scrollback,
+                    snapshot,
+                    marked,
+                    result.is_ok(),
+                    sessions,
+                    log,
+                );
+            }
             if result.is_ok()
                 && let Some((directory, pair)) = visit
             {
@@ -2701,6 +2793,84 @@ fn dispatch_control_request(
             }
         }
     }
+}
+
+/// Records in Scrollback's `snapshot` the terminal its editor starts as
+/// before `start` runs that Start, so a recovery that adopts the editor
+/// adopts its snapshot too; a failed record starts nothing (EON-C10).
+fn mark_before_start(
+    snapshot: Option<&scrollback::Snapshot>,
+    marked: &mut Option<workspace::Session>,
+    operation: SessionOperation,
+    start: impl FnOnce(SessionOperation) -> Result<(), String>,
+) -> Result<(), String> {
+    if let (
+        Some(snapshot),
+        SessionOperation::Start {
+            session,
+            command: LaunchCommand::Tool(argv),
+            ..
+        },
+    ) = (snapshot, &operation)
+        && argv
+            .last()
+            .is_some_and(|last| last.as_os_str() == snapshot.file.as_os_str())
+    {
+        snapshot.mark(&session.id)?;
+        *marked = Some(session.clone());
+    }
+    start(operation)
+}
+
+/// Gives a press's snapshot to the terminal its record names, or removes it
+/// when no terminal can be using it. A failed start whose rollback could not
+/// confirm cleanup keeps its launch record and may leave the editor running,
+/// so its snapshot stays until that record goes, as a stop that ends the
+/// terminal removes it, or for the recovery that adopts it (EON-C10).
+fn settle_snapshot(
+    store: &mut Snapshots,
+    snapshot: scrollback::Snapshot,
+    marked: Option<workspace::Session>,
+    started: bool,
+    running: &[RunningSession],
+    log: &DiagnosticLog,
+) {
+    match marked {
+        Some(session) if started || running.iter().any(|running| running.id == session.id) => {
+            store.own(snapshot, session.id, None);
+        }
+        Some(session) if sessions::launch_record_remains(&session.endpoint) => {
+            log.record(&format!(
+                "keeping scrollback snapshot {} of terminal {}, which may still run",
+                snapshot.file.display(),
+                session.id
+            ));
+            store.own(snapshot, session.id, Some(session.endpoint));
+        }
+        _ => {
+            if let Err(error) = store.discard(snapshot) {
+                log.record(&error);
+            }
+        }
+    }
+}
+
+/// Reads `terminal`'s history for Scrollback and writes it to a new
+/// snapshot of the pane or popup `target` (EON-C10).
+fn scrollback_snapshot(
+    running: &mut [RunningSession],
+    store: &mut Snapshots,
+    target: &str,
+    terminal: &str,
+    log: &DiagnosticLog,
+) -> Result<scrollback::Snapshot, String> {
+    let session = running
+        .iter_mut()
+        .find(|session| session.id == terminal)
+        .ok_or_else(|| format!("terminal {terminal} has ended"))?;
+    let history = sessions::read_history(session, log)
+        .map_err(|error| format!("cannot read the terminal's history: {}", error.detail))?;
+    store.write(target, &history)
 }
 
 /// What a terminal request does to its target.
@@ -2892,14 +3062,18 @@ mod tests {
     use super::apply_session_operation;
     use super::{
         Action, DiagnosticLog, Dispatched, LaunchMode, PairStart, SESSION_START_TIMEOUT,
-        SupervisorState, WorkspaceSet, effective_uid, pair_command, prepare_configuration,
-        prepare_runtime, reap_finished_sessions, stop_generation_sessions, stop_owned_session,
-        stop_owned_sessions, temporary_directory, venus_command, window_bar, xdg_path,
+        SupervisorState, WorkspaceSet, effective_uid, mark_before_start, pair_command,
+        prepare_configuration, prepare_runtime, reap_finished_sessions, settle_snapshot,
+        stop_generation_sessions, stop_owned_session, stop_owned_sessions, temporary_directory,
+        venus_command, window_bar, xdg_path,
     };
+    use crate::scrollback::{Snapshots, tests::history};
     use crate::sessions::{
         self,
         tests::{leased_orbit, orbit_pid, script},
     };
+    use crate::workspace::{LaunchCommand, Session, SessionOperation};
+    use orbit_protocol::management::Screen;
     use std::{
         ffi::OsString,
         fs,
@@ -2912,6 +3086,104 @@ mod tests {
         process::Command,
         time::{Duration, Instant},
     };
+
+    /// Scrollback's record names its editor's terminal before that Start
+    /// runs, and the started popup owns the snapshot. A record that cannot be
+    /// written starts nothing and leaves no snapshot. A failed start keeps
+    /// its snapshot only while its launch record says the editor may still
+    /// run (EON-C10).
+    #[test]
+    fn a_scrollback_record_precedes_its_editor_and_only_a_confirmed_failure_discards() {
+        let runtime = temporary_directory();
+        let log = DiagnosticLog::open_in(Ok(runtime.join("logs")), "g1-test", "workspace");
+        let mut store = Snapshots::new(&runtime);
+        let session = |id: &str| Session {
+            id: id.into(),
+            endpoint: runtime.join(format!("{id}.sock")),
+        };
+        let start = |file: &Path, id: &str| SessionOperation::Start {
+            session: session(id),
+            directory: runtime.clone(),
+            command: LaunchCommand::Tool(vec!["editor".into(), file.as_os_str().to_owned()]),
+            tab: Some("t1".into()),
+        };
+        let record = |file: &Path| file.with_file_name(".terminal");
+
+        let started = store.write("p1", &history(Screen::Primary, 0, 0)).unwrap();
+        let mut marked = None;
+        mark_before_start(
+            Some(&started),
+            &mut marked,
+            start(&started.file, "session-3"),
+            |_| {
+                assert_eq!(
+                    fs::read_to_string(record(&started.file)).unwrap(),
+                    "session-3"
+                );
+                Ok(())
+            },
+        )
+        .unwrap();
+        assert_eq!(marked, Some(session("session-3")));
+        let directory = started.file.parent().unwrap().to_owned();
+        settle_snapshot(&mut store, started, marked, true, &[], &log);
+        assert!(directory.exists());
+        store.retain(|_, _| false, &log);
+        assert!(!directory.exists());
+
+        let refused = store.write("p1", &history(Screen::Primary, 0, 0)).unwrap();
+        fs::write(record(&refused.file), "planted").unwrap();
+        let mut marked = None;
+        assert!(
+            mark_before_start(
+                Some(&refused),
+                &mut marked,
+                start(&refused.file, "session-4"),
+                |_| panic!("the editor started without its record"),
+            )
+            .is_err()
+        );
+        assert_eq!(marked, None);
+        let directory = refused.file.parent().unwrap().to_owned();
+        settle_snapshot(&mut store, refused, marked, false, &[], &log);
+        assert!(!directory.exists());
+
+        // A rollback that could not confirm its cleanup keeps the launch
+        // record; the editor may run, so its snapshot stays until the record
+        // goes, as a stop that ends the terminal removes it.
+        let uncertain = |_: &str, endpoint: Option<&Path>| {
+            endpoint.is_some_and(sessions::launch_record_remains)
+        };
+        for (id, unconfirmed) in [("session-5", false), ("session-6", true)] {
+            let failed = store.write("p1", &history(Screen::Primary, 0, 0)).unwrap();
+            if unconfirmed {
+                fs::write(runtime.join(format!("{id}.sock.record")), "").unwrap();
+            }
+            let mut marked = None;
+            assert!(
+                mark_before_start(Some(&failed), &mut marked, start(&failed.file, id), |_| {
+                    Err("start failed".into())
+                })
+                .is_err()
+            );
+            let file = failed.file.clone();
+            settle_snapshot(&mut store, failed, marked, false, &[], &log);
+            assert_eq!(
+                fs::read_to_string(record(&file)).is_ok(),
+                unconfirmed,
+                "{id}"
+            );
+            store.retain(uncertain, &log);
+            assert_eq!(file.exists(), unconfirmed, "{id}");
+            if unconfirmed {
+                fs::remove_file(runtime.join(format!("{id}.sock.record"))).unwrap();
+                store.retain(uncertain, &log);
+                assert!(!file.parent().unwrap().exists(), "{id}");
+            }
+        }
+        assert!(!runtime.join("snapshots").exists());
+        fs::remove_dir_all(runtime).unwrap();
+    }
 
     fn window_agents() -> crate::managed_environment::Agents {
         crate::managed_environment::Agents {
@@ -2956,6 +3228,7 @@ mod tests {
             agents: window_agents(),
             notices: crate::notification::Notices::default(),
             subscribers: crate::subscriptions::Subscribers::new("g1-test"),
+            scrollback: crate::scrollback::Snapshots::new(Path::new("/unused")),
             log: DiagnosticLog::open_in(Ok(root.join("logs")), "g1-test", "workspace"),
         };
         let subscribe = |state: &mut SupervisorState, caller: Option<&str>, filter| {
@@ -3144,6 +3417,7 @@ mod tests {
             agents: window_agents(),
             notices: crate::notification::Notices::default(),
             subscribers: crate::subscriptions::Subscribers::new("g1-test"),
+            scrollback: crate::scrollback::Snapshots::new(Path::new("/unused")),
             log: DiagnosticLog::open_in(Ok(root.join("logs")), "g1-test", "workspace"),
         };
         let Dispatched::Subscribe(subscriber) = super::dispatch(
@@ -3322,6 +3596,7 @@ mod tests {
             agents: window_agents(),
             notices: crate::notification::Notices::default(),
             subscribers: crate::subscriptions::Subscribers::new("g1-test"),
+            scrollback: crate::scrollback::Snapshots::new(Path::new("/unused")),
             log: DiagnosticLog::open_in(Ok(root.join("logs")), "g1-test", "workspace"),
         };
         let Dispatched::Subscribe(subscriber) = super::dispatch(
@@ -3434,6 +3709,7 @@ mod tests {
             agents: window_agents(),
             notices,
             subscribers: crate::subscriptions::Subscribers::new("g1-test"),
+            scrollback: crate::scrollback::Snapshots::new(Path::new("/unused")),
             log,
         };
         let closes = (0..2)
@@ -3520,6 +3796,7 @@ mod tests {
             agents: window_agents(),
             notices,
             subscribers: crate::subscriptions::Subscribers::new("g1-test"),
+            scrollback: crate::scrollback::Snapshots::new(Path::new("/unused")),
             log,
         };
         // The pending pair is a popup and not counted (EON-C18).
@@ -3662,6 +3939,7 @@ mod tests {
             agents: window_agents(),
             notices: crate::notification::Notices::default(),
             subscribers: crate::subscriptions::Subscribers::new("g1-test"),
+            scrollback: crate::scrollback::Snapshots::new(Path::new("/unused")),
             log,
         };
         let inputs = crate::fixtures::inputs();
@@ -3867,6 +4145,7 @@ mod tests {
             agents: window_agents(),
             notices: crate::notification::Notices::default(),
             subscribers: crate::subscriptions::Subscribers::new("g1-test"),
+            scrollback: crate::scrollback::Snapshots::new(Path::new("/unused")),
             log: DiagnosticLog::open_in(Ok(roots[0].join("logs")), "g1-test", "workspace"),
         };
         let inputs = crate::fixtures::inputs();
@@ -3993,6 +4272,7 @@ mod tests {
             agents: window_agents(),
             notices: crate::notification::Notices::default(),
             subscribers: crate::subscriptions::Subscribers::new("g1-test"),
+            scrollback: crate::scrollback::Snapshots::new(Path::new("/unused")),
             log: DiagnosticLog::open_in(Ok(root.join("logs")), "g1-test", "workspace"),
         };
         let inputs = crate::fixtures::inputs();
@@ -4049,6 +4329,7 @@ mod tests {
             agents: window_agents(),
             notices: crate::notification::Notices::default(),
             subscribers: crate::subscriptions::Subscribers::new("g1-test"),
+            scrollback: crate::scrollback::Snapshots::new(Path::new("/unused")),
             log: DiagnosticLog::open_in(Ok(root.join("logs")), "g1-test", "workspace"),
         };
 

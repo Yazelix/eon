@@ -137,6 +137,15 @@ pub(crate) fn inputs() -> Inputs {
                         PopupCommand::Argv(vec!["eon-workspaces".into()]),
                         false,
                     ),
+                    // Scrollback's command is built for each press (EON-C10).
+                    (
+                        "scrollback",
+                        "Scrollback",
+                        "KeyE",
+                        ALT | SHIFT,
+                        PopupCommand::Scrollback,
+                        false,
+                    ),
                 ]
                 .into_iter()
                 .map(

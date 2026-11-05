@@ -1349,22 +1349,28 @@ fn control(
 /// What the 8 MiB bound left out of `eon pane history`'s text (EON-C35),
 /// when it left out anything.
 fn history_notice(history: &TerminalHistory) -> Option<String> {
-    let lines = match history.omitted_lines {
+    history_left_out(history.omitted_lines, history.cut_bytes).map(|left_out| {
+        format!(
+            "eon: the history is over its {} MiB bound; left out {left_out}",
+            MAX_HISTORY_TEXT_BYTES / (1024 * 1024)
+        )
+    })
+}
+
+/// The earliest lines and the newest line's start that ORB-C17's history
+/// bound left out, in words, when it left out anything.
+pub(crate) fn history_left_out(omitted_lines: u32, cut_bytes: u32) -> Option<String> {
+    let lines = match omitted_lines {
         0 => None,
         1 => Some("the earliest line".to_owned()),
         lines => Some(format!("the {lines} earliest lines")),
     };
-    let cut = (history.cut_bytes > 0)
-        .then(|| format!("the first {} bytes of the newest line", history.cut_bytes));
-    let left_out = match (lines, cut) {
-        (None, None) => return None,
-        (Some(part), None) | (None, Some(part)) => part,
-        (Some(lines), Some(cut)) => format!("{lines} and {cut}"),
-    };
-    Some(format!(
-        "eon: the history is over its {} MiB bound; left out {left_out}",
-        MAX_HISTORY_TEXT_BYTES / (1024 * 1024)
-    ))
+    let cut = (cut_bytes > 0).then(|| format!("the first {cut_bytes} bytes of the newest line"));
+    match (lines, cut) {
+        (None, None) => None,
+        (Some(part), None) | (None, Some(part)) => Some(part),
+        (Some(lines), Some(cut)) => Some(format!("{lines} and {cut}")),
+    }
 }
 
 /// A result's `window`: its ID, or null for the default namespace.

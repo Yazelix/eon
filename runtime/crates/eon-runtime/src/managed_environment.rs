@@ -382,6 +382,9 @@ pub enum PopupCommand {
     Argv(Vec<OsString>),
     /// The configured editor on this file, as `eon edit` opens it.
     Edit(OsString),
+    /// Scrollback's: the configured editor on a private snapshot of the tab's
+    /// shown terminal, which the supervisor writes for each press (EON-C10).
+    Scrollback,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -514,7 +517,10 @@ pub(crate) fn print_defaults(defaults: &Defaults, json: bool) -> Result<String, 
         if !matches!(entry.id.as_str(), "project" | "files") {
             settings["enabled"] = true.into();
         }
-        if !matches!(entry.id.as_str(), "project" | "files" | "anima") {
+        if !matches!(
+            entry.id.as_str(),
+            "project" | "files" | "anima" | "scrollback"
+        ) {
             settings["keep_alive"] = entry.keep_alive.into();
             settings["command"] = match &entry.command {
                 PopupCommand::AgentAuto => "auto".into(),
@@ -530,6 +536,7 @@ pub(crate) fn print_defaults(defaults: &Defaults, json: bool) -> Result<String, 
                     json!(argv)
                 }
                 PopupCommand::Edit(_) => return Err("a default popup cannot edit a file".into()),
+                PopupCommand::Scrollback => unreachable!("Scrollback's command is Eon-owned"),
             };
         }
         popups.insert(entry.id.clone(), settings);
@@ -601,7 +608,7 @@ fn defaults_table(
         output.push_str("# Project is required and shows the tab's Files on quick search.\n");
     } else if section == "popups.files" {
         output.push_str("# Files is required: it is the tab's directory pair.\n");
-    } else if section == "popups.anima" {
+    } else if matches!(section, "popups.anima" | "popups.scrollback") {
         output.push_str("# command and keep_alive are Eon-owned.\n");
     }
     for (key, value) in settings.as_object().unwrap() {
@@ -1001,11 +1008,11 @@ pub(crate) fn popup_catalog(
             settings.enabled = None;
             settings.keep_alive = None;
         }
-        if id == "anima" && settings.command.is_some() {
-            return Err("popups.anima.command is Eon-owned".into());
+        if matches!(id, "anima" | "scrollback") && settings.command.is_some() {
+            return Err(format!("popups.{id}.command is Eon-owned"));
         }
-        if id == "anima" && settings.keep_alive == Some(true) {
-            return Err("popups.anima.keep_alive must remain false".into());
+        if matches!(id, "anima" | "scrollback") && settings.keep_alive == Some(true) {
+            return Err(format!("popups.{id}.keep_alive must remain false"));
         }
         if settings.enabled == Some(false) {
             continue;
@@ -1273,6 +1280,9 @@ pub(crate) fn prepare_popup_command(
             let mut argv = editor_command(config, defaults, log)?;
             argv.push(file.clone());
             argv
+        }
+        PopupCommand::Scrollback => {
+            return Err("the supervisor builds Scrollback's command for each press".into());
         }
         PopupCommand::AgentAuto => {
             for candidate in defaults.agent_commands {
@@ -3242,6 +3252,115 @@ label = "Browse"
             popup_catalog(&root, &inputs.defaults, None)
                 .unwrap_err()
                 .contains("popups.commands.keybinding conflicts with popups.git.keybinding")
+        );
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    /// Scrollback's command and lifetime are Eon's: its key, label and
+    /// enabled flag are settings, and a configured popup on its default key
+    /// takes the key without failing the load (EON-C10).
+    #[test]
+    fn scrollback_owns_its_command_and_yields_its_default_key() {
+        let mut inputs = crate::fixtures::inputs();
+        inputs.defaults.popups.entries.push(PopupDefinition {
+            id: "scrollback".into(),
+            label: "Scrollback".into(),
+            shortcut: PopupKey::Bound(Shortcut {
+                modifiers: ALT | SHIFT,
+                key: "KeyE".into(),
+            }),
+            command: PopupCommand::Scrollback,
+            keep_alive: false,
+        });
+        let json: serde_json::Value =
+            serde_json::from_str(&super::print_defaults(&inputs.defaults, true).unwrap()).unwrap();
+        assert_eq!(
+            json["popups"]["scrollback"],
+            serde_json::json!({
+                "enabled": true,
+                "keybinding": "Alt+Shift+E",
+                "label": "Scrollback",
+            })
+        );
+        assert!(
+            super::print_defaults(&inputs.defaults, false)
+                .unwrap()
+                .contains("[popups.scrollback]\n# command and keep_alive are Eon-owned.\n")
+        );
+        let root = std::env::temp_dir().join(format!(
+            "eon-managed-environment-test-{}-scrollback",
+            std::process::id()
+        ));
+        fs::create_dir(&root).unwrap();
+        for (source, expected) in [
+            (
+                "[popups.scrollback]\ncommand = ['less']\n",
+                "popups.scrollback.command is Eon-owned",
+            ),
+            (
+                "[popups.scrollback]\nkeep_alive = true\n",
+                "popups.scrollback.keep_alive must remain false",
+            ),
+        ] {
+            fs::write(root.join("config.toml"), source).unwrap();
+            assert_eq!(
+                popup_catalog(&root, &inputs.defaults, None).unwrap_err(),
+                expected
+            );
+        }
+        let scrollback = |source: &str| {
+            fs::write(root.join("config.toml"), source).unwrap();
+            popup_catalog(&root, &inputs.defaults, None)
+                .unwrap()
+                .entries
+                .into_iter()
+                .find(|entry| entry.id == "scrollback")
+        };
+        let configured = scrollback(
+            "[popups.scrollback]\nkeybinding = 'Alt+Shift+V'\nlabel = 'History'\nkeep_alive = false\n",
+        )
+        .unwrap();
+        assert_eq!(
+            (
+                configured.label.as_str(),
+                &configured.shortcut,
+                &configured.command,
+                configured.keep_alive
+            ),
+            (
+                "History",
+                &PopupKey::Bound(Shortcut {
+                    modifiers: ALT | SHIFT,
+                    key: "KeyV".into(),
+                }),
+                &PopupCommand::Scrollback,
+                false
+            )
+        );
+        assert_eq!(scrollback("[popups.scrollback]\nenabled = false\n"), None);
+        assert_eq!(
+            scrollback("[popups.less]\ncommand = ['less']\nkeybinding = 'Alt+Shift+E'\n")
+                .unwrap()
+                .shortcut,
+            PopupKey::Overridden {
+                default: Shortcut {
+                    modifiers: ALT | SHIFT,
+                    key: "KeyE".into(),
+                },
+                by: "less".into(),
+            }
+        );
+        assert_eq!(
+            prepare_popup_command(
+                &PopupCommand::Scrollback,
+                None,
+                &root,
+                &root,
+                &inputs.defaults,
+                None
+            )
+            .unwrap_err(),
+            "the supervisor builds Scrollback's command for each press"
         );
         fs::remove_dir_all(root).unwrap();
     }

@@ -159,6 +159,12 @@ label = "Git" # Popup display name.
 keybinding = "Alt+Z" # Popup shortcut using physical keys.
 label = "Quick search" # Popup display name.
 
+[popups.scrollback]
+# command and keep_alive are Eon-owned.
+enabled = true # Enable this feature or popup.
+keybinding = "Alt+Shift+E" # Popup shortcut using physical keys.
+label = "Scrollback" # Popup display name.
+
 [popups.workspaces]
 command = ["eon-workspaces"] # Direct argv, or auto for Agent's command selection.
 enabled = true # Enable this feature or popup.
@@ -359,7 +365,8 @@ and `eon pane send` may reach this window's terminals.
 - `"window"`, the default, lets any process running as you read or send to any
   pane or popup of the window, in any workspace, shown or hidden.
 - `"none"` refuses all three with `terminal-access-off` and reveals no
-  terminal content.
+  terminal content. It also refuses a terminal's request to open Scrollback;
+  the window's Scrollback key keeps working.
 
 The window reads the setting when it starts. It is a preference and a kill
 switch, not a security boundary: Eon's socket is private to your user, whose
@@ -456,8 +463,9 @@ keep_alive = true
 Built-in popup commands, labels and shortcuts are listed in the defaults above.
 Every built-in popup accepts `keybinding` and `label`. Git, Agent, Commands and
 Workspaces also accept `command`, `enabled` and `keep_alive`, and
-Agent's `command` may also be `"auto"`. Anima also accepts `enabled`; it
-rejects `command` and `keep_alive = true`. Project has no command of its own:
+Agent's `command` may also be `"auto"`. Anima and Scrollback also accept
+`enabled`; they reject `command` and `keep_alive = true`. Project has no
+command of its own:
 it shows the tab's Files on quick search, and Alt+Z hides it again when quick
 search is already shown. It rejects `command`, `enabled = false` and
 `keep_alive = true`, since it is required. A
@@ -472,12 +480,21 @@ configuration warning. For a Yazi that reads the `yazi` directory under Eon's
 configuration root, add a custom popup such as `[popups.yazi]` with
 `command = ["eon-yazi"]` and a free `keybinding`.
 Anima opens a random animation and stops when dismissed or replaced.
+Scrollback opens what the tab shows, its shown popup or else its selected
+pane, in `[editor] command` (see [Editor](#editor)): the terminal's retained
+history followed by its screen, as plain text in a private snapshot file that
+Eon removes when the popup ends. Its key again dismisses it, which stops the
+editor. The snapshot is limited to 8 MiB, the oldest lines dropped first, and
+its first line says what was left out; a full-screen app's terminal shows only
+its screen, and the first line says so. The bound, the plain-text layout, the
+file's private 0600 mode in a 0700 directory, and its removal at the popup's
+end are fixed for safety and by Orbit's history contract (ORB-C17).
 Commands searches and runs Eon commands.
 Workspaces lists this window's workspaces most recently shown first, the shown
 one last, marking one that needs input: Enter shows the highlighted one, and
 Enter on a name that matches none creates a workspace with that name.
-Set `enabled = false` on Git, Agent, Anima, Commands, Workspaces, or a
-custom popup to disable it.
+Set `enabled = false` on Git, Agent, Anima, Scrollback, Commands, Workspaces,
+or a custom popup to disable it.
 
 A `keybinding` you configure, on a custom popup or a built-in one, takes its
 key first. A built-in popup's default key applies only while no configured

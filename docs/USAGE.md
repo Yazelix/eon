@@ -208,6 +208,7 @@ one, and clicking another column's terminal selects it.
 | Alt+Shift+Y | Show the tab's Files, or hide it when Files is shown |
 | Alt+Shift+A | Open or dismiss the tab's Anima popup |
 | Alt+Shift+M | Open or dismiss the tab's Commands popup |
+| Alt+Shift+E | Open the shown terminal's scrollback in the configured editor, or dismiss it |
 | Alt+Shift+S | Open the Workspaces picker; in the picker, Alt+Shift+S or Enter shows the highlighted workspace, Enter on an unmatched name creates one, Ctrl+X closes the highlighted one |
 
 ### Eon Bar and tabs

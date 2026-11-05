@@ -5,6 +5,13 @@ installation, and proven contract changes.
 
 ## Unreleased
 
+- Alt+Shift+E opens the scrollback of what the tab shows, its shown popup or
+  else its selected pane, in the configured `[editor] command`: the retained
+  history and then the screen, as plain text, from a private snapshot file
+  that Eon removes when the popup ends (`eon-u5bvd.4`, EON-C10). A first line
+  says when the 8 MiB bound left lines out, or when a full-screen app shows
+  only its screen. `[popups.scrollback]` sets its `keybinding`, `label` and
+  `enabled`; a popup of yours already on Alt+Shift+E keeps the key.
 - `eon pane history TARGET [--json]` prints a pane's or popup's retained
   history followed by its screen, oldest first, as plain text with wrapped
   lines joined (`eon-u5bvd.3`, EON-C35). Past 8 MiB it leaves out the earliest

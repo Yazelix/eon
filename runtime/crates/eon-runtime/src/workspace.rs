@@ -816,6 +816,40 @@ impl WorkspaceSet {
         self.workspaces[self.caller_workspace(caller).ok()?].shown_picker(tab, entry)
     }
 
+    /// The terminal invoking `entry` in `tab` of the caller's workspace
+    /// would snapshot, as its pane or popup ID and its terminal: set only when
+    /// `entry` is Scrollback and the invocation would open a new one in the
+    /// active tab (EON-C10).
+    /// Whether `entry` of the caller's workspace is a Scrollback popup.
+    pub(crate) fn is_scrollback(&self, caller: Option<&str>, entry: &str) -> bool {
+        self.caller_workspace(caller).is_ok_and(|index| {
+            self.workspaces[index]
+                .definition(entry)
+                .is_ok_and(|definition| definition.command == PopupCommand::Scrollback)
+        })
+    }
+
+    pub(crate) fn scrollback_source(
+        &self,
+        caller: Option<&str>,
+        tab: &str,
+        entry: &str,
+    ) -> Option<(String, String)> {
+        if !self.is_scrollback(caller, entry) {
+            return None;
+        }
+        let workspace = &self.workspaces[self.caller_workspace(caller).ok()?];
+        let index = workspace.tabs.iter().position(|item| item.id == tab)?;
+        let tab = &workspace.tabs[index];
+        if index != workspace.active
+            || tab.pending
+            || tab.popups.iter().any(|popup| popup.entry == entry)
+        {
+            return None;
+        }
+        workspace.shown_terminal(index)
+    }
+
     fn reject_duplicate(&self, request_id: &str) -> Result<(), Failure> {
         if self
             .recent_mutations
@@ -1452,8 +1486,12 @@ impl Workspace {
             .position(|popup| popup.entry == shown_entry)
         {
             let popup = self.tabs[tab_index].popups[index].clone();
-            // Files keeps its Yazi, and its location, across tab-directory changes.
-            if popup.entry != "files" && popup.launch_directory != self.tabs[tab_index].directory {
+            // Files keeps its Yazi, and its location, across tab-directory
+            // changes, and a Scrollback snapshot belongs to no directory.
+            if popup.entry != "files"
+                && definition.command != PopupCommand::Scrollback
+                && popup.launch_directory != self.tabs[tab_index].directory
+            {
                 let candidate =
                     self.popup_candidate(ids, allowance, tab_index, &definition, true)?;
                 let launch =
@@ -1493,6 +1531,12 @@ impl Workspace {
                 self.tabs[tab_index].covered_popup = None;
             }
             self.tabs[tab_index].selected_popup = Some(popup.id.clone());
+            return Ok(());
+        }
+        // A tab showing no terminal has nothing to snapshot (EON-C10).
+        if definition.command == PopupCommand::Scrollback
+            && self.shown_terminal(tab_index).is_none()
+        {
             return Ok(());
         }
         self.open_popup(ids, allowance, tab_index, entry, prepare, operate, false)
@@ -1753,6 +1797,22 @@ impl Workspace {
             popup.session.id.clone(),
             tab.selected_popup.as_deref() == Some(&popup.id),
         ))
+    }
+
+    /// The terminal a tab shows, as its pane or popup ID and its terminal:
+    /// its shown popup, else its selected pane.
+    fn shown_terminal(&self, tab_index: usize) -> Option<(String, String)> {
+        let tab = &self.tabs[tab_index];
+        if let Some(selected) = tab.selected_popup.as_deref() {
+            return tab
+                .popups
+                .iter()
+                .find(|popup| popup.id == selected)
+                .map(|popup| (popup.id.clone(), popup.session.id.clone()));
+        }
+        let column = &tab.columns[tab.selected_column?];
+        let pane = &column.panes[column.expanded];
+        Some((pane.id.clone(), pane.session.id.clone()))
     }
 
     fn shown_picker(&self, tab: &str, entry: &str) -> Option<String> {
@@ -5060,6 +5120,13 @@ mod tests {
                     command: PopupCommand::Argv(vec!["commands".into()]),
                     keep_alive: false,
                 },
+                PopupDefinition {
+                    id: "scrollback".into(),
+                    label: "Scrollback".into(),
+                    shortcut: PopupKey::Unbound,
+                    command: PopupCommand::Scrollback,
+                    keep_alive: false,
+                },
             ],
         }
     }
@@ -5068,8 +5135,92 @@ mod tests {
         match command {
             PopupCommand::Argv(argv) => Ok(argv.clone()),
             PopupCommand::Edit(file) => Ok(vec!["editor".into(), file.clone()]),
+            PopupCommand::Scrollback => Ok(vec!["snapshot-editor".into()]),
             PopupCommand::AgentAuto => unreachable!(),
         }
+    }
+
+    /// Scrollback snapshots what its active tab shows, its shown popup else
+    /// its selected pane, opens as a transient over it, and its key again
+    /// hides it; a tab showing no terminal, a hidden tab and a live
+    /// Scrollback name no source (EON-C10).
+    #[test]
+    fn scrollback_snapshots_the_shown_terminal_and_covers_it_as_a_transient() {
+        let mut set = two_workspace_set(|_| Ok(()));
+        let request = |set: &mut WorkspaceSet, id: &str, action: Action| {
+            set.dispatch(id, None, action, prepared, |_| Ok(()))
+                .unwrap();
+            set.snapshot().tabs.remove(0)
+        };
+        let tab = set.snapshot().tabs.remove(0);
+        let pane = tab.selected_pane.clone().unwrap();
+        let session = |set: &WorkspaceSet, id: &str| {
+            let tab = set.snapshot().tabs.remove(0);
+            tab.panes()
+                .find(|pane| pane.id == id)
+                .map(|pane| pane.session.clone())
+                .or_else(|| {
+                    tab.popups
+                        .iter()
+                        .find(|popup| popup.id == id)
+                        .map(|popup| popup.session.clone())
+                })
+                .unwrap()
+        };
+        assert_eq!(
+            set.scrollback_source(None, "t1", "scrollback"),
+            Some((pane.clone(), session(&set, &pane)))
+        );
+        assert_eq!(set.scrollback_source(None, "t1", "commands"), None);
+
+        // Over Git, it snapshots Git and shows Git again when it ends.
+        let git = request(&mut set, "git", invoke("t1", "git")).popups[0]
+            .id
+            .clone();
+        assert_eq!(
+            set.scrollback_source(None, "t1", "scrollback"),
+            Some((git.clone(), session(&set, &git)))
+        );
+        let tab = request(&mut set, "scrollback", invoke("t1", "scrollback"));
+        let scrollback = tab.popups.last().unwrap().clone();
+        assert_eq!(
+            (scrollback.entry.as_str(), tab.selected_popup.as_ref()),
+            ("scrollback", Some(&scrollback.id))
+        );
+        // A live Scrollback is no source: its key again hides it.
+        assert_eq!(set.scrollback_source(None, "t1", "scrollback"), None);
+        let toggle = |entry: &str, instance: &str| Action::InvokePopup {
+            tab: "t1".into(),
+            entry: entry.into(),
+            expected_instance: Some(instance.into()),
+            intent: InvokeIntent::Toggle,
+        };
+        let tab = request(&mut set, "hide", toggle("scrollback", &scrollback.id));
+        assert_eq!(tab.selected_popup.as_ref(), Some(&git));
+        assert!(tab.popups.iter().all(|popup| popup.entry != "scrollback"));
+
+        // Over a pane, its end shows the pane.
+        request(&mut set, "hide-git", toggle("git", &git));
+        let tab = request(&mut set, "over-pane", invoke("t1", "scrollback"));
+        let ended = tab.popups.last().unwrap().session.clone();
+        set.session_ended(&ended, SessionEnd::Exited, |_| Ok(()))
+            .unwrap();
+        let tab = set.snapshot().tabs.remove(0);
+        assert_eq!((tab.selected_popup, tab.selected_pane), (None, Some(pane)));
+
+        // A hidden tab names none, nor does a pending one.
+        request(
+            &mut set,
+            "new-tab",
+            Action::Workspace(WorkspaceAction::CreateTab),
+        );
+        let snapshot = set.snapshot();
+        assert_ne!(snapshot.active_tab, "t1");
+        assert_eq!(set.scrollback_source(None, "t1", "scrollback"), None);
+        assert_eq!(
+            set.scrollback_source(None, &snapshot.active_tab, "scrollback"),
+            None
+        );
     }
 
     #[test]

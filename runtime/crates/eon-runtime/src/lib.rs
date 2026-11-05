@@ -13,6 +13,7 @@ mod pane_labels;
 mod platform;
 mod quota;
 mod running;
+mod scrollback;
 mod sessions;
 mod subscriptions;
 mod supervisor;
