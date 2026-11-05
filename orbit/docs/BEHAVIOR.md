@@ -304,14 +304,16 @@ back, while the flood moves on. With the 1 MiB live area, whose answer
 outgrows a socket's buffer: a paste sent while the answer is partly unread
 gets `Refused(InvalidRequest)` after the whole answer and writes nothing; a
 holder that stops reading loses its connection between 0.9 and 2.5 s after
-asking, while a title the child sets meanwhile reaches the attached client
-within a second, and another connection takes the lease; and a termination
-signal while the answer is partly unread finishes it before `Stopped`.
-Sensitivity checks each made the check fail: reporting a read during a held
-update (Bend refused it with Busy), not reading the connection while a read
-waits, not reading it while an answer is written (the paste ran), no bound on
-writing an answer (the lease stayed), and writing `Stopped` without the rest
-of the answer (the answer did not decode).
+asking, while a title the child sets once the answer begins to arrive
+reaches the attached client within a second of asking, and another
+connection takes the lease; and a termination signal while the answer is
+partly unread finishes it before `Stopped`. Sensitivity checks each made the
+check fail: reporting a read during a held update (Bend refused it with
+Busy), not reading the connection while a read waits, not reading it while an
+answer is written (the paste ran), no bound on writing an answer (the lease
+stayed), writing `Stopped` without the rest of the answer (the answer did not
+decode), and holding the owner loop until an unread answer's bound passed
+(the title came after 1.04 s).
 
 ### Lease input
 

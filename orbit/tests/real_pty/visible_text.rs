@@ -317,19 +317,26 @@ fn requests_wait_for_the_whole_answer() {
 
 /// A holder that stops reading a large answer loses the connection, and the
 /// lease with it, within the one-second bound, while the PTY and the attached
-/// client go on; another connection then takes the lease.
+/// client go on; another connection then takes the lease. The child sets the
+/// title only once the answer begins to arrive, so the title always follows
+/// the queued answer; an Orbit blocked behind it would present nothing until
+/// that bound dropped the holder. Clearing the screen with the title keeps
+/// the full screen's combining marks out of the titled frame.
 fn a_holder_that_stops_reading_loses_the_lease() {
     let mut run = Driven::start();
     fill(&mut run);
     let mut client = run.attach();
     run.lease.post(&ClientMessage::ReadVisible);
     let asked = Instant::now();
-    run.command("printf '\\033]0;unblocked\\007'");
+    run.lease.await_answer();
+    let answered = asked.elapsed();
+    run.command("printf '\\033[2J\\033]0;unblocked\\007'");
     client.frame_titled("unblocked");
+    let titled = asked.elapsed();
     assert!(
-        asked.elapsed() < seconds(1.0),
-        "the unread answer held the PTY or the client for {:?}",
-        asked.elapsed()
+        titled < seconds(1.0),
+        "the unread answer held the PTY or the client for {titled:?}; \
+         the answer began after {answered:?}"
     );
     let record = suffixed(&run.server.path, ".record");
     let next = leased(&record);

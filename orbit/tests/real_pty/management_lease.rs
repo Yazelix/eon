@@ -11,11 +11,12 @@ use std::{
     os::unix::{
         ffi::OsStrExt,
         fs::{MetadataExt, PermissionsExt},
+        io::AsRawFd,
         net::UnixStream,
     },
     path::{Path, PathBuf},
     thread,
-    time::Duration,
+    time::{Duration, Instant},
 };
 
 const MANAGED: [&str; 4] = ["--management-v6", "session-2", "run-2", "component-2"];
@@ -121,6 +122,30 @@ impl Manager {
     pub fn post(&mut self, message: &ClientMessage) {
         let bytes = management::encode_client_message(message).expect("encodable request");
         let _ = self.stream.as_mut().expect("connected").write_all(&bytes);
+    }
+
+    /// Waits up to 3 s until an answer begins to arrive, without reading it.
+    pub fn await_answer(&self) {
+        assert!(self.unread.is_empty(), "bytes of an earlier answer wait");
+        let mut ready = libc::pollfd {
+            fd: self.stream.as_ref().expect("connected").as_raw_fd(),
+            events: libc::POLLIN,
+            revents: 0,
+        };
+        let end = Instant::now() + Duration::from_secs(3);
+        loop {
+            let left = end.saturating_duration_since(Instant::now()).as_millis();
+            // SAFETY: one valid pollfd for the duration of the call.
+            match unsafe { libc::poll(&mut ready, 1, left as libc::c_int) } {
+                0 => panic!("no answer within 3 s"),
+                1 => break,
+                _ => {
+                    let error = io::Error::last_os_error();
+                    assert_eq!(error.kind(), io::ErrorKind::Interrupted, "poll: {error}");
+                }
+            }
+        }
+        assert_ne!(ready.revents & libc::POLLIN, 0, "revents {:#x}", ready.revents);
     }
 
     /// Sends Acquire with this identity and the record's inode.
