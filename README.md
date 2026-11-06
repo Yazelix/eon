@@ -98,13 +98,25 @@ launch check; the full desktop proofs and the bounded Orca
 await re-proof. Other compositors, non-systemd hosts and proprietary NVIDIA
 drivers are unproved. Restarting the machine ends live terminals.
 
-**Mac:** Orbit passes its native Apple Silicon tests in this repository, and
-Venus renders, handles input, and reattaches to Orbit natively on a scale-1
-display. Han ideographs render blank with stock macOS fonts, and flag and
-skin-tone emoji don't compose. Retina scaling, Japanese input, accessibility,
-application identity, transparency and Eon itself are not proved on Mac yet.
-Eon has no Mac install path or ETA yet, and Intel Macs are out of scope.
-We're looking for Apple Silicon testers: [open an issue](https://github.com/Yazelix/eon/issues/new).
+**Mac (preview):** From v0.2.0, Eon runs on Apple Silicon Macs as a preview,
+installed with the same Nix command. It needs macOS 14 or later and was
+checked on macOS 26 and 27. The preview makes no stability promise and is not
+full support. Full Eon runs natively on Apple Silicon Mac minis, including at
+Retina scale 2. Known issues:
+
+- No notice appears when a detached window keeps running; `eon window ls`
+  lists it.
+- CJK text may look uneven on a non-Retina display.
+- With stock macOS fonts, stacked accent marks may not show, and a long
+  notice may be cut off at the window edge.
+- Not yet tested: a physical Retina panel, a second display, screen readers
+  such as VoiceOver, how the Dock and app switcher show Eon, Claude Code in
+  the agent popup, and window translucency beyond one rented Mac.
+
+Agent-finish sounds and desktop notifications are planned, Linux first.
+[EON-C7](docs/CONTRACTS.md#eon-c7--native-linux-wayland-and-apple-silicon-macos)
+has the full list of Mac gaps. Intel Macs are out of scope. Mac reports are
+welcome: [open an issue](https://github.com/Yazelix/eon/issues/new).
 
 [Report a problem](https://github.com/Yazelix/eon/issues/new?template=bug_report.yml).
 

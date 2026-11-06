@@ -344,7 +344,10 @@ socket names, JSON fields and protocol identifiers retain their spellings.
 
 ## EON-C7 — Native Linux Wayland and Apple Silicon macOS
 
-- **Status:** Partially proved
+- **Status:** Partially proved. Amended on 2026-11-06 (tier approved by Lucca
+  2026-10-27, relayed by eon-overseer; `EON-C37` scope answered by Lucca
+  2026-11-06; exact text approved by eon-overseer under Lucca's 2026-11-04
+  auto-approve rule) by `eon-igae.5`: the Apple Silicon macOS preview tier.
 - **Consumer:** A user launching a supported Eon distribution on an approved
   native platform.
 - **Trigger:** Build, install, or launch an approved Eon channel.
@@ -359,13 +362,21 @@ socket names, JSON fields and protocol identifiers retain their spellings.
   architecture or compile-only runtime claim is rejected.
 - **Owner:** Eon platform and distribution policy; child-owned kernel
   capabilities remain explicit child contracts.
-- **Boundary:** Current accepted support remains x86_64 Linux native Wayland.
-  Orbit `ORB-C14` is proved natively on Apple Silicon at
-  `0e47d26df690c7ff4b2f1a000e174b307a17e656`; Venus `VEN-C16` and full Eon have
-  partial native proofs in this repository. Apple Silicon macOS remains
-  unsupported until the Venus and full-Eon native proofs pass.
-  X11, Xwayland, Intel macOS, signing, notarization, direct bundles, and public
-  macOS distribution remain outside this contract.
+- **Boundary:** Supported: x86_64 Linux on native Wayland. Apple Silicon
+  macOS (`aarch64-darwin`) is a labelled preview from v0.2.0, for people who
+  want Eon on an Apple Silicon Mac and will report what breaks. It installs
+  only through the same Nix channel. It rests on the Apple Silicon proof
+  below, where full Eon ran natively and Venus drew at scale 2, and it is not
+  full support: its known gaps are this contract's Apple Silicon open proof,
+  `VEN-C16`'s open items and the macOS gaps that
+  [README](../README.md#status-and-limits) lists. The preview sits outside
+  Eon's promises: `EON-C37` (upgrades within 0.x) and `EON-C28` (1.x
+  stability) cover only x86_64 Linux on native Wayland. Orbit `ORB-C14` is
+  proved natively on Apple Silicon at
+  `0e47d26df690c7ff4b2f1a000e174b307a17e656`; Venus `VEN-C16` and full Eon
+  have partial native proofs in this repository. X11, Xwayland, Intel macOS,
+  signing, notarization, direct bundles, and macOS distribution outside Nix
+  remain outside this contract.
 - **Proof:** `795d735a8f61ef439c56d68e1cc4d3929af0dfcf`, `eon-monorepo-2oko.6`;
   Apple Silicon, partial, full Eon:
   `0e47d26df690c7ff4b2f1a000e174b307a17e656`, `eon-mac-launch-kz4p.12`; the
@@ -392,6 +403,8 @@ socket names, JSON fields and protocol identifiers retain their spellings.
       - The automatic part ran 90 steps with none failed or skipped, and
         `eon versions` names `aarch64-darwin` for Eon 0.1.8 and every
         component.
+      - With the main display switched to its HiDPI mode (960x540 points at
+        1920x1080 pixels), Venus logged a window scale factor of 2.
       - The package and every `checks.aarch64-darwin` output at this revision
         built natively. `cargo test` passed for `eon` (50), `eon-runtime`
         (140, 1 ignored), `eon-workspace-protocol` (14) and `eon-manifest`
@@ -426,9 +439,10 @@ socket names, JSON fields and protocol identifiers retain their spellings.
   behavior remain unproved. Machine-restart recovery is not supported.
   On Apple Silicon, a physical Retina panel, a second display, input methods,
   the agent sidebar with Claude Code and Command+C to another app are
-  unobserved, as are VEN-C16's open items;
-  `eon-prove-full-eon-apple-silicon-macos-t8o` owns the full-Eon proof, and
-  compile/evaluation is insufficient.
+  unobserved, as are VEN-C16's open items. Command+Q closes Venus without
+  Eon's Quit prompt until `eon-7cf0y.15` lands.
+  `eon-prove-full-eon-apple-silicon-macos-t8o` owns the full-Eon proof and
+  full macOS support, and compile/evaluation is insufficient.
 
 ## EON-C8 — Durable tab and pane workspace
 

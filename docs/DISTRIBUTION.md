@@ -7,10 +7,13 @@ channel. This keeps installer and archive maintenance off the published path
 until the user approves another channel.
 
 The current accepted channel targets x86_64 Linux on native Wayland. Apple
-Silicon macOS is the only approved expansion and remains within the same
-Nix-only channel until native proof succeeds. Another Linux architecture,
-X11, Xwayland, Intel macOS, signing, notarization, direct bundles, and public
-macOS distribution need separate scope and proof.
+Silicon macOS is the only approved expansion: from v0.2.0 it ships as a
+labelled preview through the same Nix-only channel, outside any stability
+promise, as
+[EON-C7](CONTRACTS.md#eon-c7--native-linux-wayland-and-apple-silicon-macos)
+states. Another Linux architecture, X11, Xwayland, Intel macOS, signing,
+notarization, direct bundles, and macOS distribution outside Nix need
+separate scope and proof.
 
 Eon's Nix Orbit package explicitly selects `LIBGHOSTTY_VT_SYS_CPU=baseline`.
 The selected libghostty binding owns the Zig compiler invocation; Eon owns this
@@ -372,8 +375,9 @@ A Nix release candidate should prove:
 - product state uses stable component identity instead of persisted store paths;
 - Eon runs in a clean Nix-enabled native Wayland environment.
 
-EON-C7 has an installed x86_64 Linux Wayland slice on private Sway. It remains
-partially proved because Apple Silicon macOS is still unproved. A non-systemd
+EON-C7 has an installed x86_64 Linux Wayland slice on private Sway and a
+partial Apple Silicon slice. It remains partially proved because full Eon on
+Apple Silicon macOS is not fully proved. A non-systemd
 support claim separately requires installed dogfood on a non-systemd native
 Wayland host with the documented kernel capabilities.
 
