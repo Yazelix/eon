@@ -1215,7 +1215,8 @@ fn supervise(
             if reap_presentation(&mut state, inputs, config)? && !state.stopping {
                 match mode {
                     LaunchMode::Workspace => log.note(&format!(
-                        "Eon Desktop exited; terminals remain active. Run `eon attach {generation}` to reconnect."
+                        "Eon Desktop exited; terminals remain active. Run `eon window attach {}` to reconnect.",
+                        super::windows::durable_window_id(state.window.as_deref(), generation)
                     )),
                     LaunchMode::Terminal => log.note(&format!(
                         "Eon Desktop exited; terminal remains active. Run `eonbase attach {generation}` to reconnect."

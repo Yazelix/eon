@@ -9,7 +9,7 @@
 //! the notification server can deliver the notice's actions back to it.
 #![cfg_attr(not(target_os = "linux"), allow(dead_code))]
 
-use super::running::window_label;
+use super::{running::window_label, windows::durable_window_id};
 use eon_workspace_protocol::v34::WindowEntry;
 
 /// The notification service's well-known bus name.
@@ -32,10 +32,10 @@ impl NoticeWindow {
         Self {
             name: window_label(window),
             id: window.window.clone(),
-            stop_command: match &window.window {
-                Some(id) => format!("eon window stop {id}"),
-                None => format!("eon stop {}", window.generation),
-            },
+            stop_command: format!(
+                "eon window stop {}",
+                durable_window_id(window.window.as_deref(), &window.generation)
+            ),
             terminals: window.live_terminals.unwrap_or(0).into(),
         }
     }
@@ -806,7 +806,7 @@ mod linux {
             let window = || NoticeWindow {
                 name: "w".into(),
                 id: None,
-                stop_command: "eon stop g1-0123456789abcdef0123456789abcdef".into(),
+                stop_command: "eon window stop default".into(),
                 terminals: 1,
             };
             notices.show(window(), "eon", &log);
@@ -902,7 +902,7 @@ mod tests {
         assert_eq!(
             notice_text(&window("refs", None, 1), false).1,
             "1 terminal keeps running in the background. Open Eon to return. \
-             Run `eon stop g1-0123456789abcdef0123456789abcdef` to stop it."
+             Run `eon window stop 01234567` to stop it."
         );
         assert_eq!(
             notice_text(&window("eon", Some("0a1b2c3d"), 3), false),
@@ -943,9 +943,7 @@ mod tests {
             failure_text(&window("w", None, 4)),
             (
                 "Eon could not quit w".into(),
-                "Some terminals may still run; run \
-                 `eon stop g1-0123456789abcdef0123456789abcdef` to try again."
-                    .into()
+                "Some terminals may still run; run `eon window stop 01234567` to try again.".into()
             )
         );
         assert_eq!(

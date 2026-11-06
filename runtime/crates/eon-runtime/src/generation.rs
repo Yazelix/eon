@@ -397,6 +397,52 @@ pub(super) fn resolve_workspace(
     Ok(resolved)
 }
 
+/// The generation in namespace `root` whose supervisor validates `caller`.
+/// Unlike `resolve_workspace`, an entry that names no generation does not
+/// stop the search: callers that report damaged entries themselves still
+/// find the caller's window beside them.
+pub(super) fn caller_generation(root: &Path, caller: &str) -> Result<String, String> {
+    let deadline = Instant::now() + CONTROL_TIMEOUT;
+    let mut owners = Vec::new();
+    let mut failures = Vec::new();
+    for (id, path) in generation_candidates(root)? {
+        let Some(id) = id.to_str().filter(|id| valid_generation(id)) else {
+            continue;
+        };
+        if let Err(detail) = validate_private_directory(&path) {
+            failures.push(format!("generation {id}: {detail}"));
+            continue;
+        }
+        let socket = path.join("eon.sock");
+        let validated = probe_generation_runtime_until(&socket, deadline).and_then(|runtime| {
+            if runtime.generation == id {
+                validates_caller(&socket, caller, deadline)
+            } else {
+                Err(EndpointFailure::new(
+                    EndpointFailureKind::Corrupt,
+                    format!("supervisor reports generation {}", runtime.generation),
+                ))
+            }
+        });
+        match validated {
+            Ok(true) => owners.push(id.to_owned()),
+            Ok(false) => {}
+            Err(error) if matches!(error.kind, EndpointFailureKind::Dead) => {}
+            Err(error) => failures.push(format!("generation {id}: {}", error.detail)),
+        }
+    }
+    match owners.as_slice() {
+        [owner] => Ok(owner.clone()),
+        [] => Err(failures.into_iter().next().unwrap_or_else(|| {
+            "the calling terminal is not live in this Eon runtime namespace".into()
+        })),
+        _ => Err(format!(
+            "more than one supervisor validates the calling terminal: {}",
+            owners.join(", ")
+        )),
+    }
+}
+
 fn unknown_caller() -> Failure {
     failure(
         "unknown-caller",
@@ -479,7 +525,7 @@ pub(super) struct GenerationRecord {
     kind: &'static str,
     pub(super) state: &'static str,
     runtime: PathBuf,
-    name: Option<String>,
+    pub(super) name: Option<String>,
     started_at: Option<u64>,
     eon_version: Option<String>,
     workspace_protocol: Option<u16>,
@@ -1262,17 +1308,31 @@ fn preferred_window_generation<'a>(current: &str, live: &'a [String]) -> Option<
         .map(String::as_str)
 }
 
-/// How a human-mode Stop asks first.
-pub(super) enum Ask {
-    /// Always, naming the generation and its terminals.
+/// How a human-mode Stop asks first, and how its messages name the target.
+pub(super) enum Ask<'a> {
+    /// Always, naming the generation and its terminals (`eon stop` and
+    /// `eonbase stop`).
     Stop,
+    /// Always, naming the window by its ID (EON-C23) and its terminals.
+    StopWindow(&'a str),
     /// Only while a terminal other than `caller`, the terminal running the
     /// command, is busy (EON-C11), naming the window: "this window" when
-    /// `this_window`, else its name.
+    /// `this_window`, else its name, else `window`, its ID.
     Quit {
         caller: Option<String>,
         this_window: bool,
+        window: &'a str,
     },
+}
+
+impl Ask<'_> {
+    /// What this command's messages call generation `target`.
+    fn subject(&self, target: &str) -> String {
+        match self {
+            Self::Stop => format!("generation {target}"),
+            Self::StopWindow(window) | Self::Quit { window, .. } => format!("window {window}"),
+        }
+    }
 }
 
 /// Quit's question and its decline, or none while nothing is busy. A
@@ -1282,6 +1342,7 @@ fn quit_question(
     sessions: &[String],
     busy: Option<&BusyTerminals>,
     this_window: bool,
+    window: &str,
 ) -> Option<(String, String)> {
     let (names, omitted) = match busy {
         Some(busy) if busy.terminals.is_empty() && busy.omitted == 0 => return None,
@@ -1298,7 +1359,7 @@ fn quit_question(
         "this window".to_owned()
     } else {
         // EONW carries names without control characters.
-        format!("window {}", record.name.as_deref().unwrap_or(&record.id))
+        format!("window {}", record.name.as_deref().unwrap_or(window))
     };
     let plural = |count: usize| if count == 1 { "" } else { "s" };
     let running = names.len() + omitted;
@@ -1323,14 +1384,12 @@ pub(super) fn stop_generation(
     ask: &Ask,
 ) -> Result<i32, String> {
     let current = current_generation(inputs)?;
+    let subject = ask.subject(target);
     let control = generation_directory(root, target).join("eon.sock");
     let observed_supervisor = socket_identity(&control);
     let Some(record) = inspect_selected_generation(inputs, root, &current, target)? else {
         return report_failure(
-            &failure(
-                "unknown-generation",
-                format!("generation {target} was not found"),
-            ),
+            &failure("unknown-generation", format!("{subject} was not found")),
             json,
         );
     };
@@ -1342,10 +1401,7 @@ pub(super) fn stop_generation(
     {
         if env::var_os(STOP_DELEGATED).is_some_and(|delegated| delegated == target) {
             return report_failure(
-                &failure(
-                    "stop-unavailable",
-                    format!("generation {target}: {}", record.detail),
-                ),
+                &failure("stop-unavailable", format!("{subject}: {}", record.detail)),
                 json,
             );
         }
@@ -1355,7 +1411,7 @@ pub(super) fn stop_generation(
         return report_failure(
             &failure(
                 "stop-unavailable",
-                format!("generation {target}: {}", record.stop.reason),
+                format!("{subject}: {}", record.stop.reason),
             ),
             json,
         );
@@ -1378,18 +1434,19 @@ pub(super) fn stop_generation(
     };
     let question = match ask {
         _ if json => None,
-        Ask::Stop => Some((
+        Ask::Stop | Ask::StopWindow(_) => Some((
             format!(
-                "Stop generation {target} and {} live terminal{} [{}]? [y/N] ",
+                "Stop {subject} and {} live terminal{} [{}]? [y/N] ",
                 record.sessions.len(),
                 if record.sessions.len() == 1 { "" } else { "s" },
                 record.sessions.join(", ")
             ),
-            format!("cancelled; no Stop sent for generation {target}\n"),
+            format!("cancelled; no Stop sent for {subject}\n"),
         )),
         Ask::Quit {
             caller,
             this_window,
+            window,
         } => {
             // Inspect again as the caller, whose own terminal is not one to
             // ask about; a failed inspection leaves every terminal busy.
@@ -1399,7 +1456,7 @@ pub(super) fn stop_generation(
             let (sessions, busy) = runtime.map_or((record.sessions.clone(), None), |runtime| {
                 (runtime.sessions, runtime.busy)
             });
-            quit_question(&record, &sessions, busy.as_ref(), *this_window)
+            quit_question(&record, &sessions, busy.as_ref(), *this_window, window)
         }
     };
     if let Some((question, cancelled)) = question
@@ -1436,7 +1493,7 @@ pub(super) fn stop_generation(
         ControlResponse::Lifecycle(LifecycleResponse::Stopped(stopped))
             if stopped.generation == target =>
         {
-            report_stopped(&stopped, json)
+            report_stopped(&stopped, json, &subject)
         }
         ControlResponse::Lifecycle(LifecycleResponse::Failure(failure)) => {
             report_failure(&failure, json)
@@ -1451,13 +1508,13 @@ pub(super) fn stop_generation(
     }
 }
 
-fn report_stopped(stopped: &Stopped, json: bool) -> Result<i32, String> {
+/// Prints `stopped`, calling its target `subject` in human mode.
+fn report_stopped(stopped: &Stopped, json: bool, subject: &str) -> Result<i32, String> {
     if json {
         write_stdout(stopped_json(stopped))?;
     } else {
         write_stdout(format!(
-            "stopped generation {}: {}\n",
-            stopped.generation,
+            "stopped {subject}: {}\n",
             stopped.sessions.join(", ")
         ))?;
     }
@@ -1513,7 +1570,7 @@ fn delegated_stop(
         )),
     };
     match result {
-        Ok(stopped) => report_stopped(&stopped, json),
+        Ok(stopped) => report_stopped(&stopped, json, &ask.subject(target)),
         Err(failure) => report_failure(&failure, json),
     }
 }
@@ -1522,17 +1579,17 @@ fn delegated_stop(
 /// here, so it always asks.
 fn delegated_question(record: &GenerationRecord, ask: &Ask) -> (String, String) {
     const UNKNOWN: &str = "It runs another Eon build, so its terminals are unknown. [y/N] ";
-    let id = &record.id;
+    let subject = ask.subject(&record.id);
     match ask {
-        Ask::Stop => (
-            format!("Stop generation {id}? {UNKNOWN}"),
-            format!("cancelled; no Stop sent for generation {id}\n"),
+        Ask::Stop | Ask::StopWindow(_) => (
+            format!("Stop {subject}? {UNKNOWN}"),
+            format!("cancelled; no Stop sent for {subject}\n"),
         ),
         Ask::Quit { this_window, .. } => {
             let window = if *this_window {
                 "this window".to_owned()
             } else {
-                format!("window {id}")
+                subject
             };
             (
                 format!("Quit {window}? {UNKNOWN}"),
@@ -1676,7 +1733,10 @@ pub(super) fn stop_generations(
         let result = match stop_generation(inputs, root, &record.id, json, ask) {
             Ok(code) => code,
             Err(error) => report_failure(
-                &failure("stop-failed", format!("generation {}: {error}", record.id)),
+                &failure(
+                    "stop-failed",
+                    format!("{}: {error}", ask.subject(&record.id)),
+                ),
                 json,
             )?,
         };
@@ -1948,7 +2008,7 @@ mod tests {
             omitted,
         };
         assert_eq!(
-            super::quit_question(&record, &sessions, Some(&busy(&[], 0)), true),
+            super::quit_question(&record, &sessions, Some(&busy(&[], 0)), true, "default"),
             None
         );
         assert_eq!(
@@ -1956,7 +2016,8 @@ mod tests {
                 &record,
                 &sessions,
                 Some(&busy(&["p2  vim", "Files"], 0)),
-                true
+                true,
+                "default"
             ),
             Some((
                 "Quit this window? It stops 2 terminals; 2 still running: p2  vim, Files. [y/N] "
@@ -1965,19 +2026,25 @@ mod tests {
             ))
         );
         // Unknown busy terminals name every live one; outside Eon the
-        // question names the window, else its generation.
+        // question names the window, else its ID.
         assert_eq!(
-            super::quit_question(&record, &sessions[..1], None, false),
+            super::quit_question(&record, &sessions[..1], None, false, "0a1b"),
             Some((
-                "Quit window g1? It stops 1 terminal; 1 still running: session-1. [y/N] ".into(),
-                "cancelled; window g1 keeps running\n".into(),
+                "Quit window 0a1b? It stops 1 terminal; 1 still running: session-1. [y/N] ".into(),
+                "cancelled; window 0a1b keeps running\n".into(),
             ))
         );
         record.name = Some("eon".into());
         assert_eq!(
-            super::quit_question(&record, &sessions, Some(&busy(&["Agent"], 4)), false)
-                .unwrap()
-                .0,
+            super::quit_question(
+                &record,
+                &sessions,
+                Some(&busy(&["Agent"], 4)),
+                false,
+                "0a1b"
+            )
+            .unwrap()
+            .0,
             "Quit window eon? It stops 2 terminals; 5 still running: Agent and 4 more. [y/N] "
         );
     }
@@ -1993,18 +2060,28 @@ mod tests {
                 "cancelled; no Stop sent for generation g1\n".into(),
             )
         );
+        // The window commands name the window by its ID, never the generation.
+        assert_eq!(
+            super::delegated_question(&record, &super::Ask::StopWindow("3f9a")),
+            (
+                "Stop window 3f9a? It runs another Eon build, so its terminals are unknown. [y/N] "
+                    .into(),
+                "cancelled; no Stop sent for window 3f9a\n".into(),
+            )
+        );
         assert_eq!(
             super::delegated_question(
                 &record,
                 &super::Ask::Quit {
                     caller: None,
                     this_window: false,
+                    window: "3f9a",
                 }
             ),
             (
-                "Quit window g1? It runs another Eon build, so its terminals are unknown. [y/N] "
+                "Quit window 3f9a? It runs another Eon build, so its terminals are unknown. [y/N] "
                     .into(),
-                "cancelled; window g1 keeps running\n".into(),
+                "cancelled; window 3f9a keeps running\n".into(),
             )
         );
     }

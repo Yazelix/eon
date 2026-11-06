@@ -131,7 +131,11 @@ const RUNNER_COMMANDS: &[(&str, &[&str], RunnerOutput)] = {
         ),
         ("Show workspace", &["workspace"], Keep),
         ("List windows", &["window", "ls"], Keep),
-        ("Stop older generations", &["stop", "previous"], Keep),
+        (
+            "Stop old-version windows",
+            &["window", "stop", "previous"],
+            Keep,
+        ),
         ("Show versions", &["versions"], Keep),
         ("Show config path", &["config-path"], Keep),
         ("Show command help", &["--help"], Keep),
@@ -155,7 +159,7 @@ fn runner_list(tab: &str) -> String {
         .enumerate()
         .map(|(index, (label, arguments, _))| {
             let command = runner_arguments(arguments, tab).join(" ");
-            format!("{index}\t{label:<24}eon {command}\n")
+            format!("{index}\t{label:<26}eon {command}\n")
         })
         .collect()
 }
@@ -603,6 +607,15 @@ fn parse_quit_arguments(arguments: &[OsString]) -> Result<Option<(bool, bool)>, 
     Ok(Some((all, json)))
 }
 
+/// The bulk Stop `eon window stop previous|all` names.
+fn bulk(which: &OsString) -> windows::Bulk {
+    if which == "previous" {
+        windows::Bulk::Previous
+    } else {
+        windows::Bulk::All
+    }
+}
+
 fn execute(inputs: &Inputs, arguments: Vec<OsString>) -> Result<i32, Error> {
     if let Some(result) = command_help(inputs.version, &arguments) {
         return result;
@@ -612,7 +625,7 @@ fn execute(inputs: &Inputs, arguments: Vec<OsString>) -> Result<i32, Error> {
     }
     if let Some((all, json)) = parse_quit_arguments(&arguments)? {
         return if all {
-            windows::quit_all(inputs, json)
+            windows::stop_windows(inputs, windows::Bulk::Quit, json)
         } else {
             windows::quit(inputs, json)
         };
@@ -632,13 +645,20 @@ fn execute(inputs: &Inputs, arguments: Vec<OsString>) -> Result<i32, Error> {
         [command, action, id] if command == "window" && action == "attach" => {
             Ok(windows::attach_window(inputs, Some(id))?)
         }
-        [command, action, all] if command == "window" && action == "stop" && all == "all" => {
-            Ok(windows::stop_namespaces(false, false)?)
-        }
-        [command, action, all, flag]
-            if command == "window" && action == "stop" && all == "all" && flag == "--json" =>
+        [command, action, which]
+            if command == "window"
+                && action == "stop"
+                && (which == "previous" || which == "all") =>
         {
-            Ok(windows::stop_namespaces(false, true)?)
+            Ok(windows::stop_windows(inputs, bulk(which), false)?)
+        }
+        [command, action, which, flag]
+            if command == "window"
+                && action == "stop"
+                && (which == "previous" || which == "all")
+                && flag == "--json" =>
+        {
+            Ok(windows::stop_windows(inputs, bulk(which), true)?)
         }
         [command, action, id] if command == "window" && action == "stop" => {
             Ok(windows::stop_window(inputs, id, false)?)
@@ -759,15 +779,17 @@ const HELP_SECTIONS: &[(&str, &[(&str, &str)])] = &[
     (
         "Windows",
         &[
-            ("quit [--json]", "End this window and its terminals"),
-            ("quit --all [--json]", "End every window's terminals"),
+            ("quit [--all] [--json]", "End this window (or every window)"),
             ("window ls [--json]", "Every running window: ID, name,"),
             ("", "version, started, terminals,"),
             ("", "compatible or not"),
             ("window new", "Open an independent window"),
             ("window attach [ID]", "Reopen a window (no ID: default)"),
-            ("window stop ID [--json]", "End that window's terminals"),
-            ("window stop all [--json]", "End every window's terminals"),
+            (
+                "window stop ID|previous|all [--json]",
+                "End a window, the old-version",
+            ),
+            ("", "ones, or all"),
         ],
     ),
     (
@@ -2541,7 +2563,13 @@ mod tests {
         assert!(
             runner_list("t2")
                 .lines()
-                .any(|line| line.ends_with("Quit this window        eon quit"))
+                .any(|line| line.ends_with("Quit this window          eon quit"))
+        );
+        // The longest label keeps a gap before its command.
+        assert!(
+            runner_list("t2")
+                .lines()
+                .any(|line| line.ends_with("Stop old-version windows  eon window stop previous"))
         );
         for (label, arguments, _) in RUNNER_COMMANDS {
             let arguments = runner_arguments(arguments, "t2");

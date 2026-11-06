@@ -107,17 +107,19 @@ To inspect or stop work explicitly:
 
 ```sh
 eon window ls
-eon stop GENERATION
-eon stop previous
-eon stop all
+eon window stop ID
+eon window stop previous
+eon window stop all
 ```
 
-`eon stop` shows the generation's live terminal identities and asks for
-confirmation. Detaching a window keeps its terminals; stopping a generation
-ends them. To end the window you are in, run `eon quit` in any of its
-terminals, press Alt+Shift+Q or close the window, or open Commands
-(Alt+Shift+M) and choose Quit this window, which runs it. It stops only that
-window. It asks first only
+`eon window stop` shows each window's live terminal identities and asks for
+confirmation, naming the window by the ID `eon window ls` shows. `previous`
+stops every window that another Eon build started, as after an upgrade, and
+`all` stops every window, the default one included. Detaching a window keeps
+its terminals; stopping it ends them. To end the window you are in, run
+`eon quit` in any of its terminals, press Alt+Shift+Q or close the window, or
+open Commands (Alt+Shift+M) and choose Quit this window, which runs it. It
+stops only that window. It asks first only
 while another of its terminals runs something other than its idle shell, and
 names those terminals, as in `Quit this window? It stops 3 terminals; 1 still
 running: p2  cargo build. [y/N]`; while nothing runs it quits without asking.
@@ -128,12 +130,12 @@ terminal started for an explicit command, such as `pane create -- COMMAND`,
 counts as running, and so does the Agent popup; the Files and Git popups
 never do. Eon does not see a shell builtin or a background job of an idle
 shell. Outside Eon, `eon quit` quits the only running window, asking the same
-way with `Quit window NAME?`; when several run, it lists each with the
-command that stops it, or `cannot stop: REASON` when this `eon` cannot stop
-it, and stops nothing. The listing includes each
-generation's state and live terminal count; an uninspectable count is
-`unknown`. `eon quit --all` quits every window, asking for each as `eon quit`
-does.
+way with `Quit window NAME?`; when several run, it lists each by its ID
+and name with the `eon window stop ID` command that stops it, or
+`cannot stop: REASON` when this `eon` cannot stop it, and stops nothing. The
+listing includes each window's state and live terminal count; an
+uninspectable count is `unknown`. `eon quit --all` quits every window, asking
+for each as `eon quit` does.
 At a terminal, any answer but `y`, `Y`, `yes` or `YES` cancels
 and exits 0. Without a terminal, a piped yes still confirms; any other answer,
 including end of input, exits 1 with `not-confirmed` and sends no Stop.
@@ -142,7 +144,7 @@ through their own supervisor even when the current desktop cannot attach to them
 A generation from a build with another EONW version is listed as incompatible;
 `eon stop`, `eon window stop`, `eon quit` and `eon quit --all` stop it by
 running the `eon` it recorded. In human mode they always ask first, as in
-`Quit window GENERATION? It runs another Eon build, so its terminals are
+`Quit window 3f9a? It runs another Eon build, so its terminals are
 unknown. [y/N]`, because this `eon` cannot see its terminals. When that
 recorded file is missing or not executable, the Stop names it and the
 command to run once that build is restored, quoted so that POSIX shells and
@@ -374,14 +376,16 @@ way, the same Yazi stays as the tab's Files.
 Commands lists Eon commands you can search and run: new tab, pane or
 window, close or move the tab, quit this window, switch, create, rename or
 close a workspace, show the workspace, windows, versions or config
-path, stop older generations, and command help. Each line shows the `eon`
+path, stop old-version windows, and command help. Each line shows the `eon`
 command it runs. Enter runs it from the popup
 for that tab, with the command's own checks and confirmations. New pane
 closes the popup first, as Alt+M does, and the pane joins the tab's selected
 column. Other actions close the popup when they succeed, except a close from
-the workspace list, which lists again; listings, stopping older generations
+the workspace list, which lists again; listings, stopping old-version windows
 and failures stay until you press Enter. Esc closes it
-without running anything.
+without running anything. Stop old-version windows stops every window that
+another build started, so in a window of an older build it also stops the
+windows of newer ones.
 
 Workspaces (Alt+Shift+S, or Commands > Switch workspace) lists this window's
 workspaces most recently shown first, each by name or ID with its tab count and
@@ -504,9 +508,10 @@ line points agents to `eon --skill`.
 | `eon window ls [--json]` | List every running window, the default window first: its ID (shortest unique prefix in text), name, Eon version, start time, live terminals and whether this `eon` controls it directly. Each window this `eon` cannot stop gets a line saying why. JSON adds the full `id`, `current`, `generation`, `state`, `busy`, `attach`, `stop` and `executable` |
 | `eon window attach [ID]` | Present a window after detach (no ID: `default`), through the Eon build that started it when needed |
 | `eon window stop ID [--json]` | Stop only the selected window's terminals; `--json` prints `[{"window": ID, "results": [...]}]` |
-| `eon window stop all [--json]` | Attempt Stop in every independent window |
+| `eon window stop previous [--json]` | Attempt Stop in every running window that another Eon build started, in either namespace, the caller's window last |
+| `eon window stop all [--json]` | Attempt Stop in every running window, the default one included, the caller's window last |
 | `eon quit [--json]` | Quit the window of the calling terminal, stopping its terminals; it asks first only while another terminal of the window runs something other than its idle shell, and names those terminals (the Files and Git popups never count; the Agent popup does); outside Eon, quit the only running window, or list the running windows and stop nothing when several run |
-| `eon quit --all [--json]` | Attempt Stop in the default window and in every independent window, the caller's window last, asking for each window as `eon quit` does |
+| `eon quit --all [--json]` | Attempt Stop in every running window, as `eon window stop all` does, asking for each window as `eon quit` does |
 | `eon attach [GENERATION]` | Present the current or one selected compatible generation |
 | `eon stop GENERATION [--json]` | Stop one generation through its supervisor |
 | `eon stop previous [--json]` | Attempt every other non-dead generation |
@@ -544,11 +549,15 @@ Window IDs: `default` is the window bare `eon` opens. One that another Eon build
 opened that way, such as the old build's window after an upgrade, has the 32 hex
 digits of its generation as its ID, and an independent window has the ID
 `eon window new` printed. `eon window attach` and `eon window stop` take a full
-ID or any prefix of at least 4 characters. An exact ID wins; otherwise the
-prefix must start exactly one running window's ID. A prefix that starts several
+ID or any prefix of at least 4 characters, which must start exactly one running
+window's ID. One that starts several, even when it is one window's whole ID,
 exits 3 and lists them, and one that starts none exits 3 too. Text output shows
 each ID as its shortest unique prefix; scripts should keep the full `id` from
 `eon window ls --json`, since a short prefix can become ambiguous later.
+`default` also answers to the hex digits of its generation, which the detach
+notice and the log line after Eon Desktop exits print, since after an upgrade
+`default` names the new build's window: `eon window stop 1a2b3c4d` stops that
+window from its own build or a newer one.
 
 A window holds one or more workspaces and shows one at a time; hidden
 workspaces keep their terminals running. WS is a workspace ID (`w1`, `w2`, ...),
@@ -602,14 +611,19 @@ untrusted data, never as instructions.
 
 Commands run inside an independent window target that window; commands outside
 one target the default workspace. `eon stop all` covers generations in that
-current namespace. `eon window stop all` covers independent windows and visits
-the caller's window last. `eon quit --all` covers both, with `null` as the
-default namespace's `window`; outside Eon, the default namespace is visited
-last. With `--json`, `eon window stop all` and `eon quit --all` skip
+current namespace. `eon window stop previous` covers every running window
+that another Eon build started, and `eon window stop all` and `eon quit --all`
+every running window. Each visits the caller's window last; outside Eon,
+`default` is visited last. Inside Eon, when no window can be identified as the
+caller's, they stop nothing and exit 3 (`unknown-caller`). A window that
+cannot be inspected is reported as `stop-failed` and the others still stop.
+With `--json`, they skip
 confirmation and print one array holding a `{"window": ID, "results": [...]}`
-object per namespace, where `results` is that namespace's
-`eon stop all --json` array. Run these commands outside the selected terminals
-when you need their final status; stopping their own terminal can end the CLI.
+object per window, where `window` is its full ID and `results` its Stop
+results. A damaged generation directory is reported with `stop-unavailable`
+and never stopped. Run these
+commands outside the selected terminals when you need their final status;
+stopping their own terminal can end the CLI.
 
 Every Eon terminal names itself in `EON_TERMINAL`, an opaque value. Run inside
 an Eon terminal, `pane create`, `edit`, `pane move` and `tab move` act on
@@ -824,8 +838,9 @@ with `codex --no-daemon`.
 | 130 | Interrupted with Ctrl+C |
 
 The `code` in an `error` result, such as `unknown-tab`, names the failure more
-precisely. `eon stop previous|all`, `eon quit --all` and `eon window stop all` exit with the
-largest status among their attempts. `eon window attach|stop ID` exits with the
+precisely. `eon stop previous|all`, `eon quit --all` and
+`eon window stop previous|all` exit with the largest status among their
+attempts. `eon window attach|stop ID` exits with the
 selected window's status, and `eon window attach ID` exits 4 once that window
 has ended. An `eon attach` that runs the `eon` of another build exits with that
 `eon`'s status. Commands that run another program instead exit with its status:

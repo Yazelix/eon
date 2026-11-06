@@ -2,13 +2,12 @@ use super::{
     cli::{Inputs, calling_terminal},
     control::{Error, failure, report_failure, write_stdout},
     generation::{
-        Ask, GenerationRecord, Select, WorkspaceTarget, attach_generation, current_generation,
-        damaged_generations, generation_directory, private_directory_exists, resolve_workspace,
-        running_generations, stop_generation, stop_generations, valid_generation, window_cells,
-        window_generation, window_json,
+        Ask, GenerationRecord, Select, WorkspaceTarget, attach_generation, caller_generation,
+        current_generation, damaged_generations, generation_directory, private_directory_exists,
+        resolve_workspace, running_generations, stop_generation, stop_generations,
+        valid_generation, window_cells, window_generation, window_json,
     },
     platform::socket_path_fits,
-    sessions::TERMINAL_VARIABLE,
     supervisor::{
         LaunchMode, SESSION_START_TIMEOUT, base_runtime_directory, prepare_runtime,
         probe_supervisor, request_id, runtime_directory, validate_private_directory,
@@ -48,7 +47,12 @@ fn windows_root() -> PathBuf {
     base_runtime_directory("eon").join("w")
 }
 
-fn existing_windows() -> Result<Vec<(String, PathBuf)>, String> {
+/// An entry under `w/` by name, with its private root or why it is not a safe
+/// Eon window.
+type WindowDirectory = (String, Result<PathBuf, String>);
+
+/// Each entry under `w/`, sorted by name.
+fn window_entries() -> Result<Vec<WindowDirectory>, String> {
     let base = base_runtime_directory("eon");
     if !private_directory_exists(&base, "runtime directory")? {
         return Ok(Vec::new());
@@ -62,16 +66,18 @@ fn existing_windows() -> Result<Vec<(String, PathBuf)>, String> {
         .map_err(|error| format!("cannot list {}: {error}", parent.display()))?
     {
         let entry = entry.map_err(|error| format!("cannot inspect Eon window: {error}"))?;
-        let id = entry.file_name();
-        let id = id.to_str().ok_or("Eon window ID is not UTF-8")?;
-        if !valid_window_id(id) {
-            return Err(format!(
+        let name = entry.file_name();
+        let root = match name.to_str() {
+            Some(id) if valid_window_id(id) => {
+                validate_private_directory(&entry.path()).map(|_| entry.path())
+            }
+            Some(id) => Err(format!(
                 "invalid Eon window ID {id:?} in {}",
                 parent.display()
-            ));
-        }
-        validate_private_directory(&entry.path())?;
-        windows.push((id.to_owned(), entry.path()));
+            )),
+            None => Err("Eon window ID is not UTF-8".into()),
+        };
+        windows.push((name.to_string_lossy().into_owned(), root));
     }
     windows.sort_by(|left, right| left.0.cmp(&right.0));
     Ok(windows)
@@ -119,55 +125,106 @@ pub(super) struct Listed {
     pub(super) record: GenerationRecord,
 }
 
-/// Every running window: the default namespace's, this build's first, then
-/// each independent window's by ID (EON-C23).
-pub(super) fn running_windows(inputs: &Inputs) -> Result<Vec<Listed>, String> {
+/// A namespace whose generations cannot be inspected: the default one, as
+/// `default`, or an independent window by its entry's name.
+struct Uninspectable {
+    id: String,
+    root: PathBuf,
+    error: String,
+}
+
+/// The full ID of default-namespace `generation` (EON-C23): `default` for
+/// this build's, else its 32 hex digits; a damaged entry keeps its raw name.
+fn default_namespace_id(generation: &str, current: &str) -> String {
+    if generation == current {
+        DEFAULT_WINDOW.into()
+    } else if valid_generation(generation) {
+        generation[3..].to_owned()
+    } else {
+        generation.to_owned()
+    }
+}
+
+/// Every running window, as `running_windows` orders it, with each
+/// namespace that cannot be inspected in its place.
+fn window_listing(inputs: &Inputs) -> Result<Vec<Result<Listed, Uninspectable>>, String> {
     let base = base_runtime_directory("eon");
     let current = current_generation(inputs)?;
     let mut windows = Vec::new();
-    for record in running_generations(inputs, &base)? {
-        let id = if record.id == current {
-            DEFAULT_WINDOW.into()
-        } else if valid_generation(&record.id) {
-            record.id[3..].to_owned()
-        } else {
-            record.id.clone()
-        };
-        windows.push((id, base.clone(), record));
+    match running_generations(inputs, &base) {
+        Ok(records) => windows.extend(records.into_iter().map(|record| {
+            (
+                default_namespace_id(&record.id, &current),
+                base.clone(),
+                Ok(record),
+            )
+        })),
+        Err(error) => windows.push((
+            DEFAULT_WINDOW.into(),
+            base.clone(),
+            Err(format!(
+                "cannot inspect Eon window {DEFAULT_WINDOW}: {error}"
+            )),
+        )),
     }
-    for (id, root) in existing_windows()? {
-        for record in running_generations(inputs, &root)
-            .map_err(|error| format!("cannot inspect Eon window {id}: {error}"))?
-        {
-            windows.push((id.clone(), root.clone(), record));
+    for (id, root) in window_entries()? {
+        let records = root
+            .and_then(|root| running_generations(inputs, &root).map(|records| (root, records)))
+            .map_err(|error| format!("cannot inspect Eon window {id}: {error}"));
+        match records {
+            Ok((root, records)) => windows.extend(
+                records
+                    .into_iter()
+                    .map(|record| (id.clone(), root.clone(), Ok(record))),
+            ),
+            Err(error) => windows.push((id.clone(), windows_root().join(&id), Err(error))),
         }
     }
-    let short = short_ids(
+    // Short IDs stay unique among the windows that cannot be inspected too,
+    // and never start the hex digits `default` answers to.
+    let mut short = short_ids(
         &windows
             .iter()
             .map(|(id, ..)| id.as_str())
             .collect::<Vec<_>>(),
-    );
+        current.get(3..),
+    )
+    .into_iter();
     Ok(windows
         .into_iter()
-        .zip(short)
-        .map(|((id, root, record), short_id)| Listed {
-            // A damaged entry shows its whole raw name.
-            short_id: if root == base && !valid_generation(&record.id) {
-                id.clone()
-            } else {
-                short_id
-            },
-            id,
-            root,
-            record,
+        .map(|(id, root, record)| match (record, short.next()) {
+            (Ok(record), short_id) => {
+                let short_id = short_id.unwrap_or_default();
+                Ok(Listed {
+                    // A damaged entry shows its whole raw name.
+                    short_id: if root == base && !valid_generation(&record.id) {
+                        id.clone()
+                    } else {
+                        short_id
+                    },
+                    id,
+                    root,
+                    record,
+                })
+            }
+            (Err(error), _) => Err(Uninspectable { id, root, error }),
         })
         .collect())
 }
 
+/// Every running window: the default namespace's, this build's first, then
+/// each independent window's by ID (EON-C23).
+pub(super) fn running_windows(inputs: &Inputs) -> Result<Vec<Listed>, String> {
+    window_listing(inputs)?
+        .into_iter()
+        .map(|found| found.map_err(|window| window.error))
+        .collect()
+}
+
 /// Each ID's shortest prefix of at least 4 characters that no other distinct
-/// ID starts with, else the whole ID; `default` stays whole.
-fn short_ids(ids: &[&str]) -> Vec<String> {
+/// ID, and not `alias` (the hex digits `default` also answers to), starts
+/// with, else the whole ID; `default` stays whole.
+fn short_ids(ids: &[&str], alias: Option<&str>) -> Vec<String> {
     ids.iter()
         .map(|id| {
             if *id == DEFAULT_WINDOW {
@@ -178,6 +235,7 @@ fn short_ids(ids: &[&str]) -> Vec<String> {
                 .find(|prefix| {
                     ids.iter()
                         .all(|other| other == id || !other.starts_with(prefix))
+                        && alias.is_none_or(|alias| !alias.starts_with(prefix))
                 })
                 .unwrap_or(id)
                 .to_owned()
@@ -214,14 +272,16 @@ enum Match {
     None,
 }
 
-/// The listed IDs `argument` selects: an exact ID, else the one distinct ID
-/// it starts.
-fn match_id(argument: &str, ids: &[&str]) -> Match {
-    if let Some(index) = ids.iter().position(|id| *id == argument) {
-        return Match::One(index);
-    }
+/// The listed windows `argument` selects: the one distinct ID it starts,
+/// whole or in part. A window also answers to its `alias`, if any. No exact
+/// ID wins over another window that `argument` also starts: an independent
+/// window's ID and a default-namespace generation's digits share one space.
+fn match_id(argument: &str, ids: &[&str], aliases: &[Option<&str>]) -> Match {
     let matches: Vec<usize> = (0..ids.len())
-        .filter(|index| ids[*index].starts_with(argument))
+        .filter(|index| {
+            ids[*index].starts_with(argument)
+                || aliases[*index].is_some_and(|alias| alias.starts_with(argument))
+        })
         .collect();
     match matches.as_slice() {
         [] => Match::None,
@@ -232,8 +292,12 @@ fn match_id(argument: &str, ids: &[&str]) -> Match {
     }
 }
 
-/// The window a syntactically valid ID or prefix selects (EON-C23).
-pub(super) fn select_window(inputs: &Inputs, argument: &str) -> Result<Window, Failure> {
+/// The window a syntactically valid ID or prefix selects (EON-C23), with the
+/// ID that people read for it: as `eon window ls` shows it (a window that is
+/// not running, as typed).
+/// `default` also answers to its generation's hex digits, the form that
+/// durable text names it by.
+pub(super) fn select_window(inputs: &Inputs, argument: &str) -> Result<(Window, String), Failure> {
     let base = base_runtime_directory("eon");
     // A default-namespace directory that names no generation keeps its raw
     // name as its ID; an argument that names or reaches one selects nothing,
@@ -247,21 +311,21 @@ pub(super) fn select_window(inputs: &Inputs, argument: &str) -> Result<Window, F
         return Err(damaged_window(argument, argument));
     }
     if argument == DEFAULT_WINDOW {
-        return Ok(Window::Default);
+        return Ok((Window::Default, DEFAULT_WINDOW.into()));
     }
-    if valid_window_id(argument)
-        && let Some(root) = window_root(argument).map_err(unavailable)?
-    {
-        return Ok(Window::Independent {
-            id: argument.to_owned(),
-            root,
-        });
-    }
+    // Every other argument is matched against every running window, so one
+    // that two windows answer to is refused, never picked.
     let listed = running_windows(inputs)
         .map_err(|error| unavailable(format!("cannot list Eon windows: {error}")))?;
     let damaged = |window: &Listed| window.root == base && !valid_generation(&window.record.id);
     let ids: Vec<&str> = listed.iter().map(|window| window.id.as_str()).collect();
-    match match_id(argument, &ids) {
+    let aliases: Vec<Option<&str>> = listed
+        .iter()
+        .map(|window| {
+            (window.root == base && window.id == DEFAULT_WINDOW).then(|| &window.record.id[3..])
+        })
+        .collect();
+    match match_id(argument, &ids, &aliases) {
         Match::One(index) => {
             let window = &listed[index];
             if listed
@@ -270,7 +334,7 @@ pub(super) fn select_window(inputs: &Inputs, argument: &str) -> Result<Window, F
             {
                 return Err(damaged_window(argument, &window.id));
             }
-            Ok(if window.root != base {
+            let selected = if window.root != base {
                 Window::Independent {
                     id: window.id.clone(),
                     root: window.root.clone(),
@@ -279,7 +343,8 @@ pub(super) fn select_window(inputs: &Inputs, argument: &str) -> Result<Window, F
                 Window::Default
             } else {
                 Window::Other(window.record.id.clone())
-            })
+            };
+            Ok((selected, window.short_id.clone()))
         }
         Match::Several(matches) => {
             let mut named: Vec<&str> = Vec::new();
@@ -293,13 +358,31 @@ pub(super) fn select_window(inputs: &Inputs, argument: &str) -> Result<Window, F
             }
             Err(ambiguous_window(argument, &windows))
         }
-        Match::None => Err(failure(
-            "unknown-window",
-            format!(
-                "no running Eon window has an ID that starts with {argument}; run `eon window ls` to list them"
-            ),
-        )),
+        // An independent window that is not running is still selected by its
+        // whole ID.
+        Match::None if valid_window_id(argument) => {
+            match window_root(argument).map_err(unavailable)? {
+                Some(root) => Ok((
+                    Window::Independent {
+                        id: argument.to_owned(),
+                        root,
+                    },
+                    argument.to_owned(),
+                )),
+                None => Err(unknown_window(argument)),
+            }
+        }
+        Match::None => Err(unknown_window(argument)),
     }
+}
+
+fn unknown_window(argument: &str) -> Failure {
+    failure(
+        "unknown-window",
+        format!(
+            "no running Eon window has an ID that starts with {argument}; run `eon window ls` to list them"
+        ),
+    )
 }
 
 /// The failure for an argument that selects the damaged entry `name`.
@@ -312,16 +395,24 @@ fn damaged_window(argument: &str, name: &str) -> Failure {
     )
 }
 
-/// The `ambiguous-window-id` failure naming every candidate. This CLI failure
-/// is not an EONW message, so it keeps each candidate past EONW's detail limit.
+/// The `ambiguous-window-id` failure naming every candidate.
 fn ambiguous_window(argument: &str, windows: &[String]) -> Failure {
-    Failure {
-        code: "ambiguous-window-id".into(),
-        detail: format!(
+    cli_failure(
+        "ambiguous-window-id",
+        format!(
             "{argument} starts the IDs of {} Eon windows: {}; type more of the ID",
             windows.len(),
             windows.join(", ")
         ),
+    )
+}
+
+/// A failure this CLI reports itself. It is not an EONW message, so it keeps
+/// its whole detail past EONW's detail limit.
+fn cli_failure(code: &str, detail: String) -> Failure {
+    Failure {
+        code: code.into(),
+        detail,
     }
 }
 
@@ -339,35 +430,30 @@ fn window_command(root: &Path) -> Result<Command, String> {
     Ok(command)
 }
 
-fn namespace_command(id: Option<&str>, root: &Path) -> Result<Command, String> {
-    let mut command = window_command(root)?;
-    if id.is_none() {
-        command.env_remove(WINDOW_RUNTIME);
-    }
-    Ok(command)
+/// The failure for damaged entry `record`, which no Stop reaches, else none.
+/// It names the whole raw name, escaped.
+fn damaged_entry(record: &GenerationRecord) -> Option<Failure> {
+    (!valid_generation(&record.id)).then(|| {
+        cli_failure(
+            "stop-unavailable",
+            format!(
+                "{} is a damaged Eon generation directory, not a window",
+                record.id.escape_debug()
+            ),
+        )
+    })
 }
 
-fn namespaces(include_default: bool) -> Result<Vec<(Option<String>, PathBuf)>, String> {
-    let mut namespaces = Vec::new();
-    if include_default {
-        namespaces.push((None, base_runtime_directory("eon")));
-    }
-    namespaces.extend(
-        existing_windows()?
-            .into_iter()
-            .map(|(id, root)| (Some(id), root)),
-    );
-    Ok(namespaces)
-}
-
-fn candidates(inputs: &Inputs) -> Result<Vec<(Option<String>, PathBuf, GenerationRecord)>, String> {
-    let mut candidates = Vec::new();
-    for (id, root) in namespaces(true)? {
-        for generation in running_generations(inputs, &root)? {
-            candidates.push((id.clone(), root.clone(), generation));
-        }
-    }
-    Ok(candidates)
+/// The ID that durable text, such as a notice or a log, names window
+/// `window` (an independent window's ID) or, in the default namespace,
+/// `generation` by: the first 8 hex digits of its generation, which every
+/// build's `eon window` commands select, where `default` would name a newer
+/// build's window after an upgrade (EON-C8).
+pub(super) fn durable_window_id(window: Option<&str>, generation: &str) -> String {
+    window.map_or_else(
+        || generation.get(3..11).unwrap_or(generation).to_owned(),
+        str::to_owned,
+    )
 }
 
 pub(super) fn quit(inputs: &Inputs, json: bool) -> Result<i32, Error> {
@@ -380,19 +466,37 @@ pub(super) fn quit(inputs: &Inputs, json: bool) -> Result<i32, Error> {
             Ok(resolved) => resolved,
             Err(error) => return Ok(report_failure(&error, json)?),
         };
+        let root = runtime_directory("eon");
+        let id = runtime_window(&root).unwrap_or_else(|| {
+            current_generation(inputs).map_or_else(
+                |_| resolved.generation.clone(),
+                |current| default_namespace_id(&resolved.generation, &current),
+            )
+        });
+        // As `eon window ls` shows it, else in full.
+        let window = window_listing(inputs)
+            .ok()
+            .and_then(|windows| {
+                windows
+                    .into_iter()
+                    .flatten()
+                    .find(|window| window.root == root && window.record.id == resolved.generation)
+            })
+            .map_or(id, |window| window.short_id);
         return Ok(stop_generation(
             inputs,
-            &runtime_directory("eon"),
+            &root,
             &resolved.generation,
             json,
             &Ask::Quit {
                 caller: Some(caller),
                 this_window: true,
+                window: &window,
             },
         )?);
     }
-    let candidates = candidates(inputs)?;
-    match candidates.as_slice() {
+    let windows = running_windows(inputs)?;
+    match windows.as_slice() {
         [] => Ok(report_failure(
             &failure(
                 "missing-supervisor",
@@ -400,37 +504,40 @@ pub(super) fn quit(inputs: &Inputs, json: bool) -> Result<i32, Error> {
             ),
             json,
         )?),
-        [(_, root, generation)] => Ok(stop_generation(
-            inputs,
-            root,
-            &generation.id,
-            json,
-            &Ask::Quit {
-                caller: None,
-                this_window: false,
-            },
-        )?),
-        candidates => {
+        [window] => Ok(match damaged_entry(&window.record) {
+            Some(damaged) => report_failure(&damaged, json)?,
+            None => stop_generation(
+                inputs,
+                &window.root,
+                &window.record.id,
+                json,
+                &Ask::Quit {
+                    caller: None,
+                    this_window: false,
+                    window: &window.short_id,
+                },
+            )?,
+        }),
+        windows => {
             let mut detail = String::from("several Eon windows are running; select one to stop:\n");
-            for (id, _, generation) in candidates {
-                let generation_id = generation.id.escape_debug().to_string();
-                let command = match id {
-                    _ if !generation.stop.available => {
-                        format!("cannot stop: {}", terminal_text(&generation.stop.reason))
-                    }
-                    Some(id) => format!("eon window stop {id}"),
-                    None => format!("env -u EON_WINDOW_RUNTIME_DIR eon stop {generation_id}"),
+            for window in windows {
+                let record = &window.record;
+                // A damaged entry's ID is its raw name.
+                let id = window.short_id.escape_debug().to_string();
+                let command = if record.stop.available {
+                    format!("eon window stop {id}")
+                } else {
+                    format!("cannot stop: {}", terminal_text(&record.stop.reason))
                 };
-                let terminals = if generation.state == "live" {
-                    generation.sessions.len().to_string()
+                let terminals = if record.state == "live" {
+                    record.sessions.len().to_string()
                 } else {
                     "unknown".into()
                 };
                 detail.push_str(&format!(
-                    "window {} generation {} state={} terminals={terminals}; {command}\n",
-                    id.as_deref().unwrap_or("default"),
-                    generation_id,
-                    generation.state,
+                    "window {id} name={} state={} terminals={terminals}; {command}\n",
+                    record.name.as_deref().map_or("-".into(), terminal_text),
+                    record.state,
                 ));
             }
             detail.push_str("or run `eon quit --all` to stop every window");
@@ -444,7 +551,7 @@ pub(super) fn quit(inputs: &Inputs, json: bool) -> Result<i32, Error> {
                     true,
                 )?)
             } else {
-                // Damaged generation IDs are escaped above; preserve the inventory's rows.
+                // Damaged IDs are escaped above; preserve the inventory's rows.
                 eprintln!("error ambiguous-window: {detail}");
                 Ok(1)
             }
@@ -534,7 +641,7 @@ pub(super) fn attach_window(inputs: &Inputs, argument: Option<&OsStr>) -> Result
     let window = match argument {
         None => Window::Default,
         Some(argument) => match select_window(inputs, window_id_argument(argument)?) {
-            Ok(window) => window,
+            Ok((window, _)) => window,
             Err(failure) => return Ok(report_failure(&failure, false)?),
         },
     };
@@ -563,8 +670,8 @@ pub(super) fn attach_window(inputs: &Inputs, argument: Option<&OsStr>) -> Result
 /// `eon window stop ID`: Stop of the selected window's running generations,
 /// asking first in human mode (EON-C23).
 pub(super) fn stop_window(inputs: &Inputs, argument: &OsStr, json: bool) -> Result<i32, Error> {
-    let window = match select_window(inputs, window_id_argument(argument)?) {
-        Ok(window) => window,
+    let (window, shown) = match select_window(inputs, window_id_argument(argument)?) {
+        Ok(selected) => selected,
         Err(failure) => return Ok(report_failure(&failure, json)?),
     };
     let base = base_runtime_directory("eon");
@@ -574,14 +681,20 @@ pub(super) fn stop_window(inputs: &Inputs, argument: &OsStr, json: bool) -> Resu
         Window::Independent { id, root } => (id.as_str(), root.clone(), Select::All),
     };
     if !json {
-        return Ok(stop_generations(inputs, &root, select, false, &Ask::Stop)?);
+        return Ok(stop_generations(
+            inputs,
+            &root,
+            select,
+            false,
+            &Ask::StopWindow(&shown),
+        )?);
     }
     write_stdout(format!(
         "[{{\"window\":\"{}\",\"results\":",
         json_escape(id)
     ))?;
     // A namespace that cannot be listed still completes the result array.
-    let status = match stop_generations(inputs, &root, select, true, &Ask::Stop) {
+    let status = match stop_generations(inputs, &root, select, true, &Ask::StopWindow(id)) {
         Ok(status) => status,
         Err(error) => {
             let report = failure_json(&failure("stop-failed", error));
@@ -593,121 +706,175 @@ pub(super) fn stop_window(inputs: &Inputs, argument: &OsStr, json: bool) -> Resu
     Ok(status)
 }
 
-/// The namespaces, the caller's own last.
-fn ordered_namespaces(include_default: bool) -> Result<Vec<(Option<String>, PathBuf)>, String> {
-    let current = if include_default && env::var_os(TERMINAL_VARIABLE).is_none() {
-        base_runtime_directory("eon")
-    } else {
-        runtime_directory("eon")
-    };
-    let mut windows = namespaces(include_default)?;
-    windows.sort_by_key(|(_, root)| root == &current);
-    Ok(windows)
+/// The windows a bulk Stop selects.
+#[derive(Clone, Copy, PartialEq)]
+pub(super) enum Bulk {
+    /// `eon window stop previous`: those another Eon build started.
+    Previous,
+    /// `eon window stop all`: every window.
+    All,
+    /// `eon quit --all`: every window, asking as `eon quit` does.
+    Quit,
 }
 
-/// `eon quit --all`: in human mode, asks for each window as `eon quit` does,
-/// passing the calling terminal to every supervisor; only its owner leaves
-/// it out (EON-C11).
-pub(super) fn quit_all(inputs: &Inputs, json: bool) -> Result<i32, Error> {
-    if json {
-        return stop_namespaces(true, true);
-    }
-    // As with `--json`, a caller that names no terminal excludes nothing.
-    let caller = calling_terminal().ok().flatten();
-    let ask = Ask::Quit {
-        caller,
-        this_window: false,
+/// The caller's own window: the namespace and generation whose supervisor
+/// validates the calling terminal, whichever build started it. Outside Eon it
+/// is `default`. A caller whose window cannot be identified is refused: a
+/// guess could stop it before the windows after it.
+fn own_window(inputs: &Inputs) -> Result<(PathBuf, String), Failure> {
+    let refused = |detail: String| {
+        cli_failure(
+            "unknown-caller",
+            format!(
+                "cannot identify the calling terminal's Eon window, so no Stop was sent: {detail}"
+            ),
+        )
     };
-    let mut status = 0;
-    for (id, root) in ordered_namespaces(true)? {
-        match &id {
-            Some(id) => eprintln!("Quit Eon window {id}:"),
-            None => eprintln!("Quit the default Eon window:"),
+    match calling_terminal() {
+        Ok(None) => Ok((
+            base_runtime_directory("eon"),
+            current_generation(inputs).map_err(refused)?,
+        )),
+        Ok(Some(caller)) => {
+            let root = runtime_directory("eon");
+            let generation = caller_generation(&root, &caller).map_err(refused)?;
+            Ok((root, generation))
         }
-        let code = match stop_generations(inputs, &root, Select::All, false, &ask) {
-            Ok(code) => code,
-            Err(error) => report_failure(&failure("stop-failed", error), false)?,
-        };
-        status = status.max(code);
+        Err(error) => Err(error),
     }
-    Ok(status)
 }
 
-pub(super) fn stop_namespaces(include_default: bool, json: bool) -> Result<i32, Error> {
-    let windows = ordered_namespaces(include_default)?;
+/// `eon window stop previous|all` and `eon quit --all`: the validated Stop of
+/// each selected running window, each window's generations in turn and the
+/// caller's own window last (EON-C23). A namespace that cannot be inspected
+/// and a damaged entry are reported and never sent a Stop. Human mode asks as
+/// `Ask::StopWindow`, or as `Ask::Quit` with the calling terminal; `--json`
+/// prints one result object per window.
+pub(super) fn stop_windows(inputs: &Inputs, bulk: Bulk, json: bool) -> Result<i32, Error> {
+    let (own_root, own_generation) = match own_window(inputs) {
+        Ok(own) => own,
+        Err(failure) => return Ok(report_failure(&failure, json)?),
+    };
+    // As with `--json`, a caller that names no terminal excludes nothing.
+    let caller = (bulk == Bulk::Quit)
+        .then(|| calling_terminal().ok().flatten())
+        .flatten();
+    /// One window to stop: a run of listed entries with the same ID and
+    /// namespace.
+    struct Target {
+        id: String,
+        short_id: String,
+        root: PathBuf,
+        records: Result<Vec<GenerationRecord>, String>,
+    }
+    let mut windows: Vec<Target> = Vec::new();
+    for found in window_listing(inputs)? {
+        match found {
+            Ok(window) => {
+                if bulk == Bulk::Previous && window.record.current() {
+                    continue;
+                }
+                if let Some(Target {
+                    id,
+                    root,
+                    records: Ok(records),
+                    ..
+                }) = windows.last_mut()
+                    && *id == window.id
+                    && *root == window.root
+                {
+                    records.push(window.record);
+                    continue;
+                }
+                windows.push(Target {
+                    id: window.id,
+                    short_id: window.short_id,
+                    root: window.root,
+                    records: Ok(vec![window.record]),
+                });
+            }
+            Err(Uninspectable { id, root, error }) => windows.push(Target {
+                short_id: id.clone(),
+                id,
+                root,
+                records: Err(error),
+            }),
+        }
+    }
+    // The caller's own window last.
+    windows.sort_by_key(|window| {
+        window.root == own_root
+            && window
+                .records
+                .as_ref()
+                .is_ok_and(|records| records.iter().any(|record| record.id == own_generation))
+    });
     if json {
         write_stdout("[")?;
     }
     let mut status = 0;
-    for (index, (id, root)) in windows.into_iter().enumerate() {
+    for (
+        index,
+        Target {
+            id,
+            short_id,
+            root,
+            records,
+        },
+    ) in windows.iter().enumerate()
+    {
         if json {
-            let (code, results) = match namespace_command(id.as_deref(), &root) {
-                Ok(command) => stop_window_json(command),
-                Err(error) => (
-                    1,
-                    format!(
-                        "[{}]",
-                        failure_json(&failure("stop-failed", error)).trim_end()
-                    ),
-                ),
-            };
             write_stdout(format!(
-                "{}{{\"window\":{},\"results\":{results}}}",
+                "{}{{\"window\":\"{}\",\"results\":[",
                 if index == 0 { "" } else { "," },
-                id.as_ref()
-                    .map_or_else(|| "null".into(), |id| format!("\"{}\"", json_escape(id)))
+                json_escape(id)
             ))?;
-            status = status.max(code);
-        } else {
-            match &id {
-                Some(id) => eprintln!("Stop Eon window {id}:"),
-                None => eprintln!("Stop the default Eon window:"),
+        }
+        // Scripts keep full IDs; people read the IDs `eon window ls` shows.
+        let shown = if json { id } else { short_id };
+        let ask = if bulk == Bulk::Quit {
+            Ask::Quit {
+                caller: caller.clone(),
+                this_window: false,
+                window: shown,
             }
-            let code = namespace_command(id.as_deref(), &root)?
-                .args(["stop", "all"])
-                .status()
-                .map_err(|error| format!("cannot run Eon window action: {error}"))?
-                .code()
-                .unwrap_or(1);
-            status = status.max(code);
+        } else {
+            Ask::StopWindow(shown)
+        };
+        let codes = match records {
+            Err(error) => vec![report_failure(
+                &cli_failure("stop-failed", error.clone()),
+                json,
+            )?],
+            Ok(records) => {
+                let mut codes = Vec::new();
+                for (position, record) in records.iter().enumerate() {
+                    if json && position != 0 {
+                        write_stdout(",")?;
+                    }
+                    codes.push(match damaged_entry(record) {
+                        Some(damaged) => report_failure(&damaged, json)?,
+                        None => match stop_generation(inputs, root, &record.id, json, &ask) {
+                            Ok(code) => code,
+                            Err(error) => report_failure(
+                                &failure("stop-failed", format!("window {shown}: {error}")),
+                                json,
+                            )?,
+                        },
+                    });
+                }
+                codes
+            }
+        };
+        status = codes.into_iter().fold(status, i32::max);
+        if json {
+            write_stdout("]}")?;
         }
     }
     if json {
         write_stdout("]\n")?;
     }
     Ok(status)
-}
-
-/// Runs the window's `eon stop all --json` and returns its status and result
-/// array, or a `stop-failed` array when it yields none.
-fn stop_window_json(mut command: Command) -> (i32, String) {
-    let output = command
-        .args(["stop", "all", "--json"])
-        .stdin(Stdio::null())
-        .stderr(Stdio::inherit())
-        .output()
-        .map_err(|error| format!("cannot run Eon window action: {error}"));
-    let (code, detail) = match output {
-        Ok(output) => {
-            let code = output.status.code().unwrap_or(1);
-            let results = String::from_utf8_lossy(&output.stdout).trim().to_owned();
-            if serde_json::from_str::<serde_json::Value>(&results)
-                .is_ok_and(|value| value.is_array())
-            {
-                return (code, results);
-            }
-            (
-                code.max(1),
-                format!(
-                    "window Stop ended with {} and no result array",
-                    output.status
-                ),
-            )
-        }
-        Err(error) => (1, error),
-    };
-    let report = failure_json(&failure("stop-failed", detail));
-    (code, format!("[{}]", report.trim_end()))
 }
 
 /// `eon window ls [--json]` (EON-C23).
@@ -784,7 +951,9 @@ pub(super) fn list_windows(inputs: &Inputs, json: bool) -> Result<i32, String> {
 
 #[cfg(test)]
 mod tests {
-    use super::{Match, ambiguous_window, match_id, short_ids, window_id_argument};
+    use super::{
+        Match, ambiguous_window, durable_window_id, match_id, short_ids, window_id_argument,
+    };
     use std::ffi::OsStr;
 
     #[test]
@@ -800,8 +969,15 @@ mod tests {
             (vec!["0a1b2c3d"], vec!["0a1b"]),
             (vec!["0a1b2c3d", "0a1b2c3d"], vec!["0a1b", "0a1b"]),
         ] {
-            assert_eq!(short_ids(&ids), short, "{ids:?}");
+            assert_eq!(short_ids(&ids, None), short, "{ids:?}");
         }
+        // Nor the generation hex `default` answers to.
+        let own = format!("0a1b2c{}", "0".repeat(26));
+        assert_eq!(
+            short_ids(&["default", "0a1b9999"], Some(&own)),
+            ["default", "0a1b9"]
+        );
+        assert_eq!(short_ids(&["0a1b2c3d"], Some(&own)), ["0a1b2c3"]);
     }
 
     #[test]
@@ -861,14 +1037,45 @@ mod tests {
     }
 
     #[test]
-    fn exact_ids_win_and_prefixes_must_be_unique() {
+    fn ids_and_prefixes_must_select_exactly_one_window() {
         let long = format!("abcd1234{}", "0".repeat(24));
         let ids = ["default", "abcd1234", &long, "abce0000", "abce0000"];
-        assert_eq!(match_id("abcd1234", &ids), Match::One(1));
-        assert_eq!(match_id("abcd12340", &ids), Match::One(2));
-        assert_eq!(match_id("abcd", &ids), Match::Several(vec![1, 2]));
-        assert_eq!(match_id("abce", &ids), Match::One(3));
-        assert_eq!(match_id("defa", &ids), Match::One(0));
-        assert_eq!(match_id("ffff", &ids), Match::None);
+        let none = [None; 5];
+        // A whole ID that also starts another window's selects neither.
+        assert_eq!(
+            match_id("abcd1234", &ids, &none),
+            Match::Several(vec![1, 2])
+        );
+        assert_eq!(match_id("abcd12340", &ids, &none), Match::One(2));
+        assert_eq!(match_id("abcd", &ids, &none), Match::Several(vec![1, 2]));
+        assert_eq!(match_id("abce", &ids, &none), Match::One(3));
+        assert_eq!(match_id("defa", &ids, &none), Match::One(0));
+        assert_eq!(match_id("ffff", &ids, &none), Match::None);
+    }
+
+    #[test]
+    fn the_default_window_answers_to_its_generation_hex() {
+        let own = format!("1a2b3c4d{}", "0".repeat(24));
+        let ids = ["default", "1a2b9999", "abcd1234"];
+        let aliases = [Some(own.as_str()), None, None];
+        assert_eq!(match_id("1a2b3c4d", &ids, &aliases), Match::One(0));
+        assert_eq!(match_id(&own, &ids, &aliases), Match::One(0));
+        assert_eq!(match_id("1a2b3", &ids, &aliases), Match::One(0));
+        // A prefix shared with an independent window's ID stays ambiguous.
+        assert_eq!(match_id("1a2b", &ids, &aliases), Match::Several(vec![0, 1]));
+        // An independent window whose ID the hex also is: neither wins.
+        let ids = ["default", "1a2b3c4d"];
+        assert_eq!(
+            match_id("1a2b3c4d", &ids, &aliases[..2]),
+            Match::Several(vec![0, 1])
+        );
+        assert_eq!(match_id("default", &ids, &aliases[..2]), Match::One(0));
+    }
+
+    #[test]
+    fn durable_text_names_the_default_namespace_by_generation_hex() {
+        let generation = format!("g1-1a2b3c4d{}", "0".repeat(24));
+        assert_eq!(durable_window_id(None, &generation), "1a2b3c4d");
+        assert_eq!(durable_window_id(Some("abcd1234"), &generation), "abcd1234");
     }
 }

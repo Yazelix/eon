@@ -433,7 +433,10 @@ socket names, JSON fields and protocol identifiers retain their spellings.
   relayed by eon-overseer) by `eon-agent-parity-a9g0.3`: tabs and panes in any
   tab of the addressed workspace close by ID without moving focus, CLI closes
   use target-scoped busy confirmation, and a native confirmed close sends its
-  named action directly without focusing its tab first.
+  named action directly without focusing its tab first. Amended on 2026-11-06
+  (approved by Lucca, relayed by eon-overseer) by `eon-7cf0y.22` (S2): the
+  notice names `eon window stop ID`, a default-namespace window by its
+  generation's first 8 hex digits.
 - **Consumer:** One local Eon workspace user.
 - **Trigger:** Launch, create or close a tab, create, close or rename a pane, create a column, traverse focus,
   reorder the active tab or selected pane, move the selected pane into a neighbouring column, zoom the
@@ -609,9 +612,12 @@ socket names, JSON fields and protocol identifiers retain their spellings.
     how to return: "Open Eon to return." in the default namespace, or "Run
     `eon window attach ID` to return." in an independent window. When the
     notification service advertises the `actions` capability, the
-    notification offers Quit; otherwise its body ends "Run `eon window stop
-    ID` to stop it." in an independent window, or "Run `eon stop GENERATION`
-    to stop it." in the default namespace, naming that window's generation.
+    notification offers Quit; otherwise its body ends "Run `eon window stop ID`
+    to stop it.", ID being the window's full ID in an independent window and,
+    in the default namespace, the first 8 hex digits of its generation, which
+    `eon window` commands of its own build and of any newer one select
+    (EON-C23), where `default` would name a newer build's window after an
+    upgrade. A failed Stop's notification names the same command.
     A notification that offers actions carries the `resident` hint.
     Quit shows a confirmation titled "Quit NAME?" that says how many
     terminals stop and offers Quit and Keep running. The confirmation
@@ -1113,7 +1119,9 @@ socket names, JSON fields and protocol identifiers retain their spellings.
   `eon pane close PANE [--yes] [--json]` resolve in any tab of the addressed
   workspace without moving focus and use target-scoped busy confirmation.
   Amended on 2026-11-06 (approved by Lucca, relayed by eon-overseer) by
-  `eon-7cf0y.22` (S1): window IDs, prefixes and `eon window ls`.
+  `eon-7cf0y.22` (S1): window IDs, prefixes and `eon window ls`. Amended on
+  2026-11-06 (approved by Lucca, relayed by eon-overseer) by `eon-7cf0y.22`
+  (S2): Commands runs `eon window stop previous`.
 - **Consumer:** One local CLI or approved composition controlling a live Eon
   supervisor.
 - **Trigger:** The client submits one versioned workspace or supervisor-lifecycle
@@ -1469,14 +1477,14 @@ socket names, JSON fields and protocol identifiers retain their spellings.
   `eon` commands: tab, pane and window creation, closing or moving the popup's
   own tab, quitting this window, switching, creating, renaming or closing a
   workspace (EON-C33), the workspace and window
-  listings, `stop previous`, `versions`, `config-path` and `--help`. Each line
-  names the command it runs. Enter runs it in the popup's terminal, with that
-  terminal's `EON_TERMINAL` and `EON_TAB`: pane creation and tab moves act for
-  the popup's tab under the caller rules above, closing names `EON_TAB`, and
+  listings, `window stop previous`, `versions`, `config-path` and `--help`. Each
+  line names the command it runs. Enter runs it in the popup's terminal, with
+  that terminal's `EON_TERMINAL` and `EON_TAB`: pane creation and tab moves act
+  for the popup's tab under the caller rules above, closing names `EON_TAB`, and
   every command keeps the CLI's own validation, targets and Stop and
   final-close confirmations; it adds no EONW action. A successful action
   ends the popup, except a close from the workspace list, which shows the
-  list again; a listing, `stop previous`, or a failure reported while the
+  list again; a listing, `window stop previous`, or a failure reported while the
   popup is still open, waits for Enter. "Quit this window" runs `eon quit`
   (EON-C11) as the popup's terminal, so it stops only the popup's own window,
   in an independent window too (EON-C23), with `eon quit`'s confirmation; it
@@ -1805,12 +1813,15 @@ socket names, JSON fields and protocol identifiers retain their spellings.
   eon-7cf0y's approval mode, relayed by eon-overseer) by `eon-7cf0y.9`: a
   generation from another EONW version is stopped through the `eon` it
   recorded, proven by its amendment proof below. Amended on 2026-11-06
-  (approved by Lucca, relayed by eon-overseer) by `eon-7cf0y.22` (S1):
-  window IDs, prefixes and `eon window ls`.
+  (approved by Lucca, relayed by eon-overseer) by `eon-7cf0y.22` (S1): window
+  IDs, prefixes and `eon window ls`. Amended on 2026-11-06 (approved by Lucca,
+  relayed by eon-overseer) by `eon-7cf0y.22` (S2): `eon window stop
+  previous|all` and `eon quit --all` cover every window, and Stop and Quit name
+  windows by ID.
 - **Consumer:** Eon and eonbase users launching or targeting a product generation.
 - **Trigger:** Launch current generation, inspect an older live generation,
-  present a compatible existing surface, stop one generation, stop a selected
-  set of generations, or quit one window or every window.
+  present a compatible existing surface, stop one window, stop a selected set of
+  windows, or quit one window or every window.
 - **Result:**
   - Eon and eonbase use separate runtime namespaces. Launch and lifecycle defaults use their exact
     current generation; Eon workspace control follows EON-C10's caller and explicit-target rules.
@@ -1831,9 +1842,10 @@ socket names, JSON fields and protocol identifiers retain their spellings.
     `eon quit --all`, runs that `eon` as `stop GENERATION --json` in the
     generation's namespace, without standard input, after this `eon` asks any
     question the command asks. Its live and busy terminals are unknown here,
-    so human-mode `eon quit` and `eon quit --all` always ask: `Quit window
-    GENERATION? It runs another Eon build, so its terminals are unknown.
-    [y/N]`.
+    so human-mode `eon window stop`, `eon quit` and `eon quit --all` always ask.
+    They name the window by its ID as `eon window ls` shows it: `Quit window ID?
+    It runs another Eon build, so its terminals are unknown. [y/N]`, or `Stop
+    window ID? …` for `eon window stop`.
 
     This `eon` reports that `eon`'s Stop result as its own. Output that is not
     one Stop result, a Stop that a signal ends, and a `stopped` result from an
@@ -1849,6 +1861,18 @@ socket names, JSON fields and protocol identifiers retain their spellings.
     opaque launch input, so a later build can name or run it; `eon attach
     GENERATION` delegates to it when this build cannot present that
     generation.
+  - `eon window stop previous` and `eon window stop all` (EON-C23) attempt each
+    selected window with the existing validated Stop of each of its generations.
+    Human mode confirms each window, while `--json` returns the result array
+    without confirmation. Declining one window reports that no Stop was sent for
+    it. Without a terminal, that window is `not-confirmed` (exit 1), and the
+    command exits with the largest status. Earlier outcomes remain and later
+    windows continue. Failed or unavailable windows do not suppress later ones
+    while the CLI remains running. A Stop of the caller's own terminal can end
+    the CLI before it receives that result or attempts later windows, so run
+    from outside the selected windows when a complete result is required. When
+    the CLI completes, it exits nonzero if any Stop attempt fails. Neither
+    command forcibly kills a process.
   - `eon stop previous` attempts every non-dead generation except the exact
     current one, whether current is live or not. `eon stop all` includes
     current. Each selected generation uses the existing validated
@@ -1870,10 +1894,10 @@ socket names, JSON fields and protocol identifiers retain their spellings.
     while a terminal of that window other than the calling terminal is busy
     (below). The question is `Quit this window? It stops N terminals; M still
     running: NAME, NAME and K more. [y/N]`, where N counts the live terminals
-    Stop ends and each NAME is a busy terminal's name; outside Eon it says
-    `Quit window WINDOW?` with the window's name (EON-C23), else its
-    generation. A decline prints `cancelled; this window keeps running` (or
-    `window WINDOW`) and stops nothing; EON-C10's confirmation rules apply.
+    Stop ends and each NAME is a busy terminal's name; outside Eon it says `Quit
+    window WINDOW?` with the window's name (EON-C23), else its ID. A decline
+    prints `cancelled; this window keeps running` (or `window WINDOW`) and
+    stops nothing; EON-C10's confirmation rules apply.
     While no terminal is busy it stops without asking. When it cannot inspect
     the window's busy terminals, it asks and names every live terminal of the
     window by its session ID, the calling terminal included. Run from an Eon
@@ -1886,21 +1910,18 @@ socket names, JSON fields and protocol identifiers retain their spellings.
     generation of the default namespace and of every independent window
     (EON-C23): it stops the only one; with none it
     fails with `missing-supervisor`; with several it fails with
-    `ambiguous-window`, stops nothing, and names each one's window ID or the
-    default namespace, generation, state, live terminal count when inspectable
-    (otherwise unknown) and the `eon window stop ID` or
-    `env -u EON_WINDOW_RUNTIME_DIR eon stop GENERATION` command that stops it,
-    or, when this `eon` cannot stop it, `cannot stop: REASON`.
-    `eon quit --all [--json]` attempts Stop of every non-dead generation in the
-    default namespace and in every independent window, in `eon stop all`'s
-    order, the caller's own namespace last, asking for each window as
-    `eon quit` does, except that every question, the caller's own window's
-    included, says `Quit window WINDOW?`; outside Eon, the default namespace
-    counts as the caller's. With `--json` it
-    prints one array holding one `{"window": ID, "results": [...]}` object per
-    namespace, with `window` null for the default namespace, and it exits with
-    the largest status. Neither form forcibly kills a process, and quitting the
-    caller's own window can end the CLI before it reports, as Stop can.
+    `ambiguous-window`, stops nothing, and names each one's window ID as `eon
+    window ls` shows it, its name, state, live terminal count when inspectable
+    (otherwise unknown) and the `eon window stop ID` command that stops it, or,
+    when this `eon` cannot stop it, `cannot stop: REASON`.
+    `eon quit --all [--json]` attempts Stop of every running window, in `eon
+    window stop all`'s order, the caller's own window last, asking for each
+    window as `eon quit` does, except that every question, the caller's own
+    window's included, says `Quit window WINDOW?`; outside Eon, `default`
+    counts as the caller's. With `--json` it prints `eon window stop all
+    --json`'s array (EON-C23) and exits with the largest status. Neither form
+    forcibly kills a process, and quitting the caller's own window can end the
+    CLI before it reports, as Stop can.
   - **Busy terminals.** A window's pane or popup terminal, directory pickers
     excepted, is idle only while all of these hold: Eon started it with the
     window's default shell (`[shell] command`), not an explicit command
@@ -2726,8 +2747,11 @@ socket names, JSON fields and protocol identifiers retain their spellings.
 ## EON-C23 — Independent Eon windows
 
 - **Status:** Proven. Amended on 2026-11-06 (approved by Lucca, relayed by
-  eon-overseer) by `eon-7cf0y.22` (S1): window IDs, prefixes and
-  `eon window ls`.
+  eon-overseer) by `eon-7cf0y.22` (S1): window IDs, prefixes and `eon window
+  ls`. Amended on 2026-11-06 (approved by Lucca, relayed by eon-overseer) by
+  `eon-7cf0y.22` (S2): `eon window stop previous|all` over every window,
+  window language, `default` answering to its generation's hex digits, and
+  no exact ID winning over another window it begins.
 - **Consumer:** A full-Eon user on native x86_64 Linux Wayland.
 - **Trigger:** `eon window new`, the desktop launcher's New Eon Window action,
   or Venus's Alt+Shift+N shortcut.
@@ -2746,16 +2770,26 @@ socket names, JSON fields and protocol identifiers retain their spellings.
   of the running `eon`'s own build is `default`. A window that another build
   started there has as its ID the 32 hex digits of its generation. Wherever
   `eon` takes a window ID (`eon window attach` and `eon window stop`), the
-  exact ID or any prefix of at least 4 characters selects a window. An exact
-  ID wins. Otherwise the prefix must begin the ID of exactly one running
-  window. A prefix that begins several fails with `ambiguous-window-id` (exit
-  3) and names each match. One that begins none fails with `unknown-window`
-  (exit 3). An ID or prefix that is shorter than 4 characters, or that is
-  neither lowercase hex nor a prefix of `default`, is invalid syntax (exit 2).
+  exact ID or any prefix of at least 4 characters selects a window. It must
+  begin the ID of exactly one running window: an independent window's ID and
+  the hex digits of default-namespace generations share one space, so a whole
+  ID that also begins another window's ID selects neither. One that begins
+  several fails with `ambiguous-window-id` (exit 3) and names each match.
+  One that begins none fails with `unknown-window` (exit 3). An ID or prefix
+  that is shorter than 4 characters, or that is neither lowercase hex nor a
+  prefix of `default`, is invalid syntax (exit 2).
+  `default` also answers to the hex digits of its generation, exactly or by
+  a prefix of at least 4: the form that the detach notice (EON-C8) and the
+  log line after Eon Desktop exits print, since after an upgrade `default`
+  names the newer build's window. An argument that begins both those digits
+  and another window's ID fails with `ambiguous-window-id`. Short IDs never
+  begin them, and `eon window ls` still shows `default`.
   Matching only selects among existing windows, and the command then acts on
-  the full ID. `default` and an independent window's exact ID select that
-  window even when it is not running: attaching it then exits 4, and stopping
-  it stops nothing.
+  the full ID. `default`, and an independent window's exact ID that no
+  running window answers to, select that window even when it is not running:
+  attaching it then exits 4, and stopping it stops nothing. Questions and
+  results name the selected window as `eon window ls` shows it, even when the
+  whole ID was typed.
   `eon window ls [--json]` lists every running window, a window with no live
   supervisor left out. It lists the default namespace first, this build's
   window before the others, then independent windows by ID. Human output
@@ -2802,16 +2836,21 @@ socket names, JSON fields and protocol identifiers retain their spellings.
   inspection never removes another generation's files. Venus receives the
   summary in every EONW v34 snapshot; the CLI prints it as `running`
   (EON-C10).
-  `eon window stop all` covers independent windows and attempts the caller's
-  own window last; existing `eon stop all` remains scoped to the caller's
-  current runtime namespace. `eon quit --all` covers both (EON-C11). Piped
-  confirmations remain available to later windows, one answer per prompt.
-  With `--json`, `eon window stop ID` and `eon window stop all` ask for no
-  confirmation and print one JSON array holding one
-  `{"window": ID, "results": [...]}` object per window, in stop order with the
-  caller's own window last. `window` is the window's full ID, and `results` is
-  that window's array of EON-C11 Stop results. It exits with the highest
-  status among those Stops.
+  `eon window stop ID` stops one window. For an independent window, it stops
+  every running generation of its namespace. `eon window stop previous` stops
+  every running window that another Eon build started, in every namespace. `eon
+  window stop all` stops every running window. Both stop the caller's own window
+  last: the window whose supervisor validates the calling terminal, whichever
+  build started it. Outside Eon `default` counts as the caller's. Inside Eon,
+  when no single supervisor validates the calling terminal, they refuse with
+  `unknown-caller` (exit 3) and send no Stop. `eon quit --all`
+  covers the same windows as `all` (EON-C11). Human mode asks before each
+  window, under EON-C11's Stop rules. Piped confirmations remain available to
+  later windows, one answer per prompt. With `--json`, `eon window stop` asks
+  for no confirmation and prints one JSON array holding one `{"window": ID,
+  "results": [...]}` object per window it attempted, in stop order. `window` is
+  the window's full ID, and `results` is that window's array of EON-C11 Stop
+  results. It exits with the highest status among those Stops.
 - **Important failures:** Identity collision, unsafe runtime path, failed
   startup, or stale target neither replaces an existing window nor stops or
   retargets its terminals. An uncertain startup retains its ID, process, and

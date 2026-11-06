@@ -5,6 +5,27 @@ installation, and proven contract changes.
 
 ## Unreleased
 
+- `eon window stop previous [--json]` stops every running window that another
+  Eon build started, in the default namespace and in independent windows, and
+  `eon window stop all [--json]` now stops every running window, the default
+  one included; `eon quit --all` covers the same windows. Each window is
+  stopped by its own validated Stop, the caller's window last (inside Eon, a
+  caller whose window cannot be identified is refused), and a damaged
+  generation directory or a window that cannot be inspected is reported,
+  never stopped, and the other windows still stop. With `--json` each prints
+  one `{"window": ID, "results": [...]}` object per window, `window` being its
+  full ID, so `eon quit --all --json` names the default window `default`
+  instead of null. Stop and Quit questions, results and `eon quit`'s listing
+  name windows by the ID `eon window ls` shows instead of a generation, as in
+  `Stop window 0a1b and 2 live terminals [session-1, session-2]? [y/N]`. The
+  detach notice and the log line after Eon Desktop exits name a
+  default-namespace window by its generation's first 8 hex digits, as in
+  `eon window stop 1a2b3c4d`, which `default` now also answers to, so the
+  command still reaches that window after an upgrade; an ID that several
+  windows start, even one window's whole ID, is refused as ambiguous.
+  Commands has "Stop old-version windows" (`eon window stop previous`) in
+  place of "Stop older generations" (`eon-7cf0y.22`, EON-C23, EON-C11,
+  EON-C8, EON-C10). EONW is unchanged.
 - Working and background attention badges, on tabs and in the agent sidebar,
   draw their dots in the window's focus colour (`[terminal] focus_color`, or
   Venus's built-in focus colour) instead of a fixed blue. Where that colour
