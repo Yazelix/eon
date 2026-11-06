@@ -5,6 +5,22 @@ installation, and proven contract changes.
 
 ## Unreleased
 
+- Eon has one window family in the CLI. `eon attach`, `eon stop` and
+  `--generation` are removed: use `eon window attach [ID]` and
+  `eon window stop ID|previous|all`, which take a window ID as
+  `eon window ls` shows it or any unique prefix of at least 4 characters, and
+  `--window ID` now takes the same IDs and prefixes, `default` included, on
+  every workspace command. A window that another build started is stopped or
+  presented by running that build's `eon` in the form it takes:
+  `stop GENERATION --json` or `attach GENERATION` for EONW 34 or older,
+  `window stop ID --json` or `window attach ID` for later builds, with
+  `EON_STOP_DELEGATED` or `EON_ATTACH_DELEGATED` naming the generation, and
+  the advice for a missing recorded `eon` prints that command. EONW v35 marks
+  the change (no message changes), and Eon is 0.1.19. Windows started before
+  this release keep running and this `eon` stops and attaches them through
+  their recorded `eon`, but their own `eon` cannot stop or attach a window of
+  this release: restart old windows to use the new commands everywhere
+  (`eon-7cf0y.22`, EON-C10, EON-C11, EON-C23).
 - The bottom hints bar's clock drops its outline and shows as plain text in the
   version label's softened cyan, as far from the left edge as the version is
   from the right, so the two match at the bar's ends. A keycap's

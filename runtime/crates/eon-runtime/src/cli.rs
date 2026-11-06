@@ -4,9 +4,8 @@ use super::{
         send_action_from, send_action_from_until, validate_action, write_stdout,
     },
     generation::{
-        Ask, Select, WorkspaceTarget, attach_generation, confirm, current_generation,
-        generations_command, resolve_workspace, stop_generation, stop_generations,
-        valid_generation,
+        Ask, WorkspaceTarget, attach_generation, confirm, current_generation, generations_command,
+        resolve_workspace, stop_generation, valid_generation,
     },
     managed_environment,
     running::running_notice,
@@ -22,7 +21,7 @@ use super::{
         terminal_sent_json, terminal_text_json,
     },
 };
-use eon_workspace_protocol::v34::{
+use eon_workspace_protocol::v35::{
     Action, AttentionState, Direction, Failure, MAX_HISTORY_TEXT_BYTES, MAX_PASTE_BYTES, Pane,
     PopupTarget, Response, Side, Snapshot, Tab, TerminalHistory, TerminalInput, VERSION,
     WorkspaceAction, WorkspaceInfo, valid_caller, validate_paste,
@@ -620,9 +619,6 @@ fn execute(inputs: &Inputs, arguments: Vec<OsString>) -> Result<i32, Error> {
     if let Some(result) = command_help(inputs.version, &arguments) {
         return result;
     }
-    if let Some(code) = lifecycle_command(inputs, &arguments, "eon")? {
-        return Ok(code);
-    }
     if let Some((all, json)) = parse_quit_arguments(&arguments)? {
         return if all {
             windows::stop_windows(inputs, windows::Bulk::Quit, json)
@@ -737,7 +733,6 @@ fn control_command(command: &OsStr) -> bool {
         "popup",
         "edit",
         "focus",
-        "--generation",
         "--window",
     ]
     .iter()
@@ -790,16 +785,6 @@ const HELP_SECTIONS: &[(&str, &[(&str, &str)])] = &[
                 "End a window, the old-version",
             ),
             ("", "ones, or all"),
-        ],
-    ),
-    (
-        "Attach & stop",
-        &[
-            ("attach [GENERATION]", "Reattach to current or named work"),
-            (
-                "stop GENERATION|previous|all [--json]",
-                "End selected terminals",
-            ),
         ],
     ),
     (
@@ -1026,10 +1011,11 @@ fn help_text(version: &str, color: bool) -> String {
 Alt+Shift+D detaches a window; closing it or eon quit ends it.
 Inside Eon, workspace commands use the calling terminal's supervisor/workspace.
 Pane creation and moves, and tab moves, retain their calling-tab rules.
-window attach and window stop take default, an independent window's
-ID, or a unique prefix of 4+ characters, as eon window ls shows them.
-Workspace flags: --generation GENERATION / --window ID, before any --.
-Explicit targets still validate EON_TERMINAL; window-only uses attach's rule.
+Window IDs, as eon window ls shows them: default, another build's or an
+independent window's ID, or any unique prefix of 4+ characters.
+Workspace flag: --window ID, before any --.
+Explicit targets still validate EON_TERMINAL; independent windows use
+attach's rule.
 Results name generation, window (null for default), and workspace.
 WS is a workspace ID (w1, w2, ...) or its exact name.
 workspace new --name NAME names the new workspace; created gives its ID.
@@ -1053,7 +1039,7 @@ Agent? Run {command}eon --skill{reset} to learn how to work in Eon.
 }
 
 fn execute_eonbase(inputs: &Inputs, arguments: Vec<OsString>) -> Result<i32, Error> {
-    if let Some(code) = lifecycle_command(inputs, &arguments, "eonbase")? {
+    if let Some(code) = lifecycle_command(inputs, &arguments)? {
         return Ok(code);
     }
     let result = match arguments.as_slice() {
@@ -1114,61 +1100,39 @@ fn application_id_argument(argument: &OsStr) -> Result<&str, Error> {
     Ok(value)
 }
 
-fn lifecycle_command(
-    inputs: &Inputs,
-    arguments: &[OsString],
-    product: &str,
-) -> Result<Option<i32>, Error> {
+/// `eonbase attach [GENERATION]`, `generations [--json]` and
+/// `stop GENERATION [--json]` (EON-C12); `eon` has none of them.
+fn lifecycle_command(inputs: &Inputs, arguments: &[OsString]) -> Result<Option<i32>, Error> {
+    let root = runtime_directory("eonbase");
     Ok(Some(match arguments {
-        [command] if command == "attach" => {
-            attach_generation(inputs, &runtime_directory(product), None, product)?
+        [command] if command == "attach" => attach_generation(inputs, &root, None)?,
+        [command, generation] if command == "attach" => {
+            attach_generation(inputs, &root, Some(generation_argument(generation)?))?
         }
-        [command, generation] if command == "attach" => attach_generation(
+        [command] if command == "generations" => generations_command(inputs, false, "eonbase")?,
+        [command, flag] if command == "generations" && flag == "--json" => {
+            generations_command(inputs, true, "eonbase")?
+        }
+        [command, generation] if command == "stop" => stop_generation(
             inputs,
-            &runtime_directory(product),
-            Some(generation_argument(generation)?),
-            product,
+            &root,
+            generation_argument(generation)?,
+            false,
+            &Ask::Stop,
         )?,
-        [command] if command == "generations" && product == "eonbase" => {
-            generations_command(inputs, false, product)?
-        }
-        [command, flag] if command == "generations" && flag == "--json" && product == "eonbase" => {
-            generations_command(inputs, true, product)?
-        }
-        [command, generation] if command == "stop" => {
-            stop_argument(inputs, generation, false, product)?
-        }
         [command, generation, flag] | [command, flag, generation]
             if command == "stop" && flag == "--json" =>
         {
-            stop_argument(inputs, generation, true, product)?
+            stop_generation(
+                inputs,
+                &root,
+                generation_argument(generation)?,
+                true,
+                &Ask::Stop,
+            )?
         }
         _ => return Ok(None),
     }))
-}
-
-fn stop_argument(
-    inputs: &Inputs,
-    argument: &OsStr,
-    json: bool,
-    product: &str,
-) -> Result<i32, Error> {
-    let root = runtime_directory(product);
-    Ok(match argument.to_str() {
-        Some("previous") if product == "eon" => {
-            stop_generations(inputs, &root, Select::Previous, json, &Ask::Stop)?
-        }
-        Some("all") if product == "eon" => {
-            stop_generations(inputs, &root, Select::All, json, &Ask::Stop)?
-        }
-        _ => stop_generation(
-            inputs,
-            &root,
-            generation_argument(argument)?,
-            json,
-            &Ask::Stop,
-        )?,
-    })
 }
 
 fn generation_argument(argument: &OsStr) -> Result<&str, Error> {
@@ -1254,7 +1218,7 @@ fn control(
     // by Runtime's rule; a WS that resolves to none or several fails unasked.
     // After a yes it checks again that the wN is live before closing it, since
     // Runtime would read a departed wN as another workspace's name; the check
-    // and the close are not atomic. v34 lists only
+    // and the close are not atomic. EONW lists only
     // the caller's or shown workspace's terminals, so the prompt names none.
     if let Action::Workspace(WorkspaceAction::CloseWorkspace { workspace }) = &mut action
         && !json
@@ -1728,7 +1692,7 @@ fn close_question(
     let Some(target_label) = close_target_label(action) else {
         return Ok(None);
     };
-    let tab_terminals = |tab: &eon_workspace_protocol::v34::Tab| -> Vec<(String, String)> {
+    let tab_terminals = |tab: &eon_workspace_protocol::v35::Tab| -> Vec<(String, String)> {
         tab.panes()
             .map(|pane| (pane.session.clone(), pane.label.clone()))
             .chain(tab.popups.iter().map(|popup| {
@@ -1956,29 +1920,15 @@ fn parse_workspace_target_arguments(
             values.extend(arguments.next().cloned());
             continue;
         }
-        let slot = if argument == "--generation" {
-            &mut target.generation
-        } else if argument == "--window" {
-            &mut target.window
-        } else {
+        if argument != "--window" {
             values.push(argument.clone());
             continue;
-        };
-        if slot.is_some() {
+        }
+        if target.window.is_some() {
             return Err(Error::usage(EON_USAGE));
         }
-        let value = arguments
-            .next()
-            .and_then(|argument| argument.to_str())
-            .ok_or_else(|| Error::usage(EON_USAGE))?;
-        if (argument == "--generation" && !valid_generation(value))
-            || (argument == "--window" && !windows::valid_window_id(value))
-        {
-            return Err(Error::usage(format!(
-                "invalid {argument:?} identity {value:?}"
-            )));
-        }
-        *slot = Some(value.to_owned());
+        let value = arguments.next().ok_or_else(|| Error::usage(EON_USAGE))?;
+        target.window = Some(windows::window_id_argument(value)?.to_owned());
     }
     Ok((values, target))
 }
@@ -2177,7 +2127,7 @@ fn parse_pane_rename_arguments(arguments: &[OsString]) -> Result<(Action, bool),
         _ => return Err(Error::usage(EON_USAGE)),
     };
     if let Some(name) = name {
-        eon_workspace_protocol::v34::validate_pane_name(name)
+        eon_workspace_protocol::v35::validate_pane_name(name)
             .map_err(|error| Error::usage(error.to_string()))?;
     }
     Ok((
@@ -2494,20 +2444,10 @@ mod tests {
             parse_workspace_target_arguments(&args.iter().map(OsString::from).collect::<Vec<_>>())
         };
         let (args, target) = parse(&[
-            "pane",
-            "--window",
-            "0000abcd",
-            "create",
-            "--generation",
-            generation,
-            "--",
-            "echo",
-            "--window",
-            "literal",
+            "pane", "--window", "0000abcd", "create", "--", "echo", "--window", "literal",
         ])
         .unwrap();
         assert_eq!(target.window.as_deref(), Some("0000abcd"));
-        assert_eq!(target.generation.as_deref(), Some(generation));
         assert_eq!(
             args,
             ["pane", "create", "--", "echo", "--window", "literal"].map(OsString::from)
@@ -2515,21 +2455,31 @@ mod tests {
         assert!(
             matches!(parse_control_arguments(&args).unwrap().0, Action::CreateCommandPane { argv, .. } if argv == [b"echo".to_vec(), b"--window".to_vec(), b"literal".to_vec()])
         );
+        // `--window` takes window IDs and prefixes of 4+ characters (EON-C23).
+        for id in ["default", "defa", "abcd", &generation[3..]] {
+            let (_, target) = parse(&["workspace", "--window", id]).unwrap();
+            assert_eq!(target.window.as_deref(), Some(id));
+        }
         for args in [
-            vec!["workspace", "--generation"],
+            vec!["workspace", "--window"],
             vec!["workspace", "--window", "bad/id"],
-            vec!["workspace", "--generation", "g1-ABC"],
-            vec![
-                "workspace",
-                "--generation",
-                generation,
-                "--generation",
-                generation,
-            ],
+            vec!["workspace", "--window", "abc"],
+            vec!["workspace", "--window", "ABCD"],
+            vec!["workspace", "--window", generation],
             vec!["workspace", "--window", "0000abcd", "--window", "0000abcd"],
         ] {
             assert_eq!(parse(&args).err().unwrap().status, 2, "{args:?}");
         }
+        // `--generation` is no target flag: it stays an operand, which no
+        // workspace command takes.
+        let (args, target) = parse(&["workspace", "--generation", generation]).unwrap();
+        assert!(target.window.is_none());
+        assert_eq!(
+            parse_control_arguments(&args).err().unwrap().status,
+            2,
+            "{args:?}"
+        );
+        assert!(!control_command(OsStr::new("--generation")));
     }
 
     #[test]
@@ -2855,7 +2805,6 @@ mod tests {
                 false
             ),
         );
-        let generation = "g1-0123456789abcdef0123456789abcdef";
         let (args, target) = parse_workspace_target_arguments(
             &[
                 "tab",
@@ -2864,8 +2813,6 @@ mod tests {
                 "0000abcd",
                 "--directory",
                 "/",
-                "--generation",
-                generation,
                 "--",
                 "hx",
                 "--window",
@@ -2874,7 +2821,6 @@ mod tests {
         )
         .unwrap();
         assert_eq!(target.window.as_deref(), Some("0000abcd"));
-        assert_eq!(target.generation.as_deref(), Some(generation));
         assert_eq!(
             parse_control_arguments(&args).unwrap(),
             (
@@ -3161,7 +3107,7 @@ mod tests {
 
     #[test]
     fn close_question_is_target_scoped_and_conservative() {
-        use eon_workspace_protocol::v34::{
+        use eon_workspace_protocol::v35::{
             BusyTerminal, BusyTerminals, Column, Pane, Popup, PopupEntry, PopupGeometry, PopupKey,
             Sidebar, Tab, TargetId, TerminalTarget,
         };
@@ -3409,7 +3355,7 @@ mod tests {
 
     #[test]
     fn close_question_combines_busy_and_final_warnings_once() {
-        use eon_workspace_protocol::v34::{
+        use eon_workspace_protocol::v35::{
             BusyTerminal, BusyTerminals, Column, Pane, Popup, PopupEntry, PopupGeometry, PopupKey,
             Sidebar, Tab, TargetId, TerminalTarget,
         };

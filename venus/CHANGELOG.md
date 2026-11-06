@@ -21,6 +21,8 @@
 - Confirming a final-close prompt sends its named tab or pane close directly.
   If another tab became active while the prompt was open, it stays active
   (VEN-C8, `eon-agent-parity-a9g0.3`).
+- Consume EONW v35, which changes no message: only Eon's CLI forms change
+  (`eon-7cf0y.22`, EON-C11). No Venus behavior change.
 - Consume EONW v34, which adds `EditTerminalHistory` and its `Editing` reply
   (`eon-u5bvd.5`, EON-C35). No Venus behavior change.
 - Consume EONW v33, which adds `ReadTerminalHistory` and its `History` reply

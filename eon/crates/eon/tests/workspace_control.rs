@@ -1,4 +1,4 @@
-use eon_workspace_protocol::v34::{
+use eon_workspace_protocol::v35::{
     Action as ProtocolAction, Availability, Change, Direction, End, Failure as ProtocolFailure,
     Filter, HEADER_BYTES, InvokeIntent, LifecycleResponse, MAX_SESSIONS, Popup, PopupTarget,
     Request, Response, Runtime, Screen, Sent, Snapshot, Stopped, SubscriptionMessage, Tab,
@@ -272,6 +272,23 @@ fn help_is_readable_and_does_not_start_or_prepare_a_workspace() {
         }
         assert!(!help.contains("--file"));
         assert!(!help.contains("generations"));
+        // `attach`, `stop` and `--generation` are gone from eon (EON-C11).
+        for removed in [
+            "GENERATION",
+            "--generation",
+            "Attach & stop",
+            "\n  attach",
+            "\n  stop",
+        ] {
+            assert!(!help.contains(removed), "help still names {removed:?}");
+        }
+        for note in [
+            "Window IDs, as eon window ls shows them: default, another build's or an\n\
+             independent window's ID, or any unique prefix of 4+ characters.\n",
+            "Workspace flag: --window ID, before any --.\n",
+        ] {
+            assert!(help.contains(note), "missing {note:?}");
+        }
         // An entry's description may continue on the next line.
         let lines: Vec<&str> = help.lines().collect();
         for command in ["config-path ", "config defaults "] {
@@ -381,12 +398,15 @@ fn help_is_readable_and_does_not_start_or_prepare_a_workspace() {
     fs::remove_dir_all(root).unwrap();
 }
 
-/// Catches an alias or fallback for a removed window listing creeping back.
+/// Catches an alias or fallback for a removed command creeping back: the
+/// window listings, `attach`, `stop` and the `--generation` flag (EON-C23,
+/// EON-C11), with the delegation markers set too.
 #[test]
-fn removed_window_listings_are_invalid_commands() {
+fn removed_commands_are_invalid() {
     let root = temporary_directory();
     let runtime = root.join("runtime");
     let binary = Path::new(env!("CARGO_BIN_EXE_eon"));
+    let generation = format!("g1-{:032x}", 7);
     for args in [
         vec!["windows"],
         vec!["windows", "--json"],
@@ -394,6 +414,17 @@ fn removed_window_listings_are_invalid_commands() {
         vec!["generations", "--json"],
         vec!["windows", "--help"],
         vec!["generations", "--help"],
+        vec!["attach"],
+        vec!["attach", &generation],
+        vec!["attach", "--help"],
+        vec!["stop", &generation],
+        vec!["stop", &generation, "--json"],
+        vec!["stop", "--json", &generation],
+        vec!["stop", "previous"],
+        vec!["stop", "all", "--json"],
+        vec!["stop", "--help"],
+        vec!["--generation", &generation, "workspace"],
+        vec!["workspace", "--generation", &generation, "--json"],
     ] {
         let output = eon_command(binary)
             .args(&args)
@@ -410,6 +441,254 @@ fn removed_window_listings_are_invalid_commands() {
         );
         assert!(!runtime.exists(), "{args:?}");
     }
+    // Against a running window, none sends a Stop, even run as a delegated
+    // Stop or attach of that generation: the window's supervisor still
+    // answers the one Stop sent after them.
+    let server = previous_supervisor(&runtime, &generation);
+    let run = |args: &[&str], marker: Option<&str>| {
+        let mut command = eon_command(binary);
+        command
+            .args(args)
+            .env("EON_CONFIG_HOME", root.join("absent-config"))
+            .env("EON_RUNTIME_DIR", &runtime)
+            .env_remove("EON_WINDOW_RUNTIME_DIR")
+            .env_remove("EON_STOP_DELEGATED")
+            .env_remove("EON_ATTACH_DELEGATED")
+            .stdin(Stdio::null());
+        if let Some(marker) = marker {
+            command.env(marker, &generation);
+        }
+        command.output().unwrap()
+    };
+    for marker in [
+        None,
+        Some("EON_STOP_DELEGATED"),
+        Some("EON_ATTACH_DELEGATED"),
+    ] {
+        for args in [
+            vec!["stop", generation.as_str(), "--json"],
+            vec!["stop", generation.as_str()],
+            vec!["stop", "all", "--json"],
+            vec!["attach", generation.as_str()],
+        ] {
+            let output = run(&args, marker);
+            assert_eq!(output.status.code(), Some(2), "{args:?} {marker:?}");
+            assert!(output.stdout.is_empty(), "{args:?} {marker:?}");
+        }
+    }
+    let stopped = run(&["window", "stop", &generation[3..], "--json"], None);
+    assert!(stopped.status.success(), "{stopped:?}");
+    let stopped: serde_json::Value = serde_json::from_slice(&stopped.stdout).unwrap();
+    assert_eq!(
+        stopped[0]["results"][0]["stopped"]["generation"], generation,
+        "{stopped}"
+    );
+    server.join().unwrap();
+    fs::remove_dir_all(root).unwrap();
+}
+
+/// Catches a delegated Stop or attach reaching another generation of its
+/// window, or a `--window` prefix that two windows share reaching either: a
+/// window that runs two generations gets a Stop for the marked one only, and
+/// a marker that names no generation, like an ambiguous prefix, sends
+/// nothing (EON-C11, EON-C10).
+#[test]
+fn delegated_window_stop_reaches_only_the_marked_generation() {
+    let root = temporary_directory();
+    let runtime = root.join("r");
+    let config = root.join("config");
+    let windows = runtime.join("w");
+    let window = windows.join("abcd3000");
+    let binary = PathBuf::from(env!("CARGO_BIN_EXE_eon"));
+    let run = |args: &[&str], marker: Option<(&str, &str)>| {
+        let mut command = eon_command(&binary);
+        command
+            .args(args)
+            .env("EON_RUNTIME_DIR", &runtime)
+            .env("EON_CONFIG_HOME", &config)
+            .env_remove("EON_WINDOW_RUNTIME_DIR")
+            .env_remove("EON_TERMINAL")
+            .env_remove("EON_STOP_DELEGATED")
+            .env_remove("EON_ATTACH_DELEGATED")
+            .stdin(Stdio::null());
+        if let Some((marker, value)) = marker {
+            command.env(marker, value);
+        }
+        command.output().unwrap()
+    };
+    // The independent window runs another build's generation and this
+    // build's own, the only one a marker may name.
+    let current = stdout(&run(&["versions"], None))
+        .split_whitespace()
+        .nth(2)
+        .unwrap()
+        .to_owned();
+    let first = format!("g1-{:032x}", 3);
+    let other = format!("g1-abcd1{:027x}", 1);
+    let mut servers = vec![previous_supervisor(&runtime, &other)];
+    fs::create_dir_all(&windows).unwrap();
+    fs::set_permissions(&windows, fs::Permissions::from_mode(0o700)).unwrap();
+    servers.push(previous_supervisor(&window, &first));
+    servers.push(previous_supervisor(&window, &current));
+    let listed = || {
+        let listed = run(&["window", "ls", "--json"], None);
+        let listed: serde_json::Value = serde_json::from_slice(&listed.stdout).unwrap();
+        let mut generations: Vec<_> = listed["windows"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|window| window["generation"].as_str().unwrap().to_owned())
+            .collect();
+        generations.sort();
+        generations
+    };
+    let mut all = vec![other.clone(), first.clone(), current.clone()];
+    all.sort();
+    assert_eq!(listed(), all);
+
+    // An ambiguous prefix sends nothing.
+    let ambiguous = run(&["workspace", "--window", "abcd", "--json"], None);
+    assert_eq!(ambiguous.status.code(), Some(3), "{ambiguous:?}");
+    let failure: serde_json::Value = serde_json::from_slice(&ambiguous.stdout).unwrap();
+    assert_eq!(failure["error"]["code"], "ambiguous-window-id", "{failure}");
+    // A marker that is not this build's generation, or a window that does not
+    // run it, is refused: each server would stop on its own Stop and fail on
+    // a Present, so the listing below and the joins prove nothing was sent.
+    let other_hex = &other[3..];
+    for (args, marker, value) in [
+        (
+            ["window", "stop", "abcd3000"],
+            "EON_STOP_DELEGATED",
+            "not-a-generation",
+        ),
+        (["window", "stop", "abcd3000"], "EON_STOP_DELEGATED", ""),
+        (
+            ["window", "stop", "abcd3000"],
+            "EON_STOP_DELEGATED",
+            first.as_str(),
+        ),
+        (
+            ["window", "stop", other_hex],
+            "EON_STOP_DELEGATED",
+            other.as_str(),
+        ),
+        (
+            ["window", "stop", other_hex],
+            "EON_STOP_DELEGATED",
+            current.as_str(),
+        ),
+        (
+            ["window", "attach", "abcd3000"],
+            "EON_ATTACH_DELEGATED",
+            "g1-bad",
+        ),
+        (
+            ["window", "attach", "abcd3000"],
+            "EON_ATTACH_DELEGATED",
+            first.as_str(),
+        ),
+        (
+            ["window", "attach", other_hex],
+            "EON_ATTACH_DELEGATED",
+            other.as_str(),
+        ),
+        (
+            ["window", "attach", other_hex],
+            "EON_ATTACH_DELEGATED",
+            current.as_str(),
+        ),
+    ] {
+        let mut args = args.to_vec();
+        if args[1] == "stop" {
+            args.push("--json");
+        }
+        let refused = run(&args, Some((marker, value)));
+        assert_eq!(
+            refused.status.code(),
+            Some(2),
+            "{args:?} {value}: {refused:?}"
+        );
+        assert!(refused.stdout.is_empty(), "{refused:?}");
+        assert!(
+            String::from_utf8_lossy(&refused.stderr).contains("nothing was sent"),
+            "{refused:?}"
+        );
+    }
+    assert_eq!(listed(), all);
+
+    // The marked generation alone is stopped; its sibling keeps running.
+    let stopped = run(
+        &["window", "stop", "abcd3000", "--json"],
+        Some(("EON_STOP_DELEGATED", &current)),
+    );
+    assert!(stopped.status.success(), "{stopped:?}");
+    let stopped: serde_json::Value = serde_json::from_slice(&stopped.stdout).unwrap();
+    assert_eq!(
+        stopped,
+        serde_json::json!([{"window": "abcd3000", "results": [
+            {"stopped": {"generation": current, "sessions": ["session-1"]}}
+        ]}])
+    );
+    servers.pop().unwrap().join().unwrap();
+    let mut left = vec![other.clone(), first.clone()];
+    left.sort();
+    assert_eq!(listed(), left);
+
+    // Without a marker, the window's Stop covers what it runs.
+    for (id, generation) in [("abcd3000", &first), (other_hex, &other)] {
+        let stopped = run(&["window", "stop", id, "--json"], None);
+        assert!(stopped.status.success(), "{stopped:?}");
+        let stopped: serde_json::Value = serde_json::from_slice(&stopped.stdout).unwrap();
+        assert_eq!(
+            stopped[0]["results"][0]["stopped"]["generation"], *generation,
+            "{stopped}"
+        );
+    }
+    for server in servers {
+        server.join().unwrap();
+    }
+    fs::remove_dir_all(root).unwrap();
+}
+
+/// Catches `window stop default --json` opening its result array before it
+/// inspects the window: an unsafe namespace must still print one JSON value,
+/// and its endpoint must never be contacted.
+#[test]
+fn window_stop_default_reports_an_unsafe_namespace_as_json() {
+    let root = temporary_directory();
+    let runtime = root.join("r");
+    let config = root.join("config");
+    let binary = PathBuf::from(env!("CARGO_BIN_EXE_eon"));
+    let current = stdout(&invoke(&binary, &runtime, &config, &["versions"]))
+        .split_whitespace()
+        .nth(2)
+        .unwrap()
+        .to_owned();
+    let listener = generation_listener(&runtime, &current);
+    listener.set_nonblocking(true).unwrap();
+    fs::set_permissions(
+        runtime.join("generations"),
+        fs::Permissions::from_mode(0o755),
+    )
+    .unwrap();
+
+    let output = invoke(
+        &binary,
+        &runtime,
+        &config,
+        &["window", "stop", "default", "--json"],
+    );
+    assert_eq!(output.status.code(), Some(1), "{output:?}");
+    let reply: serde_json::Value = serde_json::from_slice(&output.stdout)
+        .unwrap_or_else(|error| panic!("{error}: {}", stdout(&output)));
+    let results = reply[0]["results"].as_array().unwrap();
+    assert_eq!(results.len(), 1, "{reply}");
+    assert_eq!(results[0]["error"]["code"], "stop-failed", "{reply}");
+    assert_eq!(reply[0]["window"], "default", "{reply}");
+    assert_eq!(
+        listener.accept().map(|_| ()).unwrap_err().kind(),
+        std::io::ErrorKind::WouldBlock
+    );
     fs::remove_dir_all(root).unwrap();
 }
 
@@ -1896,9 +2175,7 @@ while [ ! -e "$EON_TEST_STOP" ]; do sleep 0.01; done
     }
 
     fn stop_generation(&self, supervisor: &mut TestProcess) -> String {
-        let generation = self.generation();
-        let id = generation.file_name().unwrap().to_str().unwrap().to_owned();
-        let stopped = self.eon(&["stop", &id, "--json"]);
+        let stopped = self.eon(&["window", "stop", "default", "--json"]);
         assert!(stopped.status.success(), "{}", stdout(&stopped));
         wait_for_successful_exit(&mut supervisor.child);
         stdout(&stopped).to_owned()
@@ -2929,8 +3206,8 @@ fn stop_accounts_for_late_ready_pair_and_retains_partial_cleanup_owner() {
     // The late pair keeps session-2, so the next terminal never reuses it.
     let second = live_identity(&generation.join("session-3.sock"));
     fs::write(&fail, "session-3").unwrap();
-    let id = generation.file_name().unwrap().to_str().unwrap();
-    let failed = invoke(binary, &runtime, &config, &["stop", id, "--json"]);
+    let stop = ["window", "stop", "default", "--json"];
+    let failed = invoke(binary, &runtime, &config, &stop);
     assert_eq!(failed.status.code(), Some(1), "{}", stdout(&failed));
     assert!(stdout(&failed).contains("injected stop failure"));
     assert!(
@@ -2955,7 +3232,7 @@ fn stop_accounts_for_late_ready_pair_and_retains_partial_cleanup_owner() {
         workspace_action(&control, "blocked", Action::CreatePane { focus: true }),
         Response::Failure(_)
     ));
-    let retried = invoke(binary, &runtime, &config, &["stop", id, "--json"]);
+    let retried = invoke(binary, &runtime, &config, &stop);
     assert!(retried.status.success(), "{}", stdout(&retried));
     wait_for_successful_exit(&mut supervisor.child);
     wait_for_process_removal(second.process_id, "retried terminal survived Stop");
@@ -2995,10 +3272,9 @@ fn stop_result_covers_queued_operation_and_managed_cleanup() {
     };
     let generation = generation_runtime(&runtime);
     wait_for_connection(&generation.join("eon.sock"));
-    let id = generation.file_name().unwrap().to_str().unwrap();
     let mut stopping = TestProcess {
         child: eon_command(binary)
-            .args(["stop", id])
+            .args(["window", "stop", "default"])
             .env("EON_RUNTIME_DIR", &runtime)
             .env("EON_CONFIG_HOME", &config)
             .stdin(Stdio::piped())
@@ -3257,7 +3533,12 @@ fn a_stalled_subscriber_never_delays_requests_another_subscriber_or_stop() {
     }
 
     let stopping = Instant::now();
-    let stopped = invoke(binary, &runtime, &config, &["stop", &id, "--json"]);
+    let stopped = invoke(
+        binary,
+        &runtime,
+        &config,
+        &["window", "stop", "default", "--json"],
+    );
     let stop_took = stopping.elapsed();
     assert!(stopped.status.success(), "{}", stdout(&stopped));
     assert!(
@@ -3453,10 +3734,9 @@ fn failure_kinds_exit_with_distinct_statuses_with_and_without_json() {
             arguments,
         )
     };
-    let unknown_generation = "g1-00000000000000000000000000000000";
     for (arguments, status, code) in [
         (&["tab", "close"][..], 2, None),
-        (&["stop", unknown_generation], 3, Some("unknown-generation")),
+        (&["window", "stop", "ffff"], 3, Some("unknown-window")),
         (&["workspace"], 4, Some("missing-supervisor")),
     ] {
         let human = run(arguments);
@@ -3781,10 +4061,9 @@ fn bare_eon_attaches_only_to_the_live_current_generation() {
         .unwrap();
 
     assert!(output.status.success());
-    let generation_id = generation.file_name().unwrap().to_str().unwrap();
     overfill_generation_directory(&runtime);
     let exact = eon_command(&binary)
-        .args(["attach", generation_id])
+        .args(["window", "attach", "default"])
         .env("EON_RUNTIME_DIR", &runtime)
         .env("EON_CONFIG_HOME", &config)
         .env("EON_VENUS", &venus)
@@ -4169,7 +4448,13 @@ fn eonbase_replaces_exact_residue_after_its_supervisor_and_session_die() {
     wait_for(&orbit_log);
     assert_eq!(fs::read_to_string(&orbit_log).unwrap().lines().count(), 1);
     let generation_id = generation.file_name().unwrap().to_str().unwrap();
-    let stopped = invoke(&eon, &runtime, &config, &["stop", generation_id, "--json"]);
+    // eonbase keeps `stop GENERATION` (EON-C12).
+    let stopped = invoke(
+        &binary,
+        &runtime,
+        &config,
+        &["stop", generation_id, "--json"],
+    );
     assert!(stopped.status.success(), "{}", stdout(&stopped));
     wait_for_successful_exit(&mut second.child);
     assert!(!generation.exists());
@@ -5054,12 +5339,15 @@ fn workspace_target_failures_are_explicit_and_bounded() {
     let runtime = root.join("runtime");
     let id = "g1-00000000000000000000000000000001";
     for (arguments, status) in [
-        (vec!["workspace", "--generation", id, "--json"], 3),
+        (vec!["workspace", "--window", &id[3..], "--json"], 3),
         (vec!["workspace", "--window", "0000abcd", "--json"], 3),
-        (vec!["workspace", "--generation", "bad"], 2),
+        (vec!["workspace", "--window", "0000", "--json"], 3),
+        (vec!["workspace", "--generation", id, "--json"], 2),
+        (vec!["--generation", id, "workspace"], 2),
         (vec!["workspace", "--window", "ABCDEFGH"], 2),
+        (vec!["workspace", "--window", "abc"], 2),
         (vec!["workspace", "--window"], 2),
-        (vec!["versions", "--generation", id], 2),
+        (vec!["versions", "--window", "0000abcd"], 2),
     ] {
         assert_eq!(
             invoke(binary, &runtime, &config, &arguments).status.code(),
@@ -5071,27 +5359,15 @@ fn workspace_target_failures_are_explicit_and_bounded() {
     assert!(!config.exists());
 
     // An older EONW cannot validate the opaque caller; never guess another owner.
-    let listener = generation_listener(&runtime, id);
-    let server = thread::spawn(move || {
-        for _ in 0..2 {
-            let (mut stream, _) = listener.accept().unwrap();
-            read_request(&mut stream);
-            let mut header = encode_response(&Response::Failure(ProtocolFailure {
-                code: "unsupported-version".into(),
-                detail: "old supervisor".into(),
-            }))
-            .unwrap();
-            header[4..6].copy_from_slice(&(VERSION - 1).to_le_bytes());
-            let _ = stream.write_all(&header);
-        }
-    });
+    let done = root.join("done");
+    let server = older_supervisor(&runtime, id, &done);
     for caller in [None, Some("session-1.unknown")] {
         let mut command = eon_command(binary);
         if let Some(caller) = caller {
             command.env("EON_TERMINAL", caller);
         }
         let output = command
-            .args(["workspace", "--generation", id, "--json"])
+            .args(["workspace", "--window", &id[3..9], "--json"])
             .env("EON_RUNTIME_DIR", &runtime)
             .output()
             .unwrap();
@@ -5100,7 +5376,11 @@ fn workspace_target_failures_are_explicit_and_bounded() {
         assert!(stdout(&output).contains("EONW"));
         assert!(stdout(&output).contains("the terminal's own `eon`"));
     }
-    server.join().unwrap();
+    end_older_supervisors(
+        &done,
+        &[runtime.join("generations").join(id).join("eon.sock")],
+        vec![server],
+    );
     fs::remove_dir_all(&runtime).unwrap();
 
     fs::create_dir_all(runtime.join("generations")).unwrap();
@@ -5251,9 +5531,11 @@ fn workspace_control_follows_the_exact_caller_across_generations() {
         previous_id
     );
     older.join().unwrap();
+    // Another build's default-namespace window answers to its generation's
+    // hex digits and their prefixes.
     for arguments in [
-        vec!["workspace", "--generation", previous_id, "--json"],
-        vec!["--generation", previous_id, "workspace", "--json"],
+        vec!["workspace", "--window", &previous_id[3..], "--json"],
+        vec!["--window", &previous_id[3..9], "workspace", "--json"],
     ] {
         let outside = invoke(binary, &runtime, &config, &arguments);
         assert!(outside.status.success(), "{}", stdout(&outside));
@@ -5268,8 +5550,8 @@ fn workspace_control_follows_the_exact_caller_across_generations() {
     let wrong = from(&[
         "pane",
         "create",
-        "--generation",
-        &current_id,
+        "--window",
+        "default",
         "--no-focus",
         "--json",
     ]);
@@ -5287,7 +5569,7 @@ fn workspace_control_follows_the_exact_caller_across_generations() {
     ] {
         for arguments in [
             vec!["workspace", "--json"],
-            vec!["pane", "create", "--generation", &current_id, "--json"],
+            vec!["pane", "create", "--window", "default", "--json"],
         ] {
             let stale = eon_command(binary)
                 .args(arguments)
@@ -5352,8 +5634,12 @@ fn workspace_control_follows_the_exact_caller_across_generations() {
         &["workspace", "--window", window_id, "--json"],
     );
     assert_eq!(ambiguous.status.code(), Some(1), "{}", stdout(&ambiguous));
-    assert!(stdout(&ambiguous).contains("--generation"));
-    let exact = invoke(
+    assert!(stdout(&ambiguous).contains("\"code\":\"ambiguous-window\""));
+    assert!(stdout(&ambiguous).contains("none is this build's"));
+    assert!(!stdout(&ambiguous).contains("--generation"));
+    assert!(!stdout(&ambiguous).contains(previous_id));
+    // `--generation` no longer narrows a window to one of its generations.
+    let removed = invoke(
         binary,
         &runtime,
         &config,
@@ -5366,11 +5652,18 @@ fn workspace_control_follows_the_exact_caller_across_generations() {
             "--json",
         ],
     );
-    assert!(exact.status.success(), "{}", stdout(&exact));
+    assert_eq!(removed.status.code(), Some(2), "{}", stdout(&removed));
+    // As the base namespace, the window root lists the other generation by
+    // its hex digits.
     assert!(
-        invoke(binary, &window_root, &config, &["stop", other_id, "--json"])
-            .status
-            .success()
+        invoke(
+            binary,
+            &window_root,
+            &config,
+            &["window", "stop", &other_id[3..], "--json"]
+        )
+        .status
+        .success()
     );
     other.join().unwrap();
     fs::write(&window.stop, "").unwrap();
@@ -5452,12 +5745,7 @@ fn commands_from_a_terminal_target_its_column_and_stale_callers_change_nothing()
     });
     for arguments in [
         vec!["workspace", "--json"],
-        vec![
-            "workspace",
-            "--generation",
-            generation.file_name().unwrap().to_str().unwrap(),
-            "--json",
-        ],
+        vec!["workspace", "--window", "default", "--json"],
     ] {
         let output = from(&caller, &arguments);
         assert!(output.status.success(), "{}", stdout(&output));
@@ -6657,8 +6945,12 @@ fn a_workspace_final_close_shows_the_recent_one_and_attach_keeps_it() {
     // Detaching keeps every workspace, and attach presents the one last shown.
     fs::write(root.join(format!("venus-input.{first_venus}.detach")), "").unwrap();
     wait_for_process_removal(first_venus, "Venus did not detach");
-    let generation_id = generation.file_name().unwrap().to_str().unwrap();
-    assert!(eon(&["attach", generation_id]).status().unwrap().success());
+    assert!(
+        eon(&["window", "attach", "default"])
+            .status()
+            .unwrap()
+            .success()
+    );
     let second_venus = venus_pid(2);
     // The presented Venus is named to every live terminal before attach
     // replies.
@@ -6836,7 +7128,7 @@ fn launch_overlapping_last_session_exit_starts_a_fresh_session() {
         &binary,
         &runtime,
         &config,
-        &["stop", generation_id, "--json"],
+        &["window", "stop", "default", "--json"],
     );
     assert!(stopped.status.success(), "{}", stdout(&stopped));
     wait_for_successful_exit(&mut second.child);
@@ -6967,12 +7259,11 @@ fn replacement_reconciles_exact_tombstone_endpoints_without_deleting_replacement
         assert!(Instant::now() < deadline, "fresh Session count changed");
         thread::sleep(Duration::from_millis(10));
     }
-    let generation_id = generation.file_name().unwrap().to_str().unwrap();
     let stopped = invoke(
         &binary,
         &runtime,
         &config,
-        &["stop", generation_id, "--json"],
+        &["window", "stop", "default", "--json"],
     );
     assert!(stopped.status.success(), "{}", stdout(&stopped));
     wait_for_successful_exit(&mut recovered.child);
@@ -7157,12 +7448,11 @@ fn replacement_eon_adopts_exact_runs_and_projects_numeric_workspace() {
         Duration::ZERO,
     );
 
-    let generation_id = generation.file_name().unwrap().to_str().unwrap();
     let stopped = invoke(
         &binary,
         &runtime,
         &config,
-        &["stop", generation_id, "--json"],
+        &["window", "stop", "default", "--json"],
     );
     assert!(stopped.status.success(), "{}", stdout(&stopped));
     assert!(stdout(&stopped).contains("\"sessions\":[\"session-1\",\"session-2\",\"session-3\"]"));
@@ -7414,11 +7704,10 @@ fn stop_confirmation_refuses_a_replacement_supervisor() {
     let generation = generation_runtime(&runtime);
     let control = generation.join("eon.sock");
     wait_for(&control);
-    let generation_id = generation.file_name().unwrap().to_str().unwrap();
 
     let mut confirmation = TestProcess {
         child: eon_command(&binary)
-            .args(["stop", generation_id])
+            .args(["window", "stop", "default"])
             .env("EON_RUNTIME_DIR", &runtime)
             .env("EON_CONFIG_HOME", &config)
             .stdin(Stdio::piped())
@@ -7434,7 +7723,7 @@ fn stop_confirmation_refuses_a_replacement_supervisor() {
         &binary,
         &runtime,
         &config,
-        &["stop", generation_id, "--json"],
+        &["window", "stop", "default", "--json"],
     );
     assert!(stopped_first.status.success(), "{}", stdout(&stopped_first));
     wait_for_successful_exit(&mut first.child);
@@ -7467,7 +7756,7 @@ fn stop_confirmation_refuses_a_replacement_supervisor() {
         &binary,
         &runtime,
         &config,
-        &["stop", generation_id, "--json"],
+        &["window", "stop", "default", "--json"],
     );
     wait_for_successful_exit(&mut second.child);
     fs::remove_dir_all(root).unwrap();
@@ -7570,7 +7859,7 @@ fn concurrent_launches_converge_and_generation_stop_is_owner_routed() {
         &binary,
         &runtime,
         &config,
-        &["stop", generation_id, "--json"],
+        &["window", "stop", "default", "--json"],
     );
     assert!(
         stopped.status.success(),
@@ -7749,7 +8038,7 @@ fn quit_from_a_terminal_stops_only_the_callers_window() {
     wait_for_generation_removal(&first_generation);
     assert!(default.child.try_wait().unwrap().is_none());
     let stopped = quit_command(&root)
-        .args(["stop", "all", "--json"])
+        .args(["window", "stop", "default", "--json"])
         .output()
         .unwrap();
     assert!(stopped.status.success(), "{stopped:?}");
@@ -7924,7 +8213,7 @@ fn popup_hide_hides_a_popup_and_refuses_unknown_ones() {
     assert!(stopped.status.success(), "{stopped:?}");
     wait_for_generation_removal(&generation);
     let stopped = quit_command(&root)
-        .args(["stop", "all", "--json"])
+        .args(["window", "stop", "default", "--json"])
         .output()
         .unwrap();
     assert!(stopped.status.success(), "{stopped:?}");
@@ -8177,11 +8466,7 @@ fn quit_reports_unknown_counts_and_preserves_unavailable_discovery() {
     assert!(default.child.try_wait().unwrap().is_none());
     server.join().unwrap();
     let stopped = quit_command(&root)
-        .args([
-            "stop",
-            current.file_name().unwrap().to_str().unwrap(),
-            "--json",
-        ])
+        .args(["window", "stop", "default", "--json"])
         .output()
         .unwrap();
     assert!(stopped.status.success(), "{stopped:?}");
@@ -8437,7 +8722,10 @@ while [ ! -e "$EON_TEST_STOP" ]; do sleep 0.01; done
         2,
         "{logs:?}"
     );
-    for args in [vec!["window", "attach", &windows[0]], vec!["attach"]] {
+    for args in [
+        vec!["window", "attach", &windows[0]],
+        vec!["window", "attach", "default"],
+    ] {
         let output = command().args(args).output().unwrap();
         assert!(output.status.success(), "{output:?}");
         assert_eq!(pair_logs().len(), 4);
@@ -8449,11 +8737,8 @@ while [ ! -e "$EON_TEST_STOP" ]; do sleep 0.01; done
             .unwrap();
         assert!(output.status.success(), "{output:?}");
     }
-    let generation = control.parent().unwrap().file_name().unwrap();
     let output = command()
-        .arg("stop")
-        .arg(generation)
-        .arg("--json")
+        .args(["window", "stop", "default", "--json"])
         .output()
         .unwrap();
     assert!(output.status.success(), "{output:?}");
@@ -8535,7 +8820,6 @@ fn quit_asks_in_window_language_and_names_busy_terminals() {
 #[test]
 fn quit_counts_a_silent_terminal_busy_after_3_s() {
     let (root, mut default) = quit_workspace();
-    let generation = generation_runtime(&root.join("r"));
     fs::write(root.join("foreground"), "child").unwrap();
     wait_for_busy_panes(&root, None, &[]);
     fs::write(root.join("foreground"), "silent").unwrap();
@@ -8555,11 +8839,7 @@ fn quit_counts_a_silent_terminal_busy_after_3_s() {
     assert!(prompt.contains("error not-confirmed:"), "{prompt}");
     assert!(default.child.try_wait().unwrap().is_none());
     let stopped = quit_command(&root)
-        .args([
-            "stop",
-            generation.file_name().unwrap().to_str().unwrap(),
-            "--json",
-        ])
+        .args(["window", "stop", "default", "--json"])
         .output()
         .unwrap();
     assert!(stopped.status.success(), "{stopped:?}");
@@ -8570,32 +8850,26 @@ fn quit_counts_a_silent_terminal_busy_after_3_s() {
 #[test]
 fn stop_keeps_its_always_ask_question() {
     let (root, mut default) = quit_workspace();
-    let generation = generation_runtime(&root.join("r"));
-    let id = generation.file_name().unwrap().to_str().unwrap().to_owned();
     fs::write(root.join("foreground"), "child").unwrap();
     wait_for_busy_panes(&root, None, &[]);
     let declined = quit_command(&root)
-        .args(["stop", &id])
+        .args(["window", "stop", "default"])
         .stdin(Stdio::null())
         .output()
         .unwrap();
     assert_eq!(declined.status.code(), Some(1), "{declined:?}");
     let prompt = String::from_utf8_lossy(&declined.stderr);
     assert!(
-        prompt.starts_with(&format!(
-            "Stop generation {id} and 1 live terminal [session-1]? [y/N] "
-        )),
+        prompt.starts_with("Stop window default and 1 live terminal [session-1]? [y/N] "),
         "{prompt}"
     );
     assert!(
-        prompt.contains(&format!(
-            "error not-confirmed: no Stop sent for generation {id};"
-        )),
+        prompt.contains("error not-confirmed: no Stop sent for window default;"),
         "{prompt}"
     );
     assert!(default.child.try_wait().unwrap().is_none());
     let stopped = quit_command(&root)
-        .args(["stop", &id, "--json"])
+        .args(["window", "stop", "default", "--json"])
         .output()
         .unwrap();
     assert!(stopped.status.success(), "{stopped:?}");
@@ -8779,7 +9053,7 @@ fn running_windows_name_each_other_and_refresh_on_start_and_end() {
         }
         let response = read_request(&mut stream);
         assert!(matches!(
-            eon_workspace_protocol::v34::decode_lifecycle_response(&response).unwrap(),
+            eon_workspace_protocol::v35::decode_lifecycle_response(&response).unwrap(),
             LifecycleResponse::Runtime(_)
         ));
     }
@@ -8954,11 +9228,7 @@ fn running_windows_name_each_other_and_refresh_on_start_and_end() {
         &binary,
         &runtime,
         &config,
-        &[
-            "stop",
-            single["this"]["generation"].as_str().unwrap(),
-            "--json",
-        ],
+        &["window", "stop", "default", "--json"],
     );
     assert!(stopped.status.success(), "{}", stdout(&stopped));
     wait_for_successful_exit(&mut first.child);
@@ -10496,10 +10766,19 @@ fn generations_from_another_eonw_are_incompatible_and_not_stopped() {
         "{older}"
     );
 
-    let stopped = invoke(&binary, &runtime, &config, &["stop", &id, "--json"]);
+    let stopped = invoke(
+        &binary,
+        &runtime,
+        &config,
+        &["window", "stop", &id[3..], "--json"],
+    );
     assert_eq!(stopped.status.code(), Some(1), "{}", stdout(&stopped));
     let stopped: serde_json::Value = serde_json::from_str(stdout(&stopped)).unwrap();
-    assert_eq!(stopped["error"]["code"], "stop-unavailable", "{stopped}");
+    assert_eq!(stopped[0]["window"], &id[3..], "{stopped}");
+    assert_eq!(
+        stopped[0]["results"][0]["error"]["code"], "stop-unavailable",
+        "{stopped}"
+    );
     configure_mock_desktop(&config);
     let stop = root.join("stop");
     let orbit = root.join("orbit");
@@ -10579,6 +10858,17 @@ fn generations_from_another_eonw_are_incompatible_and_not_stopped() {
 /// Serves an older build's supervisor at `runtime`'s generation `id`: it
 /// rejects each request in its own framing until `done` exists.
 fn older_supervisor(runtime: &Path, id: &str, done: &Path) -> thread::JoinHandle<()> {
+    other_eonw_supervisor(runtime, id, done, 11)
+}
+
+/// Serves a supervisor of EONW `version` at `runtime`'s generation `id`, as
+/// `older_supervisor` does.
+fn other_eonw_supervisor(
+    runtime: &Path,
+    id: &str,
+    done: &Path,
+    version: u16,
+) -> thread::JoinHandle<()> {
     let listener = generation_listener(runtime, id);
     let done = done.to_owned();
     thread::spawn(move || {
@@ -10593,7 +10883,7 @@ fn older_supervisor(runtime: &Path, id: &str, done: &Path) -> thread::JoinHandle
                 detail: format!("unsupported EONW version {VERSION}"),
             }))
             .unwrap();
-            failure[4..6].copy_from_slice(&11u16.to_le_bytes());
+            failure[4..6].copy_from_slice(&version.to_le_bytes());
             stream.write_all(&failure).unwrap();
         }
     })
@@ -10620,6 +10910,8 @@ fn older_eonw_generations_stop_through_their_recorded_eon() {
     let done = root.join("done");
     let default = format!("g1-{:032x}", 21);
     let windowed = format!("g1-{:032x}", 22);
+    // The default-namespace window's ID, its generation's hex digits.
+    let hex = &default[3..];
     let mut servers = vec![older_supervisor(&runtime, &default, &done)];
     fs::create_dir(&windows).unwrap();
     fs::set_permissions(&windows, fs::Permissions::from_mode(0o700)).unwrap();
@@ -10692,9 +10984,10 @@ fn older_eonw_generations_stop_through_their_recorded_eon() {
     assert_eq!(older["stop"]["available"], true, "{older}");
     assert_eq!(older["executable"], older_eon.to_str().unwrap());
 
-    // A JSON Stop runs the recorded `eon` without input or a calling terminal.
+    // A JSON Stop runs the recorded `eon` of that EONW 11 build as
+    // `stop GENERATION --json`, without input or a calling terminal.
     let stopped = eon_command(&binary)
-        .args(["stop", &default, "--json"])
+        .args(["window", "stop", hex, "--json"])
         .env("EON_RUNTIME_DIR", &runtime)
         .env("EON_CONFIG_HOME", &config)
         .env_remove("EON_WINDOW_RUNTIME_DIR")
@@ -10704,32 +10997,32 @@ fn older_eonw_generations_stop_through_their_recorded_eon() {
         .unwrap();
     assert_eq!(stopped.status.code(), Some(0), "{stopped:?}");
     assert_eq!(
-        stdout(&stopped),
-        format!("{{\"stopped\":{{\"generation\":\"{default}\",\"sessions\":[\"session-1\"]}}}}\n")
+        serde_json::from_slice::<serde_json::Value>(&stopped.stdout).unwrap(),
+        serde_json::json!([{"window": hex, "results": [
+            {"stopped": {"generation": default, "sessions": ["session-1"]}}
+        ]}])
     );
     assert_eq!(
         take_log(),
         format!("stop {default} --json|unset|unset|{default}|eof\n")
     );
 
-    // A human Stop asks first; a refusal runs nothing.
-    let refused = eon(&["stop", &default], b"n\n");
+    // A human Stop asks first, naming the window as `eon window ls` shows
+    // it: `0000abcd` and `00000…15` share `0000`. A refusal runs nothing.
+    let refused = eon(&["window", "stop", "00000"], b"n\n");
     assert_eq!(refused.status.code(), Some(1), "{refused:?}");
     let error = String::from_utf8_lossy(&refused.stderr);
     assert!(
-        error.contains(&format!(
-            "Stop generation {default}? It runs another Eon build, so its terminals are unknown. [y/N] "
-        )),
+        error.contains(
+            "Stop window 00000? It runs another Eon build, so its terminals are unknown. [y/N] "
+        ),
         "{error}"
     );
     assert!(error.contains("error not-confirmed:"), "{error}");
     assert_eq!(take_log(), "");
-    let human = eon(&["stop", &default], b"y\n");
+    let human = eon(&["window", "stop", "00000"], b"y\n");
     assert_eq!(human.status.code(), Some(0), "{human:?}");
-    assert_eq!(
-        stdout(&human),
-        format!("stopped generation {default}: session-1\n")
-    );
+    assert_eq!(stdout(&human), "stopped window 00000: session-1\n");
     take_log();
 
     // Quit stops every older window, each through a Stop in its own namespace,
@@ -10791,39 +11084,42 @@ fn older_eonw_generations_stop_through_their_recorded_eon() {
     );
 
     // Its result is passed through, and anything else fails the Stop.
+    let result = |output: &Output| {
+        let value: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
+        assert_eq!(value[0]["window"], hex, "{value}");
+        value[0]["results"][0].clone()
+    };
     fs::write(&mode, "error").unwrap();
-    let failed = eon(&["stop", &default, "--json"], b"");
+    let failed = eon(&["window", "stop", hex, "--json"], b"");
     assert_eq!(failed.status.code(), Some(4), "{failed:?}");
     assert_eq!(
-        stdout(&failed),
-        "{\"error\":{\"code\":\"supervisor-unavailable\",\"detail\":\"older supervisor ended\"}}\n"
+        result(&failed),
+        serde_json::json!({"error": {"code": "supervisor-unavailable", "detail": "older supervisor ended"}})
     );
     fs::write(&mode, "garbage").unwrap();
-    let failed = eon(&["stop", &default, "--json"], b"");
+    let failed = eon(&["window", "stop", hex, "--json"], b"");
     assert_eq!(failed.status.code(), Some(1), "{failed:?}");
-    let failed: serde_json::Value = serde_json::from_slice(&failed.stdout).unwrap();
-    assert_eq!(failed["error"]["code"], "stop-failed", "{failed}");
+    assert_eq!(result(&failed)["error"]["code"], "stop-failed");
     // A Stop that a signal ends fails, whatever it printed first.
     fs::write(&mode, "killed").unwrap();
-    let killed = eon(&["stop", &default, "--json"], b"");
+    let killed = eon(&["window", "stop", hex, "--json"], b"");
     assert_eq!(killed.status.code(), Some(1), "{killed:?}");
-    let killed: serde_json::Value = serde_json::from_slice(&killed.stdout).unwrap();
-    assert_eq!(killed["error"]["code"], "stop-failed", "{killed}");
+    assert_eq!(result(&killed)["error"]["code"], "stop-failed");
     fs::remove_file(&mode).unwrap();
     take_log();
 
-    // A delegated Stop never delegates the same generation again.
+    // A delegated Stop never delegates again: a build is delegated only its
+    // own generation, so a marker naming the older one is refused.
     let again = eon_command(&binary)
-        .args(["stop", &default, "--json"])
+        .args(["window", "stop", hex, "--json"])
         .env("EON_RUNTIME_DIR", &runtime)
         .env("EON_CONFIG_HOME", &config)
         .env_remove("EON_WINDOW_RUNTIME_DIR")
         .env("EON_STOP_DELEGATED", &default)
         .output()
         .unwrap();
-    assert_eq!(again.status.code(), Some(1), "{again:?}");
-    let again: serde_json::Value = serde_json::from_slice(&again.stdout).unwrap();
-    assert_eq!(again["error"]["code"], "stop-unavailable", "{again}");
+    assert_eq!(again.status.code(), Some(2), "{again:?}");
+    assert!(again.stdout.is_empty(), "{again:?}");
     assert_eq!(take_log(), "");
 
     // A record whose file is gone or cannot run says so and names the way
@@ -10837,15 +11133,15 @@ fn older_eonw_generations_stop_through_their_recorded_eon() {
         symlink(&missing, &record).unwrap();
     }
     let quoted = format!("\"{}\"", missing.display());
-    let gone = eon(&["stop", &default, "--json"], b"");
+    let gone = eon(&["window", "stop", hex, "--json"], b"");
     assert_eq!(gone.status.code(), Some(1), "{gone:?}");
-    let gone: serde_json::Value = serde_json::from_slice(&gone.stdout).unwrap();
+    let gone = result(&gone);
     assert_eq!(gone["error"]["code"], "stop-unavailable", "{gone}");
     let detail = gone["error"]["detail"].as_str().unwrap();
     assert!(
         detail.ends_with(&format!(
             "its recorded eon {} is missing; restore that build, then run \
-             env -u EON_WINDOW_RUNTIME_DIR {quoted} stop {default}",
+             env -u EON_WINDOW_RUNTIME_DIR EON_STOP_DELEGATED={default} {quoted} stop {default}",
             missing.display(),
         )),
         "{detail}"
@@ -10858,12 +11154,12 @@ fn older_eonw_generations_stop_through_their_recorded_eon() {
             .map(|(_, command)| command.to_owned())
             .unwrap_or_else(|| panic!("no advice: {error}"))
     };
-    let default_advice = advice(&eon(&["stop", &default], b""));
+    let default_advice = advice(&eon(&["window", "stop", hex], b""));
     let window_advice = advice(&eon(&["window", "stop", "0000abcd"], b""));
     assert_eq!(
         window_advice,
         format!(
-            "env 'EON_WINDOW_RUNTIME_DIR={}' {quoted} stop {windowed}",
+            "env 'EON_WINDOW_RUNTIME_DIR={}' EON_STOP_DELEGATED={windowed} {quoted} stop {windowed}",
             window.display()
         )
     );
@@ -10883,11 +11179,14 @@ fn older_eonw_generations_stop_through_their_recorded_eon() {
     for (command, expected) in [
         (
             default_advice,
-            format!("stop {default}|unset|unset|unset|eof\n"),
+            format!("stop {default}|unset|unset|{default}|eof\n"),
         ),
         (
             window_advice,
-            format!("stop {windowed}|{}|unset|unset|eof\n", window.display()),
+            format!(
+                "stop {windowed}|{}|unset|{windowed}|eof\n",
+                window.display()
+            ),
         ),
     ] {
         for shell in [&["/bin/sh", "-c"][..], &["nu", "--no-config-file", "-c"]] {
@@ -10907,14 +11206,169 @@ fn older_eonw_generations_stop_through_their_recorded_eon() {
     let record = runtime.join("generations").join(&default).join("eon");
     fs::remove_file(&record).unwrap();
     symlink(&unrunnable, &record).unwrap();
-    let blocked = eon(&["stop", &default, "--json"], b"");
+    let blocked = eon(&["window", "stop", hex, "--json"], b"");
     assert_eq!(blocked.status.code(), Some(1), "{blocked:?}");
-    let blocked: serde_json::Value = serde_json::from_slice(&blocked.stdout).unwrap();
+    let blocked = result(&blocked);
     let detail = blocked["error"]["detail"].as_str().unwrap();
     assert!(
         detail.contains(&format!(
             "its recorded eon {} is not an executable file; restore that build",
             unrunnable.display()
+        )),
+        "{detail}"
+    );
+    assert_eq!(take_log(), "");
+
+    end_older_supervisors(&done, &sockets, servers);
+    fs::remove_dir_all(root).unwrap();
+}
+
+/// Catches a newer build's window getting the generation forms it no longer
+/// takes: a build of a later EONW is run as `window stop ID --json` and
+/// `window attach ID`, its marker naming the generation, and its window
+/// result is reported as the Stop result (EON-C11, Delegation).
+#[test]
+fn newer_eonw_windows_stop_and_attach_through_their_window_forms() {
+    let root = temporary_directory();
+    let runtime = root.join("r");
+    let config = root.join("config");
+    let window = runtime.join("w").join("0000beef");
+    let done = root.join("done");
+    let newer = format!("g1-{:032x}", 31);
+    let windowed = format!("g1-{:032x}", 32);
+    let hex = &newer[3..];
+    let mut servers = vec![other_eonw_supervisor(&runtime, &newer, &done, VERSION + 1)];
+    fs::create_dir(runtime.join("w")).unwrap();
+    fs::set_permissions(runtime.join("w"), fs::Permissions::from_mode(0o700)).unwrap();
+    servers.push(other_eonw_supervisor(
+        &window,
+        &windowed,
+        &done,
+        VERSION + 1,
+    ));
+    let sockets = [
+        runtime.join("generations").join(&newer).join("eon.sock"),
+        window.join("generations").join(&windowed).join("eon.sock"),
+    ];
+    let log = root.join("log");
+    let mode = root.join("mode");
+    let newer_eon = root.join("newer-eon");
+    executable(
+        &newer_eon,
+        format!(
+            "#!/bin/sh\n\
+             printf '%s|%s|%s|%s|%s\\n' \"$*\" \"${{EON_WINDOW_RUNTIME_DIR-unset}}\" \
+             \"${{EON_TERMINAL-unset}}\" \"${{EON_STOP_DELEGATED-unset}}\" \
+             \"${{EON_ATTACH_DELEGATED-unset}}\" >> '{log}'\n\
+             [ \"$2\" = attach ] && exit 7\n\
+             case \"$(cat '{mode}' 2>/dev/null)\" in\n\
+             other) window=elsewhere ;;\n\
+             *) window=\"$3\" ;;\n\
+             esac\n\
+             printf '[{{\"window\":\"%s\",\"results\":[{{\"stopped\":{{\"generation\":\"%s\",\"sessions\":[\"session-1\"]}}}}]}}]\\n' \"$window\" \"$EON_STOP_DELEGATED\"\n",
+            log = log.display(),
+            mode = mode.display(),
+        ),
+    );
+    for (namespace, id) in [(&runtime, &newer), (&window, &windowed)] {
+        symlink(
+            &newer_eon,
+            namespace.join("generations").join(id).join("eon"),
+        )
+        .unwrap();
+    }
+    let binary = PathBuf::from(env!("CARGO_BIN_EXE_eon"));
+    let eon = |arguments: &[&str]| {
+        eon_command(&binary)
+            .args(arguments)
+            .env("EON_RUNTIME_DIR", &runtime)
+            .env("EON_CONFIG_HOME", &config)
+            .env_remove("EON_WINDOW_RUNTIME_DIR")
+            .env_remove("EON_TERMINAL")
+            .env_remove("EON_STOP_DELEGATED")
+            .env_remove("EON_ATTACH_DELEGATED")
+            .stdin(Stdio::null())
+            .output()
+            .unwrap()
+    };
+    let take_log = || {
+        let lines = fs::read_to_string(&log).unwrap_or_default();
+        let _ = fs::remove_file(&log);
+        lines
+    };
+
+    // The listing names the EONW that the newer supervisor reported.
+    let listed = eon(&["window", "ls", "--json"]);
+    assert!(listed.status.success(), "{listed:?}");
+    let listed: serde_json::Value = serde_json::from_slice(&listed.stdout).unwrap();
+    let windows = listed["windows"].as_array().unwrap();
+    assert_eq!(windows.len(), 2, "{listed}");
+    for window in windows {
+        assert_eq!(window["state"], "incompatible", "{window}");
+        assert_eq!(window["workspace_protocol"], VERSION + 1, "{window}");
+        assert_eq!(window["stop"]["available"], true, "{window}");
+    }
+
+    // Each Stop runs the window form in its namespace, marked with its
+    // generation.
+    for (id, generation, namespace, form) in [
+        (hex, &newer, "unset".to_owned(), "default"),
+        (
+            "0000beef",
+            &windowed,
+            window.display().to_string(),
+            "0000beef",
+        ),
+    ] {
+        let stopped = eon(&["window", "stop", id, "--json"]);
+        assert_eq!(stopped.status.code(), Some(0), "{stopped:?}");
+        assert_eq!(
+            serde_json::from_slice::<serde_json::Value>(&stopped.stdout).unwrap(),
+            serde_json::json!([{"window": id, "results": [
+                {"stopped": {"generation": generation, "sessions": ["session-1"]}}
+            ]}])
+        );
+        assert_eq!(
+            take_log(),
+            format!("window stop {form} --json|{namespace}|unset|{generation}|unset\n")
+        );
+    }
+    // A window result for another window is no Stop result.
+    fs::write(&mode, "other").unwrap();
+    let failed = eon(&["window", "stop", hex, "--json"]);
+    assert_eq!(failed.status.code(), Some(1), "{failed:?}");
+    let failed: serde_json::Value = serde_json::from_slice(&failed.stdout).unwrap();
+    assert_eq!(
+        failed[0]["results"][0]["error"]["code"], "stop-failed",
+        "{failed}"
+    );
+    fs::remove_file(&mode).unwrap();
+    take_log();
+
+    // Attach runs `window attach ID` the same way.
+    let attached = eon(&["window", "attach", "0000beef"]);
+    assert_eq!(attached.status.code(), Some(7), "{attached:?}");
+    assert_eq!(
+        take_log(),
+        format!(
+            "window attach 0000beef|{}|unset|unset|{windowed}\n",
+            window.display()
+        )
+    );
+
+    // Without its recorded `eon`, the advice names that form and marker.
+    let record = runtime.join("generations").join(&newer).join("eon");
+    fs::remove_file(&record).unwrap();
+    let missing = root.join("missing-eon");
+    symlink(&missing, &record).unwrap();
+    let gone = eon(&["window", "stop", hex, "--json"]);
+    assert_eq!(gone.status.code(), Some(1), "{gone:?}");
+    let gone: serde_json::Value = serde_json::from_slice(&gone.stdout).unwrap();
+    let detail = gone[0]["results"][0]["error"]["detail"].as_str().unwrap();
+    assert!(
+        detail.ends_with(&format!(
+            "then run env -u EON_WINDOW_RUNTIME_DIR EON_STOP_DELEGATED={newer} {} window stop default",
+            missing.display()
         )),
         "{detail}"
     );
@@ -11078,7 +11532,7 @@ fn window_attach_runs_the_build_that_started_its_generation() {
     executable(
         &older_eon,
         format!(
-            "#!/bin/sh\nprintf '%s %s|%s' \"$1\" \"$2\" \"$EON_WINDOW_RUNTIME_DIR\" > '{}'\nexit 7\n",
+            "#!/bin/sh\nprintf '%s|%s|%s' \"$*\" \"$EON_WINDOW_RUNTIME_DIR\" \"$EON_ATTACH_DELEGATED\" > '{}'\nexit 7\n",
             attached.display()
         ),
     );
@@ -11104,9 +11558,10 @@ fn window_attach_runs_the_build_that_started_its_generation() {
         "{}",
         String::from_utf8_lossy(&delegated.stderr)
     );
+    // That build is of EONW 11, so it takes `attach GENERATION`.
     assert_eq!(
         fs::read_to_string(&attached).unwrap(),
-        format!("attach {id}|{}", window.display())
+        format!("attach {id}|{}|{id}", window.display())
     );
 
     // A generation with the current EONW and another component graph is
@@ -11118,14 +11573,9 @@ fn window_attach_runs_the_build_that_started_its_generation() {
         runtime.join("generations").join(&previous).join("eon"),
     )
     .unwrap();
-    let delegated = invoke(&binary, &runtime, &config, &["attach", &previous]);
-    assert_eq!(delegated.status.code(), Some(7));
-    assert_eq!(
-        fs::read_to_string(&attached).unwrap(),
-        format!("attach {previous}|")
-    );
     // `window attach` reaches another build's default-namespace window by its
     // ID, in the default namespace. Its first 4 digits also start 0000abcd's ID.
+    // That build is of this EONW, so it takes `window attach default`.
     fs::remove_file(&attached).unwrap();
     let delegated = invoke(
         &binary,
@@ -11141,18 +11591,23 @@ fn window_attach_runs_the_build_that_started_its_generation() {
     );
     assert_eq!(
         fs::read_to_string(&attached).unwrap(),
-        format!("attach {previous}|")
+        format!("window attach default||{previous}")
     );
     let again = eon_command(&binary)
-        .args(["attach", &previous])
+        .args(["window", "attach", "default"])
         .env("EON_RUNTIME_DIR", &runtime)
         .env("EON_CONFIG_HOME", &config)
         .env("EON_ATTACH_DELEGATED", &previous)
         .output()
         .unwrap();
-    assert_eq!(again.status.code(), Some(1));
-    assert!(String::from_utf8_lossy(&again.stderr).contains("different component graph"));
-    let stopped = invoke(&binary, &runtime, &config, &["stop", &previous, "--json"]);
+    assert_eq!(again.status.code(), Some(2), "{again:?}");
+    assert!(String::from_utf8_lossy(&again.stderr).contains("nothing was sent"));
+    let stopped = invoke(
+        &binary,
+        &runtime,
+        &config,
+        &["window", "stop", &previous[3..], "--json"],
+    );
     assert!(stopped.status.success(), "{}", stdout(&stopped));
     previous_server.join().unwrap();
 
@@ -11177,10 +11632,17 @@ fn window_attach_runs_the_build_that_started_its_generation() {
     assert_eq!(several.status.code(), Some(1));
     let error = String::from_utf8_lossy(&several.stderr);
     assert!(
-        error.contains(&format!("{first} (its eon: {})", older_eon.display())),
+        error.contains(&format!("Eon 0.1.0 (its eon: {})", older_eon.display())),
         "{error}"
     );
-    assert!(error.contains(&second), "{error}");
+    assert!(
+        error.contains("Eon 0.1.0 (its eon is not recorded)"),
+        "{error}"
+    );
+    assert!(
+        !error.contains(&first) && !error.contains(&second),
+        "{error}"
+    );
     let stopped = invoke(
         &binary,
         &runtime,
@@ -11227,14 +11689,13 @@ fn stop_without_terminal_requires_yes() {
     };
     let generation = generation_runtime(&runtime);
     wait_for_connection(&generation.join("eon.sock"));
-    let id = generation.file_name().unwrap().to_str().unwrap();
 
-    let declined = invoke(&binary, &runtime, &config, &["stop", id]);
+    let declined = invoke(&binary, &runtime, &config, &["window", "stop", "default"]);
     assert_eq!(declined.status.code(), Some(1), "{declined:?}");
     assert_eq!(stdout(&declined), "");
-    assert!(String::from_utf8_lossy(&declined.stderr).contains(&format!(
-        "error not-confirmed: no Stop sent for generation {id}; no yes was read and stdin is not a terminal"
-    )));
+    assert!(String::from_utf8_lossy(&declined.stderr).contains(
+        "error not-confirmed: no Stop sent for window default; no yes was read and stdin is not a terminal"
+    ));
     assert!(supervisor.child.try_wait().unwrap().is_none());
     assert!(
         invoke(&binary, &runtime, &config, &["workspace", "--json"])
@@ -11242,7 +11703,12 @@ fn stop_without_terminal_requires_yes() {
             .success()
     );
 
-    let stopped = invoke(&binary, &runtime, &config, &["stop", id, "--json"]);
+    let stopped = invoke(
+        &binary,
+        &runtime,
+        &config,
+        &["window", "stop", "default", "--json"],
+    );
     assert!(stopped.status.success(), "{}", stdout(&stopped));
     wait_for_successful_exit(&mut supervisor.child);
     fs::remove_dir_all(root).unwrap();
@@ -11254,28 +11720,31 @@ fn previous_and_all_stop_older_generations_when_current_is_unstarted() {
     let runtime = root.join("runtime");
     let config = root.join("config");
     let binary = PathBuf::from(env!("CARGO_BIN_EXE_eon"));
-    let empty = invoke(&binary, &runtime, &config, &["stop", "all", "--json"]);
-    assert!(empty.status.success(), "{}", stdout(&empty));
-    assert_eq!(
-        serde_json::from_str::<serde_json::Value>(stdout(&empty)).unwrap(),
-        serde_json::json!([])
-    );
+    let window = |which: &str| {
+        let output = invoke(
+            &binary,
+            &runtime,
+            &config,
+            &["window", "stop", which, "--json"],
+        );
+        assert!(output.status.success(), "{}", stdout(&output));
+        serde_json::from_str::<serde_json::Value>(stdout(&output)).unwrap()
+    };
+    assert_eq!(window("all"), serde_json::json!([]));
     let first_id = format!("g1-{:032x}", 2);
     let first = previous_supervisor(&runtime, &first_id);
 
-    let previous = invoke(&binary, &runtime, &config, &["stop", "previous", "--json"]);
-    assert!(previous.status.success(), "{}", stdout(&previous));
-    let result: serde_json::Value = serde_json::from_str(stdout(&previous)).unwrap();
+    let result = window("previous");
     assert_eq!(result.as_array().unwrap().len(), 1);
-    assert_eq!(result[0]["stopped"]["generation"], first_id);
+    assert_eq!(result[0]["window"], &first_id[3..]);
+    assert_eq!(result[0]["results"][0]["stopped"]["generation"], first_id);
     first.join().unwrap();
 
     let second_id = format!("g1-{:032x}", 3);
     let second = previous_supervisor(&runtime, &second_id);
-    let all = invoke(&binary, &runtime, &config, &["stop", "all", "--json"]);
-    assert!(all.status.success(), "{}", stdout(&all));
-    let result: serde_json::Value = serde_json::from_str(stdout(&all)).unwrap();
-    assert_eq!(result[0]["stopped"]["generation"], second_id);
+    let result = window("all");
+    assert_eq!(result.as_array().unwrap().len(), 1);
+    assert_eq!(result[0]["results"][0]["stopped"]["generation"], second_id);
     second.join().unwrap();
     fs::remove_dir_all(root).unwrap();
 }
@@ -11311,6 +11780,19 @@ fn batch_stop_preserves_current_until_all_and_reports_unavailable_generations() 
     let current_runtime = generation_runtime(&runtime);
     wait_for_connection(&current_runtime.join("eon.sock"));
     let current_id = current_runtime.file_name().unwrap().to_str().unwrap();
+    // Each window's one Stop result, in stop order.
+    let results = |output: &Output| {
+        let windows: serde_json::Value = serde_json::from_str(stdout(output)).unwrap();
+        windows
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|window| {
+                assert_eq!(window["results"].as_array().unwrap().len(), 1, "{window}");
+                window["results"][0].clone()
+            })
+            .collect::<Vec<_>>()
+    };
 
     let first_id = format!("g1-{:032x}", 2);
     let second_id = format!("g1-{:032x}", 3);
@@ -11320,13 +11802,18 @@ fn batch_stop_preserves_current_until_all_and_reports_unavailable_generations() 
     fs::create_dir(&unavailable).unwrap();
     fs::set_permissions(&unavailable, fs::Permissions::from_mode(0o755)).unwrap();
 
-    let previous = invoke(&binary, &runtime, &config, &["stop", "previous", "--json"]);
+    let previous = invoke(
+        &binary,
+        &runtime,
+        &config,
+        &["window", "stop", "previous", "--json"],
+    );
     assert_eq!(previous.status.code(), Some(1), "{}", stdout(&previous));
-    let results: serde_json::Value = serde_json::from_str(stdout(&previous)).unwrap();
-    assert_eq!(results.as_array().unwrap().len(), 3);
-    assert_eq!(results[0]["error"]["code"], "stop-unavailable");
-    assert_eq!(results[1]["stopped"]["generation"], first_id);
-    assert_eq!(results[2]["stopped"]["generation"], second_id);
+    let stopped = results(&previous);
+    assert_eq!(stopped.len(), 3);
+    assert_eq!(stopped[0]["error"]["code"], "stop-unavailable");
+    assert_eq!(stopped[1]["stopped"]["generation"], first_id);
+    assert_eq!(stopped[2]["stopped"]["generation"], second_id);
     assert!(current.child.try_wait().unwrap().is_none());
     assert!(
         invoke(&binary, &runtime, &config, &["workspace", "--json"])
@@ -11341,7 +11828,7 @@ fn batch_stop_preserves_current_until_all_and_reports_unavailable_generations() 
     let third = previous_supervisor(&runtime, &third_id);
     let mut human = TestProcess {
         child: eon_command(&binary)
-            .args(["stop", "all"])
+            .args(["window", "stop", "all"])
             .env("EON_RUNTIME_DIR", &runtime)
             .env("EON_CONFIG_HOME", &config)
             .stdin(Stdio::piped())
@@ -11360,22 +11847,36 @@ fn batch_stop_preserves_current_until_all_and_reports_unavailable_generations() 
         .unwrap();
     let human = human.wait_with_output().unwrap();
     assert_eq!(human.status.code(), Some(1), "{}", stdout(&human));
-    assert!(stdout(&human).contains(&format!("stopped generation {third_id}:")));
+    // The older window is named by its short ID, at least 4 hex digits.
+    let shown = stdout(&human)
+        .strip_prefix("stopped window ")
+        .and_then(|rest| rest.split_once(": "))
+        .map(|(shown, _)| shown.to_owned())
+        .unwrap_or_else(|| panic!("{}", stdout(&human)));
+    assert!(
+        shown.len() >= 4 && third_id[3..].starts_with(&shown),
+        "{shown}"
+    );
     assert!(!stdout(&human).contains("cancelled;"));
-    assert!(String::from_utf8_lossy(&human.stderr).contains(&format!(
-        "error not-confirmed: no Stop sent for generation {current_id}; no yes was read and stdin is not a terminal"
-    )));
+    assert!(String::from_utf8_lossy(&human.stderr).contains(
+        "error not-confirmed: no Stop sent for window default; no yes was read and stdin is not a terminal"
+    ));
     assert!(current.child.try_wait().unwrap().is_none());
     third.join().unwrap();
 
     let fourth_id = format!("g1-{:032x}", 5);
     let fourth = previous_supervisor(&runtime, &fourth_id);
-    let all = invoke(&binary, &runtime, &config, &["stop", "all", "--json"]);
+    let all = invoke(
+        &binary,
+        &runtime,
+        &config,
+        &["window", "stop", "all", "--json"],
+    );
     assert!(all.status.success(), "{}", stdout(&all));
-    let results: serde_json::Value = serde_json::from_str(stdout(&all)).unwrap();
-    assert_eq!(results.as_array().unwrap().len(), 2);
-    assert_eq!(results[0]["stopped"]["generation"], fourth_id);
-    assert_eq!(results[1]["stopped"]["generation"], current_id);
+    let stopped = results(&all);
+    assert_eq!(stopped.len(), 2);
+    assert_eq!(stopped[0]["stopped"]["generation"], fourth_id);
+    assert_eq!(stopped[1]["stopped"]["generation"], current_id);
     fourth.join().unwrap();
     wait_for_successful_exit(&mut current.child);
     assert!(!current_runtime.exists());
@@ -13566,7 +14067,7 @@ fn cli_closes_background_ids_and_preserves_the_presented_workspace() {
     assert_eq!(presented(&inspect()), state);
     assert_only_ended(&endpoints, &[]);
 
-    let stopped = run(None, &["stop", "all", "--json"]);
+    let stopped = run(None, &["window", "stop", "default", "--json"]);
     assert!(stopped.status.success(), "{stopped:?}");
     wait_for_successful_exit(&mut default.child);
     fs::remove_dir_all(root).unwrap();
@@ -13964,7 +14465,7 @@ fn cli_idle_background_close_ignores_other_busy_tabs() {
     }
 
     let stopped = quit_command(&root)
-        .args(["stop", "all", "--json"])
+        .args(["window", "stop", "default", "--json"])
         .output()
         .unwrap();
     assert!(stopped.status.success(), "{stopped:?}");
@@ -14227,7 +14728,7 @@ fn a_confirmed_close_inspects_first_and_a_failed_inspection_closes_nothing() {
             &binary,
             &runtime,
             &config,
-            &[&arguments[..], &["--generation", &id, "--yes", "--json"]].concat(),
+            &[&arguments[..], &["--window", &id[3..], "--yes", "--json"]].concat(),
         );
         assert_eq!(closed.status.code(), Some(1), "{closed:?}");
         assert_eq!(

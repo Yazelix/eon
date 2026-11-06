@@ -152,9 +152,10 @@ be null; Codex in Eon needs `codex --no-daemon`.
 
 `eon window ls --json` lists every running Eon window. `id` is the full
 window ID, and `default` is the window bare `eon` opens. In
-`eon window attach` and `eon window stop`, an ID or any unique prefix of
-at least 4 characters selects a window. `eon window stop previous --json`
-stops every window that another Eon build started, and
+`eon window attach`, `eon window stop` and any command's `--window ID`, an
+ID or any unique prefix of at least 4 characters selects a window.
+`eon window stop previous --json` stops every window that another Eon build
+started, and
 `eon window stop all --json` every window; each prints one
 `{"window": ID, "results": [...]}` object per window. Stop or attach only
 windows the person asked about.

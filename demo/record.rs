@@ -222,7 +222,7 @@ fn record(r: &mut Recorder) -> Result<()> {
         .arg("fill");
     r.exec(&mut wallpaper)?;
     let mut stop = isolated(&eon, &home);
-    stop.args(["stop", "all", "--json"]);
+    stop.args(["window", "stop", "all", "--json"]);
     r.on_exit(stop);
     let mut launch = isolated(&eon, &home);
     launch.current_dir(&demo).env("CODEX_HOME", &codex_home);
@@ -384,9 +384,9 @@ fn has_app(node: &Value, app_id: &str) -> bool {
 /// Runs an Eon command the way a user does and waits for its window. Plain `eon` and `eonbase`
 /// run the supervisor itself, which outlives its window. Kinestra's `launch` would signal that
 /// process group, and with it the terminals, before presenting the reattach, and would report
-/// `eon attach`, which asks the running supervisor for a window and exits, as a crash. A supervisor's `stop` is registered as soon as it
-/// starts, with a kill of its process group behind it in case the stop fails; cleanup runs in
-/// reverse registration order.
+/// `eon window attach`, which asks the running supervisor for a window and exits, as a crash.
+/// A supervisor's `stop` is registered as soon as it starts, with a kill of its process group
+/// behind it in case the stop fails; cleanup runs in reverse registration order.
 fn present(
     r: &mut Recorder,
     mut command: Command,
@@ -536,7 +536,7 @@ fn features(r: &mut Recorder) -> Result<()> {
     // The takes are keyboard-driven, so the idle pointer would only cover content.
     r.exec(r.command("swaymsg").args(["seat", "*", "hide_cursor", "1"]))?;
     let mut stop = isolated(&eon, &home);
-    stop.args(["stop", "all", "--json"]);
+    stop.args(["window", "stop", "all", "--json"]);
     present(
         r,
         eon_command(&[]),
@@ -674,7 +674,7 @@ fn features(r: &mut Recorder) -> Result<()> {
         r.sleep(Duration::from_secs(2))?;
         present(
             r,
-            eon_command(&["attach"]),
+            eon_command(&["window", "attach"]),
             "eon",
             &work.join("attach.log"),
             None,

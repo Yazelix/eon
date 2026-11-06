@@ -164,8 +164,9 @@ cover Eon. The evidence folder defaults to
 in its paths, so choose one without your name. The archive is `<out>.tar.gz` beside it.
 Look inside before sending it to Lucca. `--dry-run` walks the items without
 launching or capturing on any system; it proves no Mac behavior. Ctrl-C
-stops the check; a rerun starts over, and leftovers may need `eon stop all`
-with the private runtime environment recorded in `manual/final.log`.
+stops the check; a rerun starts over, and leftovers may need
+`eon window stop all` with the private runtime environment recorded in
+`manual/final.log`.
 
 ## Sources of truth
 

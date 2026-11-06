@@ -7,7 +7,7 @@ use super::{
     },
     workspace,
 };
-use eon_workspace_protocol::v34::{
+use eon_workspace_protocol::v35::{
     Action, Error as ProtocolError, Failure, HEADER_BYTES, LifecycleResponse, MAX_DETAIL_BYTES,
     Request, Response, Runtime, VERSION, WorkspaceAction, declared_message_len,
     declared_response_len, decode_lifecycle_response, decode_request, decode_response,
@@ -55,6 +55,8 @@ pub(super) enum EndpointFailureKind {
 pub(super) struct EndpointFailure {
     pub(super) kind: EndpointFailureKind,
     pub(super) detail: String,
+    /// The EONW version an incompatible supervisor reported, when it did.
+    pub(super) protocol: Option<u16>,
 }
 
 impl EndpointFailure {
@@ -62,6 +64,14 @@ impl EndpointFailure {
         Self {
             kind,
             detail: detail.into(),
+            protocol: None,
+        }
+    }
+
+    fn incompatible(protocol: u16, detail: String) -> Self {
+        Self {
+            protocol: Some(protocol),
+            ..Self::new(EndpointFailureKind::Incompatible, detail)
         }
     }
 }
@@ -341,8 +351,8 @@ fn io_endpoint_failure(error: std::io::Error, context: &str) -> EndpointFailure 
 
 fn protocol_endpoint_failure(error: ProtocolError) -> EndpointFailure {
     match error {
-        ProtocolError::UnsupportedVersion { version } => EndpointFailure::new(
-            EndpointFailureKind::Incompatible,
+        ProtocolError::UnsupportedVersion { version } => EndpointFailure::incompatible(
+            version,
             format!(
                 "supervisor uses EONW {version}, this Eon uses EONW {VERSION}; \
                  the Eon build that started it can attach or stop it"
@@ -419,8 +429,8 @@ pub(super) fn probe_generation_runtime_until(
 
 fn validated_runtime(runtime: Runtime) -> Result<Runtime, EndpointFailure> {
     if runtime.workspace_protocol != VERSION {
-        return Err(EndpointFailure::new(
-            EndpointFailureKind::Incompatible,
+        return Err(EndpointFailure::incompatible(
+            runtime.workspace_protocol,
             format!(
                 "supervisor reports EONW {}, current Eon requires EONW {}",
                 runtime.workspace_protocol, VERSION
@@ -871,16 +881,16 @@ mod tests {
     #[test]
     fn a_slow_reader_holds_the_supervisor_no_longer_than_the_reply_deadline() {
         let history = |text: String| {
-            super::Response::History(eon_workspace_protocol::v34::TerminalHistory {
-                target: eon_workspace_protocol::v34::TerminalTarget {
+            super::Response::History(eon_workspace_protocol::v35::TerminalHistory {
+                target: eon_workspace_protocol::v35::TerminalTarget {
                     workspace: "w1".into(),
                     tab: "t1".into(),
-                    id: eon_workspace_protocol::v34::TargetId::Pane("p1".into()),
+                    id: eon_workspace_protocol::v35::TargetId::Pane("p1".into()),
                     terminal: "session-1".into(),
                 },
                 caller: None,
                 revision: 1,
-                screen: eon_workspace_protocol::v34::Screen::Primary,
+                screen: eon_workspace_protocol::v35::Screen::Primary,
                 rows: 24,
                 columns: 80,
                 title: String::new(),

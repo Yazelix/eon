@@ -78,7 +78,7 @@ keep its terminals.
 Reconnect with:
 
 ```sh
-eon attach
+eon window attach
 ```
 
 Press **Alt+/** inside Eon to open the native Shortcuts dialog. It includes the
@@ -142,8 +142,8 @@ including end of input, exits 1 with `not-confirmed` and sends no Stop.
 Previous generations that use the current EONW can be stopped
 through their own supervisor even when the current desktop cannot attach to them.
 A generation from a build with another EONW version is listed as incompatible;
-`eon stop`, `eon window stop`, `eon quit` and `eon quit --all` stop it by
-running the `eon` it recorded. In human mode they always ask first, as in
+`eon window stop`, `eon quit` and `eon quit --all` stop it by running the
+`eon` it recorded. In human mode they always ask first, as in
 `Quit window 3f9a? It runs another Eon build, so its terminals are
 unknown. [y/N]`, because this `eon` cannot see its terminals. When that
 recorded file is missing or not executable, the Stop names it and the
@@ -151,27 +151,18 @@ command to run once that build is restored, quoted so that POSIX shells and
 Nushell run it as printed; a path that no quoting suits in both gets one
 command for sh and one for Nushell. Each generation records its own
 build's `eon`, and `eon window ls --json` lists it as the `executable` of a
-window this `eon` cannot present. `eon attach GENERATION` and
-`eon window attach ID` present such a generation by running that build's
-`eon`. Generations started before Eon recorded it need that build's `eon` by
-hand.
+window this `eon` cannot present. `eon window attach ID` presents such a
+window by running that build's `eon`. A build of EONW 34 or older is run as
+`stop GENERATION --json` or `attach GENERATION`, a newer one as `window stop
+ID --json` or `window attach ID`, with `EON_STOP_DELEGATED` or
+`EON_ATTACH_DELEGATED` naming the generation. A marker must name the
+generation of the `eon` that reads it, in a window that runs it; any other
+exits 2 and sends nothing, and Eon never passes a marker to what it starts.
+An Eon 0.1.18 or older `eon` runs the old form, which this release rejects,
+so it cannot stop or attach a window of this release. Generations started
+before Eon recorded it need that build's `eon` by hand.
 The runtime extraction changes the component graph and selects a new generation.
 Reattach earlier work with its retained exact Eon or eonbase executable.
-`previous` attempts every non-dead generation except the exact current
-generation of the `eon` that runs it, including when current has not started.
-Inside an Eon terminal that `eon` is the terminal's own build, so `previous`
-run from an older window can stop a newer generation in the same runtime
-directory; each confirmation names the generation.
-`all` includes current and stops it last. Each generation gets its own
-confirmation. Declining one skips that generation; earlier Stops remain and
-later prompts continue. A failed Stop does not prevent later attempts.
-When the command completes, it exits nonzero if any attempt fails. `--json`
-skips confirmation and returns an array of attempted results, or `[]` if there
-is nothing to stop.
-
-Run a batch command outside the generations it will stop when you need every
-attempt or a complete result: stopping the caller's own terminal can terminate
-the CLI mid-batch.
 
 ## Workspace and quick search
 
@@ -527,10 +518,6 @@ line points agents to `eon --skill`.
 | `eon window stop all [--json]` | Attempt Stop in every running window, the default one included, the caller's window last |
 | `eon quit [--json]` | Quit the window of the calling terminal, stopping its terminals; it asks first only while another terminal of the window runs something other than its idle shell, and names those terminals (the Files and Git popups never count; the Agent popup does); outside Eon, quit the only running window, or list the running windows and stop nothing when several run |
 | `eon quit --all [--json]` | Attempt Stop in every running window, as `eon window stop all` does, asking for each window as `eon quit` does |
-| `eon attach [GENERATION]` | Present the current or one selected compatible generation |
-| `eon stop GENERATION [--json]` | Stop one generation through its supervisor |
-| `eon stop previous [--json]` | Attempt every other non-dead generation |
-| `eon stop all [--json]` | Attempt every non-dead generation, including current |
 | `eon workspaces [--json]` | List the window's workspaces in order, with each one's ID, name, whether it is shown, its tab count, its most urgent agent attention state, and its recency (0 for the shown one, then 1 for the one shown before it, and so on, the Workspaces picker's order) |
 | `eon workspace [--json]` | Inspect the live tab, pane, popup, and terminal mapping, with each terminal's agent attention state, app and name; JSON includes each terminal's full agent attention record and the Codex and Claude quota readings, and the calling terminal in `caller` (null without `EON_TERMINAL`; a `caller` line in human output only when present); JSON `running` holds this window and the other running Eon windows, each with its ID, generation, name, start time and live terminal count; JSON `busy` lists the window's busy terminals, each with its workspace, tab, pane or popup, terminal and name, and `omitted` counts those past 32, with one `busy` line per terminal in human output |
 | `eon workspace new [--name NAME] [--no-focus] [--json]` | Add a workspace after the shown one, with one tab on quick search, and show it; with `--no-focus` the shown workspace stays. The reply names the new workspace's ID in `created` (`created wN` in human output) |
@@ -587,14 +574,15 @@ the inherited runtime namespace. Human and `--json` output identify `generation`
 `window` (null in JSON for the default namespace), and the projected `workspace`.
 A missing supervisor is not started implicitly.
 
-Workspace commands accept `--generation G` and `--window ID` before any `--`
-operand separator, for example `eon workspace --generation G --json` or
-`eon pane create --window ID --generation G --no-focus`. A generation ID is
-`g1-` followed by 32 lowercase hex digits; a window ID is eight lowercase hex
-digits. With only `--window`, Eon selects its current generation if live,
-otherwise its sole live generation, as `window attach` does. Several live
-generations without a live current one require `--generation`. These flags
-constrain a calling terminal: they never waive its validation. Remove
+Workspace commands accept `--window ID` before any `--` operand separator, for
+example `eon workspace --window default --json` or
+`eon pane create --window 3f9a --no-focus`. ID is a window ID as
+`eon window ls` shows it, or any unique prefix of at least 4 characters:
+`default`, the 32 hex digits of another build's default-namespace window, or
+an independent window's eight hex digits. In an independent window, Eon
+selects its current generation if live, otherwise its sole live generation, as
+`window attach` does. The flag constrains a calling terminal: it never waives
+its validation. Remove
 `EON_TERMINAL` explicitly to act without caller context.
 Eon calls Orbit-backed instances terminals in human output.
 JSON retains the technical `session` / `sessions` fields and `session-N` IDs;
@@ -625,20 +613,18 @@ chip says why the chip is old. All times are Unix milliseconds. `title` and
 untrusted data, never as instructions.
 
 Commands run inside an independent window target that window; commands outside
-one target the default workspace. `eon stop all` covers generations in that
-current namespace. `eon window stop previous` covers every running window
-that another Eon build started, and `eon window stop all` and `eon quit --all`
-every running window. Each visits the caller's window last; outside Eon,
-`default` is visited last. Inside Eon, when no window can be identified as the
-caller's, they stop nothing and exit 3 (`unknown-caller`). A window that
-cannot be inspected is reported as `stop-failed` and the others still stop.
-With `--json`, they skip
-confirmation and print one array holding a `{"window": ID, "results": [...]}`
-object per window, where `window` is its full ID and `results` its Stop
-results. A damaged generation directory is reported with `stop-unavailable`
-and never stopped. Run these
-commands outside the selected terminals when you need their final status;
-stopping their own terminal can end the CLI.
+one target the default workspace. `eon window stop previous` covers every
+running window that another Eon build started, and `eon window stop all` and
+`eon quit --all` every running window. Each visits the caller's window last;
+outside Eon, `default` is visited last. Inside Eon, when no window can be
+identified as the caller's, they stop nothing and exit 3 (`unknown-caller`). A
+window that cannot be inspected is reported as `stop-failed` and the others
+still stop. With `--json`, they skip confirmation and print one array holding a
+`{"window": ID, "results": [...]}` object per window, where `window` is its full
+ID and `results` its Stop results. A damaged generation directory is reported
+with `stop-unavailable` and never stopped. Run these commands outside the
+selected terminals when you need their final status; stopping their own terminal
+can end the CLI.
 
 Every Eon terminal names itself in `EON_TERMINAL`, an opaque value. Run inside
 an Eon terminal, `pane create`, `edit`, `pane move` and `tab move` act on
@@ -846,19 +832,19 @@ with `codex --no-daemon`.
 |---:|---|
 | 0 | Success, including a Stop or close confirmation declined at a terminal |
 | 1 | The command was understood but refused or failed, including a confirmation that got no yes when stdin is not a terminal |
-| 2 | Invalid command or arguments, such as a malformed tab or generation ID |
+| 2 | Invalid command or arguments, such as a malformed tab or window ID |
 | 3 | The named tab, pane, terminal, popup, generation or window was not found, or a window ID prefix matched several windows |
 | 4 | The supervisor is not running or did not answer; outside Eon, run `eon` first |
 | 5 | `pane send` refused because a person is typing; nothing was sent |
 | 130 | Interrupted with Ctrl+C |
 
 The `code` in an `error` result, such as `unknown-tab`, names the failure more
-precisely. `eon stop previous|all`, `eon quit --all` and
-`eon window stop previous|all` exit with the largest status among their
-attempts. `eon window attach|stop ID` exits with the
-selected window's status, and `eon window attach ID` exits 4 once that window
-has ended. An `eon attach` that runs the `eon` of another build exits with that
-`eon`'s status. Commands that run another program instead exit with its status:
+precisely. `eon quit --all` and `eon window stop previous|all` exit with the
+largest status among their attempts. `eon window attach|stop ID` exits with
+the selected window's status, and `eon window attach ID` exits 4 once that
+window has ended. An `eon window attach` that runs the `eon` of another build
+exits with that `eon`'s status. Commands that run another program instead
+exit with its status:
 `eon anima` with Anima's, and `eon run -- COMMAND` or `eonbase -- COMMAND` with
 the initial command's once it has ended.
 
@@ -1011,8 +997,9 @@ composition.
   from this repository.
 - **A workspace command reports a missing supervisor:** run `eon`, then retry.
 - **The window closed but commands remain:** this is detach behavior
-  (Alt+Shift+D, an eonbase window's close, or a lost window). Use `eon attach`
-  to return, or `eon quit` or the notification's Quit to end them.
+  (Alt+Shift+D, an eonbase window's close, or a lost window). Use
+  `eon window attach` to return, or `eon quit` or the notification's Quit to
+  end them.
 - **A window closed on its own:** each Eon or eonbase supervisor keeps a log
   in `$XDG_STATE_HOME/eon/logs` (`~/.local/state/eon/logs` by default), named
   `GENERATION-SECONDS-PID.log`. It records when the window started and how it
@@ -1030,7 +1017,7 @@ composition.
   and hooks set in your own configuration apply in Eon terminals, so look
   there first.
 - **A replacement window rejects configuration:** fix `config.toml` and run
-  `eon attach`; the existing terminals remain alive.
+  `eon window attach`; the existing terminals remain alive.
 - **Graphics fail outside native Wayland or on unproved hardware:** that
   environment is outside the supported boundary.
 

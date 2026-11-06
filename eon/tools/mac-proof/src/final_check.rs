@@ -122,7 +122,7 @@ terminal. If you already use Nushell, Atuin or Zoxide, the check's commands join
 history; the check removes only whole entries it created.
 For each item, do the action, press Enter, answer p/f/s (or pass/fail/skip), then add an optional
 one-line note. EOF leaves the remaining items unanswered. Ctrl-C stops the tool; a rerun starts
-over, and leftovers may need `eon stop all` with the private environment in manual/final.log.
+over, and leftovers may need `eon window stop all` with the private environment in manual/final.log.
 
 Items:
 "

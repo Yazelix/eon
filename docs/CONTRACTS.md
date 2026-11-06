@@ -73,7 +73,9 @@ socket names, JSON fields and protocol identifiers retain their spellings.
 ## EON-C1 — Exact compatible component launch
 
 - **Status:** Proven. Amended on 2026-11-03 (approved by Lucca, relayed by
-  eon-overseer) by `eon-369s`: Nix derives the Eon Bar's icon image.
+  eon-overseer) by `eon-369s`: Nix derives the Eon Bar's icon image. Amended
+  on 2026-11-06 (approved by Lucca, relayed by eon-overseer) by `eon-7cf0y.22`
+  (S3): `eon window attach` reopens a window.
 - **Consumer:** A user launching Eon or eonbase from one accepted product
   generation.
 - **Trigger:** Eon starts a new composed runtime or adopts an exact live run.
@@ -103,10 +105,11 @@ socket names, JSON fields and protocol identifiers retain their spellings.
   - Optional `[terminal] cursor_trail_color` is forwarded unchanged on new or
     reopened surfaces. Omission emits no override; Venus keeps one random
     preset per live supervisor endpoint, so a full-Eon window reopened by
-    `eon attach` keeps its cursor color. eonbase's first window opens before
-    its terminal endpoint exists, so it may differ from later reopens, which
-    share one preset. Venus owns `random`, `preset:<name>` and
-    `custom:#RRGGBB` parsing, colors and rendering; Orbit cursor authority remains.
+    `eon` or `eon window attach` keeps its cursor color. eonbase's first
+    window opens before its terminal endpoint exists, so it may differ from
+    later reopens, which share one preset. Venus owns `random`,
+    `preset:<name>` and `custom:#RRGGBB` parsing, colors and rendering; Orbit
+    cursor authority remains.
     Native admission rejects an invalid choice before a new terminal starts;
     rejected reopen preserves the existing terminal and command.
   - Standalone `eon -h` and `eon --help` print grouped command descriptions and
@@ -710,7 +713,7 @@ socket names, JSON fields and protocol identifiers retain their spellings.
 - **Owner:** Eon Runtime workspace topology, identity, focus, pruning and action
   enforcement; Eon supplies product defaults/policy. Orbit owns terminals and
   Venus owns native materialization.
-- **Consumes:** Current EONW v34 workspace/popup values, Orbit terminal
+- **Consumes:** Current EONW v35 workspace/popup values, Orbit terminal
   identities/endpoints and Venus `VEN-C8`.
 - **Boundary:** No arbitrary split tree, vertical splits, column resizing,
   arbitrary reorder target, cross-tab pane movement, picker relocation, durable layout
@@ -1121,7 +1124,9 @@ socket names, JSON fields and protocol identifiers retain their spellings.
   Amended on 2026-11-06 (approved by Lucca, relayed by eon-overseer) by
   `eon-7cf0y.22` (S1): window IDs, prefixes and `eon window ls`. Amended on
   2026-11-06 (approved by Lucca, relayed by eon-overseer) by `eon-7cf0y.22`
-  (S2): Commands runs `eon window stop previous`.
+  (S2): Commands runs `eon window stop previous`. Amended on 2026-11-06
+  (approved by Lucca, relayed by eon-overseer) by `eon-7cf0y.22` (S3):
+  `--window` takes window IDs and prefixes and `--generation` is removed.
 - **Consumer:** One local CLI or approved composition controlling a live Eon
   supervisor.
 - **Trigger:** The client submits one versioned workspace or supervisor-lifecycle
@@ -1186,14 +1191,17 @@ socket names, JSON fields and protocol identifiers retain their spellings.
     local information commands retain their existing targeting. Every popup terminal's environment
     also carries `EON_TAB`, the `tN` identity of the tab that owned it when it
     started.
-  - Workspace commands accept `--generation GENERATION` and `--window ID` before any `--` operand
-    separator. `--window` selects an independent window's runtime namespace; otherwise the existing
-    runtime namespace applies. `--generation` selects an exact generation there. With only `--window`,
-    selection follows `window attach`'s current-or-sole-live-generation rule. If `EON_TERMINAL` is set,
-    the selected supervisor must validate that caller; explicit targeting does not waive caller
-    validation. Workspace CLI results name the described `generation` and `window`, with `window` null
-    for the default namespace, and identify the projected workspace through shn4.3's workspace
-    discriminator.
+  - Workspace commands accept `--window ID` before any `--` operand separator,
+    ID being an EON-C23 window ID or prefix. `--window default`, or the ID of
+    another build's default-namespace window, selects that window's exact
+    generation in the default namespace. An independent window's ID selects its
+    runtime namespace, where selection follows `window attach`'s
+    current-or-sole-live-generation rule. Without `--window`, the existing
+    runtime namespace applies. If `EON_TERMINAL` is set, the selected supervisor
+    must validate that caller; explicit targeting does not waive caller
+    validation. Workspace CLI results name the described `generation` and
+    `window`, with `window` null for the default namespace, and identify the
+    projected workspace through shn4.3's workspace discriminator.
   - `eon workspace` run from an Eon terminal also names that calling terminal. In JSON, `caller`
     holds its `terminal` (`session-N`), its `tab`, and its `pane`, or its `popup` with `pane` null.
     The human output prints a matching `caller` line. Without `EON_TERMINAL`, JSON `caller` is null
@@ -1350,22 +1358,20 @@ socket names, JSON fields and protocol identifiers retain their spellings.
       caller's workspace. The CLI trims surrounding whitespace from NAME and
       from `--name`, as for pane names, so a blank NAME clears the name and a
       blank `--name` is malformed (exit 2).
-    - **Close.** `eon workspace close WS` first asks for confirmation, as
-      `eon stop` does. The prompt names the `wN` and name that WS resolves
-      to, says that closing stops every terminal in it, and that it quits the
-      window when it is the last workspace. A WS that resolves to no workspace
-      or several fails before asking, with the failures below. Any answer but
-      yes changes nothing. After a yes, the CLI checks again that the `wN` is
-      live and otherwise changes nothing and exits 3; the check and the close
-      are not atomic, so a workspace closed by another client in between
-      leaves Runtime to resolve that `wN` as any WS, which may match another
-      workspace named that `wN`. `--json` asks nothing. Closing
-      then stops every terminal of that workspace, as closing each of its
-      tabs does (EON-C8), and removes it. Closing the last workspace is the
-      window's final close (EON-C8).
-      After a successful close removes the caller's workspace, the reply
-      describes the shown remaining workspace; closing the last workspace
-      returns Ended.
+    - **Close.** `eon workspace close WS` first asks for confirmation, as `eon
+      window stop` does. The prompt names the `wN` and name that WS resolves to,
+      says that closing stops every terminal in it, and that it quits the window
+      when it is the last workspace. A WS that resolves to no workspace or
+      several fails before asking, with the failures below. Any answer but yes
+      changes nothing. After a yes, the CLI checks again that the `wN` is live
+      and otherwise changes nothing and exits 3; the check and the close are not
+      atomic, so a workspace closed by another client in between leaves Runtime
+      to resolve that `wN` as any WS, which may match another workspace named
+      that `wN`. `--json` asks nothing. Closing then stops every terminal of
+      that workspace, as closing each of its tabs does (EON-C8), and removes it.
+      Closing the last workspace is the window's final close (EON-C8). After a
+      successful close removes the caller's workspace, the reply describes the
+      shown remaining workspace; closing the last workspace returns Ended.
     - **Targeting.** Run from an Eon terminal, every workspace-scoped command
       acts in that terminal's workspace, found through `EON_TERMINAL`, and
       EON-C10's per-tab rules apply inside it. Run outside Eon, commands act on
@@ -1411,7 +1417,7 @@ socket names, JSON fields and protocol identifiers retain their spellings.
 - **Owner:** Eon Runtime supervisor workspace/action state and CLI projection;
   its canonical EONW package owns types, codec and result ordering. Eon supplies
   validated component facts and product defaults.
-- **Consumes:** Current EONW v34 and accepted Orbit management operations.
+- **Consumes:** Current EONW v35 and accepted Orbit management operations.
 - **Boundary:** Additive lifecycle tags do not widen the pinned Venus workspace
   consumer. There is no event stream or subscription policy other than
   EON-C39's event subscription, and no remote transport,
@@ -1423,7 +1429,7 @@ socket names, JSON fields and protocol identifiers retain their spellings.
   child-protocol escape hatch.
 - **Package owner:** The canonical EONW crate lives in
   `runtime/crates/eon-workspace-protocol` with its accepted package/API and
-  v34 bytes. Venus, Eon Runtime and Eon consume it by path.
+  v35 bytes. Venus, Eon Runtime and Eon consume it by path.
   See [package selection](ARCHITECTURE.md#in-tree-package-selection).
 - **Runtime policy:** Project is required and defaults to Alt+Z; it has no
   command of its own and shows the tab's pair (EON-C18) on quick search. Git
@@ -1505,8 +1511,8 @@ socket names, JSON fields and protocol identifiers retain their spellings.
   fzf list of the popup's window's workspaces (EON-C33's picker); Commands >
   Switch workspace runs the same list in the Commands popup. Each row shows
   the workspace's name, or its `wN` when unnamed, its tab count, and
-  ` · needs input` when its EONW v34 `attention` is needs input. Rows run by
-  EONW v34 `recency`, most recently shown first, with the shown workspace last
+  ` · needs input` when its EONW v35 `attention` is needs input. Rows run by
+  EONW v35 `recency`, most recently shown first, with the shown workspace last
   and marked ` · shown`, and the query matches only that name or `wN`. Enter on the highlighted row,
   including on an empty query, runs `eon workspace switch wN` once the CLI
   has checked again that the `wN` is live; otherwise it changes nothing and
@@ -1826,7 +1832,9 @@ socket names, JSON fields and protocol identifiers retain their spellings.
   IDs, prefixes and `eon window ls`. Amended on 2026-11-06 (approved by Lucca,
   relayed by eon-overseer) by `eon-7cf0y.22` (S2): `eon window stop
   previous|all` and `eon quit --all` cover every window, and Stop and Quit name
-  windows by ID.
+  windows by ID. Amended on 2026-11-06 (approved by Lucca, relayed by
+  eon-overseer) by `eon-7cf0y.22` (S3): `eon attach` and `eon stop` are
+  removed and another build is run by Delegation, in the form its EONW takes.
 - **Consumer:** Eon and eonbase users launching or targeting a product generation.
 - **Trigger:** Launch current generation, inspect an older live generation,
   present a compatible existing surface, stop one window, stop a selected set of
@@ -1847,8 +1855,8 @@ socket names, JSON fields and protocol identifiers retain their spellings.
     recorded its `eon` (below) and the recorded file exists and is executable,
     `eon window ls` reports its `stop` as available.
 
-    Every Stop of it, through `eon stop`, `eon window stop`, `eon quit` or
-    `eon quit --all`, runs that `eon` as `stop GENERATION --json` in the
+    Every Stop of it, through `eon window stop`, `eon quit` or
+    `eon quit --all`, runs that `eon` as Delegation (below) describes, in the
     generation's namespace, without standard input, after this `eon` asks any
     question the command asks. Its live and busy terminals are unknown here,
     so human-mode `eon window stop`, `eon quit` and `eon quit --all` always ask.
@@ -1864,12 +1872,33 @@ socket names, JSON fields and protocol identifiers retain their spellings.
     Without a record, the Stop is `stop-unavailable` and says the build that
     started it can stop it. With a record whose file is missing or not
     executable, the Stop is `stop-unavailable`, names the recorded path, and
-    says to restore that build and run its `eon stop GENERATION` in the
-    generation's namespace.
+    prints the command that stops it once that build is restored: the
+    Delegation form for that build's EONW, run with `EON_STOP_DELEGATED` set
+    to GENERATION, in the generation's namespace.
   - A generation records the `eon` executable of the build that started it, an
-    opaque launch input, so a later build can name or run it; `eon attach
-    GENERATION` delegates to it when this build cannot present that
-    generation.
+    opaque launch input, so a later build can name or run it; `eon window
+    attach` runs it, as Delegation describes, when this build cannot present
+    that window.
+  - **Delegation.** To stop or present a generation that another build
+    started, `eon` runs that build's recorded `eon` in the generation's
+    namespace (`EON_WINDOW_RUNTIME_DIR` set to an independent window's root,
+    else unset), with `EON_STOP_DELEGATED` or `EON_ATTACH_DELEGATED` set to
+    the generation. The form follows the EONW version that the generation's
+    supervisor reports: a build of EONW 34 or older, or one whose version is
+    unknown, runs as `stop GENERATION --json` or `attach GENERATION`; a newer
+    one as `window stop ID --json` or `window attach ID`, ID being `default` in
+    the default namespace and the independent window's ID otherwise. A build
+    is only ever delegated its own generation, so a marker must name the
+    generation of the `eon` that reads it, and the named window must run that
+    generation: `default`, or an independent window that holds it. Then
+    `eon window stop ID` stops only that generation of the window and
+    `eon window attach ID` presents only it. Any other value, or a window that
+    does not run it, is invalid (exit 2) and sends nothing: a marker narrows
+    the named window and never selects another. So a delegated Stop or attach
+    reaches only its generation and never delegates it again. Eon removes both
+    variables from the environment of every supervisor, terminal and Venus it
+    starts. `eon stop` and `eon attach` are invalid commands (exit 2), with or
+    without these variables.
   - `eon window stop previous` and `eon window stop all` (EON-C23) attempt each
     selected window with the existing validated Stop of each of its generations.
     Human mode confirms each window, while `--json` returns the result array
@@ -1882,22 +1911,6 @@ socket names, JSON fields and protocol identifiers retain their spellings.
     from outside the selected windows when a complete result is required. When
     the CLI completes, it exits nonzero if any Stop attempt fails. Neither
     command forcibly kills a process.
-  - `eon stop previous` attempts every non-dead generation except the exact
-    current one, whether current is live or not. `eon stop all` includes
-    current. Each selected generation uses the existing validated
-    Stop; human mode confirms each target, while `--json` returns a result array
-    without confirmation. Declining one target reports that no Stop was sent for
-    that generation; without a terminal that target is `not-confirmed` (exit 1),
-    and the command exits with the largest status. Earlier outcomes remain and
-    later targets continue.
-    Failed or unavailable targets do not suppress later targets while the CLI
-    remains running.
-    A Stop of the caller's own terminal can terminate the CLI before it receives
-    that result or attempts later targets; run from outside selected generations
-    when a complete result is required. When the CLI completes, it exits
-    nonzero if any Stop attempt fails. `all` stops current last so earlier
-    targets can finish when invoked inside a current terminal.
-    Neither command forcibly kills a process.
   - `eon quit [--json]` stops one window with the existing validated Stop of
     one generation and Stop's JSON result. In human mode it asks first only
     while a terminal of that window other than the calling terminal is busy
@@ -2418,7 +2431,7 @@ socket names, JSON fields and protocol identifiers retain their spellings.
   - `eon tab create --directory DIRECTORY` skips the pending pair: its tab is
     never pending and its first pane starts at DIRECTORY (EON-C10). A bare `eon
     tab create` and Venus's new-tab action keep the pending pair.
-  - EONW v34 exposes the pair as the tab's `files` popup endpoint, never as a
+  - EONW v35 exposes the pair as the tab's `files` popup endpoint, never as a
     normal `pN` pane; a pending tab holds exactly that one selected popup and
     no pane. The pair tab may remain live while another durable tab is active.
     A pair-owned pending tab remains pane-free, with an absent selected pane
@@ -2469,7 +2482,7 @@ socket names, JSON fields and protocol identifiers retain their spellings.
   Yazi owns filesystem browsing, and Anima owns style selection, rendering,
   input dismissal, playback timing, and terminal restoration. Eon consumes one
   picked directory per pick without interpreting Yazi's navigation state.
-- **Consumes:** EON-C17, current EONW v34 popup/pending-tab values, Orbit's
+- **Consumes:** EON-C17, current EONW v35 popup/pending-tab values, Orbit's
   accepted terminal startup/attachment/exit/stop contracts and the selected exact
   Venus consumer.
 - **Boundary:** No custom filesystem walker, file opening from a pending tab's
@@ -2623,7 +2636,7 @@ socket names, JSON fields and protocol identifiers retain their spellings.
   tutorial, telemetry, momentary mode, dependency, or platform expansion.
   Venus derives overrides from the popup catalog it already receives over
   EONW. Exceptions: the viewer reads `sidebar` and each popup entry's override
-  from EONW v34.
+  from EONW v35.
 - **Proof:** `795d735a8f61ef439c56d68e1cc4d3929af0dfcf`, `eon-monorepo-2oko.6`.
   - **Environment:** Automated tier; installed tier.
   - **Evidence:** `popup_configuration_owns_defaults_overrides_and_collisions`;
@@ -2709,13 +2722,13 @@ socket names, JSON fields and protocol identifiers retain their spellings.
 - **Owner:** Eon owns the exact graph, product policy, profile delivery and
   installed acceptance; Eon Runtime owns workspace identity/actions. Venus
   owns header geometry, rendering, input, native drag, tooltips, and accessibility.
-- **Consumes:** Venus VEN-C21, EONW v7 (v34 for the EON-C31 tab attention
+- **Consumes:** Venus VEN-C21, EONW v7 (v35 for the EON-C31 tab attention
   marker) and Orbit terminals.
 - **Boundary:** EON-C27 separately owns the optional quota projection. The core
   header adds no Eon-rendered chrome, second row, widget framework, agent status,
   polling, configuration, protocol change, inactive-tab close, native window
   controls, macOS claim or distribution expansion. The one exception is the
-  EON-C31 tab attention marker, which Venus reads from the EONW v34 snapshot it
+  EON-C31 tab attention marker, which Venus reads from the EONW v35 snapshot it
   already polls.
 - **Proof:** `795d735a8f61ef439c56d68e1cc4d3929af0dfcf`, `eon-monorepo-2oko.6`.
   - **Environment:** Automated tier; installed tier.
@@ -2760,7 +2773,9 @@ socket names, JSON fields and protocol identifiers retain their spellings.
   ls`. Amended on 2026-11-06 (approved by Lucca, relayed by eon-overseer) by
   `eon-7cf0y.22` (S2): `eon window stop previous|all` over every window,
   window language, `default` answering to its generation's hex digits, and
-  no exact ID winning over another window it begins.
+  no exact ID winning over another window it begins. Amended on 2026-11-06
+  (approved by Lucca, relayed by eon-overseer) by `eon-7cf0y.22` (S3):
+  `--window` takes window IDs.
 - **Consumer:** A full-Eon user on native x86_64 Linux Wayland.
 - **Trigger:** `eon window new`, the desktop launcher's New Eon Window action,
   or Venus's Alt+Shift+N shortcut.
@@ -2778,15 +2793,15 @@ socket names, JSON fields and protocol identifiers retain their spellings.
   window's ID is its eight-hex-digit ID. In the default namespace, the window
   of the running `eon`'s own build is `default`. A window that another build
   started there has as its ID the 32 hex digits of its generation. Wherever
-  `eon` takes a window ID (`eon window attach` and `eon window stop`), the
-  exact ID or any prefix of at least 4 characters selects a window. It must
-  begin the ID of exactly one running window: an independent window's ID and
-  the hex digits of default-namespace generations share one space, so a whole
-  ID that also begins another window's ID selects neither. One that begins
-  several fails with `ambiguous-window-id` (exit 3) and names each match.
-  One that begins none fails with `unknown-window` (exit 3). An ID or prefix
-  that is shorter than 4 characters, or that is neither lowercase hex nor a
-  prefix of `default`, is invalid syntax (exit 2).
+  `eon` takes a window ID (`eon window attach`, `eon window stop` and
+  `--window`), the exact ID or any prefix of at least 4 characters selects a
+  window. It must begin the ID of exactly one running window: an independent
+  window's ID and the hex digits of default-namespace generations share one
+  space, so a whole ID that also begins another window's ID selects neither.
+  One that begins several fails with `ambiguous-window-id` (exit 3) and names
+  each match. One that begins none fails with `unknown-window` (exit 3). An ID
+  or prefix that is shorter than 4 characters, or that is neither lowercase
+  hex nor a prefix of `default`, is invalid syntax (exit 2).
   `default` also answers to the hex digits of its generation, exactly or by
   a prefix of at least 4: the form that the detach notice (EON-C8) and the
   log line after Eon Desktop exits print, since after an upgrade `default`
@@ -2843,7 +2858,7 @@ socket names, JSON fields and protocol identifiers retain their spellings.
   completed inspection. Keeping it current wakes no idle process and sends
   nothing to another supervisor while nothing changes, and background
   inspection never removes another generation's files. Venus receives the
-  summary in every EONW v34 snapshot; the CLI prints it as `running`
+  summary in every EONW v35 snapshot; the CLI prints it as `running`
   (EON-C10).
   `eon window stop ID` stops one window. For an independent window, it stops
   every running generation of its namespace. `eon window stop previous` stops
@@ -2976,7 +2991,7 @@ socket names, JSON fields and protocol identifiers retain their spellings.
 - **Ownership:** Pinned CodexBar owns provider collection and credential access;
   Runtime owns bounded subprocesses, validation, freshness and the stored
   readings; canonical EONW permits absent resets; Venus consumes typed facts
-  through its existing chip owners. Eon owns exact Nix composition. EONW v34
+  through its existing chip owners. Eon owns exact Nix composition. EONW v35
   carries each window's scope and each provider's last failure.
 - **Failure policy:** Each read has a ten-second deadline and 64 KiB output cap.
   A failed read keeps retained data unchanged; age alone marks it old after one
@@ -3084,7 +3099,9 @@ socket names, JSON fields and protocol identifiers retain their spellings.
   from v1.0.0; 0.x releases make no stability promise. Amended on 2026-10-31
   (approved by Lucca, relayed by eon-overseer) by `eon-c8ytm`: delegated
   lifecycle for older generations, newer list and trust values, and no
-  rewrite of `config.toml`.
+  rewrite of `config.toml`. Amended on 2026-11-06 (approved by Lucca, relayed
+  by eon-overseer) by `eon-7cf0y.22` (S3): `eon window attach ID` presents an
+  older window.
 - **Consumer:** People, scripts and agents that use Eon 1.0 on x86_64 Linux on
   native Wayland and upgrade within 1.x.
 - **Trigger:** Installing a later 1.x release over 1.0 or another 1.x release.
@@ -3123,8 +3140,9 @@ socket names, JSON fields and protocol identifiers retain their spellings.
     `eon` lists and stops every older 1.x generation through
     [EON-C11](#eon-c11--runtime-generations-and-presentation), with its own
     codec or by running the generation's recorded `eon`.
-    `eon attach GENERATION` presents one only when its presentation is
-    compatible, which 1.x does not guarantee.
+    `eon window attach ID` presents one only when its presentation is
+    compatible, directly or through its recorded `eon`, which 1.x does not
+    guarantee.
 - **Important failures:** A 1.x release that rejects a 1.0 configuration,
   renames or removes a listed command, managed command name, flag, JSON field
   or environment variable, changes a documented exit status or a default
@@ -3486,7 +3504,7 @@ socket names, JSON fields and protocol identifiers retain their spellings.
   - **Orbit** owns the records, their neutral facts and the terminal title.
   - **Venus** owns presentation and hiding for width (VEN-C30).
 - **Consumes:** ORB-C15, ORB-C13 generation 7, EON-C8 topology, and EON-C10
-  (EONW v34, request and response). EON-C39 plans a stream of its changes.
+  (EONW v35, request and response). EON-C39 plans a stream of its changes.
 - **Boundary:**
   - no hooks and no edits to agent configuration;
   - no provider parsing; the Runtime passes `app` and `name` through unchanged, and Venus maps
@@ -3777,7 +3795,9 @@ socket names, JSON fields and protocol identifiers retain their spellings.
   rule) by `eon-vhhon`: the picker's own key confirms the highlighted row.
   Amended on 2026-11-04 (approved by eon-overseer under Lucca's standing
   rule) by `eon-hbpkq`: Alt+Shift+1..9 and Alt+Shift+0 show the workspace at
-  list position N.
+  list position N. Amended on 2026-11-06 (approved by Lucca, relayed by
+  eon-overseer) by `eon-7cf0y.22` (S3): workspace and window close follow `eon
+  window stop`.
 - **Consumer:** One full-Eon user, or an agent working for them, who keeps
   several separate sets of work in one Eon window.
 - **Trigger:** Alt+Shift+S or Commands > Switch workspace; Alt+Shift+1
@@ -3837,8 +3857,8 @@ socket names, JSON fields and protocol identifiers retain their spellings.
     workspace set the name; an empty NAME clears it. Without WS it renames the
     caller's workspace.
   - **Close.** `eon workspace close WS` and Commands > Close this workspace
-    ask for confirmation, as `eon stop` does, naming the workspace and saying
-    that closing stops every terminal in it, and that it quits the window
+    ask for confirmation, as `eon window stop` does, naming the workspace and
+    saying that closing stops every terminal in it, and that it quits the window
     when it is the last one; `--json` asks nothing. Closing then stops every
     terminal of that workspace, as closing each of its tabs does (EON-C8),
     and removes it.
@@ -3901,10 +3921,10 @@ socket names, JSON fields and protocol identifiers retain their spellings.
     each workspace's rollup as `attention` (`eon-workspace-switching-shn4.8`).
   - **Detach, attach and recovery.** Alt+Shift+D detaches every workspace
     together, and attach shows the last shown workspace; closing the window
-    follows EON-C8's close rule. `eon stop` and Commands > Quit this window
-    stop every workspace of the window. Same-boot recovery projects every
-    recovered run into one workspace `w1`, as EON-C8 projects them into `t1`;
-    names and membership are not recovered.
+    follows EON-C8's close rule. `eon window stop`, `eon quit` and Commands >
+    Quit this window stop every workspace of the window. Same-boot recovery
+    projects every recovered run into one workspace `w1`, as EON-C8 projects
+    them into `t1`; names and membership are not recovered.
 - **Important failures:** These leave every workspace unchanged and return
   EON-C10's typed failure: an unknown or stale `wN` or a name that matches
   nothing (exit 3); a name that matches more than one workspace
@@ -4028,13 +4048,15 @@ socket names, JSON fields and protocol identifiers retain their spellings.
   setting, `eon-agent-parity-a9g0.17` the command.
   `eon pane history` amended by Lucca on 2026-11-05 ("yyes", relayed by
   eon-overseer, `eon-u5bvd.1` record 03); `eon-u5bvd.3` implements it on
-  EONW v33, and `eon-u5bvd.5` its `--edit` on EONW v34.
+  EONW v33, and `eon-u5bvd.5` its `--edit` on EONW v34. Amended on 2026-11-06
+  (approved by Lucca, relayed by eon-overseer) by `eon-7cf0y.22` (S3):
+  `--generation` is removed.
 - **Consumer:** An agent or script running as the person's user, in an Eon
   terminal or outside one.
 - **Trigger:**
   - `eon pane read TARGET [--json]`, with:
     - TARGET a pane or popup ID as `eon workspace --json` names them;
-    - EON-C10's `--window` and `--generation` selection.
+    - EON-C10's `--window` selection.
   - `eon pane history TARGET [--json] [--edit]`, with the same TARGET and
     selection.
 - **Result:**
@@ -4263,6 +4285,8 @@ socket names, JSON fields and protocol identifiers retain their spellings.
   Typing refusal and `--force` amended on 2026-11-04, approved as drafted by
   eon-overseer under Lucca's standing rule, carrying out his “approve” of
   EONW v32 (`eon-buys1.2`). The amendment's proof is recorded in that bead.
+  Amended on 2026-11-06 (approved by Lucca, relayed by eon-overseer) by
+  `eon-7cf0y.22` (S3): `--generation` is removed.
 - **Consumer:** An agent or script running as the person's user, in an Eon
   terminal or outside one.
 - **Trigger:** `eon pane send TARGET [--enter] [--force] [--stdin] [--json] [-- TEXT]`,
@@ -4274,7 +4298,7 @@ socket names, JSON fields and protocol identifiers retain their spellings.
     file already holding data fails before anything is sent, naming `--stdin`
     and empty input as the remedies; a terminal, an empty or ended input, or a
     pipe or socket with no data within 100 ms is not read;
-  - EON-C10's `--window` and `--generation` selection applies.
+  - EON-C10's `--window` selection applies.
 - **Result:**
   - The supervisor that EON-C10 selects (validating `EON_TERMINAL` when set)
     resolves TARGET in any workspace of its window, shown or hidden, and
@@ -4497,6 +4521,8 @@ socket names, JSON fields and protocol identifiers retain their spellings.
   under Lucca's standing approval for this fix) by `eon-61efs.1`: Venus
   subscribes to learn of workspace changes promptly, and the events of a
   change caused by an EONW action are written before that action's reply.
+  Amended on 2026-11-06 (approved by Lucca, relayed by eon-overseer) by
+  `eon-7cf0y.22` (S3): `--generation` is removed.
 - **Consumer:** An agent or script running as the person's user, in an Eon
   terminal or outside one, that must notice workspace and attention changes
   without polling: an overseer answering its tab's questions (`eon-ciwn.4`),
@@ -4505,7 +4531,7 @@ socket names, JSON fields and protocol identifiers retain their spellings.
   changes instead of at its next `Inspect` poll.
 - **Trigger:**
   - `eon events [--json]`, with:
-    - EON-C10's `--window` and `--generation` selection and `EON_TERMINAL`
+    - EON-C10's `--window` selection and `EON_TERMINAL`
       validation;
     - the filters `--workspace WS`, `--tab TAB`, `--target ID`,
       `--kind KIND` (`workspace`, `tab`, `pane`, `popup`, `attention`,
@@ -4515,7 +4541,7 @@ socket names, JSON fields and protocol identifiers retain their spellings.
   - `eon pane wait TARGET --until done|needs-input|attention|ended
     [--timeout SECONDS] [--json]`.
 - **Result:**
-  - **One subscription.** The CLI sends one EONW v34 `Subscribe` request.
+  - **One subscription.** The CLI sends one EONW v35 `Subscribe` request.
     The supervisor either refuses it with an ordinary EONW `Failure` reply
     and closes the connection, or answers `SUBSCRIBED` and keeps the
     connection open for `TABS`, `EVENT`, `GAP` and `END` messages. A
@@ -4697,7 +4723,7 @@ socket names, JSON fields and protocol identifiers retain their spellings.
     subscriber, the attention poller or Stop.
 - **Owner:** Eon Runtime: the event projection, sequence, retained events,
   filters, subscriber bounds and CLI projection. Its canonical EONW package
-  owns the v34 `Subscribe` action and the `SUBSCRIBED`, `TABS`, `EVENT`,
+  owns the v35 `Subscribe` action and the `SUBSCRIBED`, `TABS`, `EVENT`,
   `GAP` and `END` messages.
 - **Consumes:** EON-C10 (EONW v30 from `eon-ciwn.6`, targeting, exit codes),
   EON-C31 (attention records, the queue and its CLI visibility), EON-C11

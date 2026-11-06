@@ -9,8 +9,8 @@ Website: [eonterm.com](https://eonterm.com)
 Eon is an agentic development environment (ADE): the terminal for humans and
 agents to work together. It is a native Wayland workspace for long-running
 work such as coding agents, builds, servers and editors. Its **terminals keep running after you detach the window** with
-Alt+Shift+D. Run `eon attach` and every tab, pane and terminal is where you
-left it.
+Alt+Shift+D. Run `eon window attach` and every tab, pane and terminal is
+where you left it.
 
 ## Demo
 
@@ -20,8 +20,8 @@ left it.
 
 - **Detach the window, keep the work.** [Orbit](orbit/README.md) runs each
   terminal's process and state apart from the window. Alt+Shift+D detaches;
-  `eon attach` returns to the same terminals. Closing the window quits it, and
-  `eon stop` ends a detached window's terminals when you choose.
+  `eon window attach` returns to the same terminals. Closing the window quits
+  it, and `eon window stop` ends a detached window's terminals when you choose.
 - **Made for coding agents.** Each tab has an Agent popup (**Alt+Shift+L**) that
   starts the first installed of Codex, Grok, OpenCode, Pi or Claude and keeps
   its session while hidden. When you're signed in, Codex and Claude quota appear
@@ -75,9 +75,9 @@ folder. A terminal opens there.
 Detach whenever you like. To come back or end work:
 
 ```sh
-eon attach               # return to your terminals
+eon window attach        # return to your terminals
 eon window ls            # list running windows
-eon stop GENERATION      # end one generation's terminals
+eon window stop ID       # end one window's terminals
 ```
 
 `eon --help` lists every command. `eon versions` reports the pinned component

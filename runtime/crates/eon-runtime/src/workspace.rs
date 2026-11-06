@@ -1,6 +1,6 @@
 use super::cli::WORKSPACE_PICKER;
 use super::managed_environment::{PopupCatalog, PopupCommand, PopupDefinition};
-use eon_workspace_protocol::v34::{
+use eon_workspace_protocol::v35::{
     Action, Attention, AttentionKind, AttentionState, BusyTerminals, ClaudeQuotaState,
     CodexQuotaState, Column as SnapshotColumn, Direction, Editing, FILES_ENTRY, Failure,
     InvokeIntent, MAX_COLUMNS, MAX_DIRECTORY_BYTES, MAX_SESSIONS, MAX_TABS, PROJECT_ENTRY,
@@ -313,7 +313,7 @@ impl WorkspaceSet {
         snapshot.workspaces = self
             .workspaces
             .iter()
-            .map(|workspace| eon_workspace_protocol::v34::WorkspaceInfo {
+            .map(|workspace| eon_workspace_protocol::v35::WorkspaceInfo {
                 id: workspace.id.clone(),
                 name: workspace.name.clone(),
                 tab_count: workspace.tabs.len(),
@@ -459,13 +459,13 @@ impl WorkspaceSet {
         });
         name.chars()
             .map(|character| {
-                if eon_workspace_protocol::v34::pane_label_character(character) {
+                if eon_workspace_protocol::v35::pane_label_character(character) {
                     character
                 } else {
                     '\u{fffd}'
                 }
             })
-            .take(eon_workspace_protocol::v34::MAX_WINDOW_NAME_CHARS)
+            .take(eon_workspace_protocol::v35::MAX_WINDOW_NAME_CHARS)
             .collect()
     }
 
@@ -476,7 +476,7 @@ impl WorkspaceSet {
     }
 
     fn resolve_workspace(&self, target: &str) -> Result<usize, Failure> {
-        eon_workspace_protocol::v34::validate_workspace_name(target)
+        eon_workspace_protocol::v35::validate_workspace_name(target)
             .map_err(|error| action_error("malformed-action", error.to_string()))?;
         resolve_selector(
             self.workspaces
@@ -607,7 +607,7 @@ impl WorkspaceSet {
                     .map(str::trim)
                     .filter(|name| !name.is_empty());
                 if let Some(name) = name {
-                    eon_workspace_protocol::v34::validate_pane_name(name)
+                    eon_workspace_protocol::v35::validate_pane_name(name)
                         .map_err(|error| action_error("malformed-action", error.to_string()))?;
                 }
                 let target = self.workspaces[index]
@@ -623,10 +623,10 @@ impl WorkspaceSet {
             }
             Action::Workspace(WorkspaceAction::NewWorkspace { name, focus }) => {
                 if let Some(name) = &name {
-                    eon_workspace_protocol::v34::validate_workspace_name(name)
+                    eon_workspace_protocol::v35::validate_workspace_name(name)
                         .map_err(|error| action_error("malformed-action", error.to_string()))?;
                 }
-                if self.workspaces.len() >= eon_workspace_protocol::v34::MAX_WORKSPACES {
+                if self.workspaces.len() >= eon_workspace_protocol::v35::MAX_WORKSPACES {
                     return Err(action_error(
                         "workspace-limit",
                         "a window holds at most 32 workspaces",
@@ -659,7 +659,7 @@ impl WorkspaceSet {
             }
             Action::Workspace(WorkspaceAction::RenameWorkspace { workspace, name }) => {
                 if !name.is_empty() {
-                    eon_workspace_protocol::v34::validate_workspace_name(&name)
+                    eon_workspace_protocol::v35::validate_workspace_name(&name)
                         .map_err(|error| action_error("malformed-action", error.to_string()))?;
                 }
                 let target = workspace
@@ -1032,7 +1032,7 @@ impl Workspace {
         Snapshot {
             workspace: self.id.clone(),
             active_workspace: self.id.clone(),
-            workspaces: vec![eon_workspace_protocol::v34::WorkspaceInfo {
+            workspaces: vec![eon_workspace_protocol::v35::WorkspaceInfo {
                 id: self.id.clone(),
                 name: self.name.clone(),
                 tab_count: self.tabs.len(),
@@ -3126,8 +3126,8 @@ pub(crate) fn json(snapshot: &Snapshot) -> String {
     output
 }
 
-fn window_state(state: eon_workspace_protocol::v34::WindowState) -> &'static str {
-    use eon_workspace_protocol::v34::WindowState;
+fn window_state(state: eon_workspace_protocol::v35::WindowState) -> &'static str {
+    use eon_workspace_protocol::v35::WindowState;
     match state {
         WindowState::Live => "live",
         WindowState::Incompatible => "incompatible",
@@ -3137,7 +3137,7 @@ fn window_state(state: eon_workspace_protocol::v34::WindowState) -> &'static str
 
 fn json_window(
     output: &mut String,
-    entry: &eon_workspace_protocol::v34::WindowEntry,
+    entry: &eon_workspace_protocol::v35::WindowEntry,
     include_state: bool,
 ) {
     output.push_str("{\"window\":");
@@ -3422,13 +3422,13 @@ fn action_error(code: &'static str, detail: impl Into<String>) -> Failure {
     }
 }
 
-fn shortcut_text(shortcut: &eon_workspace_protocol::v34::Shortcut) -> String {
+fn shortcut_text(shortcut: &eon_workspace_protocol::v35::Shortcut) -> String {
     let mut parts = Vec::new();
     for (bit, name) in [
-        (eon_workspace_protocol::v34::CTRL, "Ctrl"),
-        (eon_workspace_protocol::v34::ALT, "Alt"),
-        (eon_workspace_protocol::v34::SHIFT, "Shift"),
-        (eon_workspace_protocol::v34::SUPER, "Super"),
+        (eon_workspace_protocol::v35::CTRL, "Ctrl"),
+        (eon_workspace_protocol::v35::ALT, "Alt"),
+        (eon_workspace_protocol::v35::SHIFT, "Shift"),
+        (eon_workspace_protocol::v35::SUPER, "Super"),
     ] {
         if shortcut.modifiers & bit != 0 {
             parts.push(name.to_string());
@@ -3488,7 +3488,7 @@ pub(crate) fn json_escape(value: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use eon_workspace_protocol::v34::{ALT, PopupGeometry, QuotaFailureReason, Shortcut};
+    use eon_workspace_protocol::v35::{ALT, PopupGeometry, QuotaFailureReason, Shortcut};
 
     fn two_workspace_set(
         mut operate: impl FnMut(SessionOperation) -> Result<(), String>,
@@ -3745,8 +3745,8 @@ mod tests {
             ("w1", "w3")
         );
         assert_eq!(caller_view.tabs, original);
-        eon_workspace_protocol::v34::encode_response(
-            &eon_workspace_protocol::v34::Response::Snapshot(caller_view),
+        eon_workspace_protocol::v35::encode_response(
+            &eon_workspace_protocol::v35::Response::Snapshot(caller_view),
         )
         .unwrap();
 
@@ -3837,7 +3837,7 @@ mod tests {
             .code,
             "malformed-action"
         );
-        while set.workspaces.len() < eon_workspace_protocol::v34::MAX_WORKSPACES {
+        while set.workspaces.len() < eon_workspace_protocol::v35::MAX_WORKSPACES {
             set.dispatch(
                 &format!("new-{}", set.workspaces.len()),
                 None,
@@ -3893,8 +3893,8 @@ mod tests {
         )
         .unwrap();
         let snapshot = set.snapshot();
-        eon_workspace_protocol::v34::encode_response(
-            &eon_workspace_protocol::v34::Response::Snapshot(snapshot.clone()),
+        eon_workspace_protocol::v35::encode_response(
+            &eon_workspace_protocol::v35::Response::Snapshot(snapshot.clone()),
         )
         .unwrap();
         assert_eq!(snapshot.workspaces.len(), 1);
@@ -3966,8 +3966,8 @@ mod tests {
         assert_eq!(error.code, "session-start");
         assert_eq!(error.detail, "start failed");
         let snapshot = set.snapshot();
-        eon_workspace_protocol::v34::encode_response(
-            &eon_workspace_protocol::v34::Response::Snapshot(snapshot.clone()),
+        eon_workspace_protocol::v35::encode_response(
+            &eon_workspace_protocol::v35::Response::Snapshot(snapshot.clone()),
         )
         .unwrap();
         assert_eq!(snapshot.workspace, "w1");
@@ -4894,7 +4894,7 @@ mod tests {
 
     #[test]
     fn cli_json_carries_running_windows() {
-        use eon_workspace_protocol::v34::{RunningWindows, WindowEntry, WindowState};
+        use eon_workspace_protocol::v35::{RunningWindows, WindowEntry, WindowState};
         let set = WorkspaceSet::with_recovered_sessions(
             "/runtime".into(),
             "/".into(),
@@ -4963,7 +4963,7 @@ mod tests {
 
     #[test]
     fn cli_json_carries_busy_terminals() {
-        use eon_workspace_protocol::v34::{BusyTerminal, BusyTerminals};
+        use eon_workspace_protocol::v35::{BusyTerminal, BusyTerminals};
         let set = WorkspaceSet::with_recovered_sessions(
             "/runtime".into(),
             "/".into(),
@@ -5024,7 +5024,7 @@ mod tests {
 
     #[test]
     fn cli_json_carries_the_full_attention_record_and_quotas_but_human_output_does_not() {
-        use eon_workspace_protocol::v34::{
+        use eon_workspace_protocol::v35::{
             AttentionKind, AttentionRecord, ClaudeQuota, ClaudeQuotaState, CodexQuota,
             CodexQuotaState, QuotaWindow,
         };
@@ -5129,7 +5129,7 @@ mod tests {
             reason: QuotaFailureReason::InvalidWindow,
         });
         snapshot.attention_queue = vec![
-            eon_workspace_protocol::v34::QueueEntry {
+            eon_workspace_protocol::v35::QueueEntry {
                 workspace: "w1".into(),
                 tab: "t1".into(),
                 target: "p1".into(),
@@ -5138,7 +5138,7 @@ mod tests {
                     .clone()
                     .unwrap(),
             },
-            eon_workspace_protocol::v34::QueueEntry {
+            eon_workspace_protocol::v35::QueueEntry {
                 workspace: "w2".into(),
                 tab: "t\"2".into(),
                 target: "p\\2".into(),
@@ -5409,8 +5409,8 @@ mod tests {
         let after = workspace.snapshot();
         assert_eq!(after.tabs.len(), 1);
         assert_eq!(after.tabs[0].columns.len(), MAX_COLUMNS);
-        eon_workspace_protocol::v34::encode_response(
-            &eon_workspace_protocol::v34::Response::Snapshot(after),
+        eon_workspace_protocol::v35::encode_response(
+            &eon_workspace_protocol::v35::Response::Snapshot(after),
         )
         .unwrap();
         fs::remove_dir_all(root).unwrap();
@@ -7846,8 +7846,8 @@ mod tests {
             .unwrap_err();
         assert_eq!(error.code, "session-start");
         assert_eq!(workspace.snapshot(), initial);
-        eon_workspace_protocol::v34::encode_response(
-            &eon_workspace_protocol::v34::Response::Snapshot(workspace.snapshot()),
+        eon_workspace_protocol::v35::encode_response(
+            &eon_workspace_protocol::v35::Response::Snapshot(workspace.snapshot()),
         )
         .unwrap();
 
@@ -7910,8 +7910,8 @@ mod tests {
             assert!(json(&state).contains(
                 r#"{"id":"agent","label":"Agent","keybinding":"Alt+A","overridden_by":null,"default_keybinding":null}"#
             ));
-            eon_workspace_protocol::v34::encode_response(
-                &eon_workspace_protocol::v34::Response::Snapshot(state),
+            eon_workspace_protocol::v35::encode_response(
+                &eon_workspace_protocol::v35::Response::Snapshot(state),
             )
             .unwrap();
         }

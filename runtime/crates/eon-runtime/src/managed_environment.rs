@@ -17,7 +17,7 @@ use std::{
     time::{Duration, Instant},
 };
 
-use eon_workspace_protocol::v34::{
+use eon_workspace_protocol::v35::{
     ALT, CTRL, MAX_ENTER_DELAY_MS, MAX_ENTRIES, MAX_ENTRY_ID_BYTES, MAX_LABEL_BYTES, PopupGeometry,
     PopupKey, SHIFT, SUPER, Shortcut,
 };
@@ -1418,8 +1418,8 @@ const AGENT_TOOL_SETTINGS: &[(&str, &[(&str, &str)])] = &[
 /// one it loses the name, except `LANG`, which stays so the locale remains UTF-8.
 const CODEX_LOCALE: &[&str] = &["LANG", "LC_CTYPE", "LC_ALL"];
 
-/// Keeps the launching agent's session, and the settings its tool runner adds, out of
-/// a child the supervisor starts.
+/// Keeps the launching agent's session, the settings its tool runner adds, and Eon's
+/// delegation markers (EON-C11) out of a child the supervisor starts.
 pub(crate) fn remove_agent_session(command: &mut Command) -> &mut Command {
     remove_agent_environment(command, |name| env::var_os(name), desktop_locale)
 }
@@ -1454,7 +1454,10 @@ fn remove_agent_environment(
             }
         }
     }
-    for name in AGENT_SESSION_VARIABLES {
+    for name in AGENT_SESSION_VARIABLES
+        .iter()
+        .chain(&super::generation::DELEGATION_MARKERS)
+    {
         command.env_remove(name);
     }
     command
@@ -1598,8 +1601,12 @@ pub(crate) fn command(
         Tool::LazyGit => &programs.lazygit,
     };
     let mut command = Command::new(program);
-    // Nothing started inside the terminal inherits the one-shot marker.
+    // Nothing started inside the terminal inherits the one-shot marker, or a
+    // delegation marker, which names one delegated Stop or attach (EON-C11).
     command.env_remove(CONFIG_WARNED_VARIABLE);
+    for marker in super::generation::DELEGATION_MARKERS {
+        command.env_remove(marker);
+    }
     match tool {
         Tool::Nu => {
             command.arg("--experimental-options=native-clip");
@@ -3679,6 +3686,42 @@ label = "Browse"
     }
 
     #[test]
+    fn managed_commands_never_pass_on_a_delegation_marker() {
+        // `eon-bash -c 'eon window stop ID'` with an inherited marker would
+        // narrow that Stop to one generation.
+        let inputs = crate::fixtures::inputs();
+        let programs = ManagedPrograms {
+            nu: "/managed/nu".into(),
+            bash: "/managed/bash".into(),
+            helix: "/managed/hx".into(),
+            yazi: "/managed/yazi".into(),
+            ya: "/managed/ya".into(),
+            lazygit: "/managed/lazygit".into(),
+            nu_vendor_autoload: None,
+            bash_rc: None,
+            shell_bin: None,
+        };
+        let config = Path::new("/private/eon");
+        for tool in [
+            Tool::Nu,
+            Tool::Bash,
+            Tool::Helix,
+            Tool::Yazi,
+            Tool::Ya,
+            Tool::LazyGit,
+        ] {
+            let command = managed_command(tool, &programs, config, &[], &inputs.defaults).unwrap();
+            for marker in ["EON_STOP_DELEGATED", "EON_ATTACH_DELEGATED"] {
+                assert_eq!(
+                    command_environment(&command, marker),
+                    Some(None),
+                    "{tool:?} passes on {marker}"
+                );
+            }
+        }
+    }
+
+    #[test]
     fn helix_does_not_start_under_a_configuration_root_that_is_not_utf8() {
         // Helix reads HELIX_STEEL_CONFIG only as UTF-8; otherwise it falls back to
         // a repository's own .helix Steel files.
@@ -3705,6 +3748,25 @@ label = "Browse"
             std::env::split_paths(&path).collect::<Vec<_>>(),
             ["/managed/bin", "/usr/bin"].map(PathBuf::from)
         );
+    }
+
+    #[test]
+    fn children_never_inherit_a_delegation_marker() {
+        // A marker names one delegated Stop or attach (EON-C11); a terminal that
+        // inherited one would carry it into every `eon` run there.
+        let mut command = Command::new("/managed/orbit");
+        for name in ["EON_STOP_DELEGATED", "EON_ATTACH_DELEGATED"] {
+            command.env(name, "g1-00000000000000000000000000000001");
+        }
+        remove_agent_session(&mut command);
+        for name in ["EON_STOP_DELEGATED", "EON_ATTACH_DELEGATED"] {
+            assert!(
+                command
+                    .get_envs()
+                    .any(|(variable, value)| variable == name && value.is_none()),
+                "{name} reaches the child"
+            );
+        }
     }
 
     #[test]

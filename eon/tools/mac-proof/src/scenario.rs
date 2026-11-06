@@ -231,7 +231,7 @@ const STEPS: &[Spec] = &[
         needs: KEYS,
         requires: &["picker"],
         proves: "Option+Shift+D ends Venus while the supervisor and its terminals live on, and \
-                 `eon attach` shows them again",
+                 `eon window attach` shows them again",
         window: true,
         timeout: Duration::from_secs(2 * 60),
         body: detach,
@@ -243,8 +243,9 @@ const STEPS: &[Spec] = &[
         proves: "Orbit admits only Eon's Venus (ORB-C3): an ORBS client that is not Eon gets \
                  Busy, and the command it would type never runs, from a hidden tab's shell, a \
                  hidden popup's and, while Venus is detached, the shown tab's. Text Venus pastes \
-                 reaches a new tab's shell, a popup's, and the tab's again after `eon attach`, \
-                 as `eon pane read` shows, and `eon pane send` runs a command in the hidden shell",
+                 reaches a new tab's shell, a popup's, and the tab's again after \
+                 `eon window attach`, as `eon pane read` shows, and `eon pane send` runs a \
+                 command in the hidden shell",
         window: true,
         timeout: Duration::from_secs(4 * 60),
         body: admission,
@@ -254,7 +255,7 @@ const STEPS: &[Spec] = &[
         needs: GUI,
         requires: &["picker"],
         proves: "after Venus is killed, the supervisor and its terminals live on and \
-                 `eon attach` shows them again",
+                 `eon window attach` shows them again",
         window: true,
         timeout: Duration::from_secs(2 * 60),
         body: crash,
@@ -273,7 +274,7 @@ const STEPS: &[Spec] = &[
         name: "stop",
         needs: GUI,
         requires: &["session"],
-        proves: "`eon stop all` stops the generation and no process of the scenario is left",
+        proves: "`eon window stop all` stops the window and no process of the scenario is left",
         window: false,
         timeout: Duration::from_secs(2 * 60),
         body: stop,
@@ -1114,7 +1115,7 @@ impl Scenario {
     }
 
     /// Ends `venus` by `end`, then checks that the terminals outlived it and
-    /// that `eon attach` shows them again. Venus's end may add one: it
+    /// that `eon window attach` shows them again. Venus's end may add one: it
     /// dismisses the pending pair of the tab that `panes` created, which
     /// starts that tab's terminal (EON-C18).
     fn restart_venus(
@@ -1145,7 +1146,7 @@ impl Scenario {
     }
 
     pub(crate) fn reattach(&mut self, log: &mut Log, deadline: Instant) -> Result<u32, Failure> {
-        succeed(log, &mut self.eon(&["attach"]), deadline, false)?;
+        succeed(log, &mut self.eon(&["window", "attach"]), deadline, false)?;
         self.wait_for_venus(log, deadline)
     }
 
@@ -2352,7 +2353,7 @@ pub(crate) fn stop(scenario: &mut Scenario, log: &mut Log, deadline: Instant) ->
         "no supervisor is running".to_owned()
     })?;
     scenario.processes(log, deadline)?;
-    let reply = scenario.act(&["stop", "all"], log, deadline);
+    let reply = scenario.act(&["window", "stop", "all"], log, deadline);
     log.line("mac-proof: waiting for the supervisor to exit");
     let exited = until(deadline, || {
         Ok(scenario
@@ -2367,10 +2368,15 @@ pub(crate) fn stop(scenario: &mut Scenario, log: &mut Log, deadline: Instant) ->
     });
     let left = scenario.clean(log);
     let reply = reply?;
-    let results = reply.as_array().cloned().unwrap_or_default();
+    let results: Vec<Value> = reply
+        .as_array()
+        .into_iter()
+        .flatten()
+        .flat_map(|window| window["results"].as_array().cloned().unwrap_or_default())
+        .collect();
     check(
         !results.is_empty() && results.iter().all(|result| result.get("stopped").is_some()),
-        || format!("eon stop all replied {reply}"),
+        || format!("eon window stop all replied {reply}"),
     )?;
     exited?;
     check(left.is_empty(), || {

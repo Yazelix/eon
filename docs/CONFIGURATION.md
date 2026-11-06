@@ -235,9 +235,9 @@ refresh is fixed, since disk use changes slowly. Like the other `[bar]` keys,
 they apply when a window next opens or reopens.
 
 Omitting `cursor_trail_color` chooses a random color that lasts as long as the
-running workspace, so `eon attach` reopens with the same color; a new workspace
-picks again. eonbase keeps one color across reopens, though its first window
-may differ. Explicit
+running workspace, so `eon window attach` reopens with the same color; a new
+workspace picks again. eonbase keeps one color across reopens, though its
+first window may differ. Explicit
 values are `random`, `preset:<name>`, or `custom:#RRGGBB`. The presets are
 `magma`, `solar`, `lime`, `forest`, `ice`, `ocean`, `nebula`, and `bubblegum`;
 the terminal adds a contrasting cursor outline automatically. The cursor body

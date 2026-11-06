@@ -21,7 +21,7 @@ use super::{
     subscriptions::{Subscriber, Subscribers},
     workspace::{self, LaunchCommand, SessionEnd, SessionOperation, WorkspaceSet},
 };
-use eon_workspace_protocol::v34::{
+use eon_workspace_protocol::v35::{
     Action, Availability, BusyTerminals, Editing, Ended, FILES_ENTRY, Failure, InvokeIntent,
     LifecycleResponse, Request, Response, Runtime, Screen, Sent, Snapshot, Stopped, TargetId,
     TerminalHistory, TerminalInput, TerminalText, VERSION, WindowEntry, WindowState,
@@ -679,7 +679,7 @@ impl PresentationProcess {
                 };
                 if let Some(snapshot) = snapshot {
                     let bytes =
-                        eon_workspace_protocol::v34::encode_response(&Response::Snapshot(snapshot))
+                        eon_workspace_protocol::v35::encode_response(&Response::Snapshot(snapshot))
                             .map_err(|error| format!("cannot encode startup workspace: {error}"))?;
                     let mut remaining = bytes.as_slice();
                     while !remaining.is_empty() {
@@ -3507,16 +3507,16 @@ mod tests {
         state
             .subscribers
             .attach(stream, *subscriber, Instant::now());
-        let mut message = vec![0; eon_workspace_protocol::v34::HEADER_BYTES];
+        let mut message = vec![0; eon_workspace_protocol::v35::HEADER_BYTES];
         peer.read_exact(&mut message).unwrap();
         message.resize(
-            eon_workspace_protocol::v34::declared_message_len(&message).unwrap(),
+            eon_workspace_protocol::v35::declared_message_len(&message).unwrap(),
             0,
         );
-        peer.read_exact(&mut message[eon_workspace_protocol::v34::HEADER_BYTES..])
+        peer.read_exact(&mut message[eon_workspace_protocol::v35::HEADER_BYTES..])
             .unwrap();
-        let eon_workspace_protocol::v34::SubscriptionMessage::Subscribed(subscribed) =
-            eon_workspace_protocol::v34::decode_subscription_message(&message).unwrap()
+        let eon_workspace_protocol::v35::SubscriptionMessage::Subscribed(subscribed) =
+            eon_workspace_protocol::v35::decode_subscription_message(&message).unwrap()
         else {
             panic!("no SUBSCRIBED");
         };
@@ -3532,7 +3532,7 @@ mod tests {
         assert_eq!(state.workspace_snapshot_in(None).unwrap(), before);
         assert!(state.venus.is_none());
 
-        let missing = eon_workspace_protocol::v34::Filter {
+        let missing = eon_workspace_protocol::v35::Filter {
             workspaces: vec!["w9".into()],
             ..Default::default()
         };
@@ -3628,7 +3628,7 @@ mod tests {
     /// A pending window with one unfiltered subscriber that has read its
     /// snapshot, and that subscriber's end of the connection.
     fn subscribed_window() -> (PathBuf, crate::cli::Inputs, SupervisorState, UnixStream) {
-        use eon_workspace_protocol::v34::SubscriptionMessage;
+        use eon_workspace_protocol::v35::SubscriptionMessage;
         let root = temporary_directory();
         let inputs = crate::fixtures::inputs();
         let workspace = WorkspaceSet::pending(
@@ -3699,9 +3699,9 @@ mod tests {
         mut peer: UnixStream,
     ) -> std::thread::JoinHandle<(
         super::Response,
-        Vec<eon_workspace_protocol::v34::SubscriptionMessage>,
+        Vec<eon_workspace_protocol::v35::SubscriptionMessage>,
     )> {
-        use eon_workspace_protocol::v34::{
+        use eon_workspace_protocol::v35::{
             HEADER_BYTES, declared_message_len, decode_response, encode_request,
         };
         use std::io::Write;
@@ -3747,9 +3747,9 @@ mod tests {
 
     /// The names of the `workspace-renamed` events in `messages`.
     fn renames(
-        messages: &[eon_workspace_protocol::v34::SubscriptionMessage],
+        messages: &[eon_workspace_protocol::v35::SubscriptionMessage],
     ) -> Vec<Option<String>> {
-        use eon_workspace_protocol::v34::{Change, SubscriptionMessage, WorkspaceChange};
+        use eon_workspace_protocol::v35::{Change, SubscriptionMessage, WorkspaceChange};
         messages
             .iter()
             .filter_map(|message| match message {
@@ -3768,8 +3768,8 @@ mod tests {
     /// Every whole subscription message already written to `peer`.
     fn subscription_messages(
         peer: &mut UnixStream,
-    ) -> Vec<eon_workspace_protocol::v34::SubscriptionMessage> {
-        use eon_workspace_protocol::v34::{declared_message_len, decode_subscription_message};
+    ) -> Vec<eon_workspace_protocol::v35::SubscriptionMessage> {
+        use eon_workspace_protocol::v35::{declared_message_len, decode_subscription_message};
         peer.set_nonblocking(true).unwrap();
         let mut bytes = Vec::new();
         let mut buffer = [0; 65536];
@@ -3797,7 +3797,7 @@ mod tests {
     #[cfg(target_os = "linux")]
     #[test]
     fn attention_reaches_subscribers_in_the_loop_turn_that_polls_it() {
-        use eon_workspace_protocol::v34::{AttentionState, Change, SubscriptionMessage};
+        use eon_workspace_protocol::v35::{AttentionState, Change, SubscriptionMessage};
         let root = temporary_directory();
         let inputs = crate::fixtures::inputs();
         let session = leased_orbit(
@@ -3846,8 +3846,8 @@ mod tests {
                 id: "subscribe-1".into(),
                 caller: None,
                 action: Action::Subscribe {
-                    filter: eon_workspace_protocol::v34::Filter {
-                        kinds: vec![eon_workspace_protocol::v34::EventKind::Attention],
+                    filter: eon_workspace_protocol::v35::Filter {
+                        kinds: vec![eon_workspace_protocol::v35::EventKind::Attention],
                         ..Default::default()
                     },
                     after: None,
@@ -3986,8 +3986,8 @@ mod tests {
     fn inspected(
         state: &mut SupervisorState,
     ) -> (
-        Option<eon_workspace_protocol::v34::Attention>,
-        Vec<eon_workspace_protocol::v34::QueueEntry>,
+        Option<eon_workspace_protocol::v35::Attention>,
+        Vec<eon_workspace_protocol::v35::QueueEntry>,
     ) {
         // Each request ID is accepted once.
         static INSPECTIONS: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
@@ -4006,10 +4006,10 @@ mod tests {
         );
         assert!(!ended);
         let snapshot = match response {
-            super::ControlResponse::Workspace(eon_workspace_protocol::v34::Response::Snapshot(
+            super::ControlResponse::Workspace(eon_workspace_protocol::v35::Response::Snapshot(
                 snapshot,
             )) => snapshot,
-            super::ControlResponse::Workspace(eon_workspace_protocol::v34::Response::Failure(
+            super::ControlResponse::Workspace(eon_workspace_protocol::v35::Response::Failure(
                 failure,
             )) => panic!("Inspect failed: {} {}", failure.code, failure.detail),
             _ => panic!("Inspect answers with a snapshot"),
@@ -4028,9 +4028,9 @@ mod tests {
     fn raise_finish(
         state: &mut SupervisorState,
         gate: &Path,
-    ) -> eon_workspace_protocol::v34::AttentionState {
-        use eon_workspace_protocol::v34::AttentionState;
-        let changed = |attention: &Option<eon_workspace_protocol::v34::Attention>| {
+    ) -> eon_workspace_protocol::v35::AttentionState {
+        use eon_workspace_protocol::v35::AttentionState;
+        let changed = |attention: &Option<eon_workspace_protocol::v35::Attention>| {
             attention
                 .as_ref()
                 .and_then(|attention| attention.record.as_ref())
@@ -4063,7 +4063,7 @@ mod tests {
     #[cfg(target_os = "linux")]
     #[test]
     fn selected_raise_waits_for_native_window_focus() {
-        use eon_workspace_protocol::v34::AttentionState::{Finished, Idle};
+        use eon_workspace_protocol::v35::AttentionState::{Finished, Idle};
         use std::io::Write;
         let root = temporary_directory();
         let (mut state, gate) = finishing_window(&root);
@@ -4184,7 +4184,7 @@ mod tests {
     #[cfg(target_os = "linux")]
     #[test]
     fn replacement_venus_does_not_inherit_focus() {
-        use eon_workspace_protocol::v34::AttentionState::{Finished, Idle};
+        use eon_workspace_protocol::v35::AttentionState::{Finished, Idle};
         use std::{io::Write, net::Shutdown};
         let root = temporary_directory();
         let (mut state, gate) = finishing_window(&root);
@@ -5135,7 +5135,7 @@ mod tests {
 
     #[test]
     fn startup_snapshot_transfer_uses_the_admission_deadline() {
-        use eon_workspace_protocol::v34::{
+        use eon_workspace_protocol::v35::{
             Column, Pane, PopupGeometry, Response, Snapshot, Tab, encode_response,
         };
         use std::time::{Duration, Instant};
@@ -5144,7 +5144,7 @@ mod tests {
         let snapshot = Snapshot {
             workspace: "w1".into(),
             active_workspace: "w1".into(),
-            workspaces: vec![eon_workspace_protocol::v34::WorkspaceInfo {
+            workspaces: vec![eon_workspace_protocol::v35::WorkspaceInfo {
                 id: "w1".into(),
                 name: None,
                 tab_count: 64,
@@ -5186,7 +5186,7 @@ mod tests {
             claude_quota_failure: None,
             running: None,
             busy: None,
-            sidebar: eon_workspace_protocol::v34::Sidebar::Open,
+            sidebar: eon_workspace_protocol::v35::Sidebar::Open,
             attention_queue: Vec::new(),
         };
         let expected = encode_response(&Response::Snapshot(snapshot.clone())).unwrap();

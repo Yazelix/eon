@@ -4,7 +4,7 @@
 //! in the test too.
 
 use super::*;
-use eon_workspace_protocol::v34::{Filter, InvokeIntent, TerminalInput};
+use eon_workspace_protocol::v35::{Filter, InvokeIntent, TerminalInput};
 
 enum CliPath {
     /// These arguments parse to exactly this action.
@@ -40,7 +40,7 @@ fn cli_path(action: &Action) -> CliPath {
             WorkspaceAction::InspectRuntime | WorkspaceAction::InspectPresentation => {
                 return Lifecycle("window ls");
             }
-            WorkspaceAction::Present { .. } => return Lifecycle("attach"),
+            WorkspaceAction::Present { .. } => return Lifecycle("window attach"),
             WorkspaceAction::CreateTab => words(&["tab", "create"]),
             WorkspaceAction::NewWorkspace { name, focus } => [
                 words(&["workspace", "new"]),
@@ -74,7 +74,7 @@ fn cli_path(action: &Action) -> CliPath {
                 words(&["pane", "move", direction(to)])
             }
             WorkspaceAction::CloseTab { tab } => words(&["tab", "close", tab]),
-            WorkspaceAction::Stop { .. } => return Lifecycle("stop"),
+            WorkspaceAction::Stop { .. } => return Lifecycle("window stop"),
             WorkspaceAction::SetTabDirectory { tab, directory } => [
                 words(&["tab", "directory", tab, "--"]),
                 vec![bytes(directory)],

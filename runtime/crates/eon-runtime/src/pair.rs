@@ -5,7 +5,7 @@
 //! search, and a `become(exit 11)` POST to fzf leaves it for Files.
 
 use super::diagnostics::DiagnosticLog;
-use eon_workspace_protocol::v34::{InvokeIntent, PROJECT_ENTRY};
+use eon_workspace_protocol::v35::{InvokeIntent, PROJECT_ENTRY};
 use std::{
     collections::HashMap,
     ffi::{OsStr, OsString},
