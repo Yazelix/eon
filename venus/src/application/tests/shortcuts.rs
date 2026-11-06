@@ -753,19 +753,6 @@ fn quit_key_lists_hints_and_yields_to_a_popup() {
             .map(|row| (row.shortcut, row.action))
             .collect::<Vec<_>>()
     };
-    let hints = |entries: &[PopupEntry], running| {
-        shortcut_hints_for(
-            NativePlatform::Linux,
-            WorkspaceFocus::Terminal,
-            entries,
-            Sidebar::Open,
-            running,
-        )
-        .into_iter()
-        .filter(|hint| hint.label == "quit")
-        .map(|hint| (hint.modifiers, hint.key, hint.priority))
-        .collect::<Vec<_>>()
-    };
     assert_eq!(
         rows(NativePlatform::Linux, &[], true),
         [("Alt+Shift+Q".into(), label.into())]
@@ -774,8 +761,6 @@ fn quit_key_lists_hints_and_yields_to_a_popup() {
         rows(NativePlatform::Macos, &[], true),
         [("Option+Shift+Q".into(), label.into())]
     );
-    // Detach's tier, so the two host exits drop together.
-    assert_eq!(hints(&[], true), [("A-S".into(), "Q".into(), 2)]);
     // A popup on Alt+Shift+Q takes the key and its hint.
     let monitor = [PopupEntry {
         id: "monitor".into(),
@@ -793,8 +778,6 @@ fn quit_key_lists_hints_and_yields_to_a_popup() {
             format!("{label} (overridden by Monitor)")
         )]
     );
-    assert!(hints(&monitor, true).is_empty());
     // Without a running-windows summary (eonbase) there is no Quit.
     assert!(rows(NativePlatform::Linux, &[], false).is_empty());
-    assert!(hints(&[], false).is_empty());
 }

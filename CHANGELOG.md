@@ -5,6 +5,15 @@ installation, and proven contract changes.
 
 ## Unreleased
 
+- The bottom hints bar fits a 1280-pixel-wide window with Eon's packaged font
+  (DejaVu Sans) at the default size:
+  directions read `HJKL`, create hints drop their `+` (`pane`, `col`, `tab`,
+  `window`), the sidebar hint reads `side`, the Scrollback popup's `Scroll`,
+  and modifier badges drop their hyphens (`CA`, `AS`). The Alt+/, Alt+Q inbox,
+  Alt+Shift+Q quit and Ctrl+Alt+Shift tab-move hints leave the bar; those keys
+  still work and stay listed in Alt+/. Popup hints other than Git and Agent
+  show as width allows. The header `?` Shortcuts button always shows
+  (`eon-yvhke`, VEN-C32, EON-C21, VEN-C21).
 - Eon Bar hover tooltips show a short list, one fact per line, instead of
   one long sentence, and leave out what the chip already shows: a quota
   tooltip names its window, then when it resets in local time and the pace,

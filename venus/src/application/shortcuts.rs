@@ -158,7 +158,7 @@ pub(super) static FIXED_SHORTCUTS: &[NativeShortcut] = &[
         session::Modifiers::ALT,
         NativeShortcutAction::Focus(WorkspaceDirection::Down),
     ),
-    // After the H/L/K/J focus keys, so the merged focus hint ends with 1..9.
+    // After the HJKL focus keys, so the merged focus hint ends with 1..9.
     NativeShortcut {
         group: "Navigate",
         label: "Focus tab by position",
@@ -676,7 +676,7 @@ pub(super) fn shortcut_hints_for(
     running: bool,
 ) -> Vec<ShortcutHint> {
     let mut hints: Vec<ShortcutHint> = Vec::new();
-    // The key axis each fixed hint ended with: H/L, K/J or 1..9.
+    // The key axis each fixed hint ended with: HJKL, 1..9 or an arrow pair.
     let mut axes = Vec::new();
     for shortcut in FIXED_SHORTCUTS {
         if !shortcut.bound(sidebar, running)
@@ -687,23 +687,19 @@ pub(super) fn shortcut_hints_for(
         use NativeShortcutAction as Action;
         use WorkspaceDirection::{Down, Left, Right, Up};
         let (label, priority) = match shortcut.action {
-            Action::ToggleViewer => ("keys", 0),
-            Action::ToggleInbox => ("inbox", 2),
             Action::ToggleHints => ("hints", 0),
-            Action::ToggleSidebar => ("sidebar", 2),
+            Action::ToggleSidebar => ("side", 2),
             Action::Focus(_) => ("focus", 1),
             Action::FocusTabPosition => ("focus", 3),
-            Action::CreatePane => ("+pane", 1),
-            Action::CreateColumn => ("+col", 3),
-            Action::CreateTab => ("+tab", 1),
+            Action::CreatePane => ("pane", 1),
+            Action::CreateColumn => ("col", 3),
+            Action::CreateTab => ("tab", 1),
             Action::CloseTab => ("close tab", 3),
             Action::ClosePane => ("close pane", 3),
             Action::ToggleZoom => ("zoom", 3),
-            Action::Move(Left | Right) => ("mv tab", 3),
             Action::Move(Up | Down) | Action::MovePaneSideways(_) => ("mv pane", 3),
-            Action::NewWindow => ("+window", 3),
+            Action::NewWindow => ("window", 3),
             Action::Detach => ("detach", 2),
-            Action::Quit => ("quit", 2),
             Action::ReturnToTerminal if focus != WorkspaceFocus::Terminal => ("terminal", 0),
             Action::TraverseChrome(Left | Right) if focus == WorkspaceFocus::Tabs => ("tabs", 1),
             Action::TraverseChrome(Up | Down) if focus == WorkspaceFocus::Panes => ("panes", 1),
@@ -711,9 +707,9 @@ pub(super) fn shortcut_hints_for(
             _ => continue,
         };
         let axis = match shortcut.action {
-            Action::Focus(Up | Down) | Action::Move(Up | Down) => 1,
-            Action::FocusTabPosition => 2,
-            _ => 0,
+            Action::Focus(_) | Action::Move(_) | Action::MovePaneSideways(_) => 0,
+            Action::FocusTabPosition => 1,
+            _ => 2,
         };
         let (modifiers, key) = match shortcut.trigger {
             NativeShortcutTrigger::Key(code, modifiers) => {
@@ -734,11 +730,25 @@ pub(super) fn shortcut_hints_for(
             .position(|hint| hint.modifiers == modifiers && hint.label == label)
         {
             let hint = &mut hints[index];
-            // A new key axis starts a dot-separated run: H/L · K/J · 1..9.
-            hint.key
-                .push_str(if axes[index] == axis { "/" } else { " · " });
+            if axes[index] != axis {
+                // A new key axis starts a dot-separated run: HJKL · 1..9.
+                hint.key.push_str(" · ");
+                hint.key.push_str(key);
+            } else if axis == 0 {
+                // Direction letters run together sorted; for H, J, K and L that order is HJKL.
+                let start = hint.key.rfind(' ').map_or(0, |space| space + 1);
+                let mut run = hint.key[start..]
+                    .chars()
+                    .chain(key.chars())
+                    .collect::<Vec<_>>();
+                run.sort_unstable();
+                hint.key.truncate(start);
+                hint.key.extend(run);
+            } else {
+                hint.key.push('/');
+                hint.key.push_str(key);
+            }
             axes[index] = axis;
-            hint.key.push_str(key);
             hint.accessible_label.push_str("; ");
             hint.accessible_label.push_str(&accessible_label);
             // A merged hint drops only when its most important part would.
@@ -762,7 +772,12 @@ pub(super) fn shortcut_hints_for(
             .map(|(entry, shortcut)| ShortcutHint {
                 modifiers: physical_modifiers_label_for(platform, shortcut.modifiers, true),
                 key: physical_key_label(&shortcut.key).into(),
-                label: entry.label.clone(),
+                // The footer shortens only the default Scrollback name; a configured one stays.
+                label: if entry.id == "scrollback" && entry.label == "Scrollback" {
+                    "Scroll".into()
+                } else {
+                    entry.label.clone()
+                },
                 accessible_label: format!(
                     "{} — {}",
                     physical_shortcut_label_for(platform, shortcut.modifiers, &shortcut.key),
@@ -806,7 +821,7 @@ fn physical_modifiers_label_for(platform: NativePlatform, modifiers: u8, compact
             parts.push(label);
         }
     }
-    parts.join(if compact { "-" } else { "+" })
+    parts.join(if compact { "" } else { "+" })
 }
 
 fn physical_key_label(key: &str) -> &str {
@@ -1046,6 +1061,81 @@ fn popup_entry(
 mod tests {
     use super::*;
     use eon_workspace_protocol::v34::WorkspaceInfo;
+
+    #[test]
+    fn default_hints_fit_a_1280_pixel_window() {
+        use eon_workspace_protocol::v34::{ALT, SHIFT, Shortcut};
+        use yazelix_venus::{FontSettings, FontSetup, ShortcutHintsScene};
+
+        // Eon's default popup catalog, copied from eon/crates/eon/src/product.rs, which this
+        // crate cannot depend on; keep the two in step.
+        let entries = [
+            ("project", "Quick search", "KeyZ", ALT),
+            ("git", "Git", "KeyJ", ALT | SHIFT),
+            ("agent", "Agent", "KeyL", ALT | SHIFT),
+            ("files", "Files", "KeyY", ALT | SHIFT),
+            ("anima", "Anima", "KeyA", ALT | SHIFT),
+            ("commands", "Commands", "KeyM", ALT | SHIFT),
+            ("workspaces", "Workspaces", "KeyS", ALT | SHIFT),
+            ("scrollback", "Scrollback", "KeyE", ALT | SHIFT),
+        ]
+        .map(|(id, label, key, modifiers)| PopupEntry {
+            id: id.into(),
+            label: label.into(),
+            shortcut: PopupKey::Bound(Shortcut {
+                modifiers,
+                key: key.into(),
+            }),
+        });
+        let hints = |entries: &[PopupEntry]| {
+            shortcut_hints_for(
+                NativePlatform::Linux,
+                WorkspaceFocus::Terminal,
+                entries,
+                Sidebar::Open,
+                true,
+            )
+        };
+        let all = hints(&entries);
+        assert!(
+            all.iter()
+                .any(|hint| hint.key == "E" && hint.label == "Scroll")
+        );
+        let mut renamed = entries.clone();
+        renamed[7].label = "History".into();
+        assert!(
+            hints(&renamed)
+                .iter()
+                .any(|hint| hint.key == "E" && hint.label == "History")
+        );
+        // On a 13-inch 2560x1600 panel at scale 2, the bar keeps every hint but the
+        // lowest-priority popups, which show only as width allows.
+        let required = all
+            .into_iter()
+            .filter(|hint| hint.priority < 4)
+            .collect::<Vec<_>>();
+        assert!(required.iter().any(|hint| hint.label == "Agent"));
+        // Eon's packaged sans face, the exact file its Nix build and dev shell name, which hosts
+        // without their own fontconfig use. A host's sans-serif alias, such as Open Sans, may set
+        // hints narrower; another copy of DejaVu Sans may differ.
+        let font = std::env::var_os("EON_VENUS_TEST_SANS_FONT").expect(
+            "EON_VENUS_TEST_SANS_FONT names Eon's packaged DejaVu Sans; run in nix develop",
+        );
+        let mut fonts = FontSetup::new(&FontSettings::default()).unwrap();
+        fonts
+            .set_header_font_file(std::path::Path::new(&font))
+            .unwrap();
+        for scale in [1.0, 2.0] {
+            let metrics = fonts.metrics(scale);
+            let scene = ShortcutHintsScene::new(
+                required.clone(),
+                winit::dpi::PhysicalSize::new((1280.0 * scale) as u32, (800.0 * scale) as u32),
+                metrics,
+                |text| fonts.measure_header_text(metrics, text),
+            );
+            assert!(scene.complete, "scale {scale}");
+        }
+    }
 
     #[test]
     fn direct_workspace_shortcuts_use_stable_eon_actions() {
@@ -1313,16 +1403,14 @@ mod tests {
                 assert_eq!(
                     shortcut_hints_for(platform, WorkspaceFocus::Terminal, &entries, sidebar, true)
                         .iter()
-                        .any(
-                            |hint| hint.label == "sidebar" && hint.accessible_label.contains(label)
-                        ),
+                        .any(|hint| hint.label == "side" && hint.accessible_label.contains(label)),
                     bound
                 );
-                // The agent jumps stay in the viewer but leave the footer to save width.
-                for (label, short) in [
-                    ("Show the attention inbox", Some("inbox")),
-                    ("Jump to the next agent needing attention", None),
-                    ("Jump to the previous agent needing attention", None),
+                // The inbox and agent jumps stay in the viewer but leave the footer to save width.
+                for label in [
+                    "Show the attention inbox",
+                    "Jump to the next agent needing attention",
+                    "Jump to the previous agent needing attention",
                 ] {
                     assert!(
                         shortcut_groups_for(platform, &entries, sidebar, true)
@@ -1330,22 +1418,28 @@ mod tests {
                             .flat_map(|group| &group.rows)
                             .any(|row| row.action == label)
                     );
-                    let hint = shortcut_hints_for(
-                        platform,
-                        WorkspaceFocus::Terminal,
-                        &entries,
-                        sidebar,
-                        true,
-                    )
-                    .into_iter()
-                    .find(|hint| hint.accessible_label.contains(label));
-                    assert_eq!(hint.map(|hint| hint.label), short.map(String::from));
+                    assert!(
+                        shortcut_hints_for(
+                            platform,
+                            WorkspaceFocus::Terminal,
+                            &entries,
+                            sidebar,
+                            true,
+                        )
+                        .iter()
+                        .all(|hint| !hint.accessible_label.contains(label))
+                    );
                 }
             }
+            // Full help keeps these keys; the footer leaves them out to fit a 1280-pixel window.
             for action in [
                 NativeShortcutAction::Copy,
                 NativeShortcutAction::Paste,
                 NativeShortcutAction::OpenLink,
+                NativeShortcutAction::ToggleViewer,
+                NativeShortcutAction::Quit,
+                NativeShortcutAction::Move(WorkspaceDirection::Left),
+                NativeShortcutAction::Move(WorkspaceDirection::Right),
             ] {
                 let shortcut = FIXED_SHORTCUTS
                     .iter()
@@ -1410,17 +1504,13 @@ mod tests {
             };
             let panes = hints_labeled("mv pane");
             assert_eq!(panes.len(), 1);
-            assert_eq!(panes[0].modifiers, "C-A");
-            assert_eq!(panes[0].key, "H/L · K/J");
-            let tabs = hints_labeled("mv tab");
-            assert_eq!(tabs.len(), 1);
-            assert_eq!(tabs[0].modifiers, "C-A-S");
-            assert_eq!(tabs[0].key, "H/L");
+            assert_eq!(panes[0].modifiers, "CA");
+            assert_eq!(panes[0].key, "HJKL");
             // One focus hint, kept as long as its most important part.
             let focus = hints_labeled("focus");
             assert_eq!(focus.len(), 1);
             assert_eq!(focus[0].modifiers, "A");
-            assert_eq!(focus[0].key, "H/L · K/J · 1..9");
+            assert_eq!(focus[0].key, "HJKL · 1..9");
             assert_eq!(focus[0].priority, 1);
             assert!(focus[0].accessible_label.contains("Focus tab by position"));
             // A popup entry on Alt+K, reserved for focus, leaves the hint whole.
@@ -1443,9 +1533,9 @@ mod tests {
                     true
                 )
                 .iter()
-                .any(|hint| hint.label == "focus" && hint.key == "H/L · K/J · 1..9")
+                .any(|hint| hint.label == "focus" && hint.key == "HJKL · 1..9")
             );
-            for label in ["+pane", "+col", "+tab", "+window"] {
+            for label in ["pane", "col", "tab", "window"] {
                 assert_eq!(hints_labeled(label).len(), 1);
             }
             let mut labels = terminal.iter().map(|hint| &hint.label).collect::<Vec<_>>();
@@ -1510,6 +1600,12 @@ mod tests {
                         | NativeShortcutAction::NextAttention
                         | NativeShortcutAction::PreviousAttention
                         | NativeShortcutAction::ShowWorkspacePosition
+                        | NativeShortcutAction::ToggleViewer
+                        | NativeShortcutAction::ToggleInbox
+                        | NativeShortcutAction::Quit
+                        | NativeShortcutAction::Move(
+                            WorkspaceDirection::Left | WorkspaceDirection::Right
+                        )
                 )
             }) {
                 let chord = shortcut.trigger.display_label_for(platform);
@@ -1631,7 +1727,7 @@ mod tests {
                 );
             }
             for kept in [
-                "Show or close shortcuts",
+                "Focus tab by position",
                 "Detach: hide the window, keep terminals running",
             ] {
                 assert!(

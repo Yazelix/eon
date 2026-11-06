@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- VEN-C21 and VEN-C32: the header Shortcuts button always shows, and the
+  footer has no Alt+Q inbox hint (`eon-yvhke`). No wire change.
 - VEN-C14: a supervised workspace Venus reports its native window focus to
   Eon on its private presentation stream, after startup readiness when
   admission is requested, without waiting on Eon (`eon-2kvr`). The private

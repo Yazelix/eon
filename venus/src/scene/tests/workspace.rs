@@ -229,8 +229,7 @@ fn compact_pane_headers_share_title_height_and_full_row_targets() {
         snapshot.tabs[0].columns[0].panes.truncate(count);
         snapshot.tabs[0].selected_pane = Some("p1".into());
         snapshot.tabs[0].columns[0].expanded = "p1".into();
-        let hints =
-            ShortcutHintsScene::new(Vec::new(), size, metrics, WorkspaceFocus::Terminal, |_| 0.0);
+        let hints = ShortcutHintsScene::new(Vec::new(), size, metrics, |_| 0.0);
         let scene = WorkspaceScene::from_snapshot_with_bar(
             &snapshot,
             EonBar::default(),
@@ -359,13 +358,7 @@ fn popup_outer_chrome_reuses_the_pane_stack_rectangle() {
                 for selected_popup in [None, Some("u1".into())] {
                     snapshot.tabs[0].selected_popup = selected_popup;
                     for scroll in [0.0, 247.5, f32::MAX] {
-                        let hints = ShortcutHintsScene::new(
-                            Vec::new(),
-                            size,
-                            metrics,
-                            WorkspaceFocus::Terminal,
-                            |_| 0.0,
-                        );
+                        let hints = ShortcutHintsScene::new(Vec::new(), size, metrics, |_| 0.0);
                         let scene = WorkspaceScene::from_snapshot_with_bar(
                             &snapshot,
                             EonBar::default(),
@@ -638,8 +631,7 @@ fn popup_outer_chrome_reuses_the_pane_stack_rectangle() {
                 ..pane.clone()
             })
             .collect();
-        let hints =
-            ShortcutHintsScene::new(Vec::new(), size, metrics, WorkspaceFocus::Terminal, |_| 0.0);
+        let hints = ShortcutHintsScene::new(Vec::new(), size, metrics, |_| 0.0);
         let popup = WorkspaceScene::from_snapshot_with_bar(
             &snapshot,
             EonBar::default(),
@@ -743,14 +735,15 @@ fn popup_outer_chrome_reuses_the_pane_stack_rectangle() {
             accessible_label: "Alt+/ — Show shortcuts".into(),
             priority: 0,
         };
-        for focus in [
-            WorkspaceFocus::Terminal,
-            WorkspaceFocus::Header(WorkspaceHeaderControl::Shortcuts),
-        ] {
+        // Shortcuts stays whether the bar fits every hint or drops one.
+        for (label, complete) in [("all keys".to_owned(), true), ("界".repeat(400), false)] {
+            let hint = ShortcutHint {
+                label,
+                ..hint.clone()
+            };
             let footer =
-                ShortcutHintsScene::new(vec![hint.clone()], size, metrics, focus, |text| {
-                    text.len() as f32 * 10.0
-                });
+                ShortcutHintsScene::new(vec![hint], size, metrics, |text| text.len() as f32 * 10.0);
+            assert_eq!(footer.complete, complete);
             let footer_rect = footer.rect;
             let with_hints = WorkspaceScene::from_snapshot_with_bar(
                 &snapshot,
@@ -772,10 +765,7 @@ fn popup_outer_chrome_reuses_the_pane_stack_rectangle() {
             assert_eq!(footer_rect.bottom(), size.height as f32);
             assert_eq!(with_hints.chrome.left, gap);
             assert_eq!(with_hints.hit_test(20.0, footer_rect.top + 5.0), None);
-            assert_eq!(
-                with_hints.has_control(WorkspaceHeaderControl::Shortcuts),
-                focus != WorkspaceFocus::Terminal
-            );
+            assert!(with_hints.has_control(WorkspaceHeaderControl::Shortcuts));
             assert!(with_hints.has_control(WorkspaceHeaderControl::CloseTab));
         }
     }

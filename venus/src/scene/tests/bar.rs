@@ -494,7 +494,7 @@ fn shortcut_hints_drop_whole_pairs_and_rebuild_modifier_headers() {
         ShortcutHint {
             modifiers: "Alt".into(),
             key: "M".into(),
-            label: "+pane".into(),
+            label: "pane".into(),
             accessible_label: "Alt+M — New pane".into(),
             priority: 1,
         },
@@ -527,7 +527,6 @@ fn shortcut_hints_drop_whole_pairs_and_rebuild_modifier_headers() {
                 hints.clone(),
                 PhysicalSize::new((f64::from(width) * scale) as u32, 600),
                 metrics,
-                WorkspaceFocus::Terminal,
                 |text| text.chars().count() as f32 * metrics.width,
             );
             let chrome = pane_chrome_rect(
@@ -571,9 +570,9 @@ fn shortcut_hints_drop_whole_pairs_and_rebuild_modifier_headers() {
             for pair in scene.pieces.windows(2) {
                 let gap = pair[1].rect.left - pair[0].rect.right();
                 if pair[1].modifiers.is_empty() {
-                    assert!((gap - metrics.padding).abs() < 0.01);
+                    assert!((gap - metrics.padding * 0.75).abs() < 0.01);
                 } else {
-                    assert!(gap >= metrics.padding * 2.0 - 0.01);
+                    assert!(gap >= metrics.padding * 0.75 - 0.01);
                     if let Some(previous) = group_gap {
                         assert!((gap - previous).abs() < 0.01);
                     }
@@ -611,7 +610,6 @@ fn shortcut_hints_drop_whole_pairs_and_rebuild_modifier_headers() {
         hints.clone(),
         PhysicalSize::new(320, 600),
         small_metrics,
-        WorkspaceFocus::Terminal,
         |text| text.chars().count() as f32 * small_metrics.width,
     );
     assert!(
@@ -623,7 +621,6 @@ fn shortcut_hints_drop_whole_pairs_and_rebuild_modifier_headers() {
             hints.clone(),
             PhysicalSize::new(320, height),
             CellMetrics::for_scale(1.0),
-            WorkspaceFocus::Terminal,
             |text| text.chars().count() as f32 * 10.0,
         );
         assert!(scene.rect.top >= 0.0 && scene.rect.bottom() <= height as f32);
@@ -633,7 +630,6 @@ fn shortcut_hints_drop_whole_pairs_and_rebuild_modifier_headers() {
         hints,
         PhysicalSize::new(220, 600),
         CellMetrics::for_scale(1.0),
-        WorkspaceFocus::Terminal,
         |text| text.chars().count() as f32 * 10.0,
     );
     assert_eq!(scene.pieces.len(), 1);
@@ -798,11 +794,7 @@ fn eon_bar_keeps_tabs_controls_and_drag_hits_disjoint_under_pressure() {
             0.0,
             0.0,
             |_, text| (text.into(), text.len() as f32 * metrics.width),
-            hints.then(|| {
-                ShortcutHintsScene::new(Vec::new(), size, metrics, WorkspaceFocus::Terminal, |_| {
-                    0.0
-                })
-            }),
+            hints.then(|| ShortcutHintsScene::new(Vec::new(), size, metrics, |_| 0.0)),
         )
     };
     // One pane, no hints: the top gap yields before the nominal 30 px pills shrink.

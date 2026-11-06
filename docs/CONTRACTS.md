@@ -2661,8 +2661,7 @@ socket names, JSON fields and protocol identifiers retain their spellings.
 - **Result:** Full Eon presents one native Eon Bar at the existing tab-strip
   height. Eon-authored tab identity and action policy feed Venus's tab-first
   responsive layout, New tab beside the rightmost tab or pinned at the
-  tab-region edge during overflow, Shortcuts when the bottom shortcut hints
-  ([Eon Bar and tabs](USAGE.md#eon-bar-and-tabs)) need its fallback,
+  tab-region edge during overflow, Shortcuts, which always shows,
   and active-tab Close, which is available on the final tab and goes through
   the final-close prompt (EON-C8),
   shortcut tooltips, visible keyboard focus, AccessKit buttons, and bounded

@@ -278,6 +278,47 @@ impl FontSetup {
     pub fn metrics(&self, scale: f64) -> CellMetrics {
         self.logical.scaled(scale)
     }
+
+    /// Shape header text, such as tab labels and hints, in the font file at `path` alone instead
+    /// of the platform's sans-serif choice. The database's other faces of that file's family
+    /// leave it, so a layout check measures one known file whatever else is installed.
+    pub fn set_header_font_file(&mut self, path: &std::path::Path) -> Result<(), RenderError> {
+        let db = self.font_system.db_mut();
+        let loaded = db.load_font_source(fontdb::Source::File(path.into()));
+        let family = loaded
+            .first()
+            .and_then(|&id| db.face(id))
+            .and_then(|face| face.families.first())
+            .map(|(name, _)| name.clone())
+            .ok_or_else(|| RenderError(format!("no font face in {}", path.display())))?;
+        let others = db
+            .faces()
+            .filter(|face| {
+                !loaded.contains(&face.id) && face.families.iter().any(|(name, _)| *name == family)
+            })
+            .map(|face| face.id)
+            .collect::<Vec<_>>();
+        for id in others {
+            db.remove_face(id);
+        }
+        db.set_sans_serif_family(family.as_str());
+        let chosen = db.query(&fontdb::Query {
+            families: &[Family::SansSerif],
+            ..Default::default()
+        });
+        if !chosen.is_some_and(|id| loaded.contains(&id)) {
+            return Err(RenderError(format!(
+                "header text would not use {}",
+                path.display()
+            )));
+        }
+        Ok(())
+    }
+
+    /// Header text's shaped width at `metrics`, as the renderer measures tab labels and hints.
+    pub fn measure_header_text(&mut self, metrics: CellMetrics, text: &str) -> f32 {
+        super::chrome::fit_header_text(&mut self.font_system, metrics, text, f32::INFINITY).1
+    }
 }
 
 fn load_directories(

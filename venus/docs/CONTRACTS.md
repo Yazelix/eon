@@ -1517,8 +1517,7 @@ re-proved when that platform or feature is next touched.
   drag region keeps its minimum. Scrollable tabs keep the leading space and retain their labels,
   overflow, reveal, selection, hover path, stable identity, and accessibility.
   New tab follows the rightmost tab when tabs fit and stays at the tab-region
-  edge during overflow. Keyboard shortcuts (when the bottom shortcut hints of
-  [Eon Bar and tabs](../../docs/USAGE.md#eon-bar-and-tabs) require the fallback)
+  edge during overflow. Keyboard shortcuts, which always show,
   and active-tab Close remain trailing controls, with the version label between them.
   Close tab is available on the final tab and goes through the same
   VEN-C8 final-close prompt as Alt+Shift+W. The buttons use the existing CreateTab and exact-active-tab CloseTab
@@ -1585,9 +1584,7 @@ re-proved when that platform or feature is next touched.
   owns its native presentation; the application owns input, local viewer state,
   and action routing; AccessKit projects the same rectangles and identities.
   Eon retains workspace topology and action-policy ownership; winit and the
-  compositor own native window movement. The bottom shortcut hints
-  ([Eon Bar and tabs](../../docs/USAGE.md#eon-bar-and-tabs)) own conditional
-  Shortcuts visibility.
+  compositor own native window movement.
 - **Consumes:** VEN-C8, VEN-C20, canonical EONW, ORBF v2 / ORBS v13, and the
   workspace's patched winit 0.30.13.
 - **Boundary:** No second row, widget framework, status/quota data, polling,
@@ -2407,8 +2404,8 @@ re-proved when that platform or feature is next touched.
   - **Input while open.** Keyboard, pointer, IME, clipboard, link and other shortcut input does
     not reach its normal target, as for the shortcut viewer.
   - **Shortcuts.** Alt+/ lists Alt+Q (VEN-C20). The footer ([Eon Bar and
-    tabs](../../docs/USAGE.md#eon-bar-and-tabs)) shows `Q inbox` in its Alt group, and while the
-    inbox is open, its own keys. A popup configured on Alt+Q takes the key, as with other fixed
+    tabs](../../docs/USAGE.md#eon-bar-and-tabs)) has no inbox hint; while the inbox is open, it
+    shows the inbox's own keys. A popup configured on Alt+Q takes the key, as with other fixed
     bindings.
   - **Accessibility.** The inbox is one named AccessKit dialog, "Attention inbox". It holds the
     four filters, each named with its count and marked when selected, and the rows, each named

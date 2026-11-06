@@ -2021,7 +2021,6 @@ impl Application {
                 },
                 state.renderer.size(),
                 state.renderer.metrics(),
-                self.workspace_focus,
                 |text| state.renderer.measure_header_text(text).1,
             )
         });

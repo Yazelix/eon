@@ -279,12 +279,16 @@ and the selected tab and pane. Hidden hints leave no accessible footer; visible
 hints are read-only text, with no extra focus stops or announcements. The
 initial window adds the footer's space, so configured `rows` stay terminal
 rows. Hints follow the current bindings, enabled popup catalog and native
-focus; narrow windows omit whole hints, keeping the help and hints-toggle hints
-longest. Alt+Shift+D shows `detach`, Alt+Shift+Q `quit`, and Alt+Shift+H
-shows `sidebar` unless the
-sidebar is turned off. Alt+G and Alt+Shift+G, F6, Ctrl+Tab and Ctrl+Shift+Tab,
-and Quick search (Alt+Z) have no hint but stay in full help. Hints that create
-something name the tab, pane, column or window. Compact groups spread across the bar with
+focus; narrow windows omit whole hints, keeping the hints-toggle hint longest
+and dropping popup hints other than Git and Agent first, the last modifier
+group's last hint first (for the default catalog, from its end). With Eon's
+packaged font (DejaVu Sans) at the default size, a 1280-pixel-wide window shows
+every other hint. Alt+Shift+D shows `detach`, and Alt+Shift+H shows `side` unless the
+sidebar is turned off; the Scrollback popup's hint reads `Scroll` unless its
+label is configured. Alt+/, the Alt+Q inbox, Alt+Shift+Q quit, the
+Ctrl+Alt+Shift+H/L tab moves, Alt+G and Alt+Shift+G, F6, Ctrl+Tab and
+Ctrl+Shift+Tab, and Quick search (Alt+Z) have no hint but stay in full help.
+Hints that create something name the tab, pane, column or window. Compact groups spread across the bar with
 equal gaps and the outer groups near its edges; a lone group stays centered. Hint spacing stays compact.
 Only modifier headers have padded rounded backgrounds. Each pane is its own
 rounded card, stacked without gaps in its column's allocated card area. Even
@@ -317,17 +321,15 @@ rounded outer edges in the same way, with their titles on the boundary. Header
 scrolling keeps the fill's top fixed. Frameless mode keeps terminal-background
 strips across the window below the bar, including the sidebar and footer.
 
-Steel-blue modifier badges use plain aliases, such as A-S, before mint keys and gray
+Steel-blue modifier badges use plain aliases, such as AS, before mint keys and gray
 labels. The compact tab range is 1..9; Alt+0 still selects the tenth tab.
 Copy/Paste and Open link stay in full help, without footer hints.
-Each group uses C for Ctrl, A for Alt, and S for Shift, joined by hyphens.
-The `mv pane` hint groups H/L and K/J under C-A; the `mv tab` hint shows H/L
-under C-A-S. One `focus` hint shows H/L · K/J · 1..9 under A, and create hints
-read `+pane`, `+col`, `+tab` and `+window`. Full help and
-screen-reader labels keep complete chords and action names. The header `?` disappears when all applicable hints
-fit in the visible bar, unless that button has keyboard focus. Alt+/ always
-opens the complete Shortcuts viewer, including the hints toggle. Eon has no
-minor modes yet.
+Each group uses C for Ctrl, A for Alt, and S for Shift, written together.
+The `mv pane` hint shows HJKL under CA. One `focus` hint shows HJKL · 1..9
+under A, and create hints read `pane`, `col`, `tab` and `window`. Full help and
+screen-reader labels keep complete chords and action names. The header `?`
+always shows; it and Alt+/ open the complete Shortcuts viewer, including the
+hints toggle. Eon has no minor modes yet.
 
 Tabs own launch directories; changing a shell's directory does not rename or
 retarget its tab. Using a folder from quick search or Files changes the

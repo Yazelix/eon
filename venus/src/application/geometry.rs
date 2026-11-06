@@ -6,8 +6,7 @@ use eon_workspace_protocol::v34::MAX_COLUMNS;
 use orbit_protocol::{MAX_CELLS, session::SurfaceSize};
 use winit::dpi::PhysicalSize;
 use yazelix_venus::{
-    CellMetrics, EonBar, SceneRect, ShortcutHintsScene, WorkspaceFocus, WorkspaceScene,
-    workspace_column_width,
+    CellMetrics, EonBar, SceneRect, ShortcutHintsScene, WorkspaceScene, workspace_column_width,
 };
 
 /// Narrowest terminal grid a new workspace column may leave.
@@ -54,13 +53,7 @@ pub(super) fn initial_window_size(
                 0.0,
                 0.0,
                 |_, _| (String::new(), 0.0),
-                Some(ShortcutHintsScene::new(
-                    Vec::new(),
-                    size,
-                    metrics,
-                    WorkspaceFocus::Terminal,
-                    |_| 0.0,
-                )),
+                Some(ShortcutHintsScene::new(Vec::new(), size, metrics, |_| 0.0)),
             )
         });
         workspace
@@ -225,13 +218,7 @@ mod tests {
                             0.0,
                             0.0,
                             |_, _| (String::new(), 0.0),
-                            Some(ShortcutHintsScene::new(
-                                Vec::new(),
-                                size,
-                                metrics,
-                                WorkspaceFocus::Terminal,
-                                |_| 0.0,
-                            )),
+                            Some(ShortcutHintsScene::new(Vec::new(), size, metrics, |_| 0.0)),
                         )
                     });
                     let actual =

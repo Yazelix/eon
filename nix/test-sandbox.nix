@@ -84,7 +84,7 @@ let
       case $name in
         CARGO_* | RUST* | NIX_* | PKG_CONFIG* | CC | CXX | AR | AS | LD | NM | \
           OBJCOPY | OBJDUMP | RANLIB | READELF | SIZE | STRINGS | STRIP | \
-          GHOSTTY_* | LIBGHOSTTY_* | ZIG_* | BEND_* | EON_VENUS_FONT_DIRS | \
+          GHOSTTY_* | LIBGHOSTTY_* | ZIG_* | BEND_* | EON_VENUS_FONT_DIRS | EON_VENUS_TEST_* | \
           SDKROOT* | DEVELOPER_DIR* | MACOSX_DEPLOYMENT_TARGET* | \
           ORBIT_* | MISMATCHED_WORKER | \
           LANG | LC_ALL | USER | LOGNAME | SOURCE_DATE_EPOCH)
@@ -170,7 +170,7 @@ pkgs.writeShellApplication {
       case $name in
         CARGO_* | RUST* | NIX_* | PKG_CONFIG* | CC | CXX | AR | AS | LD | NM | \
           OBJCOPY | OBJDUMP | RANLIB | READELF | SIZE | STRINGS | STRIP | \
-          GHOSTTY_* | LIBGHOSTTY_* | ZIG_* | BEND_* | FONTCONFIG_FILE | \
+          GHOSTTY_* | LIBGHOSTTY_* | ZIG_* | BEND_* | FONTCONFIG_FILE | EON_VENUS_TEST_* | \
           ORBIT_* | MISMATCHED_WORKER | \
           LANG | LC_ALL | USER | LOGNAME | SOURCE_DATE_EPOCH)
           environment+=(--setenv "$name" "''${entry#*=}")

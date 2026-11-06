@@ -1275,8 +1275,8 @@ mod tests {
                         };
                         let size =
                             PhysicalSize::new((logical_width as f32 * metrics.scale) as u32, 600);
-                        for hide_help in [false, true] {
-                            let hints = hide_help.then(|| {
+                        for footer in [false, true] {
+                            let hints = footer.then(|| {
                                 crate::ShortcutHintsScene::new(
                                     vec![crate::ShortcutHint {
                                         modifiers: "Alt".into(),
@@ -1287,7 +1287,6 @@ mod tests {
                                     }],
                                     size,
                                     metrics,
-                                    WorkspaceFocus::Terminal,
                                     |text| text.len() as f32 * metrics.width,
                                 )
                             });
@@ -1364,19 +1363,15 @@ mod tests {
                                 let version_index =
                                     children.iter().position(|id| *id == VERSION).unwrap();
                                 assert_eq!(children[version_index + 1], CLOSE_TAB);
-                                if scene.has_control(WorkspaceHeaderControl::Shortcuts) {
-                                    assert_eq!(children[version_index - 1], SHORTCUTS);
-                                    let rect = scene.controls[1].rect;
-                                    assert_eq!(
-                                        scene.hit_test(
-                                            rect.left + rect.width / 2.0,
-                                            rect.height / 2.0
-                                        ),
-                                        Some(crate::WorkspaceHit::Control(
-                                            WorkspaceHeaderControl::Shortcuts
-                                        ))
-                                    );
-                                }
+                                assert!(scene.has_control(WorkspaceHeaderControl::Shortcuts));
+                                assert_eq!(children[version_index - 1], SHORTCUTS);
+                                let rect = scene.controls[1].rect;
+                                assert_eq!(
+                                    scene.hit_test(rect.left + rect.width / 2.0, rect.height / 2.0),
+                                    Some(crate::WorkspaceHit::Control(
+                                        WorkspaceHeaderControl::Shortcuts
+                                    ))
+                                );
                                 if let Some(quota) = scene.quotas.first() {
                                     assert_eq!(scene.drag_region.right(), quota.rect.left);
                                 }
@@ -3693,7 +3688,7 @@ mod tests {
     }
 
     #[test]
-    fn shortcut_hints_are_read_only_and_retire_hidden_help_actions() {
+    fn shortcut_hints_are_read_only_and_keep_the_shortcuts_button() {
         let size = PhysicalSize::new(800, 600);
         let metrics = CellMetrics::for_scale(1.0);
         let workspace = WorkspaceSnapshot {
@@ -3729,13 +3724,9 @@ mod tests {
             accessible_label: "Alt+/ — Show shortcuts".into(),
             priority: 0,
         };
-        let footer = crate::ShortcutHintsScene::new(
-            vec![hint.clone()],
-            size,
-            metrics,
-            WorkspaceFocus::Terminal,
-            |text| text.len() as f32 * 10.0,
-        );
+        let footer = crate::ShortcutHintsScene::new(vec![hint.clone()], size, metrics, |text| {
+            text.len() as f32 * 10.0
+        });
         let project = |footer| {
             WorkspaceScene::from_snapshot_with_bar(
                 &workspace,
@@ -3756,9 +3747,8 @@ mod tests {
         assert_eq!(hints.value(), Some(hint.accessible_label.as_str()));
         assert!(!hints.supports_action(Action::Focus));
         assert!(!hints.supports_action(Action::Click));
-        assert!(!node(&update, WINDOW).children().contains(&SHORTCUTS));
-        assert!(!update.nodes.iter().any(|(id, _)| *id == SHORTCUTS));
-        assert_eq!(snapshot.action_target(SHORTCUTS, Action::Click), None);
+        assert!(node(&update, WINDOW).children().contains(&SHORTCUTS));
+        assert!(snapshot.action_target(SHORTCUTS, Action::Click).is_some());
         snapshot.set_workspace(Some(&project(None)));
         let update = snapshot.tree();
         assert!(!update.nodes.iter().any(|(id, _)| *id == HINTS));

@@ -50,7 +50,7 @@ state.
 
 Click a tab or pane header to select it, or click another column's terminal
 to select that column's expanded pane. The fixed controls in the Eon Bar are
-`+` for a tab, `?` for Shortcuts when needed, and `×` to close the exact active tab. Only
+`+` for a tab, `?` for Shortcuts, and `×` to close the exact active tab. Only
 the empty region between tabs and controls drags an undecorated window.
 While the snapshot lists two or more workspaces, or its one workspace has a
 name, an outlined label leads the tabs with the shown workspace's name or `wN`
@@ -137,7 +137,8 @@ Alt+Shift+B returns that space to the terminal or restores the bar without
 changing the selected tab, pane, popup or focus. The choice lasts for that
 window, including across resize. Hints use the current bindings and enabled
 popup labels, and follow native terminal, tab and pane focus. Shared modifiers
-appear once per group: C means Ctrl, A means Alt, and S means Shift.
+appear once per group, written together: C means Ctrl, A means Alt, and S
+means Shift.
 Compact groups spread across the bar with equal gaps and the outer
 groups near its edges; a lone group stays centered. Hint spacing stays compact.
 Only modifier headers have padded rounded backgrounds. Each pane is its own
@@ -190,21 +191,25 @@ rounded outer edges in the same way, with their titles on the boundary. Header
 scrolling keeps the fill's top fixed. Frameless mode keeps terminal-background
 strips across the window below the bar, including the sidebar and footer.
 
-Steel-blue modifier badges use plain aliases, such as C-A, before mint keys and gray
+Steel-blue modifier badges use plain aliases, such as CA, before mint keys and gray
 labels. The compact tab range is 1..9; Alt+0 still selects
-the tenth tab. The `mv pane` hint groups H/L and K/J under C-A; the `mv tab`
-hint shows H/L under C-A-S. One `focus` hint shows H/L · K/J · 1..9 under A,
-and create hints read `+pane`, `+col`, `+tab` and `+window`.
+the tenth tab. The `mv pane` hint shows HJKL under CA. One `focus` hint shows
+HJKL · 1..9 under A, and create hints read `pane`, `col`, `tab` and `window`;
+the sidebar toggle reads `side`, and the Scrollback popup `Scroll` unless its
+label is configured.
+Alt+/, the Alt+Q inbox, Alt+Shift+Q quit, the Ctrl+Alt+Shift+H/L tab moves,
 Copy/Paste, Open link, and the Alt+G and Alt+Shift+G agent jumps stay in full
 Shortcuts, without footer hints.
 Full Shortcuts and screen-reader labels retain complete chords and action
-names. Narrow windows drop whole hints, keeping help and the visibility toggle
-longest; Alt+/ always opens the complete viewer.
+names. Narrow windows drop whole hints, keeping the visibility toggle longest
+and dropping popup hints other than Git and Agent first, the last modifier
+group's last hint first (for the default catalog, from its end). With Eon's
+packaged font (DejaVu Sans) at the default size, a 1280-pixel-wide window shows
+every other hint.
 
-The header `?` disappears when the visible bar fits every applicable hint. It
-stays available when the bar is hidden or incomplete, and while the button has
-keyboard focus. Hints are read-only text, including for screen readers; they
-add no keyboard stops. Eon has no minor modes yet.
+The header `?` always shows; it and Alt+/ open the complete viewer. Hints are
+read-only text, including for screen readers; they add no keyboard stops. Eon
+has no minor modes yet.
 
 ### Labels and header scrolling
 

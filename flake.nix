@@ -383,6 +383,11 @@
               { FONTCONFIG_FILE = "${venusFontsConf}"; }
             else
               { EON_VENUS_FONT_DIRS = lib.concatStringsSep ":" venusFonts; };
+          # Venus's hint fit test measures this exact packaged file, not whichever
+          # DejaVu Sans the host also has.
+          venusTestEnvironment = {
+            EON_VENUS_TEST_SANS_FONT = "${pkgs.dejavu_fonts}/share/fonts/truetype/DejaVuSans.ttf";
+          };
           venusEnvironment = {
             set = venusFontEnvironment;
             prefix = lib.optionalAttrs pkgs.stdenv.isLinux {
@@ -418,6 +423,7 @@
               '';
             }
             // venusFontEnvironment
+            // venusTestEnvironment
             // lib.optionalAttrs pkgs.stdenv.isDarwin {
               # Venus's tests build their font database without
               # EON_VENUS_FONT_DIRS, and on macOS it reads only the system and
@@ -1143,7 +1149,7 @@
             buildInputs = venusBuildInputs;
             inherit (ghosttyBuildEnv) LIBGHOSTTY_VT_SYS_CPU GHOSTTY_SOURCE_DIR GHOSTTY_ZIG_SYSTEM_DIR;
             inherit (bendBuildEnv) BEND_SOURCE_DIR BEND_CLANG BEND_NO_TELEMETRY;
-          } // venusFontEnvironment);
+          } // venusFontEnvironment // venusTestEnvironment);
         };
     in
     lib.foldl' lib.recursiveUpdate { } (map perSystem manifest.product.targets);

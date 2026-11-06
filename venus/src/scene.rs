@@ -885,7 +885,6 @@ pub struct ShortcutHintsScene {
     pub rect: SceneRect,
     pub complete: bool,
     pub(crate) pieces: Vec<ShortcutHintPiece>,
-    keep_shortcuts: bool,
 }
 
 impl ShortcutHintsScene {
@@ -904,7 +903,6 @@ impl ShortcutHintsScene {
         hints: Vec<ShortcutHint>,
         size: PhysicalSize<u32>,
         metrics: CellMetrics,
-        focus: WorkspaceFocus,
         mut measure: impl FnMut(&str) -> f32,
     ) -> Self {
         let chrome = pane_chrome_rect(
@@ -948,13 +946,12 @@ impl ShortcutHintsScene {
         let pieces = loop {
             let mut left = rect.left + metrics.padding;
             let mut pieces = Vec::new();
-            for (group_index, group) in groups.iter().enumerate() {
-                if group_index > 0 {
-                    left += metrics.padding * 2.0;
-                }
+            for group in &groups {
                 for (index, hint) in group.iter().enumerate() {
-                    if index > 0 {
-                        left += metrics.padding;
+                    // One gap, three quarters of the padding, separates every hint; spare
+                    // width then spreads the groups.
+                    if !pieces.is_empty() {
+                        left += metrics.padding * 0.75;
                     }
                     let modifiers = if index == 0 && !hint.modifiers.is_empty() {
                         hint.modifiers.clone()
@@ -1018,13 +1015,10 @@ impl ShortcutHintsScene {
                 groups.remove(group);
             }
         };
-        let complete = count > 0 && pieces.len() == count;
         Self {
             rect: frame,
-            complete,
+            complete: count > 0 && pieces.len() == count,
             pieces,
-            keep_shortcuts: !complete
-                || focus == WorkspaceFocus::Header(WorkspaceHeaderControl::Shortcuts),
         }
     }
 }
@@ -2189,7 +2183,6 @@ fn workspace_header_geometry(
     metrics: CellMetrics,
     requested_lead: f32,
     requested_quota_width: Option<f32>,
-    show_shortcuts: bool,
     edge: f32,
     entries: &[PopupEntry],
 ) -> (
@@ -2209,7 +2202,7 @@ fn workspace_header_geometry(
     let minimum_tabs = (width * 0.4)
         .min(metrics.font_size * 4.0)
         .max(identity_width.min((width - metrics.width * 3.0).max(0.0)));
-    let control_count = if show_shortcuts { 3.0 } else { 2.0 };
+    let control_count = 3.0;
     let control_width =
         tab_row(metrics, tab_height).min(((width - minimum_tabs) / control_count).max(0.0));
     // Close reaches the window's edge, its glyph `edge` from it, while the tabs keep their minimum.
@@ -2258,7 +2251,6 @@ fn workspace_header_geometry(
     let mut left = drag_region.right() + quota_width;
     let controls = control_kinds.map(|kind| {
         let width = match kind {
-            WorkspaceHeaderControl::Shortcuts if !show_shortcuts => 0.0,
             WorkspaceHeaderControl::CloseTab => control_width + close_extra,
             _ => control_width,
         };
@@ -2604,7 +2596,7 @@ impl WorkspaceScene {
         let tab_height = header_heights(metrics).0.min(size.height as f32);
         let edge = bar_edge(metrics, tab_height, tab_height);
         let (_, tab_viewport, _, _, _) =
-            workspace_header_geometry(size, tab_height, metrics, 0.0, None, true, edge, &[]);
+            workspace_header_geometry(size, tab_height, metrics, 0.0, None, edge, &[]);
         (tab_max_width(metrics, tab_viewport.width) - metrics.padding * 2.0)
             .max(0.0)
             .floor()
@@ -2769,7 +2761,6 @@ impl WorkspaceScene {
         let width = size.width as f32;
         let height = size.height as f32;
         let pane_height = header_heights(metrics).1;
-        let show_shortcuts = hints.as_ref().is_none_or(|hints| hints.keep_shortcuts);
         let content_height = hints.as_ref().map_or(height, |hints| hints.rect.top);
         let active = &snapshot.tabs[snapshot
             .tabs
@@ -3074,11 +3065,7 @@ impl WorkspaceScene {
         let chip_inset = (metrics.padding / 3.0).min(tab_height / 4.0);
         let button = tab_row(metrics, tab_height);
         let circle = (pill_band.end - pill_band.start).round().min(button);
-        let before_shortcuts = if show_shortcuts {
-            (chip_inset - (button - circle) / 2.0).max(0.0)
-        } else {
-            0.0
-        };
+        let before_shortcuts = (chip_inset - (button - circle) / 2.0).max(0.0);
         let geometry = loop {
             let requested = (!quotas.is_empty()).then(|| {
                 quotas.iter().map(|quota| quota.rect.width).sum::<f32>() + before_shortcuts
@@ -3089,7 +3076,6 @@ impl WorkspaceScene {
                 metrics,
                 lead,
                 requested,
-                show_shortcuts,
                 edge,
                 &snapshot.entries,
             );

@@ -74,7 +74,7 @@ also inform compact C/A/S headers, short action labels and one movement hint
 for both axes. Explicit creation targets remain because Eon has no mode label.
 Nova `85db9eefdbeae48fe29938ed23e28111ea5629d6` modifier formatting also
 informs modifier grouping and background roles. Venus uses unbraced badge
-headers, such as A-S, measured with their padding through the existing shaper.
+headers, such as AS, measured with their padding through the existing shaper.
 Compact grouping and modifier-only background formatting inform the footer;
 equal inter-group distribution and badge padding are Eon's product choices.
 The footer is the bare margin below the pane cards, with its hints centered in
