@@ -33,7 +33,7 @@ pub use scene::{
     WorkspaceTab, attention_inbox_hints, shown_workspace, validate_copy_uri, validate_open_uri,
     workspace_column_width,
 };
-pub(crate) use system::Load;
+pub(crate) use system::{CPU_ICON, DISK_ICON, Load, RAM_ICON};
 pub use system::{CpuReadings, CpuTimes, CpuUse, DiskUse, LoadLevels, RamUse};
 pub use transport::{
     SendError, Transport, TransportEvent, WorkspaceEvent, WorkspaceTransport,

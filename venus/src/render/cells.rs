@@ -131,6 +131,28 @@ fn is_nerd_font_symbol(text: &str) -> bool {
     })
 }
 
+/// `text` as rich-text spans of `attrs`, except that Nerd Font symbols take the bundled symbol
+/// face, which a person's terminal font and fallbacks cannot leave out.
+pub(super) fn symbol_spans<'a>(text: &'a str, attrs: &Attrs<'a>) -> Vec<(&'a str, Attrs<'a>)> {
+    let symbol = attrs.clone().family(Family::Name(NERD_FONT_FAMILY));
+    let mut spans = Vec::new();
+    let mut start = 0;
+    for (index, character) in text.char_indices() {
+        let end = index + character.len_utf8();
+        if is_nerd_font_symbol(&text[index..end]) {
+            if start < index {
+                spans.push((&text[start..index], attrs.clone()));
+            }
+            spans.push((&text[index..end], symbol.clone()));
+            start = end;
+        }
+    }
+    if start < text.len() {
+        spans.push((&text[start..], attrs.clone()));
+    }
+    spans
+}
+
 pub(super) fn block_span(text: &str, narrow: bool) -> Option<(f32, f32)> {
     match (narrow, text) {
         (true, "█") => Some((0.0, 1.0)),

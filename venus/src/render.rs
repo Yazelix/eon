@@ -44,7 +44,7 @@ mod palette;
 use cells::{
     BRAILLE_FAMILY, CellFont, CellTextKind, block_span, build_scene_rectangles, cell_ink_right,
     cell_text_attrs, cell_text_segments, cursor_bounds, cursor_outline, fitted_cell_font,
-    set_cell_layer, shape_cell_text,
+    set_cell_layer, shape_cell_text, symbol_spans,
 };
 pub use chrome::read_eon_icon;
 use chrome::{HeaderInteraction, Spinners, fit_header_text, rasterize_bar_icon, spinners_turn};
@@ -2430,7 +2430,12 @@ fn shape_styled_text(
     buffer.set_size(Some(layout_width), Some(layout_height));
     buffer.set_wrap(wrap);
     buffer.set_monospace_width(monospace_width);
-    buffer.set_text(text, &attrs, shaping(text), None);
+    if matches!(kind, DrawStyleKind::Monospace) {
+        // Icons in monospace chrome, such as the Eon Bar readings', draw from the bundled face.
+        buffer.set_rich_text(symbol_spans(text, &attrs), &attrs, shaping(text), None);
+    } else {
+        buffer.set_text(text, &attrs, shaping(text), None);
+    }
     buffer.shape_until_scroll(font_system, false);
     buffer
 }

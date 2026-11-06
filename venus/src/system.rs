@@ -7,6 +7,12 @@ use std::os::unix::fs::MetadataExt;
 use std::path::Path;
 use std::time::{Duration, Instant};
 
+/// The Symbols Nerd Font icons that lead the CPU, RAM and disk labels: `nf-oct-cpu`,
+/// `nf-fa-memory` and `nf-fa-hard_drive`. Hover and accessibility name each reading in words.
+pub(crate) const CPU_ICON: char = '\u{f4bc}';
+pub(crate) const RAM_ICON: char = '\u{efc5}';
+pub(crate) const DISK_ICON: char = '\u{f0a0}';
+
 /// How loaded a CPU, RAM or disk chip shows the machine; only load beyond normal colours it.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) enum Load {
@@ -152,7 +158,7 @@ impl CpuUse {
         let plural = if cpus == 1 { "" } else { "s" };
         Some(Self {
             percent,
-            label: format!("CPU {percent}%"),
+            label: format!("{CPU_ICON} {percent}%"),
             tooltip: format!("CPU \u{b7} {cpus} logical CPU{plural}"),
             description: format!(
                 "CPU use {percent}% across {cpus} logical CPU{plural}, over the last 2 seconds"
@@ -311,7 +317,7 @@ impl RamUse {
         let percent = percent(used, total);
         let total = total as f64 / per_gib;
         Some(Self {
-            label: format!("RAM {percent}%"),
+            label: format!("{RAM_ICON} {percent}%"),
             tooltip: format!("RAM \u{b7} {total:.1} GiB"),
             description: format!("RAM use {percent}% of {total:.1} GiB"),
             load: Load::Normal,
@@ -390,7 +396,7 @@ impl DiskUse {
         let gib = |bytes: u64| bytes as f64 / f64::from(1 << 30);
         let (size, available) = (gib(size), gib(available));
         Some(Self {
-            label: format!("DISK {percent}%"),
+            label: format!("{DISK_ICON} {percent}%"),
             tooltip: format!("Disk \u{b7} {mount}\n{available:.1} GiB free of {size:.1} GiB"),
             description: format!(
                 "Disk use {percent}% of {size:.1} GiB on {mount}, {available:.1} GiB free"
@@ -575,7 +581,7 @@ mod tests {
         // 30 busy (10 of it steal) and 70 idle (20 of it iowait); guest moves but is not counted.
         let later_line = "cpu  115 0 5 850 120 0 0 10 90 90";
         let shown = CpuUse::between(times_on(16, earlier_line), times_on(16, later_line)).unwrap();
-        assert_eq!(shown.label, "CPU 30%");
+        assert_eq!(shown.label, "\u{f4bc} 30%");
         assert_eq!(
             shown.description,
             "CPU use 30% across 16 logical CPUs, over the last 2 seconds"
@@ -590,10 +596,10 @@ mod tests {
         // Whole percentages round to nearest, from 0 to 100.
         let at = |busy, idle| times(&format!("cpu {busy} 0 0 {idle} 0 0 0 0"));
         for (busy, idle, label) in [
-            (0, 3, "CPU 0%"),
-            (1, 199, "CPU 1%"),
-            (2, 1, "CPU 67%"),
-            (5, 0, "CPU 100%"),
+            (0, 3, "\u{f4bc} 0%"),
+            (1, 199, "\u{f4bc} 1%"),
+            (2, 1, "\u{f4bc} 67%"),
+            (5, 0, "\u{f4bc} 100%"),
         ] {
             assert_eq!(
                 CpuUse::between(at(0, 0), at(busy, idle)).unwrap().label,
@@ -635,7 +641,7 @@ mod tests {
         let earlier = CpuTimes::from_host_ticks([100, 50, 800, 10], 10);
         let later = CpuTimes::from_host_ticks([115, 60, 870, 15], 10);
         let shown = CpuUse::between(earlier, later).unwrap();
-        assert_eq!(shown.label, "CPU 30%");
+        assert_eq!(shown.label, "\u{f4bc} 30%");
         assert_eq!(
             shown.description,
             "CPU use 30% across 10 logical CPUs, over the last 2 seconds"
@@ -653,7 +659,7 @@ mod tests {
         let gib = 1 << 16;
         let pages = [7 * gib, gib, 2 * gib, gib];
         let shown = RamUse::from_host_pages(pages, 16_384, 16 << 30).unwrap();
-        assert_eq!(shown.label, "RAM 56%");
+        assert_eq!(shown.label, "\u{efc5} 56%");
         assert_eq!(shown.description, "RAM use 56% of 16.0 GiB");
         assert_eq!(shown.tooltip, "RAM \u{b7} 16.0 GiB");
         for (pages, page_size, memsize) in [
@@ -678,15 +684,15 @@ mod tests {
              MemAvailable:   18677760 kB\nCached:         9000000 kB\n",
         )
         .unwrap();
-        assert_eq!(shown.label, "RAM 43%");
+        assert_eq!(shown.label, "\u{efc5} 43%");
         assert_eq!(shown.description, "RAM use 43% of 31.3 GiB");
         assert_eq!(shown.tooltip, "RAM \u{b7} 31.3 GiB");
         // Whole percentages round to nearest, from 0 to 100.
         for (total, available, label) in [
-            (3, 3, "RAM 0%"),
-            (200, 199, "RAM 1%"),
-            (3, 1, "RAM 67%"),
-            (3, 0, "RAM 100%"),
+            (3, 3, "\u{efc5} 0%"),
+            (200, 199, "\u{efc5} 1%"),
+            (3, 1, "\u{efc5} 67%"),
+            (3, 0, "\u{efc5} 100%"),
         ] {
             let meminfo = format!("MemTotal: {total} kB\nMemAvailable: {available} kB\n");
             assert_eq!(RamUse::parse(&meminfo).unwrap().label, label, "{meminfo:?}");
@@ -699,7 +705,7 @@ mod tests {
         // reserved for root, so use is 80 of 95 GiB, 84.2% rounded up.
         let gib = 1 << 18;
         let shown = DiskUse::of(100 * gib, 20 * gib, 15 * gib, 4096, "/home").unwrap();
-        assert_eq!(shown.label, "DISK 85%");
+        assert_eq!(shown.label, "\u{f0a0} 85%");
         assert_eq!(
             shown.description,
             "Disk use 85% of 100.0 GiB on /home, 15.0 GiB free"
@@ -717,13 +723,13 @@ mod tests {
         assert_eq!(shown.tooltip, "Disk \u{b7} /\n3.0 GiB free of 9.5 GiB");
         // Whole percentages round up, from 0 to 100.
         for (blocks, free, available, label) in [
-            (3, 3, 3, "DISK 0%"),
-            (1000, 999, 999, "DISK 1%"),
-            (200, 199, 199, "DISK 1%"),
-            (3, 1, 1, "DISK 67%"),
-            (3, 0, 0, "DISK 100%"),
+            (3, 3, 3, "\u{f0a0} 0%"),
+            (1000, 999, 999, "\u{f0a0} 1%"),
+            (200, 199, 199, "\u{f0a0} 1%"),
+            (3, 1, 1, "\u{f0a0} 67%"),
+            (3, 0, 0, "\u{f0a0} 100%"),
             // A full filesystem with root's reserve left still reads 100%.
-            (10, 1, 0, "DISK 100%"),
+            (10, 1, 0, "\u{f0a0} 100%"),
         ] {
             assert_eq!(
                 DiskUse::of(blocks, free, available, 1, "/").unwrap().label,
@@ -758,7 +764,7 @@ mod tests {
     #[test]
     fn disk_use_reads_the_filesystem_holding_a_path() {
         let shown = DiskUse::read(Path::new("/")).unwrap();
-        assert!(shown.label.starts_with("DISK "), "{}", shown.label);
+        assert!(shown.label.starts_with("\u{f0a0} "), "{}", shown.label);
         assert!(
             shown.description.contains(" on /, "),
             "{}",

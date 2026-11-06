@@ -1387,7 +1387,10 @@ fn cpu_and_ram_chips_colour_under_load_and_say_so() {
     burst[15] = 100;
     let shown = run(&mut readings, levels, 0, &burst);
     let busy = shown[15].as_ref().unwrap();
-    assert_eq!((busy.label.as_str(), busy.load), ("CPU 100%", Load::High));
+    assert_eq!(
+        (busy.label.as_str(), busy.load),
+        ("\u{f4bc} 100%", Load::High)
+    );
     assert_eq!(
         busy.description,
         format!(
@@ -1648,7 +1651,7 @@ fn disk_chip_shows_filesystem_use_and_colours_only_when_filling_up() {
         (95, Load::Critical, ": nearly full", "\nNearly full"),
     ] {
         let shown = disk(percent, levels);
-        assert_eq!(shown.label, format!("DISK {percent}%"));
+        assert_eq!(shown.label, format!("\u{f0a0} {percent}%"));
         assert_eq!(shown.load, load, "{percent}%");
         assert_eq!(
             shown.description,
@@ -1741,17 +1744,17 @@ fn disk_chip_shows_filesystem_use_and_colours_only_when_filling_up() {
     let full = disk(95, levels);
     let scene = project(&[BarItem::Disk], Some(&full));
     let shown = scene.disk.as_ref().unwrap();
-    assert_eq!(shown.label, "DISK 95%");
+    assert_eq!(shown.label, "\u{f0a0} 95%");
     assert_eq!(shown.load, Load::Critical);
     assert_eq!(shown.description, full.description);
     assert_eq!(
         shown.tooltip,
         "Disk \u{b7} /\n50.0 GiB free of 1000.0 GiB\nNearly full"
     );
-    // Sized for `DISK 100%`, so the bar never shifts as the use changes.
+    // Sized for its icon and ` 100%`, six cells, so the bar never shifts as the use changes.
     assert_eq!(
         shown.rect.width,
-        "DISK 100%".len() as f32 * metrics.width + metrics.padding * 2.0
+        6.0 * metrics.width + metrics.padding * 2.0
     );
     assert_eq!(shown.rect.right(), scene.controls[1].rect.left);
     assert_eq!(
@@ -2078,7 +2081,7 @@ fn live_items_never_show_or_hide_the_icon_or_move_the_tabs() {
     let (codex_read, claude_read) = (codex[1].clone(), claude[1].clone());
     let cpu = |percent: u64| crate::CpuUse {
         percent,
-        label: format!("CPU {percent}%"),
+        label: format!("\u{f4bc} {percent}%"),
         tooltip: "CPU".into(),
         description: "CPU".into(),
         load: Load::Normal,
@@ -2361,7 +2364,7 @@ fn a_full_bar_with_room_shows_the_icon() {
         .rated(levels);
     let cpu = crate::CpuUse {
         percent: 12,
-        label: "CPU 12%".into(),
+        label: "\u{f4bc} 12%".into(),
         tooltip: "CPU".into(),
         description: "CPU".into(),
         load: Load::Normal,
@@ -2933,7 +2936,7 @@ fn quota_window_widgets_filter_order_and_reserve_only_selected_windows() {
     );
     let cpu = crate::CpuUse {
         percent: 12,
-        label: "CPU 12%".into(),
+        label: "\u{f4bc} 12%".into(),
         tooltip: "CPU".into(),
         description: "CPU".into(),
         load: Load::Normal,

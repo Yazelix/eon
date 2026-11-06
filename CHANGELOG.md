@@ -10,6 +10,12 @@ installation, and proven contract changes.
   Venus and leaving the terminals running; Shortcuts lists it beside
   Option+Shift+Q. Where the window cannot quit it detaches, as closing it does
   (`eon-7cf0y.15`, VEN-C8).
+- The Eon Bar's CPU, RAM and disk chips lead with an icon instead of the words
+  `CPU`, `RAM` and `DISK`: a processor, a memory stick and a drive from the
+  bundled Symbols Nerd Font, which they use whatever the terminal font and
+  `font_fallbacks`. Each chip is six cells wide instead of eight or nine, so
+  the readings stay in narrower windows. Hover and screen readers still name
+  each reading (`eon-igae.14.5`).
 - Eon is labelled alpha again; v0.2.0 enters beta. 1.0.0 has no
   scheduled date.
 - Eon has one window family in the CLI. `eon attach`, `eon stop` and

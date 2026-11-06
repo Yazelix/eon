@@ -79,25 +79,30 @@ order, selection, and popups; Venus draws the visible scene.
   this pace the window lasts until reset, runs out about a stated time before
   it, or is used up, so colour is never the only signal. Every colour keeps at
   least 4.5:1 contrast on the bar.
-- `CPU 12%` and `RAM 43%` show whole-machine use, refreshed every 2 seconds. CPU
-  covers the last 2 seconds and first appears 2 seconds after the window opens;
-  on macOS user, system and nice time count as busy. RAM is MemTotal minus
-  MemAvailable over MemTotal on Linux, and Activity Monitor's Memory Used over
-  physical memory on macOS, and appears with its first reading, when the window
-  opens. Each chip keeps the width of `CPU 100%` with its text centred, so
-  neighbouring items never shift. Accessibility says, for example, `CPU use 12%
-  across 16 logical CPUs, over the last 2 seconds` and `RAM use 43% of 31.3
-  GiB`; hover lists `CPU · 16 logical CPUs` and `RAM · 31.3 GiB`. A reading
-  that cannot be taken shows no label, never 0%, until the next valid one.
-  Other platforms show neither label.
-- `DISK 80%` shows the used share of the filesystem holding the path Eon's
-  `[bar] disk_path` names, by default the home directory, as GNU df computes it
-  from `statvfs` on Linux and macOS: used blocks over used plus available ones,
-  so space reserved for root counts as neither, rounded up. It appears with its
-  first reading when the window opens and refreshes every 30 seconds, since
-  disk use changes slowly. The reading runs off the window's thread, so a slow
-  or hung filesystem never freezes the window; the chip keeps its last reading
-  meanwhile. The chip keeps the width of `DISK 100%` with its text centred.
+- The CPU and RAM chips show whole-machine use as an icon and a percentage,
+  such as `12%`, refreshed every 2 seconds. CPU covers the last 2 seconds and
+  first appears 2 seconds after the window opens; on macOS user, system and
+  nice time count as busy. RAM is MemTotal minus MemAvailable over MemTotal on
+  Linux, and Activity Monitor's Memory Used over physical memory on macOS, and
+  appears with its first reading, when the window opens. The icons are Symbols
+  Nerd Font's `nf-oct-cpu` (U+F4BC) for CPU, `nf-fa-memory` (U+EFC5) for RAM
+  and `nf-fa-hard_drive` (U+F0A0) for disk, drawn from that bundled face
+  whatever the terminal font and its fallbacks; hover and accessibility name
+  each reading in words. Each reading chip keeps the width of its icon and
+  ` 100%`, six cells, with its text centred, so neighbouring items never shift.
+  Accessibility says, for example, `CPU use 12% across 16 logical CPUs, over
+  the last 2 seconds` and `RAM use 43% of 31.3 GiB`; hover lists
+  `CPU · 16 logical CPUs` and `RAM · 31.3 GiB`. A reading that cannot be taken
+  shows no label, never 0%, until the next valid one. Other platforms show
+  neither label.
+- The disk chip shows, as its icon and a percentage, the used share of the
+  filesystem holding the path Eon's `[bar] disk_path` names, by default the
+  home directory, as GNU df computes it from `statvfs` on Linux and macOS: used
+  blocks over used plus available ones, so space reserved for root counts as
+  neither, rounded up. It appears with its first reading when the window opens
+  and refreshes every 30 seconds, since disk use changes slowly. The reading
+  runs off the window's thread, so a slow or hung filesystem never freezes the
+  window; the chip keeps its last reading meanwhile.
   Accessibility says, for example, `Disk use 80% of 929.4 GiB on /, 181.2 GiB
   free`, and hover lists `Disk · /` then `181.2 GiB free of 929.4 GiB`, naming
   the topmost directory above the path on the same filesystem (device),

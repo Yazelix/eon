@@ -1786,12 +1786,12 @@ mod tests {
                 assert_eq!(scene.quotas[0].label, full_quotas[0].label);
                 // The version label sits in the shortcut hints, never the header.
                 assert!(scene.version.is_none());
-                assert_eq!(shown_cpu.label, "CPU 12%");
+                assert_eq!(shown_cpu.label, "\u{f4bc} 12%");
                 if let Some(shown_ram) = &scene.ram {
-                    assert_eq!(shown_ram.label, "RAM 43%");
+                    assert_eq!(shown_ram.label, "\u{efc5} 43%");
                 }
                 if let Some(shown_disk) = &scene.disk {
-                    assert_eq!(shown_disk.label, "DISK 80%");
+                    assert_eq!(shown_disk.label, "\u{f0a0} 80%");
                 }
                 // The readings follow the quota chips in order, up to Shortcuts.
                 let labels = [
@@ -1803,18 +1803,13 @@ mod tests {
                 .filter_map(|(id, label)| Some((id, label?)))
                 .collect::<Vec<_>>();
                 let mut left = scene.quotas[0].rect.right();
-                for (id, label) in &labels {
+                for (_, label) in &labels {
                     assert_eq!(label.rect.left, left);
                     left = label.rect.right();
-                    // CPU and RAM keep the width of `CPU 100%`, disk that of `DISK 100%`.
-                    let cells = match *id {
-                        CPU | RAM => "CPU 100%".len(),
-                        DISK => "DISK 100%".len(),
-                        _ => continue,
-                    };
+                    // Each reading keeps the width of its icon and ` 100%`: six cells.
                     assert_eq!(
                         label.rect.width,
-                        cells as f32 * metrics.width + metrics.padding * 2.0
+                        6.0 * metrics.width + metrics.padding * 2.0
                     );
                 }
                 assert_eq!(left, scene.controls[1].rect.left);

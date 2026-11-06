@@ -239,10 +239,11 @@ Readings say `old` once they are more than an hour old and disappear after 24
 hours. Chips hide one by one under width pressure, the one closest to the tabs
 first, before tabs and controls, and unavailable quota leaves the bar unchanged.
 See [quota behavior](CONFIGURATION.md#agent-quota).
-After the quota chips, `CPU 12%` shows whole-machine CPU use over the last 2
-seconds, `RAM 43%` shows whole-machine memory in use, and `DISK 80%` shows how
-full the filesystem holding your home directory is, refreshed every 30 seconds;
-hover them for details, such as the disk's size, mount point and free space.
+After the quota chips come three readings, each an icon and a percentage such
+as `12%`: a processor chip shows whole-machine CPU use over the last 2 seconds,
+a memory stick whole-machine memory in use, and a drive how full the filesystem
+holding your home directory is, refreshed every 30 seconds; hover them for
+their names and details, such as the disk's size, mount point and free space.
 Each hover is a short list, one fact per line, that leaves out what the chip
 already shows; screen readers read one sentence with every fact.
 They turn orange or red when the machine is under load or the disk fills up, at

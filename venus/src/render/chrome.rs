@@ -1883,19 +1883,26 @@ impl Renderer {
             );
             push_bar_widget(rectangles, visual, self.border_width, self.metrics.scale);
             let width = (label.rect.width - self.metrics.padding * 2.0).max(0.0);
-            // A label narrower than its chip sits in the middle; every label is ASCII in cells.
-            let slack = (width - label.label.len() as f32 * self.metrics.width).max(0.0);
-            self.push_text_clipped(
-                &label.label,
-                label.rect.left + self.metrics.padding + slack / 2.0,
-                content.top + (content.height - self.metrics.height).max(0.0) / 2.0,
-                width,
-                width,
-                self.metrics.height.min(label.rect.height),
-                color,
-                DrawStyleKind::Monospace,
-                label.rect,
-            );
+            // A label narrower than its chip sits in the middle; each character takes one cell.
+            let slack = (width - label.label.chars().count() as f32 * self.metrics.width).max(0.0);
+            // The icon draws from its own cell, as in a terminal: a symbol wider than a cell
+            // spills into the space after it instead of pushing the value off the cells.
+            let icon = label.label.chars().next().map_or(0, char::len_utf8);
+            let (icon, value) = label.label.split_at(icon);
+            for (cell, text) in [icon, value].into_iter().enumerate() {
+                let offset = slack / 2.0 + cell as f32 * self.metrics.width;
+                self.push_text_clipped(
+                    text,
+                    label.rect.left + self.metrics.padding + offset,
+                    content.top + (content.height - self.metrics.height).max(0.0) / 2.0,
+                    width - offset,
+                    width - offset,
+                    self.metrics.height.min(label.rect.height),
+                    color,
+                    DrawStyleKind::Monospace,
+                    label.rect,
+                );
+            }
         }
         for control in workspace.controls {
             if control.rect.width <= 0.0 {
@@ -3397,6 +3404,78 @@ mod tests {
         // A right-to-left label is right-aligned, so its ink ends at the line's end, not its width.
         let (rtl, line) = end("2  שלום");
         assert!((rtl - width).abs() < 1.0 && line < width / 2.0);
+    }
+
+    #[test]
+    fn reading_icons_draw_from_the_bundled_symbol_face_whatever_the_terminal_fonts() {
+        let original = FontSystem::new();
+        let mut db = fontdb::Database::new();
+        // Symbols Nerd Font, the proportional face of the same package, also has the icons and
+        // comes first, as another installed symbol font can.
+        for name in [
+            "DejaVu Sans",
+            "DejaVu Sans Mono",
+            "Symbols Nerd Font",
+            NERD_FONT_FAMILY,
+        ] {
+            let id = original
+                .db()
+                .query(&fontdb::Query {
+                    families: &[Family::Name(name)],
+                    ..Default::default()
+                })
+                .expect("the accepted font environment supplies the tested face");
+            db.push_face_info(original.db().face(id).unwrap().clone());
+        }
+        db.set_sans_serif_family("DejaVu Sans");
+        // A person's own terminal font whose fallbacks leave out the symbol face, from the
+        // smallest font size to the largest, at the default and a fractional scale.
+        for size in [6.0, FontSettings::default().size, 96.0] {
+            let settings = FontSettings {
+                family: Some("DejaVu Sans Mono".into()),
+                size,
+                ..FontSettings::default()
+            };
+            let mut fonts = FontSetup::resolve(
+                &settings,
+                FontSystem::new_with_locale_and_db("en-US".into(), db.clone()),
+            )
+            .unwrap();
+            for scale in [1.0, 1.25] {
+                let metrics = fonts.metrics(scale);
+                let cell_font =
+                    fitted_cell_font(&mut fonts.font_system, metrics, fonts.family, true);
+                for label in ["\u{f4bc} 12%", "\u{efc5} 43%", "\u{f0a0} 80%"] {
+                    let case = format!("{label} at size {size}, scale {scale}");
+                    let buffer = shape_styled_text(
+                        &mut fonts.font_system,
+                        metrics,
+                        cell_font,
+                        label,
+                        1000.0,
+                        metrics.height,
+                        DrawStyleKind::Monospace,
+                    );
+                    let glyphs: Vec<_> = buffer.layout_runs().flat_map(|run| run.glyphs).collect();
+                    assert_eq!(glyphs.len(), label.chars().count(), "{case}");
+                    for glyph in glyphs {
+                        let text = &label[glyph.start..glyph.end];
+                        let face = fonts.font_system.db().face(glyph.font_id).unwrap();
+                        let family = &face.families[0].0;
+                        assert!(glyph.glyph_id != 0, "{text:?} in {case} has no glyph");
+                        if text.is_ascii() {
+                            assert_eq!(family, "DejaVu Sans Mono", "{text:?} in {case}");
+                            assert!((glyph.w - metrics.width).abs() < 0.01, "{case}");
+                        } else {
+                            assert_eq!(family, NERD_FONT_FAMILY, "{text:?} in {case}");
+                            // The chip draws the icon from its own cell; it spills into the space
+                            // after it but never reaches the value.
+                            assert!(glyph.w <= 2.0 * metrics.width, "{case}: icon {}", glyph.w);
+                        }
+                    }
+                }
+            }
+        }
     }
 
     #[test]

@@ -1,5 +1,5 @@
 use crate::{
-    CpuUse, DiskUse, Load, MAX_LINK_BYTES, RamUse,
+    CPU_ICON, CpuUse, DISK_ICON, DiskUse, Load, MAX_LINK_BYTES, RAM_ICON, RamUse,
     model::{active_popup, focused_terminal, presented_panes},
     render::{CellMetrics, FALLBACK_CAP_HEIGHT_EM},
 };
@@ -3330,14 +3330,14 @@ impl WorkspaceScene {
         // readings also need every quota chip shown.
         let shown = |item| bar.items.contains(&item);
         let reading = |item| quotas.len() == quota_count && shown(item);
-        // CPU and RAM keep the width of `CPU 100%`, and disk that of `DISK 100%`, so the header
-        // never shifts as they change.
-        let readings = "CPU 100%".len();
+        // Each reading keeps the width of its one-cell icon and ` 100%`, so the header never
+        // shifts as they change.
+        let readings = 1 + " 100%".len();
         // The widest layout reserves every listed reading, with or without data.
-        let placeholder = |item, label: &str, cells| {
+        let placeholder = |item, icon: char, cells| {
             (widest && reading(item)).then(|| {
                 (
-                    label.to_owned(),
+                    format!("{icon} 100%"),
                     String::new(),
                     String::new(),
                     cells,
@@ -3357,7 +3357,7 @@ impl WorkspaceScene {
                         cpu.load,
                     )
                 })
-                .or_else(|| placeholder(BarItem::Cpu, "CPU 100%", readings)),
+                .or_else(|| placeholder(BarItem::Cpu, CPU_ICON, readings)),
             bar.ram
                 .filter(|_| reading(BarItem::Ram))
                 .map(|ram| {
@@ -3369,7 +3369,7 @@ impl WorkspaceScene {
                         ram.load,
                     )
                 })
-                .or_else(|| placeholder(BarItem::Ram, "RAM 100%", readings)),
+                .or_else(|| placeholder(BarItem::Ram, RAM_ICON, readings)),
             bar.disk
                 .filter(|_| reading(BarItem::Disk))
                 .map(|disk| {
@@ -3377,18 +3377,18 @@ impl WorkspaceScene {
                         disk.label.clone(),
                         disk.tooltip.clone(),
                         disk.description.clone(),
-                        "DISK 100%".len(),
+                        readings,
                         disk.load,
                     )
                 })
-                .or_else(|| placeholder(BarItem::Disk, "DISK 100%", 0)),
+                .or_else(|| placeholder(BarItem::Disk, DISK_ICON, readings)),
         ]
         .map(|label| {
             label.map(
                 |(label, tooltip, description, cells, load)| WorkspaceLabel {
                     rect: SceneRect {
-                        // Every label is ASCII and rendering uses terminal cell spacing.
-                        width: label.len().max(cells) as f32 * metrics.width
+                        // Every label is an icon then ASCII, one terminal cell per character.
+                        width: label.chars().count().max(cells) as f32 * metrics.width
                             + metrics.padding * 2.0,
                         height: tab_height,
                         ..SceneRect::default()
