@@ -5,6 +5,8 @@ installation, and proven contract changes.
 
 ## Unreleased
 
+- Eon is labelled alpha again; v0.2.0 enters beta. 1.0.0 has no
+  scheduled date.
 - Eon has one window family in the CLI. `eon attach`, `eon stop` and
   `--generation` are removed: use `eon window attach [ID]` and
   `eon window stop ID|previous|all`, which take a window ID as

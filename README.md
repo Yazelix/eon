@@ -89,11 +89,11 @@ coverage.
 
 ## Status and limits
 
-Eon is in beta: commands, configuration and behavior may still change between
-0.x releases, and 1.0.0 marks the end of beta. It installs only through Nix for
-now. It was proved on COSMIC and private Sway before the move to one
-repository. Here, installed checks so far run on a private headless Sway, plus
-a brief COSMIC launch check; the full desktop proofs and the bounded Orca
+Eon is in alpha: commands, configuration and behavior may still change between
+releases. v0.2.0 enters beta. It installs only through Nix for now. It was
+proved on COSMIC and private Sway before the move to one repository. Here,
+installed checks so far run on a private headless Sway, plus a brief COSMIC
+launch check; the full desktop proofs and the bounded Orca
 [reader qualification](docs/CONTRACTS.md#eon-c8--durable-tab-and-pane-workspace)
 await re-proof. Other compositors, non-systemd hosts and proprietary NVIDIA
 drivers are unproved. Restarting the machine ends live terminals.

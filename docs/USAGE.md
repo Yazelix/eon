@@ -2,7 +2,7 @@
 
 ## Supported environment
 
-Eon is in beta (0.x) and installs only through Nix. The supported product
+Eon is in alpha and installs only through Nix. The supported product
 target is **x86_64 Linux on native Wayland**.
 
 Before installing, you need:

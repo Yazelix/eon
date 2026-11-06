@@ -34,10 +34,11 @@ Every channel consumes the same component graph and preserves runtime semantics.
 
 Eon's product version in `eon/crates/eon/Cargo.toml` is its one user-facing
 number; `eon --help`, `eon versions` and the window's `EON` label (when
-shown) report it. Every 0.x release is beta: commands, configuration and
-behavior may still change, and the changelog records what did. 1.0.0 marks the
-end of beta. `eon-igae` holds its scope, and
-[EON-C28](CONTRACTS.md#eon-c28--1x-stability) states what 1.x keeps stable.
+shown) report it. Eon is in alpha before v0.2.0 and in beta from v0.2.0:
+in both stages commands, configuration and behavior may still change, and the
+changelog records what did. `eon-igae` holds the scope for entering beta.
+1.0.0 has no scheduled date: user reports, not a plan, decide when it comes.
+[EON-C28](CONTRACTS.md#eon-c28--1x-stability) states what 1.x would keep stable.
 Orbit, Venus and Eon Runtime keep their own package versions, and EONW its
 protocol version, as compatibility identities.
 
@@ -45,8 +46,8 @@ A release bumps the product version, tags that commit `vX.Y.Z`
 (`eon-versioning-beta-bfyf`, decided 2026-10-16) and advances `main` to it
 ([Git Workflow](AGENT-RULES.md#git-workflow)). The earlier
 `linux-alpha-2026-10-14` tag is version 0.1.0, and the first numbered
-release is `v0.1.1`. Installing without Nix is a delivery milestone within
-0.x, not a stage.
+release is `v0.1.1`. Installing without Nix is a delivery milestone, not a
+stage; publishing it gates beta.
 Eon's product version is bumped at least whenever EONW's protocol version
 changes, so one version never names builds that cannot control each other
 (`eon-7sjm`, decided 2026-10-24).
