@@ -1,7 +1,7 @@
 # Configuration
 
-Settings live in `config.toml`; `eon config-path` prints its full path, normally
-`~/.config/eon/config.toml`. `eon config-dir` prints the configuration root
+Settings live in `config.toml`; `eon config path` prints its full path, normally
+`~/.config/eon/config.toml`. `eon config dir` prints the configuration root
 that holds it, which also holds the managed tools' configuration directories.
 This example chooses a font, cursor preset and 100x30 grid; it is not the
 empty-configuration default:
@@ -603,9 +603,9 @@ If no desktop clipboard is available, Nushell reports the error.
 The profile also exposes `eon-hx`, `eon-yazi`, `eon-ya`, `eon-lazygit`, and
 `eon-lg`. Inside terminals their unprefixed names resolve to the pinned tools.
 Eon's Helix reads its configuration, including the Steel files `helix.scm` and
-`init.scm`, from `$(eon config-dir)/helix/`, and never runs Steel files from a
+`init.scm`, from `$(eon config dir)/helix/`, and never runs Steel files from a
 repository's `.helix` directory. `hx --config-dir DIR` reads `config.toml` from
-DIR but still takes `helix.scm` and `init.scm` from `$(eon config-dir)/helix/`.
+DIR but still takes `helix.scm` and `init.scm` from `$(eon config dir)/helix/`.
 Eon does not start Helix when the configuration root's path is not valid UTF-8.
 Eon does not rewrite the parent PATH, aliases, shell startup files, or native
 tool data paths.

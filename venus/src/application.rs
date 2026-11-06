@@ -62,8 +62,9 @@ use scroll::{PendingViewportRequest, SelectionAutoscroll, TerminalScroll, finish
 use shortcuts::{
     HintPopupLatch, NativeShortcutAction, NativeShortcutTrigger, WORKSPACES_ENTRY, command_q,
     copy_paste_modifiers, detach_chord, invoke_popup, native_key_shortcut, native_key_shortcut_for,
-    native_pointer_shortcut, paste_shortcut, popup_shortcut, position_key_action, shortcut_groups,
-    shortcut_hints_for, sideways_move_opens_column, workspace_picker_tooltip, workspace_shortcut,
+    native_pointer_shortcut, paste_shortcut, popup_shortcut, position_key_action, quit_retry_chord,
+    shortcut_groups, shortcut_hints_for, sideways_move_opens_column, workspace_picker_tooltip,
+    workspace_shortcut,
 };
 
 const BLINK_INTERVAL: Duration = Duration::from_millis(500);
@@ -216,6 +217,14 @@ fn link_hint_for(platform: NativePlatform, uri: &str, entries: &[PopupEntry]) ->
         )
     } else {
         open
+    }
+}
+
+/// What the window says while Eon refuses refreshes after a failed Stop: Quit retries it.
+fn stop_incomplete_notice(entries: &[PopupEntry]) -> String {
+    match quit_retry_chord(entries) {
+        Some(chord) => format!("Quit did not finish; press {chord} to retry."),
+        None => "Quit did not finish.".into(),
     }
 }
 
@@ -2857,6 +2866,16 @@ impl Application {
                 snapshot.codex_quota.is_some() || snapshot.claude_quota.is_some()
             });
         let (mut view_changed, workspace_changed) = match event {
+            WorkspaceEvent::Response(eon_workspace_protocol::v35::Response::Failure(failure))
+                if failure.code == "stop-incomplete" =>
+            {
+                let notice = stop_incomplete_notice(
+                    self.workspace_model
+                        .snapshot()
+                        .map_or(&[], |snapshot| &snapshot.entries),
+                );
+                (self.workspace_model.stop_incomplete(notice), false)
+            }
             WorkspaceEvent::Response(response) => self.workspace_model.apply(response),
             WorkspaceEvent::Unavailable { notice, detail } => {
                 let changed = self.workspace_model.mark_unavailable(notice, false);

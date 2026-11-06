@@ -387,7 +387,7 @@ pair.
 Eon may precompute graph validation without effects and pass its result.
 Runtime consumes a failure only where the current command needs the graph,
 before runtime ownership directories, sockets or children. It preserves
-help/usage, managed-tool, `config-path`, `config-dir` and direct Anima
+help/usage, version, managed-tool, `config path`, `config dir` and direct Anima
 ordering; the entry point does not impose blanket graph
 validation on them.
 

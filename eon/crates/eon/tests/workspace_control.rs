@@ -199,7 +199,7 @@ fn config_defaults_ignore_user_configuration_and_have_documented_values() {
     assert_eq!(documented, printed[0]);
     for arguments in [
         vec!["config"],
-        vec!["config", "path"],
+        vec!["config", "paths"],
         vec!["config", "--json", "defaults"],
         vec!["config", "defaults", "extra"],
         vec!["config", "defaults", "--json", "--json"],
@@ -264,8 +264,9 @@ fn help_is_readable_and_does_not_start_or_prepare_a_workspace() {
             "window stop ID|previous|all [--json]",
             "window attach [ID]",
             "tab directory TAB",
-            "config-path",
-            "config-dir",
+            "config path",
+            "config dir",
+            "-V, --version",
             "eon run --",
         ] {
             assert!(help.contains(command), "missing {command}");
@@ -291,7 +292,7 @@ fn help_is_readable_and_does_not_start_or_prepare_a_workspace() {
         }
         // An entry's description may continue on the next line.
         let lines: Vec<&str> = help.lines().collect();
-        for command in ["config-path ", "config defaults "] {
+        for command in ["config path ", "config defaults "] {
             let entry = lines
                 .iter()
                 .position(|line| line.trim_start().starts_with(command))
@@ -400,7 +401,8 @@ fn help_is_readable_and_does_not_start_or_prepare_a_workspace() {
 
 /// Catches an alias or fallback for a removed command creeping back: the
 /// window listings, `attach`, `stop` and the `--generation` flag (EON-C23,
-/// EON-C11), with the delegation markers set too.
+/// EON-C11), with the delegation markers set too, and `config-path` and
+/// `config-dir` (EON-C9).
 #[test]
 fn removed_commands_are_invalid() {
     let root = temporary_directory();
@@ -425,6 +427,8 @@ fn removed_commands_are_invalid() {
         vec!["stop", "--help"],
         vec!["--generation", &generation, "workspace"],
         vec!["workspace", "--generation", &generation, "--json"],
+        vec!["config-path"],
+        vec!["config-dir"],
     ] {
         let output = eon_command(binary)
             .args(&args)
@@ -745,6 +749,43 @@ fn skill_prints_the_shipped_skill_and_help_points_agents_to_it() {
     );
     assert!(!runtime.exists());
     assert!(!absent_config.exists());
+    assert_eq!(fs::read_dir(&config).unwrap().count(), 1);
+    fs::remove_dir_all(root).unwrap();
+}
+
+/// `-V` and `--version` print one line and prepare nothing (EON-C1).
+#[test]
+fn version_prints_one_line_without_preparing_anything() {
+    let root = temporary_directory();
+    let config = root.join("config");
+    let runtime = root.join("runtime");
+    fs::create_dir(&config).unwrap();
+    fs::write(config.join("config.toml"), "invalid configuration = [").unwrap();
+    let eon = |args: &[&str]| {
+        eon_command(Path::new(env!("CARGO_BIN_EXE_eon")))
+            .args(args)
+            .env("EON_CONFIG_HOME", &config)
+            .env("EON_RUNTIME_DIR", &runtime)
+            .env_remove("EON_WINDOW_RUNTIME_DIR")
+            .env("EON_ORBIT", root.join("missing-orbit"))
+            .env("EON_VENUS", root.join("missing-venus"))
+            .output()
+            .unwrap()
+    };
+    for flag in ["-V", "--version"] {
+        let output = eon(&[flag]);
+        assert!(output.status.success(), "{flag}");
+        assert!(output.stderr.is_empty(), "{flag}");
+        assert_eq!(
+            stdout(&output),
+            format!("eon {}\n", env!("CARGO_PKG_VERSION")),
+            "{flag}"
+        );
+        let output = eon(&[flag, "extra"]);
+        assert_eq!(output.status.code(), Some(2), "{flag} extra");
+        assert!(output.stdout.is_empty(), "{flag} extra");
+    }
+    assert!(!runtime.exists());
     assert_eq!(fs::read_dir(&config).unwrap().count(), 1);
     fs::remove_dir_all(root).unwrap();
 }
@@ -3613,7 +3654,12 @@ fn a_stalled_subscriber_never_delays_requests_another_subscriber_or_stop() {
 #[test]
 fn closed_stdout_pipe_is_not_a_panic() {
     let root = temporary_directory();
-    for arguments in [&["config-path"][..], &["config-dir"], &["versions"]] {
+    for arguments in [
+        &["config", "path"][..],
+        &["config", "dir"],
+        &["versions"],
+        &["-V"],
+    ] {
         let (reader, writer) = std::io::pipe().unwrap();
         drop(reader);
         let output = eon_command(Path::new(env!("CARGO_BIN_EXE_eon")))
@@ -3642,11 +3688,11 @@ fn relative_configuration_root_is_resolved_once() {
     // through /private for a root under /tmp.
     let config = fs::canonicalize(&root).unwrap().join("config");
     for (command, path) in [
-        ("config-dir", config.clone()),
-        ("config-path", config.join("config.toml")),
+        ("dir", config.clone()),
+        ("path", config.join("config.toml")),
     ] {
         let output = eon_command(Path::new(env!("CARGO_BIN_EXE_eon")))
-            .arg(command)
+            .args(["config", command])
             .current_dir(&root)
             .env("EON_CONFIG_HOME", "config")
             .output()
@@ -3676,7 +3722,7 @@ fn config_path_prints_the_settings_file_and_config_dir_the_root() {
             .unwrap()
     };
 
-    let output = run(&["config-path"]);
+    let output = run(&["config", "path"]);
     assert!(
         output.status.success(),
         "stdout={} stderr={}",
@@ -3691,24 +3737,25 @@ fn config_path_prints_the_settings_file_and_config_dir_the_root() {
     assert!(config.is_dir());
     assert!(!config.join("config.toml").exists());
 
-    let output = run(&["config-dir"]);
+    let output = run(&["config", "dir"]);
     assert!(output.status.success());
     assert!(output.stderr.is_empty());
     assert_eq!(stdout(&output), format!("{}\n", config.display()));
 
     for arguments in [
-        &["config-path", "--file"][..],
-        &["config-path", "--json"],
-        &["config-dir", "--json"],
+        &["config", "path", "--file"][..],
+        &["config", "path", "--json"],
+        &["config", "dir", "--json"],
+        &["config"],
     ] {
         assert_eq!(run(arguments).status.code(), Some(2), "{arguments:?}");
     }
 
     // A root under a regular file cannot be created.
     fs::write(root.join("file"), "").unwrap();
-    for command in ["config-path", "config-dir"] {
+    for command in ["path", "dir"] {
         let output = eon_command(Path::new(env!("CARGO_BIN_EXE_eon")))
-            .arg(command)
+            .args(["config", command])
             .env("EON_CONFIG_HOME", root.join("file/config"))
             .output()
             .unwrap();
@@ -3782,13 +3829,24 @@ fn failure_kinds_exit_with_distinct_statuses_with_and_without_json() {
     for directory in [generations.parent().unwrap(), &generations] {
         fs::set_permissions(directory, fs::Permissions::from_mode(0o700)).unwrap();
     }
-    assert_eq!(run(&["workspace", "--json"]).status.code(), Some(4));
+    let missing = run(&["workspace", "--json"]);
+    assert_eq!(missing.status.code(), Some(4));
+    let missing: serde_json::Value = serde_json::from_str(stdout(&missing)).unwrap();
+    assert_eq!(
+        missing["error"]["detail"],
+        "the default Eon window is not running; run `eon` to open it"
+    );
     assert_eq!(fs::read_dir(&generations).unwrap().count(), 0);
     // An existing directory that is not private still refuses the call.
     fs::set_permissions(&generations, fs::Permissions::from_mode(0o755)).unwrap();
     let unsafe_directory = run(&["workspace", "--json"]);
     assert_eq!(unsafe_directory.status.code(), Some(4));
-    assert!(stdout(&unsafe_directory).contains("owned private directory"));
+    let detail: serde_json::Value = serde_json::from_str(stdout(&unsafe_directory)).unwrap();
+    let detail = detail["error"]["detail"].as_str().unwrap();
+    assert!(
+        detail.starts_with("Eon window default: ") && detail.contains("owned private directory"),
+        "{detail}"
+    );
     fs::set_permissions(&generations, fs::Permissions::from_mode(0o700)).unwrap();
     // An unknown window is missing whether or not the windows directory exists.
     let windows = root.join("runtime").join("w");
@@ -5372,9 +5430,14 @@ fn workspace_target_failures_are_explicit_and_bounded() {
             .output()
             .unwrap();
         assert_eq!(output.status.code(), Some(4), "{}", stdout(&output));
-        assert!(stdout(&output).contains(id));
-        assert!(stdout(&output).contains("EONW"));
-        assert!(stdout(&output).contains("the terminal's own `eon`"));
+        let failure: serde_json::Value = serde_json::from_str(stdout(&output)).unwrap();
+        let detail = failure["error"]["detail"].as_str().unwrap();
+        assert!(
+            detail.starts_with(&format!("Eon window {}: ", &id[3..])),
+            "{detail}"
+        );
+        assert!(detail.contains("EONW"), "{detail}");
+        assert!(detail.contains("the terminal's own `eon`"), "{detail}");
     }
     end_older_supervisors(
         &done,
@@ -6205,7 +6268,11 @@ fn delayed_second_cli_receives_committed_workspace_and_controls_three_sessions()
         &["pane", "close", "p1", "--yes"],
     );
     assert!(final_pane.status.success(), "{}", stdout(&final_pane));
-    assert!(stdout(&final_pane).starts_with("ended generation "));
+    let closed = stdout(&final_pane);
+    assert!(
+        closed.starts_with("Eon window ") && closed.ends_with(" closed\n"),
+        "{closed}"
+    );
     wait_for_successful_exit(&mut supervisor.child);
     assert!(!control.exists());
     fs::remove_dir_all(root).unwrap();
@@ -11507,7 +11574,7 @@ fn window_attach_runs_the_build_that_started_its_generation() {
     assert_eq!(attach_ended.status.code(), Some(4));
     assert!(String::from_utf8_lossy(&attach_ended.stderr).contains("has ended"));
 
-    // Without a record of its build, attach names the generation and the recovery.
+    // Without a record of its build, attach names the window and the recovery.
     assert_eq!(older["state"], "incompatible", "{older}");
     assert_eq!(older["generation"], id.as_str());
     assert_eq!(older["attach"]["available"], false);
@@ -11519,7 +11586,8 @@ fn window_attach_runs_the_build_that_started_its_generation() {
     );
     assert_eq!(unrecorded.status.code(), Some(1));
     let error = String::from_utf8_lossy(&unrecorded.stderr);
-    assert!(error.contains(&id), "{error}");
+    assert!(error.starts_with("eon: Eon window 0000 "), "{error}");
+    assert!(!error.contains(&id), "{error}");
     assert!(error.contains("EONW 11"), "{error}");
     assert!(
         error.contains("the Eon build that started it can attach or stop it"),
@@ -14369,7 +14437,7 @@ fn cli_busy_background_close_confirms_refuses_and_cancels_without_focus() {
         "{idle_final_pipe:?}"
     );
     assert!(idle_final_pipe.stderr.is_empty(), "{idle_final_pipe:?}");
-    assert!(stdout(&idle_final_pipe).starts_with("ended generation "));
+    assert_eq!(stdout(&idle_final_pipe), "Eon window default closed\n");
     wait_for_successful_exit(&mut default.child);
     fs::remove_dir_all(root).unwrap();
 }

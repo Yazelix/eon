@@ -36,6 +36,9 @@ pub(super) const WINDOW_RUNTIME: &str = "EON_WINDOW_RUNTIME_DIR";
 
 /// The ID of this build's window in the default namespace (EON-C23).
 pub(super) const DEFAULT_WINDOW: &str = "default";
+/// Why a command that needs the default window cannot reach it.
+pub(super) const DEFAULT_NOT_RUNNING: &str =
+    "the default Eon window is not running; run `eon` to open it";
 
 pub(super) fn valid_window_id(id: &str) -> bool {
     id.len() == 8
@@ -126,7 +129,7 @@ struct Uninspectable {
 
 /// The full ID of default-namespace `generation` (EON-C23): `default` for
 /// this build's, else its 32 hex digits; a damaged entry keeps its raw name.
-fn default_namespace_id(generation: &str, current: &str) -> String {
+pub(super) fn default_namespace_id(generation: &str, current: &str) -> String {
     if generation == current {
         DEFAULT_WINDOW.into()
     } else if valid_generation(generation) {
@@ -664,24 +667,26 @@ pub(super) fn attach_window(inputs: &Inputs, argument: Option<&OsStr>) -> Result
     };
     let base = base_runtime_directory("eon");
     match (window, delegated) {
-        (Window::Default, Some(generation)) => attach_generation(inputs, &base, Some(&generation)),
+        (Window::Default, Some(generation)) => {
+            attach_generation(inputs, &base, Some(&generation), Some(&shown))
+        }
         (Window::Independent { root, .. }, Some(generation)) if runs(&root, &generation) => {
-            attach_generation(inputs, &root, Some(&generation))
+            attach_generation(inputs, &root, Some(&generation), Some(&shown))
         }
         (_, Some(_)) => Err(delegated_elsewhere(false, &shown)),
         (Window::Default, None) => {
             let current = current_generation(inputs)?;
             if !generation_running(inputs, &base, &current)? {
-                return Err(Error::unreachable(
-                    "the default Eon window is not running; run `eon` to open it",
-                ));
+                return Err(Error::unreachable(DEFAULT_NOT_RUNNING));
             }
-            attach_generation(inputs, &base, Some(&current))
+            attach_generation(inputs, &base, Some(&current), Some(&shown))
         }
-        (Window::Other(generation), None) => attach_generation(inputs, &base, Some(&generation)),
+        (Window::Other(generation), None) => {
+            attach_generation(inputs, &base, Some(&generation), Some(&shown))
+        }
         (Window::Independent { id, root }, None) => {
             let generation = window_generation(inputs, &id, &root)?;
-            attach_generation(inputs, &root, Some(&generation))
+            attach_generation(inputs, &root, Some(&generation), Some(&shown))
         }
     }
 }
@@ -795,7 +800,8 @@ fn own_window(inputs: &Inputs) -> Result<(PathBuf, String), Failure> {
         )),
         Ok(Some(caller)) => {
             let root = runtime_directory("eon");
-            let generation = caller_generation(&root, &caller).map_err(refused)?;
+            let current = current_generation(inputs).map_err(refused)?;
+            let generation = caller_generation(&root, &current, &caller).map_err(refused)?;
             Ok((root, generation))
         }
         Err(error) => Err(error),

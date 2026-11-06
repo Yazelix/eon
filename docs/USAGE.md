@@ -126,7 +126,9 @@ names those terminals, as in `Quit this window? It stops 3 terminals; 1 still
 running: p2  cargo build. [y/N]`; while nothing runs it quits without asking.
 Alt+Shift+Q and closing the window (and, on macOS, Command+Q) follow the
 same rule with a prompt in the window that names the busy terminals: Enter
-quits, Esc cancels, and Alt+Shift+D detaches instead; closing again leaves the prompt open. A
+quits, Esc cancels, and Alt+Shift+D detaches instead; closing again leaves the prompt open. If a quit
+does not finish, the window says `Quit did not finish; press Alt+Shift+Q to
+retry.` and `eon` commands that reach it say to retry `eon window stop ID`. A
 terminal started for an explicit command, such as `pane create -- COMMAND`,
 counts as running, and so does the Agent popup; the Files and Git popups
 never do. Eon does not see a shell builtin or a background job of an idle
@@ -543,10 +545,11 @@ line points agents to `eon --skill`.
 | `eon popup hide POPUP [--json]` | Hide popup `uN` of the workspace as its window's dismissal would: a keep-alive popup keeps running, a transient one stops, and a pending tab's Files starts the tab's first terminal at its starting directory |
 | `eon focus ID\|left\|right\|up\|down [--json]` | Focus a stable identity or traverse the workspace |
 | `eon versions` | Print Eon, protocol, and component identities |
-| `eon config-path` | Create the configuration root and print the full path of its settings file, `config.toml`, which need not exist yet |
-| `eon config-dir` | Create and print the configuration root |
+| `eon config path` | Create the configuration root and print the full path of its settings file, `config.toml`, which need not exist yet |
+| `eon config dir` | Create and print the configuration root |
 | `eon config defaults [--json]` | Print built-in defaults as commented TOML or a nested JSON object, without reading user configuration |
 | `eon --skill` | Print the `eon` agent skill this build ships, without starting a workspace or reading configuration |
+| `eon -V`, `eon --version` | Print this build's Eon version as `eon VERSION`, without starting a workspace or reading configuration |
 
 Window IDs: `default` is the window bare `eon` opens. One that another Eon build
 opened that way, such as the old build's window after an upgrade, has the 32 hex
@@ -677,7 +680,7 @@ command from another compatible build still finds the caller's supervisor in
 the inherited namespace. Discovery validates private directories and endpoints,
 has a bounded candidate count and timeout, and refuses ambiguous or incomplete
 resolution. An unavailable or incompatible supervisor exits 4 and names the
-generation, pointing to the terminal's own `eon`; it never launches, presents or
+window, pointing to the terminal's own `eon`; it never launches, presents or
 restarts a supervisor. Unknown explicit targets exit 3, malformed flags or IDs
 exit 2, and ambiguous window selection exits 1.
 

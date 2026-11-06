@@ -136,7 +136,7 @@ const RUNNER_COMMANDS: &[(&str, &[&str], RunnerOutput)] = {
             Keep,
         ),
         ("Show versions", &["versions"], Keep),
-        ("Show config path", &["config-path"], Keep),
+        ("Show config path", &["config", "path"], Keep),
         ("Show command help", &["--help"], Keep),
     ]
 };
@@ -399,7 +399,7 @@ fn caller_snapshot(inputs: &Inputs) -> Result<Snapshot, String> {
     let caller = calling_terminal().map_err(|error| error.detail)?;
     let resolved = resolve_workspace(inputs, WorkspaceTarget::default(), caller.as_deref())
         .map_err(|error| error.detail)?;
-    inspect(&resolved.socket, caller.as_deref(), &resolved.generation).map_err(|error| error.detail)
+    inspect(&resolved.socket, caller.as_deref(), &resolved.label).map_err(|error| error.detail)
 }
 
 /// Runs an `eon` command in-process as the popup's caller and returns its exit status.
@@ -698,6 +698,10 @@ fn execute(inputs: &Inputs, arguments: Vec<OsString>) -> Result<i32, Error> {
             write_stdout(inputs.skill)?;
             Ok(0)
         }
+        [flag] if flag == "-V" || flag == "--version" => {
+            write_stdout(format!("eon {}\n", inputs.version))?;
+            Ok(0)
+        }
         [command] if command == "versions" => {
             write_stdout(format!(
                 "eon {} {}\neonw {}\n{}\n",
@@ -708,8 +712,8 @@ fn execute(inputs: &Inputs, arguments: Vec<OsString>) -> Result<i32, Error> {
             ))?;
             Ok(0)
         }
-        [command] if command == "config-path" => print_config_path(true),
-        [command] if command == "config-dir" => print_config_path(false),
+        [command, action] if command == "config" && action == "path" => print_config_path(true),
+        [command, action] if command == "config" && action == "dir" => print_config_path(false),
         [command, action] if command == "config" && action == "defaults" => {
             print_config_defaults(inputs, false)
         }
@@ -884,11 +888,12 @@ const HELP_SECTIONS: &[(&str, &[(&str, &str)])] = &[
         &[
             ("anima [STYLE] [CHILD OPTIONS...]", "Play an animation here"),
             ("versions", "Show exact component versions"),
-            ("config-path", "Create the config root and print"),
+            ("config path", "Create the config root and print"),
             ("", "its config.toml path"),
-            ("config-dir", "Create and print the config root"),
+            ("config dir", "Create and print the config root"),
             ("config defaults [--json]", "Print config.toml defaults"),
             ("--skill", "Print this build's agent skill"),
+            ("-V, --version", "Print this build's Eon version"),
             ("-h, --help", "Show this help; after a command,"),
             ("", "only that command's lines"),
         ],
@@ -901,7 +906,7 @@ const HELP_SECTIONS: &[(&str, &[(&str, &str)])] = &[
 /// Anima's own help are not help here.
 fn command_help(version: &str, arguments: &[OsString]) -> Option<Result<i32, Error>> {
     let (flag, words) = arguments.split_last()?;
-    // Command words are lowercase, as `config-path`; `--`, IDs and the `-h,` row are not.
+    // Command words are lowercase, as `window`; `--`, IDs and the `-h,` row are not.
     let command_word = |word: &OsString| {
         word.to_str().is_some_and(|word| {
             word.starts_with(|first: char| first.is_ascii_lowercase())
@@ -1105,9 +1110,9 @@ fn application_id_argument(argument: &OsStr) -> Result<&str, Error> {
 fn lifecycle_command(inputs: &Inputs, arguments: &[OsString]) -> Result<Option<i32>, Error> {
     let root = runtime_directory("eonbase");
     Ok(Some(match arguments {
-        [command] if command == "attach" => attach_generation(inputs, &root, None)?,
+        [command] if command == "attach" => attach_generation(inputs, &root, None, None)?,
         [command, generation] if command == "attach" => {
-            attach_generation(inputs, &root, Some(generation_argument(generation)?))?
+            attach_generation(inputs, &root, Some(generation_argument(generation)?), None)?
         }
         [command] if command == "generations" => generations_command(inputs, false, "eonbase")?,
         [command, flag] if command == "generations" && flag == "--json" => {
@@ -1171,7 +1176,7 @@ fn control(
     // Every tab or pane close inspects first, even with --json or --yes, and
     // asks about its own busy or unknown terminals and a final close (EON-C10).
     if let Some(target_label) = close_target_label(&action) {
-        let snapshot = match inspect(socket, caller.as_deref(), generation) {
+        let snapshot = match inspect(socket, caller.as_deref(), &resolved.label) {
             Ok(snapshot) => snapshot,
             Err(error) => return report_failure(&error, json),
         };
@@ -1223,7 +1228,7 @@ fn control(
     if let Action::Workspace(WorkspaceAction::CloseWorkspace { workspace }) = &mut action
         && !json
     {
-        let listed = match inspect(socket, caller.as_deref(), generation) {
+        let listed = match inspect(socket, caller.as_deref(), &resolved.label) {
             Ok(snapshot) => snapshot.workspaces,
             Err(error) => return report_failure(&error, json),
         };
@@ -1254,7 +1259,7 @@ fn control(
         )? {
             return Ok(status);
         }
-        match inspect(socket, caller.as_deref(), generation) {
+        match inspect(socket, caller.as_deref(), &resolved.label) {
             Ok(snapshot) if snapshot.workspaces.iter().any(|item| item.id == *id) => {}
             Ok(_) => {
                 return report_failure(
@@ -1283,7 +1288,7 @@ fn control(
             return report_failure(&failure("malformed-action", error.detail), json);
         }
         Err(error) => {
-            return report_failure(&unreachable_supervisor(error, generation), json);
+            return report_failure(&unreachable_supervisor(error, &resolved.label), json);
         }
     };
     let window = window_json(resolved.window.as_deref());
@@ -1378,11 +1383,7 @@ fn control(
                     json_escape(generation),
                 )
             } else {
-                format!(
-                    "ended generation {}; window {} closed\n",
-                    ended.generation,
-                    resolved.window.as_deref().unwrap_or("default")
-                )
+                format!("Eon window {} closed\n", resolved.label)
             })?;
             Ok(0)
         }
@@ -1563,7 +1564,7 @@ fn send_terminal(inputs: &Inputs, send: PaneSend, target: WorkspaceTarget) -> Re
             Err(error) if error.kind == EndpointFailureKind::InvalidAction => {
                 Err(failure("malformed-action", error.detail))
             }
-            Err(error) => Err(unreachable_supervisor(error, &resolved.generation)),
+            Err(error) => Err(unreachable_supervisor(error, &resolved.label)),
         };
     // No TEXT means --enter alone. The Enter goes after the window's delay, so
     // the program takes the whole paste first; once the paste is in, an Enter
@@ -1649,7 +1650,8 @@ fn stdin_holds_data() -> bool {
     }
 }
 
-fn unreachable_supervisor(error: EndpointFailure, generation: &str) -> Failure {
+/// A supervisor that stopped answering, in window `window` (its full ID).
+fn unreachable_supervisor(error: EndpointFailure, window: &str) -> Failure {
     let dead = error.kind == EndpointFailureKind::Dead;
     if env::var_os(TERMINAL_VARIABLE).is_none() {
         let code = if dead {
@@ -1662,7 +1664,7 @@ fn unreachable_supervisor(error: EndpointFailure, generation: &str) -> Failure {
     failure(
         "supervisor-unavailable",
         format!(
-            "generation {generation}: {}; use the terminal's own `eon` from its PATH",
+            "Eon window {window}: {}; use the terminal's own `eon` from its PATH",
             error.detail
         ),
     )
@@ -1845,7 +1847,7 @@ fn hide_popup(
         Err(error) => return report_failure(&error, json),
     };
     let snapshot = match resolve_workspace(inputs, target.clone(), caller.as_deref())
-        .and_then(|resolved| inspect(&resolved.socket, caller.as_deref(), &resolved.generation))
+        .and_then(|resolved| inspect(&resolved.socket, caller.as_deref(), &resolved.label))
     {
         Ok(snapshot) => snapshot,
         Err(error) => return report_failure(&error, json),
@@ -1869,7 +1871,7 @@ fn hide_popup(
 }
 
 /// The workspace `eon workspace` reports: the caller's, else the shown one.
-fn inspect(socket: &Path, caller: Option<&str>, generation: &str) -> Result<Snapshot, Failure> {
+fn inspect(socket: &Path, caller: Option<&str>, window: &str) -> Result<Snapshot, Failure> {
     match send_action_from(
         Ok(socket),
         caller.map(str::to_owned),
@@ -1881,7 +1883,7 @@ fn inspect(socket: &Path, caller: Option<&str>, generation: &str) -> Result<Snap
             "unrepresentable-state",
             "Eon returned the wrong result for workspace inspection",
         )),
-        Err(error) => Err(unreachable_supervisor(error, generation)),
+        Err(error) => Err(unreachable_supervisor(error, window)),
     }
 }
 

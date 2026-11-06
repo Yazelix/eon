@@ -75,7 +75,9 @@ socket names, JSON fields and protocol identifiers retain their spellings.
 - **Status:** Proven. Amended on 2026-11-03 (approved by Lucca, relayed by
   eon-overseer) by `eon-369s`: Nix derives the Eon Bar's icon image. Amended
   on 2026-11-06 (approved by Lucca, relayed by eon-overseer) by `eon-7cf0y.22`
-  (S3): `eon window attach` reopens a window.
+  (S3): `eon window attach` reopens a window. Amended on 2026-11-06 (approved
+  by Lucca, relayed by eon-overseer) by `eon-7cf0y.22` (S4): `eon -V` and
+  `eon --version`.
 - **Consumer:** A user launching Eon or eonbase from one accepted product
   generation.
 - **Trigger:** Eon starts a new composed runtime or adopts an exact live run.
@@ -127,6 +129,10 @@ socket names, JSON fields and protocol identifiers retain their spellings.
     unchanged and exits successfully without starting children or preparing
     configuration/runtime state; extra arguments are invalid syntax.
     `eon --help` lists it and ends with a line pointing agents to it.
+  - Standalone `eon -V` and `eon --version` print `eon VERSION`, this build's
+    Eon version, as one line on stdout and exit successfully without starting
+    children or preparing configuration or runtime state. Extra arguments are
+    invalid syntax.
   - Eon owns the cursor-tail duration default `1.5` and the optional
     `[terminal] cursor_trail_duration` multiplier in the same config file.
     Zero disables the trail while retaining the cursor color and contrasting
@@ -927,7 +933,9 @@ socket names, JSON fields and protocol identifiers retain their spellings.
 
 ## EON-C9 — Managed shell environment
 
-- **Status:** Proven
+- **Status:** Proven. Amended on 2026-11-06 (approved by Lucca, relayed by
+  eon-overseer) by `eon-7cf0y.22` (S4): `eon config path` and `eon config dir`
+  replace `config-path` and `config-dir`.
 - **Consumer:** People and agents inspecting Eon configuration defaults and
   paths, Eon terminals launched under Nushell or Bash, and every terminal,
   popup, Venus and quota reader the supervisor starts.
@@ -942,15 +950,15 @@ socket names, JSON fields and protocol identifiers retain their spellings.
     command does not read the user's configuration, prepare directories, contact
     a supervisor or start children. Successful output exits 0 with no stderr
     output; invalid syntax exits 2 and output failure exits 1.
-  - `eon config-path` creates the configuration root if it is missing and
+  - `eon config path` creates the configuration root if it is missing and
     prints the absolute path of the settings file `config.toml` inside it,
-    without creating or reading that file. `eon config-dir` creates the root
+    without creating or reading that file. `eon config dir` creates the root
     the same way and prints its absolute path. On success both exit 0 with one
     line on stdout and no stderr output; other arguments exit 2. A root that
     cannot be resolved or created, or a stdout write that fails for any reason
     but a closed pipe, exits 1 with the reason on stderr; a closed stdout pipe
     still exits 0 with no stderr output. `eon --help` names `config.toml`
-    beside `config-path` and `config defaults`.
+    beside `config path` and `config defaults`.
   - Eon selects exact Nushell, Bash, Starship, Zoxide, fzf, Atuin, Carapace,
     Helix, Yazi, and LazyGit artifacts.
   - Helix that Eon starts loads its Steel configuration files, `helix.scm` and
@@ -1141,6 +1149,8 @@ socket names, JSON fields and protocol identifiers retain their spellings.
   (S2): Commands runs `eon window stop previous`. Amended on 2026-11-06
   (approved by Lucca, relayed by eon-overseer) by `eon-7cf0y.22` (S3):
   `--window` takes window IDs and prefixes and `--generation` is removed.
+  Amended on 2026-11-06 (approved by Lucca, relayed by eon-overseer) by
+  `eon-7cf0y.22` (S4): Commands runs `eon config path`.
 - **Consumer:** One local CLI or approved composition controlling a live Eon
   supervisor.
 - **Trigger:** The client submits one versioned workspace or supervisor-lifecycle
@@ -1506,7 +1516,7 @@ socket names, JSON fields and protocol identifiers retain their spellings.
   `eon` commands: tab, pane and window creation, closing or moving the popup's
   own tab, quitting this window, switching, creating, renaming or closing a
   workspace (EON-C33), the workspace and window
-  listings, `window stop previous`, `versions`, `config-path` and `--help`. Each
+  listings, `window stop previous`, `versions`, `config path` and `--help`. Each
   line names the command it runs. Enter runs it in the popup's terminal, with
   that terminal's `EON_TERMINAL` and `EON_TAB`: pane creation and tab moves act
   for the popup's tab under the caller rules above, closing names `EON_TAB`, and
@@ -2789,7 +2799,9 @@ socket names, JSON fields and protocol identifiers retain their spellings.
   window language, `default` answering to its generation's hex digits, and
   no exact ID winning over another window it begins. Amended on 2026-11-06
   (approved by Lucca, relayed by eon-overseer) by `eon-7cf0y.22` (S3):
-  `--window` takes window IDs.
+  `--window` takes window IDs. Amended on 2026-11-06 (approved by Lucca,
+  relayed by eon-overseer) by `eon-7cf0y.22` (S4): `eon window attach` with no
+  build record names the window.
 - **Consumer:** A full-Eon user on native x86_64 Linux Wayland.
 - **Trigger:** `eon window new`, the desktop launcher's New Eon Window action,
   or Venus's Alt+Shift+N shortcut.
@@ -2801,7 +2813,7 @@ socket names, JSON fields and protocol identifiers retain their spellings.
   whichever Eon build started it. When this `eon` cannot present it (another
   EONW version or component graph), the command runs the `eon` of the build
   that started it, as that generation recorded it, to present it. When no such
-  record exists, it exits 1 and names the generation, the versions it
+  record exists, it exits 1 and names the window, the versions it
   reports, and that the build that started it can attach or stop it.
   **Window IDs.** Every running full-Eon window has one ID. An independent
   window's ID is its eight-hex-digit ID. In the default namespace, the window
@@ -3115,7 +3127,8 @@ socket names, JSON fields and protocol identifiers retain their spellings.
   lifecycle for older generations, newer list and trust values, and no
   rewrite of `config.toml`. Amended on 2026-11-06 (approved by Lucca, relayed
   by eon-overseer) by `eon-7cf0y.22` (S3): `eon window attach ID` presents an
-  older window.
+  older window. Amended on 2026-11-06 (approved by Lucca, relayed by
+  eon-overseer) by `eon-7cf0y.22` (S4): `eon config dir`.
 - **Consumer:** People, scripts and agents that use Eon 1.0 on x86_64 Linux on
   native Wayland and upgrade within 1.x.
 - **Trigger:** Installing a later 1.x release over 1.0 or another 1.x release.
@@ -3131,7 +3144,7 @@ socket names, JSON fields and protocol identifiers retain their spellings.
     prints at 1.0 keeps its name, type and meaning; the 1.0 JSON fixture
     (`eon-igae.11`) is the documented record of those fields. Later releases
     may add fields and values; consumers ignore what they don't know.
-  - **Configuration:** a `config.toml` under `eon config-dir` that loads in
+  - **Configuration:** a `config.toml` under `eon config dir` that loads in
     1.0 loads in every 1.x with the same meaning, and the documented
     `EON_CONFIG_HOME` and `EON_RUNTIME_DIR` variables keep theirs. A setting
     deprecated in 1.x still loads and warns (the first deprecation adds the

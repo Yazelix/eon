@@ -172,6 +172,23 @@ fn close_prompt_asks_for_a_final_close() {
     assert!(native_key_shortcut_for(NATIVE_PLATFORM, detach, ALT_SHIFT, &files).is_none());
     assert!(detach_chord(&[]).is_some());
     assert_eq!(detach_chord(&files), None);
+
+    // After a failed Stop the window names the Quit chord that retries it, unless a configured
+    // popup takes that key.
+    #[cfg(target_os = "linux")]
+    assert_eq!(
+        stop_incomplete_notice(&[]),
+        "Quit did not finish; press Alt+Shift+Q to retry."
+    );
+    let agent = [PopupEntry {
+        id: "agent".into(),
+        label: "Agent".into(),
+        shortcut: PopupKey::Bound(Shortcut {
+            modifiers: eon_workspace_protocol::v35::ALT | eon_workspace_protocol::v35::SHIFT,
+            key: "KeyQ".into(),
+        }),
+    }];
+    assert_eq!(stop_incomplete_notice(&agent), "Quit did not finish.");
 }
 
 #[test]
@@ -879,7 +896,7 @@ fn quit_progress_follows_workspace_events() {
     let failure = || {
         WorkspaceEvent::Response(Response::Failure(Failure {
             code: "stop-incomplete".into(),
-            detail: "generation cleanup is incomplete; retry Stop".into(),
+            detail: "window cleanup is incomplete; retry `eon window stop 00000007`".into(),
         }))
     };
     let effects = |refresh, step| QuitEffects { refresh, step };

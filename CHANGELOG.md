@@ -28,6 +28,15 @@ installation, and proven contract changes.
   their recorded `eon`, but their own `eon` cannot stop or attach a window of
   this release: restart old windows to use the new commands everywhere
   (`eon-7cf0y.22`, EON-C10, EON-C11, EON-C23).
+- `eon config path` and `eon config dir` replace `eon config-path` and
+  `eon config-dir`, which are removed, and `eon -V` and `eon --version` print
+  `eon VERSION`. Error messages name the window instead of its generation,
+  as in `Eon window default: …`, and closing the final tab prints
+  `Eon window ID closed`. After a quit that did not finish, the window says
+  `Quit did not finish; press Alt+Shift+Q to retry.`, and `eon` commands that
+  reach it say to retry `eon window stop ID`, or `eonbase stop GENERATION`
+  for an eonbase window (`eon-7cf0y.22`, `eon-7cf0y.18`,
+  EON-C1, EON-C9, EON-C11, EON-C28).
 - Tab, workspace and quota chips in the Eon Bar, and the bare key hints in the
   bottom bar (such as Left/Right), no longer cut the tails of g, p, y, j and q:
   their text clips at the chip or bar instead of at the terminal's line

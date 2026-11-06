@@ -10,7 +10,10 @@ use super::supervisor::{
     base_runtime_directory, effective_uid, present_at, probe_supervisor, runtime_directory,
     supervisor_lock_path, try_lock_supervisor_lifecycle, validate_private_directory,
 };
-use super::windows::{DEFAULT_WINDOW, WINDOW_RUNTIME, Window, runtime_window};
+use super::windows::{
+    DEFAULT_NOT_RUNNING, DEFAULT_WINDOW, WINDOW_RUNTIME, Window, default_namespace_id,
+    runtime_window,
+};
 use super::workspace::{json_escape, terminal_text};
 use eon_workspace_protocol::v35::{
     Action, Availability, BusyTerminals, Failure, LifecycleResponse, MAX_RUNNING_WINDOWS, Response,
@@ -322,6 +325,8 @@ pub(super) struct WorkspaceTarget {
 pub(super) struct ResolvedWorkspace {
     pub(super) generation: String,
     pub(super) window: Option<String>,
+    /// The window's full EON-C23 ID, for human text.
+    pub(super) label: String,
     pub(super) socket: PathBuf,
 }
 
@@ -348,8 +353,14 @@ pub(super) fn resolve_workspace(
     };
     let window_only = target.window.is_some() && exact.is_none();
     let window = super::windows::runtime_window(&root);
+    let label = |generation: &str| {
+        window
+            .clone()
+            .unwrap_or_else(|| default_namespace_id(generation, &current))
+    };
     let selected = |generation: String| ResolvedWorkspace {
         socket: generation_directory(&root, &generation).join("eon.sock"),
+        label: label(&generation),
         generation,
         window: window.clone(),
     };
@@ -357,7 +368,8 @@ pub(super) fn resolve_workspace(
         failure(
             "supervisor-unavailable",
             format!(
-                "generation {generation}: {detail}; use the terminal's own `eon` from its PATH"
+                "Eon window {}: {detail}; use the terminal's own `eon` from its PATH",
+                label(generation)
             ),
         )
     };
@@ -388,21 +400,21 @@ pub(super) fn resolve_workspace(
         {
             return Err(failure(
                 "missing-supervisor",
-                format!("generation {current} has no supervisor; run `eon` first"),
+                match &window {
+                    Some(id) => format!("Eon window {id} is not running; see `eon window ls`"),
+                    None => DEFAULT_NOT_RUNNING.into(),
+                },
             ));
         }
         probe(&current).map_err(|(_, error)| error)?;
-        return Ok(selected(current));
+        return Ok(selected(current.clone()));
     }
 
     let generation = if let Some(id) = exact {
         let present =
             workspace_runtime_exists(&root, &id).map_err(|detail| unavailable(&id, detail))?;
         if !present && id == current {
-            return Err(failure(
-                "missing-supervisor",
-                "the default Eon window is not running; run `eon` to open it",
-            ));
+            return Err(failure("missing-supervisor", DEFAULT_NOT_RUNNING));
         }
         if !present {
             return Err(failure(
@@ -508,7 +520,19 @@ pub(super) fn resolve_workspace(
 /// Unlike `resolve_workspace`, an entry that names no generation does not
 /// stop the search: callers that report damaged entries themselves still
 /// find the caller's window beside them.
-pub(super) fn caller_generation(root: &Path, caller: &str) -> Result<String, String> {
+pub(super) fn caller_generation(
+    root: &Path,
+    current: &str,
+    caller: &str,
+) -> Result<String, String> {
+    // Messages name windows by their full EON-C23 ID; `current` is this
+    // build's generation, the default namespace's `default`.
+    let window = runtime_window(root);
+    let label = |id: &str| {
+        window
+            .clone()
+            .unwrap_or_else(|| default_namespace_id(id, current))
+    };
     let deadline = Instant::now() + CONTROL_TIMEOUT;
     let mut owners = Vec::new();
     let mut failures = Vec::new();
@@ -517,7 +541,7 @@ pub(super) fn caller_generation(root: &Path, caller: &str) -> Result<String, Str
             continue;
         };
         if let Err(detail) = validate_private_directory(&path) {
-            failures.push(format!("generation {id}: {detail}"));
+            failures.push(format!("Eon window {}: {detail}", label(id)));
             continue;
         }
         let socket = path.join("eon.sock");
@@ -535,7 +559,7 @@ pub(super) fn caller_generation(root: &Path, caller: &str) -> Result<String, Str
             Ok(true) => owners.push(id.to_owned()),
             Ok(false) => {}
             Err(error) if matches!(error.kind, EndpointFailureKind::Dead) => {}
-            Err(error) => failures.push(format!("generation {id}: {}", error.detail)),
+            Err(error) => failures.push(format!("Eon window {}: {}", label(id), error.detail)),
         }
     }
     match owners.as_slice() {
@@ -543,10 +567,15 @@ pub(super) fn caller_generation(root: &Path, caller: &str) -> Result<String, Str
         [] => Err(failures.into_iter().next().unwrap_or_else(|| {
             "the calling terminal is not live in this Eon runtime namespace".into()
         })),
-        _ => Err(format!(
-            "more than one supervisor validates the calling terminal: {}",
-            owners.join(", ")
-        )),
+        _ => {
+            let mut windows: Vec<String> = owners.iter().map(|id| label(id)).collect();
+            windows.dedup();
+            Err(format!(
+                "more than one supervisor validates the calling terminal, in Eon window{} {}",
+                if windows.len() == 1 { "" } else { "s" },
+                windows.join(", ")
+            ))
+        }
     }
 }
 
@@ -1315,22 +1344,29 @@ fn local_minute(unix_ms: u64) -> String {
     String::from_utf8_lossy(&buffer[..length]).into_owned()
 }
 
+/// Presents generation `target`, the current one without it. Messages name
+/// `window`, as `eon window attach` shows it, else the generation (eonbase).
 pub(super) fn attach_generation(
     inputs: &Inputs,
     root: &Path,
     target: Option<&str>,
+    window: Option<&str>,
 ) -> Result<i32, Error> {
     let current = current_generation(inputs)?;
     let target = target.unwrap_or(&current);
+    let subject = window.map_or_else(
+        || format!("generation {target}"),
+        |window| format!("Eon window {window}"),
+    );
     let record = inspect_selected_generation(inputs, root, &current, target)?
-        .ok_or_else(|| Error::missing(format!("generation {target} was not found")))?;
+        .ok_or_else(|| Error::missing(format!("{subject} was not found")))?;
     if !record.attach.available {
         let versions = match (&record.eon_version, record.workspace_protocol) {
             (Some(version), Some(protocol)) => format!(" (Eon {version}, EONW {protocol})"),
             _ => String::new(),
         };
         return Err(format!(
-            "generation {target}{versions} is not attachable: {}",
+            "{subject}{versions} is not attachable: {}",
             record.attach.reason
         )
         .into());
@@ -1970,6 +2006,33 @@ mod tests {
         );
         held.unlock().unwrap();
         drop(log);
+        fs::remove_dir_all(base).unwrap();
+    }
+
+    /// A caller search that cannot check a generation names its window, as
+    /// `eon window ls` does, not the generation.
+    #[test]
+    fn caller_search_failures_name_the_window() {
+        let base = temporary_directory();
+        fs::set_permissions(&base, fs::Permissions::from_mode(0o700)).unwrap();
+        let id = "g1-11111111111111111111111111111111";
+        let directory = generation_directory(&base, id);
+        fs::create_dir_all(&directory).unwrap();
+        fs::set_permissions(base.join("generations"), fs::Permissions::from_mode(0o700)).unwrap();
+        fs::set_permissions(&directory, fs::Permissions::from_mode(0o755)).unwrap();
+        for (current, window) in [
+            (id, "default"),
+            (
+                "g1-22222222222222222222222222222222",
+                "11111111111111111111111111111111",
+            ),
+        ] {
+            let error = super::caller_generation(&base, current, "session-1.x").unwrap_err();
+            assert!(
+                error.starts_with(&format!("Eon window {window}: ")),
+                "{error}"
+            );
+        }
         fs::remove_dir_all(base).unwrap();
     }
 

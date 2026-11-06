@@ -109,7 +109,7 @@ const STEPS: &[Spec] = &[
         needs: GUI,
         requires: &["launch"],
         proves: "`eon versions` names aarch64-darwin for Eon and every component, and \
-                 `eon config-dir` is the private configuration root",
+                 `eon config dir` is the private configuration root",
         window: true,
         timeout: MINUTE,
         body: identity,
@@ -1686,13 +1686,13 @@ fn translucency(scenario: &mut Scenario, log: &mut Log, deadline: Instant) -> Ou
 fn identity(scenario: &mut Scenario, log: &mut Log, deadline: Instant) -> Outcome {
     let report = succeed(log, &mut scenario.eon(&["versions"]), deadline, true)?;
     versions_name(&String::from_utf8_lossy(&report), "aarch64-darwin").map_err(Failure::Check)?;
-    let path = succeed(log, &mut scenario.eon(&["config-dir"]), deadline, true)?;
+    let path = succeed(log, &mut scenario.eon(&["config", "dir"]), deadline, true)?;
     let path = String::from_utf8_lossy(&path).trim().to_owned();
     let expected = scenario.home().join(".config/eon");
     // macOS's temporary directories sit behind the /var and /tmp links.
     check(
         fs::canonicalize(&path).ok() == fs::canonicalize(&expected).ok(),
-        || format!("eon config-dir printed {path}, not {}", expected.display()),
+        || format!("eon config dir printed {path}, not {}", expected.display()),
     )
 }
 

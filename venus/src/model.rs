@@ -469,8 +469,6 @@ impl WorkspaceModel {
                 (snapshot_changed || notice_cleared, workspace_changed)
             }
             WorkspaceResponse::Failure(failure) => {
-                // After a failed Stop, Eon refuses every refresh until a Stop completes.
-                self.unavailable |= failure.code == "stop-incomplete";
                 let notice = if failure.code == "no-attention" {
                     WorkspaceNotice::NoAttention(bounded(failure.detail))
                 } else {
@@ -531,6 +529,13 @@ impl WorkspaceModel {
     /// Refuse an action locally with the same lifetime as an Eon rejection.
     pub fn reject_action(&mut self, detail: impl Into<String>) -> bool {
         self.set_notice(WorkspaceNotice::Action(bounded(detail.into())), true)
+    }
+
+    /// After a failed Stop, Eon refuses every refresh until a Stop completes; `notice` says
+    /// how to retry.
+    pub fn stop_incomplete(&mut self, notice: String) -> bool {
+        self.unavailable = true;
+        self.set_notice(WorkspaceNotice::Action(bounded(notice)), false)
     }
 
     /// Mark Eon unavailable; `answers_action` when the failure itself answers a user action.
@@ -1135,15 +1140,9 @@ mod tests {
             unavailable,
             "a retry poll is no new notice"
         );
-        let stopping = || {
-            WorkspaceResponse::Failure(Failure {
-                code: "stop-incomplete".into(),
-                detail: "stopping".into(),
-            })
-        };
-        model.apply(stopping());
+        model.stop_incomplete("Quit did not finish.".into());
         let polled = model.notice_serial();
-        assert!(!model.apply(stopping()).0);
+        assert!(!model.stop_incomplete("Quit did not finish.".into()));
         assert_eq!(
             model.notice_serial(),
             polled,
@@ -1169,11 +1168,12 @@ mod tests {
         model.reject_action("refused");
         assert!(model.unavailable(), "a later notice keeps Eon unavailable");
         let mut model = WorkspaceModel::default();
-        model.apply(failure("stop-incomplete"));
+        model.stop_incomplete("Quit did not finish.".into());
         assert!(
             model.unavailable(),
             "after a failed Stop, Eon refuses every refresh"
         );
+        assert_eq!(model.notice(), Some("Quit did not finish."));
     }
 
     /// A workspace of two tabs whose snapshot carries both quotas.

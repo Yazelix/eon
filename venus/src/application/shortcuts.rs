@@ -612,6 +612,14 @@ pub(super) fn detach_chord(entries: &[PopupEntry]) -> Option<String> {
         .map(|shortcut| shortcut.trigger.display_label_for(NATIVE_PLATFORM))
 }
 
+/// Alt+Shift+Q's label, unless a configured popup takes the key. macOS's Command+Q is a close
+/// request, which detaches after a failed Stop, so it never retries one.
+pub(super) fn quit_retry_chord(entries: &[PopupEntry]) -> Option<String> {
+    popup_entry(entries, KeyCode::KeyQ, ALT_SHIFT)
+        .is_none()
+        .then(|| physical_shortcut_label_for(NATIVE_PLATFORM, wire_modifiers(ALT_SHIFT), "KeyQ"))
+}
+
 pub(super) fn native_pointer_shortcut(
     button: MouseButton,
     modifiers: session::Modifiers,

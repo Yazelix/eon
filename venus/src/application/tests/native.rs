@@ -2082,8 +2082,12 @@ fn a_close_request_detaches_after_a_failed_stop() {
             app,
             workspace::Response::Failure(workspace::Failure {
                 code: "stop-incomplete".into(),
-                detail: "generation cleanup is incomplete; retry Stop".into(),
+                detail: "window cleanup is incomplete; retry `eon window stop 00000007`".into(),
             }),
+        );
+        assert_eq!(
+            app.workspace_model.notice(),
+            Some("Quit did not finish; press Alt+Shift+Q to retry.")
         );
         assert!(!event_loop.exiting());
         app.window_event(event_loop, id, WindowEvent::CloseRequested);

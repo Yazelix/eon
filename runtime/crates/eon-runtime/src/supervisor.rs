@@ -2400,6 +2400,22 @@ fn subscribe(
     )
 }
 
+/// Why generation `generation`, in independent window `window` or the
+/// default namespace, refuses requests after a failed Stop. Eon names the
+/// window by its durable ID, which every build's `eon window stop` selects
+/// (EON-C8); eonbase keeps its generation form.
+fn stop_incomplete(mode: LaunchMode, window: Option<&str>, generation: &str) -> String {
+    match mode {
+        LaunchMode::Workspace => format!(
+            "window cleanup is incomplete; retry `eon window stop {}`",
+            super::windows::durable_window_id(window, generation)
+        ),
+        LaunchMode::Terminal => {
+            format!("generation cleanup is incomplete; retry `eonbase stop {generation}`")
+        }
+    }
+}
+
 fn dispatch_control_request(
     request: Request,
     state: &mut SupervisorState,
@@ -2425,7 +2441,7 @@ fn dispatch_control_request(
     {
         let error = failure(
             "stop-incomplete",
-            "generation cleanup is incomplete; retry Stop",
+            stop_incomplete(mode, state.window.as_deref(), generation),
         );
         return (
             match request.action {
@@ -2459,7 +2475,7 @@ fn dispatch_control_request(
                     if state.stopping {
                         runtime.attach = Availability {
                             available: false,
-                            reason: "generation cleanup is incomplete; retry Stop".into(),
+                            reason: stop_incomplete(mode, state.window.as_deref(), generation),
                         };
                     }
                     (
@@ -3556,6 +3572,21 @@ mod tests {
         assert_eq!(
             refusal(subscribe(&mut state, None, Default::default())),
             "stop-incomplete"
+        );
+        let Dispatched::Reply(
+            super::ControlResponse::Workspace(super::Response::Failure(stopping)),
+            false,
+        ) = subscribe(&mut state, None, Default::default())
+        else {
+            panic!("a subscription is refused");
+        };
+        assert_eq!(stopping.code, "stop-incomplete");
+        assert!(
+            stopping
+                .detail
+                .starts_with("window cleanup is incomplete; retry `eon window stop "),
+            "{}",
+            stopping.detail
         );
         crate::subscriptions::tests::hang_up(hung_up_peer);
         state.serve_subscribers(Instant::now());
@@ -4940,6 +4971,27 @@ mod tests {
             "{supervisor_log}"
         );
         fs::remove_dir_all(root).unwrap();
+    }
+
+    /// After a failed Stop, Eon names the window by its durable ID, never
+    /// `default`, which another build's `eon` takes as its own window, and
+    /// eonbase names its own Stop.
+    #[test]
+    fn stop_incomplete_names_the_command_that_stops_this_window() {
+        use super::{LaunchMode, stop_incomplete};
+        let generation = "g1-0123456789abcdef0123456789abcdef";
+        assert_eq!(
+            stop_incomplete(LaunchMode::Workspace, None, generation),
+            "window cleanup is incomplete; retry `eon window stop 01234567`"
+        );
+        assert_eq!(
+            stop_incomplete(LaunchMode::Workspace, Some("abcd1234"), generation),
+            "window cleanup is incomplete; retry `eon window stop abcd1234`"
+        );
+        assert_eq!(
+            stop_incomplete(LaunchMode::Terminal, None, generation),
+            format!("generation cleanup is incomplete; retry `eonbase stop {generation}`")
+        );
     }
 
     /// A pending pair's command carries the runtime's launch flags only for
