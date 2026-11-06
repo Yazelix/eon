@@ -253,7 +253,7 @@ fn fractional_card_workspace(scale: f64, scroll: f32) -> WorkspaceScene {
     };
     let size = PhysicalSize::new(2000, 900);
     let metrics = CellMetrics::for_scale(scale);
-    let hints = ShortcutHintsScene::new(vec![], size, metrics, None, |text: &str| {
+    let hints = ShortcutHintsScene::new(vec![], size, metrics, None, None, |text: &str| {
         text.len() as f32 * metrics.width
     });
     WorkspaceScene::from_snapshot_with_bar(

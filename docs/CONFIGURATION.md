@@ -74,7 +74,7 @@ disk_path = "~" # Path whose filesystem the disk chip measures.
 disk_warning_percent = 85 # Disk use from which the disk chip turns orange.
 ram_critical_percent = 90 # RAM use from which the RAM chip turns red.
 ram_warning_percent = 80 # RAM use from which the RAM chip turns orange.
-widgets = ["codex_quota_5h", "codex_quota_7d", "claude_quota_5h", "claude_quota_7d", "claude_quota_scoped", "cpu", "ram", "disk", "clock", "version"] # Eon Bar widgets, in display order. Each quota widget selects a window; claude_quota_scoped selects all model-scoped Claude windows.
+widgets = ["codex_quota_5h", "codex_quota_7d", "claude_quota_5h", "claude_quota_7d", "claude_quota_scoped", "cpu", "ram", "disk", "clock", "version"] # Eon Bar widgets: header widgets in display order; the clock sits at the bottom bar's left end and the version at its right end, wherever they are listed. Each quota widget selects a window; claude_quota_scoped selects all model-scoped Claude windows.
 
 [terminal]
 background_blur = true # Request compositor background blur.
@@ -189,18 +189,18 @@ is ignored with a warning. `[bar] show_version`, deprecated in v0.1.2, reads as
 `true` gives the built-in list. Any other value is a configuration error.
 
 `[bar] widgets` chooses which Eon Bar widgets show and their order, left to
-right between the tabs and the Shortcuts button, except `version`, which sits
-at the right end of the bottom shortcut hints while they show, wherever it is
-in the list: the Codex and Claude quota chips, CPU, RAM and disk use, the local
-clock and `EON <version>`. The Eon logo at the
-bar's left end is not a widget and shows whatever the list holds. Each name
+right between the tabs and the Shortcuts button, except `clock` and `version`,
+which sit at the left and right ends of the bottom shortcut hints while they
+show, wherever they are in the list: the Codex and Claude quota chips, CPU, RAM
+and disk use, the local clock and `EON <version>`. The Eon logo at the bar's
+left end is not a widget and shows whatever the list holds. Each name
 appears at most once. A widget left out doesn't show, `widgets = []` leaves
 only the logo, the tabs and the buttons, and omitting the key uses the built-in
 list above. The list applies when a window next opens or reopens. Unknown names
 are ignored with a warning; repeated known names are a configuration error. Narrow windows hide the Eon
-logo first, then the clock, then disk, RAM and CPU, whatever the order, then
-quota chips one by one, the one closest to the tabs first; the version hides
-once the shortcut hints have no room for it beside their keycaps. The logo
+logo first, then disk, RAM and CPU, whatever the order, then quota chips one by
+one, the one closest to the tabs first; in the shortcut hints the version hides
+first and then the clock, once the keycaps no longer fit beside them. The logo
 also hides whenever the tabs would not all fit beside it, however wide the
 window, and it leaves room for a chip for each selected window each provider's latest
 read reported and for every reading, all at their widest, so their changing

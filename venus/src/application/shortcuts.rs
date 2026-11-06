@@ -1137,7 +1137,8 @@ mod tests {
             .set_header_font_file(std::path::Path::new(&font))
             .unwrap();
         // On a 13-inch 2560x1600 panel at scale 2, the bar keeps every keycap and expanded hint
-        // centred, clear of the version label, while the terminal or the tabs have focus.
+        // centred, clear of the clock and the version label, while the terminal or the tabs have
+        // focus.
         for focus in [WorkspaceFocus::Terminal, WorkspaceFocus::Tabs] {
             let hints =
                 shortcut_hints_for(NativePlatform::Linux, focus, &entries, Sidebar::Open, true);
@@ -1150,6 +1151,7 @@ mod tests {
                     size,
                     metrics,
                     Some("EON 0.1.18".len() as f32 * metrics.width),
+                    Some("00:00".len() as f32 * metrics.width + metrics.padding * 2.0),
                     |text| fonts.measure_header_text(metrics, text),
                 );
                 assert!(scene.complete, "{focus:?} at scale {scale}");

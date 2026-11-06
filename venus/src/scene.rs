@@ -793,7 +793,7 @@ impl Default for EonBar<'_> {
     }
 }
 
-/// One local wall-clock minute shown in the workspace header.
+/// One local wall-clock minute shown at the bottom bar's left end.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct LocalClock {
     label: String,
@@ -901,12 +901,14 @@ pub(crate) struct ShortcutHintPiece {
     pub label_offset: f32,
 }
 
-/// A read-only footer: one centred cluster of modifier keycaps and expanded hints, then the
-/// version label at its right end.
+/// The bottom bar: the local clock at its left end, one centred cluster of modifier keycaps
+/// and expanded hints, then the version label at its right end.
 #[derive(Clone, Debug, PartialEq)]
 pub struct ShortcutHintsScene {
     pub rect: SceneRect,
     pub complete: bool,
+    /// The local clock's outline, while it shows.
+    pub(crate) clock: Option<SceneRect>,
     pub(crate) groups: Vec<ShortcutHintGroup>,
     pub(crate) pieces: Vec<ShortcutHintPiece>,
     /// The version label's text rect, while it shows.
@@ -924,16 +926,18 @@ impl ShortcutHintsScene {
         Self::height(metrics) + stack_inset(metrics) + pane_inset(metrics) / 2.0
     }
 
-    /// Lay the hints out in a window `size` wide, with the version label `version` pixels wide
-    /// when it is requested. Narrow windows give way in this order: the cluster leaves the
-    /// centre to clear the version, the version hides, expanded hints drop whole by priority,
-    /// and the keycaps switch to their short legends. Keycaps never drop.
+    /// Lay the hints out in a window `size` wide, after the clock `clock` pixels wide and
+    /// before the version label `version` pixels wide, each when it is requested. Narrow
+    /// windows give way in this order: the cluster leaves the centre to clear the clock and
+    /// the version, the version hides, the clock hides, expanded hints drop whole by
+    /// priority, and the keycaps switch to their short legends. Keycaps never drop.
     #[must_use]
     pub fn new(
         hints: Vec<ShortcutHint>,
         size: PhysicalSize<u32>,
         metrics: CellMetrics,
         version: Option<f32>,
+        clock: Option<f32>,
         mut measure: impl FnMut(&str) -> f32,
     ) -> Self {
         let chrome = pane_chrome_rect(
@@ -1038,39 +1042,41 @@ impl ShortcutHintsScene {
         let start = rect.left + padding;
         let end = rect.right() - padding;
         let version = version.filter(|width| width.is_finite() && *width > 0.0);
-        let mut version_left = None;
+        let clock = clock.filter(|width| width.is_finite() && *width > 0.0);
+        let fits = height >= metrics.height;
+        let mut version_shown = fits && version.is_some();
+        let mut clock_shown = fits && clock.is_some();
         let mut legends = false;
         let mut left = start;
-        if height >= metrics.height {
-            let mut placed = None;
-            if let Some(version) = version {
-                // The cluster stays centred while it clears the version, then shifts toward
-                // the start; once it would cross the start, the version hides.
-                let before = end - version - padding;
-                let width = cluster(&full, &pieces);
-                let centred = centre - width / 2.0;
-                placed = if centred + width <= before {
-                    Some(centred)
-                } else {
-                    Some(before - width).filter(|left| *left >= start)
-                };
-                version_left = placed.map(|_| end - version);
-            }
-            left = placed.unwrap_or_else(|| {
-                loop {
-                    let width = cluster(if legends { &short } else { &full }, &pieces);
-                    if width <= end - start || legends {
-                        break (centre - width / 2.0).max(start);
-                    }
-                    if let Some(index) =
-                        (0..pieces.len()).max_by_key(|&index| (pieces[index].0, index))
-                    {
-                        pieces.remove(index);
-                    } else {
-                        legends = true;
-                    }
+        if fits {
+            // The cluster centres between the clock and the version, one padding clear of each.
+            left = loop {
+                let low = start
+                    + clock
+                        .filter(|_| clock_shown)
+                        .map_or(0.0, |clock| clock + padding);
+                let high = end
+                    - version
+                        .filter(|_| version_shown)
+                        .map_or(0.0, |version| version + padding);
+                let width = cluster(if legends { &short } else { &full }, &pieces);
+                if width <= high - low {
+                    break (centre - width / 2.0).clamp(low, high - width);
                 }
-            });
+                if version_shown {
+                    version_shown = false;
+                } else if clock_shown {
+                    clock_shown = false;
+                } else if let Some(index) =
+                    (0..pieces.len()).max_by_key(|&index| (pieces[index].0, index))
+                {
+                    pieces.remove(index);
+                } else if !legends {
+                    legends = true;
+                } else {
+                    break (centre - width / 2.0).max(start);
+                }
+            };
         } else {
             groups.clear();
             pieces.clear();
@@ -1099,17 +1105,26 @@ impl ShortcutHintsScene {
                 piece
             })
             .collect::<Vec<_>>();
+        // The clock is as tall as the tab pills, within the band, and centres on the hint line.
+        let pill = nominal_pill_height(metrics).min(frame.height);
         Self {
             rect: frame,
             complete: total > 0
-                && height >= metrics.height
+                && fits
                 && pieces.len() == count
                 && !legends
-                && version.is_none() == version_left.is_none(),
+                && version_shown == version.is_some()
+                && clock_shown == clock.is_some(),
+            clock: clock.filter(|_| clock_shown).map(|width| SceneRect {
+                left: start,
+                top: row.top + (row.height - pill) / 2.0,
+                width,
+                height: pill,
+            }),
             groups,
             pieces,
-            version: version.zip(version_left).map(|(width, left)| SceneRect {
-                left,
+            version: version.filter(|_| version_shown).map(|width| SceneRect {
+                left: end - width,
                 width,
                 ..row
             }),
@@ -1835,11 +1850,15 @@ fn tab_inset(metrics: CellMetrics, tab_height: f32) -> f32 {
     tab_gap(metrics, tab_height) + (tab_height - tab_row(metrics, tab_height)) / 2.0
 }
 
+/// The tab pills' height in a header with room for its full height.
+fn nominal_pill_height(metrics: CellMetrics) -> f32 {
+    header_heights(metrics).0 - (chrome_title_metrics(metrics).text_height / 2.0).floor()
+}
+
 /// The painted bar band, independent of its hover and accessibility rectangles.
 fn bar_pill_band(metrics: CellMetrics, tab_height: f32, card_top: f32) -> Range<f32> {
-    let nominal_top = (chrome_title_metrics(metrics).text_height / 2.0).floor();
     let end = card_top.min(header_heights(metrics).0);
-    let height = (header_heights(metrics).0 - nominal_top).min(end);
+    let height = nominal_pill_height(metrics).min(end);
     if height >= metrics.height {
         end - height..end
     } else {
@@ -2808,7 +2827,7 @@ impl WorkspaceScene {
         // The icon yields first and stays gone at every narrower width: it shows only while the
         // bar shows everything else with it, every listed live item at the widest it can be, and
         // the whole tab strip fits unscrolled. None of that depends on the tab scroll or on what
-        // a quota, a reading or the clock shows, and all of it only fails as the window narrows.
+        // a quota or a reading shows, and all of it only fails as the window narrows.
         let icon = bar.icon && {
             let widest = Self::layout(
                 snapshot,
@@ -3310,14 +3329,14 @@ impl WorkspaceScene {
             - drag_region.left)
             .max(0.0);
         // Read-only labels take spare header space without shortening tabs, in this order, and
-        // stop at the first that does not fit: the clock yields first, then disk, RAM and CPU
-        // use. The readings also need every quota chip shown.
+        // stop at the first that does not fit: disk yields first, then RAM and CPU use. The
+        // readings also need every quota chip shown.
         let shown = |item| bar.items.contains(&item);
         let reading = |item| quotas.len() == quota_count && shown(item);
         // CPU and RAM keep the width of `CPU 100%`, and disk that of `DISK 100%`, so the header
         // never shifts as they change.
         let readings = "CPU 100%".len();
-        // The widest layout reserves every listed reading and the clock, with or without data.
+        // The widest layout reserves every listed reading, with or without data.
         let placeholder = |item, label: &str, cells| {
             (widest && reading(item)).then(|| {
                 (
@@ -3366,18 +3385,6 @@ impl WorkspaceScene {
                     )
                 })
                 .or_else(|| placeholder(BarItem::Disk, "DISK 100%", 0)),
-            bar.clock
-                .filter(|_| reading(BarItem::Clock))
-                .map(|clock| {
-                    (
-                        clock.label.clone(),
-                        clock.tooltip.clone(),
-                        clock.description.clone(),
-                        0,
-                        Load::Normal,
-                    )
-                })
-                .or_else(|| placeholder(BarItem::Clock, "00:00", 0)),
         ]
         .map(|label| {
             label.map(
@@ -3416,13 +3423,12 @@ impl WorkspaceScene {
         }
         let bar_complete = !crowded && tabs_uncapped && quotas.len() == quota_count && fits;
         // Quota chips and labels sit in Eon's order between the drag region and Shortcuts; the
-        // version label sits at the right end of the shortcut hints instead.
-        let [cpu, ram, disk, clock] = labels;
+        // clock and the version label sit at the ends of the shortcut hints instead.
+        let [cpu, ram, disk] = labels;
         let mut labels = [
             (BarItem::Cpu, cpu),
             (BarItem::Ram, ram),
             (BarItem::Disk, disk),
-            (BarItem::Clock, clock),
         ];
         let mut left = drag_region.right();
         for item in bar.items {
@@ -3440,12 +3446,23 @@ impl WorkspaceScene {
                 }
             }
         }
-        let [(_, cpu), (_, ram), (_, disk), (_, clock)] = labels;
+        let [(_, cpu), (_, ram), (_, disk)] = labels;
         // Shortcuts' target reaches back over that space, so it only grows.
         let grow = if spaced { before_shortcuts } else { 0.0 };
         controls[1].centre += left + grow - controls[1].rect.left;
         controls[1].rect.left = left;
         controls[1].rect.width += grow;
+        let clock = hints
+            .as_ref()
+            .and_then(|hints| hints.clock)
+            .zip(bar.clock)
+            .map(|(rect, clock)| WorkspaceLabel {
+                rect,
+                label: clock.label.clone(),
+                tooltip: clock.tooltip.clone(),
+                description: clock.description.clone(),
+                load: Load::Normal,
+            });
         let version = hints
             .as_ref()
             .and_then(|hints| hints.version)

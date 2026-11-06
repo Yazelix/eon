@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- VEN-C21: the clock moves from the header to the left end of the bottom
+  shortcut hints, which hide it with them (`eon-e3a1z.2`). No wire change.
 - VEN-C21: the version label moves from the header to the right end of the
   bottom shortcut hints, which show one centred keycap per set of modifiers
   with a hover popup (`eon-e3a1z.1`). No wire change.

@@ -3647,7 +3647,9 @@ socket names, JSON fields and protocol identifiers retain their spellings.
   Lucca, relayed by eon-overseer) by `eon-369s`: the Eon icon leads the Eon Bar,
   and the version label sits between Shortcuts and Close. Amended on 2026-11-06
   (approved by Lucca, "B", relayed by eon-overseer) by `eon-e3a1z.1`: the version
-  label moves to the bottom hints bar's right end.
+  label moves to the bottom hints bar's right end. Amended on 2026-11-06 (approved
+  by Lucca, "lets do it", relayed by eon-overseer) by `eon-e3a1z.2`: the clock moves
+  to the bottom hints bar's left end.
 - **Consumer:** Full-Eon workspace users.
 - **Trigger:** A workspace window opens or reopens.
 - **Result:** `[bar] widgets` is an ordered list of unique names from
@@ -3657,8 +3659,9 @@ socket names, JSON fields and protocol identifiers retain their spellings.
   windows, and `claude_quota_scoped` selects every model-scoped Claude window.
   Unknown names warn and are ignored.
   The Eon Bar shows the listed widgets left to right in that order, between the
-  drag region and Shortcuts, except `version`, which sits at the right end of the
-  bottom shortcut hints while they show, whatever its place in the list. The
+  drag region and Shortcuts, except `clock` and `version`, which sit at the left
+  and right ends of the bottom shortcut hints while they show, whatever their
+  places in the list. The
   quota widgets select Codex and Claude windows (EON-C27), `cpu`
   and `ram` the whole-machine CPU and memory use labels, `disk` the used
   percentage of the filesystem holding the configured path, `clock` the local
@@ -3745,7 +3748,12 @@ socket names, JSON fields and protocol identifiers retain their spellings.
     `footer_centres_full_name_keycaps_and_keeps_the_version_clear`,
     `version_label_sits_after_the_hints_and_has_no_actions` and
     `eon_orders_and_omits_bar_items`, and the isolated installed observation
-    recorded in `eon-e3a1z.1`.
+    recorded in `eon-e3a1z.1`. For the clock in the hints bar, Venus's
+    `footer_centres_full_name_keycaps_and_keeps_the_version_clear`,
+    `local_clock_leads_the_bottom_bar_and_has_no_actions`,
+    `readings_yield_disk_first_and_have_no_actions` and
+    `eon_orders_and_omits_bar_items`, and the isolated installed observation
+    recorded in `eon-e3a1z.2`.
 
 ## EON-C33 — Several workspaces in one window
 

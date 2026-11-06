@@ -255,19 +255,20 @@ They turn orange or red when the machine is under load or the disk fills up, at
 the levels [`[bar]`](CONFIGURATION.md#configuration-behavior) sets, which also
 chooses the path the disk chip measures.
 A reading that can't be taken shows no label rather than 0%. A 24-hour clock
-follows and shows local time; hover it for the date and UTC offset, and it stays
-hidden if the local time zone can't be determined. The `EON <version>` label, in
+showing local time sits at the left end of the bottom hints bar and hides with
+it; hover it for the date and UTC offset, and it stays hidden if the local time
+zone can't be determined. The `EON <version>` label, in
 softened cyan, sits at the right end of the bottom hints bar and hides with it;
 it names the running supervisor, so updating the installation doesn't change
 it, and its hover opens above it. The Eon logo leads the bar, before the tabs.
 `[bar] widgets` chooses which of these show and in what order (see
 [Configuration](CONFIGURATION.md#configuration-behavior)). When the bar runs
-short of space the Eon logo hides first; then the clock, then disk, RAM and
-CPU, before any quota chip. The logo also hides whenever the
+short of space the Eon logo hides first; then disk, RAM and CPU, before any
+quota chip. The logo also hides whenever the
 tabs would not all fit beside it, however wide the window, so tabs never lose
 room to it, and it leaves room for a chip for each window each provider's latest
 read reported and for each reading, all at their widest, so a changing quota,
-reading or clock, or a quota window's reset, never shows or hides it. It can
+reading, or a quota window's reset, never shows or hides it. It can
 show or hide once, shifting the tabs, when a provider's quota first appears or
 goes away (as it does when all its windows reset before a read), or when a read
 finds the provider has gained or lost a window.
@@ -293,12 +294,15 @@ per key, with what the key does as full help says it. The popup never takes
 focus. Escape or a click closes it until the pointer leaves the keycap; Escape
 still does what it always does, and a click on a keycap does nothing else. A
 popup with more keys than the window has room for ends with `Alt+/ lists all`. Narrow windows give way in
-this order: the cluster moves left to stay one padding clear of the version
-label, then the version label hides, then keys without modifiers drop whole
-(`Escape terminal` last), and in the narrowest windows the keycaps switch to the
-short legends `A`, `CA`, `AS` and `CAS`; keycaps never drop. With Eon's
-packaged font (DejaVu Sans) at the default size, a 1280-pixel-wide window
-shows every hint centred, clear of the version label. Screen readers read each
+this order: the cluster moves to stay one padding clear of the clock and the
+version label, then the version label hides, then the clock hides, then keys
+without modifiers drop whole (`Escape terminal` last), and in the narrowest
+windows the keycaps switch to the short legends `A`, `CA`, `AS` and `CAS`;
+keycaps never drop. With Eon's packaged font (DejaVu Sans) at the default size,
+a 1280-pixel-wide window shows every hint centred, clear of the clock and the
+version label; with the terminal focused, an 800-pixel window still shows
+both, a 400-pixel window the full-name keycaps alone, and a 330-pixel window
+the short legends. Screen readers read each
 keycap by its full name, such as `Alt+Shift shortcuts`, with every chord in
 it and what it does. Alt+/, the Alt+Q inbox, Alt+Shift+Q quit, Alt+G and
 Alt+Shift+G, F6, Ctrl+Tab and Ctrl+Shift+Tab, and Quick search (Alt+Z) have no

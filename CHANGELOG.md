@@ -5,6 +5,13 @@ installation, and proven contract changes.
 
 ## Unreleased
 
+- The clock moves from the Eon Bar to the left end of the bottom hints bar,
+  keeping its outline, format and hover, which now opens above it. It hides
+  with the bar (Alt+Shift+B), and in narrow windows after the version label,
+  before any hint drops. The Eon Bar's quota chips and CPU, RAM and disk readings get
+  its room; narrow windows now hide the Eon logo, then disk, RAM and CPU, then
+  quota chips. `[bar] widgets` still lists `clock`, but its place in the list
+  no longer moves it (`eon-e3a1z.2`, EON-C32, VEN-C21).
 - The JSON replies of `eon pane create` and `eon tab create`, in every form,
   and of `eon edit` name what they started in a top-level `created` object,
   `{"tab": "tN", "pane": "pN"}`, so an agent no longer has to compare

@@ -1571,6 +1571,28 @@ impl Renderer {
             rectangles.clip = None;
         }
         if let Some(hints) = &workspace.hints {
+            // The clock keeps its widget outline at the hints' left end, its time centred in it.
+            if let Some(clock) = &workspace.clock {
+                push_bar_widget(
+                    rectangles,
+                    clock.rect,
+                    self.border_width,
+                    self.metrics.scale,
+                );
+                let width = (clock.rect.width - self.metrics.padding * 2.0).max(0.0);
+                let slack = (width - clock.label.len() as f32 * self.metrics.width).max(0.0);
+                self.push_text_clipped(
+                    &clock.label,
+                    clock.rect.left + self.metrics.padding + slack / 2.0,
+                    clock.rect.top + (clock.rect.height - self.metrics.height).max(0.0) / 2.0,
+                    width,
+                    width,
+                    self.metrics.height.min(clock.rect.height),
+                    palette::SECONDARY_TEXT,
+                    DrawStyleKind::Monospace,
+                    clock.rect,
+                );
+            }
             // The hints sit bare in the margin below the cards; only keycaps have a fill.
             let padding = self.metrics.padding;
             for (index, group) in hints.groups.iter().enumerate() {
@@ -1763,12 +1785,7 @@ impl Renderer {
                 );
             }
         }
-        for label in [
-            &workspace.cpu,
-            &workspace.ram,
-            &workspace.disk,
-            &workspace.clock,
-        ] {
+        for label in [&workspace.cpu, &workspace.ram, &workspace.disk] {
             let Some(label) = label else {
                 continue;
             };
@@ -2270,6 +2287,7 @@ mod tests {
                     size,
                     metrics,
                     Some(measure("EON 9.8.7")),
+                    None,
                     measure,
                 )),
             );

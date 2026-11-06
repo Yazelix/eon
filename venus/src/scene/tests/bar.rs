@@ -513,19 +513,21 @@ fn default_like_hints() -> Vec<ShortcutHint> {
     ]
 }
 
-/// Sweeps window widths at one scale, checking each step of the narrow-window order, and
-/// returns which steps showed: centred beside the version, shifted to clear it, version hidden,
-/// expanded hints dropped, and short legends.
+/// Sweeps window widths at one scale, with the clock `clock` pixels wide when given, checking
+/// each step of the narrow-window order, and returns which steps showed: centred beside the
+/// version, shifted to clear it or the clock, version hidden, clock hidden, expanded hints
+/// dropped, and short legends.
 fn sweep_footer(
     hints: &[ShortcutHint],
     scale: f64,
     metrics: CellMetrics,
+    clock: Option<f32>,
     mut measure: impl FnMut(&str) -> f32,
-) -> [bool; 5] {
+) -> [bool; 6] {
     // As the application measures it: ASCII length times the terminal cell width.
     let version = "EON 0.1.18".len() as f32 * metrics.width;
     let padding = metrics.padding;
-    let mut seen = [false; 5];
+    let mut seen = [false; 6];
     let mut previous: Option<ShortcutHintsScene> = None;
     for logical in (200..=2400).step_by(2) {
         let width = (f64::from(logical) * scale) as u32;
@@ -534,10 +536,21 @@ fn sweep_footer(
             PhysicalSize::new(width, (800.0 * scale) as u32),
             metrics,
             Some(version),
+            clock,
             &mut measure,
         );
         let width = width as f32;
         let (start, end) = (padding, width - padding);
+        // The clock sits at the start, as tall as the tab pills within the bar, centred on the
+        // keycaps' line; the cluster keeps one padding after it.
+        let low = scene.clock.map_or(start, |rect| rect.right() + padding);
+        if let Some(rect) = scene.clock {
+            assert_eq!(rect.left, start);
+            assert!((rect.width - clock.unwrap()).abs() < 0.01);
+            assert!(rect.top >= scene.rect.top && rect.bottom() <= scene.rect.bottom());
+            let line = scene.groups[0].rect;
+            assert!(((rect.top + rect.bottom()) - (line.top + line.bottom())).abs() < 0.01);
+        }
         // Keycaps never drop: one per modifier group, in the hints' order, each with its
         // group's rows and accessible chords.
         let names = scene
@@ -593,7 +606,7 @@ fn sweep_footer(
         let right = items.last().unwrap().right();
         let centred = ((left + right) / 2.0 - width / 2.0).abs() < 0.5;
         if !short {
-            assert!(left >= start - 0.01 && right <= end + 0.01, "{logical}");
+            assert!(left >= low - 0.01 && right <= end + 0.01, "{logical}");
         }
         match scene.version {
             Some(rect) => {
@@ -601,12 +614,15 @@ fn sweep_footer(
                 assert!((rect.width - version).abs() < 0.01);
                 assert!(right + padding <= rect.left + 0.01, "{logical}");
                 assert_eq!(scene.pieces.len(), 2);
-                // Off centre only to clear the version.
+                // The version hides before the clock.
+                assert_eq!(scene.clock.is_some(), clock.is_some(), "{logical}");
+                // Off centre only to clear the version or the clock.
+                let at_version = (right + padding - rect.left).abs() < 0.01;
                 assert!(
-                    centred || (right + padding - rect.left).abs() < 0.01,
+                    centred || at_version || (left - low).abs() < 0.01,
                     "{logical}"
                 );
-                if !centred {
+                if !centred && at_version {
                     assert!(width / 2.0 + (right - left) / 2.0 + padding > rect.left);
                 }
             }
@@ -625,28 +641,49 @@ fn sweep_footer(
                 for hint in hints.iter().filter(|hint| hint.modifiers.is_empty()) {
                     cluster += measure(&hint.key) + measure(" ") + measure(&hint.label);
                 }
-                assert!(end - version - padding - cluster < start, "{logical}");
-                assert!(centred || short && left == start, "{logical}");
+                let room = clock.map_or(0.0, |clock| clock + padding);
+                assert!(
+                    end - version - padding - cluster < start + room,
+                    "{logical}"
+                );
+                assert!(
+                    centred || (left - low).abs() < 0.01 || short && left == start,
+                    "{logical}"
+                );
+                // The clock hides only once the whole cluster no longer fits after it, and
+                // before any expanded hint drops.
+                match (clock, scene.clock) {
+                    (Some(clock), None) => {
+                        assert!(end - cluster < start + clock + padding, "{logical}");
+                    }
+                    (Some(_), Some(_)) => assert_eq!(scene.pieces.len(), 2, "{logical}"),
+                    _ => {}
+                }
             }
         }
         // Short legends only once no expanded hint is left.
         assert!(!short || scene.pieces.is_empty());
         assert_eq!(
             scene.complete,
-            scene.version.is_some() && scene.pieces.len() == 2 && !short
+            scene.version.is_some()
+                && scene.pieces.len() == 2
+                && !short
+                && scene.clock.is_some() == clock.is_some()
         );
         // Widening never hides anything: each step gives way in its order.
         if let Some(previous) = previous {
             assert!(previous.version.is_none() || scene.version.is_some());
+            assert!(previous.clock.is_none() || scene.clock.is_some());
             assert!(scene.pieces.len() >= previous.pieces.len());
             assert!(previous.groups[0].legend == "A" || scene.groups[0].legend == "Alt");
         }
         seen[match (scene.version.is_some(), centred, scene.pieces.len(), short) {
             (true, true, ..) => 0,
             (true, false, ..) => 1,
-            (false, _, 2, false) => 2,
-            (false, _, _, false) => 3,
-            (false, _, _, true) => 4,
+            _ if scene.clock.is_some() => 2,
+            (false, _, 2, false) => 3,
+            (false, _, _, false) => 4,
+            (false, _, _, true) => 5,
         }] = true;
         previous = Some(scene);
     }
@@ -657,12 +694,22 @@ fn sweep_footer(
 #[test]
 fn footer_centres_full_name_keycaps_and_keeps_the_version_clear() {
     let hints = default_like_hints();
+    // As the application measures it: `HH:MM` in cells, inside its outline's padding. Without
+    // a clock no step keeps one; with it every step shows.
+    let clocks = |metrics: CellMetrics| {
+        [
+            (None, [true, true, false, true, true, true]),
+            (Some(5.0 * metrics.width + metrics.padding * 2.0), [true; 6]),
+        ]
+    };
     for scale in [1.0, 2.0] {
         let metrics = CellMetrics::for_scale(scale);
-        let seen = sweep_footer(&hints, scale, metrics, |text: &str| {
-            text.chars().count() as f32 * metrics.width
-        });
-        assert_eq!(seen, [true; 5], "every step shows at scale {scale}");
+        for (clock, steps) in clocks(metrics) {
+            let seen = sweep_footer(&hints, scale, metrics, clock, |text: &str| {
+                text.chars().count() as f32 * metrics.width
+            });
+            assert_eq!(seen, steps, "{clock:?} at scale {scale}");
+        }
     }
     // The same order holds with Eon's packaged font, whose measured widths decide each step,
     // and a 1280-pixel window keeps every hint centred beside the version.
@@ -674,24 +721,61 @@ fn footer_centres_full_name_keycaps_and_keeps_the_version_clear() {
         .unwrap();
     for scale in [1.0, 2.0] {
         let metrics = fonts.metrics(scale);
-        let seen = sweep_footer(&hints, scale, metrics, |text: &str| {
-            fonts.measure_header_text(metrics, text)
-        });
-        assert_eq!(
-            seen, [true; 5],
-            "every step shows in DejaVu Sans at scale {scale}"
-        );
-        let scene = ShortcutHintsScene::new(
-            hints.clone(),
-            PhysicalSize::new((1280.0 * scale) as u32, (800.0 * scale) as u32),
-            metrics,
-            Some("EON 0.1.18".len() as f32 * metrics.width),
-            |text| fonts.measure_header_text(metrics, text),
-        );
-        let left = scene.groups[0].rect.left;
-        let right = scene.pieces.last().unwrap().rect.right();
-        assert!(scene.complete);
-        assert!(((left + right) / 2.0 - 640.0 * scale as f32).abs() < 0.5);
+        for (clock, steps) in clocks(metrics) {
+            let seen = sweep_footer(&hints, scale, metrics, clock, |text: &str| {
+                fonts.measure_header_text(metrics, text)
+            });
+            assert_eq!(seen, steps, "{clock:?} in DejaVu Sans at scale {scale}");
+            let scene = ShortcutHintsScene::new(
+                hints.clone(),
+                PhysicalSize::new((1280.0 * scale) as u32, (800.0 * scale) as u32),
+                metrics,
+                Some("EON 0.1.18".len() as f32 * metrics.width),
+                clock,
+                |text| fonts.measure_header_text(metrics, text),
+            );
+            let left = scene.groups[0].rect.left;
+            let right = scene.pieces.last().unwrap().rect.right();
+            assert!(scene.complete);
+            assert!(((left + right) / 2.0 - 640.0 * scale as f32).abs() < 0.5);
+        }
+        // With the terminal focused (keycaps only), at the widths the bead names: 1280 and 800
+        // show the clock, the centred full names and the version; 400 keeps the full names
+        // without either; 330 takes the short legends.
+        let keycaps = hints
+            .iter()
+            .filter(|hint| !hint.modifiers.is_empty())
+            .cloned()
+            .collect::<Vec<_>>();
+        for (logical, shown, full) in [
+            (1280, true, true),
+            (800, true, true),
+            (400, false, true),
+            (330, false, false),
+        ] {
+            let width = (logical as f64 * scale) as u32;
+            let scene = ShortcutHintsScene::new(
+                keycaps.clone(),
+                PhysicalSize::new(width, (800.0 * scale) as u32),
+                metrics,
+                Some("EON 0.1.18".len() as f32 * metrics.width),
+                Some(5.0 * metrics.width + metrics.padding * 2.0),
+                |text| fonts.measure_header_text(metrics, text),
+            );
+            assert_eq!(scene.clock.is_some(), shown, "{logical} at {scale}");
+            assert_eq!(scene.version.is_some(), shown, "{logical} at {scale}");
+            assert_eq!(
+                scene.groups[0].legend == "Alt",
+                full,
+                "{logical} at {scale}"
+            );
+            let left = scene.groups[0].rect.left;
+            let right = scene.groups.last().unwrap().rect.right();
+            assert!(
+                ((left + right) / 2.0 - width as f32 / 2.0).abs() < 0.5,
+                "{logical}"
+            );
+        }
     }
     // While the inbox is open, its keys alone centre.
     let metrics = CellMetrics::for_scale(1.0);
@@ -700,6 +784,7 @@ fn footer_centres_full_name_keycaps_and_keeps_the_version_clear() {
         PhysicalSize::new(1280, 800),
         metrics,
         Some(100.0),
+        None,
         |text| text.chars().count() as f32 * metrics.width,
     );
     assert!(inbox.groups.is_empty() && inbox.pieces.len() == 4 && inbox.complete);
@@ -712,6 +797,7 @@ fn footer_centres_full_name_keycaps_and_keeps_the_version_clear() {
             PhysicalSize::new(1280, height),
             CellMetrics::for_scale(1.0),
             Some(100.0),
+            None,
             |text| text.chars().count() as f32 * 10.0,
         );
         assert!(scene.rect.top >= 0.0 && scene.rect.bottom() <= height as f32);
@@ -730,6 +816,7 @@ fn footer_centres_full_name_keycaps_and_keeps_the_version_clear() {
         hints,
         PhysicalSize::new(320, 600),
         small_metrics,
+        None,
         None,
         |text| text.chars().count() as f32 * small_metrics.width,
     );
@@ -895,7 +982,7 @@ fn eon_bar_keeps_tabs_controls_and_drag_hits_disjoint_under_pressure() {
             0.0,
             0.0,
             |_, text| (text.into(), text.len() as f32 * metrics.width),
-            hints.then(|| ShortcutHintsScene::new(Vec::new(), size, metrics, None, |_| 0.0)),
+            hints.then(|| ShortcutHintsScene::new(Vec::new(), size, metrics, None, None, |_| 0.0)),
         )
     };
     // One pane, no hints: the top gap yields before the nominal 30 px pills shrink.
@@ -2396,6 +2483,7 @@ fn shortcuts_and_close_end_the_bar_one_edge_from_the_corner() {
                     size,
                     metrics,
                     version.map(|version| measure(&format!("EON {version}"))),
+                    None,
                     measure,
                 )
             });
@@ -2525,6 +2613,7 @@ fn hint_keycap_hover_hits_its_group() {
         size,
         metrics,
         Some(measure("EON 9.8.7")),
+        None,
         measure,
     );
     let scene = WorkspaceScene::from_snapshot_with_bar(

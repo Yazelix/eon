@@ -11,7 +11,7 @@ order, selection, and popups; Venus draws the visible scene.
 - Tabs show their one-based position and the directory leaf or `/` from Eon's tab
   launch directory. Long labels use middle ellipsis; hover shows the full path.
   Selection brightens the tab, and keyboard focus adds an outline.
-- Tab pills and quota, CPU, RAM, disk and clock widgets share one height and
+- Tab pills and quota, CPU, RAM and disk widgets share one height and
   centre line, starting half the card-title height below the window top. The
   allocated card areas start lower so the gap to the tops of the titles' capital
   letters equals the space above the pills. This extra space yields first on
@@ -26,8 +26,8 @@ order, selection, and popups; Venus draws the visible scene.
   decorative, with no action, hover or accessible node. It shows only while
   everything else in the bar would show with it: a chip for each selected window each
   provider's latest read reported, each at the widest that window's chip can
-  be, or Codex's one blocked or unknown chip; each reading and the clock at
-  its widest; and every tab unscrolled at its full width. So it hides before
+  be, or Codex's one blocked or unknown chip; each reading at its widest; and
+  every tab unscrolled at its full width. So it hides before
   any other item and stays hidden as the window narrows, and it hides whenever
   the tabs overflow, however wide the window.
   The tab scroll, a live value and a window's reset never show or hide it: a
@@ -125,6 +125,11 @@ order, selection, and popups; Venus draws the visible scene.
   ones.
 - The clock shows local 24-hour `HH:MM` and changes within a second of each
   minute; after suspend or a system clock change it corrects within a minute.
+  It sits at the left end of the bottom shortcut hints, one padding from the
+  window edge, in a widget outline as tall as the tab pills and centred on the
+  hints' line, five cells of terminal monospace wide so it never shifts the
+  keycaps; it hides with the hints, and in windows too narrow for it beside
+  their keycaps once the version has hidden. Its hover opens above it.
   Accessibility names the time, date and UTC offset, such as `Local time 14:05,
   Wednesday 21 October 2026, UTC−03:00`; hover lists the date then the offset,
   `Wednesday 21 October 2026` and `UTC−03:00`. When the local time zone
@@ -147,8 +152,9 @@ order, selection, and popups; Venus draws the visible scene.
   Accessibility keeps one sentence per item with every fact, including what
   the chip shows.
 - Eon's `[bar] widgets` chooses which of these items show and their order, left
-  to right between the drag region and Shortcuts; the version always sits at
-  the right end of the shortcut hints. By default the order
+  to right between the drag region and Shortcuts; the clock always sits at the
+  left end of the shortcut hints and the version at their right end. By default
+  the order
   is Codex 5h and 7d, Claude 5h and 7d then its scoped windows, CPU, RAM, disk,
   clock and version. A left-out quota window takes no room, including the
   logo's reserved room. `_5h` and `_7d` select only unscoped windows
@@ -157,10 +163,11 @@ order, selection, and popups; Venus draws the visible scene.
   observation when no windows are available. A left-out
   item has no chip, hover or accessible node, and a left-out CPU, RAM, disk or
   clock is never read and never wakes Venus. Accessibility order follows the
-  visual order. The items use only spare drag-region space and keep its minimum.
-  Whatever the order, narrow windows hide the Eon logo first, then the clock,
-  then disk, RAM and CPU, then quota chips, before tabs or controls. No item has an action or a keyboard focus target, and none drags
-  the window. A change in a quota's numbers, a reading or the clock never moves
+  visual order, so screen readers meet the clock after the panes, before the
+  hints. The header items use only spare drag-region space and keep its minimum.
+  Whatever the order, narrow windows hide the Eon logo first, then disk, RAM and
+  CPU, then quota chips, before tabs or controls. No item has an action or a
+  keyboard focus target, and none drags the window. A change in a quota's numbers, a reading or the clock never moves
   the tabs, cancels scrolling or resizes terminals, and neither does a window's
   reset. The one exception is the Eon logo: it can show or hide once, shifting
   the tabs, when a provider's quota first appears or goes away (as it does when

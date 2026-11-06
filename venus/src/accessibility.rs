@@ -387,7 +387,6 @@ impl Snapshot {
                         (CPU, &workspace.cpu),
                         (RAM, &workspace.ram),
                         (DISK, &workspace.disk),
-                        (CLOCK, &workspace.clock),
                     ]
                     .into_iter()
                     .filter_map(|(id, label)| Some((label.as_ref()?.rect.left, id))),
@@ -405,6 +404,10 @@ impl Snapshot {
                 children.push(SIDEBAR);
             }
             children.push(PANE_PANEL);
+            // The clock sits at the hints' left end.
+            if workspace.clock.is_some() {
+                children.push(CLOCK);
+            }
             if workspace
                 .hints
                 .as_ref()
@@ -1322,6 +1325,7 @@ mod tests {
                                         version.map(|version| {
                                             format!("EON {version}").len() as f32 * metrics.width
                                         }),
+                                        None,
                                         |text| text.len() as f32 * metrics.width,
                                     )
                                 });
@@ -1480,7 +1484,15 @@ mod tests {
                 0.0,
                 0.0,
                 |_, text| (text.to_owned(), text.chars().count() as f32 * 10.0),
-                None,
+                // The clock shows in the shortcut hints, which give it room.
+                Some(crate::ShortcutHintsScene::new(
+                    Vec::new(),
+                    PhysicalSize::new(1100, 600),
+                    CellMetrics::for_scale(1.0),
+                    None,
+                    Some(74.0),
+                    |_| 0.0,
+                )),
             );
             let shown = workspace.clock.unwrap();
             assert_eq!(shown.label, label);
@@ -1490,7 +1502,7 @@ mod tests {
     }
 
     #[test]
-    fn local_clock_yields_first_and_has_no_actions() {
+    fn local_clock_leads_the_bottom_bar_and_has_no_actions() {
         let clock = crate::LocalClock::new(
             &jiff::civil::date(2026, 10, 21)
                 .at(14, 5, 0, 0)
@@ -1546,18 +1558,36 @@ mod tests {
                             running: None,
                             busy: None,
                         };
-                        let project = |logical_width: u32, version, clock| {
+                        let size =
+                            PhysicalSize::new((logical_width as f32 * metrics.scale) as u32, 600);
+                        let clock_width = 5.0 * metrics.width + metrics.padding * 2.0;
+                        // One keycap; the clock's room while it is listed and the hints show.
+                        let project = |clock: Option<&crate::LocalClock>, hints: bool| {
+                            let footer = hints.then(|| {
+                                crate::ShortcutHintsScene::new(
+                                    vec![crate::ShortcutHint {
+                                        modifiers: "AS".into(),
+                                        modifier_names: "Alt+Shift".into(),
+                                        key: "T".into(),
+                                        label: "tab".into(),
+                                        description: "Create tab".into(),
+                                        accessible_label: "Alt+Shift+T — Create tab".into(),
+                                        priority: 0,
+                                    }],
+                                    size,
+                                    metrics,
+                                    None,
+                                    clock.map(|_| clock_width),
+                                    |text| text.chars().count() as f32 * 10.0 * metrics.scale,
+                                )
+                            });
                             WorkspaceScene::from_snapshot_with_bar(
                                 &snapshot,
                                 EonBar {
-                                    version,
                                     clock,
                                     ..EonBar::default()
                                 },
-                                PhysicalSize::new(
-                                    (logical_width as f32 * metrics.scale) as u32,
-                                    600,
-                                ),
+                                size,
                                 metrics,
                                 0.0,
                                 0.0,
@@ -1567,109 +1597,72 @@ mod tests {
                                         text.chars().count() as f32 * 10.0 * metrics.scale,
                                     )
                                 },
-                                None,
+                                footer,
                             )
                         };
-                        let full_quotas = project(3000, None, None)
-                            .quotas
-                            .into_iter()
-                            .map(|quota| quota.label)
-                            .collect::<Vec<_>>();
-                        for version in [None, Some("9.8.7")] {
-                            let baseline = project(logical_width, version, None);
-                            let scene = project(logical_width, version, Some(&clock));
-                            assert_eq!(scene.tabs, baseline.tabs);
-                            assert_eq!(scene.tab_viewport, baseline.tab_viewport);
-                            // Shortcuts' target may reach back over the space after the clock;
-                            // its glyph and right edge stay.
-                            assert_eq!(scene.controls[0], baseline.controls[0]);
-                            assert_eq!(scene.controls[2], baseline.controls[2]);
-                            assert_eq!(scene.controls[1].centre, baseline.controls[1].centre);
-                            assert_eq!(
-                                scene.controls[1].rect.right(),
-                                baseline.controls[1].rect.right()
-                            );
-                            assert_eq!(scene.terminal, baseline.terminal);
-                            assert_eq!(scene.panes, baseline.panes);
-                            assert_eq!(
-                                scene
-                                    .quotas
-                                    .iter()
-                                    .map(|quota| &quota.label)
-                                    .collect::<Vec<_>>(),
-                                baseline
-                                    .quotas
-                                    .iter()
-                                    .map(|quota| &quota.label)
-                                    .collect::<Vec<_>>()
-                            );
-                            assert_eq!(scene.version.is_some(), baseline.version.is_some());
-                            let mut accessible = Snapshot::new(PhysicalSize::new(
-                                (logical_width as f32 * metrics.scale) as u32,
-                                600,
-                            ));
-                            accessible.set_workspace(Some(&scene));
-                            let tree = accessible.tree();
-                            assert_eq!(
-                                tree.nodes.iter().any(|(id, _)| *id == CLOCK),
-                                scene.clock.is_some()
-                            );
-                            let Some(shown) = &scene.clock else {
-                                assert!(logical_width < 3000, "a wide bar shows the clock");
-                                continue;
-                            };
-                            // The clock yields before quota chips; the version label sits in the
-                            // shortcut hints, never the header.
-                            assert_eq!(
-                                scene
-                                    .quotas
-                                    .iter()
-                                    .map(|quota| &quota.label)
-                                    .collect::<Vec<_>>(),
-                                full_quotas.iter().collect::<Vec<_>>()
-                            );
-                            assert!(scene.version.is_none());
-                            assert_eq!(
-                                shown.rect.width,
-                                5.0 * metrics.width + metrics.padding * 2.0
-                            );
-                            assert!(scene.drag_region.width >= metrics.font_size * 4.0);
-                            assert_eq!(shown.rect.right(), scene.controls[1].rect.left);
-                            assert_eq!(
-                                scene
-                                    .quotas
-                                    .last()
-                                    .map_or(scene.drag_region.right(), |quota| quota.rect.right()),
-                                shown.rect.left
-                            );
-                            if let Some(quota) = scene.quotas.first() {
-                                assert_eq!(scene.drag_region.right(), quota.rect.left);
-                            }
-                            assert_eq!(
-                                scene.hit_test(
-                                    shown.rect.left + shown.rect.width / 2.0,
-                                    shown.rect.height / 2.0
-                                ),
-                                Some(crate::WorkspaceHit::Clock)
-                            );
-                            let children = node(&tree, WINDOW).children();
-                            let index = children.iter().position(|id| *id == CLOCK).unwrap();
-                            assert_eq!(
-                                children[index - 1],
-                                scene.quotas.last().map_or(NEW_TAB, quota_id)
-                            );
-                            assert_eq!(children[index + 1], SHORTCUTS);
-                            let node = node(&tree, CLOCK);
-                            assert_eq!(node.role(), Role::Label);
-                            assert_eq!(
-                                node.value(),
-                                Some(
-                                    "Local time 14:05, Wednesday 21 October 2026, UTC\u{2212}03:00"
-                                )
-                            );
-                            assert!(!node.supports_action(Action::Click));
-                            assert!(!node.supports_action(Action::Focus));
+                        // The header lays out as it would without the clock, and the hidden
+                        // hints take the clock with them.
+                        let baseline = project(None, true);
+                        let scene = project(Some(&clock), true);
+                        assert_eq!(scene.tabs, baseline.tabs);
+                        assert_eq!(scene.tab_viewport, baseline.tab_viewport);
+                        assert_eq!(scene.controls, baseline.controls);
+                        assert_eq!(scene.drag_region, baseline.drag_region);
+                        assert_eq!(scene.quotas, baseline.quotas);
+                        assert_eq!(scene.eon_icon, baseline.eon_icon);
+                        assert_eq!(scene.terminal, baseline.terminal);
+                        assert_eq!(scene.panes, baseline.panes);
+                        assert!(project(Some(&clock), false).clock.is_none());
+                        let footer = scene.hints.as_ref().unwrap();
+                        let mut accessible = Snapshot::new(size);
+                        accessible.set_workspace(Some(&scene));
+                        let tree = accessible.tree();
+                        assert_eq!(
+                            tree.nodes.iter().any(|(id, _)| *id == CLOCK),
+                            scene.clock.is_some()
+                        );
+                        assert_eq!(scene.clock.as_ref().map(|clock| clock.rect), footer.clock);
+                        let Some(shown) = &scene.clock else {
+                            assert!(logical_width < 700, "a wide bar shows the clock");
+                            continue;
+                        };
+                        // At the bar's left end, inside it, keeping one padding before the
+                        // keycap.
+                        assert_eq!(shown.label, "14:05");
+                        assert_eq!(shown.rect.width, clock_width);
+                        assert_eq!(shown.rect.left, metrics.padding);
+                        assert!(shown.rect.top >= footer.rect.top);
+                        assert!(shown.rect.bottom() <= footer.rect.bottom());
+                        assert!(
+                            shown.rect.right() + metrics.padding
+                                <= footer.groups[0].rect.left + 0.01
+                        );
+                        let middle = shown.rect.top + shown.rect.height / 2.0;
+                        assert_eq!(
+                            scene.hit_test(shown.rect.left + shown.rect.width / 2.0, middle),
+                            Some(crate::WorkspaceHit::Clock)
+                        );
+                        // The pointer leaving it ends its hover.
+                        for (x, y) in [
+                            (shown.rect.right() + 0.5, middle),
+                            (shown.rect.left + 1.0, shown.rect.top - 0.5),
+                        ] {
+                            assert_ne!(scene.hit_test(x, y), Some(crate::WorkspaceHit::Clock));
                         }
+                        // Screen readers meet it after the panes, before the hints.
+                        let children = node(&tree, WINDOW).children();
+                        let index = children.iter().position(|id| *id == CLOCK).unwrap();
+                        assert_eq!(children[index - 1], PANE_PANEL);
+                        assert_eq!(children[index + 1], HINTS);
+                        let node = node(&tree, CLOCK);
+                        assert_eq!(node.role(), Role::Label);
+                        assert_eq!(node.bounds(), Some(rect(shown.rect)));
+                        assert_eq!(
+                            node.value(),
+                            Some("Local time 14:05, Wednesday 21 October 2026, UTC\u{2212}03:00")
+                        );
+                        assert!(!node.supports_action(Action::Click));
+                        assert!(!node.supports_action(Action::Focus));
                     }
                 }
             }
@@ -1677,7 +1670,7 @@ mod tests {
     }
 
     #[test]
-    fn readings_yield_after_the_clock_and_have_no_actions() {
+    fn readings_yield_disk_first_and_have_no_actions() {
         let cpu = crate::CpuUse::between(
             crate::CpuTimes::parse(
                 "cpu 0 0 0 0 0 0 0 0\ncpu0 0 0 0 0 0 0 0 0\ncpu1 0 0 0 0 0 0 0 0",
@@ -1760,7 +1753,7 @@ mod tests {
             )
         };
         let full_quotas = project(3000, None, None, None, None, None).quotas;
-        // Widths that show CPU use without RAM, RAM without disk, and disk without the clock.
+        // Widths that show CPU use without RAM, RAM without disk, and every reading.
         let mut partial = [false; 3];
         for version in [None, Some("9.8.7")] {
             for logical_width in (100..=1600).step_by(5) {
@@ -1777,8 +1770,9 @@ mod tests {
                 assert_eq!(scene.controls, baseline.controls);
                 assert_eq!(scene.terminal, baseline.terminal);
                 assert_eq!(scene.version.is_some(), baseline.version.is_some());
-                // The clock yields first, then disk, RAM and CPU use, before the quotas.
-                assert!(scene.clock.is_none() || scene.disk.is_some());
+                // The clock sits in the shortcut hints, never the header; disk yields first,
+                // then RAM and CPU use, before the quotas.
+                assert!(scene.clock.is_none());
                 assert!(scene.disk.is_none() || scene.ram.is_some());
                 assert!(scene.ram.is_none() || scene.cpu.is_some());
                 let Some(shown_cpu) = &scene.cpu else {
@@ -1787,7 +1781,7 @@ mod tests {
                 };
                 partial[0] |= scene.ram.is_none();
                 partial[1] |= scene.ram.is_some() && scene.disk.is_none();
-                partial[2] |= scene.disk.is_some() && scene.clock.is_none();
+                partial[2] |= scene.disk.is_some();
                 assert_eq!(scene.quotas.len(), full_quotas.len());
                 assert_eq!(scene.quotas[0].label, full_quotas[0].label);
                 // The version label sits in the shortcut hints, never the header.
@@ -1804,7 +1798,6 @@ mod tests {
                     (CPU, Some(shown_cpu)),
                     (RAM, scene.ram.as_ref()),
                     (DISK, scene.disk.as_ref()),
-                    (CLOCK, scene.clock.as_ref()),
                 ]
                 .into_iter()
                 .filter_map(|(id, label)| Some((id, label?)))
@@ -1813,12 +1806,10 @@ mod tests {
                 for (id, label) in &labels {
                     assert_eq!(label.rect.left, left);
                     left = label.rect.right();
-                    // CPU and RAM keep the width of `CPU 100%`, disk that of `DISK 100%`; the
-                    // clock fits its text.
+                    // CPU and RAM keep the width of `CPU 100%`, disk that of `DISK 100%`.
                     let cells = match *id {
                         CPU | RAM => "CPU 100%".len(),
                         DISK => "DISK 100%".len(),
-                        CLOCK => label.label.len(),
                         _ => continue,
                     };
                     assert_eq!(
@@ -1982,11 +1973,10 @@ mod tests {
             panic!("both quota chips show");
         };
         assert_eq!(claude.provider.name(), "Claude");
-        // The version label sits in the shortcut hints, whatever its place in the list; without
-        // hints it does not show.
-        assert!(scene.version.is_none());
+        // The clock and the version label sit in the shortcut hints, whatever their places in
+        // the list; without hints they do not show.
+        assert!(scene.version.is_none() && scene.clock.is_none());
         let rects = [
-            scene.clock.as_ref().unwrap().rect,
             claude.rect,
             scene.cpu.as_ref().unwrap().rect,
             codex.rect,
@@ -2004,17 +1994,10 @@ mod tests {
         let children = node(&tree, WINDOW).children();
         let start = children.iter().position(|id| *id == NEW_TAB).unwrap() + 1;
         assert_eq!(
-            children[start..start + 6],
-            [
-                CLOCK,
-                quota_id(claude),
-                CPU,
-                quota_id(codex),
-                SHORTCUTS,
-                CLOSE_TAB
-            ]
+            children[start..start + 5],
+            [quota_id(claude), CPU, quota_id(codex), SHORTCUTS, CLOSE_TAB]
         );
-        assert!(tree.nodes.iter().all(|(id, _)| *id != RAM));
+        assert!(tree.nodes.iter().all(|(id, _)| *id != RAM && *id != CLOCK));
         // With no items, the drag region reaches Shortcuts.
         let bare = project(&[]);
         assert!(bare.quotas.is_empty() && bare.cpu.is_none() && bare.version.is_none());
@@ -3748,6 +3731,7 @@ mod tests {
             ],
             size,
             metrics,
+            None,
             None,
             |text| text.len() as f32 * 10.0,
         );

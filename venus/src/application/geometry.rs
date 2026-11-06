@@ -58,6 +58,7 @@ pub(super) fn initial_window_size(
                     size,
                     metrics,
                     None,
+                    None,
                     |_| 0.0,
                 )),
             )
@@ -228,6 +229,7 @@ mod tests {
                                 Vec::new(),
                                 size,
                                 metrics,
+                                None,
                                 None,
                                 |_| 0.0,
                             )),

@@ -614,7 +614,7 @@ fn defaults_table(
     for (key, value) in settings.as_object().unwrap() {
         let comment = match key.as_str() {
             "widgets" => {
-                "Eon Bar widgets, in display order. Each quota widget selects a window; claude_quota_scoped selects all model-scoped Claude windows."
+                "Eon Bar widgets: header widgets in display order; the clock sits at the bottom bar's left end and the version at its right end, wherever they are listed. Each quota widget selects a window; claude_quota_scoped selects all model-scoped Claude windows."
             }
             "ram_warning_percent" => "RAM use from which the RAM chip turns orange.",
             "ram_critical_percent" => "RAM use from which the RAM chip turns red.",

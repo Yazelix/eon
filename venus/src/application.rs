@@ -2030,6 +2030,14 @@ impl Application {
                     .map(|version| {
                         format!("EON {version}").len() as f32 * state.renderer.metrics().width
                     }),
+                // The clock's `HH:MM` is drawn in cells too, inside its outline's padding.
+                self.clock
+                    .as_ref()
+                    .filter(|_| self.bar_items.contains(&BarItem::Clock))
+                    .map(|_| {
+                        let metrics = state.renderer.metrics();
+                        "00:00".len() as f32 * metrics.width + metrics.padding * 2.0
+                    }),
                 |text| state.renderer.measure_header_text(text).1,
             )
         });
@@ -5270,7 +5278,13 @@ impl ApplicationHandler<UserEvent> for Application {
             self.next_clock = Some(now + reading.as_ref().map_or(MINUTE, |(_, wait)| *wait));
             let clock = reading.map(|(clock, _)| clock);
             if clock != self.clock {
+                // Showing or losing the clock gives or takes its room in the shortcut hints.
+                let room = clock.is_some() != self.clock.is_some();
                 self.clock = clock;
+                if room {
+                    self.rebuild_workspace_measurements(self.tab_scroll, self.pane_scroll);
+                    self.presentation.content_changed();
+                }
                 self.refresh_client_view();
             }
         }

@@ -1481,14 +1481,15 @@ re-proved when that platform or feature is next touched.
 
 - **Status:** Proven. Amended on 2026-11-06 (approved by Lucca, "B", relayed by
   eon-overseer) by `eon-e3a1z.1`: the version label moves to the bottom hints bar's right
-  end.
+  end. Amended on 2026-11-06 (approved by Lucca, "lets do it", relayed by eon-overseer)
+  by `eon-e3a1z.2`: the clock moves to the bottom hints bar's left end.
 - **Consumer:** One person using a Venus surface controlled by a full Eon
   workspace.
 - **Trigger:** The person points at, focuses, or activates the workspace header;
   uses the workspace label, New tab, Keyboard shortcuts, or active-tab Close;
   scrolls the tab region; or left-presses its empty drag region.
 - **Result:** The existing workspace tab strip remains one row at its existing
-  height. Tabs keep their filled pills. Tab pills and the quota, CPU, RAM and clock widgets share
+  height. Tabs keep their filled pills. Tab pills and the quota, CPU, RAM and disk widgets share
   one height and centre line, starting half the card title height below the window's top edge; the
   allocated card areas start below them so that the space between the pills and the tops of the card
   titles' capital letters equals the space above the pills. The widgets draw no fill: each is a
@@ -1501,11 +1502,11 @@ re-proved when that platform or feature is next touched.
   would show everything else with it at the widest it can be: for each provider that has a quota
   fact, a chip for each window its latest read reported, each at the widest that window's text
   can be with the widest digit in every digit's place, or Codex's one blocked or unknown chip;
-  each listed reading and the clock; every tab at its full width; and the whole tab strip
+  each listed reading; every tab at its full width; and the whole tab strip
   fitting unscrolled. So it hides
   before any other item and stays hidden at every narrower width, and it hides whenever the tabs
-  overflow however wide the window. The tab scroll, a live value (quota numbers, a reading, the
-  clock) and a window's reset never show or hide it: a window keeps its room from its reset until
+  overflow however wide the window. The tab scroll, a live value (quota numbers, a
+  reading) and a window's reset never show or hide it: a window keeps its room from its reset until
   the next read. It can change once when a provider's quota first appears or goes away (as it
   does when all its windows reset before a read), or when a read finds the provider has gained or
   lost a window. Its centre lies as far from
@@ -1521,7 +1522,8 @@ re-proved when that platform or feature is next touched.
   New tab follows the rightmost tab when tabs fit and stays at the tab-region
   edge during overflow. Keyboard shortcuts, which always show,
   and active-tab Close remain trailing controls. The version label sits at the right
-  end of the bottom shortcut hints, not in the header (EON-C32).
+  end of the bottom shortcut hints and the clock at their left end, not in the header
+  (EON-C32).
   Close tab is available on the final tab and goes through the same
   VEN-C8 final-close prompt as Alt+Shift+W. The buttons use the existing CreateTab and exact-active-tab CloseTab
   EONW actions and the existing local VEN-C20 viewer. Their tooltips and
@@ -1638,6 +1640,15 @@ re-proved when that platform or feature is next touched.
     `readings_yield_after_the_clock_and_have_no_actions` and
     `eon_orders_and_omits_bar_items`; the isolated installed observation
     recorded in `eon-e3a1z.1`.
+  - **Clock in the hints bar (`eon-e3a1z.2`):**
+    `footer_centres_full_name_keycaps_and_keeps_the_version_clear` extended to
+    the clock and the four widths; `local_clock_leads_the_bottom_bar_and_has_no_actions`
+    (renamed from `local_clock_yields_first_and_has_no_actions`) and
+    `readings_yield_disk_first_and_have_no_actions` (renamed from
+    `readings_yield_after_the_clock_and_have_no_actions`) updated, with
+    `local_clock_names_minute_date_and_offset` and
+    `eon_orders_and_omits_bar_items`; the isolated installed observation
+    recorded in `eon-e3a1z.2`.
   - **Workspace label (`eon-workspace-switching-shn4.7`):** added checks
     `workspace_label_leads_the_tabs_and_opens_the_picker`,
     `eon_bar_controls_reuse_existing_actions_and_local_viewer` and

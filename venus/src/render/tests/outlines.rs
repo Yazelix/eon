@@ -1330,6 +1330,7 @@ fn shared_bottom_preserves_grid_and_bounds_short_scene_paint() {
                                         size,
                                         metrics,
                                         None,
+                                        None,
                                         |_| 0.0,
                                     )
                                 }),

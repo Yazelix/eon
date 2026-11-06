@@ -146,7 +146,6 @@ fn compact_pane_headers_share_title_height_and_full_row_targets() {
             for rect in widgets.quotas.iter().map(|quota| quota.rect).chain([
                 widgets.cpu.as_ref().unwrap().rect,
                 widgets.ram.as_ref().unwrap().rect,
-                widgets.clock.as_ref().unwrap().rect,
             ]) {
                 let painted = widgets.bar_pill_rect(rect, metrics);
                 assert_eq!((painted.top, painted.height), (pill.top, pill.height));
@@ -224,7 +223,7 @@ fn compact_pane_headers_share_title_height_and_full_row_targets() {
         snapshot.tabs[0].columns[0].panes.truncate(count);
         snapshot.tabs[0].selected_pane = Some("p1".into());
         snapshot.tabs[0].columns[0].expanded = "p1".into();
-        let hints = ShortcutHintsScene::new(Vec::new(), size, metrics, None, |_| 0.0);
+        let hints = ShortcutHintsScene::new(Vec::new(), size, metrics, None, None, |_| 0.0);
         let scene = WorkspaceScene::from_snapshot_with_bar(
             &snapshot,
             EonBar::default(),
@@ -354,7 +353,7 @@ fn popup_outer_chrome_reuses_the_pane_stack_rectangle() {
                     snapshot.tabs[0].selected_popup = selected_popup;
                     for scroll in [0.0, 247.5, f32::MAX] {
                         let hints =
-                            ShortcutHintsScene::new(Vec::new(), size, metrics, None, |_| 0.0);
+                            ShortcutHintsScene::new(Vec::new(), size, metrics, None, None, |_| 0.0);
                         let scene = WorkspaceScene::from_snapshot_with_bar(
                             &snapshot,
                             EonBar::default(),
@@ -627,7 +626,7 @@ fn popup_outer_chrome_reuses_the_pane_stack_rectangle() {
                 ..pane.clone()
             })
             .collect();
-        let hints = ShortcutHintsScene::new(Vec::new(), size, metrics, None, |_| 0.0);
+        let hints = ShortcutHintsScene::new(Vec::new(), size, metrics, None, None, |_| 0.0);
         let popup = WorkspaceScene::from_snapshot_with_bar(
             &snapshot,
             EonBar::default(),
@@ -739,7 +738,7 @@ fn popup_outer_chrome_reuses_the_pane_stack_rectangle() {
                 label,
                 ..hint.clone()
             };
-            let footer = ShortcutHintsScene::new(vec![hint], size, metrics, None, |text| {
+            let footer = ShortcutHintsScene::new(vec![hint], size, metrics, None, None, |text| {
                 text.len() as f32 * 10.0
             });
             assert_eq!(footer.complete, complete);

@@ -143,9 +143,10 @@ order the hints first use them: `Alt`, `Ctrl+Alt`, `Alt+Shift` and
 cluster centred on the window's centre line, one padding apart; keys without
 modifiers follow inside the cluster, written out (`Escape terminal`, and the
 arrows while the tabs, panes or sidebar have focus). While the attention inbox
-is open, the cluster is only its keys. `EON <version>` sits at the bar's right
-end, one padding from the window edge, while `version` is in `[bar] widgets`;
-it hides with the bar, and its tooltip opens above it.
+is open, the cluster is only its keys. The clock sits at the bar's left end
+and `EON <version>` at its right end, each one padding from the window edge,
+while `clock` and `version` are in `[bar] widgets`; they hide with the bar,
+and their tooltips open above them. Neither takes focus or acts on a press.
 
 Pointing at a keycap fills it with the chrome highlight and opens a popup above
 it, inside Venus's own surface: its left edge at the keycap's, kept inside the
@@ -159,14 +160,17 @@ hides the popup until the pointer leaves that keycap's hover band, as a tooltip
 does; the key or press still goes where it would without the popup.
 
 Narrow windows give way in this order, and keycaps never drop: the cluster
-stays centred while it clears the version by one padding, then shifts left to
-sit one padding before it; when it would then cross the bar's left padding,
-the version hides and the cluster centres again; then keys without modifiers
+stays centred while it clears the clock and the version by one padding, then
+shifts to sit one padding from whichever it would cross; when it no longer
+fits between them, the version hides; when it no longer fits after the clock,
+the clock hides and the cluster centres again; then keys without modifiers
 drop whole, `Escape terminal` last; and when the full-name keycaps alone exceed
 the bar, they switch to the short legends `A`, `CA`, `AS` and `CAS` (C for
 Ctrl, A for Alt, S for Shift), which clip only in the narrowest windows. With
-Eon's packaged font (DejaVu Sans) at the default size, a 1280-pixel-wide window
-shows every hint centred and clear of the version. Each pane is its own
+Eon's packaged font (DejaVu Sans) at the default size and the terminal
+focused, 1280- and 800-pixel-wide windows show the clock, the centred keycaps
+and the version; a 400-pixel window shows the full-name keycaps alone; a
+330-pixel window shows the short legends. Each pane is its own
 rounded card, stacked without gaps in its column's allocated card area. Even
 outer gaps surround and separate the allocated column areas. Pane titles sit
 in rounded edges, with neutral outlines sized by `border_width`. Collapsed rows'
