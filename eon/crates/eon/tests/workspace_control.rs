@@ -1,4 +1,4 @@
-use eon_workspace_protocol::v33::{
+use eon_workspace_protocol::v34::{
     Action as ProtocolAction, Availability, Change, Direction, End, Failure as ProtocolFailure,
     Filter, HEADER_BYTES, InvokeIntent, LifecycleResponse, MAX_SESSIONS, Popup, PopupTarget,
     Request, Response, Runtime, Screen, Sent, Snapshot, Stopped, SubscriptionMessage, Tab,
@@ -8608,7 +8608,7 @@ fn running_windows_name_each_other_and_refresh_on_start_and_end() {
         }
         let response = read_request(&mut stream);
         assert!(matches!(
-            eon_workspace_protocol::v33::decode_lifecycle_response(&response).unwrap(),
+            eon_workspace_protocol::v34::decode_lifecycle_response(&response).unwrap(),
             LifecycleResponse::Runtime(_)
         ));
     }
@@ -10658,6 +10658,268 @@ fn scrollback_refuses_callers_without_terminal_access_and_ends_with_its_window()
     assert!(!snapshots.exists());
 }
 
+/// `eon pane history TARGET --edit` opens TARGET's snapshot in a Scrollback
+/// popup over its tab, as the window's key does for the shown terminal,
+/// leaves the selection as it was and prints nothing but its JSON. It works
+/// only in the shown workspace's active tab while that tab shows no
+/// Scrollback; otherwise it changes nothing (EON-C35, EON-C10).
+#[test]
+fn pane_history_edit_opens_its_target_in_scrollback_in_the_active_tab_only() {
+    let window = PairWindow::new();
+    let mut supervisor = scrollback_window(&window, "");
+    let editor_log = window.root.join("editor.log");
+    let release = window.root.join("editor-release");
+    assert!(
+        window
+            .eon(&["pane", "create", "--no-focus"])
+            .status
+            .success()
+    );
+    let before = window.inspect("before").tabs.remove(0);
+    assert_eq!(before.selected_pane.as_deref(), Some("p1"));
+    assert!(before.panes().any(|pane| pane.id == "p2"));
+
+    // A pane the tab does not show: its snapshot, over the tab.
+    let edit = window.eon(&["pane", "history", "p2", "--edit"]);
+    assert_eq!(
+        (edit.status.code(), stdout(&edit), edit.stderr.as_slice()),
+        (Some(0), "", &b""[..])
+    );
+    let file = PathBuf::from(&wait_for_lines(&editor_log, 1)[0]);
+    assert_eq!(file.file_name().unwrap(), "p2-scrollback.txt");
+    let history = window.eon(&["pane", "history", "p2"]);
+    assert_eq!(
+        fs::read_to_string(&file).unwrap(),
+        format!(
+            "This pane is in a full-screen app; Eon shows only its screen. Quit the app to see the history.\n{}",
+            stdout(&history)
+        )
+    );
+    let shown = window.inspect("shown").tabs.remove(0);
+    let popup = shown.popups.last().unwrap().clone();
+    assert_eq!(
+        (
+            popup.entry.as_str(),
+            shown.selected_popup.as_ref(),
+            shown.selected_pane.as_deref()
+        ),
+        ("scrollback", Some(&popup.id), Some("p1"))
+    );
+    assert!(
+        log_lines(&window.root.join("snapshot.log")).contains(&format!("{0}|{0}", popup.session))
+    );
+
+    // While Scrollback shows, another edit changes nothing.
+    let again = window.eon(&["pane", "history", "p1", "--edit", "--json"]);
+    assert_eq!(edit_error(&again), (Some(1), "unavailable".to_owned()));
+    assert!(
+        stdout(&again).contains("tab t1 already shows a Scrollback popup"),
+        "{again:?}"
+    );
+    assert_eq!(
+        stable_tabs(&window.inspect("again").tabs),
+        stable_tabs(std::slice::from_ref(&shown))
+    );
+    assert_eq!(
+        window.snapshot_directories(),
+        [file.parent().unwrap().to_owned()]
+    );
+    fs::write(&release, "").unwrap();
+    wait_for_removal(file.parent().unwrap());
+    fs::remove_file(&release).unwrap();
+
+    // JSON names the target and the Scrollback popup.
+    let edit = window.eon(&["pane", "history", "p1", "--edit", "--json"]);
+    assert_eq!(edit.status.code(), Some(0), "{edit:?}");
+    let value: serde_json::Value = serde_json::from_str(stdout(&edit)).unwrap();
+    let shown = window.inspect("json").tabs.remove(0);
+    let popup = shown.popups.last().unwrap().clone();
+    assert_eq!(
+        value,
+        serde_json::json!({
+            "generation": value["generation"],
+            "window": null,
+            "workspace": "w1",
+            "tab": "t1",
+            "pane": "p1",
+            "popup": null,
+            "terminal": "session-1",
+            "caller": null,
+            "scrollback": {"popup": popup.id, "terminal": popup.session},
+        })
+    );
+    let file = PathBuf::from(&wait_for_lines(&editor_log, 2)[1]);
+    assert_eq!(file.file_name().unwrap(), "p1-scrollback.txt");
+    assert!(matches!(
+        window.invoke_popup("dismiss", "scrollback", Some(&popup.id)),
+        Response::Snapshot(snapshot) if snapshot.tabs[0].popups.iter().all(|item| item.id != popup.id)
+    ));
+    wait_for_removal(file.parent().unwrap());
+
+    // In a hidden tab it refuses with not-active and changes nothing.
+    assert!(window.eon(&["tab", "create"]).status.success());
+    let pair = window.inspect("tab-two").tabs[1].popups[0].session.clone();
+    window.pair_launch(&pair);
+    let home = window.home.to_str().unwrap();
+    assert!(
+        window
+            .eon(&["tab", "directory", "t2", "--", home])
+            .status
+            .success()
+    );
+    let before = window.inspect("hidden");
+    assert_eq!(before.active_tab, "t2");
+    let human = window.eon(&["pane", "history", "p1", "--edit"]);
+    assert_eq!((human.status.code(), stdout(&human)), (Some(1), ""));
+    assert!(
+        String::from_utf8_lossy(&human.stderr).contains("not-active"),
+        "{human:?}"
+    );
+    let json = window.eon(&["pane", "history", "p2", "--edit", "--json"]);
+    assert_eq!(edit_error(&json), (Some(1), "not-active".to_owned()));
+    let after = window.inspect("hidden-after");
+    assert_eq!(after.active_tab, before.active_tab);
+    assert_eq!(stable_tabs(&after.tabs), stable_tabs(&before.tabs));
+
+    // And in a hidden workspace.
+    assert!(window.eon(&["workspace", "new"]).status.success());
+    let pair = window.inspect("workspace-two").tabs[0].popups[0]
+        .session
+        .clone();
+    window.pair_launch(&pair);
+    let before = window.inspect("hidden-workspace");
+    assert_eq!(before.workspace, "w2");
+    let json = window.eon(&["pane", "history", "p1", "--edit", "--json"]);
+    assert_eq!(edit_error(&json), (Some(1), "not-active".to_owned()));
+    let after = window.inspect("hidden-workspace-after");
+    assert_eq!(
+        (after.workspace.as_str(), after.active_tab.as_str()),
+        (before.workspace.as_str(), before.active_tab.as_str())
+    );
+    assert_eq!(stable_tabs(&after.tabs), stable_tabs(&before.tabs));
+    assert_eq!(after.workspaces, before.workspaces);
+    assert_eq!(window.snapshot_directories(), Vec::<PathBuf>::new());
+    assert_eq!(log_lines(&editor_log).len(), 2);
+    window.stop_generation(&mut supervisor);
+}
+
+/// `eon pane history TARGET --edit` refuses while the tab shows a transient
+/// popup, in a tab still choosing its directory, when the export fails or
+/// misses the terminal deadline, and when the editor is missing; each refusal
+/// leaves no snapshot and changes no tab (EON-C35).
+#[test]
+fn pane_history_edit_refusals_leave_no_snapshot_and_change_nothing() {
+    let window = PairWindow::new();
+    let commands = window.root.join("commands");
+    executable(
+        &commands,
+        "#!/bin/sh\nwhile [ ! -e \"$EON_TEST_STOP\" ]; do sleep 0.01; done\n",
+    );
+    let mut supervisor = scrollback_window(
+        &window,
+        &format!(
+            "\n[popups.commands]\ncommand = [\"{}\"]\n",
+            commands.display()
+        ),
+    );
+    let refused = |id: &str, target: &str, code: &str| {
+        let before = window.inspect(id);
+        let output = window.eon(&["pane", "history", target, "--edit", "--json"]);
+        assert_eq!(edit_error(&output), (Some(1), code.to_owned()), "{id}");
+        assert_eq!(window.snapshot_directories(), Vec::<PathBuf>::new(), "{id}");
+        let after = window.inspect(&format!("{id}-after"));
+        assert_eq!(
+            (after.active_tab, stable_tabs(&after.tabs)),
+            (before.active_tab, stable_tabs(&before.tabs)),
+            "{id}"
+        );
+    };
+
+    // A transient popup the person has open stays open.
+    let shown = match window.invoke_popup("commands", "commands", None) {
+        Response::Snapshot(shown) => shown,
+        other => panic!("Commands did not open: {other:?}"),
+    };
+    let commands = shown.tabs[0].selected_popup.clone().unwrap();
+    refused("transient", "p1", "unavailable");
+    assert!(matches!(
+        window.invoke_popup("hide", "commands", Some(&commands)),
+        Response::Snapshot(snapshot) if snapshot.tabs[0].selected_popup.is_none()
+    ));
+
+    fs::write(window.root.join("orbit-reply"), "busy").unwrap();
+    refused("busy", "p1", "terminal-unavailable");
+    fs::remove_file(window.root.join("orbit-reply")).unwrap();
+
+    // A tab still choosing its directory.
+    assert!(window.eon(&["tab", "create"]).status.success());
+    let tab = window.inspect("tab-two").tabs.remove(1);
+    window.pair_launch(&tab.popups[0].session);
+    refused("pending", &tab.popups[0].id, "choose-directory-first");
+    let home = window.home.to_str().unwrap();
+    assert!(
+        window
+            .eon(&["tab", "directory", &tab.id, "--", home])
+            .status
+            .success()
+    );
+    let pane = window.inspect("committed").tabs[1]
+        .panes()
+        .next()
+        .unwrap()
+        .id
+        .clone();
+
+    fs::write(
+        window.config.join("config.toml"),
+        format!(
+            "[terminal]\nfont_fallbacks = []\n\n[anima]\nenabled = false\n\n[editor]\ncommand = [\"{}\"]\n",
+            window.root.join("missing").display()
+        ),
+    )
+    .unwrap();
+    refused("missing", &pane, "popup-command");
+
+    // The timed-out read goes last: its late answer holds the lease's slot.
+    fs::write(window.root.join("orbit-reply"), "slow-history").unwrap();
+    refused("slow", &pane, "terminal-unavailable");
+    assert!(!window.root.join("editor.log").exists());
+    window.stop_generation(&mut supervisor);
+}
+
+/// With Scrollback disabled, `eon pane history TARGET --edit` exits 3 with
+/// `unknown-popup` and changes nothing (EON-C35).
+#[test]
+fn pane_history_edit_with_scrollback_disabled_refuses_with_unknown_popup() {
+    let window = PairWindow::new();
+    let mut supervisor = scrollback_window(&window, "\n[popups.scrollback]\nenabled = false\n");
+    let before = window.inspect("before");
+    let human = window.eon(&["pane", "history", "p1", "--edit"]);
+    assert_eq!((human.status.code(), stdout(&human)), (Some(3), ""));
+    assert!(
+        String::from_utf8_lossy(&human.stderr).starts_with("error unknown-popup: "),
+        "{human:?}"
+    );
+    let json = window.eon(&["pane", "history", "p1", "--edit", "--json"]);
+    assert_eq!(edit_error(&json), (Some(3), "unknown-popup".to_owned()));
+    let after = window.inspect("after");
+    assert_eq!(
+        (after.active_tab, stable_tabs(&after.tabs)),
+        (before.active_tab, stable_tabs(&before.tabs))
+    );
+    assert_eq!(window.snapshot_directories(), Vec::<PathBuf>::new());
+    window.stop_generation(&mut supervisor);
+}
+
+/// A refused `eon pane history --edit --json`'s exit status and error code.
+fn edit_error(output: &Output) -> (Option<i32>, String) {
+    let value: serde_json::Value = serde_json::from_str(stdout(output)).unwrap();
+    (
+        output.status.code(),
+        value["error"]["code"].as_str().unwrap().to_owned(),
+    )
+}
+
 /// Fails a Scrollback press whose editor's Orbit publishes Ready after its
 /// start and rollback deadlines, and returns the running editor's terminal
 /// and its snapshot, which stays.
@@ -10736,6 +10998,12 @@ fn terminal_access_none_refuses_every_read_and_send() {
         (
             "history",
             ProtocolAction::ReadTerminalHistory {
+                target: "p1".into(),
+            },
+        ),
+        (
+            "edit",
+            ProtocolAction::EditTerminalHistory {
                 target: "p1".into(),
             },
         ),

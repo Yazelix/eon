@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- Consume EONW v34, which adds `EditTerminalHistory` and its `Editing` reply
+  (`eon-u5bvd.5`, EON-C35). No Venus behavior change.
 - Consume EONW v33, which adds `ReadTerminalHistory` and its `History` reply
   (`eon-u5bvd.3`, EON-C35). Venus still reads every message under the 2 MiB
   bound. No Venus behavior change.

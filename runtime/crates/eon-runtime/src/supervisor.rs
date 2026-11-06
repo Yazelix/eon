@@ -21,14 +21,15 @@ use super::{
     subscriptions::{Subscriber, Subscribers},
     workspace::{self, LaunchCommand, SessionEnd, SessionOperation, WorkspaceSet},
 };
-use eon_workspace_protocol::v33::{
-    Action, Availability, BusyTerminals, Ended, FILES_ENTRY, Failure, InvokeIntent,
-    LifecycleResponse, Request, Response, Runtime, Screen, Sent, Snapshot, Stopped,
+use eon_workspace_protocol::v34::{
+    Action, Availability, BusyTerminals, Editing, Ended, FILES_ENTRY, Failure, InvokeIntent,
+    LifecycleResponse, Request, Response, Runtime, Screen, Sent, Snapshot, Stopped, TargetId,
     TerminalHistory, TerminalInput, TerminalText, VERSION, WindowEntry, WindowState,
     WorkspaceAction,
 };
 use orbit_protocol::management::{LeaseInput, Screen as OrbitScreen};
 use std::{
+    borrow::Cow,
     env,
     ffi::{OsStr, OsString},
     fs,
@@ -605,7 +606,7 @@ impl PresentationProcess {
                 };
                 if let Some(snapshot) = snapshot {
                     let bytes =
-                        eon_workspace_protocol::v33::encode_response(&Response::Snapshot(snapshot))
+                        eon_workspace_protocol::v34::encode_response(&Response::Snapshot(snapshot))
                             .map_err(|error| format!("cannot encode startup workspace: {error}"))?;
                     let mut remaining = bytes.as_slice();
                     while !remaining.is_empty() {
@@ -2525,6 +2526,16 @@ fn dispatch_control_request(
             ),
             false,
         ),
+        Request {
+            action: Action::EditTerminalHistory { .. },
+            ..
+        } => (
+            ControlResponse::Workspace(
+                edit_terminal_history(request, state, inputs, config)
+                    .unwrap_or_else(Response::Failure),
+            ),
+            false,
+        ),
         request => {
             if state.workspaces.is_none() {
                 return (
@@ -2692,16 +2703,8 @@ fn dispatch_control_request(
                     caller.as_deref(),
                     action,
                     |command, directory| {
-                        let edit;
-                        let command = match (command, &snapshot) {
-                            (PopupCommand::Scrollback, Some(snapshot)) => {
-                                edit = PopupCommand::Edit(snapshot.file.clone().into_os_string());
-                                &edit
-                            }
-                            _ => command,
-                        };
                         managed_environment::prepare_popup_command(
-                            command,
+                            &snapshot_command(command, snapshot.as_ref()),
                             inputs.managed.shell_bin.as_deref(),
                             directory,
                             config,
@@ -2792,6 +2795,133 @@ fn dispatch_control_request(
                 ),
             }
         }
+    }
+}
+
+/// Opens the retained history and live area of the pane or popup the
+/// request names in the configured editor, in a Scrollback popup over its
+/// tab, as the window's Scrollback key does for the terminal a tab shows
+/// (EON-C35, EON-C10). Only in the shown workspace's active tab; it changes
+/// no active tab, shown workspace or selection. Blocks the supervisor for the
+/// read, as `eon pane history` does.
+fn edit_terminal_history(
+    request: Request,
+    state: &mut SupervisorState,
+    inputs: &Inputs,
+    config: &Path,
+) -> Result<Response, Failure> {
+    if state.workspaces.is_none() {
+        return Err(failure(
+            "workspace-unavailable",
+            "eonbase has no Eon workspace",
+        ));
+    }
+    if state.agents.terminal_access == TerminalAccess::None {
+        return Err(failure(
+            "terminal-access-off",
+            "[agents] terminal_access is \"none\" for this window",
+        ));
+    }
+    let caller = caller_session(state, inputs, config, &request)?;
+    let Some(workspace) = &mut state.workspaces else {
+        unreachable!("reconciliation keeps the workspace owner");
+    };
+    let caller = caller.and_then(|caller| workspace.session_target(&caller));
+    let Action::EditTerminalHistory { target: id } = &request.action else {
+        unreachable!("dispatch routes only history edits here");
+    };
+    let (target, entry) = workspace.scrollback_target(&request.id, id)?;
+    let Some(session) = state
+        .sessions
+        .iter_mut()
+        .find(|session| session.id == target.terminal)
+    else {
+        return Err(failure(
+            "terminal-ended",
+            format!("terminal {} has ended", target.terminal),
+        ));
+    };
+    let history = sessions::read_history(session, &state.log)?;
+    let (TargetId::Pane(source) | TargetId::Popup(source)) = &target.id;
+    let snapshot = state
+        .scrollback
+        .write(source, &history)
+        .map_err(|detail| failure("popup-start", detail))?;
+    let mut marked = None;
+    let venus = state.venus.as_ref().and_then(|venus| venus.name);
+    let component_generation = &state.component_generation;
+    let sessions = &mut state.sessions;
+    let initial_child = &mut state.initial_child;
+    let log = &state.log;
+    // The target's tab is the shown workspace's active tab, which a request
+    // without a caller acts on.
+    let result = workspace.dispatch(
+        &request.id,
+        None,
+        Action::InvokePopup {
+            tab: target.tab.clone(),
+            entry,
+            expected_instance: None,
+            intent: InvokeIntent::Toggle,
+        },
+        |command, directory| {
+            managed_environment::prepare_popup_command(
+                &snapshot_command(command, Some(&snapshot)),
+                inputs.managed.shell_bin.as_deref(),
+                directory,
+                config,
+                &inputs.defaults,
+                Some(log),
+            )
+        },
+        |operation| {
+            mark_before_start(Some(&snapshot), &mut marked, operation, |operation| {
+                apply_session_operation(
+                    inputs,
+                    config,
+                    log,
+                    component_generation,
+                    sessions,
+                    initial_child,
+                    operation,
+                    PairStart::Later,
+                    venus,
+                )
+            })
+        },
+    );
+    let popup = marked.as_ref().map(|session| session.id.clone());
+    settle_snapshot(
+        &mut state.scrollback,
+        snapshot,
+        marked,
+        result.is_ok(),
+        sessions,
+        log,
+    );
+    result.map_err(|error| failure(error.code, error.detail))?;
+    let popup = popup
+        .and_then(|session| workspace.session_target(&session))
+        .ok_or_else(|| failure("popup-start", "the Scrollback popup did not start"))?;
+    Ok(Response::Editing(Editing {
+        target,
+        caller,
+        popup,
+    }))
+}
+
+/// Scrollback's command for one press: `[editor] command` on its
+/// `snapshot`, as `eon edit` builds it (EON-C10). Any other command is
+/// itself.
+fn snapshot_command<'a>(
+    command: &'a PopupCommand,
+    snapshot: Option<&scrollback::Snapshot>,
+) -> Cow<'a, PopupCommand> {
+    match (command, snapshot) {
+        (PopupCommand::Scrollback, Some(snapshot)) => {
+            Cow::Owned(PopupCommand::Edit(snapshot.file.clone().into_os_string()))
+        }
+        _ => Cow::Borrowed(command),
     }
 }
 
@@ -3265,16 +3395,16 @@ mod tests {
         state
             .subscribers
             .attach(stream, *subscriber, Instant::now());
-        let mut message = vec![0; eon_workspace_protocol::v33::HEADER_BYTES];
+        let mut message = vec![0; eon_workspace_protocol::v34::HEADER_BYTES];
         peer.read_exact(&mut message).unwrap();
         message.resize(
-            eon_workspace_protocol::v33::declared_message_len(&message).unwrap(),
+            eon_workspace_protocol::v34::declared_message_len(&message).unwrap(),
             0,
         );
-        peer.read_exact(&mut message[eon_workspace_protocol::v33::HEADER_BYTES..])
+        peer.read_exact(&mut message[eon_workspace_protocol::v34::HEADER_BYTES..])
             .unwrap();
-        let eon_workspace_protocol::v33::SubscriptionMessage::Subscribed(subscribed) =
-            eon_workspace_protocol::v33::decode_subscription_message(&message).unwrap()
+        let eon_workspace_protocol::v34::SubscriptionMessage::Subscribed(subscribed) =
+            eon_workspace_protocol::v34::decode_subscription_message(&message).unwrap()
         else {
             panic!("no SUBSCRIBED");
         };
@@ -3290,7 +3420,7 @@ mod tests {
         assert_eq!(state.workspace_snapshot_in(None).unwrap(), before);
         assert!(state.venus.is_none());
 
-        let missing = eon_workspace_protocol::v33::Filter {
+        let missing = eon_workspace_protocol::v34::Filter {
             workspaces: vec!["w9".into()],
             ..Default::default()
         };
@@ -3386,7 +3516,7 @@ mod tests {
     /// A pending window with one unfiltered subscriber that has read its
     /// snapshot, and that subscriber's end of the connection.
     fn subscribed_window() -> (PathBuf, crate::cli::Inputs, SupervisorState, UnixStream) {
-        use eon_workspace_protocol::v33::SubscriptionMessage;
+        use eon_workspace_protocol::v34::SubscriptionMessage;
         let root = temporary_directory();
         let inputs = crate::fixtures::inputs();
         let workspace = WorkspaceSet::pending(
@@ -3457,9 +3587,9 @@ mod tests {
         mut peer: UnixStream,
     ) -> std::thread::JoinHandle<(
         super::Response,
-        Vec<eon_workspace_protocol::v33::SubscriptionMessage>,
+        Vec<eon_workspace_protocol::v34::SubscriptionMessage>,
     )> {
-        use eon_workspace_protocol::v33::{
+        use eon_workspace_protocol::v34::{
             HEADER_BYTES, declared_message_len, decode_response, encode_request,
         };
         use std::io::Write;
@@ -3505,9 +3635,9 @@ mod tests {
 
     /// The names of the `workspace-renamed` events in `messages`.
     fn renames(
-        messages: &[eon_workspace_protocol::v33::SubscriptionMessage],
+        messages: &[eon_workspace_protocol::v34::SubscriptionMessage],
     ) -> Vec<Option<String>> {
-        use eon_workspace_protocol::v33::{Change, SubscriptionMessage, WorkspaceChange};
+        use eon_workspace_protocol::v34::{Change, SubscriptionMessage, WorkspaceChange};
         messages
             .iter()
             .filter_map(|message| match message {
@@ -3526,8 +3656,8 @@ mod tests {
     /// Every whole subscription message already written to `peer`.
     fn subscription_messages(
         peer: &mut UnixStream,
-    ) -> Vec<eon_workspace_protocol::v33::SubscriptionMessage> {
-        use eon_workspace_protocol::v33::{declared_message_len, decode_subscription_message};
+    ) -> Vec<eon_workspace_protocol::v34::SubscriptionMessage> {
+        use eon_workspace_protocol::v34::{declared_message_len, decode_subscription_message};
         peer.set_nonblocking(true).unwrap();
         let mut bytes = Vec::new();
         let mut buffer = [0; 65536];
@@ -3555,7 +3685,7 @@ mod tests {
     #[cfg(target_os = "linux")]
     #[test]
     fn attention_reaches_subscribers_in_the_loop_turn_that_polls_it() {
-        use eon_workspace_protocol::v33::{AttentionState, Change, SubscriptionMessage};
+        use eon_workspace_protocol::v34::{AttentionState, Change, SubscriptionMessage};
         let root = temporary_directory();
         let inputs = crate::fixtures::inputs();
         let session = leased_orbit(
@@ -3604,8 +3734,8 @@ mod tests {
                 id: "subscribe-1".into(),
                 caller: None,
                 action: Action::Subscribe {
-                    filter: eon_workspace_protocol::v33::Filter {
-                        kinds: vec![eon_workspace_protocol::v33::EventKind::Attention],
+                    filter: eon_workspace_protocol::v34::Filter {
+                        kinds: vec![eon_workspace_protocol::v34::EventKind::Attention],
                         ..Default::default()
                     },
                     after: None,
@@ -4553,7 +4683,7 @@ mod tests {
 
     #[test]
     fn startup_snapshot_transfer_uses_the_admission_deadline() {
-        use eon_workspace_protocol::v33::{
+        use eon_workspace_protocol::v34::{
             Column, Pane, PopupGeometry, Response, Snapshot, Tab, encode_response,
         };
         use std::time::{Duration, Instant};
@@ -4562,7 +4692,7 @@ mod tests {
         let snapshot = Snapshot {
             workspace: "w1".into(),
             active_workspace: "w1".into(),
-            workspaces: vec![eon_workspace_protocol::v33::WorkspaceInfo {
+            workspaces: vec![eon_workspace_protocol::v34::WorkspaceInfo {
                 id: "w1".into(),
                 name: None,
                 tab_count: 64,
@@ -4604,7 +4734,7 @@ mod tests {
             claude_quota_failure: None,
             running: None,
             busy: None,
-            sidebar: eon_workspace_protocol::v33::Sidebar::Open,
+            sidebar: eon_workspace_protocol::v34::Sidebar::Open,
             attention_queue: Vec::new(),
         };
         let expected = encode_response(&Response::Snapshot(snapshot.clone())).unwrap();

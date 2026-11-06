@@ -360,7 +360,7 @@ aside while the window leaves fewer than 80 cells for the terminals beside it.
 See [Agent sidebar](USAGE.md#agent-sidebar).
 
 `[agents] terminal_access` decides whether `eon pane read`, `eon pane history`
-and `eon pane send` may reach this window's terminals.
+(with `--edit` too) and `eon pane send` may reach this window's terminals.
 
 - `"window"`, the default, lets any process running as you read or send to any
   pane or popup of the window, in any workspace, shown or hidden.
@@ -489,6 +489,9 @@ its first line says what was left out; a full-screen app's terminal shows only
 its screen, and the first line says so. The bound, the plain-text layout, the
 file's private 0600 mode in a 0700 directory, and its removal at the popup's
 end are fixed for safety and by Orbit's history contract (ORB-C17).
+`eon pane history TARGET --edit` opens Scrollback on TARGET from the CLI (see
+[Reading a terminal](USAGE.md#reading-a-terminal)); with Scrollback disabled
+it exits 3 with `unknown-popup`.
 Commands searches and runs Eon commands.
 Workspaces lists this window's workspaces most recently shown first, the shown
 one last, marking one that needs input: Enter shows the highlighted one, and
@@ -536,6 +539,31 @@ against the tab's directory. Each edit reads the setting again, so a
 change applies to the next file you open without restarting the window. When
 the editor is not on the terminal PATH, the edit fails with `edit-command` and
 opens no pane; Eon does not fall back to Helix.
+
+The Scrollback popup (Alt+Shift+E, or `eon pane history TARGET --edit`) opens
+its snapshot file with the same command, in a popup instead of a pane. When
+the editor is missing, it fails with `popup-command` and opens nothing.
+
+- The editor must stay in the foreground until you are done. A GUI editor
+  needs its wait flag, for example `["code", "--wait"]`; otherwise it returns
+  at once, the popup ends, and Eon removes the snapshot.
+- The snapshot is discarded when the popup ends. Dismissing or replacing the
+  popup stops the editor and loses unsaved edits, so to keep edits, save them
+  under another name first.
+- Eon removes the snapshot's directory, but not state your editor keeps
+  elsewhere, such as Neovim's swap, undo and shada files under
+  `~/.local/state/nvim`.
+- If a window's supervisor dies with a Scrollback popup open, the recovering
+  supervisor adopts a still-running editor's snapshot and removes it when
+  that terminal ends; the next start of that window's generation removes only
+  snapshots no live editor holds. One whose generation never starts again,
+  for example after an Eon update, stays until you log out on Linux, where
+  the runtime directory is in memory. The macOS fallback under `/tmp` is not
+  in memory, so there it stays until the system clears `/tmp`.
+- Opening Scrollback reads the history and then starts the editor, each
+  within its own deadline. On a machine too loaded to finish both within
+  6 seconds, the window may report Eon as slow or unavailable while the
+  popup still opens.
 
 ## Managed tools
 

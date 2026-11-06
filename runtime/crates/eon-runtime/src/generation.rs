@@ -12,7 +12,7 @@ use super::supervisor::{
 };
 use super::windows::WINDOW_RUNTIME;
 use super::workspace::{json_escape, terminal_text};
-use eon_workspace_protocol::v33::{
+use eon_workspace_protocol::v34::{
     Action, Availability, BusyTerminals, Failure, LifecycleResponse, MAX_RUNNING_WINDOWS, Response,
     Stopped, WindowEntry, WindowState, WorkspaceAction,
 };
@@ -1637,7 +1637,7 @@ mod tests {
 
     #[test]
     fn read_only_discovery_excludes_terminal_only_supervisors() {
-        use eon_workspace_protocol::v33::{
+        use eon_workspace_protocol::v34::{
             Availability, HEADER_BYTES, LifecycleResponse, Runtime, declared_message_len,
             encode_lifecycle_response,
         };
@@ -1669,7 +1669,7 @@ mod tests {
                 name: None,
                 started_at: 123,
                 eon_version: "fixture".into(),
-                workspace_protocol: eon_workspace_protocol::v33::VERSION,
+                workspace_protocol: eon_workspace_protocol::v34::VERSION,
                 component_report: "fixture".into(),
                 sessions: vec!["session-1".into()],
                 attach: available.clone(),
@@ -1775,7 +1775,7 @@ mod tests {
 
     #[test]
     fn quit_asks_only_while_busy_in_window_language() {
-        use eon_workspace_protocol::v33::{BusyTerminal, TargetId, TerminalTarget};
+        use eon_workspace_protocol::v34::{BusyTerminal, TargetId, TerminalTarget};
         let mut record = super::dead_generation("g1", "current", "/runtime".into(), "ended");
         let sessions = ["session-1".to_owned(), "session-2".to_owned()];
         let busy = |names: &[&str], omitted| BusyTerminals {

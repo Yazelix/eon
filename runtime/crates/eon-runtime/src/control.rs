@@ -7,7 +7,7 @@ use super::{
     },
     workspace,
 };
-use eon_workspace_protocol::v33::{
+use eon_workspace_protocol::v34::{
     Action, Error as ProtocolError, Failure, HEADER_BYTES, LifecycleResponse, MAX_DETAIL_BYTES,
     Request, Response, Runtime, VERSION, WorkspaceAction, declared_message_len,
     declared_response_len, decode_lifecycle_response, decode_request, decode_response,
@@ -457,7 +457,11 @@ pub(super) fn probe_launch_mode(socket: &Path) -> Result<LaunchMode, EndpointFai
             ),
         )),
         ControlResponse::Workspace(
-            Response::Ended(_) | Response::Text(_) | Response::Sent(_) | Response::History(_),
+            Response::Ended(_)
+            | Response::Text(_)
+            | Response::Sent(_)
+            | Response::History(_)
+            | Response::Editing(_),
         )
         | ControlResponse::Lifecycle(_) => Err(EndpointFailure::new(
             EndpointFailureKind::Corrupt,
@@ -866,16 +870,16 @@ mod tests {
     #[test]
     fn a_slow_reader_holds_the_supervisor_no_longer_than_the_reply_deadline() {
         let history = |text: String| {
-            super::Response::History(eon_workspace_protocol::v33::TerminalHistory {
-                target: eon_workspace_protocol::v33::TerminalTarget {
+            super::Response::History(eon_workspace_protocol::v34::TerminalHistory {
+                target: eon_workspace_protocol::v34::TerminalTarget {
                     workspace: "w1".into(),
                     tab: "t1".into(),
-                    id: eon_workspace_protocol::v33::TargetId::Pane("p1".into()),
+                    id: eon_workspace_protocol::v34::TargetId::Pane("p1".into()),
                     terminal: "session-1".into(),
                 },
                 caller: None,
                 revision: 1,
-                screen: eon_workspace_protocol::v33::Screen::Primary,
+                screen: eon_workspace_protocol::v34::Screen::Primary,
                 rows: 24,
                 columns: 80,
                 title: String::new(),

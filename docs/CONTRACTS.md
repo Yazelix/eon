@@ -689,7 +689,7 @@ socket names, JSON fields and protocol identifiers retain their spellings.
 - **Owner:** Eon Runtime workspace topology, identity, focus, pruning and action
   enforcement; Eon supplies product defaults/policy. Orbit owns terminals and
   Venus owns native materialization.
-- **Consumes:** Current EONW v33 workspace/popup values, Orbit terminal
+- **Consumes:** Current EONW v34 workspace/popup values, Orbit terminal
   identities/endpoints and Venus `VEN-C8`.
 - **Boundary:** No arbitrary split tree, vertical splits, column resizing,
   arbitrary reorder target, cross-tab pane movement, picker relocation, durable layout
@@ -1067,7 +1067,10 @@ socket names, JSON fields and protocol identifiers retain their spellings.
   relayed by eon-overseer, `eon-u5bvd.1` record 03) by `eon-u5bvd.3`: EONW
   carries EON-C35's read of retained history. Amended on 2026-11-05 (approved
   by Lucca, relayed by eon-overseer, `eon-u5bvd.1` record 03) by
-  `eon-u5bvd.4`: the Scrollback popup and its private snapshot.
+  `eon-u5bvd.4`: the Scrollback popup and its private snapshot. Amended on
+  2026-11-05 (approved by Lucca, relayed by eon-overseer, `eon-u5bvd.1`
+  record 03) by `eon-u5bvd.5`: Scrollback's CLI path, `eon pane history
+  --edit`.
 - **Consumer:** One local CLI or approved composition controlling a live Eon
   supervisor.
 - **Trigger:** The client submits one versioned workspace or supervisor-lifecycle
@@ -1318,7 +1321,7 @@ socket names, JSON fields and protocol identifiers retain their spellings.
 - **Owner:** Eon Runtime supervisor workspace/action state and CLI projection;
   its canonical EONW package owns types, codec and result ordering. Eon supplies
   validated component facts and product defaults.
-- **Consumes:** Current EONW v33 and accepted Orbit management operations.
+- **Consumes:** Current EONW v34 and accepted Orbit management operations.
 - **Boundary:** Additive lifecycle tags do not widen the pinned Venus workspace
   consumer. There is no event stream or subscription policy other than
   EON-C39's event subscription, and no remote transport,
@@ -1330,7 +1333,7 @@ socket names, JSON fields and protocol identifiers retain their spellings.
   child-protocol escape hatch.
 - **Package owner:** The canonical EONW crate lives in
   `runtime/crates/eon-workspace-protocol` with its accepted package/API and
-  v33 bytes. Venus, Eon Runtime and Eon consume it by path.
+  v34 bytes. Venus, Eon Runtime and Eon consume it by path.
   See [package selection](ARCHITECTURE.md#in-tree-package-selection).
 - **Runtime policy:** Project is required and defaults to Alt+Z; it has no
   command of its own and shows the tab's pair (EON-C18) on quick search. Git
@@ -1386,7 +1389,8 @@ socket names, JSON fields and protocol identifiers retain their spellings.
   or times out, or the editor is missing, no popup starts, the window shows
   the existing popup start-failure notice, and no snapshot is left. The window
   key is the person's own action, and `[agents] terminal_access` does not
-  govern it; a Scrollback request a terminal sends is an agent's read, which
+  govern it; its CLI path, `eon pane history --edit`, is governed (EON-C35),
+  and a Scrollback request a terminal sends is an agent's read, which
   `terminal_access = "none"` refuses with `terminal-access-off`.
   Commands defaults to Alt+Shift+M and runs a transient fzf list of existing
   `eon` commands: tab, pane and window creation, closing or moving the popup's
@@ -1411,8 +1415,8 @@ socket names, JSON fields and protocol identifiers retain their spellings.
   fzf list of the popup's window's workspaces (EON-C33's picker); Commands >
   Switch workspace runs the same list in the Commands popup. Each row shows
   the workspace's name, or its `wN` when unnamed, its tab count, and
-  ` · needs input` when its EONW v33 `attention` is needs input. Rows run by
-  EONW v33 `recency`, most recently shown first, with the shown workspace last
+  ` · needs input` when its EONW v34 `attention` is needs input. Rows run by
+  EONW v34 `recency`, most recently shown first, with the shown workspace last
   and marked ` · shown`, and the query matches only that name or `wN`. Enter on the highlighted row,
   including on an empty query, runs `eon workspace switch wN` once the CLI
   has checked again that the `wN` is live; otherwise it changes nothing and
@@ -1673,6 +1677,18 @@ socket names, JSON fields and protocol identifiers retain their spellings.
     (`a_scrollback_record_precedes_its_editor_and_only_a_confirmed_failure_discards`);
     a failed removal is retried on later turns
     (`a_failed_removal_is_retried_on_later_turns`).
+  - **Scrollback (`eon-u5bvd.5`, installed tier):** in a private headless
+    Sway 1.12 with its own HOME and runtime directory,
+    `/nix/store/nzzakslm85qhwgzamyg9506r111jswrv-eon-0.1.18`, from that
+    commit's reviewed candidate, whose runtime behaved the same but for
+    `--edit`'s transient-popup refusal. After p1 printed 300 numbered lines, Alt+Shift+E opened
+    the packaged hx in a Scrollback popup over p1 at line 1, the earliest
+    retained line (the command line), through the prompt, 302 lines; the
+    snapshot was a 0600 file in a fresh 0700 directory of a 0700 store,
+    beside its `.terminal` record, and its text equalled `eon pane history
+    p1` byte for byte. `:q` ended the popup, p1 showed again, and the
+    snapshot and the store were gone. `eon pane history --edit` is EON-C35's
+    proof.
 
 ## EON-C11 — Runtime generations and presentation
 
@@ -2268,7 +2284,7 @@ socket names, JSON fields and protocol identifiers retain their spellings.
   - `eon tab create --directory DIRECTORY` skips the pending pair: its tab is
     never pending and its first pane starts at DIRECTORY (EON-C10). A bare `eon
     tab create` and Venus's new-tab action keep the pending pair.
-  - EONW v33 exposes the pair as the tab's `files` popup endpoint, never as a
+  - EONW v34 exposes the pair as the tab's `files` popup endpoint, never as a
     normal `pN` pane; a pending tab holds exactly that one selected popup and
     no pane. The pair tab may remain live while another durable tab is active.
     A pair-owned pending tab remains pane-free, with an absent selected pane
@@ -2319,7 +2335,7 @@ socket names, JSON fields and protocol identifiers retain their spellings.
   Yazi owns filesystem browsing, and Anima owns style selection, rendering,
   input dismissal, playback timing, and terminal restoration. Eon consumes one
   picked directory per pick without interpreting Yazi's navigation state.
-- **Consumes:** EON-C17, current EONW v33 popup/pending-tab values, Orbit's
+- **Consumes:** EON-C17, current EONW v34 popup/pending-tab values, Orbit's
   accepted terminal startup/attachment/exit/stop contracts and the selected exact
   Venus consumer.
 - **Boundary:** No custom filesystem walker, file opening from a pending tab's
@@ -2473,7 +2489,7 @@ socket names, JSON fields and protocol identifiers retain their spellings.
   tutorial, telemetry, momentary mode, dependency, or platform expansion.
   Venus derives overrides from the popup catalog it already receives over
   EONW. Exceptions: the viewer reads `sidebar` and each popup entry's override
-  from EONW v33.
+  from EONW v34.
 - **Proof:** `795d735a8f61ef439c56d68e1cc4d3929af0dfcf`, `eon-monorepo-2oko.6`.
   - **Environment:** Automated tier; installed tier.
   - **Evidence:** `popup_configuration_owns_defaults_overrides_and_collisions`;
@@ -2560,13 +2576,13 @@ socket names, JSON fields and protocol identifiers retain their spellings.
 - **Owner:** Eon owns the exact graph, product policy, profile delivery and
   installed acceptance; Eon Runtime owns workspace identity/actions. Venus
   owns header geometry, rendering, input, native drag, tooltips, and accessibility.
-- **Consumes:** Venus VEN-C21, EONW v7 (v33 for the EON-C31 tab attention
+- **Consumes:** Venus VEN-C21, EONW v7 (v34 for the EON-C31 tab attention
   marker) and Orbit terminals.
 - **Boundary:** EON-C27 separately owns the optional quota projection. The core
   header adds no Eon-rendered chrome, second row, widget framework, agent status,
   polling, configuration, protocol change, inactive-tab close, native window
   controls, macOS claim or distribution expansion. The one exception is the
-  EON-C31 tab attention marker, which Venus reads from the EONW v33 snapshot it
+  EON-C31 tab attention marker, which Venus reads from the EONW v34 snapshot it
   already polls.
 - **Proof:** `795d735a8f61ef439c56d68e1cc4d3929af0dfcf`, `eon-monorepo-2oko.6`.
   - **Environment:** Automated tier; installed tier.
@@ -2650,7 +2666,7 @@ socket names, JSON fields and protocol identifiers retain their spellings.
   completed inspection. Keeping it current wakes no idle process and sends
   nothing to another supervisor while nothing changes, and background
   inspection never removes another generation's files. Venus receives the
-  summary in every EONW v33 snapshot; the CLI prints it as `running`
+  summary in every EONW v34 snapshot; the CLI prints it as `running`
   (EON-C10).
   `eon window stop all` covers independent windows and attempts the caller's
   own window last; existing `eon stop all` remains scoped to the caller's
@@ -2775,7 +2791,7 @@ socket names, JSON fields and protocol identifiers retain their spellings.
 - **Ownership:** Pinned CodexBar owns provider collection and credential access;
   Runtime owns bounded subprocesses, validation, freshness and the stored
   readings; canonical EONW permits absent resets; Venus consumes typed facts
-  through its existing chip owners. Eon owns exact Nix composition. EONW v33
+  through its existing chip owners. Eon owns exact Nix composition. EONW v34
   carries each window's scope and each provider's last failure.
 - **Failure policy:** Each read has a ten-second deadline and 64 KiB output cap.
   A failed read keeps retained data unchanged; age alone marks it old after one
@@ -3270,7 +3286,7 @@ socket names, JSON fields and protocol identifiers retain their spellings.
   - **Orbit** owns the records, their neutral facts and the terminal title.
   - **Venus** owns presentation and hiding for width (VEN-C30).
 - **Consumes:** ORB-C15, ORB-C13 generation 7, EON-C8 topology, and EON-C10
-  (EONW v33, request and response). EON-C39 plans a stream of its changes.
+  (EONW v34, request and response). EON-C39 plans a stream of its changes.
 - **Boundary:**
   - no hooks and no edits to agent configuration;
   - no provider parsing; the Runtime passes `app` and `name` through unchanged, and Venus maps
@@ -3769,14 +3785,15 @@ socket names, JSON fields and protocol identifiers retain their spellings.
   setting, `eon-agent-parity-a9g0.17` the command.
   `eon pane history` amended by Lucca on 2026-11-05 ("yyes", relayed by
   eon-overseer, `eon-u5bvd.1` record 03); `eon-u5bvd.3` implements it on
-  EONW v33.
+  EONW v33, and `eon-u5bvd.5` its `--edit` on EONW v34.
 - **Consumer:** An agent or script running as the person's user, in an Eon
   terminal or outside one.
 - **Trigger:**
   - `eon pane read TARGET [--json]`, with:
     - TARGET a pane or popup ID as `eon workspace --json` names them;
     - EON-C10's `--window` and `--generation` selection.
-  - `eon pane history TARGET [--json]`, with the same TARGET and selection.
+  - `eon pane history TARGET [--json] [--edit]`, with the same TARGET and
+    selection.
 - **Result:**
   - The supervisor that EON-C10 selects (validating `EON_TERMINAL` when set)
     resolves TARGET in any workspace of its window, shown or hidden, and reads
@@ -3796,30 +3813,53 @@ socket names, JSON fields and protocol identifiers retain their spellings.
     Human output prints the text alone on stdout; when either is nonzero it
     also writes one notice to stderr naming them and the 8 MiB bound, and
     exits 0.
+  - `eon pane history TARGET --edit` opens that text in the configured editor
+    as the window's Scrollback popup does (EON-C10), over TARGET's tab, and
+    prints nothing (`--json` prints the target, `caller`, `generation`,
+    `window`, and `scrollback`: the popup's `popup` ID and `terminal`).
+    TARGET's tab must be its window's active tab in the shown workspace;
+    otherwise it changes nothing and fails with `not-active`, exit 1. It
+    changes no active tab, shown workspace or desktop focus.
   - Reading changes no workspace, tab, pane or popup selection, shown
     workspace or popup, or desktop focus, and never shows a hidden popup. It
     leaves no visible trace.
   - `[agents] terminal_access` ([Configuration](CONFIGURATION.md#configuration-behavior))
     governs it: `"window"` allows it; `"none"` refuses every read, `history`
-    included, with `terminal-access-off` and no terminal content.
+    and `history --edit` included, with `terminal-access-off` and no terminal
+    content.
 - **Important failures:**
   - Exit 1:
     - `terminal-access-off`;
     - `terminal-ended`: the target's terminal has exited; its exit status
       belongs to eon-agent-parity-a9g0.4;
     - `terminal-unavailable`: Orbit refused, or timed out after 2 s.
-  - Exit 3: a missing or stale target, generation or window.
+    - for `--edit`: `not-active` (above); `unavailable` while TARGET's tab
+      already shows a Scrollback popup, or shows a transient popup, which
+      `--edit` never stops; `choose-directory-first` while that tab is
+      pending. These refusals and the read failures above come before any
+      snapshot: each leaves none and changes nothing.
+    - for `--edit`, after the snapshot is written, EON-C10's Scrollback
+      failures: `popup-command` for a missing or unexecutable editor, and
+      `popup-start` when the snapshot or the editor cannot start. Each
+      changes no tab and removes the snapshot, except a `popup-start` whose
+      rollback Eon cannot confirm: the editor may then still run, so Eon
+      keeps its snapshot until that terminal ends, and EON-C10's recovery,
+      stop and next-start paths remove it.
+  - Exit 3: a missing or stale target, generation or window; for `--edit`,
+    `unknown-popup` when Scrollback is disabled.
   - Exit 4: a missing or unreachable supervisor, including one that speaks
     another EONW version (`supervisor-unavailable`).
   - Exit 2: invalid arguments.
   - No failure carries terminal content.
 - **Owner:**
   - Eon Runtime: policy, target resolution, the EONW v26 request (v33 for
-    `history`) and the CLI projection;
+    `history`, v34 for `--edit`), the Scrollback popup (EON-C10) and the CLI
+    projection;
   - Orbit: ORB-C17.
 - **Boundary:** None of the following:
   - styles, streaming or waiting (eon-cli-action-discovery-ogzi), and
     history beyond ORB-C17's retained history;
+  - `--edit` outside the shown workspace's active tab;
   - per-agent tokens, grants, expiry or audit log;
   - remote or MCP exposure (eon-ciwn.3);
   - redaction;
@@ -3924,6 +3964,48 @@ socket names, JSON fields and protocol identifiers retain their spellings.
       answers other requests after the read in progress, so a workspace
       inspection took at most 107 ms idle and 157 ms under load during
       reads, against 77 and 50 ms without.
+- **Proof (`--edit`):** the `eon-u5bvd.5` commit
+  - **Environment:** Automated tier: sandboxed `nix develop -c eon-test` and
+    `nix build --keep-going` of every flake check on that commit's tree.
+    Isolated installed tier: x86_64 Linux,
+    `/nix/store/nzzakslm85qhwgzamyg9506r111jswrv-eon-0.1.18` in a private
+    headless Sway 1.12 with its own HOME and runtime directory. That package
+    is from the commit's reviewed candidate, whose runtime behaved the same
+    but for the transient-popup refusal, which no observed step reaches.
+  - **Evidence:**
+    - The CLI test
+      `pane_history_edit_opens_its_target_in_scrollback_in_the_active_tab_only`
+      in [`workspace_control.rs`](../eon/crates/eon/tests/workspace_control.rs):
+      `--edit` on a pane the tab does not show opens the editor on that
+      pane's snapshot, whose text after its notice line is `eon pane
+      history`'s, under a Scrollback popup whose record names its terminal,
+      with the selected pane unchanged; a second `--edit` while it shows
+      fails with `unavailable` and changes nothing; the editor's exit removes
+      the snapshot; `--json` prints the exact object; in a hidden tab and in
+      a hidden workspace it fails with `not-active`, exit 1, changes nothing
+      and leaves no snapshot.
+      `pane_history_edit_refusals_leave_no_snapshot_and_change_nothing`:
+      `--edit` exits 1, leaves no snapshot and changes no tab with
+      `unavailable` while the tab shows a transient popup (which stays
+      shown), `terminal-unavailable` when Orbit refuses the export and when
+      it misses the 2 s deadline, `choose-directory-first` in a pending tab,
+      and `popup-command` with a missing editor.
+      `pane_history_edit_with_scrollback_disabled_refuses_with_unknown_popup`:
+      with Scrollback disabled it exits 3 with `unknown-popup` and changes
+      nothing. `terminal_access_none_refuses_every_read_and_send`
+      refuses `EditTerminalHistory`. The EONW v34 codec goldens cover the
+      request and the `Editing` reply, which both sides refuse when its popup
+      is a pane.
+    - Installed, from outside Eon: with p1 selected, `eon pane history p2
+      --edit --json` exited 0 and named p2 and Scrollback popup u3; hx showed
+      p2's snapshot from its earliest retained line, the snapshot equalled
+      `eon pane history p2` byte for byte, p1 stayed selected, the active tab
+      stayed t1, and Sway's seats were unchanged. A second `--edit` while it
+      showed exited 1 with `unavailable` and wrote no snapshot. `:q` showed
+      p1 again and removed the snapshot and its store. With a new tab t2
+      active, `--edit` of t1's p1 (human) and p2 (`--json`) exited 1 with
+      `not-active`, leaving the workspace reply, Sway's seats and tree, and
+      the snapshot store (none) unchanged.
 
 ## EON-C36 — Sending input to a terminal from the CLI
 
@@ -4190,7 +4272,7 @@ socket names, JSON fields and protocol identifiers retain their spellings.
   - `eon pane wait TARGET --until done|needs-input|attention|ended
     [--timeout SECONDS] [--json]`.
 - **Result:**
-  - **One subscription.** The CLI sends one EONW v33 `Subscribe` request.
+  - **One subscription.** The CLI sends one EONW v34 `Subscribe` request.
     The supervisor either refuses it with an ordinary EONW `Failure` reply
     and closes the connection, or answers `SUBSCRIBED` and keeps the
     connection open for `TABS`, `EVENT`, `GAP` and `END` messages. A
@@ -4372,7 +4454,7 @@ socket names, JSON fields and protocol identifiers retain their spellings.
     subscriber, the attention poller or Stop.
 - **Owner:** Eon Runtime: the event projection, sequence, retained events,
   filters, subscriber bounds and CLI projection. Its canonical EONW package
-  owns the v33 `Subscribe` action and the `SUBSCRIBED`, `TABS`, `EVENT`,
+  owns the v34 `Subscribe` action and the `SUBSCRIBED`, `TABS`, `EVENT`,
   `GAP` and `END` messages.
 - **Consumes:** EON-C10 (EONW v30 from `eon-ciwn.6`, targeting, exit codes),
   EON-C31 (attention records, the queue and its CLI visibility), EON-C11

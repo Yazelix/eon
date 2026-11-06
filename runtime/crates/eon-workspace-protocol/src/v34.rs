@@ -1,4 +1,4 @@
-//! Eon-owned values and bounded EONW v33 codec for local workspace clients.
+//! Eon-owned values and bounded EONW v34 codec for local workspace clients.
 //!
 //! Every message is a 12-byte header (`EONW`, little-endian version, kind,
 //! zero flags, little-endian payload length) followed by its payload.
@@ -17,7 +17,7 @@ pub use subscription::{
     decode_subscription_message, encode_subscription_message,
 };
 
-pub const VERSION: u16 = 33;
+pub const VERSION: u16 = 34;
 pub const HEADER_BYTES: usize = 12;
 const MAGIC: &[u8; 4] = b"EONW";
 const MAX_MESSAGE_BYTES: usize = 2 * 1024 * 1024;
@@ -108,6 +108,7 @@ const ENDED: u8 = 133;
 const TEXT: u8 = 134;
 const SENT: u8 = 135;
 const HISTORY: u8 = 141;
+const EDITING: u8 = 142;
 
 const INVOKE_POPUP: u8 = 19;
 const DISMISS_POPUP: u8 = 20;
@@ -126,6 +127,7 @@ const PREVIOUS_ATTENTION: u8 = 31;
 const READ_TERMINAL: u8 = 38;
 const SEND_TERMINAL: u8 = 39;
 const READ_TERMINAL_HISTORY: u8 = 41;
+const EDIT_TERMINAL_HISTORY: u8 = 42;
 const NO_PROGRESS: u8 = 255;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -261,6 +263,12 @@ pub enum Action {
     /// Read the retained history and live area of the pane or popup
     /// `target`, in any workspace of the window (EON-C35).
     ReadTerminalHistory {
+        target: String,
+    },
+    /// Open the retained history and live area of the pane or popup `target`
+    /// in the configured editor, in a Scrollback popup over its tab, which
+    /// must be the active tab of the shown workspace (EON-C35, EON-C10).
+    EditTerminalHistory {
         target: String,
     },
     /// Send `input` to the pane or popup `target`, in any workspace of the
@@ -666,6 +674,7 @@ pub enum Response {
     Text(TerminalText),
     Sent(Sent),
     History(TerminalHistory),
+    Editing(Editing),
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -738,6 +747,17 @@ pub struct TerminalHistory {
     /// One line per logical line, oldest first, joined by line feeds, with no
     /// other control character.
     pub text: String,
+}
+
+/// The Scrollback popup that opened a terminal's history in the editor
+/// (EON-C35, EON-C10).
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct Editing {
+    pub target: TerminalTarget,
+    /// The calling terminal, when the request named one.
+    pub caller: Option<TerminalTarget>,
+    /// The Scrollback popup whose editor shows the snapshot.
+    pub popup: TerminalTarget,
 }
 
 /// An input the target's terminal took (EON-C36).
@@ -996,6 +1016,11 @@ pub fn encode_request(request: &Request) -> Result<Vec<u8>> {
             payload.byte(READ_TERMINAL_HISTORY);
             payload.string(target);
         }
+        Action::EditTerminalHistory { target } => {
+            identity("terminal target", target)?;
+            payload.byte(EDIT_TERMINAL_HISTORY);
+            payload.string(target);
+        }
         Action::SendTerminal {
             target,
             input,
@@ -1161,6 +1186,9 @@ pub fn decode_request(bytes: &[u8]) -> Result<Request> {
         READ_TERMINAL_HISTORY => Some(Action::ReadTerminalHistory {
             target: decoder.string("terminal target", MAX_ID_BYTES)?,
         }),
+        EDIT_TERMINAL_HISTORY => Some(Action::EditTerminalHistory {
+            target: decoder.string("terminal target", MAX_ID_BYTES)?,
+        }),
         SEND_TERMINAL => Some(Action::SendTerminal {
             target: decoder.string("terminal target", MAX_ID_BYTES)?,
             force: decode_bool(&mut decoder, "force")?,
@@ -1206,9 +1234,9 @@ pub fn decode_request(bytes: &[u8]) -> Result<Request> {
                 identity("tab id", tab)?;
                 identity("attention target", target)?;
             }
-            Action::ReadTerminal { target } | Action::ReadTerminalHistory { target } => {
-                identity("terminal target", target)?
-            }
+            Action::ReadTerminal { target }
+            | Action::ReadTerminalHistory { target }
+            | Action::EditTerminalHistory { target } => identity("terminal target", target)?,
             Action::SendTerminal { target, input, .. } => {
                 identity("terminal target", target)?;
                 if let TerminalInput::Paste(text) = input {
@@ -1462,6 +1490,7 @@ fn validate_popup_action(action: &Action) -> Result<()> {
         | Action::PreviousAttention
         | Action::ReadTerminal { .. }
         | Action::ReadTerminalHistory { .. }
+        | Action::EditTerminalHistory { .. }
         | Action::SendTerminal { .. }
         | Action::Subscribe { .. } => (),
     }
@@ -1615,6 +1644,13 @@ pub fn encode_response(response: &Response) -> Result<Vec<u8>> {
             payload.number(sent.enter_delay_ms);
             SENT
         }
+        Response::Editing(editing) => {
+            validate_editing(editing)?;
+            encode_target(&mut payload, &editing.target);
+            encode_caller(&mut payload, editing.caller.as_ref());
+            encode_target(&mut payload, &editing.popup);
+            EDITING
+        }
     };
     frame(kind, payload.bytes)
 }
@@ -1639,6 +1675,21 @@ fn encode_target(encoder: &mut Encoder, target: &TerminalTarget) {
     encoder.byte(tag);
     encoder.string(id);
     encoder.string(&target.terminal);
+}
+
+/// Accepts an [`Editing`] reply whose popup is a popup.
+fn validate_editing(editing: &Editing) -> Result<()> {
+    validate_target(&editing.target)?;
+    if let Some(caller) = &editing.caller {
+        validate_target(caller)?;
+    }
+    validate_target(&editing.popup)?;
+    if !matches!(editing.popup.id, TargetId::Popup(_)) {
+        return Err(Error::InvalidValue {
+            field: "editing popup",
+        });
+    }
+    Ok(())
 }
 
 fn decode_target(decoder: &mut Decoder<'_>) -> Result<TerminalTarget> {
@@ -1811,6 +1862,16 @@ pub fn decode_response(bytes: &[u8]) -> Result<Response> {
         decoder.finish()?;
         validate_enter_delay(sent.enter_delay_ms)?;
         return Ok(Response::Sent(sent));
+    }
+    if kind == EDITING {
+        let editing = Editing {
+            target: decode_target(&mut decoder)?,
+            caller: decode_caller(&mut decoder)?,
+            popup: decode_target(&mut decoder)?,
+        };
+        decoder.finish()?;
+        validate_editing(&editing)?;
+        return Ok(Response::Editing(editing));
     }
     if kind != SNAPSHOT {
         return Err(Error::InvalidKind { value: kind });
@@ -4383,6 +4444,9 @@ mod tests {
                 Action::ReadTerminalHistory {
                     target: target.into(),
                 },
+                Action::EditTerminalHistory {
+                    target: target.into(),
+                },
                 Action::SendTerminal {
                     target: target.into(),
                     force: false,
@@ -4481,6 +4545,28 @@ mod tests {
         let end = forged.len();
         forged[end - 2..].copy_from_slice(&(MAX_ENTER_DELAY_MS + 1).to_le_bytes());
         assert_eq!(decode_response(&forged).map_err(field), Err("enter delay"));
+
+        // An editing reply's popup is a popup, on either side.
+        let editing = |popup| {
+            Response::Editing(Editing {
+                target: terminal_target(TargetId::Pane("p1".into()), "session-1"),
+                caller: None,
+                popup: terminal_target(popup, "session-2"),
+            })
+        };
+        assert_eq!(
+            encode_response(&editing(TargetId::Pane("p2".into()))).map_err(field),
+            Err("editing popup")
+        );
+        let mut forged = encode_response(&editing(TargetId::Popup("u1".into()))).unwrap();
+        // The popup's tag follows its workspace and tab, 16 bytes from the end.
+        let tag = forged.len() - 16;
+        assert_eq!(forged[tag], 1);
+        forged[tag] = 0;
+        assert_eq!(
+            decode_response(&forged).map_err(field),
+            Err("editing popup")
+        );
     }
 
     fn field(error: Error) -> &'static str {
@@ -4568,14 +4654,14 @@ mod tests {
         for (action, expected) in [
             (
                 Action::Workspace(WorkspaceAction::CloseTab { tab: "t1".into() }),
-                "454f4e57210001000a00000002007231001202007431",
+                "454f4e57220001000a00000002007231001202007431",
             ),
             (
                 Action::Workspace(WorkspaceAction::SetTabDirectory {
                     tab: "t1".into(),
                     directory: b"/tmp".to_vec(),
                 }),
-                "454f4e57210001001000000002007231000c0200743104002f746d70",
+                "454f4e57220001001000000002007231000c0200743104002f746d70",
             ),
             (
                 Action::InvokePopup {
@@ -4584,29 +4670,29 @@ mod tests {
                     expected_instance: Some("u1".into()),
                     intent: InvokeIntent::Focus,
                 },
-                "454f4e572100010015000000020072310013020074310300676974010200753101",
+                "454f4e572200010015000000020072310013020074310300676974010200753101",
             ),
-            (Action::CreateColumn, "454f4e572100010006000000020072310016"),
+            (Action::CreateColumn, "454f4e572200010006000000020072310016"),
             (
                 Action::ClosePane { pane: "p2".into() },
-                "454f4e57210001000a00000002007231001702007032",
+                "454f4e57220001000a00000002007231001702007032",
             ),
             (
                 Action::MovePaneSideways(Side::Right),
-                "454f4e572100010006000000020072310019",
+                "454f4e572200010006000000020072310019",
             ),
             (
                 Action::Edit {
                     file: b"/tmp/a".to_vec(),
                 },
-                "454f4e57210001000e00000002007231001a06002f746d702f61",
+                "454f4e57220001000e00000002007231001a06002f746d702f61",
             ),
             (
                 Action::CreateCommandPane {
                     argv: vec![b"hx".to_vec(), b"a".to_vec()],
                     focus: false,
                 },
-                "454f4e57210001001000000002007231001b00020002006878010061",
+                "454f4e57220001001000000002007231001b00020002006878010061",
             ),
             (
                 Action::LaunchTab {
@@ -4614,7 +4700,7 @@ mod tests {
                     argv: vec![],
                     focus: true,
                 },
-                "454f4e57210001000f00000002007231002504002f746d70000001",
+                "454f4e57220001000f00000002007231002504002f746d70000001",
             ),
             (
                 Action::LaunchTab {
@@ -4622,38 +4708,44 @@ mod tests {
                     argv: vec![b"hx".to_vec(), b"a".to_vec()],
                     focus: false,
                 },
-                "454f4e57210001001600000002007231002504002f746d7002000200687801006100",
+                "454f4e57220001001600000002007231002504002f746d7002000200687801006100",
             ),
             (
                 Action::ToggleSidebar,
-                "454f4e57210001000600000002007231001c",
+                "454f4e57220001000600000002007231001c",
             ),
             (
                 Action::FocusAttention {
                     tab: "t1".into(),
                     target: "p2".into(),
                 },
-                "454f4e57210001000e00000002007231001d0200743102007032",
+                "454f4e57220001000e00000002007231001d0200743102007032",
             ),
             (
                 Action::NextAttention,
-                "454f4e57210001000600000002007231001e",
+                "454f4e57220001000600000002007231001e",
             ),
             (
                 Action::PreviousAttention,
-                "454f4e57210001000600000002007231001f",
+                "454f4e57220001000600000002007231001f",
             ),
             (
                 Action::ReadTerminal {
                     target: "p2".into(),
                 },
-                "454f4e57210001000a00000002007231002602007032",
+                "454f4e57220001000a00000002007231002602007032",
             ),
             (
                 Action::ReadTerminalHistory {
                     target: "p2".into(),
                 },
-                "454f4e57210001000a00000002007231002902007032",
+                "454f4e57220001000a00000002007231002902007032",
+            ),
+            (
+                Action::EditTerminalHistory {
+                    target: "p2".into(),
+                },
+                "454f4e57220001000a00000002007231002a02007032",
             ),
             (
                 Action::SendTerminal {
@@ -4662,7 +4754,7 @@ mod tests {
                     input: TerminalInput::Paste("hi".into()),
                 },
                 // v27's u32-length paste.
-                "454f4e572100010012000000020072310027020070320000020000006869",
+                "454f4e572200010012000000020072310027020070320000020000006869",
             ),
             (
                 Action::SendTerminal {
@@ -4670,7 +4762,7 @@ mod tests {
                     force: true,
                     input: TerminalInput::Enter,
                 },
-                "454f4e57210001000c000000020072310027020075310101",
+                "454f4e57220001000c000000020072310027020075310101",
             ),
         ] {
             let request = Request {
@@ -4690,7 +4782,7 @@ mod tests {
         let bytes = encode_request(&request).unwrap();
         assert_eq!(
             hex(&bytes),
-            "454f4e57210001001600000002007231010d0073657373696f6e2d322e392d310201",
+            "454f4e57220001001600000002007231010d0073657373696f6e2d322e392d310201",
         );
         assert_eq!(decode_request(&bytes).unwrap(), request);
         for caller in ["", "session 2"] {
@@ -4805,7 +4897,7 @@ mod tests {
             (
                 snapshot,
                 concat!(
-                    "454f4e57210081001c0100000100020002000100010000000200743100000041",
+                    "454f4e57220081001c0100000100020002000100010000000200743100000041",
                     "00008040010003006769740300476974000404004b6579470100020074310400",
                     "2f746d700001020070330102007531030002007031030073703103002f703101",
                     "02007031000002007032030073703203002f7032010200703200000200703303",
@@ -4822,7 +4914,7 @@ mod tests {
                     "00000000",
                 ),
             ),
-            (failure, "454f4e57210082000a00000004006275737902006e6f"),
+            (failure, "454f4e57220082000a00000004006275737902006e6f"),
             (
                 Response::Text(TerminalText {
                     target: terminal_target(TargetId::Pane("p2".into()), "session-2"),
@@ -4837,7 +4929,7 @@ mod tests {
                     text: "a\nb".into(),
                 }),
                 concat!(
-                    "454f4e572100860037000000",
+                    "454f4e572200860037000000",
                     // Workspace, tab, pane p2 and its terminal; no caller.
                     "02007731020074310002007032090073657373696f6e2d3200",
                     // Revision, alternate screen, 24x80, title, directory,
@@ -4860,7 +4952,7 @@ mod tests {
                     text: "a\nb".into(),
                 }),
                 concat!(
-                    "454f4e5721008d003b000000",
+                    "454f4e5722008d003b000000",
                     "02007731020074310002007032090073657373696f6e2d3200",
                     // Revision, primary screen, 24x80, title, directory,
                     // omitted lines, cut bytes, then the u32-length text.
@@ -4876,17 +4968,31 @@ mod tests {
                     enter_delay_ms: 300,
                 }),
                 concat!(
-                    "454f4e572100870034000000",
+                    "454f4e572200870034000000",
                     "02007731020074310002007032090073657373696f6e2d32",
                     "0102007731020074310102007531090073657373696f6e2d33",
                     "012c01",
                 ),
             ),
             (
+                Response::Editing(Editing {
+                    target: terminal_target(TargetId::Pane("p2".into()), "session-2"),
+                    caller: None,
+                    popup: terminal_target(TargetId::Popup("u1".into()), "session-3"),
+                }),
+                concat!(
+                    "454f4e5722008e0031000000",
+                    // Pane p2 and its terminal, no caller, then popup u1 and
+                    // its terminal.
+                    "02007731020074310002007032090073657373696f6e2d3200",
+                    "02007731020074310102007531090073657373696f6e2d33",
+                ),
+            ),
+            (
                 Response::Ended(Ended {
                     generation: "g1".into(),
                 }),
-                "454f4e57210085000400000002006731",
+                "454f4e57220085000400000002006731",
             ),
         ] {
             let bytes = encode_response(&response).unwrap();
@@ -4915,7 +5021,7 @@ mod tests {
                     busy: None,
                 }),
                 concat!(
-                    "454f4e572100830030000000020067310500302e392e30210002006f6b010002",
+                    "454f4e572200830030000000020067310500302e392e30220002006f6b010002",
                     "007331010500726561647900040062757379",
                     // v28: absent name, supervisor start in Unix milliseconds.
                     "000000000000000000",
@@ -4928,7 +5034,7 @@ mod tests {
                     generation: "g1".into(),
                     sessions: vec![],
                 }),
-                "454f4e572100840006000000020067310000",
+                "454f4e572200840006000000020067310000",
             ),
         ] {
             let bytes = encode_lifecycle_response(&response).unwrap();
@@ -5007,7 +5113,7 @@ mod tests {
         assert_eq!(
             hex(&bytes),
             concat!(
-                "454f4e57210081008a00000001000100010000000100740000000000000000",
+                "454f4e57220081008a00000001000100010000000100740000000000000000",
                 "0000010001007401002f00010100700001000100700200737002002f700101007000",
                 "010128000000000000000001000000000000000000000000010000000002",
                 "02007731020077310100020077310001000100",
@@ -5047,7 +5153,7 @@ mod tests {
         assert_eq!(
             hex(&bytes),
             concat!(
-                "454f4e5721008100bb0000000100010001000000010074000000000000000000",
+                "454f4e5722008100bb0000000100010001000000010074000000000000000000",
                 "00010001007401002f00010100700001000100700200737002002f7001010070",
                 "0001012800000000000000000100000000000000000000000001000000000202",
                 "0077310200773101000200773100010001000100020077310100740100700101",
@@ -5119,7 +5225,7 @@ mod tests {
         assert_eq!(
             hex(&bytes),
             concat!(
-                "454f4e572100830063000000020067310500302e392e30210002006f6b0000",
+                "454f4e572200830063000000020067310500302e392e30220002006f6b0000",
                 "01050072656164790105007265616479",
                 "000000000000000000",
             )
@@ -5452,10 +5558,10 @@ mod tests {
                 },
             ),
             (
-                &[42],
+                &[43],
                 Error::InvalidTag {
                     field: "action",
-                    value: 42,
+                    value: 43,
                 },
             ),
             (

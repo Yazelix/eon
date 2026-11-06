@@ -523,6 +523,7 @@ line points agents to `eon --skill`.
 | `eon pane move left\|right [--json]` | Move the selected pane, or the calling pane, into the neighbouring column, as Ctrl+Alt+H/L does |
 | `eon pane read TARGET [--json]` | Print the visible text of pane or popup TARGET, in any workspace of the window, without changing anything; see [Reading a terminal](#reading-a-terminal) |
 | `eon pane history TARGET [--json]` | Print pane or popup TARGET's retained history followed by its visible text, in any workspace of the window, without changing anything; see [Reading a terminal](#reading-a-terminal) |
+| `eon pane history TARGET --edit [--json]` | Open that text in the configured editor in a Scrollback popup over TARGET's tab, as Alt+Shift+E does, when the tab is the shown workspace's active tab; see [Reading a terminal](#reading-a-terminal) |
 | `eon pane send TARGET [--enter] [--force] [--stdin] [--json] [-- TEXT]` | Paste TEXT, or standard input with `--stdin`, into pane or popup TARGET in any workspace of the window, then with `--enter` press Enter; see [Sending to a terminal](#sending-to-a-terminal) |
 | `eon popup hide POPUP [--json]` | Hide popup `uN` of the workspace as its window's dismissal would: a keep-alive popup keeps running, a transient one stops, and a pending tab's Files starts the tab's first terminal at its starting directory |
 | `eon focus ID\|left\|right\|up\|down [--json]` | Focus a stable identity or traverse the workspace |
@@ -650,7 +651,30 @@ left out on standard error, and the text alone goes to standard output.
 `cut_bytes` (the bytes cut from the start of the newest line) in place of
 `omitted_rows`. Output that Orbit's history budget already dropped is gone.
 
-A read exits 1 with `terminal-access-off` when
+`eon pane history TARGET --edit` opens that text in your editor as the
+Scrollback key (Alt+Shift+E) does: Eon writes it to a private snapshot file
+and opens a Scrollback popup over TARGET's tab running
+[`[editor] command`](CONFIGURATION.md#editor) on it. TARGET need not be the
+terminal the tab shows, and the tab's selected pane stays as it was. It prints
+nothing; with `--json` it names the target, and the popup's `popup` ID and
+`terminal` in `scrollback`. It works only in the shown workspace's active tab,
+and refuses without changing anything:
+
+- `not-active` (exit 1) for a hidden tab or workspace;
+- `unavailable` (exit 1) while that tab already shows a Scrollback popup, or
+  shows a transient popup such as Commands, which an edit never closes;
+- `choose-directory-first` (exit 1) while that tab is still choosing its
+  directory;
+- `unknown-popup` (exit 3) when Scrollback is disabled.
+
+Once the snapshot is written, it exits 1 with `popup-command` when the editor
+is missing and with `popup-start` when the snapshot or the editor cannot
+start. Either way no popup is shown and Eon removes the snapshot, except when
+Eon cannot confirm that a `popup-start` stopped the editor: it may then still
+run, and Eon keeps its snapshot until it ends. When the popup ends, Eon
+removes the snapshot; see [Editor](CONFIGURATION.md#editor) for keeping your edits.
+
+A read, or an edit, exits 1 with `terminal-access-off` when
 [`[agents] terminal_access`](CONFIGURATION.md#configuration-behavior) is
 `"none"`, `terminal-ended` once the program has exited, and
 `terminal-unavailable` when the terminal's Orbit refuses or does not answer

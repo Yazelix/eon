@@ -17,11 +17,11 @@ use super::{
     windows,
     workspace::{
         caller_output, failure_human, human as human_output, json as json_output, json_escape,
-        list_human, list_json, resolve_selector, terminal_history_json, terminal_sent_json,
-        terminal_text_json,
+        list_human, list_json, resolve_selector, terminal_editing_json, terminal_history_json,
+        terminal_sent_json, terminal_text_json,
     },
 };
-use eon_workspace_protocol::v33::{
+use eon_workspace_protocol::v34::{
     Action, AttentionState, Direction, Failure, MAX_HISTORY_TEXT_BYTES, MAX_PASTE_BYTES,
     PopupTarget, Response, Side, Snapshot, TerminalHistory, TerminalInput, VERSION,
     WorkspaceAction, WorkspaceInfo, valid_caller, validate_paste,
@@ -836,7 +836,7 @@ const HELP_SECTIONS: &[(&str, &[(&str, &str)])] = &[
                 "Print a pane's or popup's text",
             ),
             (
-                "pane history PANE|POPUP [--json]",
+                "pane history PANE|POPUP [--json] [--edit]",
                 "Print a pane's or popup's history",
             ),
             (
@@ -999,6 +999,8 @@ pane create keeps the selected pane and any popup.
 pane read, history and send reach hidden workspaces; [agents]
 terminal_access governs all three. pane send --enter waits
 [agents] send_enter_delay_ms first.
+pane history --edit opens the history in a Scrollback editor popup,
+only in the shown workspace's active tab.
 pane send refuses while a person is typing; --force bypasses the typing check.
 Where shown, {command}--json{reset} prints JSON and skips confirmation.
 Without a terminal, a confirmation needs yes or exits 1 (not-confirmed).
@@ -1175,7 +1177,7 @@ fn control(
     // by Runtime's rule; a WS that resolves to none or several fails unasked.
     // After a yes it checks again that the wN is live before closing it, since
     // Runtime would read a departed wN as another workspace's name; the check
-    // and the close are not atomic. v33 lists only
+    // and the close are not atomic. v34 lists only
     // the caller's or shown workspace's terminals, so the prompt names none.
     if let Action::Workspace(WorkspaceAction::CloseWorkspace { workspace }) = &mut action
         && !json
@@ -1336,6 +1338,17 @@ fn control(
             })?;
             if let Some(notice) = history_notice(&history).filter(|_| !json) {
                 eprintln!("{notice}");
+            }
+            Ok(0)
+        }
+        // `eon pane history --edit` prints nothing but its JSON (EON-C35).
+        ControlResponse::Workspace(Response::Editing(editing)) => {
+            if json {
+                write_stdout(format!(
+                    "{{\"generation\":\"{}\",\"window\":{window},{}",
+                    json_escape(generation),
+                    &terminal_editing_json(&editing)[1..]
+                ))?;
             }
             Ok(0)
         }
@@ -1870,9 +1883,16 @@ fn parse_control_arguments(arguments: &[OsString]) -> Result<(Action, bool), Err
         ["pane", "read", target] => Action::ReadTerminal {
             target: (*target).into(),
         },
-        ["pane", "history", target] => Action::ReadTerminalHistory {
+        ["pane", "history", target] if *target != "--edit" => Action::ReadTerminalHistory {
             target: (*target).into(),
         },
+        ["pane", "history", target, "--edit"] | ["pane", "history", "--edit", target]
+            if *target != "--edit" =>
+        {
+            Action::EditTerminalHistory {
+                target: (*target).into(),
+            }
+        }
         ["pane", "move", "up"] => Action::Workspace(WorkspaceAction::Move(Direction::Up)),
         ["pane", "move", "down"] => Action::Workspace(WorkspaceAction::Move(Direction::Down)),
         ["pane", "move", "left"] => Action::MovePaneSideways(Side::Left),
@@ -1910,7 +1930,7 @@ fn parse_pane_rename_arguments(arguments: &[OsString]) -> Result<(Action, bool),
         _ => return Err(Error::usage(EON_USAGE)),
     };
     if let Some(name) = name {
-        eon_workspace_protocol::v33::validate_pane_name(name)
+        eon_workspace_protocol::v34::validate_pane_name(name)
             .map_err(|error| Error::usage(error.to_string()))?;
     }
     Ok((
@@ -2859,7 +2879,7 @@ mod tests {
     }
 
     #[test]
-    fn pane_read_and_history_take_one_target_and_an_optional_json_flag() {
+    fn pane_read_and_history_take_one_target_and_their_optional_flags() {
         for verb in ["read", "history"] {
             let action = |target: &str| {
                 let target = target.into();
@@ -2890,6 +2910,35 @@ mod tests {
                     "{args:?}"
                 );
             }
+        }
+        let edit = |target: &str| Action::EditTerminalHistory {
+            target: target.into(),
+        };
+        for (args, json) in [
+            (&["pane", "history", "p1", "--edit"][..], false),
+            (&["pane", "history", "--edit", "p1"], false),
+            (&["pane", "history", "p1", "--edit", "--json"], true),
+            (&["pane", "history", "--json", "p1", "--edit"], true),
+        ] {
+            assert_eq!(
+                parse_control_arguments(&args.iter().map(OsString::from).collect::<Vec<_>>())
+                    .unwrap(),
+                (edit("p1"), json),
+                "{args:?}"
+            );
+        }
+        for args in [
+            &["pane", "history", "--edit"][..],
+            &["pane", "history", "--edit", "--edit"],
+            &["pane", "history", "p1", "--edit", "--edit"],
+            &["pane", "history", "p1", "p2", "--edit"],
+            &["pane", "read", "p1", "--edit"],
+        ] {
+            assert!(
+                parse_control_arguments(&args.iter().map(OsString::from).collect::<Vec<_>>())
+                    .is_err(),
+                "{args:?}"
+            );
         }
     }
 

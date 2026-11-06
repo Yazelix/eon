@@ -5,6 +5,16 @@ installation, and proven contract changes.
 
 ## Unreleased
 
+- `eon pane history TARGET --edit` opens TARGET's scrollback in the configured
+  editor from the CLI, in a Scrollback popup over its tab, as Alt+Shift+E does
+  for what the tab shows (`eon-u5bvd.5`, EON-C35, EON-C10). It works only in
+  the shown workspace's active tab, exits 1 with `not-active` elsewhere and
+  with `unavailable` while that tab shows a transient popup, which it never
+  closes, and `[agents] terminal_access` governs it. `docs/CONFIGURATION.md` explains a
+  GUI editor's wait flag, saving edits under another name before the popup
+  ends, and the editor state files Eon leaves. EONW moves to v34: windows
+  started before this change keep running, but an `eon` from this version
+  cannot reach them; restart them to use it.
 - Alt+Shift+E opens the scrollback of what the tab shows, its shown popup or
   else its selected pane, in the configured `[editor] command`: the retained
   history and then the screen, as plain text, from a private snapshot file

@@ -14,7 +14,7 @@ use super::{
     },
     workspace::{failure_json, json_escape, terminal_text},
 };
-use eon_workspace_protocol::v33::Failure;
+use eon_workspace_protocol::v34::Failure;
 use std::{
     collections::hash_map::RandomState,
     env,
