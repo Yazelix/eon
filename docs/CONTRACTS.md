@@ -1241,6 +1241,15 @@ socket names, JSON fields and protocol identifiers retain their spellings.
     reply's tab list ends with the new tab. An unavailable DIRECTORY, the tab
     limit, or a command that cannot start refuses the command with exit 1 and
     changes nothing. `--no-focus` and `-- COMMAND` require `--directory`.
+  - The JSON reply of `pane create`, `edit` and `tab create`, in every form
+    above, names what it started in `created`: `{"tab": "tN", "pane": "pN"}`,
+    the new pane and its tab, or the new tab and its one pane, with `pane`
+    null for a bare `tab create`, whose pending tab has no pane until its
+    pick. A pick (`tab directory` on a pending tab) and `popup hide` of a
+    pending tab's pair start that tab's first pane without reporting it in
+    `created`. No other workspace reply carries `created` except
+    `workspace new`, whose `created` is its `wN`, and the human output is
+    unchanged.
   - `eon tab directory TAB [--json] -- DIRECTORY` on a pending tab is a pick:
     it commits exactly as a pair pick does (EON-C18).
   - `eon popup hide POPUP [--json]` hides popup `uN` of the addressed

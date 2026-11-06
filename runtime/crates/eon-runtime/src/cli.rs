@@ -23,8 +23,8 @@ use super::{
     },
 };
 use eon_workspace_protocol::v34::{
-    Action, AttentionState, Direction, Failure, MAX_HISTORY_TEXT_BYTES, MAX_PASTE_BYTES,
-    PopupTarget, Response, Side, Snapshot, TerminalHistory, TerminalInput, VERSION,
+    Action, AttentionState, Direction, Failure, MAX_HISTORY_TEXT_BYTES, MAX_PASTE_BYTES, Pane,
+    PopupTarget, Response, Side, Snapshot, Tab, TerminalHistory, TerminalInput, VERSION,
     WorkspaceAction, WorkspaceInfo, valid_caller, validate_paste,
 };
 use std::{
@@ -1302,10 +1302,16 @@ fn control(
         }
         *workspace = id.clone();
     }
-    let creating = matches!(
-        action,
-        Action::Workspace(WorkspaceAction::NewWorkspace { .. })
-    );
+    let creation = match action {
+        Action::Workspace(WorkspaceAction::NewWorkspace { .. }) => Some(Creation::Workspace),
+        Action::Workspace(WorkspaceAction::CreateTab) | Action::LaunchTab { .. } => {
+            Some(Creation::Tab)
+        }
+        Action::Workspace(WorkspaceAction::CreatePane { .. })
+        | Action::CreateCommandPane { .. }
+        | Action::Edit { .. } => Some(Creation::Pane),
+        _ => None,
+    };
     let inspecting = !list && matches!(action, Action::Workspace(WorkspaceAction::Inspect));
     let response = match send_action_from(Ok(socket), caller.clone(), action) {
         Ok(response) => response,
@@ -1328,28 +1334,56 @@ fn control(
             } else {
                 String::new()
             };
-            // The reply projects the caller's workspace. wN identities rise and
-            // are never reused, and the supervisor lists the workspaces in the
-            // same request step that creates one, so the highest is the new one.
-            let created = creating
-                .then(|| {
-                    snapshot.workspaces.iter().max_by_key(|item| {
-                        item.id
-                            .strip_prefix('w')
-                            .and_then(|n| n.parse::<u64>().ok())
+            // The reply projects the caller's workspace, where a tab or pane
+            // creation acts. wN, tN and pN identities rise window-wide and are
+            // never reused, and the supervisor builds the reply in the same
+            // request step that creates one, so the highest is the new one.
+            let terminal = |tab: &Tab, pane: Option<&Pane>| {
+                format!(
+                    "{{\"tab\":\"{}\",\"pane\":{}}}",
+                    json_escape(&tab.id),
+                    pane.map_or_else(
+                        || "null".into(),
+                        |pane| format!("\"{}\"", json_escape(&pane.id))
+                    )
+                )
+            };
+            // The JSON value, and the human line only a new workspace prints.
+            // A pending tab has no pane until its directory is picked.
+            let (created, created_line) = match creation {
+                Some(Creation::Workspace) => newest(&snapshot.workspaces, 'w', |item| &item.id)
+                    .map(|item| {
+                        (
+                            format!("\"{}\"", json_escape(&item.id)),
+                            format!("created {}\n", item.id),
+                        )
                     })
-                })
-                .flatten()
-                .map(|item| item.id.as_str());
+                    .unzip(),
+                Some(Creation::Tab) => (
+                    newest(&snapshot.tabs, 't', |tab| &tab.id)
+                        .map(|tab| terminal(tab, newest(tab.panes(), 'p', |pane| &pane.id))),
+                    None,
+                ),
+                Some(Creation::Pane) => (
+                    newest(
+                        snapshot
+                            .tabs
+                            .iter()
+                            .flat_map(|tab| tab.panes().map(move |pane| (tab, pane))),
+                        'p',
+                        |(_, pane)| &pane.id,
+                    )
+                    .map(|(tab, pane)| terminal(tab, Some(pane))),
+                    None,
+                ),
+                None => (None, None),
+            };
             write_stdout(if json {
                 format!(
                     "{{\"generation\":\"{}\",\"window\":{window},\"workspace\":\"{}\",{caller}{}{}",
                     json_escape(generation),
                     json_escape(&snapshot.workspace),
-                    created.map_or_else(String::new, |id| format!(
-                        "\"created\":\"{}\",",
-                        json_escape(id)
-                    )),
+                    created.map_or_else(String::new, |value| format!("\"created\":{value},")),
                     &if list {
                         list_json(&snapshot)
                     } else {
@@ -1361,7 +1395,7 @@ fn control(
                     "generation {generation}\nwindow {}\nworkspace {}\n{caller}{}{}",
                     resolved.window.as_deref().unwrap_or("default"),
                     snapshot.workspace,
-                    created.map_or_else(String::new, |id| format!("created {id}\n")),
+                    created_line.unwrap_or_default(),
                     if list {
                         list_human(&snapshot)
                     } else {
@@ -1461,6 +1495,28 @@ pub(crate) fn history_left_out(omitted_lines: u32, cut_bytes: u32) -> Option<Str
         (Some(part), None) | (None, Some(part)) => Some(part),
         (Some(lines), Some(cut)) => Some(format!("{lines} and {cut}")),
     }
+}
+
+/// What a workspace action's reply names in `created`.
+#[derive(Clone, Copy)]
+enum Creation {
+    Workspace,
+    Tab,
+    Pane,
+}
+
+/// The item with the highest `prefix`N identity, which is the newest: Runtime
+/// allocates wN, tN and pN rising window-wide and never reuses one.
+fn newest<T>(
+    items: impl IntoIterator<Item = T>,
+    prefix: char,
+    id: impl Fn(&T) -> &String,
+) -> Option<T> {
+    items.into_iter().max_by_key(|item| {
+        id(item)
+            .strip_prefix(prefix)
+            .and_then(|n| n.parse::<u64>().ok())
+    })
 }
 
 /// A result's `window`: its ID, or null for the default namespace.

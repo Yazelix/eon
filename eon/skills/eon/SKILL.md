@@ -50,10 +50,10 @@ shell, for example:
 eon pane create --no-focus --json -- sh -c 'printf hello | cat'
 ```
 
-Omit `-- COMMAND ARGS...` to open a shell pane. Find the new pane's ID by
-comparing `tabs[].panes[].id` before and after, in the tab named by `caller.tab`.
-Read its terminal from `session`. With `--no-focus`, `selected_pane` stays on
-the person's selected pane; it does not identify the new pane.
+Omit `-- COMMAND ARGS...` to open a shell pane. The reply names the new pane
+and its tab in `created`, as `{"tab": "tN", "pane": "pN"}`; read its terminal
+from that pane's `session`. With `--no-focus`, `selected_pane` stays on the
+person's selected pane; it does not identify the new pane.
 
 ## Open files, tabs and workspaces
 
@@ -64,11 +64,12 @@ For a work tab, read `eon workspace --json` first, then run
 `eon tab create --no-focus --json --directory DIR`. This starts a tab at DIR
 without quick search and leaves the person's view alone. Append `-- COMMAND ARGS...`
 to run an exact command from a calling Eon terminal; without a caller this form
-exits 1. Omit the command to open a shell pane. Find the new tab's ID by
-comparing `tabs[].id` before and after; `active_tab` stays unchanged with
-`--no-focus`. Use plain `eon tab create --json` only when the person asks for
+exits 1. Omit the command to open a shell pane. The reply names the new tab
+and its pane in `created`, as `eon pane create` does; `active_tab` stays
+unchanged with `--no-focus`. Use plain `eon tab create --json` only when the person asks for
 a tab that starts on quick search: it activates the new pending tab and moves
-the person's view.
+the person's view. Its `created` pane is null, and the pick that later starts
+the tab's first pane does not report that pane in `created`.
 Create a workspace with `eon workspace new --no-focus --json`, adding
 `--name NAME` when requested; read its ID from `created`.
 Set a tab's launch directory with `eon tab directory tN --json -- DIRECTORY`;

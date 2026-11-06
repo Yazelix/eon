@@ -2105,7 +2105,15 @@ fn a_pick_commits_a_pending_tab_with_one_pane_and_keeps_its_pair() {
     assert_eq!(wait_for_lines(&window.zoxide_log, 1), first_visit);
 
     // Racing picks on a pending tab start one pane; the later one retargets.
-    assert!(window.eon(&["tab", "create"]).status.success());
+    // The pending tab has no pane to name until then.
+    let pending = window.eon(&["tab", "create", "--json"]);
+    assert!(pending.status.success(), "{pending:?}");
+    let pending: serde_json::Value = serde_json::from_slice(&pending.stdout).unwrap();
+    assert_eq!(
+        pending["created"],
+        serde_json::json!({"tab": "t2", "pane": null}),
+        "{pending}"
+    );
     window.pair_launch("session-3");
     thread::scope(|scope| {
         let picks = [&left, &right].map(|directory| {
@@ -5515,6 +5523,19 @@ fn commands_from_a_terminal_target_its_column_and_stale_callers_change_nothing()
     );
     let created: serde_json::Value = serde_json::from_slice(&created.stdout).unwrap();
     assert!(created.get("caller").is_none());
+    // Each pane or tab creation names what it started in `created`.
+    let names = |output: &Output, tab: &str, pane: Option<&str>| {
+        let reply: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
+        assert_eq!(
+            reply["created"],
+            serde_json::json!({"tab": tab, "pane": pane}),
+            "{reply}"
+        );
+    };
+    assert_eq!(
+        created["created"],
+        serde_json::json!({"tab": "t1", "pane": "p3"})
+    );
     let snapshot = inspect("after-create");
     let ids = |column: usize| {
         snapshot.tabs[0].columns[column]
@@ -5538,6 +5559,9 @@ fn commands_from_a_terminal_target_its_column_and_stale_callers_change_nothing()
     let closed = from(&caller, &["pane", "close", "p3", "--yes", "--json"]);
     assert!(closed.status.success(), "{}", stdout(&closed));
     assert!(!stdout(&closed).contains("\"id\":\"p3\""));
+    // A reply that creates nothing carries no `created`.
+    let closed: serde_json::Value = serde_json::from_slice(&closed.stdout).unwrap();
+    assert!(closed.get("created").is_none(), "{closed}");
 
     // `eon edit` opens a relative file from the caller's directory in Helix,
     // the default editor, in a new pane beside the calling terminal.
@@ -5550,6 +5574,7 @@ fn commands_from_a_terminal_target_its_column_and_stale_callers_change_nothing()
         .output()
         .unwrap();
     assert!(edited.status.success(), "{}", stdout(&edited));
+    names(&edited, "t1", Some("p4"));
     let snapshot = inspect("after-edit");
     assert_eq!(snapshot.tabs[0].selected_pane.as_deref(), Some("p4"));
     let pane = &snapshot.tabs[0].columns[0].panes[1];
@@ -5585,6 +5610,7 @@ fn commands_from_a_terminal_target_its_column_and_stale_callers_change_nothing()
         .unwrap();
     assert!(ran.status.success(), "{}", stdout(&ran));
     assert!(stdout(&ran).contains(r#""selected_pane":"p5""#));
+    names(&ran, "t1", Some("p5"));
     let snapshot = inspect("after-command");
     assert_eq!(snapshot.tabs[0].selected_pane.as_deref(), Some("p5"));
     let pane = &snapshot.tabs[0].columns[0].panes[2];
@@ -5604,6 +5630,7 @@ fn commands_from_a_terminal_target_its_column_and_stale_callers_change_nothing()
         &["pane", "create", "--no-focus", "--json", "--", "hx"],
     );
     assert!(unfocused.status.success(), "{}", stdout(&unfocused));
+    names(&unfocused, "t1", Some("p6"));
     let snapshot = inspect("after-unfocused");
     assert_eq!(snapshot.tabs[0].selected_pane.as_deref(), Some("p5"));
     assert_eq!(snapshot.tabs[0].columns[0].panes[3].id, "p6");
@@ -5647,6 +5674,7 @@ fn commands_from_a_terminal_target_its_column_and_stale_callers_change_nothing()
     assert_eq!(tab.panes().count(), 1);
     let pane = tab.panes().next().unwrap();
     assert_eq!(tab.selected_pane.as_deref(), Some(pane.id.as_str()));
+    names(&launched, &tab.id, Some(&pane.id));
     let endpoint = Path::new(OsStr::from_bytes(&pane.endpoint));
     assert!(process::cmdline(live_identity(endpoint).process_id).ends_with(b"hx\0"));
     assert!(fs::read_to_string(&orbit_log).unwrap().contains(&format!(
@@ -13372,10 +13400,22 @@ fn cli_closes_background_ids_and_preserves_the_presented_workspace() {
     // The caller is t1's Agent popup. The active t2 shows its own Agent
     // popup, and the background t3 and t4 each hold two panes.
     let caller = quit_terminal_caller(Path::new(&show_agent(&control, "t1-agent", "t1")));
-    parsed(&run(
+    // Each creation names its tab and the pane it started in `created`,
+    // focused or not, and wherever the calling terminal is.
+    let names = |reply: &serde_json::Value, tab: &serde_json::Value, pane: &serde_json::Value| {
+        assert_eq!(
+            reply["created"],
+            serde_json::json!({"tab": tab, "pane": pane}),
+            "{reply}"
+        );
+    };
+    let focused = parsed(&run(
         Some(&caller),
         &["tab", "create", "--directory", &directory, "--json"],
     ));
+    let tab = focused["tabs"].as_array().unwrap().last().unwrap();
+    assert_eq!(tab["id"], "t2");
+    names(&focused, &tab["id"], &tab["panes"][0]["id"]);
     show_agent(&control, "t2-agent", "t2");
     let mut background = Vec::new();
     for _ in 0..2 {
@@ -13391,14 +13431,25 @@ fn cli_closes_background_ids_and_preserves_the_presented_workspace() {
             ],
         ));
         let tab = created["tabs"].as_array().unwrap().last().unwrap();
+        names(&created, &tab["id"], &tab["panes"][0]["id"]);
         let first = quit_terminal_caller(Path::new(tab["panes"][0]["endpoint"].as_str().unwrap()));
-        parsed(&run(
+        let pane = parsed(&run(
             Some(&first),
             &["pane", "create", "--no-focus", "--json"],
         ));
+        let panes = pane["tabs"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|item| item["id"] == tab["id"])
+            .unwrap()["panes"]
+            .clone();
+        assert_eq!(panes.as_array().unwrap().len(), 2);
+        names(&pane, &tab["id"], &panes[1]["id"]);
         background.push(tab["id"].as_str().unwrap().to_owned());
     }
     let before = parsed(&inspect());
+    assert!(before.get("created").is_none(), "{before}");
     assert_eq!(before["active_tab"], "t2");
     assert!(before["tabs"][0]["selected_popup"].is_string());
     assert!(before["tabs"][1]["selected_popup"].is_string());

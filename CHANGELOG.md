@@ -5,6 +5,14 @@ installation, and proven contract changes.
 
 ## Unreleased
 
+- The JSON replies of `eon pane create` and `eon tab create`, in every form,
+  and of `eon edit` name what they started in a top-level `created` object,
+  `{"tab": "tN", "pane": "pN"}`, so an agent no longer has to compare
+  pane lists before and after; `pane` is null for a bare `tab create`, whose
+  tab waits on quick search. A pick (`eon tab directory` on a pending tab)
+  and `eon popup hide` of its quick search start that tab's first pane
+  without naming it. Human output and every other reply are unchanged
+  (`eon-1jeai`, EON-C10). EONW is unchanged.
 - `eon window stop previous [--json]` stops every running window that another
   Eon build started, in the default namespace and in independent windows, and
   `eon window stop all [--json]` now stops every running window, the default
