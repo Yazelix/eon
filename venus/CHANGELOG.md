@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+- VEN-C8: on macOS, Command+Q in an Eon workspace window acts as a close
+  request; Venus takes it off winit's default app menu, and the Shortcuts row
+  reads "Option+Shift+Q or Command+Q". A standalone Orbit session keeps
+  AppKit's quit (`eon-7cf0y.15`). No wire change.
 - VEN-C21: the clock in the bottom shortcut hints is plain text in the version
   label's colour, with no outline, its inset mirroring the version's; the
   keycap hover popup has no title row

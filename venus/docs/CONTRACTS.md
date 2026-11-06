@@ -572,7 +572,9 @@ re-proved when that platform or feature is next touched.
   Alt+Shift+0 show workspace positions. Amended on 2026-11-05 (approved by
   Lucca, relayed by eon-overseer) by `eon-agent-parity-a9g0.3`: Enter on the
   final-close prompt sends the held close directly by its named target without
-  first focusing its tab.
+  first focusing its tab. Amended on 2026-11-06 under Lucca's standing
+  approval rule, relayed by eon-overseer, by `eon-7cf0y.15`: Command+Q on
+  macOS acts as a close request.
 - **Consumer:** One Venus surface controlled by an Eon workspace.
 - **Trigger:** Outside visible `VEN-C18` popup presentation, Eon supplies
   durable topology, a workspace action changes tab, pane, focus, order,
@@ -755,7 +757,14 @@ re-proved when that platform or feature is next touched.
     while the snapshot carries a running-windows summary. A compositor close
     request acts as Alt+Shift+Q, and detaches without a running-windows
     summary, while the workspace is unavailable, and while it refuses refreshes
-    after a failed Stop.
+    after a failed Stop. On macOS, Command+Q in an Eon workspace window acts as
+    a close request, so it quits as Option+Shift+Q does, prompt included, and
+    detaches where a close request detaches, and the viewer lists it beside
+    Option+Shift+Q; a popup on one of the two keys takes only that key, and
+    the row reads "Quit: close the window, stop its terminals (<key>
+    overridden by <popup label>)". Venus takes the key off winit's default app
+    menu, whose Quit item stays and still exits Venus. A standalone Orbit
+    session keeps AppKit's quit, which exits Venus and leaves Orbit live.
     While the snapshot's `busy` lists a terminal, or is absent, Venus first
     shows the EON-C8 quit prompt, which shares the final-close prompt's owner,
     key answers, scrolling, Alt+Shift+D mapping, self-closing on workspace
@@ -967,7 +976,9 @@ re-proved when that platform or feature is next touched.
   t1, and t3 stayed active, where selecting t1 first would have shown t2.
   `close_prompt_asks_for_a_final_close` checks only that a prompt held while
   t2 became active still names t1 and p1; no automated test drives
-  `send_close`. Pending
+  `send_close`. Command+Q on macOS (`eon-7cf0y.15`): the key predicate and
+  the viewer row by `quit_key_lists_hints_and_yields_to_a_popup`; the native
+  key path awaits the mac-proof `quit` step. Pending
   re-proof in this repository: the ignored native long-label header regression and reader
   announcement of a workspace failure notice.
 

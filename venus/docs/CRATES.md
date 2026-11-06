@@ -252,6 +252,36 @@ dependency decision does not establish public-distribution proof.
   follow the version the rest of the lock resolves, through the dependency
   gate.
 
+### macOS application menu
+
+- **Selected shape:** target-only macOS `objc2 = "=0.6.4"`, `objc2-app-kit =
+  "=0.3.2"` (default features disabled; `std`, `NSApplication`, `NSMenu`,
+  `NSMenuItem`, `NSResponder`) and `objc2-foundation = "=0.3.2"` (default
+  features disabled; `std`, `NSArray`, `NSEnumerator`, `NSString`)
+  (`eon-7cf0y.15`, Command+Q under VEN-C8). Approved 2026-11-06 under Lucca's
+  standing approval rule, relayed by eon-overseer. All three are already in
+  the lock at these versions and in Venus's macOS build through arboard, so
+  the lock gains three edges and no package or version; on macOS
+  objc2-app-kit's application, menu and responder modules newly compile, and
+  Linux builds nothing more. objc2 and objc2-app-kit MIT; objc2-foundation
+  Zlib OR Apache-2.0 OR MIT.
+- **Capability:** in an Eon workspace window, on the main thread, find the
+  main-menu item whose action is `terminate:` and clear its key equivalent, so
+  Command+Q reaches Venus as a key. Venus relies on AppKit's documented
+  `NSApplication`, `NSMenu` and `NSMenuItem` API and on winit building its
+  default menu before the first `resumed`. These 0.3 bindings are safe, so
+  Venus adds no unsafe code.
+- **Rejected:** winit's own objc2-app-kit 0.2.2, whose menu calls are
+  `unsafe fn` and would add a second unsafe site; `with_default_menu(false)`,
+  which drops the whole app menu (About, Services, Hide, Show All);
+  `applicationShouldTerminate:` interception, which also catches the Dock's
+  Quit and logout and needs runtime class changes; and raw libobjc calls
+  through libc.
+- **Exit:** replacing it costs one cfg(macos) function in
+  `src/application.rs`; the fallback is a Yazelix winit-fork option that
+  leaves Command+Q off the default menu. Remove the edges when winit offers
+  that or Venus owns its app menu; move with arboard's objc2 generation.
+
 ### Subscription readiness
 
 - **Selected shape:** the `event` feature of the rustix edge above

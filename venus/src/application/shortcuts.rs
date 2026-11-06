@@ -60,6 +60,8 @@ pub(super) enum NativeShortcutTrigger {
     Copy,
     Paste,
     OpenLink,
+    /// Alt+Shift+Q. On macOS Command+Q quits too, through the close request (`command_q`).
+    Quit,
 }
 
 impl NativeShortcutTrigger {
@@ -96,6 +98,13 @@ impl NativeShortcutTrigger {
                 wire_modifiers(open_link_modifiers(platform)),
                 "click",
             ),
+            Self::Quit => {
+                let quit = physical_shortcut_label_for(platform, wire_modifiers(ALT_SHIFT), "KeyQ");
+                match platform {
+                    NativePlatform::Linux => quit,
+                    NativePlatform::Macos => format!("{quit} or Command+Q"),
+                }
+            }
         }
     }
 }
@@ -332,13 +341,12 @@ pub(super) static FIXED_SHORTCUTS: &[NativeShortcut] = &[
         ALT_SHIFT,
         NativeShortcutAction::Detach,
     ),
-    NativeShortcut::key(
-        "Host",
-        "Quit: close the window, stop its terminals",
-        KeyCode::KeyQ,
-        ALT_SHIFT,
-        NativeShortcutAction::Quit,
-    ),
+    NativeShortcut {
+        group: "Host",
+        label: "Quit: close the window, stop its terminals",
+        trigger: NativeShortcutTrigger::Quit,
+        action: NativeShortcutAction::Quit,
+    },
     NativeShortcut::key(
         "Host",
         "Show or close shortcuts",
@@ -430,6 +438,9 @@ impl NativeShortcut {
                         && modifiers == copy_paste_modifiers(platform)
             }
             NativeShortcutTrigger::OpenLink => false,
+            NativeShortcutTrigger::Quit => {
+                key == PhysicalKey::Code(KeyCode::KeyQ) && modifiers == ALT_SHIFT
+            }
         }
     }
 
@@ -451,24 +462,35 @@ impl NativeShortcut {
             }
             NativeShortcutTrigger::Copy => (KeyCode::KeyC, copy_paste_modifiers(platform)),
             NativeShortcutTrigger::Paste => (KeyCode::KeyV, copy_paste_modifiers(platform)),
+            // On macOS Quit has two keys, and a popup on one leaves the other (`taken_keys`).
+            NativeShortcutTrigger::Quit if platform == NativePlatform::Linux => {
+                (KeyCode::KeyQ, ALT_SHIFT)
+            }
             _ => return None,
         };
         popup_entry(entries, code, modifiers)
     }
 
-    /// Each workspace position key a configured popup takes, as "<key> overridden by <popup>";
-    /// the binding keeps the other positions (VEN-C20).
-    fn taken_positions(self, platform: NativePlatform, entries: &[PopupEntry]) -> Vec<String> {
-        if !matches!(self.trigger, NativeShortcutTrigger::AltShiftDigits) {
-            return Vec::new();
-        }
-        DIGIT_KEYS
-            .iter()
-            .filter_map(|code| {
-                let entry = popup_entry(entries, *code, ALT_SHIFT)?;
+    /// Each key of a several-key binding that a configured popup takes, as "<key> overridden by
+    /// <popup>"; the binding keeps its other keys: the workspace positions (VEN-C20), and on
+    /// macOS Quit's Option+Shift+Q and Command+Q (VEN-C8).
+    fn taken_keys(self, platform: NativePlatform, entries: &[PopupEntry]) -> Vec<String> {
+        let keys: Vec<(KeyCode, session::Modifiers)> = match self.trigger {
+            NativeShortcutTrigger::AltShiftDigits => {
+                DIGIT_KEYS.iter().map(|code| (*code, ALT_SHIFT)).collect()
+            }
+            NativeShortcutTrigger::Quit if platform == NativePlatform::Macos => vec![
+                (KeyCode::KeyQ, ALT_SHIFT),
+                (KeyCode::KeyQ, session::Modifiers::SUPER),
+            ],
+            _ => return Vec::new(),
+        };
+        keys.into_iter()
+            .filter_map(|(code, modifiers)| {
+                let entry = popup_entry(entries, code, modifiers)?;
                 let key = physical_shortcut_label_for(
                     platform,
-                    wire_modifiers(ALT_SHIFT),
+                    wire_modifiers(modifiers),
                     &format!("{code:?}"),
                 );
                 Some(format!("{key} overridden by {}", entry.label))
@@ -502,6 +524,28 @@ fn open_link_modifiers(platform: NativePlatform) -> session::Modifiers {
     }
 }
 
+pub(super) fn command_q(
+    key: PhysicalKey,
+    modifiers: session::Modifiers,
+    entries: &[PopupEntry],
+) -> bool {
+    command_q_for(NATIVE_PLATFORM, key, modifiers, entries)
+}
+
+/// Command+Q on macOS, which an Eon workspace window takes as its close request (VEN-C8),
+/// unless a configured popup takes the key.
+pub(super) fn command_q_for(
+    platform: NativePlatform,
+    key: PhysicalKey,
+    modifiers: session::Modifiers,
+    entries: &[PopupEntry],
+) -> bool {
+    platform == NativePlatform::Macos
+        && key == PhysicalKey::Code(KeyCode::KeyQ)
+        && modifiers == session::Modifiers::SUPER
+        && popup_entry(entries, KeyCode::KeyQ, modifiers).is_none()
+}
+
 pub(super) fn native_key_shortcut(
     key: PhysicalKey,
     modifiers: session::Modifiers,
@@ -511,7 +555,7 @@ pub(super) fn native_key_shortcut(
 }
 
 /// The fixed binding a key triggers, unless a configured popup takes that key. A popup takes any
-/// one of the workspace position keys and leaves the others bound (VEN-C8).
+/// one of the workspace position keys, or of Quit's keys, and leaves the others bound (VEN-C8).
 pub(super) fn native_key_shortcut_for(
     platform: NativePlatform,
     key: PhysicalKey,
@@ -525,8 +569,10 @@ pub(super) fn native_key_shortcut_for(
         };
         shortcut.matches_key(platform, key, modifiers)
             && shortcut.overriding_popup(platform, entries).is_none()
-            && !(matches!(shortcut.trigger, NativeShortcutTrigger::AltShiftDigits)
-                && position_taken())
+            && !(matches!(
+                shortcut.trigger,
+                NativeShortcutTrigger::AltShiftDigits | NativeShortcutTrigger::Quit
+            ) && position_taken())
     })
 }
 
@@ -630,7 +676,7 @@ fn shortcut_groups_with(
                                 Some(entry) => {
                                     format!("{} (overridden by {})", shortcut.label, entry.label)
                                 }
-                                None => match shortcut.taken_positions(platform, entries) {
+                                None => match shortcut.taken_keys(platform, entries) {
                                     taken if taken.is_empty() => shortcut.label.into(),
                                     taken => format!("{} ({})", shortcut.label, taken.join("; ")),
                                 },

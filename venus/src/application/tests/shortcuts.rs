@@ -1,6 +1,6 @@
 use super::*;
 use crate::application::shortcuts::{
-    ALT_SHIFT, CTRL_ALT, CTRL_SHIFT, FIXED_SHORTCUTS, native_pointer_shortcut_for,
+    ALT_SHIFT, CTRL_ALT, CTRL_SHIFT, FIXED_SHORTCUTS, command_q_for, native_pointer_shortcut_for,
     shortcut_groups_for,
 };
 use eon_workspace_protocol::v35::{InvokeIntent, Side, Tab};
@@ -151,6 +151,10 @@ fn shortcut_viewer_uses_live_rows_and_captures_its_local_sequence() {
                     ));
                 }
             }
+            NativeShortcutTrigger::Quit => assert!(std::ptr::eq(
+                key_shortcut(PhysicalKey::Code(KeyCode::KeyQ), ALT_SHIFT),
+                shortcut
+            )),
             NativeShortcutTrigger::OpenLink => assert!(std::ptr::eq(
                 native_pointer_shortcut_for(
                     NativePlatform::Linux,
@@ -759,7 +763,41 @@ fn quit_key_lists_hints_and_yields_to_a_popup() {
     );
     assert_eq!(
         rows(NativePlatform::Macos, &[], true),
-        [("Option+Shift+Q".into(), label.into())]
+        [("Option+Shift+Q or Command+Q".into(), label.into())]
+    );
+    // Command+Q is macOS's close request, not a Quit binding; Linux leaves Super+Q to the
+    // terminal, and a popup on Command+Q takes it.
+    let command = orbit_protocol::session::Modifiers::SUPER;
+    assert!(command_q_for(NativePlatform::Macos, quit, command, &[]));
+    assert!(!command_q_for(NativePlatform::Linux, quit, command, &[]));
+    assert!(!command_q_for(
+        NativePlatform::Macos,
+        quit,
+        command.union(orbit_protocol::session::Modifiers::SHIFT),
+        &[]
+    ));
+    assert!(!command_q_for(NativePlatform::Macos, quit, ALT_SHIFT, &[]));
+    let files = [PopupEntry {
+        id: "files".into(),
+        label: "Files".into(),
+        shortcut: PopupKey::Bound(eon_workspace_protocol::v35::Shortcut {
+            modifiers: eon_workspace_protocol::v35::SUPER,
+            key: "KeyQ".into(),
+        }),
+    }];
+    assert!(!command_q_for(NativePlatform::Macos, quit, command, &files));
+    // On macOS the row names the one key a popup takes; the other still quits.
+    let macos_quit = |entries: &[PopupEntry]| {
+        native_key_shortcut_for(NativePlatform::Macos, quit, ALT_SHIFT, entries)
+            .map(|shortcut| shortcut.action)
+    };
+    assert_eq!(macos_quit(&files), Some(NativeShortcutAction::Quit));
+    assert_eq!(
+        rows(NativePlatform::Macos, &files, true),
+        [(
+            "Option+Shift+Q or Command+Q".into(),
+            format!("{label} (Command+Q overridden by Files)")
+        )]
     );
     // A popup on Alt+Shift+Q takes the key and its hint.
     let monitor = [PopupEntry {
@@ -776,6 +814,20 @@ fn quit_key_lists_hints_and_yields_to_a_popup() {
         [(
             "Alt+Shift+Q".into(),
             format!("{label} (overridden by Monitor)")
+        )]
+    );
+    assert_eq!(macos_quit(&monitor), None);
+    assert!(command_q_for(
+        NativePlatform::Macos,
+        quit,
+        command,
+        &monitor
+    ));
+    assert_eq!(
+        rows(NativePlatform::Macos, &monitor, true),
+        [(
+            "Option+Shift+Q or Command+Q".into(),
+            format!("{label} (Option+Shift+Q overridden by Monitor)")
         )]
     );
     // Without a running-windows summary (eonbase) there is no Quit.

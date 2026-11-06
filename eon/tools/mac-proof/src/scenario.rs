@@ -271,6 +271,19 @@ const STEPS: &[Spec] = &[
         body: adoption,
     },
     Spec {
+        name: "quit",
+        needs: KEYS,
+        requires: &["picker"],
+        proves: "Command+Q quits the window as Option+Shift+Q does. While the driver runs, it \
+                 keeps Venus and the terminals, where AppKit's quit would end Venus; Escape \
+                 cancels, so Return alone then quits nothing; Command+Q and Return end Venus \
+                 and the supervisor. In a new window whose one terminal is an idle shell, \
+                 Command+Q alone ends both. A new window is then started for stop",
+        window: true,
+        timeout: Duration::from_secs(4 * 60),
+        body: quit,
+    },
+    Spec {
         name: "stop",
         needs: GUI,
         requires: &["session"],
@@ -1261,6 +1274,10 @@ const SHORTCUTS: Key = Key {
 };
 const PASTE: Key = Key {
     code: 9,
+    flags: COMMAND,
+};
+const QUIT: Key = Key {
+    code: 12,
     flags: COMMAND,
 };
 /// The scenario's own popup, a shell (`launch` configures it).
@@ -2345,6 +2362,91 @@ fn adoption(scenario: &mut Scenario, log: &mut Log, deadline: Instant) -> Outcom
     let missing: Vec<&String> = before.difference(&adopted).collect();
     check(missing.is_empty(), || {
         format!("the new supervisor did not adopt terminals {missing:?}; it shows {adopted:?}")
+    })
+}
+
+fn quit(scenario: &mut Scenario, log: &mut Log, deadline: Instant) -> Outcome {
+    let venus = scenario.wait_for_venus(log, deadline)?;
+    // The driver runs a command, so Quit asks first; an absent busy list asks too.
+    let busy = scenario.workspace(log, deadline)?["busy"].take();
+    check(
+        busy.is_null()
+            || busy["terminals"]
+                .as_array()
+                .is_some_and(|terminals| !terminals.is_empty()),
+        || format!("want the driver busy, found {busy}"),
+    )?;
+    let before = scenario.terminals(log, deadline)?;
+    for (keys, after) in [
+        (QUIT, "Command+Q"),
+        (ESCAPE, "Escape"),
+        (RETURN, "Return after Escape"),
+    ] {
+        scenario.press(&[keys], log, deadline)?;
+        // AppKit's quit, or a Stop, would end Venus within this pause.
+        thread::sleep(Duration::from_secs(3));
+        check(scenario.venus(log, deadline)? == Some(venus), || {
+            format!("Venus {venus} ended after {after}")
+        })?;
+        scenario.supervisor_alive()?;
+        let terminals = scenario.terminals(log, deadline)?;
+        check(terminals == before, || {
+            format!("terminals {before:?} became {terminals:?} after {after}")
+        })?;
+    }
+    scenario.press(&[QUIT], log, deadline)?;
+    thread::sleep(Duration::from_secs(1));
+    scenario.press(&[RETURN], log, deadline)?;
+    quit_ended(scenario, venus, log, deadline)?;
+
+    scenario.start(&["run"], log)?;
+    scenario.wait_for_workspace(log, deadline)?;
+    let venus = scenario.wait_for_venus(log, deadline)?;
+    log.line("mac-proof: waiting for an idle shell after quick search");
+    until(deadline, || {
+        // Escape closes quick search, which starts the tab's shell.
+        scenario.press(&[ESCAPE], log, deadline)?;
+        thread::sleep(Duration::from_secs(2));
+        let workspace = scenario.workspace(log, deadline)?;
+        let idle = workspace["busy"]["terminals"]
+            .as_array()
+            .is_some_and(Vec::is_empty);
+        Ok((idle && panes(&workspace).len() == 1).then_some(()))
+    })?;
+    scenario.press(&[QUIT], log, deadline)?;
+    quit_ended(scenario, venus, log, deadline)?;
+
+    scenario.start(&["run"], log)?;
+    scenario.wait_for_workspace(log, deadline)?;
+    scenario.wait_for_venus(log, deadline).map(drop)
+}
+
+/// Waits up to a minute for Quit to end the supervisor and `venus`; AppKit's quit would end
+/// only Venus.
+fn quit_ended(scenario: &mut Scenario, venus: u32, log: &mut Log, deadline: Instant) -> Outcome {
+    log.line(&format!(
+        "mac-proof: waiting for the supervisor and Venus {venus} to end"
+    ));
+    let wait = deadline.min(Instant::now() + MINUTE);
+    let status = until(wait, || {
+        Ok(scenario
+            .supervisor
+            .as_mut()
+            .and_then(|child| child.try_wait().ok().flatten()))
+    })
+    .map_err(|failure| match failure {
+        Failure::Timeout => {
+            Failure::Check("the supervisor still runs a minute after Quit".to_owned())
+        }
+        other => other,
+    })?;
+    log.line(&format!("mac-proof: the supervisor exited: {status}"));
+    scenario.supervisor = None;
+    until(wait, || {
+        Ok((!listing(log, wait)?
+            .iter()
+            .any(|process| process.pid == venus && process.name().contains("yazelix-venus")))
+        .then_some(()))
     })
 }
 

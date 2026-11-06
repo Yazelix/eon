@@ -106,6 +106,7 @@ fn a_local_dry_run_round_trips_the_candidate_tree() {
             "admission=planned",
             "crash=planned",
             "adoption=planned",
+            "quit=planned",
             "stop=planned",
             "leftovers=planned"
         ]

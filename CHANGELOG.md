@@ -5,6 +5,11 @@ installation, and proven contract changes.
 
 ## Unreleased
 
+- On macOS, Command+Q in an Eon window quits the window as Option+Shift+Q
+  does, asking first while a terminal runs something, instead of only closing
+  Venus and leaving the terminals running; Shortcuts lists it beside
+  Option+Shift+Q. Where the window cannot quit it detaches, as closing it does
+  (`eon-7cf0y.15`, VEN-C8).
 - Eon is labelled alpha again; v0.2.0 enters beta. 1.0.0 has no
   scheduled date.
 - Eon has one window family in the CLI. `eon attach`, `eon stop` and

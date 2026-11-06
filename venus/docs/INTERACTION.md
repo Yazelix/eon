@@ -77,7 +77,7 @@ the workspace, by name or `wN`, and its footer reads `Enter Close`.
 | Alt+Shift+W | Close the active tab; closing the final tab quits the window, or closes the workspace while others remain |
 | Alt+Shift+N | Open an independent Eon window when supervised by Eon |
 | Alt+Shift+D | Detach: hide the window, keep terminals running |
-| Alt+Shift+Q | Quit: close the window, stop its terminals; asks first while a terminal is busy, and is absent without Eon's running-windows summary |
+| Alt+Shift+Q (on macOS, also Command+Q) | Quit: close the window, stop its terminals; asks first while a terminal is busy, and is absent without Eon's running-windows summary |
 | Alt+Z | Show or hide quick search, Eon's `project` popup entry; Eon supplies other popup shortcuts |
 | Alt+/ | Open or close Shortcuts |
 | Alt+Shift+B | Show or hide the bottom shortcut hints |
@@ -94,6 +94,12 @@ refuses refreshes after a failed Stop, a close request detaches as Alt+Shift+D
 does. A close request carries no reason, so a desktop that closes each window
 at logout, such as KDE Plasma, gets the same quit; Alt+Shift+D before logging
 out keeps the terminals there.
+
+On macOS, Command+Q in an Eon workspace window is such a close request, and
+Shortcuts lists it beside Option+Shift+Q. Venus takes the key off winit's app
+menu, whose Quit item stays and still only exits Venus, leaving the window's
+terminals running. A standalone Orbit session keeps AppKit's Command+Q, which
+exits Venus and leaves Orbit live.
 
 In the attention inbox, Left/Right cycle All, Needs input, Error and Finished;
 Up/Down highlight a row. Enter, Space or a row click sends that row's

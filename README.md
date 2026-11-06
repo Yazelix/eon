@@ -70,7 +70,7 @@ folder. A terminal opens there.
 | Alt+Shift+M | Commands popup: search and run Eon commands |
 | Alt+Shift+S | Workspaces: switch, create or close a workspace in this window |
 | Alt+Shift+D | Detach: hide the window, keep terminals running |
-| Alt+Shift+Q | Quit this window; closing the window does the same |
+| Alt+Shift+Q | Quit this window; closing the window, or Command+Q on macOS, does the same |
 
 Detach whenever you like. To come back or end work:
 

@@ -60,7 +60,7 @@ use geometry::{
 use scroll::{PendingViewportRequest, SelectionAutoscroll, TerminalScroll, finish_scroll_failure};
 
 use shortcuts::{
-    HintPopupLatch, NativeShortcutAction, NativeShortcutTrigger, WORKSPACES_ENTRY,
+    HintPopupLatch, NativeShortcutAction, NativeShortcutTrigger, WORKSPACES_ENTRY, command_q,
     copy_paste_modifiers, detach_chord, invoke_popup, native_key_shortcut, native_key_shortcut_for,
     native_pointer_shortcut, paste_shortcut, popup_shortcut, position_key_action, shortcut_groups,
     shortcut_hints_for, sideways_move_opens_column, workspace_picker_tooltip, workspace_shortcut,
@@ -1686,6 +1686,42 @@ impl Application {
         self.refresh_client_view();
     }
 
+    /// A compositor close request, or Command+Q on macOS (EON-C8, VEN-C8).
+    fn request_close(&mut self, event_loop: &ActiveEventLoop) {
+        match close_request(
+            self.workspace_model.snapshot(),
+            self.workspace_model.unavailable(),
+        ) {
+            // An open prompt owns the answer: Enter, Esc or Alt+Shift+D.
+            CloseRequest::Quit if self.close_prompt.is_some() => {}
+            CloseRequest::Quit => self.begin_quit(),
+            CloseRequest::Detach => event_loop.exit(),
+        }
+    }
+
+    /// Command+Q in an Eon workspace on macOS is the window's close request in any dialog
+    /// state, as the close button is (VEN-C8).
+    fn handle_command_q(&mut self, event_loop: &ActiveEventLoop, event: &ShortcutKey) -> bool {
+        let closes = self.workspace_socket.is_some()
+            && command_q(
+                event.physical_key,
+                self.input.modifiers(),
+                self.popup_entries(),
+            );
+        // Any other key, including a release after Command is up, passes on.
+        if !closes
+            || !self
+                .input
+                .consumes_shortcut(event.physical_key, event.state, event.repeat, true)
+        {
+            return false;
+        }
+        if shortcut_is_ready(event.state, event.repeat) {
+            self.request_close(event_loop);
+        }
+        true
+    }
+
     /// Alt+Shift+D detaches from any workspace state (VEN-C14).
     fn handle_detach_key(&mut self, event_loop: &ActiveEventLoop, event: &ShortcutKey) -> bool {
         let detaches = self.workspace_model.snapshot().is_some()
@@ -1802,6 +1838,7 @@ impl Application {
     fn handle_shortcut_key(&mut self, event_loop: &ActiveEventLoop, event: &ShortcutKey) -> bool {
         self.input
             .suppresses_retired_key(event.physical_key, event.state, event.repeat)
+            || self.handle_command_q(event_loop, event)
             || self.handle_attention_inbox_key(event)
             || self.handle_detach_key(event_loop, event)
             || self.handle_quit_hold_key(event)
@@ -4442,6 +4479,10 @@ fn window_attributes(
 
 impl ApplicationHandler<UserEvent> for Application {
     fn resumed(&mut self, event_loop: &ActiveEventLoop) {
+        #[cfg(target_os = "macos")]
+        if self.workspace_socket.is_some() {
+            release_command_q();
+        }
         if self.window.is_none()
             && self.initial_scale_pending
             && self.workspace_model.snapshot().is_none()
@@ -4489,15 +4530,7 @@ impl ApplicationHandler<UserEvent> for Application {
         state.adapter.process_event(&state.window, &event);
 
         match event {
-            WindowEvent::CloseRequested => match close_request(
-                self.workspace_model.snapshot(),
-                self.workspace_model.unavailable(),
-            ) {
-                // An open prompt owns the answer: Enter, Esc or Alt+Shift+D.
-                CloseRequest::Quit if self.close_prompt.is_some() => {}
-                CloseRequest::Quit => self.begin_quit(),
-                CloseRequest::Detach => event_loop.exit(),
-            },
+            WindowEvent::CloseRequested => self.request_close(event_loop),
             WindowEvent::Destroyed => event_loop.exit(),
             WindowEvent::Resized(size) => {
                 self.next_animation = None;
@@ -6114,6 +6147,30 @@ fn write_native_clipboard(
     text: String,
 ) -> std::result::Result<(), arboard::Error> {
     arboard::Clipboard::new()?.set_text(text)
+}
+
+/// Takes Command+Q off winit's default app menu, whose Quit item exits Venus through AppKit, so
+/// the key reaches Venus as the window's close request (VEN-C8). The item stays, without its
+/// key; winit builds the menu before the first `resumed`.
+#[cfg(target_os = "macos")]
+fn release_command_q() {
+    use objc2::{MainThreadMarker, sel};
+    use objc2_app_kit::NSApplication;
+    use objc2_foundation::NSString;
+
+    let Some(main_thread) = MainThreadMarker::new() else {
+        return;
+    };
+    let Some(menu) = NSApplication::sharedApplication(main_thread).mainMenu() else {
+        return;
+    };
+    for submenu in menu.itemArray().iter().filter_map(|item| item.submenu()) {
+        for item in &submenu.itemArray() {
+            if item.action() == Some(sel!(terminate:)) {
+                item.setKeyEquivalent(&NSString::new());
+            }
+        }
+    }
 }
 
 #[cfg(target_os = "linux")]

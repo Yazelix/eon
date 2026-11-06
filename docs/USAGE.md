@@ -63,8 +63,8 @@ A terminal starts after choosing a directory or closing quick search. Closing th
 tab quits the window and stops its terminals; in a window with several
 workspaces, it closes only that workspace. By default Eon asks first, listing the
 terminals that stop, and the question names the workspace while others remain.
-Closing the Eon window, with the desktop's close-window key or the window's
-close button, quits it as Alt+Shift+Q does (see
+Closing the Eon window, with the desktop's close-window key, the window's
+close button or, on macOS, Command+Q, quits it as Alt+Shift+Q does (see
 [Stop terminals](#stop-terminals)). To leave its terminals and PTY commands
 running instead, press Alt+Shift+D: it detaches the desktop without asking. Each time, on Linux, Eon shows a desktop
 notification naming the window and how many terminals still run, with a Quit
@@ -124,9 +124,9 @@ stops only that window. It asks first only
 while another of its terminals runs something other than its idle shell, and
 names those terminals, as in `Quit this window? It stops 3 terminals; 1 still
 running: p2  cargo build. [y/N]`; while nothing runs it quits without asking.
-Alt+Shift+Q and closing the window follow the same rule with a prompt in the
-window that names the busy terminals: Enter quits, Esc cancels, and
-Alt+Shift+D detaches instead; closing again leaves the prompt open. A
+Alt+Shift+Q and closing the window (and, on macOS, Command+Q) follow the
+same rule with a prompt in the window that names the busy terminals: Enter
+quits, Esc cancels, and Alt+Shift+D detaches instead; closing again leaves the prompt open. A
 terminal started for an explicit command, such as `pane create -- COMMAND`,
 counts as running, and so does the Agent popup; the Files and Git popups
 never do. Eon does not see a shell builtin or a background job of an idle
@@ -197,7 +197,7 @@ one, and clicking another column's terminal selects it.
 | Alt+Shift+W | Close the active tab; closing the final tab quits the window, or closes the workspace while others remain |
 | Alt+Shift+N | Open an independent Eon window (also the desktop launcher's **New Eon Window** action) |
 | Alt+Shift+D | Detach: hide the window, keep terminals running |
-| Alt+Shift+Q | Quit this window, stopping its terminals; asks first while one runs something |
+| Alt+Shift+Q | Quit this window, stopping its terminals; asks first while one runs something. On macOS, Command+Q does the same |
 | Alt+Z | Show the tab's quick search, or hide it when quick search is shown |
 | Alt+Shift+J | Open or hide the tab's Git popup |
 | Alt+Shift+L | Open or hide the tab's Agent popup |
