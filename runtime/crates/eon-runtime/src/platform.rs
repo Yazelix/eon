@@ -35,6 +35,26 @@ pub(crate) fn fallback_runtime_directory(product: &str, uid: u32) -> PathBuf {
     PathBuf::from(format!("/tmp/{product}-{uid}"))
 }
 
+/// Reads what `stream` holds now, without waiting and without changing the
+/// blocking mode its other users share: `WouldBlock` when it holds nothing,
+/// and 0 at its end.
+pub(crate) fn read_available(stream: &UnixStream, buffer: &mut [u8]) -> io::Result<usize> {
+    // SAFETY: buffer is writable for its whole length.
+    let read = unsafe {
+        libc::recv(
+            stream.as_raw_fd(),
+            buffer.as_mut_ptr().cast(),
+            buffer.len(),
+            libc::MSG_DONTWAIT,
+        )
+    };
+    if read < 0 {
+        Err(io::Error::last_os_error())
+    } else {
+        Ok(read as usize)
+    }
+}
+
 /// What the kernel reports about a process that still has its pid.
 pub(crate) struct Process {
     /// The start identity, in the unit Orbit publishes as `process_start`.
@@ -165,9 +185,36 @@ pub(crate) fn process(pid: u32) -> Result<Option<Process>, String> {
 
 #[cfg(test)]
 mod tests {
-    use super::{SOCKET_PATH_BYTES, socket_path_fits};
+    use super::{SOCKET_PATH_BYTES, read_available, socket_path_fits};
     use crate::supervisor::temporary_directory;
-    use std::{fs, os::unix::net::UnixListener};
+    use std::{
+        fs,
+        io::{self, Write},
+        net::Shutdown,
+        os::{
+            fd::AsRawFd,
+            unix::net::{UnixListener, UnixStream},
+        },
+    };
+
+    #[test]
+    fn read_available_does_not_change_socket_mode() {
+        let (stream, mut peer) = UnixStream::pair().unwrap();
+        // SAFETY: F_GETFL only reads the open file's status flags.
+        let flags = || unsafe { libc::fcntl(stream.as_raw_fd(), libc::F_GETFL) };
+        let blocking = flags();
+        let mut buffer = [0; 8];
+        assert_eq!(
+            read_available(&stream, &mut buffer).unwrap_err().kind(),
+            io::ErrorKind::WouldBlock
+        );
+        peer.write_all(b"abc").unwrap();
+        assert_eq!(read_available(&stream, &mut buffer).unwrap(), 3);
+        assert_eq!(&buffer[..3], b"abc");
+        peer.shutdown(Shutdown::Write).unwrap();
+        assert_eq!(read_available(&stream, &mut buffer).unwrap(), 0);
+        assert_eq!(flags(), blocking);
+    }
 
     #[test]
     fn socket_path_bound_is_the_longest_path_that_binds() {

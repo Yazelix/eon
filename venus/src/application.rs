@@ -15,10 +15,14 @@ use std::{
     collections::{HashMap, HashSet, VecDeque},
     ffi::OsString,
     io::{self, Read, Write},
-    os::unix::ffi::OsStringExt,
+    net::Shutdown,
+    os::{
+        fd::AsFd,
+        unix::{ffi::OsStringExt, net::UnixStream},
+    },
     path::{Path, PathBuf},
     process::{Child, Command, Stdio},
-    sync::Arc,
+    sync::{Arc, Condvar, Mutex, MutexGuard, PoisonError},
     thread,
     time::{Duration, Instant, SystemTime},
 };
@@ -1044,6 +1048,8 @@ struct Application {
     /// Whether a disk reading is outstanding; while one is, due readings are skipped.
     disk_reading: bool,
     window_focused: bool,
+    /// Reports `window_focused` to a supervising Eon workspace (VEN-C14).
+    focus_reporter: Option<FocusReporter>,
     window_occluded: bool,
     workspace_focus: WorkspaceFocus,
     /// The agent sidebar row that holds keyboard focus while `workspace_focus` is `Sidebar`.
@@ -1168,6 +1174,7 @@ impl Application {
             disk_reading: false,
             next_animation: None,
             window_focused: false,
+            focus_reporter: None,
             window_occluded: false,
             workspace_focus: WorkspaceFocus::Terminal,
             sidebar_row: None,
@@ -4595,6 +4602,9 @@ impl ApplicationHandler<UserEvent> for Application {
             }
             WindowEvent::Focused(focused) => {
                 self.window_focused = focused;
+                if let Some(reporter) = &self.focus_reporter {
+                    reporter.report(focused);
+                }
                 self.next_animation = None;
                 self.terminal
                     .terminal_scroll
@@ -5173,14 +5183,21 @@ impl ApplicationHandler<UserEvent> for Application {
                 event_loop.exit();
                 return;
             }
-            if self.startup_admission
-                && let Err(error) = io::stdout()
-                    .write_all(b"ready-v1")
-                    .and_then(|()| io::stdout().flush())
-            {
-                self.fatal_error = Some(format!("Cannot report Venus startup readiness: {error}"));
-                event_loop.exit();
-                return;
+            if self.startup_admission {
+                match admit_presentation(
+                    &mut io::stdout(),
+                    true,
+                    self.workspace_socket.is_some(),
+                    self.window_focused,
+                ) {
+                    Ok(reporter) => self.focus_reporter = reporter,
+                    Err(error) => {
+                        self.fatal_error =
+                            Some(format!("Cannot report Venus startup readiness: {error}"));
+                        event_loop.exit();
+                        return;
+                    }
+                }
             }
             self.start_initial_attachment();
             self.refresh_client_view();
@@ -6115,6 +6132,14 @@ pub(super) fn run(arguments: LaunchArguments) -> Result {
     }
     if application.supervised {
         start_presentation_control(event_loop.create_proxy())?;
+        if !application.startup_admission {
+            application.focus_reporter = admit_presentation(
+                &mut io::stdout(),
+                false,
+                application.workspace_socket.is_some(),
+                application.window_focused,
+            )?;
+        }
     }
     event_loop.run_app(&mut application)?;
     if let Some(error) = application.fatal_error {
@@ -6140,6 +6165,123 @@ fn run_presentation_control(mut input: impl Read, mut send: impl FnMut(UserEvent
         }
     }
     let _ = send(UserEvent::Exit);
+}
+
+/// Admits a supervised Venus's window on `output`, its stdout: reports
+/// startup readiness when `admission` asks for it, then, in a workspace,
+/// starts reporting native window focus, from `focused`. Only readiness
+/// can fail; without focus reports Eon treats the window as unfocused
+/// (VEN-C14).
+fn admit_presentation(
+    output: &mut (impl Write + AsFd),
+    admission: bool,
+    workspace: bool,
+    focused: bool,
+) -> io::Result<Option<FocusReporter>> {
+    if admission {
+        output.write_all(b"ready-v1")?;
+        output.flush()?;
+    }
+    if !workspace {
+        return Ok(None);
+    }
+    let reporter = output
+        .as_fd()
+        .try_clone_to_owned()
+        .and_then(|output| FocusReporter::start(UnixStream::from(output)))
+        .inspect_err(|error| eprintln!("Cannot report Venus window focus: {error}"))
+        .ok();
+    if let Some(reporter) = &reporter {
+        reporter.report(focused);
+    }
+    Ok(reporter)
+}
+
+/// Reports native window focus to the supervisor from a worker thread, so a
+/// slow supervisor never holds up the event loop. It keeps only the latest
+/// focus not yet sent.
+struct FocusReporter {
+    mailbox: Arc<FocusMailbox>,
+}
+
+#[derive(Default)]
+struct FocusMailbox {
+    pending: Mutex<PendingFocus>,
+    changed: Condvar,
+}
+
+#[derive(Default)]
+struct PendingFocus {
+    focused: Option<bool>,
+    closed: bool,
+}
+
+impl FocusReporter {
+    fn start(output: UnixStream) -> io::Result<Self> {
+        let mailbox = Arc::new(FocusMailbox::default());
+        let worker = Arc::clone(&mailbox);
+        thread::Builder::new()
+            .name("venus-window-focus".into())
+            .spawn(move || report_focus(&worker, output))?;
+        Ok(Self { mailbox })
+    }
+
+    fn report(&self, focused: bool) {
+        self.mailbox.lock().focused = Some(focused);
+        self.mailbox.changed.notify_one();
+    }
+}
+
+impl Drop for FocusReporter {
+    fn drop(&mut self) {
+        self.mailbox.lock().closed = true;
+        self.mailbox.changed.notify_one();
+    }
+}
+
+impl FocusMailbox {
+    fn lock(&self) -> MutexGuard<'_, PendingFocus> {
+        self.pending.lock().unwrap_or_else(PoisonError::into_inner)
+    }
+
+    /// Waits for the next focus to send; none once the reporter is gone.
+    fn take(&self) -> Option<bool> {
+        let mut pending = self.lock();
+        loop {
+            if pending.closed {
+                return None;
+            }
+            if let Some(focused) = pending.focused.take() {
+                return Some(focused);
+            }
+            pending = self
+                .changed
+                .wait(pending)
+                .unwrap_or_else(PoisonError::into_inner);
+        }
+    }
+}
+
+/// The reporter's worker. A failed report ends reports and closes only their
+/// direction, so Eon reads its end while presentation control continues.
+fn report_focus(mailbox: &FocusMailbox, output: UnixStream) {
+    if let Err(error) = send_focus(mailbox, &output) {
+        eprintln!("Cannot report Venus window focus: {error}");
+        let _ = output.shutdown(Shutdown::Write);
+    }
+}
+
+/// Writes each focus taken that differs from the last one written, as one
+/// complete frame, without holding the mailbox.
+fn send_focus(mailbox: &FocusMailbox, mut output: impl Write) -> io::Result<()> {
+    let mut sent = None;
+    while let Some(focused) = mailbox.take() {
+        if sent != Some(focused) {
+            output.write_all(if focused { b"focus:1\n" } else { b"focus:0\n" })?;
+            sent = Some(focused);
+        }
+    }
+    Ok(())
 }
 
 #[cfg(test)]

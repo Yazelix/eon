@@ -3112,6 +3112,8 @@ socket names, JSON fields and protocol identifiers retain their spellings.
   `eon-ngwf.2`: `FocusAttention` across workspaces.
   Amended on 2026-11-03 (approved by Lucca, relayed by eon-overseer) by
   `eon-ciwn.1`: EON-C39 plans a stream of its changes.
+  Amended on 2026-11-06 (approved by Lucca, relayed by eon-overseer) by
+  `eon-2kvr`: Seen needs native window focus.
 - **Consumer:** One person supervising coding agents across the tabs and workspaces (EON-C33)
   of one full-Eon window.
   eonbase has no poller and no sidebar; its `sidebar` is `Off`.
@@ -3119,6 +3121,7 @@ socket names, JSON fields and protocol identifiers retain their spellings.
   - the attention poller's timer fires;
   - focus moves to a pane or popup;
   - a Venus attaches;
+  - a Venus reports that its native window gained or lost focus;
   - an attention action arrives: `FocusAttention`, `NextAttention`, `PreviousAttention` or
     `ToggleSidebar`.
 - **Result:**
@@ -3181,18 +3184,27 @@ socket names, JSON fields and protocol identifiers retain their spellings.
     Background takes precedence over finished and idle for that record: while the count is
     above 0 the record maps to background, not finished or idle.
 
-  - **Seen.** Seen is keyed by (run, `id`, raise). A raise becomes seen when a Venus is attached
-    and its exact terminal is the focused target (the selected pane of the shown workspace's
-    active tab, or its shown popup) at one of these moments:
-    - focus arrives on that terminal, including via `FocusAttention` to a terminal that
-      already has focus, or when its workspace is shown with that terminal focused;
-    - a new raise arrives while that terminal is focused;
-    - a Venus attaches while that terminal is focused.
+  - **Seen.** Seen is keyed by (run, `id`, raise). A raise becomes seen when a
+    Venus is attached, its native window is focused, and its exact terminal is
+    the focused target (the selected pane of the shown workspace's active tab,
+    or its shown popup) at one of these moments:
+    - focus arrives on that terminal, including via `FocusAttention` to a
+      terminal that already has focus, or when its workspace is shown with
+      that terminal focused;
+    - a new raise arrives while that terminal and its native window are focused;
+    - a Venus attaches with that terminal focused and reports native window
+      focus, or its native window gains focus with that terminal focused.
 
-    A focus action applies seen to the raise cached when the action was handled, and a poll in
-    flight cannot undo it. Needs input is never cleared by viewing. A terminal in a hidden
-    workspace is never the focused target, so focus never sees its raises until its workspace
-    is shown and that exact terminal has focus.
+    Native window focus is the latest report from the current supervised
+    Venus. Before its first report, after report-channel failure, or without
+    an attached Venus, it is treated as unfocused. A replacement Venus starts
+    with no focus report; it inherits no report from its predecessor.
+
+    A focus action applies seen to the raise cached when the action was
+    handled, and a poll in flight cannot undo it. Needs input is never cleared
+    by viewing. A terminal in a hidden workspace is never the focused target,
+    so focus never sees its raises until its workspace is shown and that exact
+    terminal and its native window have focus.
 
     Newer work also sees a finish, with or without a Venus attached and in any workspace. When
     a `working` record in a terminal's reply changed later, by ORB-C15 change sequence, than
@@ -3370,8 +3382,11 @@ socket names, JSON fields and protocol identifiers retain their spellings.
     ScheduleWakeup and cron waits) is not counted, so its terminal shows finished or idle. A
     helper that lives past 1 s outside the agent's process group counts as background work;
     none was found in Claude Code 2.1.303 with Lucca's configuration. This is accepted for 1.0.
-  - **Window focus.** Eon does not know desktop window focus, so a raise in the focused terminal
-    counts as seen even while the window sits behind another app. This is accepted under D5.
+  - **Window focus.** Attachment alone does not make a raise seen. A selected
+    terminal's raise stays unseen while its native window is unfocused or
+    native focus is unknown. Focus reports are observations, not a request to
+    activate the window; desktop focus and terminal input never change as a
+    result of an attention update.
   - **Detached windows.** While no Venus is attached, only newer work makes a raise seen. The
     supervisor knows this because it holds the control stream (VEN-C14).
   - **Older generations.** The new `eon` treats a still-running EONW 17 generation as
@@ -3500,11 +3515,38 @@ socket names, JSON fields and protocol identifiers retain their spellings.
       `runtime/crates/eon-workspace-protocol/src/v25.rs`, within `nix develop -c eon-test`
       (590 passed, 57 ignored) on x86_64 Linux. The first three fail without the queue, and
       the golden fails when the entry field order changes.
+  - **Amendment** (`eon-2kvr`, Seen needs native window focus): the commit that carries
+    this record is its revision.
+    - **Automated:** in `runtime/crates/eon-runtime/src/supervisor.rs`,
+      `selected_raise_waits_for_native_window_focus` (a real Orbit agent's finish in the
+      selected pane stays queued without a focus report, through Inspect, the EON-C39
+      projection and `FocusAttention`, and is seen on a focus report) and
+      `replacement_venus_does_not_inherit_focus`, both failing on the attachment-only
+      gate, and `native_focus_frames_are_partial_bounded_and_fail_closed`; in
+      `runtime/crates/eon-runtime/src/platform.rs`,
+      `read_available_does_not_change_socket_mode`. They ran within `nix develop -c
+      eon-test -p eon-runtime -p yazelix-venus -p eon -p eon-workspace-protocol`
+      on x86_64 Linux; reverting any one Seen gate to attachment fails
+      the first.
+    - **Installed:** private headless Sway 1.12 (pixman, 1280x720, `no_focus [all]`) on
+      x86_64 Linux with its own HOME, runtime directories and session bus, the
+      candidate `/nix/store/lxdflqv9p2p96m9h4cas1sd7l28mih57-eon-0.1.18` and
+      `/nix/store/fp9rk0lg3vk2hc77mh8h8mlbgfv24yzf-eonbase-0.1.18`, built from
+      this commit's tree before this record was added. A FIFO-driven OSC 7501
+      fixture ran in the probe window's p1; a second window from `eon window new`
+      took focus by `swaymsg`, each move checked in the Sway tree. 24 of 24 checks
+      passed (`eon-2kvr` proof record 02). With the sink focused, a finish and an
+      error in p1 stayed queued, also after Inspect and `eon focus p1`, and Sway
+      focus did not move; native focus on the probe window made each idle and
+      emptied the queue. Needs input stayed queued in the focused window. A finish
+      raised while the window was detached stayed queued after `eon attach` until
+      the reattached window had focus.
 - **Open proof:** A reply with a lower update sequence for the same run
   cannot be produced by an emitter, so only the automated test covers its
   discard. The `eon-agent-parity-a9g0.2` amendment awaits one installed
   `eon workspace --json` observation after landing. So does the `eon-ngwf.1`
-  amendment, with agents needing attention in two workspaces.
+  amendment, with agents needing attention in two workspaces. The `eon-2kvr`
+  amendment is not proved on Darwin.
 
 ## EON-C32 — Eon Bar items and order
 

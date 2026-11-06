@@ -5,6 +5,11 @@ installation, and proven contract changes.
 
 ## Unreleased
 
+- An agent's finish or error in the selected terminal stays unread, in the
+  sidebar, the attention inbox and Alt+G's queue, while another app has
+  focus; it becomes read once Eon's window has focus with that terminal
+  selected (`eon-2kvr`, EON-C31). Windows started before this change keep the
+  old behavior until restarted.
 - `eon tab close TAB` and `eon pane close PANE` close targets in any tab of
   the addressed workspace without changing the person's active tab or popup.
   CLI closes ask before stopping busy work; JSON callers pass `--yes` to

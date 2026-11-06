@@ -2,6 +2,11 @@
 
 ## Unreleased
 
+- VEN-C14: a supervised workspace Venus reports its native window focus to
+  Eon on its private presentation stream, after startup readiness when
+  admission is requested, without waiting on Eon (`eon-2kvr`). The private
+  modes become `stdin-ready-focus-v1` and `stdin-focus-v1`; the old mode names
+  are no longer accepted. No EONW change.
 - Confirming a final-close prompt sends its named tab or pane close directly.
   If another tab became active while the prompt was open, it stays active
   (VEN-C8, `eon-agent-parity-a9g0.3`).

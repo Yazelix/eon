@@ -383,12 +383,14 @@ pub(super) fn launch_arguments(
         );
     }
 
-    let startup_admission = presentation_control.as_deref() == Some("stdin-ready-v1".as_ref());
+    let startup_admission =
+        presentation_control.as_deref() == Some("stdin-ready-focus-v1".as_ref());
     Ok(LaunchArguments {
         application_id: application_id.unwrap_or_else(|| "eon".into()),
         orbit_socket,
         workspace_socket,
-        supervised: startup_admission || presentation_control == Some(OsString::from("stdin")),
+        supervised: startup_admission
+            || presentation_control.as_deref() == Some("stdin-focus-v1".as_ref()),
         startup_admission,
         decorations,
         pane_frames: pane_frames.unwrap_or(true),
@@ -1005,10 +1007,27 @@ mod tests {
     fn startup_admission_keeps_presentation_control_enabled() {
         let arguments = launch_arguments(
             [OsString::from("orbit.sock")],
-            Some("stdin-ready-v1".into()),
+            Some("stdin-ready-focus-v1".into()),
         )
         .unwrap();
         assert!(arguments.supervised);
+    }
+
+    #[test]
+    fn focus_reporting_modes_are_supervised() {
+        let mode = |control: &str| {
+            let arguments = launch_arguments(
+                ["--workspace", "eon.sock"].map(OsString::from),
+                Some(control.into()),
+            )
+            .unwrap();
+            (arguments.supervised, arguments.startup_admission)
+        };
+        assert_eq!(mode("stdin-ready-focus-v1"), (true, true));
+        assert_eq!(mode("stdin-focus-v1"), (true, false));
+        for unrecognized in ["stdin-ready-v1", "stdin", "STDIN-FOCUS-V1"] {
+            assert_eq!(mode(unrecognized), (false, false), "{unrecognized}");
+        }
     }
 
     #[test]
@@ -1137,13 +1156,6 @@ mod tests {
             .cursor_tail,
             Some((rgb(0x7ddcff), 2.5))
         );
-
-        let supervised =
-            launch_arguments(Vec::<OsString>::new(), Some(OsString::from("stdin"))).unwrap();
-        assert!(supervised.supervised);
-        let other_control =
-            launch_arguments(Vec::<OsString>::new(), Some(OsString::from("STDIN"))).unwrap();
-        assert!(!other_control.supervised);
 
         for value in ["0", "0.88", "1"] {
             let parsed = parse(&[

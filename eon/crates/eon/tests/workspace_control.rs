@@ -3975,7 +3975,7 @@ cat >/dev/null
     assert_eq!(
         venus_log
             .matches(
-                "|stdin-ready-v1|--no-decorations --application-id eonova --background-opacity "
+                "|stdin-ready-focus-v1|--no-decorations --application-id eonova --background-opacity "
             )
             .count(),
         2

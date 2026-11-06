@@ -244,7 +244,8 @@ pub(super) type Key = (State, Instant, usize, usize, usize);
 pub(super) struct Attention {
     terminals: Vec<Terminal>,
     focus: Option<String>,
-    attached: bool,
+    /// Whether an attached Venus's native window has focus (EON-C31's Seen).
+    viewing: bool,
     /// The order key of the last jump target.
     cursor: Option<Key>,
     next_poll: Instant,
@@ -264,7 +265,7 @@ impl Attention {
         Attention {
             terminals: Vec::new(),
             focus: None,
-            attached: false,
+            viewing: false,
             cursor: None,
             next_poll: now,
             sidebar: if enabled { Sidebar::Open } else { Sidebar::Off },
@@ -404,7 +405,7 @@ impl Attention {
             Some(index) => self.terminals[index] = terminal,
             None => self.terminals.push(terminal),
         }
-        if self.attached && self.focus.as_deref() == Some(session) {
+        if self.viewing && self.focus.as_deref() == Some(session) {
             self.see(session);
         }
         // A new entry of a higher class than the cursor's restarts the walk
@@ -418,34 +419,35 @@ impl Attention {
         }
     }
 
-    /// Follows focus and attachment. A focus move by any other means than a
-    /// queue jump resets the cursor. While a Venus is attached, focus arriving
-    /// on a terminal, or a Venus attaching to it, sees its raises.
-    pub(super) fn observe(&mut self, focus: Option<String>, attached: bool) {
+    /// Follows focus and viewing: whether an attached Venus's native window
+    /// has focus. A focus move by any other means than a queue jump resets the
+    /// cursor. While viewing, focus arriving on a terminal, or viewing starting
+    /// with it focused, sees its raises.
+    pub(super) fn observe(&mut self, focus: Option<String>, viewing: bool) {
         let moved = focus != self.focus;
         if moved {
             self.cursor = None;
         }
-        if attached
-            && (moved || !self.attached)
+        if viewing
+            && (moved || !self.viewing)
             && let Some(session) = &focus
         {
             self.see(session);
         }
         self.focus = focus;
-        self.attached = attached;
+        self.viewing = viewing;
     }
 
     /// Follows an accepted attention action, given the workspaces it left:
     /// `ToggleSidebar` flips visibility, and `FocusAttention` follows focus,
     /// moves the cursor to `jump` for a queue jump, and sees the target's
-    /// raises when it has focus, also when it had focus already.
+    /// raises when it has focus while viewing, also when it had focus already.
     pub(super) fn handled(
         &mut self,
         action: &Action,
         jump: Option<Key>,
         workspaces: &[Snapshot],
-        attached: bool,
+        viewing: bool,
         direct_cross_workspace: bool,
     ) {
         match action {
@@ -455,7 +457,7 @@ impl Attention {
                     self.cursor = None;
                 }
                 let (targets, focus) = targets(workspaces);
-                self.observe(focus.clone(), attached);
+                self.observe(focus.clone(), viewing);
                 if jump.is_some() {
                     self.cursor = jump;
                 }
@@ -463,7 +465,7 @@ impl Attention {
                     .iter()
                     .find(|item| item.id == *target)
                     .map(|item| &item.session)
-                    && attached
+                    && viewing
                     && focus.as_ref() == Some(session)
                 {
                     self.see(session);
@@ -599,11 +601,11 @@ impl Attention {
         &mut self,
         snapshot: &mut Snapshot,
         workspaces: &[Snapshot],
-        attached: bool,
+        viewing: bool,
         now: Instant,
     ) {
         let (targets, focus) = targets(workspaces);
-        self.observe(focus, attached);
+        self.observe(focus, viewing);
         let projected = workspaces
             .iter()
             .position(|workspace| workspace.workspace == snapshot.workspace);
@@ -2213,11 +2215,11 @@ mod tests {
         let (targets, focus) = targets(&workspaces);
         let mut attention = Attention::new(true);
         // As the supervisor projects the window each turn.
-        let project = |attention: &mut Attention, attached| {
+        let project = |attention: &mut Attention, viewing| {
             let now = Instant::now();
             let mut presented = workspaces.clone();
             for snapshot in &mut presented {
-                attention.present(snapshot, &workspaces, attached, now);
+                attention.present(snapshot, &workspaces, viewing, now);
             }
             Projection::new(&presented, attention.busy_terminals(&workspaces, &[], now))
         };
@@ -2275,13 +2277,13 @@ mod tests {
         subscribers.turn(project(&mut attention, false), Instant::now());
         assert_eq!(state(read(&mut peer)), (None, Some(State::Finished)));
 
-        // Unattached turns, as a subscriber alone sees the window, keep the
-        // finish unseen.
+        // Turns without a viewed window, as a subscriber alone sees the
+        // window, keep the finish unseen.
         for _ in 0..3 {
             attention.observe(focus.clone(), false);
             subscribers.turn(project(&mut attention, false), Instant::now());
         }
-        // A focus that sees it, with Venus attached, is the next event.
+        // A focus that sees it, in a viewed window, is the next event.
         attention.observe(focus.clone(), true);
         subscribers.turn(project(&mut attention, true), Instant::now());
         assert_eq!(

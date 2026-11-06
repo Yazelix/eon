@@ -25,7 +25,9 @@ in-tree version. VEN-C31 entered with ORBF v3 in ORBS v14.
 ## VEN-C19 — Startup typography and terminal geometry
 
 - **Status:** Proved by the automated tier; installed configured typography and
-  geometry are pending re-proof in this repository.
+  geometry are pending re-proof in this repository. Amended on 2026-11-06
+  (approved by eon-overseer, MINOR D2 on `eon-2kvr`) by `eon-2kvr`: the
+  admission mode is named `stdin-ready-focus-v1`; the old name is gone.
 - **Consumer:** One direct or caller-launched Venus surface.
 - **Trigger:** Optional `--font-family`, repeatable `--font-fallback`,
   `--font-size`, `--line-height`, `--columns`, and `--rows` startup options.
@@ -65,7 +67,7 @@ in-tree version. VEN-C31 entered with ORBF v3 in ORBS v14.
 - **Consumes:** ORBF v2 / ORBS v13, canonical EONW, and the selected glyphon
   0.12.0 / cosmic-text 0.19.0 APIs with exact unicode-script 0.5.8.
 - **Supervised startup admission:**
-  `EON_VENUS_PRESENTATION_CONTROL=stdin-ready-v1` uses private stdin/stdout.
+  `EON_VENUS_PRESENTATION_CONTROL=stdin-ready-focus-v1` uses private stdin/stdout.
   Workspace mode first reads one bounded canonical EONW Snapshot from stdin;
   standalone mode has no snapshot prefix. After font/renderer initialization
   and real-window initial native-scale admission, Venus writes exactly
@@ -1058,7 +1060,9 @@ re-proved when that platform or feature is next touched.
 
 ## VEN-C14 — Supervised native presentation lifecycle
 
-- **Status:** Proved
+- **Status:** Proved. Amended on 2026-11-06 (approved by eon-overseer, MINOR
+  D2 under Lucca's 2026-11-06 decisions on `eon-2kvr`) by `eon-2kvr`: native
+  window focus reports.
 - **Consumer:** One Eon-supervised Venus process.
 - **Trigger:** A complete private Present command, control EOF, terminal read
   failure, Alt+Shift+D, a compositor close request, an EONW `Ended` reply, or
@@ -1073,6 +1077,13 @@ re-proved when that platform or feature is next touched.
   close that stopped the window's last terminal, and the `Stopped` reply to
   its Quit each exit like control loss,
   leaving no Orbit terminal of that generation.
+
+  In supervised workspace mode Venus also reports its native window focus to its own
+  supervisor, separately from terminal focus sent to Orbit. Reports begin
+  after startup readiness when admission is requested. Reporting never waits
+  for the supervisor on the native event loop. A failed report channel cannot
+  activate a window, send terminal input, or stop Orbit; the supervisor treats
+  the focus as unknown. Standalone Venus and eonbase send no focus report.
 - **Important failures:** Malformed or partial commands do not present; standalone
   Busy remains terminal; Present followed by EOF preserves exact Present-then-
   Exit ordering.
@@ -1095,8 +1106,27 @@ re-proved when that platform or feature is next touched.
     Sway, 1280x720): Venus exited after Enter in the final-close prompt, and
     no Orbit terminal of the generation remained; Alt+Shift+D closed the
     window with its terminal still live.
+  - **Focus reports (`eon-2kvr`):** the commit that carries this record is its
+    revision. In `venus/src/application/tests/native.rs`,
+    `focus_writer_keeps_latest_without_blocking_native_reporting`,
+    `interrupted_and_short_focus_writes_still_send_complete_frames`,
+    `a_failed_focus_report_closes_only_its_direction` and
+    `focus_reporting_follows_admission`, and in `venus/src/launch.rs`
+    `focus_reporting_modes_are_supervised`, within `nix develop -c eon-test -p
+    yazelix-venus` on x86_64 Linux. Installed: private headless Sway 1.12
+    (pixman, 1280x720, `no_focus [all]`) on x86_64 Linux with its own HOME,
+    runtime directories and session bus, the candidate
+    `/nix/store/lxdflqv9p2p96m9h4cas1sd7l28mih57-eon-0.1.18` and
+    `/nix/store/fp9rk0lg3vk2hc77mh8h8mlbgfv24yzf-eonbase-0.1.18`, built from
+    this commit's tree before this record was added. A FIFO-driven OSC 7501
+    fixture ran in the probe window's p1; a second window from `eon window
+    new` took focus by `swaymsg`, each move checked in the Sway tree. 24 of 24
+    checks passed (`eon-2kvr` proof record 02). Native focus moved Seen in the
+    supervisor (EON-C31); the reattached window took no focus by itself;
+    eonbase started and exited with its command.
 - **Open proof:** Pending re-proof in this repository: native Present of an
-  existing window that preserves its process and terminal attachment.
+  existing window that preserves its process and terminal attachment. Focus
+  reports are not proved on Darwin.
 
 ## VEN-C15 — Compositor-owned background blur
 

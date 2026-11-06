@@ -33,7 +33,7 @@ use std::{
     env,
     ffi::{OsStr, OsString},
     fs,
-    io::{Read, Write},
+    io::{self, Read, Write},
     net::Shutdown,
     os::fd::OwnedFd,
     os::unix::{
@@ -527,6 +527,74 @@ fn venus_command(
     command
 }
 
+/// The bytes of one native focus report from Venus (VEN-C14).
+const FOCUS_REPORT: usize = 8;
+/// The most report bytes one loop turn reads; the rest waits for the next
+/// turn, so a burst of reports cannot hold up the loop.
+const FOCUS_READ_BUDGET: usize = 512;
+
+/// The native window focus its Venus last reported on the presentation
+/// control stream (EON-C31). It is unknown before the first report and once
+/// reports fail.
+#[derive(Default)]
+struct NativeFocus {
+    focused: Option<bool>,
+    report: [u8; FOCUS_REPORT],
+    used: usize,
+    ended: bool,
+}
+
+enum FocusFailure {
+    Invalid,
+    Ended,
+    Io(io::Error),
+}
+
+impl NativeFocus {
+    /// Reads the reports `stream` holds now. A failure leaves focus unknown
+    /// and ends reports from this Venus.
+    fn poll(&mut self, stream: &UnixStream) -> Result<(), FocusFailure> {
+        if self.ended {
+            return Ok(());
+        }
+        let result = self.read(stream);
+        if result.is_err() {
+            self.ended = true;
+            self.focused = None;
+        }
+        result
+    }
+
+    fn read(&mut self, stream: &UnixStream) -> Result<(), FocusFailure> {
+        let mut buffer = [0; 64];
+        let mut budget = FOCUS_READ_BUDGET;
+        while budget > 0 {
+            let limit = buffer.len().min(budget);
+            let count = match platform::read_available(stream, &mut buffer[..limit]) {
+                Ok(0) => return Err(FocusFailure::Ended),
+                Ok(count) => count,
+                Err(error) if error.kind() == io::ErrorKind::WouldBlock => return Ok(()),
+                Err(error) if error.kind() == io::ErrorKind::Interrupted => continue,
+                Err(error) => return Err(FocusFailure::Io(error)),
+            };
+            budget -= count;
+            for &byte in &buffer[..count] {
+                self.report[self.used] = byte;
+                self.used += 1;
+                if self.used == FOCUS_REPORT {
+                    self.used = 0;
+                    self.focused = Some(match &self.report {
+                        b"focus:0\n" => false,
+                        b"focus:1\n" => true,
+                        _ => return Err(FocusFailure::Invalid),
+                    });
+                }
+            }
+        }
+        Ok(())
+    }
+}
+
 struct PresentationProcess {
     child: Child,
     /// The name each terminal's Orbit admits to attach, read at spawn; none
@@ -537,6 +605,8 @@ struct PresentationProcess {
     log: Arc<DiagnosticLog>,
     relay: Option<JoinHandle<()>>,
     reported: bool,
+    /// This process's own reports; a replacement starts unknown.
+    focus: NativeFocus,
 }
 
 impl PresentationProcess {
@@ -553,15 +623,17 @@ impl PresentationProcess {
         let deadline = Instant::now() + timeout;
         let (control, input) = UnixStream::pair()
             .map_err(|error| format!("cannot create Eon Desktop presentation control: {error}"))?;
-        if admission {
-            command.stdout(Stdio::from(OwnedFd::from(input.try_clone().map_err(
-                |error| format!("cannot create Eon Desktop readiness channel: {error}"),
-            )?)));
-        }
         command
+            .stdout(Stdio::from(OwnedFd::from(input.try_clone().map_err(
+                |error| format!("cannot create Eon Desktop presentation return channel: {error}"),
+            )?)))
             .env(
                 "EON_VENUS_PRESENTATION_CONTROL",
-                if admission { "stdin-ready-v1" } else { "stdin" },
+                if admission {
+                    "stdin-ready-focus-v1"
+                } else {
+                    "stdin-focus-v1"
+                },
             )
             .stdin(Stdio::from(OwnedFd::from(input)))
             .stderr(Stdio::piped());
@@ -589,6 +661,7 @@ impl PresentationProcess {
             log: Arc::clone(log),
             relay: None,
             reported: false,
+            focus: NativeFocus::default(),
         };
         process.relay = Some(
             log.relay(stderr)
@@ -698,6 +771,25 @@ impl PresentationProcess {
             self.log.record(&format!("Eon Desktop exited: {status}"));
         }
         Ok(status)
+    }
+
+    /// Reads this Venus's native focus reports, recording once when they fail.
+    fn read_native_focus(&mut self) {
+        let failure = match self.focus.poll(&self.control) {
+            Ok(()) => return,
+            Err(FocusFailure::Invalid) => "Eon Desktop focus reports are invalid".to_owned(),
+            // Reports end with an exited Venus, which is no failure.
+            Err(FocusFailure::Ended) if matches!(self.child.try_wait(), Ok(Some(_))) => return,
+            Err(FocusFailure::Ended) => "Eon Desktop focus reports ended".to_owned(),
+            Err(FocusFailure::Io(error)) => format!("Eon Desktop focus reports failed: {error}"),
+        };
+        self.log
+            .record(&format!("{failure}; treating the window as unfocused"));
+    }
+
+    /// Whether this Venus last reported that its native window has focus.
+    fn viewing(&self) -> bool {
+        self.focus.focused == Some(true)
     }
 
     fn present(&self) -> Result<(), String> {
@@ -1260,7 +1352,9 @@ impl SupervisorState {
             attention.present(
                 &mut snapshot,
                 &workspaces.snapshots(),
-                self.venus.is_some(),
+                self.venus
+                    .as_ref()
+                    .is_some_and(PresentationProcess::viewing),
                 Instant::now(),
             );
         }
@@ -1282,12 +1376,15 @@ impl SupervisorState {
     }
 
     /// The window now as EON-C39 projects it: every workspace prepared as
-    /// an inspection prepares it, with the same `attached`, so a subscriber
+    /// an inspection prepares it, with the same `viewing`, so a subscriber
     /// never makes a raise seen that Inspect would not, and every busy
     /// terminal without EONW's bound. Eonbase has none.
     fn projection(&mut self) -> Option<Projection> {
         let workspaces = self.workspaces.as_ref()?;
-        let attached = self.venus.is_some();
+        let viewing = self
+            .venus
+            .as_ref()
+            .is_some_and(PresentationProcess::viewing);
         let now = Instant::now();
         let every = workspaces.snapshots();
         let mut prepared = Vec::with_capacity(every.len());
@@ -1298,7 +1395,7 @@ impl SupervisorState {
             }
             self.pane_labels.present(&mut snapshot, workspaces.home());
             if let Some(attention) = &mut self.attention {
-                attention.present(&mut snapshot, &every, attached, now);
+                attention.present(&mut snapshot, &every, viewing, now);
             }
             prepared.push(snapshot);
         }
@@ -1334,6 +1431,12 @@ impl SupervisorState {
     /// terminals, focus and attention. The turn publishes it to subscribers
     /// once, with its action's change (EON-C39).
     fn tend(&mut self, now: Instant) {
+        // Read first, so attention this turn sees the latest native focus.
+        if self.attention.is_some()
+            && let Some(venus) = &mut self.venus
+        {
+            venus.read_native_focus();
+        }
         self.retain_snapshots();
         if !self.stopping {
             sessions::drain_given_up_requests(&mut self.sessions);
@@ -1402,7 +1505,12 @@ impl SupervisorState {
             return;
         };
         let (targets, focus) = attention::targets(&workspace.snapshots());
-        attention.observe(focus, self.venus.is_some());
+        attention.observe(
+            focus,
+            self.venus
+                .as_ref()
+                .is_some_and(PresentationProcess::viewing),
+        );
         attention.poll(&targets, &mut self.sessions, Instant::now());
         attention.retain(&targets, &self.sessions);
     }
@@ -2772,7 +2880,10 @@ fn dispatch_control_request(
                     action,
                     jump.map(|(_, key)| key),
                     &workspace.snapshots(),
-                    state.venus.is_some(),
+                    state
+                        .venus
+                        .as_ref()
+                        .is_some_and(PresentationProcess::viewing),
                     direct_cross_workspace,
                 );
             }
@@ -3782,6 +3893,346 @@ mod tests {
             assert!(Instant::now() < deadline, "no finish within 20 s");
             std::thread::sleep(Duration::from_millis(25));
         }
+        stop_generation_sessions(&mut state, &root, LaunchMode::Workspace).unwrap();
+        drop(state);
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    /// A full-Eon window whose one pane runs a real Orbit agent that reports
+    /// a fresh finish each time its gate, the returned FIFO, is written.
+    #[cfg(target_os = "linux")]
+    fn finishing_window(root: &Path) -> (SupervisorState, PathBuf) {
+        let gate = root.join("gate");
+        assert!(
+            Command::new("mkfifo")
+                .arg(&gate)
+                .status()
+                .unwrap()
+                .success()
+        );
+        let session = leased_orbit(
+            root,
+            &format!(
+                "while read -r _ < '{}'; do \
+                 printf '\\033]7501;state=working:app=claude-code\\007'; \
+                 printf '\\033]7501;state=done:app=claude-code\\007'; done",
+                gate.display()
+            ),
+        );
+        let inputs = crate::fixtures::inputs();
+        let workspace = WorkspaceSet::with_recovered_sessions(
+            root.to_path_buf(),
+            root.to_path_buf(),
+            None,
+            vec![(
+                1,
+                Session {
+                    id: session.id.clone(),
+                    endpoint: session.endpoint.clone(),
+                },
+            )],
+            inputs.defaults.popups.clone(),
+        )
+        .unwrap();
+        let state = SupervisorState {
+            started_at: 1,
+            window: None,
+            running: None,
+            component_generation: "component-1".into(),
+            application_id: String::new(),
+            decorations: false,
+            workspaces: Some(workspace),
+            sessions: vec![session],
+            venus: None,
+            initial_child: Vec::new(),
+            initial_status: None,
+            stopping: false,
+            quotas: None,
+            attention: Some(crate::attention::Attention::new(true)),
+            pane_labels: super::super::pane_labels::Labels::default(),
+            agents: window_agents(),
+            notices: crate::notification::Notices::default(),
+            subscribers: crate::subscriptions::Subscribers::new("g1-test"),
+            scrollback: Snapshots::new(Path::new("/unused")),
+            log: DiagnosticLog::open_in(Ok(root.join("logs")), "g1-test", "workspace"),
+        };
+        (state, gate)
+    }
+
+    /// Attaches a Venus whose native focus reports are what the returned
+    /// peer writes. Its process runs until the returned control end closes.
+    #[cfg(target_os = "linux")]
+    fn attach_reporting_venus(state: &mut SupervisorState) -> (UnixStream, UnixStream) {
+        let mut command = Command::new("/bin/sh");
+        command.args(["-c", "exec cat >/dev/null"]);
+        let mut venus = super::PresentationProcess::start(
+            command,
+            false,
+            None,
+            super::PRESENTATION_ADMISSION_TIMEOUT,
+            &mut [],
+            &state.log,
+        )
+        .unwrap();
+        let (control, peer) = UnixStream::pair().unwrap();
+        let original = std::mem::replace(&mut venus.control, control);
+        state.venus = Some(venus);
+        (peer, original)
+    }
+
+    /// The pane's attention and the window's queue, as Inspect shows them.
+    #[cfg(target_os = "linux")]
+    fn inspected(
+        state: &mut SupervisorState,
+    ) -> (
+        Option<eon_workspace_protocol::v34::Attention>,
+        Vec<eon_workspace_protocol::v34::QueueEntry>,
+    ) {
+        // Each request ID is accepted once.
+        static INSPECTIONS: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
+        let inspection = INSPECTIONS.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+        let (response, ended) = super::dispatch_control_request(
+            super::Request {
+                id: format!("inspect-{inspection}"),
+                caller: None,
+                action: Action::Workspace(WorkspaceAction::Inspect),
+            },
+            state,
+            &crate::fixtures::inputs(),
+            Path::new("/unused"),
+            Path::new("/unused"),
+            "component-1",
+        );
+        assert!(!ended);
+        let snapshot = match response {
+            super::ControlResponse::Workspace(eon_workspace_protocol::v34::Response::Snapshot(
+                snapshot,
+            )) => snapshot,
+            super::ControlResponse::Workspace(eon_workspace_protocol::v34::Response::Failure(
+                failure,
+            )) => panic!("Inspect failed: {} {}", failure.code, failure.detail),
+            _ => panic!("Inspect answers with a snapshot"),
+        };
+        let attention = snapshot
+            .tabs
+            .iter()
+            .flat_map(|tab| tab.panes())
+            .find_map(|pane| pane.attention.clone());
+        (attention, snapshot.attention_queue)
+    }
+
+    /// Writes the gate, then runs loop turns until the pane shows the fresh
+    /// finish, and returns its state.
+    #[cfg(target_os = "linux")]
+    fn raise_finish(
+        state: &mut SupervisorState,
+        gate: &Path,
+    ) -> eon_workspace_protocol::v34::AttentionState {
+        use eon_workspace_protocol::v34::AttentionState;
+        let changed = |attention: &Option<eon_workspace_protocol::v34::Attention>| {
+            attention
+                .as_ref()
+                .and_then(|attention| attention.record.as_ref())
+                .map(|record| record.changed_at)
+        };
+        let shown = |state: &mut SupervisorState| {
+            let snapshot = state.workspace_snapshot_in(None).unwrap();
+            snapshot.tabs[0].panes().next().unwrap().attention.clone()
+        };
+        let before = changed(&shown(state));
+        fs::write(gate, "\n").unwrap();
+        let deadline = Instant::now() + Duration::from_secs(20);
+        loop {
+            state.tend(Instant::now());
+            state.end_turn(Instant::now());
+            let attention = shown(state);
+            if let Some(shown) = attention.as_ref().map(|attention| attention.state)
+                && shown != AttentionState::Working
+                && changed(&attention) != before
+            {
+                return shown;
+            }
+            assert!(Instant::now() < deadline, "no finish within 20 s");
+            std::thread::sleep(Duration::from_millis(25));
+        }
+    }
+
+    /// EON-C31: attachment alone does not see a raise; the selected
+    /// terminal's finish waits for its window's native focus.
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn selected_raise_waits_for_native_window_focus() {
+        use eon_workspace_protocol::v34::AttentionState::{Finished, Idle};
+        use std::io::Write;
+        let root = temporary_directory();
+        let (mut state, gate) = finishing_window(&root);
+        let (mut peer, original) = attach_reporting_venus(&mut state);
+        let queued = |state: &mut SupervisorState| {
+            let (attention, queue) = inspected(state);
+            (attention.map(|attention| attention.state), queue.len())
+        };
+
+        // No report yet: unknown focus is unfocused, in every path that
+        // presents attention.
+        assert_eq!(raise_finish(&mut state, &gate), Finished);
+        assert_eq!(queued(&mut state), (Some(Finished), 1));
+        state.projection().unwrap();
+        let (pane, tab) = {
+            let snapshot = state.workspace_snapshot_in(None).unwrap();
+            (
+                snapshot.tabs[0].panes().next().unwrap().id.clone(),
+                snapshot.tabs[0].id.clone(),
+            )
+        };
+        let (_, ended) = super::dispatch_control_request(
+            super::Request {
+                id: "focus".into(),
+                caller: None,
+                action: Action::FocusAttention { tab, target: pane },
+            },
+            &mut state,
+            &crate::fixtures::inputs(),
+            &root,
+            &root,
+            "component-1",
+        );
+        assert!(!ended);
+        assert_eq!(queued(&mut state), (Some(Finished), 1), "focused by CLI");
+
+        // Native focus sees it; losing focus leaves the next finish queued.
+        peer.write_all(b"focus:1\n").unwrap();
+        state.tend(Instant::now());
+        assert_eq!(queued(&mut state), (Some(Idle), 0));
+        peer.write_all(b"focus:0\n").unwrap();
+        state.tend(Instant::now());
+        assert_eq!(raise_finish(&mut state, &gate), Finished);
+        assert_eq!(queued(&mut state), (Some(Finished), 1));
+
+        drop(original);
+        stop_generation_sessions(&mut state, &root, LaunchMode::Workspace).unwrap();
+        drop(state);
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn native_focus_frames_are_partial_bounded_and_fail_closed() {
+        use super::{FocusFailure, NativeFocus};
+        use std::{io::Write, net::Shutdown, os::fd::OwnedFd};
+        let focused = || {
+            let (stream, mut peer) = UnixStream::pair().unwrap();
+            let mut focus = NativeFocus::default();
+            peer.write_all(b"focus:1").unwrap();
+            assert!(focus.poll(&stream).is_ok());
+            assert_eq!(focus.focused, None, "a partial report counted");
+            peer.write_all(b"\n").unwrap();
+            assert!(focus.poll(&stream).is_ok());
+            assert_eq!(focus.focused, Some(true));
+            (focus, stream, peer)
+        };
+
+        // The last complete report wins; repeats and silence keep it.
+        let (mut focus, stream, mut peer) = focused();
+        for (bytes, expected) in [
+            (&b"focus:0\nfocus:1\nfocus:0\n"[..], false),
+            (b"focus:0\n", false),
+            (b"", false),
+            (&b"focus:1\n".repeat(64)[..], true),
+        ] {
+            peer.write_all(bytes).unwrap();
+            assert!(focus.poll(&stream).is_ok());
+            assert_eq!(focus.focused, Some(expected));
+        }
+        // A turn reads at most 512 bytes; the rest waits for the next turn.
+        peer.write_all(&b"focus:0\n".repeat(64)).unwrap();
+        peer.write_all(b"focus:1\n").unwrap();
+        assert!(focus.poll(&stream).is_ok());
+        assert_eq!(focus.focused, Some(false), "read past one turn's bound");
+        assert!(focus.poll(&stream).is_ok());
+        assert_eq!(focus.focused, Some(true), "a burst ended reports");
+
+        // Each failure leaves focus unknown, for good.
+        let malformed = |bytes: &[u8]| {
+            let (mut focus, stream, mut peer) = focused();
+            peer.write_all(bytes).unwrap();
+            let failure = focus.poll(&stream);
+            peer.write_all(b"focus:1\n").unwrap();
+            assert!(focus.poll(&stream).is_ok());
+            assert_eq!(focus.focused, None);
+            failure
+        };
+        assert!(matches!(
+            malformed(b"focus:2\nfocus:1\n"),
+            Err(FocusFailure::Invalid)
+        ));
+        let (mut focus, stream, peer) = focused();
+        (&peer).write_all(b"focus").unwrap();
+        peer.shutdown(Shutdown::Write).unwrap();
+        assert!(matches!(focus.poll(&stream), Err(FocusFailure::Ended)));
+        assert_eq!(focus.focused, None);
+        let mut focus = NativeFocus {
+            focused: Some(true),
+            ..NativeFocus::default()
+        };
+        let unreadable = UnixStream::from(OwnedFd::from(fs::File::open("/dev/null").unwrap()));
+        assert!(matches!(focus.poll(&unreadable), Err(FocusFailure::Io(_))));
+        assert_eq!(focus.focused, None);
+    }
+
+    /// EON-C31: a replacement Venus inherits no focus report, and one whose
+    /// reports end counts as unfocused, without stopping anything.
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn replacement_venus_does_not_inherit_focus() {
+        use eon_workspace_protocol::v34::AttentionState::{Finished, Idle};
+        use std::{io::Write, net::Shutdown};
+        let root = temporary_directory();
+        let (mut state, gate) = finishing_window(&root);
+        let run = state.sessions[0].run_id().to_owned();
+        let (mut first, original) = attach_reporting_venus(&mut state);
+        first.write_all(b"focus:1\n").unwrap();
+        state.tend(Instant::now());
+        assert_eq!(raise_finish(&mut state, &gate), Idle, "seen while focused");
+
+        drop(original);
+        state.venus = None;
+        let (mut second, original) = attach_reporting_venus(&mut state);
+        assert_eq!(raise_finish(&mut state, &gate), Finished, "inherited focus");
+        second.write_all(b"focus:1\n").unwrap();
+        state.tend(Instant::now());
+        assert_eq!(
+            inspected(&mut state).0.map(|attention| attention.state),
+            Some(Idle)
+        );
+        second.shutdown(Shutdown::Write).unwrap();
+        state.tend(Instant::now());
+        assert_eq!(
+            raise_finish(&mut state, &gate),
+            Finished,
+            "kept focus after EOF"
+        );
+
+        // Reports that end with a live Venus are recorded; with an exited
+        // one they are not.
+        drop(original);
+        state.venus = None;
+        let (third, original) = attach_reporting_venus(&mut state);
+        drop(original);
+        state.venus.as_mut().unwrap().child.wait().unwrap();
+        third.shutdown(Shutdown::Write).unwrap();
+        state.tend(Instant::now());
+        let ended = fs::read_dir(root.join("logs"))
+            .unwrap()
+            .filter_map(|entry| fs::read_to_string(entry.unwrap().path()).ok())
+            .collect::<String>()
+            .matches("Eon Desktop focus reports ended")
+            .count();
+        assert_eq!(ended, 1);
+
+        assert!(state.venus.is_some() && !state.stopping);
+        assert_eq!(
+            (state.sessions.len(), state.sessions[0].run_id()),
+            (1, run.as_str())
+        );
         stop_generation_sessions(&mut state, &root, LaunchMode::Workspace).unwrap();
         drop(state);
         fs::remove_dir_all(root).unwrap();

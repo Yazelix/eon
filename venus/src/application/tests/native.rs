@@ -1441,6 +1441,206 @@ fn presentation_control_emits_complete_commands_then_exit() {
     assert_eq!(events, ["present", "exit"]);
 }
 
+/// A writer that names each write as it begins, then holds it until the test
+/// releases it.
+struct GatedWriter {
+    started: std::sync::mpsc::Sender<Vec<u8>>,
+    release: std::sync::mpsc::Receiver<()>,
+}
+
+impl Write for GatedWriter {
+    fn write(&mut self, bytes: &[u8]) -> io::Result<usize> {
+        self.started.send(bytes.to_vec()).unwrap();
+        self.release.recv().unwrap();
+        Ok(bytes.len())
+    }
+
+    fn flush(&mut self) -> io::Result<()> {
+        Ok(())
+    }
+}
+
+#[test]
+fn focus_writer_keeps_latest_without_blocking_native_reporting() {
+    let mailbox = Arc::new(FocusMailbox::default());
+    let reporter = FocusReporter {
+        mailbox: Arc::clone(&mailbox),
+    };
+    let (started, writes) = std::sync::mpsc::channel();
+    let (release, held) = std::sync::mpsc::channel();
+    let worker = {
+        let mailbox = Arc::clone(&mailbox);
+        thread::spawn(move || {
+            send_focus(
+                &mailbox,
+                GatedWriter {
+                    started,
+                    release: held,
+                },
+            )
+        })
+    };
+    let frame = || {
+        writes
+            .recv_timeout(Duration::from_secs(10))
+            .expect("a focus write began")
+    };
+
+    reporter.report(true);
+    assert_eq!(frame(), b"focus:1\n");
+    // While that write is held, reports return at once and keep only the
+    // latest focus.
+    let (returned, reported) = std::sync::mpsc::channel();
+    thread::spawn(move || {
+        reporter.report(true);
+        reporter.report(false);
+        returned.send(reporter).unwrap();
+    });
+    let reporter = reported
+        .recv_timeout(Duration::from_secs(10))
+        .expect("a report waited for the held write");
+    assert_eq!(mailbox.lock().focused, Some(false));
+    release.send(()).unwrap();
+    assert_eq!(frame(), b"focus:0\n");
+    release.send(()).unwrap();
+
+    // A repeated focus writes nothing once taken.
+    reporter.report(false);
+    while mailbox.lock().focused.is_some() {
+        thread::yield_now();
+    }
+    reporter.report(true);
+    assert_eq!(frame(), b"focus:1\n", "a repeated focus was written");
+    release.send(()).unwrap();
+    drop(reporter);
+    worker.join().unwrap().unwrap();
+}
+
+/// A writer that is interrupted before each write and then takes at most
+/// three bytes, sending what it holds after each.
+struct ShortWriter {
+    written: Vec<u8>,
+    interrupted: bool,
+    progress: std::sync::mpsc::Sender<Vec<u8>>,
+}
+
+impl Write for ShortWriter {
+    fn write(&mut self, bytes: &[u8]) -> io::Result<usize> {
+        self.interrupted = !self.interrupted;
+        if self.interrupted {
+            return Err(io::ErrorKind::Interrupted.into());
+        }
+        let count = bytes.len().min(3);
+        self.written.extend_from_slice(&bytes[..count]);
+        self.progress.send(self.written.clone()).unwrap();
+        Ok(count)
+    }
+
+    fn flush(&mut self) -> io::Result<()> {
+        Ok(())
+    }
+}
+
+#[test]
+fn interrupted_and_short_focus_writes_still_send_complete_frames() {
+    let mailbox = Arc::new(FocusMailbox::default());
+    let reporter = FocusReporter {
+        mailbox: Arc::clone(&mailbox),
+    };
+    let (progress, written) = std::sync::mpsc::channel();
+    let worker = {
+        let mailbox = Arc::clone(&mailbox);
+        thread::spawn(move || {
+            send_focus(
+                &mailbox,
+                ShortWriter {
+                    written: Vec::new(),
+                    interrupted: false,
+                    progress,
+                },
+            )
+        })
+    };
+    let until = |length: usize| loop {
+        let written = written
+            .recv_timeout(Duration::from_secs(10))
+            .expect("a focus write progressed");
+        if written.len() >= length {
+            return written;
+        }
+    };
+    reporter.report(true);
+    assert_eq!(until(8), b"focus:1\n");
+    reporter.report(false);
+    assert_eq!(until(16), b"focus:1\nfocus:0\n");
+    drop(reporter);
+    worker.join().unwrap().unwrap();
+}
+
+#[test]
+fn a_failed_focus_report_closes_only_its_direction() {
+    let (venus, mut eon) = UnixStream::pair().unwrap();
+    // Fill the return direction so that the report's write times out.
+    venus
+        .set_write_timeout(Some(Duration::from_millis(1)))
+        .unwrap();
+    let mut filled = 0;
+    while let Ok(count) = (&venus).write(&[0; 4096]) {
+        filled += count;
+    }
+    let mailbox = Arc::new(FocusMailbox::default());
+    let reporter = FocusReporter {
+        mailbox: Arc::clone(&mailbox),
+    };
+    reporter.report(true);
+    let output = venus.try_clone().unwrap();
+    thread::spawn(move || report_focus(&mailbox, output))
+        .join()
+        .unwrap();
+
+    // Eon reads what was written, then the end of reports.
+    eon.set_read_timeout(Some(Duration::from_secs(10))).unwrap();
+    let mut returned = Vec::new();
+    eon.read_to_end(&mut returned).unwrap();
+    assert_eq!(returned, vec![0; filled]);
+    // Presentation control still reads Eon's commands.
+    eon.write_all(b"present\n").unwrap();
+    let mut command = [0; 8];
+    (&venus).read_exact(&mut command).unwrap();
+    assert_eq!(&command, b"present\n");
+    drop(reporter);
+}
+
+#[test]
+fn focus_reporting_follows_admission() {
+    // What Venus writes on its stdout, given how many frames it should hold.
+    let admit = |admission, workspace, focused, frames: usize| {
+        let (mut venus, mut eon) = UnixStream::pair().unwrap();
+        eon.set_read_timeout(Some(Duration::from_secs(10))).unwrap();
+        let reporter = admit_presentation(&mut venus, admission, workspace, focused).unwrap();
+        let mut written = vec![0; 8 * frames];
+        eon.read_exact(&mut written).unwrap();
+        let reports = reporter.is_some();
+        drop((reporter, venus));
+        eon.read_to_end(&mut written).unwrap();
+        (written, reports)
+    };
+    // A focus that arrived before admission is reported after readiness.
+    assert_eq!(
+        admit(true, true, true, 2),
+        (b"ready-v1focus:1\n".to_vec(), true)
+    );
+    assert_eq!(admit(false, true, false, 1), (b"focus:0\n".to_vec(), true));
+    // eonbase reports readiness alone, or nothing.
+    assert_eq!(admit(true, false, true, 1), (b"ready-v1".to_vec(), false));
+    assert_eq!(admit(false, false, true, 0), (Vec::new(), false));
+
+    // Failed readiness starts no reports.
+    let (mut venus, eon) = UnixStream::pair().unwrap();
+    drop(eon);
+    assert!(admit_presentation(&mut venus, true, true, true).is_err());
+}
+
 #[test]
 fn blinking_starts_with_a_complete_visible_phase_after_idle() {
     let now = Instant::now();
