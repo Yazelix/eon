@@ -512,13 +512,13 @@ line points agents to `eon --skill`.
 | `eon workspace close WS [--json]` | Stop every terminal of WS and remove it, asking first without `--json`; closing the last workspace quits the window |
 | `eon tab create [--json]` | Create a distinct pending tab on quick search, even while another tab waits for its directory |
 | `eon tab create [--json] [--no-focus] --directory DIRECTORY [-- COMMAND [ARGS...]]` | Create a tab at DIRECTORY without quick search, optionally running an exact command from a calling terminal; `--no-focus` preserves the active tab, selection and popup |
-| `eon tab close TAB [--json]` | Close the expected active tab; the final tab quits the window, or closes the workspace while others remain, asking first from a terminal |
+| `eon tab close TAB [--yes] [--json]` | Close any tab of the addressed workspace without changing the active tab, selection or shown popup; busy closes ask first, as described after this table. The final tab quits the window, or closes the workspace while others remain, asking first from a terminal |
 | `eon tab directory TAB [--json] -- DIRECTORY` | Set a tab's directory for future terminals; on a pending tab, use DIRECTORY as quick search would: start its first terminal there and hide its Files |
 | `eon tab move left\|right [--json]` | Move the active tab, or the calling terminal's tab, one position |
 | `eon pane create [--json] [--no-focus]` | Create a pane in the active tab's selected column, or in the calling pane's column; with `--no-focus`, the tab's selected pane and any shown popup stay as they are |
 | `eon pane create [--json] [--no-focus] -- COMMAND...` | From an Eon terminal, run COMMAND exactly as given (no shell) in a new pane of the caller's column, at the tab's directory, with `--no-focus` as above; refused with exit 1 outside an Eon terminal |
 | `eon edit [--json] -- FILE` | Open FILE in the configured editor (`[editor] command`, Helix by default) in a new pane, placed as `pane create` places it, at the tab's directory |
-| `eon pane close PANE [--json]` | Close a pane of the active tab, or of the calling terminal's tab, stopping its terminal; the final tab's last pane quits the window, or closes the workspace while others remain, asking first from a terminal |
+| `eon pane close PANE [--yes] [--json]` | Close any pane of the addressed workspace, stopping its terminal without changing the active tab, selection or shown popup; busy closes ask first, as described after this table. The final tab's last pane quits the window, or closes the workspace while others remain, asking first from a terminal |
 | `eon pane move up\|down [--json]` | Move the selected pane, or the calling pane, one position within its column |
 | `eon pane move left\|right [--json]` | Move the selected pane, or the calling pane, into the neighbouring column, as Ctrl+Alt+H/L does |
 | `eon pane read TARGET [--json]` | Print the visible text of pane or popup TARGET, in any workspace of the window, without changing anything; see [Reading a terminal](#reading-a-terminal) |
@@ -595,11 +595,16 @@ object per namespace, where `results` is that namespace's
 when you need their final status; stopping their own terminal can end the CLI.
 
 Every Eon terminal names itself in `EON_TERMINAL`, an opaque value. Run inside
-an Eon terminal, `pane create`, `edit`, `pane close`, `pane move` and `tab move` act on
+an Eon terminal, `pane create`, `edit`, `pane move` and `tab move` act on
 that terminal's own tab rather than the active one: a pane adds the new pane to
 its own column and moves itself, and a popup acts for its tab's selected pane.
-`pane close PANE` works from these terminals even while a popup covers the
-tab, and the popup stays shown; it refuses the tab's last pane there.
+`tab close TAB` and `pane close PANE` close any named tab or pane in the
+caller's workspace, even when another workspace is shown, and refuse IDs in
+another workspace with exit 3 (`unknown-tab` or `unknown-pane`).
+`pane close PANE` works from a calling terminal even while a popup covers the
+target tab, and the popup stays shown; it refuses the target tab's last pane
+while a popup covers it, or any pane of a popup-covered tab without a calling
+terminal (`unavailable`, exit 1).
 The active tab and desktop focus stay where they are. Other workspace commands
 use the caller's workspace and retain their existing per-tab rules. A malformed
 caller changes nothing and exits 3, with no fallback. An ended or stale caller
@@ -608,6 +613,28 @@ supervisor cannot be inspected, it stops nothing and exits 4
 (`supervisor-unavailable`). Run `env -u EON_TERMINAL eon ...` to act on the
 shown workspace without caller
 context. Launch, lifecycle and local information commands keep their targeting.
+
+Before every `tab close` or `pane close`, the CLI inspects the workspace and
+checks the named target, even with `--json` or `--yes`. When a terminal the
+close would stop is busy, or Eon cannot tell, it asks once on standard error,
+listing those terminals (`still running` or `busy state unknown`), and stops
+nothing unless the answer is yes. At a terminal any other answer prints the
+cancel note and exits 0; without one, only a piped `y`, `Y`, `yes` or `YES`
+confirms, and anything else exits 1 with `not-confirmed`. `--json` never asks and never
+reads standard input: it refuses a busy close with `not-confirmed` (exit 1)
+unless `--yes` confirms that one close, for example
+`eon tab close t3 --yes --json`. Busy terminals in other tabs do not count.
+The check uses the latest inspection; Eon checks the target again before
+stopping it, but not whether it became busy since.
+
+A busy close of the final tab, or of its last pane, names what it ends, the
+window or the workspace, whatever `warning_close_last_tab` says. An idle final
+close asks only a person at a terminal, while that setting is `true` and
+without `--yes`.
+
+An eonbase window reports no busy terminals, so every tab or pane close there
+counts as busy state unknown: a terminal asks, a pipe needs a yes, and `--json`
+needs `--yes`.
 
 An Eon terminal's PATH puts that terminal's own Eon build first as `eon`, so
 `eon` keeps acting on its own window after you install a newer profile. That

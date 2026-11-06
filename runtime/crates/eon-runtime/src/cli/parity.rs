@@ -288,8 +288,13 @@ fn every_eonw_action_has_a_cli_path_or_a_named_exception() {
             // The parse `execute` runs: its first-word gate, target flags, then the action.
             CliPath::Command(arguments) => {
                 assert!(control_command(&arguments[0]), "{arguments:?}");
-                let parsed = parse_workspace_target_arguments(&arguments)
-                    .and_then(|(arguments, _)| parse_control_arguments(&arguments));
+                let parsed =
+                    parse_workspace_target_arguments(&arguments).and_then(|(arguments, _)| {
+                        match parse_close_arguments(&arguments)? {
+                            Some((action, json, _yes)) => Ok((action, json)),
+                            None => parse_control_arguments(&arguments),
+                        }
+                    });
                 assert_eq!(
                     parsed.map_err(|error| error.message),
                     Ok((action, false)),

@@ -666,9 +666,12 @@ fn execute(inputs: &Inputs, arguments: Vec<OsString>) -> Result<i32, Error> {
             if let Some((popup, json)) = parse_popup_hide_arguments(&arguments)? {
                 return Ok(hide_popup(inputs, popup, json, target)?);
             }
+            if let Some((action, json, yes)) = parse_close_arguments(&arguments)? {
+                return Ok(control(inputs, action, json, false, target, yes)?);
+            }
             let (action, json) = parse_control_arguments(&arguments)?;
             let list = arguments.first().is_some_and(|value| value == "workspaces");
-            control(inputs, action, json, list, target)
+            control(inputs, action, json, list, target, false)
         }
         [flag] if flag == "--skill" => {
             write_stdout(inputs.skill)?;
@@ -803,7 +806,10 @@ const HELP_SECTIONS: &[(&str, &[(&str, &str)])] = &[
                 "  [--json] [--no-focus] [-- COMMAND...]",
                 "COMMAND needs an Eon terminal",
             ),
-            ("tab close TAB [--json]", "Close the active tab"),
+            (
+                "tab close TAB [--yes] [--json]",
+                "Close any tab of this workspace",
+            ),
             (
                 "tab directory TAB [--json] -- DIRECTORY",
                 "Set the tab's launch directory",
@@ -818,7 +824,10 @@ const HELP_SECTIONS: &[(&str, &[(&str, &str)])] = &[
                 "Run COMMAND in a new pane",
             ),
             ("edit [--json] -- FILE", "Open FILE in a new editor pane"),
-            ("pane close PANE [--json]", "Close a pane of the active tab"),
+            (
+                "pane close PANE [--yes] [--json]",
+                "Close any pane of this workspace",
+            ),
             (
                 "pane rename PANE NAME [--json]",
                 "Pin a pane name; empty clears",
@@ -988,7 +997,7 @@ fn help_text(version: &str, color: bool) -> String {
 {examples}
 Alt+Shift+D detaches a window; closing it or eon quit ends it.
 Inside Eon, workspace commands use the calling terminal's supervisor/workspace.
-Tab move and pane commands retain their calling-tab rules.
+Pane creation and moves, and tab moves, retain their calling-tab rules.
 Workspace flags: --generation GENERATION / --window ID, before any --.
 Explicit targets still validate EON_TERMINAL; window-only uses attach's rule.
 Results name generation, window (null for default), and workspace.
@@ -1002,7 +1011,9 @@ terminal_access governs all three. pane send --enter waits
 pane history --edit opens the history in a Scrollback editor popup,
 only in the shown workspace's active tab.
 pane send refuses while a person is typing; --force bypasses the typing check.
-Where shown, {command}--json{reset} prints JSON and skips confirmation.
+Where shown, {command}--json{reset} prints JSON and never asks.
+Busy tab/pane closes require {command}--yes{reset} with {command}--json{reset}; {command}--yes{reset} confirms only that close.
+Tab/pane close IDs resolve in the caller's workspace, otherwise the shown one.
 Without a terminal, a confirmation needs yes or exits 1 (not-confirmed).
 Exit status: 0 success, 1 failed, 2 invalid command, 3 target not found,
 4 Eon unreachable, 5 person typing (nothing sent), 130 interrupted.
@@ -1139,6 +1150,7 @@ fn control(
     json: bool,
     list: bool,
     target: WorkspaceTarget,
+    yes: bool,
 ) -> Result<i32, String> {
     let caller = match calling_terminal() {
         Ok(caller) => caller,
@@ -1153,24 +1165,50 @@ fn control(
     };
     let generation = &resolved.generation;
     let socket = &resolved.socket;
-    let final_close = if !json && std::io::stdin().is_terminal() {
-        match final_close_terminals(socket, &action, generation, caller.as_deref()) {
-            Ok(terminals) => terminals,
+    // Every tab or pane close inspects first, even with --json or --yes, and
+    // asks about its own busy or unknown terminals and a final close (EON-C10).
+    if let Some(target_label) = close_target_label(&action) {
+        let snapshot = match inspect(socket, caller.as_deref(), generation) {
+            Ok(snapshot) => snapshot,
             Err(error) => return report_failure(&error, json),
+        };
+        let has_caller = caller.is_some();
+        let mut question = match close_question(&snapshot, &action, has_caller, false) {
+            Ok(question) => question,
+            Err(error) => return report_failure(&error, json),
+        };
+        // The idle final warning asks only a person at a terminal, and the
+        // setting is read only when it changes the question.
+        if !yes && !json && std::io::stdin().is_terminal() {
+            let warned = match close_question(&snapshot, &action, has_caller, true) {
+                Ok(warned) => warned,
+                Err(error) => return report_failure(&error, json),
+            };
+            if warned != question
+                && managed_environment::warning_close_last_tab(
+                    &configuration_directory()?,
+                    &inputs.defaults,
+                    None,
+                )?
+            {
+                question = warned;
+            }
         }
-    } else {
-        None
-    };
-    if let Some((terminals, workspace)) = final_close
-        && managed_environment::warning_close_last_tab(
-            &configuration_directory()?,
-            &inputs.defaults,
-            None,
-        )?
-    {
-        let (question, cancelled) = final_close_prompt(&terminals, workspace.as_deref());
-        if let Some(status) = confirm(&question, &cancelled)? {
-            return Ok(status);
+        if let Some((question, cancelled)) = question
+            && !yes
+        {
+            if json {
+                return report_failure(
+                    &failure(
+                        "not-confirmed",
+                        format!("close of {target_label} requires confirmation; rerun with --yes"),
+                    ),
+                    true,
+                );
+            }
+            if let Some(status) = confirm(&question, &cancelled)? {
+                return Ok(status);
+            }
         }
     }
     // Closing a workspace asks as Stop does, about the wN that WS resolves to
@@ -1571,74 +1609,159 @@ fn unreachable_supervisor(error: EndpointFailure, generation: &str) -> Failure {
     )
 }
 
-/// The terminals a final close stops, and the workspace it removes while
-/// others remain.
-type FinalClose = (Vec<String>, Option<String>);
-
-/// The terminals a tab or pane close would stop when it closes the final tab,
-/// labelled by pane identity and popup entry, with the workspace's name or wN
-/// while other workspaces remain, and `None` for any other action. A close
-/// that cannot inspect the workspace first fails rather than skip the
-/// question.
-fn final_close_terminals(
-    socket: &Path,
-    action: &Action,
-    generation: &str,
-    caller: Option<&str>,
-) -> Result<Option<FinalClose>, Failure> {
-    if !matches!(
-        action,
-        Action::Workspace(WorkspaceAction::CloseTab { .. }) | Action::ClosePane { .. }
-    ) {
-        return Ok(None);
+/// How a question, cancel note or refusal names a tab or pane close's target,
+/// and `None` for any other action.
+fn close_target_label(action: &Action) -> Option<String> {
+    match action {
+        Action::Workspace(WorkspaceAction::CloseTab { tab }) => Some(format!("tab {tab}")),
+        Action::ClosePane { pane } => Some(format!("pane {pane}")),
+        _ => None,
     }
-    let snapshot = inspect(socket, caller, generation)?;
-    let [tab] = snapshot.tabs.as_slice() else {
+}
+
+/// The question and cancel note a tab or pane close asks, from the latest
+/// inspection, or `None` when its terminals are known idle and no final
+/// warning applies. It fails as Runtime would for a target that is not live
+/// in the inspected workspace or that a covering popup protects; Runtime
+/// still enforces both after the question (EON-C10).
+fn close_question(
+    snapshot: &Snapshot,
+    action: &Action,
+    has_caller: bool,
+    warn_final: bool,
+) -> Result<Option<(String, String)>, Failure> {
+    let Some(target_label) = close_target_label(action) else {
         return Ok(None);
     };
-    let last = match action {
-        Action::Workspace(WorkspaceAction::CloseTab { tab: id }) => *id == tab.id,
-        // Runtime refuses closing the last pane under a popup, so it is not asked about.
-        Action::ClosePane { pane } => {
-            let mut panes = tab.panes();
-            tab.selected_popup.is_none()
-                && panes.next().is_some_and(|only| only.id == *pane)
-                && panes.next().is_none()
-        }
-        _ => false,
+    let tab_terminals = |tab: &eon_workspace_protocol::v34::Tab| -> Vec<(String, String)> {
+        tab.panes()
+            .map(|pane| (pane.session.clone(), pane.label.clone()))
+            .chain(tab.popups.iter().map(|popup| {
+                let label = snapshot
+                    .entries
+                    .iter()
+                    .find(|entry| entry.id == popup.entry)
+                    .map_or_else(|| popup.entry.clone(), |entry| entry.label.clone());
+                (popup.session.clone(), label)
+            }))
+            .collect()
     };
-    // The close removes the workspace the reply projects while others remain (EON-C33).
-    let workspace = snapshot
-        .workspaces
-        .iter()
-        .find(|workspace| workspace.id == snapshot.workspace)
-        .filter(|_| snapshot.workspaces.len() >= 2)
-        .map(|workspace| {
-            workspace
-                .name
-                .clone()
-                .unwrap_or_else(|| workspace.id.clone())
-        });
-    Ok(last.then(|| {
-        (
-            tab.panes()
-                .map(|pane| pane.label.clone())
-                .chain(tab.popups.iter().map(|popup| popup.entry.clone()))
-                .collect(),
+    let (tab, affected, is_final) = match action {
+        Action::Workspace(WorkspaceAction::CloseTab { tab: id }) => {
+            let tab = snapshot
+                .tabs
+                .iter()
+                .find(|tab| tab.id == *id)
+                .ok_or_else(|| failure("unknown-tab", format!("tab {id} is not live")))?;
+            (tab, tab_terminals(tab), snapshot.tabs.len() == 1)
+        }
+        Action::ClosePane { pane: id } => {
+            let (tab, pane) = snapshot
+                .tabs
+                .iter()
+                .find_map(|tab| {
+                    tab.panes()
+                        .find(|pane| pane.id == *id)
+                        .map(|pane| (tab, pane))
+                })
+                .ok_or_else(|| failure("unknown-pane", format!("pane {id} is not live")))?;
+            let last_pane = tab.panes().count() == 1;
+            if tab.selected_popup.is_some() {
+                if !has_caller {
+                    return Err(failure(
+                        "unavailable",
+                        "close the popup before closing a pane",
+                    ));
+                }
+                if last_pane {
+                    return Err(failure(
+                        "unavailable",
+                        "close the popup before closing the tab's last pane",
+                    ));
+                }
+            }
+            // The final tab's last pane closes as that tab does, popups included.
+            let is_final = snapshot.tabs.len() == 1 && last_pane;
+            let affected = if is_final {
+                tab_terminals(tab)
+            } else {
+                vec![(pane.session.clone(), pane.label.clone())]
+            };
+            (tab, affected, is_final)
+        }
+        _ => return Ok(None),
+    };
+    // A missing or capped busy list cannot show the target idle.
+    let busy = match &snapshot.busy {
+        Some(busy) if busy.omitted == 0 => {
+            let running = busy
+                .terminals
+                .iter()
+                .filter(|item| {
+                    affected
+                        .iter()
+                        .any(|(session, _)| *session == item.target.terminal)
+                })
+                .map(|item| item.name.as_str())
+                .collect::<Vec<_>>();
+            (!running.is_empty())
+                .then(|| format!("{} still running: {}", running.len(), running.join(", ")))
+        }
+        _ => Some(format!(
+            "busy state unknown: {}",
+            affected
+                .iter()
+                .map(|(_, label)| label.as_str())
+                .collect::<Vec<_>>()
+                .join(", ")
+        )),
+    };
+    if is_final && (busy.is_some() || warn_final) {
+        // The close removes the workspace the reply projects while others remain (EON-C33).
+        let workspace = snapshot
+            .workspaces
+            .iter()
+            .find(|workspace| workspace.id == snapshot.workspace)
+            .filter(|_| snapshot.workspaces.len() >= 2)
+            .map(|workspace| workspace.name.as_deref().unwrap_or(&workspace.id));
+        let terminals = tab
+            .panes()
+            .map(|pane| pane.label.clone())
+            .chain(tab.popups.iter().map(|popup| popup.entry.clone()))
+            .collect::<Vec<_>>();
+        return Ok(Some(final_close_prompt(
+            &terminals,
             workspace,
+            busy.as_deref(),
+        )));
+    }
+    Ok(busy.map(|busy| {
+        let count = affected.len();
+        (
+            format!(
+                "Close {target_label}? This stops {count} terminal{}; {busy}. [y/N] ",
+                if count == 1 { "" } else { "s" }
+            ),
+            format!("cancelled; {target_label} stays open\n"),
         )
     }))
 }
 
 /// The final-close question and its cancel note: the window's, or EON-C33's
-/// wording for the workspace the close removes while others remain.
-fn final_close_prompt(terminals: &[String], workspace: Option<&str>) -> (String, String) {
+/// wording for the workspace the close removes while others remain, with the
+/// busy clause of a busy or unknown final close.
+fn final_close_prompt(
+    terminals: &[String],
+    workspace: Option<&str>,
+    busy: Option<&str>,
+) -> (String, String) {
     let ends = workspace.map_or_else(
         || "quits the window".into(),
         |name| format!("closes workspace {}", name.escape_debug()),
     );
+    let busy = busy.map_or_else(String::new, |busy| format!("; {busy}"));
     let question = format!(
-        "Close the last tab? This {ends} and stops {} terminal{} [{}]. [y/N] ",
+        "Close the last tab? This {ends} and stops {} terminal{} [{}]{busy}. [y/N] ",
         terminals.len(),
         if terminals.len() == 1 { "" } else { "s" },
         terminals.join(", ")
@@ -1683,7 +1806,7 @@ fn hide_popup(
         tab: tab.id.clone(),
         instance: popup,
     });
-    control(inputs, action, json, false, target)
+    control(inputs, action, json, false, target, false)
 }
 
 /// The workspace `eon workspace` reports: the caller's, else the shown one.
@@ -1826,6 +1949,41 @@ fn parse_pane_send_arguments(arguments: &[OsString]) -> Result<Option<PaneSend>,
     }))
 }
 
+/// `tab close TAB [--yes] [--json]` and `pane close PANE [--yes] [--json]`.
+fn parse_close_arguments(arguments: &[OsString]) -> Result<Option<(Action, bool, bool)>, Error> {
+    let [command, operation, rest @ ..] = arguments else {
+        return Ok(None);
+    };
+    let kind = match (command.to_str(), operation.to_str()) {
+        (Some(kind @ ("tab" | "pane")), Some("close")) => kind,
+        _ => return Ok(None),
+    };
+    let (mut json, mut yes) = (false, false);
+    let mut target = None;
+    for argument in rest {
+        let argument = argument
+            .to_str()
+            .ok_or_else(|| Error::usage("Eon workspace actions require UTF-8 arguments"))?;
+        match argument {
+            "--json" if !json => json = true,
+            "--yes" if !yes => yes = true,
+            id if target.is_none() && !id.starts_with('-') => target = Some(id),
+            _ => return Err(Error::usage(EON_USAGE)),
+        }
+    }
+    let Some(target) = target else {
+        return Err(Error::usage(EON_USAGE));
+    };
+    let action = if kind == "tab" {
+        Action::Workspace(WorkspaceAction::CloseTab { tab: target.into() })
+    } else {
+        Action::ClosePane {
+            pane: target.into(),
+        }
+    };
+    Ok(Some((action, json, yes)))
+}
+
 fn parse_control_arguments(arguments: &[OsString]) -> Result<(Action, bool), Error> {
     if arguments.first().is_some_and(|value| value == "pane")
         && arguments.get(1).is_some_and(|value| value == "rename")
@@ -1872,14 +2030,8 @@ fn parse_control_arguments(arguments: &[OsString]) -> Result<(Action, bool), Err
         _ if !focus => return Err(Error::usage(EON_USAGE)),
         ["workspace"] | ["workspaces"] => Action::Workspace(WorkspaceAction::Inspect),
         ["tab", "create"] => Action::Workspace(WorkspaceAction::CreateTab),
-        ["tab", "close", tab] => {
-            Action::Workspace(WorkspaceAction::CloseTab { tab: (*tab).into() })
-        }
         ["tab", "move", "left"] => Action::Workspace(WorkspaceAction::Move(Direction::Left)),
         ["tab", "move", "right"] => Action::Workspace(WorkspaceAction::Move(Direction::Right)),
-        ["pane", "close", pane] => Action::ClosePane {
-            pane: (*pane).into(),
-        },
         ["pane", "read", target] => Action::ReadTerminal {
             target: (*target).into(),
         },
@@ -2222,7 +2374,7 @@ mod tests {
     fn final_close_prompt_names_the_workspace_it_closes() {
         let terminals = ["p1".to_owned(), "agent".to_owned()];
         assert_eq!(
-            final_close_prompt(&terminals[..1], None),
+            final_close_prompt(&terminals[..1], None, None),
             (
                 "Close the last tab? This quits the window and stops 1 terminal [p1]. [y/N] "
                     .to_owned(),
@@ -2230,7 +2382,7 @@ mod tests {
             )
         );
         assert_eq!(
-            final_close_prompt(&terminals, Some("my \"notes\"")),
+            final_close_prompt(&terminals, Some("my \"notes\""), None),
             (
                 "Close the last tab? This closes workspace my \\\"notes\\\" and stops 2 \
                  terminals [p1, agent]. [y/N] "
@@ -2394,7 +2546,11 @@ mod tests {
                     Some((false, false))
                 );
             } else if ["workspace", "tab", "pane"].contains(&arguments[0].to_str().unwrap()) {
-                assert!(parse_control_arguments(&arguments).is_ok(), "{label}");
+                let close = matches!(parse_close_arguments(&arguments), Ok(Some(_)));
+                assert!(
+                    close || parse_control_arguments(&arguments).is_ok(),
+                    "{label}"
+                );
             }
         }
     }
@@ -2816,19 +2972,524 @@ mod tests {
 
     #[test]
     fn close_parsers_require_one_stable_identity() {
-        assert_eq!(
-            parse_control_arguments(&["tab", "close", "t2", "--json"].map(Into::into)).unwrap(),
+        let parse = |args: &[&str]| {
+            parse_close_arguments(&args.iter().map(OsString::from).collect::<Vec<_>>())
+        };
+        let tab = |id: &str| Action::Workspace(WorkspaceAction::CloseTab { tab: id.into() });
+        let pane = |id: &str| Action::ClosePane { pane: id.into() };
+        for (args, expected) in [
+            (&["tab", "close", "t2"][..], (tab("t2"), false, false)),
+            (&["tab", "close", "t2", "--json"], (tab("t2"), true, false)),
+            (&["tab", "close", "t2", "--yes"], (tab("t2"), false, true)),
             (
-                Action::Workspace(WorkspaceAction::CloseTab { tab: "t2".into() }),
-                true,
-            )
-        );
-        assert!(parse_control_arguments(&["tab", "close"].map(Into::into)).is_err());
+                &["tab", "close", "--yes", "t2", "--json"],
+                (tab("t2"), true, true),
+            ),
+            (&["pane", "close", "p3"], (pane("p3"), false, false)),
+            (&["pane", "close", "p3", "--yes"], (pane("p3"), false, true)),
+            (
+                &["pane", "close", "--json", "--yes", "p3"],
+                (pane("p3"), true, true),
+            ),
+        ] {
+            assert_eq!(parse(args).unwrap(), Some(expected), "{args:?}");
+        }
+        assert_eq!(parse(&["tab", "create"]).unwrap(), None);
+        assert_eq!(parse(&["pane", "create"]).unwrap(), None);
+        for args in [
+            &["tab", "close"][..],
+            &["pane", "close"],
+            &["tab", "close", "--yes"],
+            &["pane", "close", "--json"],
+            &["tab", "close", "t1", "t2"],
+            &["pane", "close", "p1", "p2"],
+            &["tab", "close", "-t1"],
+            &["pane", "close", "--", "p1"],
+            &["tab", "close", "t1", "--yes", "--yes"],
+            &["pane", "close", "p1", "--json", "--json"],
+            &["tab", "close", "t1", "--no-focus"],
+            &["pane", "close", "p1", "--no-focus"],
+            &["tab", "close", "t1", "-y"],
+            &["pane", "close", "p1", "--force"],
+            &["tab", "close", "t1", "--generation", "g1"],
+        ] {
+            let error = parse(args).unwrap_err();
+            assert_eq!(
+                (error.status, error.message),
+                (2, EON_USAGE.into()),
+                "{args:?}"
+            );
+        }
+        let non_utf8 = OsString::from_vec(vec![b't', 0xff]);
         assert_eq!(
-            parse_control_arguments(&["pane", "close", "p3"].map(Into::into)).unwrap(),
-            (Action::ClosePane { pane: "p3".into() }, false)
+            parse_close_arguments(&["tab".into(), "close".into(), non_utf8])
+                .unwrap_err()
+                .status,
+            2
         );
-        assert!(parse_control_arguments(&["pane", "close"].map(Into::into)).is_err());
+        // Only closes take --yes.
+        for args in [
+            &["tab", "create", "--yes"][..],
+            &["tab", "move", "left", "--yes"],
+            &["pane", "create", "--yes"],
+            &["workspace", "--yes"],
+        ] {
+            let arguments = args.iter().map(OsString::from).collect::<Vec<_>>();
+            assert_eq!(parse_close_arguments(&arguments).unwrap(), None, "{args:?}");
+            let error = parse_control_arguments(&arguments).unwrap_err();
+            assert_eq!(
+                (error.status, error.message),
+                (2, EON_USAGE.into()),
+                "{args:?}"
+            );
+        }
+        // Target flags are taken before the close parser sees its action.
+        let (arguments, _) = parse_workspace_target_arguments(
+            &["tab", "--window", "0000abcd", "close", "t2", "--yes"].map(OsString::from),
+        )
+        .unwrap();
+        assert_eq!(
+            parse_close_arguments(&arguments).unwrap(),
+            Some((
+                Action::Workspace(WorkspaceAction::CloseTab { tab: "t2".into() }),
+                false,
+                true
+            ))
+        );
+    }
+
+    #[test]
+    fn close_question_is_target_scoped_and_conservative() {
+        use eon_workspace_protocol::v34::{
+            BusyTerminal, BusyTerminals, Column, Pane, Popup, PopupEntry, PopupGeometry, PopupKey,
+            Sidebar, Tab, TargetId, TerminalTarget,
+        };
+        let pane = |id: &str, session: &str| Pane {
+            id: id.into(),
+            label: id.into(),
+            pinned_name: None,
+            session: session.into(),
+            endpoint: b"/runtime/orbit.sock".to_vec(),
+            live: true,
+            attention: None,
+        };
+        let busy_item = |tab: &str, id: TargetId, session: &str, name: &str| BusyTerminal {
+            target: TerminalTarget {
+                workspace: "w1".into(),
+                tab: tab.into(),
+                id,
+                terminal: session.into(),
+            },
+            name: name.into(),
+        };
+        let base_snapshot = || Snapshot {
+            workspace: "w1".into(),
+            active_workspace: "w1".into(),
+            workspaces: vec![WorkspaceInfo {
+                id: "w1".into(),
+                name: None,
+                tab_count: 2,
+                attention: None,
+                recency: 0,
+            }],
+            active_tab: "t1".into(),
+            geometry: PopupGeometry {
+                side_margin: 0.0,
+                vertical_margin: 0.0,
+            },
+            entries: vec![PopupEntry {
+                id: "git".into(),
+                label: "Git".into(),
+                shortcut: PopupKey::Unbound,
+            }],
+            tabs: vec![
+                Tab {
+                    id: "t1".into(),
+                    directory: b"/".to_vec(),
+                    pending: false,
+                    columns: vec![Column {
+                        panes: vec![pane("p1", "s1")],
+                        expanded: "p1".into(),
+                    }],
+                    selected_pane: Some("p1".into()),
+                    popups: Vec::new(),
+                    selected_popup: None,
+                    attention_rollup: None,
+                },
+                Tab {
+                    id: "t2".into(),
+                    directory: b"/".to_vec(),
+                    pending: false,
+                    columns: vec![Column {
+                        panes: vec![pane("p2", "s2"), pane("p3", "s3")],
+                        expanded: "p2".into(),
+                    }],
+                    selected_pane: Some("p2".into()),
+                    popups: vec![Popup {
+                        id: "u1".into(),
+                        entry: "git".into(),
+                        session: "s4".into(),
+                        endpoint: b"/runtime/orbit.sock".to_vec(),
+                        attention: None,
+                    }],
+                    selected_popup: None,
+                    attention_rollup: None,
+                },
+            ],
+            codex_quota: None,
+            claude_quota: None,
+            codex_quota_failure: None,
+            claude_quota_failure: None,
+            sidebar: Sidebar::Off,
+            attention_queue: Vec::new(),
+            running: None,
+            busy: Some(BusyTerminals {
+                terminals: vec![busy_item("t1", TargetId::Pane("p1".into()), "s1", "p1")],
+                omitted: 0,
+            }),
+        };
+
+        let close_t2 = Action::Workspace(WorkspaceAction::CloseTab { tab: "t2".into() });
+        let close_p2 = Action::ClosePane { pane: "p2".into() };
+
+        // Known-idle background tab or pane (only t1's s1 is busy) returns Ok(None).
+        let snap = base_snapshot();
+        assert_eq!(close_question(&snap, &close_t2, true, true), Ok(None));
+        assert_eq!(close_question(&snap, &close_p2, false, true), Ok(None));
+
+        // Known-busy background tab or pane returns exact question and cancel note.
+        let mut snap = base_snapshot();
+        snap.busy = Some(BusyTerminals {
+            terminals: vec![
+                busy_item("t2", TargetId::Pane("p2".into()), "s2", "p2"),
+                busy_item("t2", TargetId::Popup("u1".into()), "s4", "Git"),
+            ],
+            omitted: 0,
+        });
+        assert_eq!(
+            close_question(&snap, &close_t2, true, true),
+            Ok(Some((
+                "Close tab t2? This stops 3 terminals; 2 still running: p2, Git. [y/N] ".into(),
+                "cancelled; tab t2 stays open\n".into(),
+            )))
+        );
+        assert_eq!(
+            close_question(&snap, &close_p2, true, true),
+            Ok(Some((
+                "Close pane p2? This stops 1 terminal; 1 still running: p2. [y/N] ".into(),
+                "cancelled; pane p2 stays open\n".into(),
+            )))
+        );
+
+        // snapshot.busy == None -> busy state unknown.
+        let mut snap = base_snapshot();
+        snap.busy = None;
+        assert_eq!(
+            close_question(&snap, &close_t2, true, false),
+            Ok(Some((
+                "Close tab t2? This stops 3 terminals; busy state unknown: p2, p3, Git. [y/N] "
+                    .into(),
+                "cancelled; tab t2 stays open\n".into(),
+            )))
+        );
+
+        // A capped list (omitted > 0) is unknown for every target, even one it
+        // lists as busy, and names all of the target's terminals.
+        let mut snap = base_snapshot();
+        snap.busy = Some(BusyTerminals {
+            terminals: vec![busy_item("t2", TargetId::Pane("p2".into()), "s2", "p2")],
+            omitted: 1,
+        });
+        assert_eq!(
+            close_question(&snap, &close_t2, true, false),
+            Ok(Some((
+                "Close tab t2? This stops 3 terminals; busy state unknown: p2, p3, Git. [y/N] "
+                    .into(),
+                "cancelled; tab t2 stays open\n".into(),
+            )))
+        );
+        assert_eq!(
+            close_question(&snap, &close_p2, true, false),
+            Ok(Some((
+                "Close pane p2? This stops 1 terminal; busy state unknown: p2. [y/N] ".into(),
+                "cancelled; pane p2 stays open\n".into(),
+            )))
+        );
+        // Even a capped list that names only another tab's terminal.
+        snap.busy = Some(BusyTerminals {
+            terminals: vec![busy_item("t1", TargetId::Pane("p1".into()), "s1", "p1")],
+            omitted: 3,
+        });
+        assert_eq!(
+            close_question(
+                &snap,
+                &Action::ClosePane { pane: "p3".into() },
+                false,
+                false
+            ),
+            Ok(Some((
+                "Close pane p3? This stops 1 terminal; busy state unknown: p3. [y/N] ".into(),
+                "cancelled; pane p3 stays open\n".into(),
+            )))
+        );
+
+        // The target is found by ID whichever tab is active, and a caller's
+        // own busy pane counts when it is the target.
+        let mut snap = base_snapshot();
+        snap.active_tab = "t2".into();
+        assert_eq!(close_question(&snap, &close_t2, false, false), Ok(None));
+        assert_eq!(
+            close_question(&snap, &Action::ClosePane { pane: "p1".into() }, true, false),
+            Ok(Some((
+                "Close pane p1? This stops 1 terminal; 1 still running: p1. [y/N] ".into(),
+                "cancelled; pane p1 stays open\n".into(),
+            )))
+        );
+        // Other actions ask nothing here.
+        assert_eq!(
+            close_question(
+                &snap,
+                &Action::Workspace(WorkspaceAction::CreateTab),
+                true,
+                true
+            ),
+            Ok(None)
+        );
+
+        // A stale ID, or one in another workspace, which the inspection of
+        // the addressed workspace never lists, fails as Runtime does.
+        assert_eq!(
+            close_question(
+                &snap,
+                &Action::Workspace(WorkspaceAction::CloseTab { tab: "t9".into() }),
+                true,
+                false,
+            ),
+            Err(failure("unknown-tab", "tab t9 is not live"))
+        );
+        assert_eq!(
+            close_question(&snap, &Action::ClosePane { pane: "p9".into() }, true, false),
+            Err(failure("unknown-pane", "pane p9 is not live"))
+        );
+
+        // A covering popup refuses a pane close without a caller, and the
+        // tab's last pane even with one, before any question.
+        let mut snap = base_snapshot();
+        snap.busy = None;
+        snap.tabs[1].selected_popup = Some("u1".into());
+        assert_eq!(
+            close_question(&snap, &close_p2, false, false),
+            Err(failure(
+                "unavailable",
+                "close the popup before closing a pane"
+            ))
+        );
+        assert_eq!(
+            close_question(&snap, &close_p2, true, false),
+            Ok(Some((
+                "Close pane p2? This stops 1 terminal; busy state unknown: p2. [y/N] ".into(),
+                "cancelled; pane p2 stays open\n".into(),
+            )))
+        );
+        snap.tabs[0].selected_popup = Some("u1".into());
+        assert_eq!(
+            close_question(&snap, &Action::ClosePane { pane: "p1".into() }, true, false),
+            Err(failure(
+                "unavailable",
+                "close the popup before closing the tab's last pane"
+            ))
+        );
+        // A covered tab still closes by its ID.
+        assert!(matches!(
+            close_question(&snap, &close_t2, false, false),
+            Ok(Some(_))
+        ));
+    }
+
+    #[test]
+    fn close_question_combines_busy_and_final_warnings_once() {
+        use eon_workspace_protocol::v34::{
+            BusyTerminal, BusyTerminals, Column, Pane, Popup, PopupEntry, PopupGeometry, PopupKey,
+            Sidebar, Tab, TargetId, TerminalTarget,
+        };
+        let mut snap = Snapshot {
+            workspace: "w1".into(),
+            active_workspace: "w1".into(),
+            workspaces: vec![WorkspaceInfo {
+                id: "w1".into(),
+                name: None,
+                tab_count: 1,
+                attention: None,
+                recency: 0,
+            }],
+            active_tab: "t1".into(),
+            geometry: PopupGeometry {
+                side_margin: 0.0,
+                vertical_margin: 0.0,
+            },
+            entries: vec![PopupEntry {
+                id: "agent".into(),
+                label: "Agent".into(),
+                shortcut: PopupKey::Unbound,
+            }],
+            tabs: vec![Tab {
+                id: "t1".into(),
+                directory: b"/".to_vec(),
+                pending: false,
+                columns: vec![Column {
+                    panes: vec![Pane {
+                        id: "p1".into(),
+                        label: "p1".into(),
+                        pinned_name: None,
+                        session: "s1".into(),
+                        endpoint: b"/runtime/orbit.sock".to_vec(),
+                        live: true,
+                        attention: None,
+                    }],
+                    expanded: "p1".into(),
+                }],
+                selected_pane: Some("p1".into()),
+                popups: Vec::new(),
+                selected_popup: None,
+                attention_rollup: None,
+            }],
+            codex_quota: None,
+            claude_quota: None,
+            codex_quota_failure: None,
+            claude_quota_failure: None,
+            sidebar: Sidebar::Off,
+            attention_queue: Vec::new(),
+            running: None,
+            busy: Some(BusyTerminals {
+                terminals: Vec::new(),
+                omitted: 0,
+            }),
+        };
+        let close_t1 = Action::Workspace(WorkspaceAction::CloseTab { tab: "t1".into() });
+
+        let close_p1 = Action::ClosePane { pane: "p1".into() };
+
+        // An idle final close asks only with the warning, for the tab or its
+        // last pane, in the existing words.
+        let idle_final = Ok(Some((
+            "Close the last tab? This quits the window and stops 1 terminal [p1]. [y/N] ".into(),
+            "cancelled; the window stays open\n".into(),
+        )));
+        assert_eq!(close_question(&snap, &close_t1, true, true), idle_final);
+        assert_eq!(close_question(&snap, &close_p1, true, true), idle_final);
+        assert_eq!(close_question(&snap, &close_t1, true, false), Ok(None));
+        assert_eq!(close_question(&snap, &close_p1, false, false), Ok(None));
+
+        // A busy final close asks once, with the final consequence, whether
+        // or not the warning applies; its last pane stops the tab's popups too.
+        snap.tabs[0].popups.push(Popup {
+            id: "u1".into(),
+            entry: "agent".into(),
+            session: "s2".into(),
+            endpoint: b"/runtime/orbit.sock".to_vec(),
+            attention: None,
+        });
+        snap.busy = Some(BusyTerminals {
+            terminals: vec![BusyTerminal {
+                target: TerminalTarget {
+                    workspace: "w1".into(),
+                    tab: "t1".into(),
+                    id: TargetId::Pane("p1".into()),
+                    terminal: "s1".into(),
+                },
+                name: "p1".into(),
+            }],
+            omitted: 0,
+        });
+        let busy_final = Ok(Some((
+            "Close the last tab? This quits the window and stops 2 terminals [p1, agent]; \
+             1 still running: p1. [y/N] "
+                .into(),
+            "cancelled; the window stays open\n".into(),
+        )));
+        for (action, warn_final) in [
+            (&close_t1, true),
+            (&close_t1, false),
+            (&close_p1, true),
+            (&close_p1, false),
+        ] {
+            assert_eq!(
+                close_question(&snap, action, true, warn_final),
+                busy_final,
+                "{action:?} {warn_final}"
+            );
+        }
+
+        // Unknown busy state, missing or capped, is a busy final close.
+        let unknown_final = Ok(Some((
+            "Close the last tab? This quits the window and stops 2 terminals [p1, agent]; \
+             busy state unknown: p1, Agent. [y/N] "
+                .into(),
+            "cancelled; the window stays open\n".into(),
+        )));
+        snap.busy = None;
+        assert_eq!(close_question(&snap, &close_t1, true, false), unknown_final);
+        snap.busy = Some(BusyTerminals {
+            terminals: Vec::new(),
+            omitted: 2,
+        });
+        assert_eq!(close_question(&snap, &close_p1, true, true), unknown_final);
+
+        // While other workspaces remain, the question names the workspace it
+        // closes, escaped, and its busy terminals.
+        snap.busy = Some(BusyTerminals {
+            terminals: vec![BusyTerminal {
+                target: TerminalTarget {
+                    workspace: "w1".into(),
+                    tab: "t1".into(),
+                    id: TargetId::Popup("u1".into()),
+                    terminal: "s2".into(),
+                },
+                name: "Agent".into(),
+            }],
+            omitted: 0,
+        });
+        snap.workspaces = vec![
+            WorkspaceInfo {
+                id: "w1".into(),
+                name: Some("my \"notes\"".into()),
+                tab_count: 1,
+                attention: None,
+                recency: 0,
+            },
+            WorkspaceInfo {
+                id: "w2".into(),
+                name: None,
+                tab_count: 1,
+                attention: None,
+                recency: 1,
+            },
+        ];
+        let workspace_final = Ok(Some((
+            "Close the last tab? This closes workspace my \\\"notes\\\" and stops 2 terminals \
+             [p1, agent]; 1 still running: Agent. [y/N] "
+                .into(),
+            "cancelled; workspace my \\\"notes\\\" stays open\n".into(),
+        )));
+        assert_eq!(
+            close_question(&snap, &close_t1, true, false),
+            workspace_final
+        );
+        assert_eq!(
+            close_question(&snap, &close_p1, true, true),
+            workspace_final
+        );
+        // An unnamed workspace is named by its ID.
+        snap.workspaces[0].name = None;
+        assert_eq!(
+            close_question(&snap, &close_t1, true, true),
+            Ok(Some((
+                "Close the last tab? This closes workspace w1 and stops 2 terminals \
+                 [p1, agent]; 1 still running: Agent. [y/N] "
+                    .into(),
+                "cancelled; workspace w1 stays open\n".into(),
+            )))
+        );
     }
 
     #[test]

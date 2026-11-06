@@ -1733,25 +1733,17 @@ impl Application {
         true
     }
 
-    /// Sends the prompt's close or quit. A tab created meanwhile is active, and Eon closes
-    /// only in the active tab, so the named tab is focused first.
+    /// Sends the prompt's close or quit.
     fn send_close(&mut self, prompt: ClosePrompt) {
-        let (tab, action) = match prompt.target {
-            PromptTarget::CloseTab { tab, action } => (tab, action),
+        match prompt.target {
+            PromptTarget::CloseTab { action, .. } => {
+                self.queue_workspace(action);
+            }
             PromptTarget::QuitWindow => {
                 if let Some(action) = self.workspace_model.snapshot().and_then(quit_action) {
                     self.send_stop(action);
                 }
-                return;
             }
-        };
-        let inactive = self
-            .workspace_model
-            .snapshot()
-            .is_some_and(|snapshot| snapshot.active_tab != tab);
-        if !inactive || self.queue_workspace(WorkspaceAction::Workspace(CommonAction::FocusId(tab)))
-        {
-            self.queue_workspace(action);
         }
     }
 

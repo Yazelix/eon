@@ -215,7 +215,7 @@ pub enum Action {
     DismissPopup(PopupTarget),
     /// Add a column right of the selected column with one new pane.
     CreateColumn,
-    /// Stop the terminal of one pane in the active tab.
+    /// Stop the terminal of one named pane in the addressed workspace.
     ClosePane {
         pane: String,
     },
@@ -297,9 +297,9 @@ pub enum TerminalInput {
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Request {
     pub id: String,
-    /// The opaque `EON_TERMINAL` of the terminal that issued the request. Pane
-    /// create, move and close actions and tab moves then target its tab,
-    /// column and pane instead of the active tab's selection.
+    /// The opaque `EON_TERMINAL` of the terminal that issued the request.
+    /// It selects the caller's workspace; pane creation and moves and tab moves
+    /// retain their calling-tab, column and pane rules. Close targets are explicit.
     pub caller: Option<String>,
     pub action: Action,
 }

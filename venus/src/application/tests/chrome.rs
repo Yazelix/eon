@@ -81,7 +81,8 @@ fn close_prompt_asks_for_a_final_close() {
     );
     let stacked = snapshot(vec![tab("t1", &["p1", "p2"])]);
     assert_eq!(final_close_tab(&stacked, &close_pane("p1")), None);
-    let two = snapshot(vec![tab("t1", &["p1"]), tab("t2", &["p2"])]);
+    let mut two = snapshot(vec![tab("t1", &["p1"]), tab("t2", &["p2"])]);
+    two.active_tab = "t2".into();
     assert_eq!(final_close_tab(&two, &close_tab("t1")), None);
     assert_eq!(final_close_tab(&two, &close_pane("p1")), None);
     // With another workspace, closing the shown one's last tab asks too.
@@ -115,7 +116,8 @@ fn close_prompt_asks_for_a_final_close() {
     );
     assert_eq!(worded(&model).as_deref(), Some("w1"));
 
-    // The prompt keeps its close while the named tab and pane live, even when a tab appears.
+    // The prompt keeps its close while the named tab and pane live, even when a tab appears
+    // and becomes active.
     let prompt = |action| ClosePrompt {
         target: PromptTarget::CloseTab {
             tab: "t1".into(),
@@ -123,8 +125,21 @@ fn close_prompt_asks_for_a_final_close() {
         },
         scroll: 0.0,
     };
-    assert!(prompt(close_tab("t1")).names_live_target(&two));
-    assert!(prompt(close_pane("p1")).names_live_target(&two));
+    let tab_prompt = prompt(close_tab("t1"));
+    assert_eq!(two.active_tab, "t2");
+    assert!(matches!(
+        &tab_prompt.target,
+        PromptTarget::CloseTab { tab, action }
+            if tab == "t1" && *action == close_tab("t1")
+    ));
+    assert!(tab_prompt.names_live_target(&two));
+    let pane_prompt = prompt(close_pane("p1"));
+    assert!(matches!(
+        &pane_prompt.target,
+        PromptTarget::CloseTab { tab, action }
+            if tab == "t1" && *action == close_pane("p1")
+    ));
+    assert!(pane_prompt.names_live_target(&two));
     assert!(!prompt(close_pane("p1")).names_live_target(&snapshot(vec![tab("t1", &["p2"])])));
     assert!(!prompt(close_tab("t1")).names_live_target(&snapshot(vec![tab("t2", &["p2"])])));
 

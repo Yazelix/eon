@@ -1898,12 +1898,6 @@ impl Workspace {
             .iter()
             .position(|tab| tab.id == id)
             .ok_or_else(|| action_error("unknown-tab", format!("tab {id} is not live")))?;
-        if index != self.active {
-            return Err(action_error(
-                "not-active",
-                format!("tab {id} is not the active tab"),
-            ));
-        }
         let sessions = self.tab_sessions(index);
         Ok(sessions)
     }
@@ -1921,38 +1915,26 @@ impl Workspace {
             .collect()
     }
 
-    /// Validates closing one pane of the caller's tab, else of the active tab,
-    /// and names the terminals to stop: the pane's, and when it is the final
-    /// tab's last pane, every terminal of that tab, since the close removes the
-    /// workspace, or ends the window when it is the last one.
+    /// Validates closing one pane of this workspace, and names the terminals to
+    /// stop: the pane's, and when it is the final tab's last pane, every
+    /// terminal of that tab, since the close removes the workspace, or ends the
+    /// window when it is the last one.
     pub(crate) fn prepare_close_pane(
         &mut self,
         caller: Option<&str>,
         id: &str,
     ) -> Result<Vec<String>, Failure> {
-        let tab_index = self.target_tab(caller)?.0;
+        let (tab_index, (column, pane)) = self
+            .tabs
+            .iter()
+            .enumerate()
+            .find_map(|(index, tab)| tab.find_pane(|pane| pane.id == id).map(|pos| (index, pos)))
+            .ok_or_else(|| action_error("unknown-pane", format!("pane {id} is not live")))?;
         let tab = &self.tabs[tab_index];
-        let Some((column, pane)) = tab.find_pane(|pane| pane.id == id) else {
-            return Err(
-                if self
-                    .tabs
-                    .iter()
-                    .any(|tab| tab.find_pane(|pane| pane.id == id).is_some())
-                {
-                    let tab = if caller.is_some() {
-                        "calling"
-                    } else {
-                        "active"
-                    };
-                    action_error("not-active", format!("pane {id} is not in the {tab} tab"))
-                } else {
-                    action_error("unknown-pane", format!("pane {id} is not live"))
-                },
-            );
-        };
         // A covering popup hides the pane Alt+W would close, and closing the
-        // tab's last pane would stop the popup too, so only the tab's own
-        // terminals may close a named pane under it, and never its last.
+        // tab's last pane would stop the popup too, so only validated calling
+        // terminals of this workspace may close a named pane under it, and
+        // never its last.
         if tab.selected_popup.is_some() {
             if caller.is_none() {
                 return Err(action_error(
@@ -4433,20 +4415,77 @@ mod tests {
                 );
                 assert_eq!(set, before);
             }
-            assert!(
+            assert_eq!(
                 set.prepare_close_tab("refused", Some(&caller.id), &foreign.id)
-                    .is_err()
+                    .unwrap_err()
+                    .code,
+                "unknown-tab"
             );
-            assert!(
+            assert_eq!(
                 set.prepare_close_pane(
                     "refused",
                     Some(&caller.id),
                     &foreign.columns[0].panes[0].id
                 )
-                .is_err()
+                .unwrap_err()
+                .code,
+                "unknown-pane"
+            );
+            if shown == 0 {
+                assert_eq!(
+                    set.prepare_close_tab("refused-none", None, &foreign.id)
+                        .unwrap_err()
+                        .code,
+                    "unknown-tab"
+                );
+                assert_eq!(
+                    set.prepare_close_pane("refused-none", None, &foreign.columns[0].panes[0].id)
+                        .unwrap_err()
+                        .code,
+                    "unknown-pane"
+                );
+            }
+            // Stale local IDs and a stale caller refuse in the same way.
+            for caller in [Some(caller.id.as_str()), None] {
+                assert_eq!(
+                    set.prepare_close_tab("refused-stale", caller, "t99"),
+                    Err(action_error("unknown-tab", "tab t99 is not live"))
+                );
+                assert_eq!(
+                    set.prepare_close_pane("refused-stale", caller, "p99"),
+                    Err(action_error("unknown-pane", "pane p99 is not live"))
+                );
+            }
+            let stale = action_error(
+                "unknown-caller",
+                "the calling terminal is not part of this workspace",
+            );
+            assert_eq!(
+                set.prepare_close_tab("refused-caller", Some("session-99"), &foreign.id),
+                Err(stale.clone())
+            );
+            assert_eq!(
+                set.prepare_close_pane(
+                    "refused-caller",
+                    Some("session-99"),
+                    &foreign.columns[0].panes[0].id
+                ),
+                Err(stale)
             );
             assert_eq!(set, before);
         }
+        // A refused close does not use up its request ID.
+        let local = set.workspaces[0].tabs[0].id.clone();
+        let sessions = set
+            .prepare_close_tab("refused", Some(&caller.id), &local)
+            .unwrap();
+        assert!(sessions.contains(&caller.id));
+        assert_eq!(
+            set.prepare_close_tab("refused", Some(&caller.id), &local)
+                .unwrap_err()
+                .code,
+            "duplicate-request"
+        );
         set.dispatch(
             "local",
             Some(&caller.id),
@@ -5986,7 +6025,7 @@ mod tests {
     }
 
     #[test]
-    fn pane_close_targets_the_active_tab_and_prunes_like_an_exit() {
+    fn pane_close_targets_exact_ids_and_prunes_like_an_exit() {
         let mut workspace = WorkspaceSet::with_recovered_sessions(
             "/runtime".into(),
             "/".into(),
@@ -6042,7 +6081,7 @@ mod tests {
         assert_eq!(tab.columns.len(), 1);
         assert_eq!(tab.selected_pane.as_deref(), Some("p1"));
 
-        // A covering popup and an inactive tab refuse; a non-final tab's last pane removes it.
+        // A covering popup refuses without a caller; a non-final tab's last pane removes it.
         request(
             &mut workspace,
             "a1",
@@ -6057,7 +6096,7 @@ mod tests {
             refused(&mut workspace, "x5", "p1").detail,
             "close the popup before closing a pane"
         );
-        // Under the popup, the tab's own terminals may close a named pane but not its last.
+        // Under the popup, a validated caller may close a named pane but not its last.
         let agent = workspace.snapshot().tabs[0].popups[0].session.clone();
         let before = workspace.snapshot();
         assert_eq!(
@@ -6095,12 +6134,37 @@ mod tests {
                 .unwrap();
             assert_eq!(workspace.snapshot(), before);
         }
+        // A pane of a background tab closes by its ID, here under that tab's
+        // popup by the popup's terminal, and the active pending tab, its
+        // picker and the covered tab's popup stay as they were.
+        request(
+            &mut workspace,
+            "x6-pane",
+            Action::Workspace(WorkspaceAction::CreatePane { focus: false }),
+        );
+        let background = workspace.snapshot().tabs[0].panes().last().unwrap().clone();
         request(
             &mut workspace,
             "t2",
             Action::Workspace(WorkspaceAction::CreateTab),
         );
-        assert_eq!(refused(&mut workspace, "x6", "p1").code, "not-active");
+        let before = workspace.snapshot();
+        assert_eq!(before.active_tab, "t2");
+        assert_eq!(
+            workspace
+                .prepare_close_pane("x6", Some(&agent), &background.id)
+                .unwrap(),
+            std::slice::from_ref(&background.session)
+        );
+        workspace
+            .session_ended(&background.session, SessionEnd::Closed, ok)
+            .unwrap();
+        let after = workspace.snapshot();
+        assert_eq!(after.active_tab, "t2");
+        assert_eq!(after.tabs[1], before.tabs[1]);
+        assert_eq!(after.tabs[0].selected_popup, before.tabs[0].selected_popup);
+        assert_eq!(after.tabs[0].selected_pane.as_deref(), Some("p1"));
+        assert_eq!(after.tabs[0].panes().count(), 1);
         let pair = workspace.snapshot().tabs[1].popups[0].clone();
         request(
             &mut workspace,
@@ -6232,7 +6296,7 @@ mod tests {
             (vec!["t2", "t1"], "t2")
         );
 
-        // Closing resolves the pane in the caller's tab, not the active one.
+        // Closing resolves the pane by its ID, here in the caller's background tab.
         let [session] = &workspace
             .prepare_close_pane("x1", Some("session-1"), &created[1])
             .unwrap()[..]
@@ -8008,5 +8072,600 @@ mod tests {
         assert!(!snapshot.tabs[1].pending);
         assert!(snapshot.tabs[1].popups.is_empty());
         assert_eq!(snapshot.tabs[1].panes().count(), 1);
+    }
+
+    #[test]
+    fn background_tab_close_preserves_foreground_state() {
+        let setup = || {
+            let mut set = WorkspaceSet::with_recovered_sessions(
+                "/runtime".into(),
+                "/".into(),
+                Some("/".into()),
+                vec![(
+                    1,
+                    Session {
+                        id: "session-1".into(),
+                        endpoint: "/runtime/orbit.sock".into(),
+                    },
+                )],
+                catalog(),
+            )
+            .unwrap();
+            let apply = |set: &mut WorkspaceSet, id: &str, caller: Option<&str>, action| {
+                set.dispatch(id, caller, action, prepared, |_| Ok(()))
+                    .unwrap();
+            };
+            apply(
+                &mut set,
+                "t1-p2",
+                Some("session-1"),
+                Action::Workspace(WorkspaceAction::CreatePane { focus: false }),
+            );
+            apply(&mut set, "t1-git", Some("session-1"), invoke("t1", "git"));
+            apply(
+                &mut set,
+                "t2",
+                Some("session-1"),
+                Action::LaunchTab {
+                    directory: b"/".to_vec(),
+                    argv: Vec::new(),
+                    focus: true,
+                },
+            );
+            apply(&mut set, "t2-col", None, Action::CreateColumn);
+            apply(&mut set, "t2-agent", None, invoke("t2", "agent"));
+            apply(
+                &mut set,
+                "t3",
+                Some("session-1"),
+                Action::LaunchTab {
+                    directory: b"/".to_vec(),
+                    argv: Vec::new(),
+                    focus: true,
+                },
+            );
+            apply(&mut set, "t3-git", None, invoke("t3", "git"));
+            apply(
+                &mut set,
+                "focus-t2",
+                None,
+                Action::Workspace(WorkspaceAction::FocusId("t2".into())),
+            );
+            set
+        };
+
+        for (target, surviving) in [("t1", ["t2", "t3"]), ("t3", ["t1", "t2"])] {
+            let mut set = setup();
+            let before = set.snapshot();
+            assert_eq!(before.active_tab, "t2");
+            let active_before = before
+                .tabs
+                .iter()
+                .find(|tab| tab.id == "t2")
+                .unwrap()
+                .clone();
+            assert!(active_before.selected_popup.is_some());
+            let target_tab = before.tabs.iter().find(|tab| tab.id == target).unwrap();
+            let expected_sessions = target_tab
+                .panes()
+                .map(|pane| pane.session.clone())
+                .chain(target_tab.popups.iter().map(|popup| popup.session.clone()))
+                .collect::<Vec<_>>();
+            assert!(expected_sessions.len() >= 2);
+            let sessions = set
+                .prepare_close_tab(&format!("close-{target}"), None, target)
+                .unwrap();
+            assert_eq!(sessions, expected_sessions);
+            assert_eq!(set.snapshot(), before);
+            for session in &sessions {
+                set.session_ended(session, SessionEnd::Closed, |operation| {
+                    assert!(
+                        !matches!(operation, SessionOperation::Start { .. }),
+                        "closing a background tab must not start a terminal: {operation:?}"
+                    );
+                    Ok(())
+                })
+                .unwrap();
+            }
+            let after = set.snapshot();
+            assert_eq!(after.active_tab, "t2");
+            assert_eq!(
+                after
+                    .tabs
+                    .iter()
+                    .map(|tab| tab.id.as_str())
+                    .collect::<Vec<_>>(),
+                surviving
+            );
+            assert_eq!(
+                after.tabs.iter().find(|tab| tab.id == "t2").unwrap(),
+                &active_before
+            );
+        }
+
+        let mut set = setup();
+        set.dispatch(
+            "t4-pending",
+            None,
+            Action::Workspace(WorkspaceAction::CreateTab),
+            prepared,
+            |_| Ok(()),
+        )
+        .unwrap();
+        set.dispatch(
+            "refocus-t2",
+            None,
+            Action::Workspace(WorkspaceAction::FocusId("t2".into())),
+            prepared,
+            |_| Ok(()),
+        )
+        .unwrap();
+        let before = set.snapshot();
+        assert_eq!(before.active_tab, "t2");
+        let active_before = before
+            .tabs
+            .iter()
+            .find(|tab| tab.id == "t2")
+            .unwrap()
+            .clone();
+        let pending_tab = before.tabs.iter().find(|tab| tab.id == "t4").unwrap();
+        assert!(pending_tab.pending);
+        let pair = pending_tab.popups[0].session.clone();
+        let sessions = set.prepare_close_tab("close-t4", None, "t4").unwrap();
+        assert_eq!(sessions, vec![pair.clone()]);
+        assert_eq!(set.snapshot(), before);
+        set.session_ended(&pair, SessionEnd::Closed, |operation| {
+            assert!(
+                !matches!(operation, SessionOperation::Start { .. }),
+                "closing a pending background tab must not start a replacement pane: {operation:?}"
+            );
+            Ok(())
+        })
+        .unwrap();
+        let after = set.snapshot();
+        assert_eq!(after.active_tab, "t2");
+        assert!(!after.tabs.iter().any(|tab| tab.id == "t4"));
+        assert_eq!(
+            after.tabs.iter().find(|tab| tab.id == "t2").unwrap(),
+            &active_before
+        );
+    }
+
+    #[test]
+    fn pane_close_resolves_any_tab_without_selecting_it() {
+        let setup = || {
+            let mut set = WorkspaceSet::with_recovered_sessions(
+                "/runtime".into(),
+                "/".into(),
+                Some("/".into()),
+                vec![(
+                    1,
+                    Session {
+                        id: "session-1".into(),
+                        endpoint: "/runtime/orbit.sock".into(),
+                    },
+                )],
+                catalog(),
+            )
+            .unwrap();
+            let caller = "session-1".to_string();
+            let apply = |set: &mut WorkspaceSet, id: &str, action_caller: Option<&str>, action| {
+                set.dispatch(id, action_caller, action, prepared, |_| Ok(()))
+                    .unwrap();
+            };
+            apply(
+                &mut set,
+                "t2",
+                Some(&caller),
+                Action::LaunchTab {
+                    directory: b"/".to_vec(),
+                    argv: Vec::new(),
+                    focus: true,
+                },
+            );
+            apply(&mut set, "t2-col", None, Action::CreateColumn);
+            apply(&mut set, "t2-agent", None, invoke("t2", "agent"));
+            apply(
+                &mut set,
+                "t3",
+                Some(&caller),
+                Action::LaunchTab {
+                    directory: b"/".to_vec(),
+                    argv: Vec::new(),
+                    focus: true,
+                },
+            );
+            let t3_first_session = set
+                .snapshot()
+                .tabs
+                .iter()
+                .find(|tab| tab.id == "t3")
+                .unwrap()
+                .panes()
+                .next()
+                .unwrap()
+                .session
+                .clone();
+            apply(&mut set, "t3-col2", None, Action::CreateColumn);
+            apply(
+                &mut set,
+                "t3-p2",
+                Some(&t3_first_session),
+                Action::Workspace(WorkspaceAction::CreatePane { focus: true }),
+            );
+            apply(
+                &mut set,
+                "focus-t2",
+                None,
+                Action::Workspace(WorkspaceAction::FocusId("t2".into())),
+            );
+            set.insert_pending(
+                "/other".into(),
+                Some("/other".into()),
+                catalog(),
+                prepared,
+                |_| Ok(()),
+            )
+            .unwrap();
+            let pair = set.workspaces[1].tabs[0].popups[0].session.id.clone();
+            set.shown = 1;
+            set.session_ended(&pair, SessionEnd::Exited, |_| Ok(()))
+                .unwrap();
+            set.shown = 0;
+            set.recent_workspaces = VecDeque::from(["w1".into(), "w2".into()]);
+            (set, caller)
+        };
+
+        for (close_expanded, with_caller) in [(false, true), (true, true), (true, false)] {
+            let (mut set, caller) = setup();
+            let before = set.snapshot();
+            let recency_before = set.recent_workspaces.clone();
+            assert_eq!(before.workspace, "w1");
+            assert_eq!(before.active_workspace, "w1");
+            assert_eq!(before.active_tab, "t2");
+            let t3 = before.tabs.iter().find(|tab| tab.id == "t3").unwrap();
+            assert_eq!(t3.columns.len(), 2);
+            assert_eq!(t3.columns[0].panes.len(), 2);
+            assert_eq!(t3.columns[1].panes.len(), 1);
+            let collapsed = &t3.columns[0].panes[0];
+            let expanded = &t3.columns[0].panes[1];
+            assert_eq!(t3.columns[0].expanded, expanded.id);
+            let (target, survivor) = if close_expanded {
+                (expanded.clone(), collapsed.clone())
+            } else {
+                (collapsed.clone(), expanded.clone())
+            };
+            let request_caller = with_caller.then_some(caller.as_str());
+            let sessions = set
+                .prepare_close_pane("close-pane", request_caller, &target.id)
+                .unwrap();
+            assert_eq!(sessions, vec![target.session.clone()]);
+            assert_eq!(set.snapshot(), before);
+            set.session_ended(&target.session, SessionEnd::Closed, |operation| {
+                assert!(!matches!(operation, SessionOperation::Start { .. }));
+                Ok(())
+            })
+            .unwrap();
+            let after = set.snapshot();
+            assert_eq!(after.workspace, "w1");
+            assert_eq!(after.active_workspace, "w1");
+            assert_eq!(set.recent_workspaces, recency_before);
+            assert_eq!(after.active_tab, "t2");
+            assert_eq!(after.tabs[0], before.tabs[0]);
+            assert_eq!(after.tabs[1], before.tabs[1]);
+            let after_t3 = after.tabs.iter().find(|tab| tab.id == "t3").unwrap();
+            assert_eq!(after_t3.columns.len(), 2);
+            assert_eq!(after_t3.columns[0].panes.len(), 1);
+            assert_eq!(after_t3.columns[0].panes[0].id, survivor.id);
+            assert_eq!(after_t3.columns[0].expanded, survivor.id);
+            assert_eq!(
+                after_t3.selected_pane.as_deref(),
+                Some(survivor.id.as_str())
+            );
+        }
+    }
+
+    #[test]
+    fn background_close_retains_popup_and_last_pane_guards() {
+        let mut set = WorkspaceSet::with_recovered_sessions(
+            "/runtime".into(),
+            "/".into(),
+            Some("/".into()),
+            vec![(
+                1,
+                Session {
+                    id: "session-1".into(),
+                    endpoint: "/runtime/orbit.sock".into(),
+                },
+            )],
+            catalog(),
+        )
+        .unwrap();
+        let apply = |set: &mut WorkspaceSet, id: &str, caller: Option<&str>, action| {
+            set.dispatch(id, caller, action, prepared, |_| Ok(()))
+                .unwrap();
+        };
+        let new_pane = |set: &mut WorkspaceSet, id: &str| {
+            apply(
+                set,
+                id,
+                Some("session-1"),
+                Action::Workspace(WorkspaceAction::CreatePane { focus: false }),
+            );
+            set.snapshot().tabs[0].panes().last().unwrap().clone()
+        };
+        // t1 shows Git over p1, and the active t2 shows Agent over its pane.
+        apply(&mut set, "t1-git", None, invoke("t1", "git"));
+        apply(
+            &mut set,
+            "t2",
+            None,
+            Action::LaunchTab {
+                directory: b"/".to_vec(),
+                argv: Vec::new(),
+                focus: true,
+            },
+        );
+        apply(&mut set, "t2-agent", None, invoke("t2", "agent"));
+        let snapshot = set.snapshot();
+        assert_eq!(snapshot.active_tab, "t2");
+        let pane_caller = snapshot.tabs[1].panes().next().unwrap().session.clone();
+        let popup_caller = snapshot.tabs[1].popups[0].session.clone();
+        let git = snapshot.tabs[0].selected_popup.clone().unwrap();
+
+        // Under t1's popup, a validated pane or popup terminal of another tab
+        // may close a pane that is not the last; Alt+W, with no caller, may not.
+        let before = set.snapshot();
+        for (id, caller) in [
+            ("pane-caller", &pane_caller),
+            ("popup-caller", &popup_caller),
+        ] {
+            let pane = new_pane(&mut set, &format!("{id}-pane"));
+            let covered = set.snapshot();
+            let refused = set
+                .prepare_close_pane(&format!("{id}-alt-w"), None, &pane.id)
+                .unwrap_err();
+            assert_eq!(
+                (refused.code.as_str(), refused.detail.as_str()),
+                ("unavailable", "close the popup before closing a pane")
+            );
+            assert_eq!(set.snapshot(), covered);
+            assert_eq!(
+                set.prepare_close_pane(&format!("{id}-close"), Some(caller), &pane.id)
+                    .unwrap(),
+                std::slice::from_ref(&pane.session)
+            );
+            set.session_ended(&pane.session, SessionEnd::Closed, |_| Ok(()))
+                .unwrap();
+            // The active tab, both popups and every selection are as they were.
+            assert_eq!(set.snapshot(), before);
+            assert_eq!(set.snapshot().tabs[0].selected_popup.as_ref(), Some(&git));
+        }
+
+        // Even a validated caller may not close the covered tab's last pane.
+        for caller in [&pane_caller, &popup_caller] {
+            let refused = set
+                .prepare_close_pane("last-covered", Some(caller), "p1")
+                .unwrap_err();
+            assert_eq!(
+                (refused.code.as_str(), refused.detail.as_str()),
+                (
+                    "unavailable",
+                    "close the popup before closing the tab's last pane"
+                )
+            );
+            assert_eq!(set.snapshot(), before);
+        }
+
+        // With Git hidden, t1's last pane closes and t1 stays with only its
+        // keep-alive popup, while t2 stays active and unchanged. Only the
+        // active tab's popup toggles, so t1 is shown for that and left again.
+        let focus = |id: &str| Action::Workspace(WorkspaceAction::FocusId(id.into()));
+        apply(&mut set, "show-t1", None, focus("t1"));
+        apply(
+            &mut set,
+            "hide-git",
+            None,
+            Action::InvokePopup {
+                tab: "t1".into(),
+                entry: "git".into(),
+                expected_instance: Some(git.clone()),
+                intent: InvokeIntent::Toggle,
+            },
+        );
+        apply(&mut set, "show-t2", None, focus("t2"));
+        assert_eq!(set.snapshot().tabs[0].selected_popup, None);
+        assert_eq!(set.snapshot().tabs[1], before.tabs[1]);
+        assert_eq!(
+            set.prepare_close_pane("t1-last", None, "p1").unwrap(),
+            ["session-1".to_owned()]
+        );
+        set.session_ended("session-1", SessionEnd::Closed, |_| Ok(()))
+            .unwrap();
+        let snapshot = set.snapshot();
+        assert_eq!(snapshot.active_tab, "t2");
+        assert_eq!(snapshot.tabs[1], before.tabs[1]);
+        assert_eq!(snapshot.tabs[0].panes().count(), 0);
+        assert_eq!(snapshot.tabs[0].popups, before.tabs[0].popups);
+
+        // Once t2 is the sole tab, its last pane is a final close, which stops
+        // its hidden popup with it; preparing it changes nothing.
+        let popup_only = set.prepare_close_tab("close-t1", None, "t1").unwrap();
+        assert_eq!(popup_only, [before.tabs[0].popups[0].session.clone()]);
+        set.session_ended(&popup_only[0], SessionEnd::Closed, |_| Ok(()))
+            .unwrap();
+        let agent = set.snapshot().tabs[0].popups[0].id.clone();
+        apply(
+            &mut set,
+            "hide-agent",
+            None,
+            Action::InvokePopup {
+                tab: "t2".into(),
+                entry: "agent".into(),
+                expected_instance: Some(agent),
+                intent: InvokeIntent::Toggle,
+            },
+        );
+        let sole = set.snapshot();
+        let t2_pane = sole.tabs[0].panes().next().unwrap().clone();
+        assert_eq!(
+            set.prepare_close_pane("close-sole-pane", None, &t2_pane.id)
+                .unwrap(),
+            [t2_pane.session, popup_caller]
+        );
+        assert_eq!(set.snapshot(), sole);
+    }
+
+    #[test]
+    fn hidden_callers_close_only_their_workspace_without_showing_it() {
+        let mut set = two_workspace_set(|_| Ok(()));
+        let w1_caller = set.workspaces[0].tabs[0].columns[0].panes[0]
+            .session
+            .id
+            .clone();
+        let w2_caller = set.workspaces[1].tabs[0].columns[0].panes[0]
+            .session
+            .id
+            .clone();
+        let apply = |set: &mut WorkspaceSet, id: &str, caller: Option<&str>, action| {
+            set.dispatch(id, caller, action, prepared, |_| Ok(()))
+                .unwrap();
+        };
+        // Give w2 a second tab (background) and a second pane on its first tab.
+        apply(
+            &mut set,
+            "w2-p2",
+            Some(&w2_caller),
+            Action::Workspace(WorkspaceAction::CreatePane { focus: false }),
+        );
+        apply(
+            &mut set,
+            "w2-bg-tab",
+            Some(&w2_caller),
+            Action::LaunchTab {
+                directory: b"/".to_vec(),
+                argv: Vec::new(),
+                focus: false,
+            },
+        );
+        // w2 keeps a hidden Agent; the shown w1 shows its own Agent.
+        let w2_tab0 = set.workspaces[1].tabs[0].id.clone();
+        apply(
+            &mut set,
+            "w2-agent",
+            Some(&w2_caller),
+            invoke(&w2_tab0, "agent"),
+        );
+        let w2_agent = set.workspaces[1].tabs[0].popups[0].clone();
+        apply(
+            &mut set,
+            "w2-agent-hide",
+            Some(&w2_caller),
+            Action::InvokePopup {
+                tab: w2_tab0.clone(),
+                entry: "agent".into(),
+                expected_instance: Some(w2_agent.id.clone()),
+                intent: InvokeIntent::Toggle,
+            },
+        );
+        set.shown = 0;
+        let w1_tab0 = set.workspaces[0].tabs[0].id.clone();
+        apply(&mut set, "w1-agent", None, invoke(&w1_tab0, "agent"));
+        assert!(set.snapshot().tabs[0].selected_popup.is_some());
+        let shown_before = set.workspaces[0].clone();
+        let recency_before = set.recent_workspaces.clone();
+        let w1_tab = set.workspaces[0].tabs[0].id.clone();
+        let w1_pane = set.workspaces[0].tabs[0].columns[0].panes[0].id.clone();
+        let w2_bg_tab = set.workspaces[1].tabs[1].id.clone();
+        let w2_second_pane = set.workspaces[1].tabs[0].columns[0].panes[1].id.clone();
+        let w2_second_pane_session = set.workspaces[1].tabs[0].columns[0].panes[1]
+            .session
+            .id
+            .clone();
+
+        // A caller in w1 (or None) attempting to close a tab or pane in w2 fails with unknown-tab / unknown-pane.
+        let before = set.clone();
+        for caller in [Some(w1_caller.as_str()), None] {
+            assert_eq!(
+                set.prepare_close_tab("w1-to-w2-tab", caller, &w2_bg_tab)
+                    .unwrap_err()
+                    .code,
+                "unknown-tab"
+            );
+            assert_eq!(
+                set.prepare_close_pane("w1-to-w2-pane", caller, &w2_second_pane)
+                    .unwrap_err()
+                    .code,
+                "unknown-pane"
+            );
+            assert_eq!(set, before);
+        }
+
+        // A caller in w2 attempting to close a tab or pane in w1 fails with unknown-tab / unknown-pane.
+        assert_eq!(
+            set.prepare_close_tab("w2-to-w1-tab", Some(&w2_caller), &w1_tab)
+                .unwrap_err()
+                .code,
+            "unknown-tab"
+        );
+        assert_eq!(
+            set.prepare_close_pane("w2-to-w1-pane", Some(&w2_caller), &w1_pane)
+                .unwrap_err()
+                .code,
+            "unknown-pane"
+        );
+        assert_eq!(set, before);
+
+        // A caller in w2 closes a pane and a background tab in w2 without showing w2 or changing w1 or recency.
+        let pane_sessions = set
+            .prepare_close_pane("w2-close-pane", Some(&w2_caller), &w2_second_pane)
+            .unwrap();
+        assert_eq!(pane_sessions, vec![w2_second_pane_session.clone()]);
+        set.session_ended(&w2_second_pane_session, SessionEnd::Closed, |_| Ok(()))
+            .unwrap();
+        assert_eq!(set.shown, 0);
+        assert_eq!(set.snapshot().active_workspace, "w1");
+        assert_eq!(set.snapshot().active_tab, w1_tab);
+        assert_eq!(set.recent_workspaces, recency_before);
+        assert_eq!(set.workspaces[1].tabs[0].panes().count(), 1);
+
+        let tab_sessions = set
+            .prepare_close_tab("w2-close-tab", Some(&w2_caller), &w2_bg_tab)
+            .unwrap();
+        assert_eq!(tab_sessions.len(), 1);
+        set.session_ended(&tab_sessions[0], SessionEnd::Closed, |_| Ok(()))
+            .unwrap();
+        assert_eq!(set.shown, 0);
+        assert_eq!(set.snapshot().active_workspace, "w1");
+        assert_eq!(set.snapshot().active_tab, w1_tab);
+        assert_eq!(set.recent_workspaces, recency_before);
+        assert_eq!(set.workspaces[1].tabs.len(), 1);
+        assert_eq!(set.workspaces[0], shown_before);
+
+        // Its own caller closes the hidden w2's final tab, by the tab or by its
+        // last pane, stopping its hidden popup too; only w2 goes, and the shown
+        // w1 stays shown and unchanged.
+        let w2_pane = set.workspaces[1].tabs[0].columns[0].panes[0].id.clone();
+        let final_sessions = vec![w2_caller.clone(), w2_agent.session.id.clone()];
+        let unchanged = set.clone();
+        assert_eq!(
+            set.prepare_close_tab("w2-final-tab", Some(&w2_caller), &w2_tab0)
+                .unwrap(),
+            final_sessions
+        );
+        assert_eq!(
+            set.prepare_close_pane("w2-final-pane", Some(&w2_caller), &w2_pane)
+                .unwrap(),
+            final_sessions
+        );
+        assert_eq!(set.workspaces, unchanged.workspaces);
+        for session in &final_sessions {
+            set.session_ended(session, SessionEnd::Closed, |_| Ok(()))
+                .unwrap();
+        }
+        assert_eq!(set.workspaces.len(), 1);
+        assert_eq!(set.shown, 0);
+        assert_eq!(set.workspaces[0], shown_before);
+        assert_eq!(set.snapshot().active_workspace, "w1");
     }
 }

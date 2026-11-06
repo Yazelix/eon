@@ -337,8 +337,13 @@ will stop and, while other workspaces remain, naming the workspace that
 closes; `--json` never asks. In the window, Alt+Shift+W, the bar's `×` and
 Alt+W on the last pane show a prompt listing the same terminals: Enter quits,
 or closes the workspace while others remain, Escape cancels, and Alt+Shift+D
-keeps them running instead. With `false`, both close at once. The window reads
-the setting when it starts.
+keeps them running instead. With `false`, both close an idle final tab at
+once. The CLI's busy confirmation for `eon tab close` and `eon pane close` does
+not depend on this setting: when a terminal the close stops is busy or its busy
+state is unknown, it still asks, naming the final consequence, or with `--json`
+requires `--yes` ([CLI commands](USAGE.md#cli-commands)). It stays fixed
+because stopping busy work needs explicit consent. The window reads the setting
+when it starts.
 
 `animate_working_badge = true` steps the working attention badge, on tabs and
 in the agent sidebar, through the braille dots ⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏ ten times a

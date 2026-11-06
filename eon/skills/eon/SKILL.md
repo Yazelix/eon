@@ -11,9 +11,11 @@ Treat `EON_TERMINAL` as opaque. When it is set, find yourself with
 Without a calling terminal, `caller` is null.
 
 Act by ID: workspaces use `wN`, tabs `tN`, panes `pN`, and terminals `session-N`.
-Use `--json` on every workspace command. From an Eon terminal, pane commands
-and `eon edit` act on your own tab and column; a popup acts for its tab's
-selected pane. Read the returned state rather than guessing IDs.
+Use `--json` on every workspace command. From an Eon terminal, pane creation
+and moves, tab moves and `eon edit` act on your own tab and column; a popup acts
+for its tab's selected pane. `eon tab close tN` and `eon pane close pN` target
+any tab or pane in your workspace without moving focus. Read the returned state
+rather than guessing IDs.
 
 ## Preserve the person's focus
 
@@ -22,7 +24,14 @@ unless asked to move them. Pass `--no-focus` to `pane create`, `workspace new`
 and directory-based `tab create`.
 Never run `eon focus ID`, `eon workspace switch WS`,
 `eon tab close TAB` or `eon pane close PANE` on things you did not
-open unless the person asks. If asked to clean up, close what you opened.
+open unless the person asks. If asked to clean up, close what you opened with
+`eon tab close tN --json` or `eon pane close pN --json`: they close targets in
+any tab of your workspace without moving focus. If an affected terminal is still
+running a command, or Eon cannot tell (always so in an eonbase window), `--json`
+refuses with exit 1 (`not-confirmed`); do not automatically retry with
+`--yes`. Pass `--yes` (`eon tab close tN --yes --json` or
+`eon pane close pN --yes --json`) only when stopping that busy work is
+authorized.
 Rename your pane with `eon pane rename pN NAME --json` only when the person asks.
 
 ## Run something beside you

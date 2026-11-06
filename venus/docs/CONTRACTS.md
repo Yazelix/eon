@@ -567,7 +567,10 @@ re-proved when that platform or feature is next touched.
 - **Status:** Partially proved. Amended on 2026-11-04 under Lucca's standing
   approval rule, relayed by eon-overseer: by `eon-8wh7h`, the slow notice and
   product text for unavailable notices; by `eon-hbpkq`, Alt+Shift+1..9 and
-  Alt+Shift+0 show workspace positions.
+  Alt+Shift+0 show workspace positions. Amended on 2026-11-05 (approved by
+  Lucca, relayed by eon-overseer) by `eon-agent-parity-a9g0.3`: Enter on the
+  final-close prompt sends the held close directly by its named target without
+  first focusing its tab.
 - **Consumer:** One Venus surface controlled by an Eon workspace.
 - **Trigger:** Outside visible `VEN-C18` popup presentation, Eon supplies
   durable topology, a workspace action changes tab, pane, focus, order,
@@ -729,8 +732,9 @@ re-proved when that platform or feature is next touched.
     without an action when the tab has none. Both may target the final tab and
     its last pane. Such a final close, whatever the workspace count, when the
     `--warning-close-last-tab` launch argument is true (its default), first
-    shows the EON-C8 prompt, which Venus owns: Enter sends the held close,
-    first focusing its tab if another tab became active, Escape dismisses it,
+    shows the EON-C8 prompt, which Venus owns: Enter sends the held close
+    directly by its named target, without first focusing its tab. If another
+    tab became active, that tab stays active. Escape dismisses the prompt,
     Alt+Shift+D detaches, the wheel and the viewer's navigation keys scroll a
     long list, and other keys and pointer input reach nothing while it is
     open.
@@ -953,7 +957,15 @@ re-proved when that platform or feature is next touched.
   t3 active, read the active tab from `eon workspace --json` as t1, t2, t1, t3
   and t1 after Ctrl+Tab, Ctrl+Tab, Ctrl+Shift+Tab, Ctrl+Shift+Tab and
   Ctrl+Tab, and t1's shell line still read `ech` after the two presses made
-  from t1. Pending
+  from t1. The amendment by `eon-agent-parity-a9g0.3` was observed in an
+  isolated install of the built package (code tree `6a89e36`, whose
+  `nix build` gave `/nix/store/pgm8dy6678g9kf4swpxpciwxd0hasspj-eon-0.1.18`,
+  x86_64 Linux, private headless Sway). With t1's final-close prompt held
+  while the CLI added t2 and then t3, leaving t3 active, Enter closed only
+  t1, and t3 stayed active, where selecting t1 first would have shown t2.
+  `close_prompt_asks_for_a_final_close` checks only that a prompt held while
+  t2 became active still names t1 and p1; no automated test drives
+  `send_close`. Pending
   re-proof in this repository: the ignored native long-label header regression and reader
   announcement of a workspace failure notice.
 

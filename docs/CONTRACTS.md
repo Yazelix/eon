@@ -429,7 +429,11 @@ socket names, JSON fields and protocol identifiers retain their spellings.
 
 ## EON-C8 — Durable tab and pane workspace
 
-- **Status:** Partially proved
+- **Status:** Partially proved. Amended on 2026-11-05 (approved by Lucca,
+  relayed by eon-overseer) by `eon-agent-parity-a9g0.3`: tabs and panes in any
+  tab of the addressed workspace close by ID without moving focus, CLI closes
+  use target-scoped busy confirmation, and a native confirmed close sends its
+  named action directly without focusing its tab first.
 - **Consumer:** One local Eon workspace user.
 - **Trigger:** Launch, create or close a tab, create, close or rename a pane, create a column, traverse focus,
   reorder the active tab or selected pane, move the selected pane into a neighbouring column, zoom the
@@ -543,11 +547,15 @@ socket names, JSON fields and protocol identifiers retain their spellings.
     active tab. Venus maps Ctrl+Alt+Shift+H/L, Ctrl+Alt+K/J and Ctrl+Alt+H/L
     directly to these actions without a mode; `eon pane move left|right` sends
     the same EONW v12 sideways move. Run from an Eon terminal, `eon tab move`,
-    `eon pane move`, `eon pane create` and `eon pane close` act on the calling
-    terminal's tab and pane instead of the active tab and its selected pane
-    ([EON-C10](#eon-c10--typed-workspace-control)).
-  - Closing names the expected active `tN`. A non-final pending tab first
-    stops its exact picker, then disappears and restores its prior tab. Eon
+    `eon pane move` and `eon pane create` act on the calling terminal's tab
+    and pane instead of the active tab and its selected pane (EON-C10).
+    Explicit close targets follow the close rules below.
+  - Closing names an exact live `tN` in the addressed workspace (EON-C10),
+    whether or not that tab is active. A close of a background tab preserves
+    the active tab's identity, selected column and pane, shown and selected
+    popup, and desktop focus. It does not show a hidden workspace. A
+    non-final pending tab first stops its exact picker, then disappears;
+    remaining selection follows the ended-terminal rules below. Eon
     stops the tab's pane and popup terminals together, under one shared
     five-second bound, and prunes each confirmed end, in tab order, through
     the normal terminal-exit owner. Complete success removes the tab with the
@@ -641,20 +649,28 @@ socket names, JSON fields and protocol identifiers retain their spellings.
     flight, Alt+Shift+Q and Enter do nothing. A failed Stop keeps the window
     and shows the failure, and Alt+Shift+Q then tries again.
     eonbase has no Quit key.
-  - Closing a pane names a `pN` in the active tab, or in the calling
-    terminal's tab under EON-C10. Eon stops that pane's
-    terminal and prunes the confirmed end through the normal terminal-exit
-    owner, so its column, its tab and focus follow the ended-terminal rules
-    below. Closing the final tab's last pane acts as final-tab close does,
-    stopping that tab's popups with it. Closing is unavailable
-    while a popup or picker covers the tab, except that a calling terminal
-    of that tab, pane or popup (EON-C10), may close a named pane other than
-    the tab's last; the popup stays shown and selected, and the tab's pane
-    selection follows the ended-terminal rules below. A failed stop reports
-    failure and keeps the pane; a terminal that ended naturally during the
-    request is reconciled as an exit. Venus maps Alt+W directly to the
-    selected pane without a mode; `eon pane close PANE` sends the same EONW
-    v11 action.
+
+    CLI closes also use EON-C10's target-scoped busy confirmation, independently
+    of `warning_close_last_tab`. A native confirmed close sends its named
+    close action without first selecting the named tab. If that tab became
+    background while the prompt was open, the current active tab stays active.
+  - Closing a pane names an exact live `pN` in any tab of the addressed
+    workspace (EON-C10), independently of the caller's tab and the active tab.
+    Eon stops that pane's terminal and prunes its confirmed end through the
+    normal terminal-exit owner, so its column, its tab and focus follow the
+    ended-terminal rules below. Closing the final tab's last pane acts as
+    final-tab close does, stopping that tab's popups with it. While a popup
+    or picker covers the target tab, a close without a calling terminal is
+    unavailable; a validated calling terminal of the addressed workspace may
+    close a non-last pane in that tab, leaving its popup shown and selected,
+    but may not close the tab's last pane. A close in a background tab
+    preserves the active tab's selection and popup and never shows another
+    workspace or moves desktop focus. A close in the active tab keeps every
+    surviving selected identity when possible and otherwise follows the
+    ended-terminal rules. A failed stop reports failure and keeps the pane;
+    a terminal that ended naturally during the request is reconciled as an
+    exit. Venus maps Alt+W directly to the selected pane without a mode;
+    `eon pane close PANE` sends the same target-bearing EONW action.
   - Ended terminals leave no dead pane or empty tab; focus moves deterministically
     to the same identity when possible, otherwise the following sibling at the
     removed index, otherwise the preceding sibling. A workspace left empty
@@ -668,12 +684,11 @@ socket names, JSON fields and protocol identifiers retain their spellings.
     without claiming restoration of prior topology or launch-directory policy.
   - New current-generation full Eon surfaces omit the redundant native title
     bar while retaining the selected terminal title for compositor semantics.
-- **Important failures:** Unknown or stale identity, a close target other than
-  the active tab, a pane outside the active or calling tab,
-  pane close under a popup or picker other than a calling terminal's close
-  of a non-last pane in its tab, creating a fifth column,
-  durable close in the picker-bound tab,
-  invalid transition, unavailable endpoint, duplicate identity, or partial
+- **Important failures:** Unknown or stale identity, a close target outside
+  the addressed workspace, pane close under a popup or picker without a
+  calling terminal or naming the tab's last pane, creating a fifth column,
+  durable close in the picker-bound tab, invalid transition, unavailable
+  endpoint, duplicate identity, or partial
   recovery leaves accepted topology unchanged. A request ID repeated within
   the last 256 accepted mutations never repeats a stop, and a replay naming a removed tab cannot close its successor.
   A final close never ends the generation until every terminal stop is
@@ -693,8 +708,8 @@ socket names, JSON fields and protocol identifiers retain their spellings.
   identities/endpoints and Venus `VEN-C8`.
 - **Boundary:** No arbitrary split tree, vertical splits, column resizing,
   arbitrary reorder target, cross-tab pane movement, picker relocation, durable layout
-  restoration, a per-pane terminal restart action, closing panes outside the
-  active or calling tab, terminal
+  restoration, a per-pane terminal restart action, closing tabs or panes
+  outside the addressed workspace, terminal
   content/history, provider state (except EON-C31's attention values), plugin
   surface, remote access, reconstructed terminal state, or notifications other
   than the detach notice.
@@ -863,6 +878,29 @@ socket names, JSON fields and protocol identifiers retain their spellings.
   ended the zoom on Alt+H.
   Installed AT-SPI labels and broader reader use remain open. These checks do not establish uninterrupted picker rendering,
   fractional-scale, wider compositor or non-systemd coverage.
+  Close by ID without moving focus (`eon-agent-parity-a9g0.3`, whose commit is
+  the revision): runtime `background_tab_close_preserves_foreground_state`,
+  `pane_close_resolves_any_tab_without_selecting_it`,
+  `pane_close_targets_exact_ids_and_prunes_like_an_exit`,
+  `background_close_retains_popup_and_last_pane_guards`,
+  `workspace_set_refuses_foreign_targets` and
+  `hidden_callers_close_only_their_workspace_without_showing_it`; CLI
+  `close_parsers_require_one_stable_identity`,
+  `close_question_is_target_scoped_and_conservative` and
+  `close_question_combines_busy_and_final_warnings_once`; real-binary
+  `cli_closes_background_ids_and_preserves_the_presented_workspace`,
+  `cli_busy_background_close_confirms_refuses_and_cancels_without_focus`,
+  `cli_idle_background_close_ignores_other_busy_tabs` and
+  `cli_close_preserves_workspace_scope_and_final_close_results`. Isolated
+  installed observation of the built package (code tree `6a89e36`, whose
+  `nix build` gave `/nix/store/pgm8dy6678g9kf4swpxpciwxd0hasspj-eon-0.1.18`,
+  x86_64 Linux, private headless Sway, D-Bus session, home and runtime
+  directory): with the native final-close prompt for t1 held open,
+  `eon tab create` added t2 and then t3, leaving t3 active. Enter closed only
+  t1 and ended only its terminals, and t3 stayed active, where selecting t1
+  first would have left t2 active. Escape on the prompt kept the tab, and
+  Enter on the last tab ended only the private window. No automated test
+  drives Venus's `send_close`.
 
 ## EON-C9 — Managed shell environment
 
@@ -1070,7 +1108,10 @@ socket names, JSON fields and protocol identifiers retain their spellings.
   `eon-u5bvd.4`: the Scrollback popup and its private snapshot. Amended on
   2026-11-05 (approved by Lucca, relayed by eon-overseer, `eon-u5bvd.1`
   record 03) by `eon-u5bvd.5`: Scrollback's CLI path, `eon pane history
-  --edit`.
+  --edit`. Amended on 2026-11-05 (approved by Lucca, relayed by eon-overseer)
+  by `eon-agent-parity-a9g0.3`: `eon tab close TAB [--yes] [--json]` and
+  `eon pane close PANE [--yes] [--json]` resolve in any tab of the addressed
+  workspace without moving focus and use target-scoped busy confirmation.
 - **Consumer:** One local CLI or approved composition controlling a live Eon
   supervisor.
 - **Trigger:** The client submits one versioned workspace or supervisor-lifecycle
@@ -1107,27 +1148,29 @@ socket names, JSON fields and protocol identifiers retain their spellings.
     failure code.
     Multi-target Stop exits with its largest status; commands that run another
     program pass on its status.
-  - A CLI confirmation (`eon stop`, `eon quit`, `eon window stop`,
-    `eon workspace close`, and the final close of `eon tab close` and
-    `eon pane close`) proceeds only
-    on a yes answer (`y`, `Y`, `yes` or `YES`). Any other answer changes
-    nothing. At a terminal it prints the cancel note and exits 0. When stdin
-    is not a terminal, it exits 1 with `not-confirmed`, end of input included,
-    and a piped yes still confirms. `--json` never asks. The final close asks
-    only at a terminal and otherwise closes.
+  - A CLI confirmation proceeds only on a yes answer (`y`, `Y`, `yes` or
+    `YES`). Any other answer changes nothing. At a terminal it prints the
+    cancel note and exits 0. When stdin is not a terminal, it exits 1 with
+    `not-confirmed`, end of input included, and a piped yes still confirms.
+    `--json` never asks or reads a confirmation from stdin. Stop, Quit,
+    window-stop and workspace-close retain their existing JSON behavior.
+    Tab and pane close use the separate busy and final-close rules below;
+    `--json` alone never confirms a busy close.
   - Every Eon terminal's environment carries `EON_TERMINAL`, an opaque value
     naming that terminal's exact Orbit run; the supervisor's other children
     never inherit one. For workspace control, `EON_TERMINAL` selects the live supervisor and workspace that own that
     exact terminal, independently of the invoked CLI build's current generation. Within that workspace,
-    `pane create`, `edit`, `pane close PANE`, `pane move` and `tab move` retain their calling-tab,
-    column and pane rules: creation uses the caller's column, moves act on its pane or tab, and pane
-    close resolves its target in the caller's tab. A popup terminal acts for its tab and that tab's selected column and
-    pane. Within that tab each action behaves as it does for the active tab,
-    so `pane create` selects the new pane and dismisses the tab's popup;
-    `pane close PANE` also works while a popup covers the caller's tab and
-    leaves that popup shown (EON-C8); the active tab and desktop focus never
-    change. Other workspace-scoped commands use the caller's workspace and retain their existing per-tab
-    rules. Without a calling terminal or explicit target, workspace control uses the invoked build's
+    `pane create`, `edit`, `pane move` and `tab move` retain their calling-tab,
+    column and pane rules: creation uses the caller's column and moves act on
+    its pane or tab. A popup terminal acts
+    for its tab and that tab's selected column and pane. Within that tab each
+    action behaves as it does for the active tab, so `pane create` selects
+    the new pane and dismisses the tab's popup; the active tab and desktop
+    focus never change. Explicit `tab close TAB` and `pane close PANE`
+    resolve in any tab of that workspace by the close rules below. Other
+    workspace-scoped commands use the caller's workspace and retain their
+    existing per-tab rules. Without a calling terminal or explicit target,
+    workspace control uses the invoked build's
     current generation in the selected runtime namespace and its shown workspace. Launch, lifecycle and
     local information commands retain their existing targeting. Every popup terminal's environment
     also carries `EON_TAB`, the `tN` identity of the tab that owned it when it
@@ -1203,21 +1246,47 @@ socket names, JSON fields and protocol identifiers retain their spellings.
     addressed workspace does not list fails with
     `unknown-popup`; one that leaves between the read and the dismissal fails
     with `stale-popup`. Both exit 3 and change nothing.
-  - `eon tab close TAB` and `eon pane close PANE` may name the final tab or
-    its last pane, which ends the window (EON-C8), or, while other workspaces
-    remain, removes that workspace (EON-C33). Before either final close, when
-    `[workspace] warning_close_last_tab` is true, its default, and stdin is a
-    terminal, the CLI first lists the terminals that will stop and asks, as
-    `eon stop` does. While other workspaces remain, it words the question as
-    EON-C33 does, `Close the last tab? This closes workspace NAME and stops N
-    terminals [...]. [y/N]`, and a cancel prints `cancelled; workspace NAME
-    stays open`. `--json` never asks, and neither does the CLI when the
-    setting is false. Run from a terminal, a close that cannot first inspect
-    the workspace fails without closing. A close that ends the window prints
-    that the generation ended, or with `--json`
-    `{"ended":{"generation":...}}`, and exits 0. The caller's own
-    terminal may end with it, as with Stop. Eon rejects a non-boolean
-    `warning_close_last_tab` with the rest of `config.toml`.
+  - `eon tab close TAB [--yes] [--json]` and
+    `eon pane close PANE [--yes] [--json]` resolve their explicit live IDs
+    in any tab of the addressed workspace: the validated caller's workspace
+    inside Eon, otherwise the shown workspace of the selected supervisor.
+    The caller's workspace may be hidden; an ID in another workspace is
+    `unknown-tab` or `unknown-pane` (exit 3), with no fallback or workspace
+    switch. Caller validation and EON-C8's popup and final-pane rules still
+    apply. Closing a background target leaves the shown workspace, active
+    tab, surviving selected identities, shown popup and desktop focus alone.
+    Selection removed by an active-target close follows EON-C8's exit rules.
+  - Before every tab or pane close, including with `--json` or `--yes`, the
+    CLI successfully inspects the addressed workspace and validates the
+    named target. It uses EON-C11's busy classification for the terminals
+    that this close will stop, including the caller when it is a target.
+    An unavailable busy list or a nonzero omitted count is unknown and
+    requires confirmation. A busy or unknown close in human mode lists its
+    affected terminals and asks for confirmation; cancellation stops
+    nothing. In JSON mode without `--yes` it stops nothing and returns
+    `not-confirmed` (exit 1), with detail `close of tab TAB requires
+    confirmation; rerun with --yes` or `close of pane PANE requires
+    confirmation; rerun with --yes`. `--yes` explicitly confirms this one
+    named close and never bypasses target, caller, popup or Stop validation.
+    Busy confirmation is independent of `warning_close_last_tab`. It uses
+    the latest successful inspection, not an atomic inspect-and-close
+    transaction; Runtime revalidates the exact live target before stopping.
+  - Closing a workspace's final tab or that tab's last pane ends the window
+    when it is the last workspace (EON-C8), or removes that workspace while
+    others remain (EON-C33). With `warning_close_last_tab = true`, its
+    default, a human-mode CLI at a terminal asks first even when the target
+    is idle, unless `--yes` was given. An idle final close in JSON mode or
+    without a terminal retains its existing no-prompt behavior. A busy
+    final close requires the busy confirmation above, even in those modes
+    or with the warning setting false. When both warnings apply, ask once
+    with the final-close consequence and busy terminal list. The idle
+    final-close question and cancel note retain their existing wording,
+    naming the workspace while other workspaces remain. A close that
+    cannot inspect first fails without closing. Successful JSON and human
+    result shapes and exit statuses remain unchanged, including `Ended`
+    when the window ends. The caller's own terminal may end with it, as
+    with Stop. Eon rejects a non-boolean `warning_close_last_tab` with the
+    rest of `config.toml`.
   - CLI JSON carries each pane's and popup's full EON-C31 attention record, the window's
     EON-C31 attention queue in order, and the window's Codex and Claude quota readings
     (EON-C27), as EON-C31's CLI JSON rule lists them. It also carries the window's
@@ -1307,9 +1376,10 @@ socket names, JSON fields and protocol identifiers retain their spellings.
   a tab without panes, a popup caller's `pane move` refuses, and so does its
   `pane create` without `--no-focus` when dismissing that popup would end the
   tab's last terminal; both change nothing and exit 1. While a popup covers the
-  caller's tab, `pane close` naming that tab's last pane changes nothing and
-  exits 1, and so does a close sent without a calling terminal, including
-  Alt+W. An unavailable editor changes nothing and exits 1. An empty COMMAND is
+  target tab, `pane close` naming that tab's last
+  pane changes nothing and exits 1. Without a calling terminal, a pane
+  close under a popup also refuses a non-last pane, including Alt+W. An
+  unavailable editor changes nothing and exits 1. An empty COMMAND is
   a usage error (exit 2); a command pane requested without a calling terminal,
   or whose program is missing or not executable, changes nothing and exits 1.
   Malformed, oversized, incompatible, unavailable, rejected, timed-out,
@@ -1689,6 +1759,35 @@ socket names, JSON fields and protocol identifiers retain their spellings.
     p1` byte for byte. `:q` ended the popup, p1 showed again, and the
     snapshot and the store were gone. `eon pane history --edit` is EON-C35's
     proof.
+  - **Close by ID without moving focus (`eon-agent-parity-a9g0.3`, whose commit
+    is the revision):** runtime
+    `background_tab_close_preserves_foreground_state`,
+    `pane_close_resolves_any_tab_without_selecting_it`,
+    `pane_close_targets_exact_ids_and_prunes_like_an_exit`,
+    `background_close_retains_popup_and_last_pane_guards`,
+    `workspace_set_refuses_foreign_targets` and
+    `hidden_callers_close_only_their_workspace_without_showing_it`; CLI
+    `close_parsers_require_one_stable_identity`,
+    `close_question_is_target_scoped_and_conservative` and
+    `close_question_combines_busy_and_final_warnings_once`; real-binary
+    `cli_closes_background_ids_and_preserves_the_presented_workspace`,
+    `cli_busy_background_close_confirms_refuses_and_cancels_without_focus`,
+    `cli_idle_background_close_ignores_other_busy_tabs`,
+    `cli_close_preserves_workspace_scope_and_final_close_results` and
+    `a_confirmed_close_inspects_first_and_a_failed_inspection_closes_nothing`.
+    The isolated installed observation recorded under EON-C8 (code tree
+    `6a89e36`, `/nix/store/pgm8dy6678g9kf4swpxpciwxd0hasspj-eon-0.1.18`) also
+    ran these closes with t2 active and its Files popup shown:
+    - Background t3 and t1's pane p2 closed by ID.
+    - For the busy t1, `n` at a terminal cancelled, and `--json` refused with
+      `not-confirmed` (exit 1). `--yes --json` closed only t1 and ended its
+      `sleep 300`.
+    - A hidden w1's caller closed w1's tab t4, then its last tab, which
+      removed w1. The shown w2 did not change, and w1's IDs exited 3 from
+      w2's caller and from no caller.
+
+    In the first two, t2, its popup and the compositor focus stayed. Each
+    close ended exactly its target's processes.
 
 ## EON-C11 — Runtime generations and presentation
 

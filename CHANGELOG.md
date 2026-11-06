@@ -5,6 +5,14 @@ installation, and proven contract changes.
 
 ## Unreleased
 
+- `eon tab close TAB` and `eon pane close PANE` close targets in any tab of
+  the addressed workspace without changing the person's active tab or popup.
+  CLI closes ask before stopping busy work; JSON callers pass `--yes` to
+  confirm a busy close. In an eonbase window every tab or pane close counts
+  as "busy state unknown", so `--json` needs `--yes` there and a terminal
+  asks. IDs in another workspace remain refused. A native final-close prompt
+  no longer selects its tab before closing it if another tab became active
+  (`eon-agent-parity-a9g0.3`, EON-C8, EON-C10).
 - `eon pane history TARGET --edit` opens TARGET's scrollback in the configured
   editor from the CLI, in a Scrollback popup over its tab, as Alt+Shift+E does
   for what the tab shows (`eon-u5bvd.5`, EON-C35, EON-C10). It works only in

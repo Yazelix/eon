@@ -4746,7 +4746,6 @@ esac
     // Runs a popup with `input` on its stdin: a pipe, or with `terminal` a pseudoterminal whose
     // controller stays open until the popup exits.
     let popup_status = |name: &str, caller: &str, input: &[u8], terminal: bool| {
-        use std::os::fd::{AsRawFd, FromRawFd, OwnedFd};
         let program = root.join(name);
         if !program.exists() {
             symlink(&binary, &program).unwrap();
@@ -4760,28 +4759,7 @@ esac
         let path = std::iter::once(tools.clone()).chain(std::env::split_paths(&original));
         let mut controller = None;
         let stdin = if terminal {
-            let (mut leader, mut device) = (-1, -1);
-            // SAFETY: openpty initializes both descriptors on success.
-            let opened = unsafe {
-                libc::openpty(
-                    &raw mut leader,
-                    &raw mut device,
-                    std::ptr::null_mut(),
-                    std::ptr::null_mut(),
-                    std::ptr::null_mut(),
-                )
-            };
-            assert_eq!(opened, 0, "{}", std::io::Error::last_os_error());
-            // SAFETY: a successful openpty transferred ownership of both descriptors.
-            let (leader, device) =
-                unsafe { (fs::File::from_raw_fd(leader), OwnedFd::from_raw_fd(device)) };
-            for descriptor in [leader.as_raw_fd(), device.as_raw_fd()] {
-                // SAFETY: both descriptors are open and owned here.
-                assert_eq!(
-                    unsafe { libc::fcntl(descriptor, libc::F_SETFD, libc::FD_CLOEXEC) },
-                    0
-                );
-            }
+            let (leader, device) = pseudo_terminal();
             controller.insert(leader).write_all(input).unwrap();
             Stdio::from(device)
         } else {
@@ -5481,7 +5459,7 @@ fn commands_from_a_terminal_target_its_column_and_stale_callers_change_nothing()
     }
     assert_eq!(inspect("after-refusals"), snapshot);
 
-    let closed = from(&caller, &["pane", "close", "p3", "--json"]);
+    let closed = from(&caller, &["pane", "close", "p3", "--yes", "--json"]);
     assert!(closed.status.success(), "{}", stdout(&closed));
     assert!(!stdout(&closed).contains("\"id\":\"p3\""));
 
@@ -5801,7 +5779,7 @@ fn delayed_second_cli_receives_committed_workspace_and_controls_three_sessions()
         &binary,
         &runtime,
         &config,
-        &["pane", "close", "p2", "--json"],
+        &["pane", "close", "p2", "--yes", "--json"],
     );
     assert!(
         closed.status.success(),
@@ -5827,8 +5805,13 @@ fn delayed_second_cli_receives_committed_workspace_and_controls_three_sessions()
         close_third(),
         Response::Failure(failure) if failure.code == "duplicate-request"
     ));
-    // The final tab's last pane ends the window; stdin is not a terminal, so it does not ask.
-    let final_pane = invoke(&binary, &runtime, &config, &["pane", "close", "p1"]);
+    // The final tab's last pane ends the window.
+    let final_pane = invoke(
+        &binary,
+        &runtime,
+        &config,
+        &["pane", "close", "p1", "--yes"],
+    );
     assert!(final_pane.status.success(), "{}", stdout(&final_pane));
     assert!(stdout(&final_pane).starts_with("ended generation "));
     wait_for_successful_exit(&mut supervisor.child);
@@ -6420,7 +6403,7 @@ fn closing_the_final_tab_ends_the_window_and_its_terminals() {
         &binary,
         &runtime,
         &config,
-        &["tab", "close", "t1", "--json"],
+        &["tab", "close", "t1", "--yes", "--json"],
     );
     assert!(closed.status.success(), "{}", stdout(&closed));
     let generation_id = generation.file_name().unwrap().to_str().unwrap();
@@ -11755,4 +11738,1148 @@ fn pane_send_pastes_then_waits_for_enter_and_exits_by_failure() {
     fs::write(&supervisor.stop, "").unwrap();
     wait_for_successful_exit(&mut supervisor.child);
     fs::remove_dir_all(off).unwrap();
+}
+
+/// A pseudoterminal's controller and the device a child reads as stdin, both
+/// closed on exec.
+fn pseudo_terminal() -> (fs::File, std::os::fd::OwnedFd) {
+    use std::os::fd::{AsRawFd, FromRawFd, OwnedFd};
+    let (mut leader, mut device) = (-1, -1);
+    // SAFETY: openpty initializes both descriptors on success.
+    let opened = unsafe {
+        libc::openpty(
+            &raw mut leader,
+            &raw mut device,
+            std::ptr::null_mut(),
+            std::ptr::null_mut(),
+            std::ptr::null_mut(),
+        )
+    };
+    assert_eq!(opened, 0, "{}", std::io::Error::last_os_error());
+    // SAFETY: a successful openpty transferred ownership of both descriptors.
+    let (leader, device) = unsafe { (fs::File::from_raw_fd(leader), OwnedFd::from_raw_fd(device)) };
+    for descriptor in [leader.as_raw_fd(), device.as_raw_fd()] {
+        // SAFETY: both descriptors are open and owned here.
+        assert_eq!(
+            unsafe { libc::fcntl(descriptor, libc::F_SETFD, libc::FD_CLOEXEC) },
+            0
+        );
+    }
+    (leader, device)
+}
+
+/// Runs `command` with stdin null and returns its output, killing it and
+/// failing if it has not exited within 10 seconds.
+fn bounded_output(command: &mut Command) -> Output {
+    let mut child = command
+        .stdin(Stdio::null())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .unwrap();
+    let deadline = Instant::now() + Duration::from_secs(10);
+    while child.try_wait().unwrap().is_none() {
+        if Instant::now() >= deadline {
+            let _ = child.kill();
+            let _ = child.wait();
+            panic!("{command:?} did not finish");
+        }
+        thread::sleep(Duration::from_millis(10));
+    }
+    child.wait_with_output().unwrap()
+}
+
+/// Runs `command` with a pseudoterminal as stdin, bounding every wait. With an
+/// `answer`, it waits for the `[y/N] ` question, runs `meanwhile`, then
+/// answers; without one the command must finish unasked. If `meanwhile`
+/// fails, the command is killed. The controller stays open until the command
+/// exits.
+fn at_terminal(command: &mut Command, answer: Option<&[u8]>, meanwhile: impl FnOnce()) -> Output {
+    let (mut leader, device) = pseudo_terminal();
+    let mut child = command
+        .stdin(Stdio::from(device))
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .unwrap();
+    let mut out = child.stdout.take().unwrap();
+    let stdout = thread::spawn(move || {
+        let mut bytes = Vec::new();
+        out.read_to_end(&mut bytes).unwrap();
+        bytes
+    });
+    let mut err = child.stderr.take().unwrap();
+    let (send, received) = std::sync::mpsc::channel();
+    let reader = thread::spawn(move || {
+        let mut chunk = [0; 256];
+        while let Ok(count @ 1..) = err.read(&mut chunk) {
+            if send.send(chunk[..count].to_vec()).is_err() {
+                break;
+            }
+        }
+    });
+    let deadline = Instant::now() + Duration::from_secs(10);
+    let mut stderr = Vec::new();
+    if let Some(answer) = answer {
+        while !stderr.ends_with(b"[y/N] ") {
+            let Ok(bytes) =
+                received.recv_timeout(deadline.saturating_duration_since(Instant::now()))
+            else {
+                child.kill().unwrap();
+                panic!("no question: {}", String::from_utf8_lossy(&stderr));
+            };
+            stderr.extend(bytes);
+        }
+        if let Err(panic) = std::panic::catch_unwind(std::panic::AssertUnwindSafe(meanwhile)) {
+            let _ = child.kill();
+            let _ = child.wait();
+            std::panic::resume_unwind(panic);
+        }
+        leader.write_all(answer).unwrap();
+    }
+    let status = loop {
+        if let Some(status) = child.try_wait().unwrap() {
+            break status;
+        }
+        if Instant::now() >= deadline {
+            child.kill().unwrap();
+            panic!("did not finish: {}", String::from_utf8_lossy(&stderr));
+        }
+        thread::sleep(Duration::from_millis(10));
+    };
+    drop(leader);
+    reader.join().unwrap();
+    stderr.extend(received.try_iter().flatten());
+    Output {
+        status,
+        stdout: stdout.join().unwrap(),
+        stderr,
+    }
+}
+
+/// Waits until the busy terminals are exactly `panes` and the shown
+/// workspace's labels have settled, and returns its JSON.
+fn wait_for_settled_workspace(root: &Path, panes: &[&str]) -> Output {
+    wait_for_busy_panes(root, None, panes);
+    let deadline = Instant::now() + Duration::from_secs(10);
+    loop {
+        let output = quit_command(root)
+            .args(["workspace", "--json"])
+            .output()
+            .unwrap();
+        assert!(output.status.success(), "{output:?}");
+        let value: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
+        let connecting =
+            |name: &serde_json::Value| name.as_str().unwrap().ends_with("  connecting");
+        let settled = !value["tabs"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .flat_map(|tab| tab["panes"].as_array().unwrap())
+            .any(|pane| connecting(&pane["label"]))
+            && !value["busy"]["terminals"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .any(|item| connecting(&item["name"]));
+        if settled {
+            return output;
+        }
+        assert!(
+            Instant::now() < deadline,
+            "labels stayed connecting: {value}"
+        );
+        thread::sleep(Duration::from_millis(50));
+    }
+}
+
+/// Shows the Agent popup over the shown workspace's active `tab` and
+/// returns its terminal's endpoint.
+fn show_agent(control: &Path, id: &str, tab: &str) -> String {
+    let response = protocol_action(
+        control,
+        id,
+        ProtocolAction::InvokePopup {
+            tab: tab.into(),
+            entry: "agent".into(),
+            expected_instance: None,
+            intent: InvokeIntent::Toggle,
+        },
+    );
+    let Response::Snapshot(snapshot) = response else {
+        panic!("{id}: Agent did not open: {response:?}");
+    };
+    let tab = snapshot.tabs.iter().find(|item| item.id == tab).unwrap();
+    let popup = tab
+        .popups
+        .iter()
+        .find(|popup| tab.selected_popup.as_ref() == Some(&popup.id))
+        .unwrap();
+    String::from_utf8(popup.endpoint.clone()).unwrap()
+}
+
+/// Whether the fake Orbit at `endpoint` still records its terminal as live.
+fn terminal_is_live(endpoint: &str) -> bool {
+    fs::read(artifact_path(Path::new(endpoint), ".record")).is_ok_and(|bytes| {
+        matches!(
+            management::decode_record(&bytes),
+            Ok(ManagementRecord::Live(_))
+        )
+    })
+}
+
+/// The endpoint of every pane and popup terminal in a workspace's JSON.
+fn terminal_endpoints(workspace: &serde_json::Value) -> Vec<String> {
+    workspace["tabs"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .flat_map(|tab| {
+            tab["panes"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .chain(tab["popups"].as_array().unwrap())
+        })
+        .map(|terminal| terminal["endpoint"].as_str().unwrap().to_owned())
+        .collect()
+}
+
+/// The live Orbit identity of the terminal at each of `endpoints`, read
+/// before a close so its process can be checked afterwards.
+fn live_terminals(endpoints: &[String]) -> Vec<(String, LiveIdentity)> {
+    endpoints
+        .iter()
+        .map(|endpoint| (endpoint.clone(), live_identity(Path::new(endpoint))))
+        .collect()
+}
+
+/// Asserts that of `terminals` exactly `ended` stopped: their processes
+/// exit and their records stop being live, while every other terminal's
+/// process (by start identity) and record stay live.
+fn assert_only_ended(terminals: &[(String, LiveIdentity)], ended: &[String]) {
+    for (endpoint, identity) in terminals {
+        if ended.contains(endpoint) {
+            wait_for_process_removal(identity.process_id, &format!("{endpoint} kept running"));
+            assert!(
+                !terminal_is_live(endpoint),
+                "{endpoint} stayed recorded live"
+            );
+        }
+    }
+    for (endpoint, identity) in terminals {
+        if !ended.contains(endpoint) {
+            assert!(
+                process::exists(identity.process_id)
+                    && process::start_identity(identity.process_id) == identity.process_start,
+                "{endpoint} stopped running"
+            );
+            assert!(
+                terminal_is_live(endpoint),
+                "{endpoint} stopped being recorded live"
+            );
+        }
+    }
+}
+
+/// The workspace JSON without the caller, labels, the window's running and
+/// busy terminals and quota reads, which change on their own as terminals run
+/// or end elsewhere in the window.
+fn presented(output: &Output) -> serde_json::Value {
+    assert_eq!(output.status.code(), Some(0), "{output:?}");
+    let mut value = stable_workspace_json(output);
+    let object = value.as_object_mut().unwrap();
+    for field in [
+        "running",
+        "busy",
+        "codex_quota",
+        "claude_quota",
+        "codex_quota_failure",
+        "claude_quota_failure",
+    ] {
+        object.remove(field);
+    }
+    value
+}
+
+/// Asserts that `after` is `before` without the tab or pane `target`, with
+/// the same shown workspace, active tab and every other tab unchanged.
+fn assert_closed_only(before: &serde_json::Value, after: &serde_json::Value, target: &str) {
+    for field in ["workspace", "active_workspace", "active_tab", "entries"] {
+        assert_eq!(after[field], before[field], "{field}");
+    }
+    let tabs = |value: &serde_json::Value| value["tabs"].as_array().unwrap().clone();
+    let mut expected = tabs(before);
+    expected.retain(|tab| tab["id"] != target);
+    let after_tabs = tabs(after);
+    assert_eq!(after_tabs.len(), expected.len(), "{after}");
+    for (after, mut expected) in after_tabs.into_iter().zip(expected) {
+        let panes = expected["panes"].as_array_mut().unwrap();
+        if panes.iter().any(|pane| pane["id"] == target) {
+            panes.retain(|pane| pane["id"] != target);
+            let ids = |tab: &serde_json::Value| {
+                tab["panes"]
+                    .as_array()
+                    .unwrap()
+                    .iter()
+                    .map(|pane| pane["id"].clone())
+                    .collect::<Vec<_>>()
+            };
+            assert_eq!(ids(&after), ids(&expected));
+            for field in ["id", "selected_pane", "popups", "selected_popup"] {
+                assert_eq!(after[field], expected[field], "{field}");
+            }
+        } else {
+            assert_eq!(after, expected);
+        }
+    }
+}
+
+#[test]
+fn cli_closes_background_ids_and_preserves_the_presented_workspace() {
+    let (root, mut default) = quit_workspace();
+    let control = generation_runtime(&root.join("r")).join("eon.sock");
+    let directory = root.to_str().unwrap().to_owned();
+    let run = |caller: Option<&[u8]>, arguments: &[&str]| {
+        let mut command = quit_command(&root);
+        if let Some(caller) = caller {
+            command.env("EON_TERMINAL", OsStr::from_bytes(caller));
+        }
+        command
+            .args(arguments)
+            .stdin(Stdio::null())
+            .output()
+            .unwrap()
+    };
+    let parsed = |output: &Output| -> serde_json::Value {
+        assert_eq!(output.status.code(), Some(0), "{output:?}");
+        serde_json::from_slice(&output.stdout).unwrap()
+    };
+    let inspect = || run(None, &["workspace", "--json"]);
+
+    // The caller is t1's Agent popup. The active t2 shows its own Agent
+    // popup, and the background t3 and t4 each hold two panes.
+    let caller = quit_terminal_caller(Path::new(&show_agent(&control, "t1-agent", "t1")));
+    parsed(&run(
+        Some(&caller),
+        &["tab", "create", "--directory", &directory, "--json"],
+    ));
+    show_agent(&control, "t2-agent", "t2");
+    let mut background = Vec::new();
+    for _ in 0..2 {
+        let created = parsed(&run(
+            Some(&caller),
+            &[
+                "tab",
+                "create",
+                "--no-focus",
+                "--directory",
+                &directory,
+                "--json",
+            ],
+        ));
+        let tab = created["tabs"].as_array().unwrap().last().unwrap();
+        let first = quit_terminal_caller(Path::new(tab["panes"][0]["endpoint"].as_str().unwrap()));
+        parsed(&run(
+            Some(&first),
+            &["pane", "create", "--no-focus", "--json"],
+        ));
+        background.push(tab["id"].as_str().unwrap().to_owned());
+    }
+    let before = parsed(&inspect());
+    assert_eq!(before["active_tab"], "t2");
+    assert!(before["tabs"][0]["selected_popup"].is_string());
+    assert!(before["tabs"][1]["selected_popup"].is_string());
+    let tab = |value: &serde_json::Value, id: &str| {
+        value["tabs"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|tab| tab["id"] == id)
+            .unwrap()
+            .clone()
+    };
+    let second_pane = |id: &str| tab(&before, id)["panes"][1].clone();
+
+    // Each close names its target by ID: a pane from another tab's popup, a
+    // pane without a caller, then each tab in the same two ways. Only the
+    // target's terminals end.
+    let (t3, t4) = (background[0].as_str(), background[1].as_str());
+    let (p3b, p4b) = (second_pane(t3), second_pane(t4));
+    let endpoint = |terminal: &serde_json::Value| terminal["endpoint"].as_str().unwrap().to_owned();
+    for (caller, kind, target, ended, json) in [
+        (
+            Some(&caller[..]),
+            "pane",
+            p3b["id"].as_str().unwrap(),
+            vec![endpoint(&p3b)],
+            true,
+        ),
+        (
+            None,
+            "pane",
+            p4b["id"].as_str().unwrap(),
+            vec![endpoint(&p4b)],
+            false,
+        ),
+        (
+            Some(&caller[..]),
+            "tab",
+            t3,
+            terminal_endpoints(&serde_json::json!({ "tabs": [tab(&before, t3)] })),
+            true,
+        ),
+        (
+            None,
+            "tab",
+            t4,
+            terminal_endpoints(&serde_json::json!({ "tabs": [tab(&before, t4)] })),
+            false,
+        ),
+    ] {
+        let state = presented(&inspect());
+        let endpoints = live_terminals(&terminal_endpoints(&parsed(&inspect())));
+        let mut arguments = vec![kind, "close", target, "--yes"];
+        if json {
+            arguments.push("--json");
+        }
+        let closed = run(caller, &arguments);
+        assert_eq!(closed.status.code(), Some(0), "{closed:?}");
+        if json {
+            assert_eq!(parsed(&closed)["active_tab"], "t2");
+        }
+        assert_closed_only(&state, &presented(&inspect()), target);
+        assert_only_ended(&endpoints, &ended);
+    }
+
+    // A stale ID changes and stops nothing, as JSON or for a person.
+    let state = presented(&inspect());
+    let endpoints = live_terminals(&terminal_endpoints(&parsed(&inspect())));
+    let gone = run(Some(&caller), &["tab", "close", t3, "--yes", "--json"]);
+    assert_eq!(gone.status.code(), Some(3), "{gone:?}");
+    assert_eq!(
+        stdout(&gone),
+        format!("{{\"error\":{{\"code\":\"unknown-tab\",\"detail\":\"tab {t3} is not live\"}}}}\n")
+    );
+    let pane = p3b["id"].as_str().unwrap();
+    let gone = run(None, &["pane", "close", pane]);
+    assert_eq!(gone.status.code(), Some(3), "{gone:?}");
+    assert_eq!(
+        String::from_utf8_lossy(&gone.stderr),
+        format!("error unknown-pane: pane {pane} is not live\n")
+    );
+    assert_eq!(presented(&inspect()), state);
+    assert_only_ended(&endpoints, &[]);
+
+    // A replayed close is a duplicate and stops nothing more.
+    let created = parsed(&run(
+        Some(&caller),
+        &[
+            "tab",
+            "create",
+            "--no-focus",
+            "--directory",
+            &directory,
+            "--json",
+        ],
+    ));
+    let t5 = created["tabs"].as_array().unwrap().last().unwrap()["id"]
+        .as_str()
+        .unwrap()
+        .to_owned();
+    let close_t5 = || {
+        workspace_action(
+            &control,
+            "replayed-close",
+            Action::CloseTab { tab: t5.clone() },
+        )
+    };
+    assert!(matches!(close_t5(), Response::Snapshot(_)));
+    let endpoints = live_terminals(&terminal_endpoints(&parsed(&inspect())));
+    assert!(matches!(
+        close_t5(),
+        Response::Failure(failure) if failure.code == "duplicate-request"
+    ));
+    assert_eq!(presented(&inspect()), state);
+    assert_only_ended(&endpoints, &[]);
+
+    let stopped = run(None, &["stop", "all", "--json"]);
+    assert!(stopped.status.success(), "{stopped:?}");
+    wait_for_successful_exit(&mut default.child);
+    fs::remove_dir_all(root).unwrap();
+}
+
+#[test]
+fn cli_busy_background_close_confirms_refuses_and_cancels_without_focus() {
+    let (root, mut default) = quit_workspace();
+    let runtime = root.join("r");
+    let control = generation_runtime(&runtime).join("eon.sock");
+    // Every default shell runs another program, so every terminal is busy.
+    fs::write(root.join("foreground"), "other").unwrap();
+    let caller = quit_caller(&runtime);
+    let run_caller = |args: &[&str]| {
+        let mut cmd = quit_command(&root);
+        cmd.env("EON_TERMINAL", OsStr::from_bytes(&caller))
+            .args(args);
+        cmd
+    };
+    let inspect = || run_caller(&["workspace", "--json"]).output().unwrap();
+    let not_confirmed = |kind: &str, target: &str| {
+        format!(
+            "{{\"error\":{{\"code\":\"not-confirmed\",\"detail\":\"close of {kind} {target} requires confirmation; rerun with --yes\"}}}}\n"
+        )
+    };
+    let create_background = || {
+        let created = run_caller(&[
+            "tab",
+            "create",
+            "--no-focus",
+            "--directory",
+            root.to_str().unwrap(),
+            "--json",
+            "--",
+            "sleep",
+            "300",
+        ])
+        .output()
+        .unwrap();
+        assert!(created.status.success(), "{created:?}");
+        let snap: serde_json::Value = serde_json::from_slice(&created.stdout).unwrap();
+        let tab = snap["tabs"].as_array().unwrap().last().unwrap();
+        (
+            tab["id"].as_str().unwrap().to_owned(),
+            tab["panes"][0]["id"].as_str().unwrap().to_owned(),
+        )
+    };
+
+    // The active t2 shows its Agent popup throughout.
+    let created_t2 = run_caller(&[
+        "tab",
+        "create",
+        "--directory",
+        root.to_str().unwrap(),
+        "--json",
+    ])
+    .output()
+    .unwrap();
+    assert!(created_t2.status.success(), "{created_t2:?}");
+    show_agent(&control, "t2-agent", "t2");
+
+    for kind in ["tab", "pane"] {
+        let (tab_id, pane_id) = create_background();
+        let target = if kind == "tab" { &tab_id } else { &pane_id };
+        let before_output = wait_for_settled_workspace(&root, &["p1", "p2", "popup", &pane_id]);
+        let before_val: serde_json::Value = serde_json::from_slice(&before_output.stdout).unwrap();
+        let pane_label =
+            before_val["tabs"].as_array().unwrap().last().unwrap()["panes"][0]["label"]
+                .as_str()
+                .unwrap()
+                .to_owned();
+        let before = presented(&before_output);
+        let question = format!(
+            "Close {kind} {target}? This stops 1 terminal; 1 still running: {pane_label}. [y/N] "
+        );
+
+        // JSON without --yes, even with piped "y\n", refuses with not-confirmed/1 without asking.
+        let json_refused =
+            quit_with_answers(&mut run_caller(&[kind, "close", target, "--json"]), b"y\n");
+        assert_eq!(json_refused.status.code(), Some(1), "{json_refused:?}");
+        assert_eq!(stdout(&json_refused), not_confirmed(kind, target));
+        assert!(json_refused.stderr.is_empty(), "{json_refused:?}");
+        assert_eq!(presented(&inspect()), before);
+
+        // Human pipe "n\n" and empty input refuse with not-confirmed/1 without mutating.
+        for answer in [b"n\n".as_slice(), b"".as_slice()] {
+            let declined = quit_with_answers(&mut run_caller(&[kind, "close", target]), answer);
+            assert_eq!(declined.status.code(), Some(1), "{declined:?}");
+            assert!(declined.stdout.is_empty(), "{declined:?}");
+            assert_eq!(
+                String::from_utf8_lossy(&declined.stderr),
+                format!(
+                    "{question}error not-confirmed: {kind} {target} stays open; no yes was read and stdin is not a terminal\n"
+                )
+            );
+            assert_eq!(presented(&inspect()), before);
+        }
+
+        // A "n" at a terminal cancels with exit 0 and the exact cancel note on stdout.
+        let cancelled = at_terminal(
+            &mut run_caller(&[kind, "close", target]),
+            Some(b"n\n"),
+            || (),
+        );
+        assert_eq!(cancelled.status.code(), Some(0), "{cancelled:?}");
+        assert_eq!(
+            stdout(&cancelled),
+            format!("cancelled; {kind} {target} stays open\n")
+        );
+        assert_eq!(String::from_utf8_lossy(&cancelled.stderr), question);
+        assert_eq!(presented(&inspect()), before);
+
+        // A piped "y\n" confirms and closes only the target; t2 stays active with its popup.
+        let confirmed = quit_with_answers(&mut run_caller(&[kind, "close", target]), b"y\n");
+        assert_eq!(confirmed.status.code(), Some(0), "{confirmed:?}");
+        assert_closed_only(&before, &presented(&inspect()), &tab_id);
+
+        // --yes --json closes a busy background target without reading stdin.
+        let (yes_tab, yes_pane) = create_background();
+        let yes_target = if kind == "tab" { &yes_tab } else { &yes_pane };
+        let before = presented(&wait_for_settled_workspace(
+            &root,
+            &["p1", "p2", "popup", &yes_pane],
+        ));
+        let closed_yes = run_caller(&[kind, "close", yes_target, "--yes", "--json"])
+            .stdin(Stdio::null())
+            .output()
+            .unwrap();
+        assert_eq!(closed_yes.status.code(), Some(0), "{closed_yes:?}");
+        assert_closed_only(&before, &presented(&inspect()), &yes_tab);
+    }
+
+    // A target that ends while its question waits is not live when the yes
+    // arrives (exit 3), and nothing else closes.
+    let (vanish_tab, vanish_pane) = create_background();
+    let before = presented(&wait_for_settled_workspace(
+        &root,
+        &["p1", "p2", "popup", &vanish_pane],
+    ));
+    let vanished = at_terminal(
+        &mut run_caller(&["tab", "close", &vanish_tab]),
+        Some(b"y\n"),
+        || {
+            let concurrent = bounded_output(&mut run_caller(&[
+                "tab",
+                "close",
+                &vanish_tab,
+                "--yes",
+                "--json",
+            ]));
+            assert!(concurrent.status.success(), "{concurrent:?}");
+        },
+    );
+    assert_eq!(vanished.status.code(), Some(3), "{vanished:?}");
+    assert!(
+        String::from_utf8_lossy(&vanished.stderr).ends_with(&format!(
+            "error unknown-tab: tab {vanish_tab} is not live\n"
+        )),
+        "{vanished:?}"
+    );
+    assert_closed_only(&before, &presented(&inspect()), &vanish_tab);
+
+    // A busy final close names its consequence, with the warning on or off,
+    // at a terminal and through a pipe, and JSON refuses it without --yes.
+    assert!(
+        run_caller(&["tab", "close", "t2", "--yes", "--json"])
+            .stdin(Stdio::null())
+            .output()
+            .unwrap()
+            .status
+            .success()
+    );
+    let sole_out = wait_for_settled_workspace(&root, &["p1"]);
+    let sole_snap: serde_json::Value = serde_json::from_slice(&sole_out.stdout).unwrap();
+    let sole = presented(&sole_out);
+    let p1_label = sole_snap["tabs"][0]["panes"][0]["label"]
+        .as_str()
+        .unwrap()
+        .to_owned();
+    let busy_final = format!(
+        "Close the last tab? This quits the window and stops 1 terminal [{p1_label}]; 1 still running: {p1_label}. [y/N] "
+    );
+    let configure = |warning: bool| {
+        fs::write(
+            root.join("config/config.toml"),
+            format!(
+                "[terminal]\nfont_fallbacks = []\n[anima]\nenabled = false\n[workspace]\nwarning_close_last_tab = {warning}\n"
+            ),
+        )
+        .unwrap();
+    };
+    for warning in [true, false] {
+        configure(warning);
+        for (kind, target) in [("tab", "t1"), ("pane", "p1")] {
+            let tty = at_terminal(
+                &mut run_caller(&[kind, "close", target]),
+                Some(b"n\n"),
+                || (),
+            );
+            assert_eq!(tty.status.code(), Some(0), "{tty:?}");
+            assert_eq!(stdout(&tty), "cancelled; the window stays open\n");
+            assert_eq!(String::from_utf8_lossy(&tty.stderr), busy_final);
+            let pipe = quit_with_answers(&mut run_caller(&[kind, "close", target]), b"n\n");
+            assert_eq!(pipe.status.code(), Some(1), "{pipe:?}");
+            assert_eq!(
+                String::from_utf8_lossy(&pipe.stderr),
+                format!(
+                    "{busy_final}error not-confirmed: the window stays open; no yes was read and stdin is not a terminal\n"
+                )
+            );
+            let json = run_caller(&[kind, "close", target, "--json"])
+                .stdin(Stdio::null())
+                .output()
+                .unwrap();
+            assert_eq!(json.status.code(), Some(1), "{json:?}");
+            assert_eq!(stdout(&json), not_confirmed(kind, target));
+            assert_eq!(presented(&inspect()), sole);
+        }
+    }
+
+    // An idle final close asks only a person at a terminal with the warning
+    // on and no --yes. Each case closes a fresh shown workspace, whose final
+    // close removes it while t1's workspace remains.
+    fs::write(root.join("foreground"), "child").unwrap();
+    for (warning, mode) in [
+        (true, "terminal"),
+        (true, "terminal --yes"),
+        (true, "pipe"),
+        (true, "json"),
+        (false, "terminal"),
+        (false, "pipe"),
+        (false, "json"),
+    ] {
+        configure(warning);
+        let created = quit_command(&root)
+            .args(["workspace", "new", "--json"])
+            .output()
+            .unwrap();
+        assert!(created.status.success(), "{created:?}");
+        let shown: serde_json::Value =
+            serde_json::from_slice(&wait_for_settled_workspace(&root, &[]).stdout).unwrap();
+        let workspace = shown["workspace"].as_str().unwrap().to_owned();
+        let tab = shown["tabs"][0]["id"].as_str().unwrap().to_owned();
+        let label = shown["tabs"][0]["panes"][0]["label"].as_str().unwrap();
+        let close = |extra: &[&str]| {
+            let mut command = quit_command(&root);
+            command.args(["tab", "close", &tab]).args(extra);
+            command
+        };
+        let closed = match mode {
+            "terminal" if warning => {
+                let question = format!(
+                    "Close the last tab? This closes workspace {workspace} and stops 1 terminal [{label}]. [y/N] "
+                );
+                let cancelled = at_terminal(&mut close(&[]), Some(b"n\n"), || ());
+                assert_eq!(cancelled.status.code(), Some(0), "{cancelled:?}");
+                assert_eq!(
+                    stdout(&cancelled),
+                    format!("cancelled; workspace {workspace} stays open\n")
+                );
+                assert_eq!(String::from_utf8_lossy(&cancelled.stderr), question);
+                let confirmed = at_terminal(&mut close(&[]), Some(b"y\n"), || ());
+                assert_eq!(String::from_utf8_lossy(&confirmed.stderr), question);
+                confirmed
+            }
+            "terminal" => at_terminal(&mut close(&[]), None, || ()),
+            "terminal --yes" => at_terminal(&mut close(&["--yes"]), None, || ()),
+            "pipe" => close(&[]).stdin(Stdio::null()).output().unwrap(),
+            _ => close(&["--json"]).stdin(Stdio::null()).output().unwrap(),
+        };
+        assert_eq!(
+            closed.status.code(),
+            Some(0),
+            "{warning} {mode}: {closed:?}"
+        );
+        if mode != "terminal" || !warning {
+            assert!(closed.stderr.is_empty(), "{warning} {mode}: {closed:?}");
+        }
+        let listed = quit_command(&root)
+            .args(["workspaces", "--json"])
+            .output()
+            .unwrap();
+        assert!(
+            !stdout(&listed).contains(&format!("\"id\":\"{workspace}\"")),
+            "{listed:?}"
+        );
+    }
+
+    // The idle final close of the last workspace ends the window unasked through a pipe.
+    configure(true);
+    wait_for_settled_workspace(&root, &[]);
+    let idle_final_pipe = run_caller(&["tab", "close", "t1"])
+        .stdin(Stdio::null())
+        .output()
+        .unwrap();
+    assert_eq!(
+        idle_final_pipe.status.code(),
+        Some(0),
+        "{idle_final_pipe:?}"
+    );
+    assert!(idle_final_pipe.stderr.is_empty(), "{idle_final_pipe:?}");
+    assert!(stdout(&idle_final_pipe).starts_with("ended generation "));
+    wait_for_successful_exit(&mut default.child);
+    fs::remove_dir_all(root).unwrap();
+}
+
+#[test]
+fn cli_idle_background_close_ignores_other_busy_tabs() {
+    let (root, mut default) = quit_workspace();
+    let runtime = root.join("r");
+    let control = generation_runtime(&runtime).join("eon.sock");
+    // Default shells are idle; a command terminal and Agent stay busy.
+    fs::write(root.join("foreground"), "child").unwrap();
+    let caller = quit_caller(&runtime);
+    let run = |caller: &[u8], args: &[&str]| {
+        quit_command(&root)
+            .env("EON_TERMINAL", OsStr::from_bytes(caller))
+            .args(args)
+            .stdin(Stdio::null())
+            .output()
+            .unwrap()
+    };
+    let parsed = |output: &Output| -> serde_json::Value {
+        assert_eq!(output.status.code(), Some(0), "{output:?}");
+        serde_json::from_slice(&output.stdout).unwrap()
+    };
+    let directory = root.to_str().unwrap();
+    let busy = parsed(&run(
+        &caller,
+        &[
+            "tab",
+            "create",
+            "--no-focus",
+            "--directory",
+            directory,
+            "--json",
+            "--",
+            "sleep",
+            "300",
+        ],
+    ));
+    let busy_pane = busy["tabs"][1]["panes"][0]["id"]
+        .as_str()
+        .unwrap()
+        .to_owned();
+    let idle = parsed(&run(
+        &caller,
+        &[
+            "tab",
+            "create",
+            "--no-focus",
+            "--directory",
+            directory,
+            "--json",
+        ],
+    ));
+    let idle_tab = idle["tabs"][2]["id"].as_str().unwrap().to_owned();
+    let first = quit_terminal_caller(Path::new(
+        idle["tabs"][2]["panes"][0]["endpoint"].as_str().unwrap(),
+    ));
+    let idle = parsed(&run(&first, &["pane", "create", "--no-focus", "--json"]));
+    let idle_pane = idle["tabs"][2]["panes"][1].clone();
+    show_agent(&control, "t1-agent", "t1");
+
+    // With a complete busy list naming only other tabs' terminals, the idle
+    // pane closes through JSON without --yes, and then its idle tab for a
+    // person without a terminal, neither asking anything.
+    for (args, target, ended) in [
+        (
+            vec!["pane", "close", idle_pane["id"].as_str().unwrap(), "--json"],
+            idle_pane["id"].as_str().unwrap().to_owned(),
+            vec![idle_pane["endpoint"].as_str().unwrap().to_owned()],
+        ),
+        (
+            vec!["tab", "close", &idle_tab],
+            idle_tab.clone(),
+            vec![
+                idle["tabs"][2]["panes"][0]["endpoint"]
+                    .as_str()
+                    .unwrap()
+                    .to_owned(),
+            ],
+        ),
+    ] {
+        let settled = wait_for_settled_workspace(&root, &["popup", &busy_pane]);
+        let before = presented(&settled);
+        assert!(before["tabs"][0]["selected_popup"].is_string());
+        let endpoints = live_terminals(&terminal_endpoints(&parsed(&settled)));
+        let closed = run(&caller, &args);
+        assert_eq!(closed.status.code(), Some(0), "{closed:?}");
+        assert!(closed.stderr.is_empty(), "{closed:?}");
+        let after = presented(&run(&caller, &["workspace", "--json"]));
+        assert_closed_only(&before, &after, &target);
+        assert_only_ended(&endpoints, &ended);
+    }
+
+    let stopped = quit_command(&root)
+        .args(["stop", "all", "--json"])
+        .output()
+        .unwrap();
+    assert!(stopped.status.success(), "{stopped:?}");
+    wait_for_successful_exit(&mut default.child);
+    fs::remove_dir_all(root).unwrap();
+}
+
+#[test]
+fn cli_close_preserves_workspace_scope_and_final_close_results() {
+    let (root, mut default) = quit_workspace();
+    let runtime = root.join("r");
+    let generation = generation_runtime(&runtime);
+    fs::write(root.join("foreground"), "child").unwrap();
+    let w1_caller = quit_caller(&runtime);
+    let run_from = |caller_bytes: Option<&[u8]>, args: &[&str]| {
+        let mut cmd = quit_command(&root);
+        if let Some(caller) = caller_bytes {
+            cmd.env("EON_TERMINAL", OsStr::from_bytes(caller));
+        }
+        cmd.args(args).stdin(Stdio::null()).output().unwrap()
+    };
+    let parsed = |output: &Output| -> serde_json::Value {
+        assert_eq!(output.status.code(), Some(0), "{output:?}");
+        serde_json::from_slice(&output.stdout).unwrap()
+    };
+    let shown_workspace = || {
+        let val = parsed(&run_from(None, &["workspaces", "--json"]));
+        let shown = val["workspaces"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|w| w["shown"] == true)
+            .unwrap()["id"]
+            .as_str()
+            .unwrap()
+            .to_owned();
+        let count = val["workspaces"].as_array().unwrap().len();
+        (shown, count)
+    };
+
+    // The hidden w2 gets a second pane and a second tab; w1 stays shown.
+    parsed(&run_from(
+        Some(&w1_caller),
+        &[
+            "workspace",
+            "new",
+            "--no-focus",
+            "--name",
+            "notes",
+            "--json",
+        ],
+    ));
+    let w2_caller = quit_terminal_caller(&generation.join("session-2.sock"));
+    parsed(&run_from(
+        Some(&w2_caller),
+        &["pane", "create", "--no-focus", "--json"],
+    ));
+    let w2_snap = parsed(&run_from(
+        Some(&w2_caller),
+        &[
+            "tab",
+            "create",
+            "--no-focus",
+            "--directory",
+            root.to_str().unwrap(),
+            "--json",
+        ],
+    ));
+    assert_eq!(w2_snap["workspace"], "w2");
+    assert_eq!(shown_workspace(), ("w1".to_owned(), 2));
+    let w2_t2 = w2_snap["tabs"][1]["id"].as_str().unwrap().to_owned();
+    let w2_p1 = w2_snap["tabs"][0]["panes"][0]["id"]
+        .as_str()
+        .unwrap()
+        .to_owned();
+    let w2_p2 = w2_snap["tabs"][0]["panes"][1]["id"]
+        .as_str()
+        .unwrap()
+        .to_owned();
+    wait_for_busy_panes(&root, None, &[]);
+    // The shown w1 without the workspace list, whose tab counts change.
+    let shown_w1 = || {
+        let mut value = presented(&run_from(None, &["workspace", "--json"]));
+        value.as_object_mut().unwrap().remove("workspaces");
+        value
+    };
+    let w1 = shown_w1();
+    let w1_endpoints = terminal_endpoints(&parsed(&run_from(None, &["workspace", "--json"])));
+    let w2_endpoints = terminal_endpoints(&w2_snap);
+    let w1_terminals = live_terminals(&w1_endpoints);
+    let w2_terminals = live_terminals(&w2_endpoints);
+    let w1_w2 = [w1_terminals.clone(), w2_terminals].concat();
+
+    // Neither w1's caller nor a caller-less command reaches w2's IDs, nor
+    // w2's caller w1's: each exits 3 and changes nothing.
+    let refused = |caller: Option<&[u8]>, kind: &str, target: &str, code: &str| {
+        let foreign = run_from(caller, &[kind, "close", target, "--yes", "--json"]);
+        assert_eq!(foreign.status.code(), Some(3), "{foreign:?}");
+        assert_eq!(
+            stdout(&foreign),
+            format!(
+                "{{\"error\":{{\"code\":\"{code}\",\"detail\":\"{kind} {target} is not live\"}}}}\n"
+            )
+        );
+    };
+    for caller in [Some(&w1_caller[..]), None] {
+        refused(caller, "tab", &w2_t2, "unknown-tab");
+        refused(caller, "pane", &w2_p2, "unknown-pane");
+    }
+    refused(Some(&w2_caller), "tab", "t1", "unknown-tab");
+    refused(Some(&w2_caller), "pane", "p1", "unknown-pane");
+    assert_eq!(shown_w1(), w1);
+    assert_only_ended(&w1_w2, &[]);
+
+    // w2's caller closes its pane and its background tab without showing w2;
+    // the replies project w2.
+    for (kind, target) in [("pane", &w2_p2), ("tab", &w2_t2)] {
+        let closed = parsed(&run_from(
+            Some(&w2_caller),
+            &[kind, "close", target, "--yes", "--json"],
+        ));
+        assert_eq!(closed["workspace"], "w2");
+        assert_eq!(shown_workspace(), ("w1".to_owned(), 2));
+        assert_eq!(shown_w1(), w1);
+    }
+    let w2_left = parsed(&run_from(Some(&w2_caller), &["workspace", "--json"]));
+    assert_eq!(w2_left["tabs"].as_array().unwrap().len(), 1);
+    assert_eq!(w2_left["tabs"][0]["panes"].as_array().unwrap().len(), 1);
+    assert_only_ended(&w1_w2, &w2_endpoints[1..]);
+
+    // Closing the hidden w2's final tab's last pane removes only w2; the
+    // reply projects the shown w1, which is unchanged.
+    let removed = parsed(&run_from(
+        Some(&w2_caller),
+        &["pane", "close", &w2_p1, "--yes", "--json"],
+    ));
+    assert_eq!(removed["workspace"], "w1");
+    assert_eq!(shown_workspace(), ("w1".to_owned(), 1));
+    assert_eq!(shown_w1(), w1);
+    assert_only_ended(&w1_w2, &w2_endpoints);
+
+    // So does closing a shown w3's final tab by its ID; w1 is shown again.
+    parsed(&run_from(None, &["workspace", "new", "--json"]));
+    let w3 = parsed(&run_from(None, &["workspace", "--json"]));
+    assert_eq!(w3["workspace"], "w3");
+    let w3_tab = w3["tabs"][0]["id"].as_str().unwrap().to_owned();
+    let w3_endpoints = terminal_endpoints(&w3);
+    let w1_w3 = [w1_terminals.clone(), live_terminals(&w3_endpoints)].concat();
+    let removed = parsed(&run_from(
+        None,
+        &["tab", "close", &w3_tab, "--yes", "--json"],
+    ));
+    assert_eq!(removed["workspace"], "w1");
+    assert_eq!(shown_workspace(), ("w1".to_owned(), 1));
+    assert_only_ended(&w1_w3, &w3_endpoints);
+
+    // The last workspace's last pane ends the window with the existing Ended
+    // result, and with it the supervisor and its terminals.
+    let ended = run_from(
+        Some(&w1_caller),
+        &["pane", "close", "p1", "--yes", "--json"],
+    );
+    assert_eq!(ended.status.code(), Some(0), "{ended:?}");
+    let generation_id = generation.file_name().unwrap().to_str().unwrap();
+    assert_eq!(
+        stdout(&ended),
+        format!(
+            "{{\"ended\":{{\"generation\":\"{generation_id}\"}},\"generation\":\"{generation_id}\",\"window\":null}}\n"
+        )
+    );
+    wait_for_successful_exit(&mut default.child);
+    assert_only_ended(&w1_terminals, &w1_endpoints);
+    fs::remove_dir_all(root).unwrap();
+}
+
+#[test]
+fn a_confirmed_close_inspects_first_and_a_failed_inspection_closes_nothing() {
+    let root = temporary_directory();
+    let runtime = root.join("runtime");
+    let config = root.join("config");
+    configure_mock_desktop(&config);
+    let id = format!("g1-{:032x}", 12);
+    let listener = generation_listener(&runtime, &id);
+    let held = fs::OpenOptions::new()
+        .read(true)
+        .write(true)
+        .create(true)
+        .truncate(false)
+        .mode(0o600)
+        .open(runtime.join(format!("supervisor-{id}.lock")))
+        .unwrap();
+    held.lock().unwrap();
+    listener.set_nonblocking(true).unwrap();
+    let done = Arc::new(std::sync::atomic::AtomicBool::new(false));
+    let received = Arc::new(Mutex::new(Vec::new()));
+    let (server_done, server_received, server_id) = (done.clone(), received.clone(), id.clone());
+    // A supervisor that answers lifecycle inspection but refuses to inspect
+    // its workspace, recording every other request.
+    let server = thread::spawn(move || {
+        while !server_done.load(Ordering::SeqCst) {
+            let (mut stream, _) = match listener.accept() {
+                Ok(peer) => peer,
+                Err(error) if error.kind() == std::io::ErrorKind::WouldBlock => {
+                    thread::sleep(Duration::from_millis(5));
+                    continue;
+                }
+                Err(error) => panic!("{error}"),
+            };
+            stream.set_nonblocking(false).unwrap();
+            let action = decode_request(&read_request(&mut stream)).unwrap().action;
+            let response = match &action {
+                ProtocolAction::Workspace(Action::InspectPresentation | Action::InspectRuntime) => {
+                    encode_lifecycle_response(&LifecycleResponse::Runtime(Runtime {
+                        generation: server_id.clone(),
+                        name: None,
+                        started_at: 0,
+                        eon_version: "0.1.0".into(),
+                        workspace_protocol: VERSION,
+                        component_report: "test components".into(),
+                        sessions: vec!["session-1".into()],
+                        attach: Availability {
+                            available: true,
+                            reason: "test presentation".into(),
+                        },
+                        stop: Availability {
+                            available: true,
+                            reason: "supervisor owns these Sessions".into(),
+                        },
+                        busy: None,
+                    }))
+                    .unwrap()
+                }
+                _ => {
+                    server_received.lock().unwrap().push(action);
+                    encode_response(&Response::Failure(ProtocolFailure {
+                        code: "unavailable".into(),
+                        detail: "test supervisor".into(),
+                    }))
+                    .unwrap()
+                }
+            };
+            stream.write_all(&response).unwrap();
+        }
+    });
+
+    // --yes skips the question, never the inspection that precedes it.
+    let binary = PathBuf::from(env!("CARGO_BIN_EXE_eon"));
+    for (arguments, close) in [
+        (
+            ["tab", "close", "t1"],
+            ProtocolAction::Workspace(Action::CloseTab { tab: "t1".into() }),
+        ),
+        (
+            ["pane", "close", "p1"],
+            ProtocolAction::ClosePane { pane: "p1".into() },
+        ),
+    ] {
+        received.lock().unwrap().clear();
+        let closed = invoke(
+            &binary,
+            &runtime,
+            &config,
+            &[&arguments[..], &["--generation", &id, "--yes", "--json"]].concat(),
+        );
+        assert_eq!(closed.status.code(), Some(1), "{closed:?}");
+        assert_eq!(
+            stdout(&closed),
+            "{\"error\":{\"code\":\"unavailable\",\"detail\":\"test supervisor\"}}\n"
+        );
+        let received = received.lock().unwrap();
+        assert_eq!(
+            *received,
+            [ProtocolAction::Workspace(Action::Inspect)],
+            "{close:?}"
+        );
+    }
+    done.store(true, Ordering::SeqCst);
+    server.join().unwrap();
+    drop(held);
+    fs::remove_dir_all(root).unwrap();
 }
