@@ -463,6 +463,8 @@ fn workspace_paint<'a>(
     workspace.with_displayed_grids(metrics, selected.into_iter().chain(peers))
 }
 
+/// Each card behind the workspace's terminals with its background: the selected column's, the
+/// other columns', then the agent sidebar's last.
 fn card_backdrops(
     workspace: &WorkspaceScene,
     scene: Option<&Scene>,
@@ -1138,7 +1140,7 @@ impl Renderer {
                 last_cursor_frame: None,
             },
             header: HeaderInteraction::default(),
-            spinners: Spinners::new(spinners_turn),
+            spinners: Spinners::new(spinners_turn, focus_color),
             eon_icon,
             cursor_tail: cursor_tail
                 .map(|(color, duration)| (color, cursor_outline(color), duration)),

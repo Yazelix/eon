@@ -602,37 +602,43 @@ fn relative_luminance(color: SceneColor) -> f64 {
     0.2126 * linear(color.r) + 0.7152 * linear(color.g) + 0.0722 * linear(color.b)
 }
 
-fn contrast_ratio(left: SceneColor, right: SceneColor) -> f64 {
+pub(super) fn contrast_ratio(left: SceneColor, right: SceneColor) -> f64 {
     let left = relative_luminance(left);
     let right = relative_luminance(right);
     (left.max(right) + 0.05) / (left.min(right) + 0.05)
 }
 
 pub(super) fn cursor_outline(fill: SceneColor) -> SceneColor {
+    blend_to_contrast(fill, fill, 3.0)
+}
+
+/// `color` blended toward black or white, whichever contrasts more with `against`, by the least
+/// that reaches `ratio` against it; black or white itself when no blend does.
+pub(super) fn blend_to_contrast(color: SceneColor, against: SceneColor, ratio: f64) -> SceneColor {
     let black = SceneColor { r: 0, g: 0, b: 0 };
     let white = SceneColor {
         r: 255,
         g: 255,
         b: 255,
     };
-    let target = if contrast_ratio(fill, black) >= contrast_ratio(fill, white) {
+    let target = if contrast_ratio(against, black) >= contrast_ratio(against, white) {
         black
     } else {
         white
     };
-    (1..=255)
+    (0..=255)
         .map(|amount| {
             let blend = |source: u8, target: u8| {
                 ((u16::from(source) * (255 - amount) + u16::from(target) * amount + 127) / 255)
                     as u8
             };
             SceneColor {
-                r: blend(fill.r, target.r),
-                g: blend(fill.g, target.g),
-                b: blend(fill.b, target.b),
+                r: blend(color.r, target.r),
+                g: blend(color.g, target.g),
+                b: blend(color.b, target.b),
             }
         })
-        .find(|outline| contrast_ratio(fill, *outline) >= 3.0)
+        .find(|blended| contrast_ratio(against, *blended) >= ratio)
         .unwrap_or(target)
 }
 

@@ -413,7 +413,8 @@ the panes' rows in pane order. A row shows:
   working (still without GPU rendering or with
   `[workspace] animate_working_badge = false`), three still dots in a row while
   the agent waits on background work (it reported done or idle while processes
-  it started still run), or ○ idle;
+  it started still run), or ○ idle; the dots take the window's focus colour
+  (`[terminal] focus_color`);
 - the Claude or Codex icon;
 - a Claude Code session's name, such as `eon-9a` for a session started
   with `claude --name eon-9a`; otherwise the title the agent reports, and

@@ -3,7 +3,8 @@
 
 use super::{
     CellMetrics, CursorPoint, DrawStyleKind, PlacedText, RectangleBatch, Renderer, SceneColor,
-    cells::NERD_FONT_FAMILY, palette, physical_outline_width, shaping,
+    cells::{NERD_FONT_FAMILY, blend_to_contrast},
+    palette, physical_outline_width, shaping,
 };
 use crate::{
     DialogKind, DialogScene, Load, SceneRect, WorkspaceFocus, WorkspaceHeaderControl,
@@ -385,14 +386,39 @@ const SPINNER_FRAMES: [u8; 10] = [0x0B, 0x19, 0x39, 0x38, 0x3C, 0x34, 0x26, 0x27
 struct SpinnerSlot {
     offset: usize,
     badge: TabBadge,
+    color: SceneColor,
 }
 
 /// The working badges in the current static vertices and the phase they are drawn at. On a
 /// software adapter, where every turn re-rasterizes the whole frame, or when Eon turns the
 /// animation off, there is no phase: working badges are drawn still and never tick (VEN-C21).
+/// Working and background badges take the window's focus color.
 pub(super) struct Spinners {
     slots: Vec<SpinnerSlot>,
     phase: Option<usize>,
+    focus: SceneColor,
+}
+
+/// What an attention badge's glyph sits on.
+#[derive(Clone, Copy, Debug, PartialEq)]
+enum Backing {
+    /// A disc of this color, drawn under the glyph.
+    Disc(SceneColor),
+    /// An opaque surface of this color, already painted.
+    Surface(SceneColor),
+    /// A translucent card, whose painted color depends on what lies behind the window.
+    Translucent,
+}
+
+impl Backing {
+    /// A card in `fill` at the terminal-background `opacity`.
+    fn card(fill: SceneColor, opacity: f32) -> Self {
+        if opacity >= 1.0 {
+            Self::Surface(fill)
+        } else {
+            Self::Translucent
+        }
+    }
 }
 
 /// Whether working badges turn: only on a hardware adapter, and only while
@@ -402,10 +428,11 @@ pub(super) fn spinners_turn(device: wgpu::DeviceType, animate: bool) -> bool {
 }
 
 impl Spinners {
-    pub(super) fn new(turning: bool) -> Self {
+    pub(super) fn new(turning: bool, focus_color: SceneColor) -> Self {
         Self {
             slots: Vec::new(),
             phase: turning.then_some(0),
+            focus: focus_color,
         }
     }
 
@@ -413,26 +440,42 @@ impl Spinners {
         self.slots.clear();
     }
 
-    /// Draws `badge`, inside a disc of `ring` (the color of what it sits on) when given.
-    fn push_badge(
-        &mut self,
-        badge: TabBadge,
-        ring: Option<SceneColor>,
-        rectangles: &mut RectangleBatch,
-    ) {
+    /// Draws `badge` on `backing`. Working and background dots take the focus color, blended by
+    /// the least that keeps 3:1 contrast, the cursor outline's bound, with the color under them.
+    /// On a translucent card that color is unknown, so they take the bar's disc, as on a tab.
+    fn push_badge(&mut self, badge: TabBadge, backing: Backing, rectangles: &mut RectangleBatch) {
         if !badge_inside(badge, rectangles.clip) {
             return;
         }
-        if let Some(ring) = ring {
-            rectangles.push_rounded(badge.rect, badge.rect.width / 2.0, ring);
+        let dots = matches!(
+            badge.state,
+            AttentionState::Working | AttentionState::Background
+        );
+        let (disc, under) = match backing {
+            Backing::Disc(color) => (Some(color), color),
+            Backing::Surface(color) => (None, color),
+            Backing::Translucent if dots => {
+                (Some(palette::BAR_BACKGROUND), palette::BAR_BACKGROUND)
+            }
+            // Other glyphs keep their own colors and need no disc.
+            Backing::Translucent => (None, palette::BAR_BACKGROUND),
+        };
+        if let Some(disc) = disc {
+            rectangles.push_rounded(badge.rect, badge.rect.width / 2.0, disc);
         }
+        let color = if dots {
+            blend_to_contrast(self.focus, under, 3.0)
+        } else {
+            self.focus
+        };
         if badge.state == AttentionState::Working && self.phase.is_some() {
             self.slots.push(SpinnerSlot {
                 offset: rectangles.bytes.len(),
                 badge,
+                color,
             });
         }
-        push_badge_glyph(rectangles, badge, self.phase);
+        push_badge_glyph(rectangles, badge, self.phase, color);
     }
 }
 
@@ -469,9 +512,14 @@ fn push_popup_marker(rectangles: &mut RectangleBatch, rect: SceneRect, color: Sc
 
 /// Draws one attention badge's glyph inside its disc: ◆ needs input, ✕ error, ✓ finished, the
 /// braille frame at `phase` for working, or the first frame without one, three still dots for
-/// background, and, in sidebar rows, ○ idle and · unavailable. Quads keep the glyphs independent
-/// of fonts.
-fn push_badge_glyph(rectangles: &mut RectangleBatch, badge: TabBadge, phase: Option<usize>) {
+/// background, both in `working`, and, in sidebar rows, ○ idle and · unavailable. Quads keep the
+/// glyphs independent of fonts.
+fn push_badge_glyph(
+    rectangles: &mut RectangleBatch,
+    badge: TabBadge,
+    phase: Option<usize>,
+    working: SceneColor,
+) {
     // The ring yields entirely on the smallest badges, so the glyph never leaves the badge.
     let ring = (badge.rect.width / 12.0).floor();
     let glyph = SceneRect {
@@ -529,10 +577,11 @@ fn push_badge_glyph(rectangles: &mut RectangleBatch, badge: TabBadge, phase: Opt
             glyph,
             (2, 3),
             SPINNER_FRAMES[phase.unwrap_or(0)],
+            working,
             alpha,
         ),
         // Background never animates (VEN-C21), so it takes no phase.
-        AttentionState::Background => push_dots(rectangles, glyph, (3, 1), 0b111, alpha),
+        AttentionState::Background => push_dots(rectangles, glyph, (3, 1), 0b111, working, alpha),
         AttentionState::Idle | AttentionState::Unavailable => {
             // A thin ring for idle and a small round dot for unavailable, each drawn as 16 joined
             // segments.
@@ -569,16 +618,17 @@ fn push_badge_glyph(rectangles: &mut RectangleBatch, badge: TabBadge, phase: Opt
 /// Draws a `columns` by `rows` grid of square dots centred on the whole pixels inside `glyph`,
 /// lighting the dots whose bit is set in `lit`, numbered down each column and then across, as a
 /// braille cell numbers them: a working badge's 2x3 braille frame, or the background badge's
-/// three dots in a row. Dots are twice as wide as the gaps between them, two pixels and one at
-/// the default badge, scaled by whole pixels with the glyph. Every dot is pushed, unlit ones at
-/// zero alpha, so each spinner phase writes the same vertices and only alpha changes. A glyph too
-/// small for the grid keeps the dots that fit; none leave `glyph`, so the badge's clip check
-/// covers them.
+/// three dots in a row, in `color`. Dots are twice as wide as the gaps between them, two pixels
+/// and one at the default badge, scaled by whole pixels with the glyph. Every dot is pushed, unlit
+/// ones at zero alpha, so each spinner phase writes the same vertices and only alpha changes. A
+/// glyph too small for the grid keeps the dots that fit; none leave `glyph`, so the badge's clip
+/// check covers them.
 fn push_dots(
     rectangles: &mut RectangleBatch,
     glyph: SceneRect,
     (columns, rows): (u8, u8),
     lit: u8,
+    color: SceneColor,
     alpha: f32,
 ) {
     let left = glyph.left.ceil();
@@ -617,7 +667,7 @@ fn push_dots(
                 rect.top,
                 rect.width,
                 rect.height,
-                palette::ATTENTION_WORKING,
+                color,
                 if (lit >> bit) & 1 == 1 { alpha } else { 0.0 },
             );
         }
@@ -634,7 +684,7 @@ impl Renderer {
         *phase = (*phase + 1) % SPINNER_FRAMES.len();
         for slot in &self.spinners.slots {
             let mut batch = RectangleBatch::new(self.config.width, self.config.height);
-            push_badge_glyph(&mut batch, slot.badge, self.spinners.phase);
+            push_badge_glyph(&mut batch, slot.badge, self.spinners.phase, slot.color);
             self.queue
                 .write_buffer(&self.vertices, slot.offset as u64, &batch.bytes);
         }
@@ -817,11 +867,14 @@ impl Renderer {
         )
     }
 
+    /// Draws one sidebar or inbox row over `surface`, what its badge sits on unless the row is
+    /// highlighted.
     fn push_attention_row(
         &mut self,
         row: &crate::SidebarRow,
         list: SceneRect,
         hovered: bool,
+        surface: Backing,
         rectangles: &mut RectangleBatch,
     ) {
         let padding = self.metrics.padding;
@@ -840,9 +893,13 @@ impl Renderer {
         if row.focused {
             rectangles.push_rounded_outline(row.rect, padding / 2.0, palette::ACCENT);
         }
-        // A glyph on the translucent card needs no disc; on a highlight it matches it.
-        let ring = (row.focused || hovered).then_some(palette::CHROME_HIGHLIGHT);
-        self.spinners.push_badge(row.glyph, ring, rectangles);
+        // On a highlight a glyph's disc matches it.
+        let backing = if row.focused || hovered {
+            Backing::Disc(palette::CHROME_HIGHLIGHT)
+        } else {
+            surface
+        };
+        self.spinners.push_badge(row.glyph, backing, rectangles);
         if let Some((provider, rect)) = row.icon {
             self.push_quota_icon(provider, rect, Some(list));
         }
@@ -1135,7 +1192,13 @@ impl Renderer {
             );
         }
         for row in &viewer.attention_rows {
-            self.push_attention_row(row, viewer.content, false, rectangles);
+            self.push_attention_row(
+                row,
+                viewer.content,
+                false,
+                Backing::Surface(palette::DIALOG_BACKGROUND),
+                rectangles,
+            );
         }
         let key_cells = match viewer.kind {
             DialogKind::Shortcuts | DialogKind::AttentionInbox => 15.0,
@@ -1293,9 +1356,17 @@ impl Renderer {
                     rectangles,
                 );
             }
+            // `card_backdrops` lists the sidebar's card last.
+            let card = Backing::card(
+                backgrounds
+                    .last()
+                    .copied()
+                    .unwrap_or(palette::TERMINAL_FALLBACK),
+                self.background_opacity,
+            );
             for row in workspace.sidebar_rows() {
                 let hovered = self.header.hovers(WorkspaceFocus::Sidebar, &row.target);
-                self.push_attention_row(row, list, hovered, rectangles);
+                self.push_attention_row(row, list, hovered, card, rectangles);
             }
             rectangles.clip = None;
         }
@@ -1386,12 +1457,12 @@ impl Renderer {
             );
             if let Some(badge) = tab.badge {
                 self.spinners
-                    .push_badge(badge, Some(palette::BAR_BACKGROUND), rectangles);
+                    .push_badge(badge, Backing::Disc(palette::BAR_BACKGROUND), rectangles);
             }
         }
         for badge in &workspace.edge_badges {
             self.spinners
-                .push_badge(*badge, Some(palette::BAR_BACKGROUND), rectangles);
+                .push_badge(*badge, Backing::Disc(palette::BAR_BACKGROUND), rectangles);
         }
         rectangles.clip = None;
         if let Some(icon) = workspace.eon_icon {
@@ -1432,7 +1503,7 @@ impl Renderer {
             );
             if let Some(badge) = label.badge {
                 self.spinners
-                    .push_badge(badge, Some(palette::BAR_BACKGROUND), rectangles);
+                    .push_badge(badge, Backing::Disc(palette::BAR_BACKGROUND), rectangles);
             }
         }
         // Quota chips and readings share the tabs' band; the version label stays plain.
@@ -1858,6 +1929,13 @@ mod tests {
     use super::super::*;
     use super::*;
     use glyphon::cosmic_text::SubpixelBin;
+
+    /// Venus's focus color when Eon passes none (`--focus-color`), readable on the bar disc.
+    const DEFAULT_FOCUS: SceneColor = SceneColor {
+        r: 0xb2,
+        g: 0x07,
+        b: 0xfb,
+    };
 
     /// The ink box of `buffer` as glyphon draws it from `left` and `top`: left, top, right and
     /// bottom in physical pixels.
@@ -2309,7 +2387,7 @@ mod tests {
             let glyph = |phase, clip| {
                 let mut rectangles = RectangleBatch::new(800, 600);
                 rectangles.clip = clip;
-                push_badge_glyph(&mut rectangles, badge, Some(phase));
+                push_badge_glyph(&mut rectangles, badge, Some(phase), DEFAULT_FOCUS);
                 rectangles
                     .bytes
                     .chunks_exact(4)
@@ -2378,7 +2456,7 @@ mod tests {
             },
         };
         let mut rectangles = RectangleBatch::new(800, 600);
-        push_badge_glyph(&mut rectangles, badge, phase);
+        push_badge_glyph(&mut rectangles, badge, phase, DEFAULT_FOCUS);
         let side = size as usize;
         let mut rows = vec![vec![' '; side]; side];
         // Each dot is one quad of six vertices of x, y, r, g, b, alpha, in clip space.
@@ -2487,16 +2565,20 @@ mod tests {
                 ..SceneRect::default()
             },
         };
-        let mut spinners = Spinners::new(true);
+        let mut spinners = Spinners::new(true, DEFAULT_FOCUS);
         let mut rectangles = RectangleBatch::new(800, 600);
-        spinners.push_badge(badge, None, &mut rectangles);
+        spinners.push_badge(
+            badge,
+            Backing::Surface(palette::BAR_BACKGROUND),
+            &mut rectangles,
+        );
         assert!(
             spinners.slots.is_empty(),
             "a background badge schedules no tick"
         );
         // A phase never changes it.
         let mut turned = RectangleBatch::new(800, 600);
-        push_badge_glyph(&mut turned, badge, Some(4));
+        push_badge_glyph(&mut turned, badge, Some(4), DEFAULT_FOCUS);
         assert_eq!(turned.bytes, rectangles.bytes);
     }
 
@@ -2512,9 +2594,13 @@ mod tests {
             },
         };
         let draw = |turning| {
-            let mut spinners = Spinners::new(turning);
+            let mut spinners = Spinners::new(turning, DEFAULT_FOCUS);
             let mut rectangles = RectangleBatch::new(800, 600);
-            spinners.push_badge(badge, None, &mut rectangles);
+            spinners.push_badge(
+                badge,
+                Backing::Surface(palette::BAR_BACKGROUND),
+                &mut rectangles,
+            );
             let alphas = rectangles
                 .bytes
                 .chunks_exact(24)
@@ -2528,6 +2614,161 @@ mod tests {
         // `update_spinner` schedules no tick.
         assert_eq!((turning_slots, still_slots), (1, 0));
         assert_eq!(turning, still);
+    }
+
+    #[test]
+    fn working_dots_take_the_focus_color_and_stay_readable_on_their_surface() {
+        use super::super::cells::contrast_ratio;
+        // The colors a badge draws in, its disc first, and the color a tick rewrites.
+        let drawn = |state, focus, backing| {
+            let mut spinners = Spinners::new(true, focus);
+            let mut rectangles = RectangleBatch::new(800, 600);
+            let badge = TabBadge {
+                state,
+                dimmed: false,
+                rect: SceneRect {
+                    width: 12.0,
+                    height: 12.0,
+                    ..SceneRect::default()
+                },
+            };
+            spinners.push_badge(badge, backing, &mut rectangles);
+            let channel = |bytes: &[u8]| {
+                (f32::from_ne_bytes(bytes.try_into().unwrap()) * 255.0).round() as u8
+            };
+            let mut colors = rectangles
+                .bytes
+                .chunks_exact(24)
+                .map(|vertex| SceneColor {
+                    r: channel(&vertex[8..12]),
+                    g: channel(&vertex[12..16]),
+                    b: channel(&vertex[16..20]),
+                })
+                .collect::<Vec<_>>();
+            colors.dedup();
+            (colors, spinners.slots.first().map(|slot| slot.color))
+        };
+        let gray = |value| SceneColor {
+            r: value,
+            g: value,
+            b: value,
+        };
+        let custom = SceneColor {
+            r: 0x2b,
+            g: 0xd4,
+            b: 0xff,
+        };
+        let navy = SceneColor {
+            r: 0x1a,
+            g: 0x1a,
+            b: 0x8c,
+        };
+        // On a tab's disc and on a dark opaque card a readable focus color is drawn as
+        // configured, the default included.
+        for focus in [DEFAULT_FOCUS, custom] {
+            assert_eq!(
+                drawn(
+                    AttentionState::Working,
+                    focus,
+                    Backing::Disc(palette::BAR_BACKGROUND)
+                ),
+                (vec![palette::BAR_BACKGROUND, focus], Some(focus))
+            );
+            let card = Backing::card(palette::TERMINAL_FALLBACK, 1.0);
+            assert_eq!(
+                drawn(AttentionState::Working, focus, card),
+                (vec![focus], Some(focus))
+            );
+            assert_eq!(
+                drawn(AttentionState::Background, focus, card),
+                (vec![focus], None)
+            );
+        }
+        // Elsewhere the dots blend by the least that reads at 3:1 on what is under them, and a
+        // tick rewrites that color: the default on a hovered row's highlight, navy on a dark
+        // terminal's card and on the inbox, white on a white terminal, and the default on a gray
+        // one.
+        for (focus, backing, under) in [
+            (
+                DEFAULT_FOCUS,
+                Backing::Disc(palette::CHROME_HIGHLIGHT),
+                palette::CHROME_HIGHLIGHT,
+            ),
+            (navy, Backing::card(gray(25), 1.0), gray(25)),
+            (
+                navy,
+                Backing::Surface(palette::DIALOG_BACKGROUND),
+                palette::DIALOG_BACKGROUND,
+            ),
+            (gray(255), Backing::card(gray(255), 1.0), gray(255)),
+            (DEFAULT_FOCUS, Backing::card(gray(119), 1.0), gray(119)),
+        ] {
+            let color = blend_to_contrast(focus, under, 3.0);
+            assert_ne!(color, focus, "{backing:?}");
+            assert!(contrast_ratio(color, under) >= 3.0, "{backing:?}");
+            let disc = matches!(backing, Backing::Disc(_)).then_some(under);
+            assert_eq!(
+                drawn(AttentionState::Working, focus, backing),
+                (disc.into_iter().chain([color]).collect(), Some(color)),
+                "{backing:?}"
+            );
+        }
+        // A translucent card's color depends on the desktop behind it, so working and background
+        // dots get the bar's disc; other glyphs stay bare.
+        let translucent = Backing::card(gray(255), 0.8);
+        let on_bar = blend_to_contrast(navy, palette::BAR_BACKGROUND, 3.0);
+        assert!(contrast_ratio(on_bar, palette::BAR_BACKGROUND) >= 3.0);
+        assert_eq!(
+            drawn(AttentionState::Working, navy, translucent),
+            (vec![palette::BAR_BACKGROUND, on_bar], Some(on_bar))
+        );
+        assert_eq!(
+            drawn(AttentionState::Background, navy, translucent),
+            (vec![palette::BAR_BACKGROUND, on_bar], None)
+        );
+        assert_eq!(
+            drawn(AttentionState::NeedsInput, navy, translucent),
+            (vec![palette::ATTENTION_NEEDS_INPUT], None)
+        );
+        // Other attention states keep their own colors.
+        for (state, color) in [
+            (AttentionState::NeedsInput, palette::ATTENTION_NEEDS_INPUT),
+            (AttentionState::Error, palette::ATTENTION_ERROR),
+            (AttentionState::Finished, palette::ATTENTION_FINISHED),
+        ] {
+            assert_eq!(
+                drawn(state, custom, Backing::Disc(palette::BAR_BACKGROUND)),
+                (vec![palette::BAR_BACKGROUND, color], None)
+            );
+        }
+        // Any focus color, black and white included, reads at 3:1 on any surface: one that
+        // already does is kept, any other blends no further than it needs, which the search over
+        // increasing blends guarantees.
+        let steps = (0..=255).step_by(17).map(|value| value as u8);
+        for r in steps.clone() {
+            for g in steps.clone() {
+                for b in steps.clone() {
+                    let focus = SceneColor { r, g, b };
+                    for surface in [
+                        palette::BAR_BACKGROUND,
+                        palette::CHROME_HIGHLIGHT,
+                        palette::DIALOG_BACKGROUND,
+                        gray(25),
+                        gray(119),
+                        gray(255),
+                    ] {
+                        let color = blend_to_contrast(focus, surface, 3.0);
+                        let ratio = contrast_ratio(color, surface);
+                        assert!(ratio >= 3.0, "{focus:?} on {surface:?}");
+                        if contrast_ratio(focus, surface) >= 3.0 {
+                            assert_eq!(color, focus);
+                        } else {
+                            assert!(ratio < 3.1, "{focus:?} on {surface:?} at {ratio}");
+                        }
+                    }
+                }
+            }
+        }
     }
 
     #[test]

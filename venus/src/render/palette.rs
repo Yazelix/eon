@@ -63,11 +63,10 @@ pub(super) const SPLASH_TEXT: SceneColor = rgb(196, 202, 216);
 /// keys, the dialog's scroll thumb, and the splash title.
 pub(super) const ACCENT: SceneColor = rgb(126, 231, 185);
 
-// Attention badge glyphs.
+// Attention badge glyphs. Working and background dots take the window's focus color instead.
 pub(super) const ATTENTION_NEEDS_INPUT: SceneColor = rgb(255, 196, 87);
 pub(super) const ATTENTION_ERROR: SceneColor = rgb(255, 107, 107);
 pub(super) const ATTENTION_FINISHED: SceneColor = rgb(96, 196, 96);
-pub(super) const ATTENTION_WORKING: SceneColor = rgb(138, 180, 255);
 /// The idle ring and the unavailable dot.
 pub(super) const ATTENTION_IDLE: SceneColor = rgb(162, 174, 190);
 

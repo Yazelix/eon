@@ -5,6 +5,15 @@ installation, and proven contract changes.
 
 ## Unreleased
 
+- Working and background attention badges, on tabs and in the agent sidebar,
+  draw their dots in the window's focus colour (`[terminal] focus_color`, or
+  Venus's built-in focus colour) instead of a fixed blue. Where that colour
+  would read below 3:1 contrast on what lies under the dots, they blend it
+  toward black or white just enough to reach 3:1. With a translucent terminal
+  background, the sidebar's working and background badges sit on the bar's
+  dark disc, as on a tab, since the desktop behind the window sets the card's
+  colour. A stale agent's badge stays dimmed below 3:1 on purpose. Needs
+  input, error and finished badges keep their own colours (`eon-i3th2`).
 - The bottom hints bar fits a 1280-pixel-wide window with Eon's packaged font
   (DejaVu Sans) at the default size:
   directions read `HJKL`, create hints drop their `+` (`pane`, `col`, `tab`,

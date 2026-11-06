@@ -2375,6 +2375,17 @@ fn card_backdrop_keeps_cards_like_the_agent_sidebar_at_terminal_opacity() {
                                 metrics,
                                 physical_outline_width(2, metrics.scale),
                             );
+                            // Sidebar badges read the sidebar card's background from the end.
+                            if let Some(area) = workspace.sidebar_area() {
+                                assert_eq!(
+                                    cards.last().unwrap().0.bounds,
+                                    workspace.card_rect(
+                                        area,
+                                        metrics,
+                                        physical_outline_width(2, metrics.scale),
+                                    )
+                                );
+                            }
                             let frame = SceneRect {
                                 left: 0.0,
                                 top: workspace.tab_viewport.bottom(),

@@ -243,7 +243,16 @@ uses the chosen color with a shape-aware contrasting edge unless Orbit supplies
 an explicit cursor color.
 
 `focus_color` colours the selected pane's whole outline in the selected column
-when pane frames are on. It accepts
+when pane frames are on, and the working and background dots of agent
+attention badges on tabs and in the agent sidebar. Where the colour would
+read below 3:1 contrast on what lies under the dots, such as a dark custom
+colour on the bar or a white one on a white terminal background, the dots
+blend it toward black or white just enough to reach 3:1. Under a translucent
+terminal background (`background_opacity` below 1) the sidebar's colour
+depends on the desktop behind the window, so those dots sit on the bar's dark
+disc, as on a tab. The 3:1 holds for a current agent's badge; a stale agent's
+badge is dimmed on purpose and reads below it. The other badges keep their
+own colours. It accepts
 `preset:<name>` from the cursor presets above or `custom:#RRGGBB`; `random` is
 invalid. The setting is omitted by default, leaving Venus's built-in focus
 colour in use. The example selects `custom:#b207fb`. F6 keyboard focus in the chrome keeps

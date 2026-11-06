@@ -128,7 +128,12 @@ Standalone and popup presentation have no pane frames; popups retain their own
 rounded card outline. This is a startup option; Eon owns persistent product configuration.
 
 Pass `--focus-color preset:NAME|custom:#RRGGBB` to colour the selected pane's
-whole outline in the selected column.
+whole outline in the selected column and the working and background attention
+badges' dots. The dots blend it toward black or white just enough to read at
+3:1 on what lies under them: a tab's or highlighted row's disc, or the sidebar
+card when the terminal background is opaque. Under a translucent background
+the sidebar's dots sit on the bar's disc. A stale badge's dimming takes it
+below 3:1 on purpose.
 The default is `custom:#b207fb`; presets are the cursor colours listed below,
 and `random` is invalid. Missing, duplicate or invalid values fail before window
 creation. F6 keyboard-focus pills stay mint. With pane frames off, no pane
