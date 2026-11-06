@@ -1261,8 +1261,16 @@ fn managed_orbit_helper() {
             if disconnected {
                 let lease_released = *leased;
                 client = None;
+                // One append per line, so the fake Orbits that share the
+                // log never interleave.
                 if lease_released && let Some(path) = std::env::var_os("EON_TEST_LEASE_RELEASED") {
-                    fs::write(path, "released").unwrap();
+                    fs::OpenOptions::new()
+                        .create(true)
+                        .append(true)
+                        .open(path)
+                        .unwrap()
+                        .write_all(format!("{}\n", identity.session_id).as_bytes())
+                        .unwrap();
                 }
             }
         }
@@ -1823,6 +1831,29 @@ while [ ! -e "$EON_TEST_STOP" ]; do sleep 0.01; done
 
     fn visits(&self) -> Vec<String> {
         log_lines(&self.zoxide_log)
+    }
+
+    /// Kills `supervisor` as a crash would and waits until the fake Orbit of
+    /// every terminal its window showed has seen its lease end. Each fake
+    /// Orbit notices on its own poll, and one still holding the ended lease
+    /// refuses a replacement supervisor's lease as Busy.
+    fn crash(&self, supervisor: &mut TestProcess) {
+        let leased = snapshot_sessions(&self.inspect("leased"));
+        let _ = fs::remove_file(&self.lease_released);
+        supervisor.child.kill().unwrap();
+        assert!(!supervisor.child.wait().unwrap().success());
+        let deadline = Instant::now() + Duration::from_secs(5);
+        loop {
+            let released = log_lines(&self.lease_released);
+            if leased.iter().all(|session| released.contains(session)) {
+                return;
+            }
+            assert!(
+                Instant::now() < deadline,
+                "leases of {leased:?} not all released: {released:?}"
+            );
+            thread::sleep(Duration::from_millis(10));
+        }
     }
 
     fn stop_generation(&self, supervisor: &mut TestProcess) -> String {
@@ -2660,9 +2691,7 @@ fn recovery_stops_a_pending_pair_and_keeps_a_committed_files() {
             );
             live_identity(&generation.join("orbit.sock"));
         }
-        first.child.kill().unwrap();
-        assert!(!first.child.wait().unwrap().success());
-        wait_for(&window.lease_released);
+        window.crash(&mut first);
 
         let mut replacement = window.spawn(&[]);
         let recovered = window.inspect("recovered");
@@ -2709,9 +2738,7 @@ fn a_pending_pair_left_by_a_failed_rollback_is_stopped_by_recovery() {
     let marker = artifact_path(&generation.join("session-2.sock"), ".pending");
     let marked = marker.exists();
 
-    first.child.kill().unwrap();
-    assert!(!first.child.wait().unwrap().success());
-    wait_for(&window.lease_released);
+    window.crash(&mut first);
     let mut replacement = window.spawn(&[]);
     let recovered = window.inspect("recovered");
     assert_eq!(recovered.tabs.len(), 1);
@@ -10533,9 +10560,7 @@ fn recovery_adopts_a_live_scrollback_snapshot_and_sweeps_stale_ones() {
         .join(format!("{}-1-1", u32::MAX));
     fs::create_dir(&stale).unwrap();
     fs::write(stale.join("p9-scrollback.txt"), "old").unwrap();
-    first.child.kill().unwrap();
-    assert!(!first.child.wait().unwrap().success());
-    wait_for(&window.lease_released);
+    window.crash(&mut first);
 
     let mut replacement = window.spawn_scrollback();
     let recovered = window.inspect("recovered");
@@ -10559,9 +10584,7 @@ fn recovery_whose_venus_cannot_start_removes_adopted_snapshots() {
     let mut first = scrollback_window(&window, "");
     let (_, file) = window.open_scrollback("open");
     let snapshots = window.generation().join("snapshots");
-    first.child.kill().unwrap();
-    assert!(!first.child.wait().unwrap().success());
-    wait_for(&window.lease_released);
+    window.crash(&mut first);
 
     let mut command = window.scrollback_command();
     command.env("EON_VENUS", window.root.join("missing-venus"));
@@ -10951,9 +10974,7 @@ fn a_recovery_adopts_the_snapshot_of_an_unconfirmed_scrollback_start() {
     let mut first = scrollback_window(&window, "");
     let (session, file) = unconfirmed_scrollback(&window);
 
-    first.child.kill().unwrap();
-    assert!(!first.child.wait().unwrap().success());
-    wait_for(&window.lease_released);
+    window.crash(&mut first);
     let mut replacement = window.spawn_scrollback();
     assert!(
         window.inspect("recovered").tabs[0]
