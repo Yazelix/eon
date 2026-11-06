@@ -21,6 +21,14 @@ installation, and proven contract changes.
   their recorded `eon`, but their own `eon` cannot stop or attach a window of
   this release: restart old windows to use the new commands everywhere
   (`eon-7cf0y.22`, EON-C10, EON-C11, EON-C23).
+- Tab, workspace and quota chips in the Eon Bar, and the bare key hints in the
+  bottom bar (such as Left/Right), no longer cut the tails of g, p, y, j and q:
+  their text clips at the chip or bar instead of at the terminal's line
+  height, which is shorter than the ascent and descent of some header fonts,
+  such as Open Sans at the default `line_height = 1.125`. The text keeps its
+  place, except that at a large `font_size`, where the font is taller than
+  the chip, a label moves to centre its letters in the chip, keeping its
+  descenders inside first (`eon-4x5tb`).
 - The bottom hints bar's clock drops its outline and shows as plain text in the
   version label's softened cyan, as far from the left edge as the version is
   from the right, so the two match at the bar's ends. A keycap's

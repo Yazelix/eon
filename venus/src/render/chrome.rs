@@ -10,8 +10,8 @@ use crate::{
     DialogKind, DialogScene, Load, SceneRect, WorkspaceFocus, WorkspaceHeaderControl,
     WorkspaceScene,
     scene::{
-        QuotaProvider, SIDEBAR_EMPTY, SIDEBAR_TITLE, ShortcutHintGroup, TabBadge, WorkspaceControl,
-        chrome_title_metrics,
+        QuotaProvider, SIDEBAR_EMPTY, SIDEBAR_TITLE, ShortcutHintGroup, ShortcutHintsScene,
+        TabBadge, WorkspaceControl, chrome_title_metrics,
     },
 };
 use eon_workspace_protocol::v35::AttentionState;
@@ -343,6 +343,94 @@ pub(super) fn placed_control_glyph(
         )),
         _ => None,
     }
+}
+
+/// The label box of a tab or workspace chip in `slot`: inside its padding, as tall as its pill.
+fn chip_label_box(workspace: &WorkspaceScene, slot: SceneRect, metrics: CellMetrics) -> SceneRect {
+    SceneRect {
+        left: slot.left + metrics.padding,
+        width: (slot.width - metrics.padding * 2.0).max(1.0),
+        ..workspace.bar_pill_rect(slot, metrics)
+    }
+}
+
+/// The label box of hint text from `left`, `width` wide, on `row`: as tall as the hints bar and
+/// centred on the text's terminal-height line at the row's top, so the text keeps its place and
+/// clips at the bar, not at that line.
+fn hint_label_box(
+    hints: &ShortcutHintsScene,
+    row: SceneRect,
+    left: f32,
+    width: f32,
+    metrics: CellMetrics,
+) -> SceneRect {
+    let line = chrome_title_metrics(metrics).line_height;
+    let height = hints.rect.height.max(line);
+    SceneRect {
+        left,
+        top: row.top + (line - height) / 2.0,
+        width,
+        height,
+    }
+}
+
+/// The pixels a chip label in `label` may draw: the chip's height, not its line's, within `clip`.
+fn chip_label_bounds(label: SceneRect, clip: SceneRect) -> Option<TextBounds> {
+    SceneRect {
+        width: label.width.max(1.0),
+        ..label
+    }
+    .intersection(clip)
+    .map(super::text_clip_bounds)
+}
+
+/// The top at which `buffer`, one header line shaped `line_height` tall, draws in `chip`:
+/// centred there. Only when the face's descent would pass the chip's bottom, as a face taller
+/// than the chip at a large font size can, it moves by whole pixels to centre the label's own ink
+/// in the chip instead, or to keep the descenders inside when that ink is taller than the chip.
+fn chip_label_top(
+    font_system: &mut FontSystem,
+    swash_cache: &mut SwashCache,
+    buffer: &mut Buffer,
+    chip: SceneRect,
+    line_height: f32,
+) -> f32 {
+    let top = chip.top + (chip.height - line_height) / 2.0;
+    let line_y = buffer.layout_runs().next().map(|run| run.line_y);
+    let descent = buffer
+        .line_layout(font_system, 0)
+        .and_then(|lines| lines.first())
+        .map(|line| line.max_descent);
+    let (Some(line_y), Some(descent)) = (line_y, descent) else {
+        return top;
+    };
+    // Glyphon puts the baseline at the truncated top plus the rounded line offset.
+    let baseline = top.trunc() + line_y.round();
+    if baseline + descent <= chip.bottom() {
+        return top;
+    }
+    // The label's ink rows from its baseline.
+    let mut ink: Option<(i32, i32)> = None;
+    for glyph in buffer.layout_runs().flat_map(|run| run.glyphs) {
+        let physical = glyph.physical((0.0, 0.0), 1.0);
+        let Some(image) = swash_cache.get_image(font_system, physical.cache_key) else {
+            continue;
+        };
+        if image.placement.height == 0 {
+            continue;
+        }
+        let glyph_top = physical.y - image.placement.top;
+        let glyph_bottom = glyph_top + image.placement.height as i32;
+        ink = Some(ink.map_or((glyph_top, glyph_bottom), |(top, bottom)| {
+            (top.min(glyph_top), bottom.max(glyph_bottom))
+        }));
+    }
+    let Some((ink_top, ink_bottom)) = ink else {
+        return top;
+    };
+    let rows = super::text_clip_bounds(chip);
+    let centred = (rows.top + rows.bottom - ink_top - ink_bottom).div_euclid(2);
+    top + (centred.min(rows.bottom - ink_bottom) as f32 - baseline)
 }
 
 /// `glyph` shaped in the status font, and its ink box from an origin at zero in whole physical
@@ -1020,6 +1108,46 @@ impl Renderer {
         }
     }
 
+    /// One header line in `label`, whose height is its chip's, as `chip_label_top` places it.
+    /// It clips at the chip and `clip`, not at its terminal-height line, which can be shorter
+    /// than the face's ascent and descent.
+    fn push_chip_label(
+        &mut self,
+        text: &str,
+        label: SceneRect,
+        color: SceneColor,
+        clip: SceneRect,
+    ) {
+        let Some(bounds) = chip_label_bounds(label, clip) else {
+            return;
+        };
+        let width = label.width.max(1.0);
+        let line_height = chrome_title_metrics(self.metrics).line_height;
+        let pushed = self.text.len();
+        self.push_text(
+            text,
+            label.left,
+            label.top,
+            width,
+            line_height,
+            color,
+            DrawStyleKind::Status(Wrap::None),
+        );
+        for placed in &mut self.text[pushed..] {
+            placed.top = chip_label_top(
+                &mut self.fonts.font_system,
+                &mut self.swash_cache,
+                &mut placed.buffer,
+                label,
+                line_height,
+            );
+            placed.bound_left = bounds.left;
+            placed.bound_top = bounds.top;
+            placed.right = bounds.right;
+            placed.bottom = bounds.bottom;
+        }
+    }
+
     /// One line of agent sidebar text. With `marker`, the popup marker follows the text before
     /// that byte offset, at the end of the line if that text overflows, and the rest of the text
     /// follows the marker.
@@ -1600,16 +1728,16 @@ impl Renderer {
                         palette::SECONDARY_TEXT,
                     ),
                 ] {
-                    self.push_text_clipped(
+                    let label = hint_label_box(hints, hint.rect, left, width, self.metrics);
+                    self.push_chip_label(
                         text,
-                        left,
-                        hint.rect.top,
-                        width,
-                        width,
-                        hint.rect.height,
+                        label,
                         color,
-                        DrawStyleKind::Status(Wrap::None),
-                        hint.rect,
+                        SceneRect {
+                            top: label.top,
+                            height: label.height,
+                            ..hint.rect
+                        },
                     );
                 }
             }
@@ -1652,20 +1780,14 @@ impl Renderer {
             if tab.selected && focus == WorkspaceFocus::Tabs {
                 rectangles.push_rounded_outline(visual, radius, palette::ACCENT);
             }
-            let label_width = (tab.rect.width - self.metrics.padding * 2.0).max(1.0);
-            self.push_text_clipped(
+            self.push_chip_label(
                 tab.label(),
-                tab.rect.left + self.metrics.padding,
-                visual.top + (visual.height - self.metrics.height) / 2.0,
-                label_width,
-                label_width,
-                self.metrics.height,
+                chip_label_box(workspace, tab.rect, self.metrics),
                 if tab.selected {
                     palette::PRIMARY_TEXT
                 } else {
                     palette::TAB_TEXT
                 },
-                DrawStyleKind::Status(Wrap::None),
                 workspace.tab_label_clip,
             );
             if let Some(badge) = tab.badge {
@@ -1698,16 +1820,10 @@ impl Renderer {
             if focus == WorkspaceFocus::Header(control) && workspace.has_control(control) {
                 rectangles.push_rounded_outline(visual, radius, palette::ACCENT);
             }
-            let label_width = (label.rect.width - self.metrics.padding * 2.0).max(1.0);
-            self.push_text_clipped(
+            self.push_chip_label(
                 &label.label,
-                label.rect.left + self.metrics.padding,
-                visual.top + (visual.height - self.metrics.height) / 2.0,
-                label_width,
-                label_width,
-                self.metrics.height,
+                chip_label_box(workspace, label.rect, self.metrics),
                 palette::PRIMARY_TEXT,
-                DrawStyleKind::Status(Wrap::None),
                 SceneRect {
                     top: workspace.header.top,
                     height: workspace.header.height,
@@ -1726,20 +1842,18 @@ impl Renderer {
                 self.metrics,
             );
             push_bar_widget(rectangles, visual, self.border_width, self.metrics.scale);
-            let content = workspace.bar_item_rect(quota.rect, self.metrics);
             self.push_quota_icon(quota.provider, quota.logo, None);
             let label_left = quota.logo.right() + self.metrics.padding / 2.0;
             let label_width = (quota.rect.right() - self.metrics.padding - label_left).max(0.0);
             let first_text = self.text.len();
-            self.push_text_clipped(
+            self.push_chip_label(
                 &quota.label,
-                label_left,
-                content.top + (content.height - self.metrics.height).max(0.0) / 2.0,
-                label_width,
-                label_width,
-                self.metrics.height.min(quota.rect.height),
+                SceneRect {
+                    left: label_left,
+                    width: label_width,
+                    ..visual
+                },
                 palette::SECONDARY_TEXT,
-                DrawStyleKind::Status(Wrap::None),
                 quota.rect,
             );
             if let Some(shortfall) = quota.pace
@@ -3940,5 +4054,258 @@ mod tests {
         let mut probe = Probe(false);
         event_loop.run_app(&mut probe).unwrap();
         assert!(probe.0);
+    }
+
+    /// Tab and workspace chip labels and bottom-bar hint text with descenders, shaped in Eon's
+    /// packaged DejaVu Sans, whose ascent and descent (1.164 em) exceed a terminal line of 1 em
+    /// and nearly fill the default 1.125 em: their ink lies inside their clip bounds, drawn where
+    /// their terminal-height line always drew it. In a chip shorter than the face, the line lifts
+    /// by whole pixels to keep the descenders inside.
+    #[test]
+    fn chip_label_descenders_stay_inside_their_clip_and_chip() {
+        use eon_workspace_protocol::v35::{
+            Column, Pane, PopupGeometry, Sidebar, Snapshot, Tab, WorkspaceInfo,
+        };
+
+        let font = std::env::var_os("EON_VENUS_TEST_SANS_FONT").expect(
+            "EON_VENUS_TEST_SANS_FONT names Eon's packaged DejaVu Sans; run in nix develop",
+        );
+        let tab = |index: usize, directory: &str| Tab {
+            id: format!("t{index}"),
+            directory: directory.as_bytes().to_vec(),
+            pending: false,
+            selected_pane: Some(format!("p{index}")),
+            selected_popup: None,
+            columns: vec![Column {
+                panes: vec![Pane {
+                    label: format!("p{index}"),
+                    pinned_name: None,
+                    id: format!("p{index}"),
+                    session: format!("s{index}"),
+                    endpoint: format!("/tmp/s{index}.sock").into_bytes(),
+                    live: true,
+                    attention: None,
+                }],
+                expanded: format!("p{index}"),
+            }],
+            popups: Vec::new(),
+            attention_rollup: None,
+        };
+        let snapshot = Snapshot {
+            workspace: "w1".into(),
+            active_workspace: "w1".into(),
+            workspaces: vec![WorkspaceInfo {
+                id: "w1".into(),
+                name: Some("gpy-jq".into()),
+                tab_count: 2,
+                attention: None,
+                recency: 0,
+            }],
+            active_tab: "t2".into(),
+            tabs: vec![tab(1, "/tmp/eon"), tab(2, "/tmp/rota-gtp")],
+            geometry: PopupGeometry {
+                side_margin: 8.0,
+                vertical_margin: 4.0,
+            },
+            entries: Vec::new(),
+            codex_quota: None,
+            claude_quota: None,
+            codex_quota_failure: None,
+            claude_quota_failure: None,
+            running: None,
+            busy: None,
+            sidebar: Sidebar::Closed,
+            attention_queue: Vec::new(),
+        };
+        for (line_height, scale) in [(1.0, 1.0), (1.0, 2.0), (1.125, 1.0), (1.125, 2.0)] {
+            let mut fonts = FontSetup::new(&FontSettings {
+                line_height,
+                ..FontSettings::default()
+            })
+            .unwrap();
+            fonts
+                .set_header_font_file(std::path::Path::new(&font))
+                .unwrap();
+            let metrics = fonts.metrics(scale);
+            let case = format!("line height {line_height} at scale {scale}");
+            let size = PhysicalSize::new((1280.0 * scale) as u32, (800.0 * scale) as u32);
+            let width = WorkspaceScene::tab_text_width(size, metrics);
+            let workspace =
+                WorkspaceScene::from_snapshot(&snapshot, size, metrics, 0.0, 0.0, |_, label| {
+                    fit_tab_text(&mut fonts.font_system, metrics, label, false, width)
+                });
+            let tab = &workspace.tabs[1];
+            assert_eq!(tab.label(), "2  rota-gtp");
+            let name = workspace.workspace_label.as_ref().unwrap();
+            assert!(name.label.contains("gpy-jq"), "{}", name.label);
+            let cell_font = fitted_cell_font(&mut fonts.font_system, metrics, fonts.family, false);
+            let line = chrome_title_metrics(metrics).line_height;
+            let mut swash_cache = SwashCache::new();
+            let mut place = |font_system: &mut FontSystem, text: &str, label: SceneRect| {
+                let mut buffer = shape_styled_text(
+                    font_system,
+                    metrics,
+                    cell_font,
+                    text,
+                    label.width,
+                    line,
+                    DrawStyleKind::Status(Wrap::None),
+                );
+                let top = chip_label_top(font_system, &mut swash_cache, &mut buffer, label, line);
+                let ink = drawn_ink(font_system, &buffer, label.left, top);
+                (buffer, top, ink)
+            };
+            let header_clip = SceneRect {
+                top: workspace.header.top,
+                height: workspace.header.height,
+                ..name.rect
+            };
+            for (text, slot, clip) in [
+                (tab.label(), tab.rect, workspace.tab_label_clip),
+                (name.label.as_str(), name.rect, header_clip),
+            ] {
+                let label = chip_label_box(&workspace, slot, metrics);
+                let (buffer, top, ink) = place(&mut fonts.font_system, text, label);
+                let bounds = chip_label_bounds(label, clip).unwrap();
+                assert!(
+                    ink.1 >= bounds.top && ink.3 <= bounds.bottom,
+                    "{text} at {case}: ink rows {}..{} leave the clip rows {}..{}",
+                    ink.1,
+                    ink.3,
+                    bounds.top,
+                    bounds.bottom
+                );
+                let pill = workspace.bar_pill_rect(slot, metrics);
+                assert_eq!((label.top, label.height), (pill.top, pill.height));
+                // The label draws where the line centred in the pill always put it, and at 1 em
+                // the descenders reach below that line, the box that used to clip them.
+                let centred = pill.top + (pill.height - line) / 2.0;
+                assert_eq!(top, centred, "{text} at {case}");
+                assert_eq!(
+                    ink,
+                    drawn_ink(&mut fonts.font_system, &buffer, label.left, centred)
+                );
+                if line_height == 1.0 {
+                    assert!(ink.3 as f32 > centred + line, "{text} at {case}");
+                }
+            }
+            // Bare hint text in the bottom bar, as Left/Right and its label show in tabs focus.
+            let hints = ShortcutHintsScene::new(
+                vec![crate::ShortcutHint {
+                    modifiers: String::new(),
+                    modifier_names: String::new(),
+                    key: "Left/Right".into(),
+                    label: "gpy-jq".into(),
+                    description: "gpy-jq".into(),
+                    accessible_label: "Left/Right gpy-jq".into(),
+                    priority: 0,
+                }],
+                size,
+                metrics,
+                None,
+                None,
+                |text| fit_header_text(&mut fonts.font_system, metrics, text, f32::INFINITY).1,
+            );
+            let piece = &hints.pieces[0];
+            for (text, left, width) in [
+                (piece.key.as_str(), piece.rect.left, piece.label_offset),
+                (
+                    piece.label.as_str(),
+                    piece.rect.left + piece.label_offset,
+                    piece.rect.width - piece.label_offset,
+                ),
+            ] {
+                let label = hint_label_box(&hints, piece.rect, left, width, metrics);
+                let (_, top, ink) = place(&mut fonts.font_system, text, label);
+                let clip = SceneRect {
+                    top: label.top,
+                    height: label.height,
+                    ..piece.rect
+                };
+                let bounds = chip_label_bounds(label, clip).unwrap();
+                assert!(
+                    ink.1 >= bounds.top && ink.3 <= bounds.bottom,
+                    "hint {text} at {case}: ink rows {}..{} leave the clip rows {}..{}",
+                    ink.1,
+                    ink.3,
+                    bounds.top,
+                    bounds.bottom
+                );
+                assert_eq!(top, piece.rect.top, "hint {text} at {case}");
+                if line_height == 1.0 && text.contains('g') {
+                    assert!(ink.3 as f32 > piece.rect.top + line, "hint at {case}");
+                }
+            }
+            // A chip shorter than the face lifts the line by whole pixels, keeping g and p in.
+            let short = SceneRect {
+                height: metrics.font_size.round(),
+                ..chip_label_box(&workspace, tab.rect, metrics)
+            };
+            let (_, top, ink) = place(&mut fonts.font_system, tab.label(), short);
+            let bounds = chip_label_bounds(short, short).unwrap();
+            assert!(
+                ink.1 >= bounds.top && ink.3 <= bounds.bottom,
+                "short chip at {case}: ink rows {}..{} leave the clip rows {}..{}",
+                ink.1,
+                ink.3,
+                bounds.top,
+                bounds.bottom
+            );
+            let centred = short.top + (short.height - line) / 2.0;
+            assert!(top != centred && top.fract() == centred.fract(), "{case}");
+        }
+        // At font size 96, a chip shorter than the face but taller than "É-gp"'s ink keeps both
+        // the accent and the descenders; one shorter than that ink keeps the descenders.
+        let mut fonts = FontSetup::new(&FontSettings {
+            size: 96.0,
+            line_height: 1.0,
+            ..FontSettings::default()
+        })
+        .unwrap();
+        fonts
+            .set_header_font_file(std::path::Path::new(&font))
+            .unwrap();
+        let metrics = fonts.metrics(1.0);
+        let cell_font = fitted_cell_font(&mut fonts.font_system, metrics, fonts.family, false);
+        let line = metrics.height;
+        let mut buffer = shape_styled_text(
+            &mut fonts.font_system,
+            metrics,
+            cell_font,
+            "É-gp",
+            1000.0,
+            line,
+            DrawStyleKind::Status(Wrap::None),
+        );
+        let free = drawn_ink(&mut fonts.font_system, &buffer, 0.0, 0.0);
+        let face = buffer.line_layout(&mut fonts.font_system, 0).unwrap()[0].clone();
+        let ink_height = (free.3 - free.1) as f32;
+        assert!(ink_height + 2.0 < face.max_ascent + face.max_descent);
+        let mut swash_cache = SwashCache::new();
+        for (height, fits) in [(ink_height + 1.0, true), (ink_height - 6.0, false)] {
+            let chip = SceneRect {
+                left: 0.0,
+                top: 50.0,
+                width: 1000.0,
+                height,
+            };
+            let top = chip_label_top(
+                &mut fonts.font_system,
+                &mut swash_cache,
+                &mut buffer,
+                chip,
+                line,
+            );
+            let ink = drawn_ink(&mut fonts.font_system, &buffer, 0.0, top);
+            let bounds = chip_label_bounds(chip, chip).unwrap();
+            assert!(
+                ink.3 <= bounds.bottom && (ink.1 >= bounds.top) == fits,
+                "É-gp in a {height}-pixel chip: ink rows {}..{}, clip rows {}..{}",
+                ink.1,
+                ink.3,
+                bounds.top,
+                bounds.bottom
+            );
+        }
     }
 }

@@ -4,8 +4,8 @@ use crate::{
     scene::{CardFill, PaneOutline, chrome_title_metrics, rounded_radius},
 };
 use glyphon::{
-    Attrs, Buffer, Cache, Color, ColorMode, CustomGlyph, Family, Metrics, Resolution, Shaping,
-    SwashCache, TextArea, TextAtlas, TextBounds, TextRenderer, Viewport, Weight, Wrap,
+    Attrs, Buffer, Cache, Color, ColorMode, CustomGlyph, Family, FontSystem, Metrics, Resolution,
+    Shaping, SwashCache, TextArea, TextAtlas, TextBounds, TextRenderer, Viewport, Weight, Wrap,
 };
 use orbit_protocol::{
     MAX_CELLS,
@@ -2187,68 +2187,30 @@ impl Renderer {
         if text.is_empty() {
             return 0.0;
         }
-        let (font_size, line_height, attrs, monospace_width, wrap, alpha) = match kind {
-            DrawStyleKind::Cell(style, wide) => {
-                self.push_cell_text(
-                    text,
-                    left,
-                    top,
-                    layout_width,
-                    layout_height,
-                    foreground,
-                    style,
-                    wide,
-                );
-                return 0.0;
-            }
-            DrawStyleKind::PopupLabel => (
-                11.0 * self.metrics.scale,
-                12.0 * self.metrics.scale,
-                Attrs::new().family(Family::SansSerif),
-                None,
-                Wrap::None,
-                255,
-            ),
-            DrawStyleKind::Heading => (
-                self.metrics.font_size * 1.15,
-                self.metrics.height * 1.4,
-                Attrs::new().family(Family::SansSerif).weight(Weight::BOLD),
-                None,
-                Wrap::None,
-                255,
-            ),
-            DrawStyleKind::Preedit | DrawStyleKind::Monospace => (
-                self.cell_font.size,
-                self.metrics.height,
-                self.cell_font.attrs(),
-                Some(self.metrics.width),
-                Wrap::None,
-                255,
-            ),
-            DrawStyleKind::Status(wrap) => (
-                chrome_title_metrics(self.metrics).font_size,
-                if wrap == Wrap::None {
-                    chrome_title_metrics(self.metrics).line_height
-                } else {
-                    self.metrics.height * 1.25
-                },
-                Attrs::new().family(Family::SansSerif),
-                None,
-                wrap,
-                255,
-            ),
-        };
+        if let DrawStyleKind::Cell(style, wide) = kind {
+            self.push_cell_text(
+                text,
+                left,
+                top,
+                layout_width,
+                layout_height,
+                foreground,
+                style,
+                wide,
+            );
+            return 0.0;
+        }
         let layout_width = layout_width.max(1.0);
         let layout_height = layout_height.max(1.0);
-        let mut buffer = Buffer::new(
+        let buffer = shape_styled_text(
             &mut self.fonts.font_system,
-            Metrics::new(font_size, line_height),
+            self.metrics,
+            self.cell_font,
+            text,
+            layout_width,
+            layout_height,
+            kind,
         );
-        buffer.set_size(Some(layout_width), Some(layout_height));
-        buffer.set_wrap(wrap);
-        buffer.set_monospace_width(monospace_width);
-        buffer.set_text(text, &attrs, shaping(text), None);
-        buffer.shape_until_scroll(&mut self.fonts.font_system, false);
         let (left_offset, measured_width) = if matches!(kind, DrawStyleKind::Preedit) {
             shaped_preedit_placement(&buffer)
         } else {
@@ -2268,7 +2230,7 @@ impl Renderer {
             bottom: (top + layout_height).ceil() as i32,
             bound_left: left.floor() as i32,
             bound_top: top.floor() as i32,
-            color: Color::rgba(foreground.r, foreground.g, foreground.b, alpha),
+            color: Color::rgba(foreground.r, foreground.g, foreground.b, 255),
         });
         measured_width
     }
@@ -2417,6 +2379,60 @@ enum DrawStyleKind {
     Monospace,
     Status(Wrap),
     PopupLabel,
+}
+
+/// `text` shaped in the typography of `kind` for a box `layout_width` by `layout_height`, as
+/// `push_text` draws it. Cell runs, which `push_cell_text` shapes, take the monospace font here.
+fn shape_styled_text(
+    font_system: &mut FontSystem,
+    metrics: CellMetrics,
+    cell_font: CellFont,
+    text: &str,
+    layout_width: f32,
+    layout_height: f32,
+    kind: DrawStyleKind,
+) -> Buffer {
+    let (font_size, line_height, attrs, monospace_width, wrap) = match kind {
+        DrawStyleKind::PopupLabel => (
+            11.0 * metrics.scale,
+            12.0 * metrics.scale,
+            Attrs::new().family(Family::SansSerif),
+            None,
+            Wrap::None,
+        ),
+        DrawStyleKind::Heading => (
+            metrics.font_size * 1.15,
+            metrics.height * 1.4,
+            Attrs::new().family(Family::SansSerif).weight(Weight::BOLD),
+            None,
+            Wrap::None,
+        ),
+        DrawStyleKind::Cell(..) | DrawStyleKind::Preedit | DrawStyleKind::Monospace => (
+            cell_font.size,
+            metrics.height,
+            cell_font.attrs(),
+            Some(metrics.width),
+            Wrap::None,
+        ),
+        DrawStyleKind::Status(wrap) => (
+            chrome_title_metrics(metrics).font_size,
+            if wrap == Wrap::None {
+                chrome_title_metrics(metrics).line_height
+            } else {
+                metrics.height * 1.25
+            },
+            Attrs::new().family(Family::SansSerif),
+            None,
+            wrap,
+        ),
+    };
+    let mut buffer = Buffer::new(font_system, Metrics::new(font_size, line_height));
+    buffer.set_size(Some(layout_width), Some(layout_height));
+    buffer.set_wrap(wrap);
+    buffer.set_monospace_width(monospace_width);
+    buffer.set_text(text, &attrs, shaping(text), None);
+    buffer.shape_until_scroll(font_system, false);
+    buffer
 }
 
 fn shaped_preedit_placement(buffer: &Buffer) -> (f32, f32) {
