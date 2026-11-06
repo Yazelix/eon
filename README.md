@@ -6,9 +6,9 @@ Website: [eonterm.com](https://eonterm.com)
 
 ![Glowing violet three-fold Eon loop](assets/eon.png)
 
-Eon is the terminal for humans and agents to work together: a native Wayland
-workspace for long-running work such as coding agents, builds, servers and
-editors. Its **terminals keep running after you detach the window** with
+Eon is an agentic development environment (ADE): the terminal for humans and
+agents to work together. It is a native Wayland workspace for long-running
+work such as coding agents, builds, servers and editors. Its **terminals keep running after you detach the window** with
 Alt+Shift+D. Run `eon attach` and every tab, pane and terminal is where you
 left it.
 
