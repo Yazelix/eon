@@ -668,6 +668,35 @@ fn shortcut_groups_with(
     groups
 }
 
+/// A keycap popup's dismissal: Escape or a pointer press hides the popup until
+/// the pointer leaves that keycap's hover band, as tooltips do. Neither changes
+/// where the key or press goes.
+#[derive(Debug, Default)]
+pub(super) struct HintPopupLatch {
+    shown: Option<usize>,
+    dismissed: Option<usize>,
+}
+
+impl HintPopupLatch {
+    /// Whether the hovered keycap's popup shows.
+    pub(super) fn popup(&mut self, hovered: Option<usize>) -> bool {
+        if hovered != self.dismissed {
+            self.dismissed = None;
+        }
+        self.shown = hovered.filter(|_| self.dismissed.is_none());
+        self.shown.is_some()
+    }
+
+    /// Hides the open popup; true when one was open.
+    pub(super) fn dismiss(&mut self) -> bool {
+        let Some(group) = self.shown.take() else {
+            return false;
+        };
+        self.dismissed = Some(group);
+        true
+    }
+}
+
 pub(super) fn shortcut_hints_for(
     platform: NativePlatform,
     focus: WorkspaceFocus,
@@ -697,6 +726,7 @@ pub(super) fn shortcut_hints_for(
             Action::CloseTab => ("close tab", 3),
             Action::ClosePane => ("close pane", 3),
             Action::ToggleZoom => ("zoom", 3),
+            Action::Move(Left | Right) => ("mv tab", 3),
             Action::Move(Up | Down) | Action::MovePaneSideways(_) => ("mv pane", 3),
             Action::NewWindow => ("window", 3),
             Action::Detach => ("detach", 2),
@@ -718,6 +748,7 @@ pub(super) fn shortcut_hints_for(
             NativeShortcutTrigger::AltDigits => (eon_workspace_protocol::v34::ALT, "1..9".into()),
             _ => continue,
         };
+        let modifier_names = physical_modifiers_label_for(platform, modifiers, false);
         let modifiers = physical_modifiers_label_for(platform, modifiers, true);
         let key = physical_key_label(&key);
         let accessible_label = format!(
@@ -749,6 +780,15 @@ pub(super) fn shortcut_hints_for(
                 hint.key.push_str(key);
             }
             axes[index] = axis;
+            // A merged hint says what all its keys do; the arrow pairs keep their first line.
+            if let Some(description) = match label {
+                "focus" => Some("Focus by direction, or a tab by position"),
+                "mv pane" => Some("Move pane between columns, up or down"),
+                "mv tab" => Some("Move tab left or right"),
+                _ => None,
+            } {
+                description.clone_into(&mut hint.description);
+            }
             hint.accessible_label.push_str("; ");
             hint.accessible_label.push_str(&accessible_label);
             // A merged hint drops only when its most important part would.
@@ -757,8 +797,10 @@ pub(super) fn shortcut_hints_for(
             axes.push(axis);
             hints.push(ShortcutHint {
                 modifiers,
+                modifier_names,
                 key: key.into(),
                 label: label.into(),
+                description: shortcut.label.into(),
                 accessible_label,
                 priority,
             });
@@ -771,13 +813,10 @@ pub(super) fn shortcut_hints_for(
             .filter_map(|entry| Some((entry, entry.shortcut.bound()?)))
             .map(|(entry, shortcut)| ShortcutHint {
                 modifiers: physical_modifiers_label_for(platform, shortcut.modifiers, true),
+                modifier_names: physical_modifiers_label_for(platform, shortcut.modifiers, false),
                 key: physical_key_label(&shortcut.key).into(),
-                // The footer shortens only the default Scrollback name; a configured one stays.
-                label: if entry.id == "scrollback" && entry.label == "Scrollback" {
-                    "Scroll".into()
-                } else {
-                    entry.label.clone()
-                },
+                label: entry.label.clone(),
+                description: entry.label.clone(),
                 accessible_label: format!(
                     "{} — {}",
                     physical_shortcut_label_for(platform, shortcut.modifiers, &shortcut.key),
@@ -1087,34 +1126,6 @@ mod tests {
                 key: key.into(),
             }),
         });
-        let hints = |entries: &[PopupEntry]| {
-            shortcut_hints_for(
-                NativePlatform::Linux,
-                WorkspaceFocus::Terminal,
-                entries,
-                Sidebar::Open,
-                true,
-            )
-        };
-        let all = hints(&entries);
-        assert!(
-            all.iter()
-                .any(|hint| hint.key == "E" && hint.label == "Scroll")
-        );
-        let mut renamed = entries.clone();
-        renamed[7].label = "History".into();
-        assert!(
-            hints(&renamed)
-                .iter()
-                .any(|hint| hint.key == "E" && hint.label == "History")
-        );
-        // On a 13-inch 2560x1600 panel at scale 2, the bar keeps every hint but the
-        // lowest-priority popups, which show only as width allows.
-        let required = all
-            .into_iter()
-            .filter(|hint| hint.priority < 4)
-            .collect::<Vec<_>>();
-        assert!(required.iter().any(|hint| hint.label == "Agent"));
         // Eon's packaged sans face, the exact file its Nix build and dev shell name, which hosts
         // without their own fontconfig use. A host's sans-serif alias, such as Open Sans, may set
         // hints narrower; another copy of DejaVu Sans may differ.
@@ -1125,15 +1136,24 @@ mod tests {
         fonts
             .set_header_font_file(std::path::Path::new(&font))
             .unwrap();
-        for scale in [1.0, 2.0] {
-            let metrics = fonts.metrics(scale);
-            let scene = ShortcutHintsScene::new(
-                required.clone(),
-                winit::dpi::PhysicalSize::new((1280.0 * scale) as u32, (800.0 * scale) as u32),
-                metrics,
-                |text| fonts.measure_header_text(metrics, text),
-            );
-            assert!(scene.complete, "scale {scale}");
+        // On a 13-inch 2560x1600 panel at scale 2, the bar keeps every keycap and expanded hint
+        // centred, clear of the version label, while the terminal or the tabs have focus.
+        for focus in [WorkspaceFocus::Terminal, WorkspaceFocus::Tabs] {
+            let hints =
+                shortcut_hints_for(NativePlatform::Linux, focus, &entries, Sidebar::Open, true);
+            for scale in [1.0, 2.0] {
+                let metrics = fonts.metrics(scale);
+                let size =
+                    winit::dpi::PhysicalSize::new((1280.0 * scale) as u32, (800.0 * scale) as u32);
+                let scene = ShortcutHintsScene::new(
+                    hints.clone(),
+                    size,
+                    metrics,
+                    Some("EON 0.1.18".len() as f32 * metrics.width),
+                    |text| fonts.measure_header_text(metrics, text),
+                );
+                assert!(scene.complete, "{focus:?} at scale {scale}");
+            }
         }
     }
 
@@ -1438,8 +1458,6 @@ mod tests {
                 NativeShortcutAction::OpenLink,
                 NativeShortcutAction::ToggleViewer,
                 NativeShortcutAction::Quit,
-                NativeShortcutAction::Move(WorkspaceDirection::Left),
-                NativeShortcutAction::Move(WorkspaceDirection::Right),
             ] {
                 let shortcut = FIXED_SHORTCUTS
                     .iter()
@@ -1603,9 +1621,6 @@ mod tests {
                         | NativeShortcutAction::ToggleViewer
                         | NativeShortcutAction::ToggleInbox
                         | NativeShortcutAction::Quit
-                        | NativeShortcutAction::Move(
-                            WorkspaceDirection::Left | WorkspaceDirection::Right
-                        )
                 )
             }) {
                 let chord = shortcut.trigger.display_label_for(platform);
@@ -1617,6 +1632,150 @@ mod tests {
                 );
             }
         }
+    }
+
+    #[test]
+    fn hints_carry_full_names_and_full_help_descriptions() {
+        use eon_workspace_protocol::v34::{ALT, SHIFT, Shortcut};
+
+        let scrollback = PopupEntry {
+            id: "scrollback".into(),
+            label: "Scrollback".into(),
+            shortcut: PopupKey::Bound(Shortcut {
+                modifiers: ALT | SHIFT,
+                key: "KeyE".into(),
+            }),
+        };
+        for platform in [NativePlatform::Linux, NativePlatform::Macos] {
+            let hints = shortcut_hints_for(
+                platform,
+                WorkspaceFocus::Tabs,
+                std::slice::from_ref(&scrollback),
+                Sidebar::Open,
+                true,
+            );
+            assert!(hints.iter().all(|hint| !hint.description.is_empty()));
+            for hint in &hints {
+                // The full names are the chord's modifiers, as full help writes them.
+                assert!(
+                    hint.modifiers.is_empty()
+                        || hint
+                            .accessible_label
+                            .starts_with(&format!("{}+", hint.modifier_names)),
+                    "{hint:?}"
+                );
+            }
+            let described = |label: &str| {
+                hints
+                    .iter()
+                    .find(|hint| hint.label == label)
+                    .map(|hint| hint.description.as_str())
+            };
+            assert_eq!(
+                described("focus"),
+                Some("Focus by direction, or a tab by position")
+            );
+            assert_eq!(
+                described("mv pane"),
+                Some("Move pane between columns, up or down")
+            );
+            assert_eq!(described("tab"), Some("Create tab"));
+            // A popup is described by its configured name, which the hint also shows.
+            assert_eq!(described("Scrollback"), Some("Scrollback"));
+        }
+        let modifiers = |platform| {
+            shortcut_hints_for(platform, WorkspaceFocus::Terminal, &[], Sidebar::Open, true)
+                .iter()
+                .fold(Vec::new(), |mut names, hint| {
+                    if !names.contains(&hint.modifier_names) {
+                        names.push(hint.modifier_names.clone());
+                    }
+                    names
+                })
+        };
+        assert_eq!(
+            modifiers(NativePlatform::Linux),
+            ["Alt", "Ctrl+Alt", "Alt+Shift", "Ctrl+Alt+Shift"]
+        );
+        assert_eq!(
+            modifiers(NativePlatform::Macos),
+            [
+                "Option",
+                "Control+Option",
+                "Option+Shift",
+                "Control+Option+Shift"
+            ]
+        );
+    }
+
+    #[test]
+    fn escape_or_a_press_hides_a_keycap_popup_until_the_pointer_leaves() {
+        let mut latch = HintPopupLatch::default();
+        assert!(!latch.dismiss(), "nothing to hide yet");
+        assert!(latch.popup(Some(2)));
+        // Escape (or a press) hides it, and it stays hidden while the pointer rests there.
+        assert!(latch.dismiss());
+        assert!(!latch.popup(Some(2)));
+        assert!(!latch.popup(Some(2)));
+        assert!(!latch.dismiss(), "already hidden");
+        // Leaving the keycap and coming back shows it again.
+        assert!(!latch.popup(None));
+        assert!(latch.popup(Some(2)));
+        // A press hides it; moving straight to another keycap shows that one's popup.
+        assert!(latch.dismiss());
+        assert!(!latch.popup(Some(2)));
+        assert!(latch.popup(Some(3)));
+        assert!(
+            latch.popup(Some(2)),
+            "the dismissal ended when the pointer left"
+        );
+    }
+
+    #[test]
+    fn ctrl_alt_shift_group_holds_the_tab_moves() {
+        use eon_workspace_protocol::v34::{ALT, CTRL, SHIFT, Shortcut};
+
+        let tabs = |entries: &[PopupEntry]| {
+            shortcut_hints_for(
+                NativePlatform::Linux,
+                WorkspaceFocus::Terminal,
+                entries,
+                Sidebar::Open,
+                true,
+            )
+            .into_iter()
+            .filter(|hint| hint.modifiers == "CAS")
+            .collect::<Vec<_>>()
+        };
+        let moves = tabs(&[]);
+        assert_eq!(moves.len(), 1);
+        assert_eq!(moves[0].key, "HL");
+        assert_eq!(moves[0].label, "mv tab");
+        assert_eq!(moves[0].description, "Move tab left or right");
+        assert_eq!(
+            moves[0].accessible_label,
+            "Ctrl+Alt+Shift+H — Move tab left; Ctrl+Alt+Shift+L — Move tab right"
+        );
+        // A popup configured on Ctrl+Alt+Shift+H takes that key and leaves L.
+        let popup = PopupEntry {
+            id: "notes".into(),
+            label: "Notes".into(),
+            shortcut: PopupKey::Bound(Shortcut {
+                modifiers: CTRL | ALT | SHIFT,
+                key: "KeyH".into(),
+            }),
+        };
+        let keys = tabs(&[popup])
+            .into_iter()
+            .map(|hint| (hint.key, hint.label))
+            .collect::<Vec<_>>();
+        assert_eq!(
+            keys,
+            [
+                ("L".to_owned(), "mv tab".to_owned()),
+                ("H".to_owned(), "Notes".to_owned())
+            ]
+        );
     }
 
     #[test]

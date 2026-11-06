@@ -39,6 +39,9 @@ const SIDEBAR: NodeId = NodeId(18);
 const SIDEBAR_EMPTY_STATE: NodeId = NodeId(19);
 const WORKSPACE_LABEL: NodeId = NodeId(20);
 const DISK: NodeId = NodeId(21);
+const HINT_PIECES: NodeId = NodeId(22);
+/// One label per shortcut hints keycap; at most one group per set of modifiers.
+const HINT_GROUP_START: u64 = 23;
 // Scene rows are u16, so this range cannot collide with fixed or text-run nodes.
 const WORKSPACE_NODE_START: u64 = 1 << 32;
 // Two IDs per u32 duration fit below links; workspace allocation stops before this range.
@@ -385,7 +388,6 @@ impl Snapshot {
                         (RAM, &workspace.ram),
                         (DISK, &workspace.disk),
                         (CLOCK, &workspace.clock),
-                        (VERSION, &workspace.version),
                     ]
                     .into_iter()
                     .filter_map(|(id, label)| Some((label.as_ref()?.rect.left, id))),
@@ -406,9 +408,13 @@ impl Snapshot {
             if workspace
                 .hints
                 .as_ref()
-                .is_some_and(|hints| !hints.pieces.is_empty())
+                .is_some_and(|hints| !hints.groups.is_empty() || !hints.pieces.is_empty())
             {
                 children.push(HINTS);
+            }
+            // The version label sits at the hints' right end.
+            if workspace.version.is_some() {
+                children.push(VERSION);
             }
             if status_alert {
                 children.push(STATUS);
@@ -566,18 +572,40 @@ impl Snapshot {
                 nodes.push((control_node_id(control.kind), node));
             }
             if let Some(hints) = &workspace.hints
-                && !hints.pieces.is_empty()
+                && (!hints.groups.is_empty() || !hints.pieces.is_empty())
             {
-                let mut node = Node::new(Role::Label);
-                node.set_description("Eon shortcut hints");
-                node.set_value(
-                    hints
-                        .pieces
-                        .iter()
-                        .map(|hint| hint.accessible_label.as_str())
-                        .collect::<Vec<_>>()
-                        .join("\n"),
-                );
+                // Each keycap reads its group's chords whatever legend it shows.
+                let mut children = Vec::new();
+                for (index, group) in hints.groups.iter().enumerate() {
+                    let id = NodeId(HINT_GROUP_START + index as u64);
+                    let mut node = Node::new(Role::Label);
+                    node.set_label(format!("{} shortcuts", group.name));
+                    node.set_value(group.accessible_label.as_str());
+                    node.set_bounds(rect(group.rect));
+                    nodes.push((id, node));
+                    children.push(id);
+                }
+                if let (Some(first), Some(last)) = (hints.pieces.first(), hints.pieces.last()) {
+                    let mut node = Node::new(Role::Label);
+                    node.set_label("Other shortcuts");
+                    node.set_value(
+                        hints
+                            .pieces
+                            .iter()
+                            .map(|hint| hint.accessible_label.as_str())
+                            .collect::<Vec<_>>()
+                            .join("\n"),
+                    );
+                    node.set_bounds(rect(SceneRect {
+                        width: last.rect.right() - first.rect.left,
+                        ..first.rect
+                    }));
+                    nodes.push((HINT_PIECES, node));
+                    children.push(HINT_PIECES);
+                }
+                let mut node = Node::new(Role::Group);
+                node.set_label("Eon shortcut hints");
+                node.set_children(children);
                 node.set_bounds(rect(hints.rect));
                 nodes.push((HINTS, node));
             }
@@ -1221,7 +1249,7 @@ mod tests {
     }
 
     #[test]
-    fn version_label_uses_only_spare_space_and_has_no_actions() {
+    fn version_label_sits_after_the_hints_and_has_no_actions() {
         for scale in [1.0, 1.25, 2.0] {
             let metrics = CellMetrics::for_scale(scale);
             for logical_width in [100, 320, 1100, 3000] {
@@ -1276,21 +1304,27 @@ mod tests {
                         let size =
                             PhysicalSize::new((logical_width as f32 * metrics.scale) as u32, 600);
                         for footer in [false, true] {
-                            let hints = footer.then(|| {
-                                crate::ShortcutHintsScene::new(
-                                    vec![crate::ShortcutHint {
-                                        modifiers: "Alt".into(),
-                                        key: "/".into(),
-                                        label: "keys".into(),
-                                        accessible_label: "Alt+/ — Show shortcuts".into(),
-                                        priority: 0,
-                                    }],
-                                    size,
-                                    metrics,
-                                    |text| text.len() as f32 * metrics.width,
-                                )
-                            });
-                            let project = |version| {
+                            let project = |version: Option<&str>| {
+                                let hints = footer.then(|| {
+                                    crate::ShortcutHintsScene::new(
+                                        vec![crate::ShortcutHint {
+                                            modifiers: "A".into(),
+                                            modifier_names: "Alt".into(),
+                                            key: "/".into(),
+                                            label: "keys".into(),
+                                            description: "Show or close shortcuts".into(),
+                                            accessible_label: "Alt+/ — Show or close shortcuts"
+                                                .into(),
+                                            priority: 0,
+                                        }],
+                                        size,
+                                        metrics,
+                                        version.map(|version| {
+                                            format!("EON {version}").len() as f32 * metrics.width
+                                        }),
+                                        |text| text.len() as f32 * metrics.width,
+                                    )
+                                });
                                 WorkspaceScene::from_snapshot_with_bar(
                                     &snapshot,
                                     EonBar {
@@ -1307,31 +1341,29 @@ mod tests {
                                             text.chars().count() as f32 * 10.0 * metrics.scale,
                                         )
                                     },
-                                    hints.clone(),
+                                    hints,
                                 )
                             };
                             let baseline = project(None);
                             let scene = project(Some("9.8.7-alpha.2+proof"));
+                            // The version takes no header space: the header stays as it was.
                             assert_eq!(scene.tabs, baseline.tabs);
                             assert_eq!(scene.tab_viewport, baseline.tab_viewport);
-                            // Shortcuts moves before the version label; the rest stay.
-                            assert_eq!(scene.controls[0], baseline.controls[0]);
-                            assert_eq!(scene.controls[2], baseline.controls[2]);
-                            assert_eq!(
-                                scene.controls[1].rect.left,
-                                baseline.controls[1].rect.left
-                                    - scene
-                                        .version
-                                        .as_ref()
-                                        .map_or(0.0, |version| version.rect.width)
-                            );
+                            assert_eq!(scene.controls, baseline.controls);
+                            assert_eq!(scene.drag_region, baseline.drag_region);
                             assert_eq!(scene.terminal, baseline.terminal);
                             assert_eq!(scene.panes, baseline.panes);
                             assert_eq!(scene.quotas.len(), baseline.quotas.len());
                             assert_eq!(
                                 scene.version.is_some(),
-                                tab_count == 1 && logical_width >= 1100 || logical_width == 3000
+                                scene
+                                    .hints
+                                    .as_ref()
+                                    .is_some_and(|hints| hints.version.is_some())
                             );
+                            if footer && logical_width >= 320 {
+                                assert!(scene.version.is_some());
+                            }
                             let mut accessible = Snapshot::new(size);
                             accessible.set_workspace(Some(&scene));
                             let tree = accessible.tree();
@@ -1340,50 +1372,34 @@ mod tests {
                                 scene.version.is_some()
                             );
                             if let Some(version) = &scene.version {
+                                let hints = scene.hints.as_ref().unwrap();
                                 assert_eq!(version.label, "EON 9.8.7-alpha.2+proof");
                                 assert_eq!(version.tooltip, "Eon version 9.8.7-alpha.2+proof");
                                 assert_eq!(
                                     version.rect.width,
                                     version.label.len() as f32 * metrics.width
-                                        + metrics.padding * 2.0
                                 );
+                                assert!(version.rect.top >= hints.rect.top);
                                 let center = (
                                     version.rect.left + version.rect.width / 2.0,
-                                    version.rect.height / 2.0,
+                                    version.rect.top + version.rect.height / 2.0,
                                 );
                                 assert_eq!(
                                     scene.hit_test(center.0, center.1),
                                     Some(crate::WorkspaceHit::Version)
                                 );
-                                assert!(scene.drag_region.width >= metrics.font_size * 4.0);
-                                assert!(scene.drag_region.right() <= version.rect.left);
-                                assert_eq!(scene.controls[1].rect.right(), version.rect.left);
-                                assert_eq!(version.rect.right(), scene.controls[2].rect.left);
+                                // Screen readers meet it after the hints, as it is drawn.
                                 let children = node(&tree, WINDOW).children();
                                 let version_index =
                                     children.iter().position(|id| *id == VERSION).unwrap();
-                                assert_eq!(children[version_index + 1], CLOSE_TAB);
-                                assert!(scene.has_control(WorkspaceHeaderControl::Shortcuts));
-                                assert_eq!(children[version_index - 1], SHORTCUTS);
-                                let rect = scene.controls[1].rect;
-                                assert_eq!(
-                                    scene.hit_test(rect.left + rect.width / 2.0, rect.height / 2.0),
-                                    Some(crate::WorkspaceHit::Control(
-                                        WorkspaceHeaderControl::Shortcuts
-                                    ))
-                                );
-                                if let Some(quota) = scene.quotas.first() {
-                                    assert_eq!(scene.drag_region.right(), quota.rect.left);
-                                }
-                                if let Some(quota) = scene.quotas.last() {
-                                    assert_eq!(quota.rect.right(), scene.controls[1].rect.left);
-                                }
+                                assert_eq!(children[version_index - 1], HINTS);
                                 let node = node(&tree, VERSION);
                                 assert_eq!(node.role(), Role::Label);
                                 assert_eq!(
                                     node.value(),
                                     Some("Running Eon version 9.8.7-alpha.2+proof")
                                 );
+                                assert_eq!(node.bounds(), Some(rect(version.rect)));
                                 assert!(!node.supports_action(Action::Click));
                                 assert!(!node.supports_action(Action::Focus));
                             }
@@ -1602,8 +1618,8 @@ mod tests {
                                 assert!(logical_width < 3000, "a wide bar shows the clock");
                                 continue;
                             };
-                            // The clock yields before quota chips and the version label, which
-                            // follows it at the edge.
+                            // The clock yields before quota chips; the version label sits in the
+                            // shortcut hints, never the header.
                             assert_eq!(
                                 scene
                                     .quotas
@@ -1612,7 +1628,7 @@ mod tests {
                                     .collect::<Vec<_>>(),
                                 full_quotas.iter().collect::<Vec<_>>()
                             );
-                            assert_eq!(version.is_some(), scene.version.is_some());
+                            assert!(scene.version.is_none());
                             assert_eq!(
                                 shown.rect.width,
                                 5.0 * metrics.width + metrics.padding * 2.0
@@ -1642,10 +1658,7 @@ mod tests {
                                 children[index - 1],
                                 scene.quotas.last().map_or(NEW_TAB, quota_id)
                             );
-                            assert_eq!(
-                                children[index + 1..index + 3] == [SHORTCUTS, VERSION],
-                                version.is_some()
-                            );
+                            assert_eq!(children[index + 1], SHORTCUTS);
                             let node = node(&tree, CLOCK);
                             assert_eq!(node.role(), Role::Label);
                             assert_eq!(
@@ -1764,8 +1777,7 @@ mod tests {
                 assert_eq!(scene.controls, baseline.controls);
                 assert_eq!(scene.terminal, baseline.terminal);
                 assert_eq!(scene.version.is_some(), baseline.version.is_some());
-                // The clock yields first, then disk, RAM and CPU use, before the version label
-                // and quotas.
+                // The clock yields first, then disk, RAM and CPU use, before the quotas.
                 assert!(scene.clock.is_none() || scene.disk.is_some());
                 assert!(scene.disk.is_none() || scene.ram.is_some());
                 assert!(scene.ram.is_none() || scene.cpu.is_some());
@@ -1778,7 +1790,8 @@ mod tests {
                 partial[2] |= scene.disk.is_some() && scene.clock.is_none();
                 assert_eq!(scene.quotas.len(), full_quotas.len());
                 assert_eq!(scene.quotas[0].label, full_quotas[0].label);
-                assert_eq!(version.is_some(), scene.version.is_some());
+                // The version label sits in the shortcut hints, never the header.
+                assert!(scene.version.is_none());
                 assert_eq!(shown_cpu.label, "CPU 12%");
                 if let Some(shown_ram) = &scene.ram {
                     assert_eq!(shown_ram.label, "RAM 43%");
@@ -1786,8 +1799,7 @@ mod tests {
                 if let Some(shown_disk) = &scene.disk {
                     assert_eq!(shown_disk.label, "DISK 80%");
                 }
-                // The readings follow the quota chips in order, and the version label sits at
-                // the edge before Shortcuts and Close.
+                // The readings follow the quota chips in order, up to Shortcuts.
                 let labels = [
                     (CPU, Some(shown_cpu)),
                     (RAM, scene.ram.as_ref()),
@@ -1815,9 +1827,6 @@ mod tests {
                     );
                 }
                 assert_eq!(left, scene.controls[1].rect.left);
-                if let Some(version) = &scene.version {
-                    assert_eq!(version.rect.left, scene.controls[1].rect.right());
-                }
                 assert!(scene.drag_region.width >= metrics.font_size * 4.0);
                 assert_eq!(scene.drag_region.right(), scene.quotas[0].rect.left);
                 for (label, hit) in [
@@ -1973,14 +1982,15 @@ mod tests {
             panic!("both quota chips show");
         };
         assert_eq!(claude.provider.name(), "Claude");
-        // The version label keeps its place between Shortcuts and Close.
+        // The version label sits in the shortcut hints, whatever its place in the list; without
+        // hints it does not show.
+        assert!(scene.version.is_none());
         let rects = [
             scene.clock.as_ref().unwrap().rect,
             claude.rect,
             scene.cpu.as_ref().unwrap().rect,
             codex.rect,
             scene.controls[1].rect,
-            scene.version.as_ref().unwrap().rect,
             scene.controls[2].rect,
         ];
         assert_eq!(scene.drag_region.right(), rects[0].left);
@@ -1994,14 +2004,13 @@ mod tests {
         let children = node(&tree, WINDOW).children();
         let start = children.iter().position(|id| *id == NEW_TAB).unwrap() + 1;
         assert_eq!(
-            children[start..start + 7],
+            children[start..start + 6],
             [
                 CLOCK,
                 quota_id(claude),
                 CPU,
                 quota_id(codex),
                 SHORTCUTS,
-                VERSION,
                 CLOSE_TAB
             ]
         );
@@ -3717,16 +3726,31 @@ mod tests {
             sidebar: eon_workspace_protocol::v34::Sidebar::Open,
             attention_queue: Vec::new(),
         };
-        let hint = crate::ShortcutHint {
-            modifiers: "Alt".into(),
-            key: "/".into(),
-            label: "all keys".into(),
-            accessible_label: "Alt+/ — Show shortcuts".into(),
+        let hint = |modifiers: &str, names: &str, key: &str, action: &str| crate::ShortcutHint {
+            modifiers: modifiers.into(),
+            modifier_names: names.into(),
+            key: key.into(),
+            label: action.to_lowercase(),
+            description: action.into(),
+            accessible_label: if names.is_empty() {
+                format!("{key} — {action}")
+            } else {
+                format!("{names}+{key} — {action}")
+            },
             priority: 0,
         };
-        let footer = crate::ShortcutHintsScene::new(vec![hint.clone()], size, metrics, |text| {
-            text.len() as f32 * 10.0
-        });
+        let footer = crate::ShortcutHintsScene::new(
+            vec![
+                hint("AS", "Alt+Shift", "T", "Create tab"),
+                hint("A", "Alt", "M", "Create pane"),
+                hint("AS", "Alt+Shift", "W", "Close active tab"),
+                hint("", "", "Escape", "Terminal"),
+            ],
+            size,
+            metrics,
+            None,
+            |text| text.len() as f32 * 10.0,
+        );
         let project = |footer| {
             WorkspaceScene::from_snapshot_with_bar(
                 &workspace,
@@ -3743,8 +3767,43 @@ mod tests {
         snapshot.set_workspace(Some(&project(Some(footer))));
         let update = snapshot.tree();
         let hints = node(&update, HINTS);
-        assert_eq!(hints.role(), Role::Label);
-        assert_eq!(hints.value(), Some(hint.accessible_label.as_str()));
+        assert_eq!(hints.role(), Role::Group);
+        assert_eq!(hints.label(), Some("Eon shortcut hints"));
+        // Each keycap names its modifiers in full and reads its chords; the expanded hints
+        // follow in one label. None of them takes focus or a click.
+        let children = hints.children().to_vec();
+        assert_eq!(children.len(), 3);
+        let read = |id| {
+            let node = node(&update, id);
+            assert_eq!(node.role(), Role::Label);
+            assert!(!node.supports_action(Action::Focus));
+            assert!(!node.supports_action(Action::Click));
+            (
+                node.label().map(str::to_owned),
+                node.value().map(str::to_owned),
+            )
+        };
+        assert_eq!(
+            read(children[0]),
+            (
+                Some("Alt+Shift shortcuts".into()),
+                Some("Alt+Shift+T — Create tab; Alt+Shift+W — Close active tab".into())
+            )
+        );
+        assert_eq!(
+            read(children[1]),
+            (
+                Some("Alt shortcuts".into()),
+                Some("Alt+M — Create pane".into())
+            )
+        );
+        assert_eq!(
+            read(children[2]),
+            (
+                Some("Other shortcuts".into()),
+                Some("Escape — Terminal".into())
+            )
+        );
         assert!(!hints.supports_action(Action::Focus));
         assert!(!hints.supports_action(Action::Click));
         assert!(node(&update, WINDOW).children().contains(&SHORTCUTS));

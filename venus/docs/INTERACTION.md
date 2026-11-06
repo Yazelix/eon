@@ -136,12 +136,37 @@ The bottom hints bar starts visible and reserves its own compact native row.
 Alt+Shift+B returns that space to the terminal or restores the bar without
 changing the selected tab, pane, popup or focus. The choice lasts for that
 window, including across resize. Hints use the current bindings and enabled
-popup labels, and follow native terminal, tab and pane focus. Shared modifiers
-appear once per group, written together: C means Ctrl, A means Alt, and S
-means Shift.
-Compact groups spread across the bar with equal gaps and the outer
-groups near its edges; a lone group stays centered. Hint spacing stays compact.
-Only modifier headers have padded rounded backgrounds. Each pane is its own
+popup labels, and follow native terminal, tab and pane focus. Each set of
+modifiers collapses into one keycap labelled with their full names, in the
+order the hints first use them: `Alt`, `Ctrl+Alt`, `Alt+Shift` and
+`Ctrl+Alt+Shift` by default, with macOS's own names there. The keycaps form one
+cluster centred on the window's centre line, one padding apart; keys without
+modifiers follow inside the cluster, written out (`Escape terminal`, and the
+arrows while the tabs, panes or sidebar have focus). While the attention inbox
+is open, the cluster is only its keys. `EON <version>` sits at the bar's right
+end, one padding from the window edge, while `version` is in `[bar] widgets`;
+it hides with the bar, and its tooltip opens above it.
+
+Pointing at a keycap fills it with the chrome highlight and opens a popup above
+it, inside Venus's own surface: its left edge at the keycap's, kept inside the
+window, and its bottom a third of a padding above the bar. Its title row is the
+keycap's full name; then one row per hint in bar order, the keys in mint and
+what they do, as full help says it, in white. It is never taller than the room
+between the header and the bar; when rows are cut, its last row reads `Alt+/
+lists all`. The popup never takes keyboard focus or changes terminal focus, and
+a press on a keycap or the version does nothing else. Escape or a pointer press
+hides the popup until the pointer leaves that keycap's hover band, as a tooltip
+does; the key or press still goes where it would without the popup.
+
+Narrow windows give way in this order, and keycaps never drop: the cluster
+stays centred while it clears the version by one padding, then shifts left to
+sit one padding before it; when it would then cross the bar's left padding,
+the version hides and the cluster centres again; then keys without modifiers
+drop whole, `Escape terminal` last; and when the full-name keycaps alone exceed
+the bar, they switch to the short legends `A`, `CA`, `AS` and `CAS` (C for
+Ctrl, A for Alt, S for Shift), which clip only in the narrowest windows. With
+Eon's packaged font (DejaVu Sans) at the default size, a 1280-pixel-wide window
+shows every hint centred and clear of the version. Each pane is its own
 rounded card, stacked without gaps in its column's allocated card area. Even
 outer gaps surround and separate the allocated column areas. Pane titles sit
 in rounded edges, with neutral outlines sized by `border_width`. Collapsed rows'
@@ -191,25 +216,22 @@ rounded outer edges in the same way, with their titles on the boundary. Header
 scrolling keeps the fill's top fixed. Frameless mode keeps terminal-background
 strips across the window below the bar, including the sidebar and footer.
 
-Steel-blue modifier badges use plain aliases, such as CA, before mint keys and gray
-labels. The compact tab range is 1..9; Alt+0 still selects
-the tenth tab. The `mv pane` hint shows HJKL under CA. One `focus` hint shows
-HJKL · 1..9 under A, and create hints read `pane`, `col`, `tab` and `window`;
-the sidebar toggle reads `side`, and the Scrollback popup `Scroll` unless its
-label is configured.
-Alt+/, the Alt+Q inbox, Alt+Shift+Q quit, the Ctrl+Alt+Shift+H/L tab moves,
-Copy/Paste, Open link, and the Alt+G and Alt+Shift+G agent jumps stay in full
-Shortcuts, without footer hints.
+Keycaps are steel blue with light text. The compact tab range is 1..9; Alt+0
+still selects the tenth tab. Merged keys share one popup row: the `Alt` popup
+reads `HJKL · 1..9  Focus by direction, or a tab by position`, the `Ctrl+Alt`
+popup `HJKL  Move pane between columns, up or down`, and the `Ctrl+Alt+Shift`
+popup `HL  Move tab left or right`. A popup entry's row uses its configured
+name. Alt+/, the Alt+Q inbox, Alt+Shift+Q quit, Copy/Paste, Open link, and the
+Alt+G and Alt+Shift+G agent jumps stay in full Shortcuts, without footer hints.
 Full Shortcuts and screen-reader labels retain complete chords and action
-names. Narrow windows drop whole hints, keeping the visibility toggle longest
-and dropping popup hints other than Git and Agent first, the last modifier
-group's last hint first (for the default catalog, from its end). With Eon's
-packaged font (DejaVu Sans) at the default size, a 1280-pixel-wide window shows
-every other hint.
+names.
 
 The header `?` always shows; it and Alt+/ open the complete viewer. Hints are
-read-only text, including for screen readers; they add no keyboard stops. Eon
-has no minor modes yet.
+read-only, including for screen readers: AccessKit reads them as one group,
+"Eon shortcut hints", holding a label per keycap named by its full modifiers,
+such as "Alt+Shift shortcuts", whose value lists each chord and what it does,
+then one label for the expanded keys; the version label follows the group.
+They add no keyboard stops or actions. Eon has no minor modes yet.
 
 ### Labels and header scrolling
 

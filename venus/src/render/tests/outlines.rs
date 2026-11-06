@@ -1329,6 +1329,7 @@ fn shared_bottom_preserves_grid_and_bounds_short_scene_paint() {
                                         Vec::new(),
                                         size,
                                         metrics,
+                                        None,
                                         |_| 0.0,
                                     )
                                 }),

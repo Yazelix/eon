@@ -1,7 +1,7 @@
 use super::*;
 use eon_workspace_protocol::v34::Pane;
 
-mod bar;
+pub(crate) mod bar;
 mod links;
 mod sidebar;
 mod terminal;

@@ -33,7 +33,7 @@ use winit::{
     dpi::{LogicalSize, PhysicalPosition, PhysicalSize},
     event::{ElementState, Ime, MouseButton, MouseScrollDelta, WindowEvent},
     event_loop::{ActiveEventLoop, ControlFlow, EventLoop, EventLoopProxy},
-    keyboard::{KeyCode, PhysicalKey},
+    keyboard::{Key, KeyCode, NamedKey, PhysicalKey},
     window::{CursorIcon, UserAttentionType, Window, WindowAttributes, WindowId},
 };
 use yazelix_venus::{
@@ -60,8 +60,8 @@ use geometry::{
 use scroll::{PendingViewportRequest, SelectionAutoscroll, TerminalScroll, finish_scroll_failure};
 
 use shortcuts::{
-    NativeShortcutAction, NativeShortcutTrigger, WORKSPACES_ENTRY, copy_paste_modifiers,
-    detach_chord, invoke_popup, native_key_shortcut, native_key_shortcut_for,
+    HintPopupLatch, NativeShortcutAction, NativeShortcutTrigger, WORKSPACES_ENTRY,
+    copy_paste_modifiers, detach_chord, invoke_popup, native_key_shortcut, native_key_shortcut_for,
     native_pointer_shortcut, paste_shortcut, popup_shortcut, position_key_action, shortcut_groups,
     shortcut_hints_for, sideways_move_opens_column, workspace_picker_tooltip, workspace_shortcut,
 };
@@ -1066,6 +1066,7 @@ struct Application {
     quit: QuitProgress,
     hints_visible: bool,
     hints: Option<ShortcutHintsScene>,
+    hint_popup: HintPopupLatch,
     zoom: Option<ZoomTarget>,
     tab_texts: HashMap<String, (String, f32)>,
     quota_widths: HashMap<String, f32>,
@@ -1188,6 +1189,7 @@ impl Application {
             quit: QuitProgress::Idle,
             hints_visible: true,
             hints: None,
+            hint_popup: HintPopupLatch::default(),
             zoom: None,
             tab_texts: HashMap::new(),
             quota_widths: HashMap::new(),
@@ -2021,6 +2023,13 @@ impl Application {
                 },
                 state.renderer.size(),
                 state.renderer.metrics(),
+                // The version label is ASCII drawn in terminal cells.
+                self.eon_version
+                    .as_deref()
+                    .filter(|_| self.bar_items.contains(&BarItem::Version))
+                    .map(|version| {
+                        format!("EON {version}").len() as f32 * state.renderer.metrics().width
+                    }),
                 |text| state.renderer.measure_header_text(text).1,
             )
         });
@@ -4288,6 +4297,12 @@ impl Application {
             None
         };
         let version_hovered = matches!(hovered_hit, Some(WorkspaceHit::Version));
+        let hint_group_hovered = if let Some(WorkspaceHit::HintGroup(index)) = hovered_hit {
+            Some(index)
+        } else {
+            None
+        };
+        let hint_popup = self.hint_popup.popup(hint_group_hovered);
         let cpu_hovered = matches!(hovered_hit, Some(WorkspaceHit::Cpu));
         let ram_hovered = matches!(hovered_hit, Some(WorkspaceHit::Ram));
         let disk_hovered = matches!(hovered_hit, Some(WorkspaceHit::Disk));
@@ -4304,6 +4319,9 @@ impl Application {
         state.renderer.set_hovered_header(hovered_header);
         state.renderer.set_quota_hovered(quota_hovered);
         state.renderer.set_version_hovered(version_hovered);
+        state
+            .renderer
+            .set_hint_group_hovered(hint_group_hovered, hint_popup);
         state.renderer.set_cpu_hovered(cpu_hovered);
         state.renderer.set_ram_hovered(ram_hovered);
         state.renderer.set_disk_hovered(disk_hovered);
@@ -4550,6 +4568,12 @@ impl ApplicationHandler<UserEvent> for Application {
                 }
             }
             WindowEvent::KeyboardInput { event, .. } => {
+                if event.state == ElementState::Pressed
+                    && event.logical_key == Key::Named(NamedKey::Escape)
+                    && self.hint_popup.dismiss()
+                {
+                    state.window.request_redraw();
+                }
                 self.cancel_terminal_scroll();
                 let Some(event) = self.input.resolve_key(event) else {
                     return;
@@ -4643,7 +4667,8 @@ impl ApplicationHandler<UserEvent> for Application {
                                 | WorkspaceHit::Ram
                                 | WorkspaceHit::Disk
                                 | WorkspaceHit::Clock
-                                | WorkspaceHit::Control(_),
+                                | WorkspaceHit::Control(_)
+                                | WorkspaceHit::HintGroup(_),
                             ) => hit,
                             _ => None,
                         }
@@ -4737,6 +4762,9 @@ impl ApplicationHandler<UserEvent> for Application {
             } => {
                 if button == MouseButton::Left {
                     self.terminal.selection_scroll.cancel();
+                }
+                if button_state == ElementState::Pressed && self.hint_popup.dismiss() {
+                    state.window.request_redraw();
                 }
                 match viewer_button(
                     &mut self.shortcut_viewer.dismissal,
@@ -4886,7 +4914,8 @@ impl ApplicationHandler<UserEvent> for Application {
                             | WorkspaceHit::Cpu
                             | WorkspaceHit::Ram
                             | WorkspaceHit::Disk
-                            | WorkspaceHit::Clock,
+                            | WorkspaceHit::Clock
+                            | WorkspaceHit::HintGroup(_),
                         ) => None,
                         None => None,
                     };

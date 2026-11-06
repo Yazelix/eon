@@ -17,8 +17,8 @@ order, selection, and popups; Venus draws the visible scene.
   letters equals the space above the pills. This extra space yields first on
   short windows, before the bar's top gap and pill height. Tabs keep their
   fills; widgets have no fill and use rounded outlines in the pane cards'
-  neutral colour and `border_width`. The plain version label and header controls
-  share their centre. Hover and accessibility bounds stay unchanged.
+  neutral colour and `border_width`. The header controls share their centre.
+  Hover and accessibility bounds stay unchanged.
 - The Eon logo, in its own colours and two logical pixels shorter than the tab
   pills, leads the bar before the workspace label and tabs. Its centre is as far
   from the window's left edge as the bar's centre line is below the window top,
@@ -37,8 +37,8 @@ order, selection, and popups; Venus draws the visible scene.
   lost a window. Without a readable icon from Eon there is none and no gap.
 - New tab sits beside the last tab and pins to the tab-region edge when tabs
   overflow. Shortcut help, a round outlined button as tall as the tab pills
-  with its `?` centred in the circle, then the version label and Close stay at
-  the right; after a chip or reading, the button keeps the space chips keep
+  with its `?` centred in the circle, then Close stay at the right; after a
+  chip or reading, the button keeps the space chips keep
   between them. Close's `×` lies as far from the window's right edge as from
   its top. A small empty area lets users drag an undecorated window without
   taking clicks from tabs or controls.
@@ -130,8 +130,10 @@ order, selection, and popups; Venus draws the visible scene.
   `Wednesday 21 October 2026` and `UTC−03:00`. When the local time zone
   cannot be determined, no clock shows, never UTC in its place.
 - `EON <version>` names the supervising Eon that serves the window, in regular
-  terminal monospace and softened cyan. Hover reads `Eon version 0.1.18`, and
-  its accessible label names the version too. Updating the installation does
+  terminal monospace and softened cyan, at the right end of the bottom shortcut
+  hints, one padding from the window edge; it hides with the hints, and in
+  windows too narrow for it beside their keycaps. Hover reads `Eon version
+  0.1.18`, above the label, and its accessible label names the version too. Updating the installation does
   not relabel a running supervisor. Without a version from Eon, no label shows.
 - Each item's hover is a short list, one fact per line: the first line names
   the item, except the clock's, whose date is self-evident, and the rest give
@@ -145,8 +147,8 @@ order, selection, and popups; Venus draws the visible scene.
   Accessibility keeps one sentence per item with every fact, including what
   the chip shows.
 - Eon's `[bar] widgets` chooses which of these items show and their order, left
-  to right between the drag region and Shortcuts; the version always sits
-  between Shortcuts and Close. By default the order
+  to right between the drag region and Shortcuts; the version always sits at
+  the right end of the shortcut hints. By default the order
   is Codex 5h and 7d, Claude 5h and 7d then its scoped windows, CPU, RAM, disk,
   clock and version. A left-out quota window takes no room, including the
   logo's reserved room. `_5h` and `_7d` select only unscoped windows
@@ -157,8 +159,7 @@ order, selection, and popups; Venus draws the visible scene.
   clock is never read and never wakes Venus. Accessibility order follows the
   visual order. The items use only spare drag-region space and keep its minimum.
   Whatever the order, narrow windows hide the Eon logo first, then the clock,
-  then disk, RAM, CPU and the version, then quota chips, before tabs or
-  controls. No item has an action or a keyboard focus target, and none drags
+  then disk, RAM and CPU, then quota chips, before tabs or controls. No item has an action or a keyboard focus target, and none drags
   the window. A change in a quota's numbers, a reading or the clock never moves
   the tabs, cancels scrolling or resizes terminals, and neither does a window's
   reset. The one exception is the Eon logo: it can show or hide once, shifting

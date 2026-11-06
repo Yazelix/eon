@@ -830,6 +830,8 @@ pub enum WorkspaceHit<'a> {
     Clock,
     Control(WorkspaceHeaderControl),
     Drag,
+    /// A shortcut hints keycap, by its group's index.
+    HintGroup(usize),
     /// An agent sidebar row, named by its target.
     SidebarRow(&'a str),
     Pane(&'a str),
@@ -861,30 +863,54 @@ pub struct ShortcutRow {
 /// One binding-derived footer hint, before native width fitting.
 #[derive(Clone, Debug)]
 pub struct ShortcutHint {
+    /// The short modifier legend, such as `AS`; empty for a key without modifiers.
     pub modifiers: String,
+    /// The same modifiers by their full names, such as `Alt+Shift`.
+    pub modifier_names: String,
     pub key: String,
     pub label: String,
+    /// What the keys do, as full help says it.
+    pub description: String,
     pub accessible_label: String,
     pub priority: u8,
 }
 
+/// One modifier group collapsed into a keycap; hovering it lists the group's hints.
+#[derive(Clone, Debug, PartialEq)]
+pub(crate) struct ShortcutHintGroup {
+    /// The full modifier names, which the popup title and accessible name use.
+    pub name: String,
+    /// What the keycap shows: the full names, or the short legend in a narrow window.
+    pub legend: String,
+    pub rect: SceneRect,
+    /// The keycap widened to the footer band and half a gap on each side.
+    pub hover: SceneRect,
+    /// Each hint's keys and description, in bar order.
+    pub rows: Vec<(String, String)>,
+    /// Each hint's chords and full-help text.
+    pub accessible_label: String,
+}
+
+/// A hint without modifiers, shown expanded after the keycaps.
 #[derive(Clone, Debug, PartialEq)]
 pub(crate) struct ShortcutHintPiece {
-    pub modifiers: String,
     pub key: String,
     pub label: String,
     pub accessible_label: String,
     pub rect: SceneRect,
-    pub key_offset: f32,
     pub label_offset: f32,
 }
 
-/// A read-only footer whose complete hints share the renderer's shaped widths.
+/// A read-only footer: one centred cluster of modifier keycaps and expanded hints, then the
+/// version label at its right end.
 #[derive(Clone, Debug, PartialEq)]
 pub struct ShortcutHintsScene {
     pub rect: SceneRect,
     pub complete: bool,
+    pub(crate) groups: Vec<ShortcutHintGroup>,
     pub(crate) pieces: Vec<ShortcutHintPiece>,
+    /// The version label's text rect, while it shows.
+    pub(crate) version: Option<SceneRect>,
 }
 
 impl ShortcutHintsScene {
@@ -898,11 +924,16 @@ impl ShortcutHintsScene {
         Self::height(metrics) + stack_inset(metrics) + pane_inset(metrics) / 2.0
     }
 
+    /// Lay the hints out in a window `size` wide, with the version label `version` pixels wide
+    /// when it is requested. Narrow windows give way in this order: the cluster leaves the
+    /// centre to clear the version, the version hides, expanded hints drop whole by priority,
+    /// and the keycaps switch to their short legends. Keycaps never drop.
     #[must_use]
     pub fn new(
         hints: Vec<ShortcutHint>,
         size: PhysicalSize<u32>,
         metrics: CellMetrics,
+        version: Option<f32>,
         mut measure: impl FnMut(&str) -> f32,
     ) -> Self {
         let chrome = pane_chrome_rect(
@@ -925,100 +956,163 @@ impl ShortcutHintsScene {
             height: (size.height as f32 - rect.top).max(0.0),
             ..rect
         };
-        let count = hints.len();
-        let mut groups: Vec<Vec<ShortcutHint>> = Vec::new();
+        let row = SceneRect {
+            top: frame.top + (frame.height - metrics.height).max(0.0) / 2.0,
+            height: metrics.height.min(height),
+            ..SceneRect::default()
+        };
+        let padding = metrics.padding;
+        let mut groups: Vec<ShortcutHintGroup> = Vec::new();
+        let mut shorts = Vec::new();
+        let mut pieces = Vec::new();
         for hint in hints {
-            if let Some(group) = groups
-                .iter_mut()
-                .find(|group| group[0].modifiers == hint.modifiers)
-            {
-                group.push(hint);
-            } else {
-                groups.push(vec![hint]);
+            if hint.modifiers.is_empty() {
+                pieces.push(hint);
+                continue;
             }
+            let index = groups
+                .iter()
+                .position(|group| group.name == hint.modifier_names)
+                .unwrap_or_else(|| {
+                    shorts.push(hint.modifiers.clone());
+                    groups.push(ShortcutHintGroup {
+                        name: hint.modifier_names.clone(),
+                        legend: String::new(),
+                        rect: row,
+                        hover: SceneRect::default(),
+                        rows: Vec::new(),
+                        accessible_label: String::new(),
+                    });
+                    groups.len() - 1
+                });
+            let group = &mut groups[index];
+            if !group.accessible_label.is_empty() {
+                group.accessible_label.push_str("; ");
+            }
+            group.accessible_label.push_str(&hint.accessible_label);
+            group.rows.push((hint.key, hint.description));
         }
+        let total = groups.iter().map(|group| group.rows.len()).sum::<usize>() + pieces.len();
+        let count = pieces.len();
         let mut widths = std::collections::HashMap::new();
         let mut width = |text: &str| {
             *widths
                 .entry(text.to_owned())
                 .or_insert_with(|| measure(text))
         };
-        let pieces = loop {
-            let mut left = rect.left + metrics.padding;
-            let mut pieces = Vec::new();
-            for group in &groups {
-                for (index, hint) in group.iter().enumerate() {
-                    // One gap, three quarters of the padding, separates every hint; spare
-                    // width then spreads the groups.
-                    if !pieces.is_empty() {
-                        left += metrics.padding * 0.75;
-                    }
-                    let modifiers = if index == 0 && !hint.modifiers.is_empty() {
-                        hint.modifiers.clone()
-                    } else {
-                        String::new()
-                    };
-                    let key_offset = if modifiers.is_empty() {
-                        0.0
-                    } else {
-                        width(&modifiers) + metrics.padding * 2.0
-                    };
-                    let label_offset = key_offset + width(&hint.key) + width(" ");
-                    let piece_width = label_offset + width(&hint.label);
-                    pieces.push(ShortcutHintPiece {
-                        modifiers,
-                        key: hint.key.clone(),
-                        label: hint.label.clone(),
-                        accessible_label: hint.accessible_label.clone(),
-                        key_offset,
-                        label_offset,
-                        rect: SceneRect {
-                            left,
-                            top: frame.top + (frame.height - metrics.height).max(0.0) / 2.0,
-                            width: piece_width,
-                            height: metrics.height.min(height),
-                        },
-                    });
-                    left += piece_width;
-                }
-            }
-            if groups.is_empty()
-                || height >= metrics.height && left <= rect.right() - metrics.padding
-            {
-                let spare = rect.right() - metrics.padding - left;
-                let mut retained = pieces.iter_mut();
-                for (index, group) in groups.iter().enumerate() {
-                    let offset = if groups.len() == 1 {
-                        spare / 2.0
-                    } else {
-                        spare * index as f32 / (groups.len() - 1) as f32
-                    };
-                    for piece in retained.by_ref().take(group.len()) {
-                        piece.rect.left += offset;
-                    }
-                }
-                break pieces;
-            }
-            let (group, index, _) = groups
+        let full = groups
+            .iter()
+            .map(|group| width(&group.name) + padding)
+            .collect::<Vec<_>>();
+        let short = shorts
+            .iter()
+            .map(|legend| width(legend) + padding)
+            .collect::<Vec<_>>();
+        let space = width(" ");
+        let mut pieces = pieces
+            .into_iter()
+            .map(|hint| {
+                let label_offset = width(&hint.key) + space;
+                let piece = ShortcutHintPiece {
+                    rect: SceneRect {
+                        width: label_offset + width(&hint.label),
+                        ..row
+                    },
+                    key: hint.key,
+                    label: hint.label,
+                    accessible_label: hint.accessible_label,
+                    label_offset,
+                };
+                (hint.priority, piece)
+            })
+            .collect::<Vec<_>>();
+        // One padding separates the cluster's items, and keeps the version clear of it.
+        let cluster = |keycaps: &[f32], pieces: &[(u8, ShortcutHintPiece)]| {
+            let widths = keycaps
                 .iter()
-                .enumerate()
-                .flat_map(|(group, hints)| {
-                    hints
-                        .iter()
-                        .enumerate()
-                        .map(move |(index, hint)| (group, index, hint.priority))
-                })
-                .max_by_key(|&(group, index, priority)| (priority, group, index))
-                .expect("nonempty hints");
-            groups[group].remove(index);
-            if groups[group].is_empty() {
-                groups.remove(group);
-            }
+                .copied()
+                .chain(pieces.iter().map(|(_, piece)| piece.rect.width));
+            widths.clone().sum::<f32>() + padding * widths.count().saturating_sub(1) as f32
         };
+        let centre = size.width as f32 / 2.0;
+        let start = rect.left + padding;
+        let end = rect.right() - padding;
+        let version = version.filter(|width| width.is_finite() && *width > 0.0);
+        let mut version_left = None;
+        let mut legends = false;
+        let mut left = start;
+        if height >= metrics.height {
+            let mut placed = None;
+            if let Some(version) = version {
+                // The cluster stays centred while it clears the version, then shifts toward
+                // the start; once it would cross the start, the version hides.
+                let before = end - version - padding;
+                let width = cluster(&full, &pieces);
+                let centred = centre - width / 2.0;
+                placed = if centred + width <= before {
+                    Some(centred)
+                } else {
+                    Some(before - width).filter(|left| *left >= start)
+                };
+                version_left = placed.map(|_| end - version);
+            }
+            left = placed.unwrap_or_else(|| {
+                loop {
+                    let width = cluster(if legends { &short } else { &full }, &pieces);
+                    if width <= end - start || legends {
+                        break (centre - width / 2.0).max(start);
+                    }
+                    if let Some(index) =
+                        (0..pieces.len()).max_by_key(|&index| (pieces[index].0, index))
+                    {
+                        pieces.remove(index);
+                    } else {
+                        legends = true;
+                    }
+                }
+            });
+        } else {
+            groups.clear();
+            pieces.clear();
+        }
+        for ((group, width), legend) in groups
+            .iter_mut()
+            .zip(if legends { &short } else { &full })
+            .zip(shorts)
+        {
+            group.legend = if legends { legend } else { group.name.clone() };
+            group.rect.left = left;
+            group.rect.width = *width;
+            group.hover = SceneRect {
+                left: left - padding / 2.0,
+                top: frame.top,
+                width: width + padding,
+                height: frame.height,
+            };
+            left += width + padding;
+        }
+        let pieces = pieces
+            .into_iter()
+            .map(|(_, mut piece)| {
+                piece.rect.left = left;
+                left += piece.rect.width + padding;
+                piece
+            })
+            .collect::<Vec<_>>();
         Self {
             rect: frame,
-            complete: count > 0 && pieces.len() == count,
+            complete: total > 0
+                && height >= metrics.height
+                && pieces.len() == count
+                && !legends
+                && version.is_none() == version_left.is_none(),
+            groups,
             pieces,
+            version: version.zip(version_left).map(|(width, left)| SceneRect {
+                left,
+                width,
+                ..row
+            }),
         }
     }
 }
@@ -1121,8 +1215,10 @@ pub fn attention_inbox_hints() -> Vec<ShortcutHint> {
     .into_iter()
     .map(|(key, label)| ShortcutHint {
         modifiers: String::new(),
+        modifier_names: String::new(),
         key: key.into(),
         label: label.into(),
+        description: label.into(),
         accessible_label: format!("{key} {label}"),
         priority: 0,
     })
@@ -1644,8 +1740,8 @@ pub struct WorkspaceScene {
     /// while it shows.
     pub(crate) eon_icon: Option<SceneRect>,
     /// Whether the bar shows everything it was asked to as a wide window would: the workspace
-    /// label, every tab at its full width, every quota chip and every listed reading and version
-    /// label that has data.
+    /// label, every tab at its full width, every quota chip and every listed reading that has
+    /// data.
     bar_complete: bool,
     /// The shown workspace's label before the tabs, while it shows.
     pub(crate) workspace_label: Option<WorkspaceNameLabel>,
@@ -3215,7 +3311,7 @@ impl WorkspaceScene {
             .max(0.0);
         // Read-only labels take spare header space without shortening tabs, in this order, and
         // stop at the first that does not fit: the clock yields first, then disk, RAM and CPU
-        // use, then the version label. The readings also need every quota chip shown.
+        // use. The readings also need every quota chip shown.
         let shown = |item| bar.items.contains(&item);
         let reading = |item| quotas.len() == quota_count && shown(item);
         // CPU and RAM keep the width of `CPU 100%`, and disk that of `DISK 100%`, so the header
@@ -3234,17 +3330,6 @@ impl WorkspaceScene {
             })
         };
         let mut labels = [
-            bar.version
-                .filter(|_| shown(BarItem::Version))
-                .map(|version| {
-                    (
-                        format!("EON {version}"),
-                        format!("Eon version {version}"),
-                        format!("Running Eon version {version}"),
-                        0,
-                        Load::Normal,
-                    )
-                }),
             bar.cpu
                 .filter(|_| reading(BarItem::Cpu))
                 .map(|cpu| {
@@ -3298,8 +3383,7 @@ impl WorkspaceScene {
             label.map(
                 |(label, tooltip, description, cells, load)| WorkspaceLabel {
                     rect: SceneRect {
-                        // Every label is ASCII (launch validation bounds the version), and
-                        // rendering uses terminal cell spacing.
+                        // Every label is ASCII and rendering uses terminal cell spacing.
                         width: label.len().max(cells) as f32 * metrics.width
                             + metrics.padding * 2.0,
                         height: tab_height,
@@ -3315,38 +3399,33 @@ impl WorkspaceScene {
         // The first reading to show before Shortcuts also takes the space before its button,
         // unless a quota chip already took it.
         let mut fits = true;
-        for (index, label) in labels.iter_mut().enumerate() {
+        for label in &mut labels {
             let Some(width) = label.as_ref().map(|label| label.rect.width) else {
                 continue;
             };
-            let space = if index > 0 && !spaced {
-                before_shortcuts
-            } else {
-                0.0
-            };
+            let space = if spaced { 0.0 } else { before_shortcuts };
             fits &= width.is_finite()
                 && width > 0.0
                 && width + space + metrics.font_size * 4.0 <= drag_region.width;
             if fits {
                 drag_region.width -= width + space;
-                spaced |= index > 0;
+                spaced = true;
             } else {
                 *label = None;
             }
         }
         let bar_complete = !crowded && tabs_uncapped && quotas.len() == quota_count && fits;
-        // Quota chips and labels sit in Eon's order between the drag region and Shortcuts, and
-        // the version label between Shortcuts and Close.
-        let [version, cpu, ram, disk, clock] = labels;
+        // Quota chips and labels sit in Eon's order between the drag region and Shortcuts; the
+        // version label sits at the right end of the shortcut hints instead.
+        let [cpu, ram, disk, clock] = labels;
         let mut labels = [
             (BarItem::Cpu, cpu),
             (BarItem::Ram, ram),
             (BarItem::Disk, disk),
             (BarItem::Clock, clock),
-            (BarItem::Version, version),
         ];
         let mut left = drag_region.right();
-        for item in bar.items.iter().filter(|item| **item != BarItem::Version) {
+        for item in bar.items {
             if let Some(label) = labels
                 .iter_mut()
                 .find_map(|(kind, label)| label.as_mut().filter(|_| kind == item))
@@ -3361,15 +3440,23 @@ impl WorkspaceScene {
                 }
             }
         }
-        let [(_, cpu), (_, ram), (_, disk), (_, clock), (_, mut version)] = labels;
+        let [(_, cpu), (_, ram), (_, disk), (_, clock)] = labels;
         // Shortcuts' target reaches back over that space, so it only grows.
         let grow = if spaced { before_shortcuts } else { 0.0 };
         controls[1].centre += left + grow - controls[1].rect.left;
         controls[1].rect.left = left;
         controls[1].rect.width += grow;
-        if let Some(version) = &mut version {
-            version.rect.left = controls[1].rect.right();
-        }
+        let version = hints
+            .as_ref()
+            .and_then(|hints| hints.version)
+            .zip(bar.version)
+            .map(|(rect, version)| WorkspaceLabel {
+                rect,
+                label: format!("EON {version}"),
+                tooltip: format!("Eon version {version}"),
+                description: format!("Running Eon version {version}"),
+                load: Load::Normal,
+            });
         let tab_scroll_limit = (tab_end - tab_viewport.right()).max(0.0);
         let active = tabs[active_tab].rect;
         // Revealing the first tab never scrolls.
@@ -3791,6 +3878,14 @@ impl WorkspaceScene {
         }
         if self.drag_region.contains(x, y) {
             return Some(WorkspaceHit::Drag);
+        }
+        if let Some(index) = self.hints.as_ref().and_then(|hints| {
+            hints
+                .groups
+                .iter()
+                .position(|group| group.hover.contains(x, y))
+        }) {
+            return Some(WorkspaceHit::HintGroup(index));
         }
         if let Some(row) = self.sidebar_rows.iter().find(|row| {
             row.rect
@@ -4759,4 +4854,4 @@ fn resolve_color(color: StyleColor, default: Rgb, palette: &[Rgb; 256]) -> Color
 }
 
 #[cfg(test)]
-mod tests;
+pub(crate) mod tests;

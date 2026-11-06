@@ -35,6 +35,19 @@ installation, and proven contract changes.
   dark disc, as on a tab, since the desktop behind the window sets the card's
   colour. A stale agent's badge stays dimmed below 3:1 on purpose. Needs
   input, error and finished badges keep their own colours (`eon-i3th2`).
+- The bottom hints bar shows one keycap per set of modifiers, named in full
+  (`Alt`, `Ctrl+Alt`, `Alt+Shift`, `Ctrl+Alt+Shift`), centred in the window,
+  with keys without modifiers such as `Escape terminal` written out after them.
+  Pointing at a keycap opens a popup above it listing its keys and what each
+  does, as Alt+/ words them; it never takes focus, and Escape or a click
+  closes it until the pointer leaves the keycap. The Ctrl+Alt+Shift+H/L tab
+  moves are back in the bar, under `Ctrl+Alt+Shift`. `EON <version>` moves
+  from the header to the hints bar's right end, hides with it (Alt+Shift+B),
+  and its hover opens above it; the header's `?` sits beside `×`. Narrow
+  windows shift the keycaps clear of the version, then hide the version, then
+  drop the written-out keys, and finally shorten the keycaps to `A`, `CA`,
+  `AS` and `CAS`. Screen readers read each keycap as, for example, `Alt+Shift
+  shortcuts` with its chords (`eon-e3a1z.1`, VEN-C21, EON-C32).
 - The bottom hints bar fits a 1280-pixel-wide window with Eon's packaged font
   (DejaVu Sans) at the default size:
   directions read `HJKL`, create hints drop their `+` (`pane`, `col`, `tab`,

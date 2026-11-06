@@ -53,7 +53,13 @@ pub(super) fn initial_window_size(
                 0.0,
                 0.0,
                 |_, _| (String::new(), 0.0),
-                Some(ShortcutHintsScene::new(Vec::new(), size, metrics, |_| 0.0)),
+                Some(ShortcutHintsScene::new(
+                    Vec::new(),
+                    size,
+                    metrics,
+                    None,
+                    |_| 0.0,
+                )),
             )
         });
         workspace
@@ -218,7 +224,13 @@ mod tests {
                             0.0,
                             0.0,
                             |_, _| (String::new(), 0.0),
-                            Some(ShortcutHintsScene::new(Vec::new(), size, metrics, |_| 0.0)),
+                            Some(ShortcutHintsScene::new(
+                                Vec::new(),
+                                size,
+                                metrics,
+                                None,
+                                |_| 0.0,
+                            )),
                         )
                     });
                     let actual =

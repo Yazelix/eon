@@ -10,7 +10,7 @@ use crate::{
     DialogKind, DialogScene, Load, SceneRect, WorkspaceFocus, WorkspaceHeaderControl,
     WorkspaceScene,
     scene::{
-        QuotaProvider, SIDEBAR_EMPTY, SIDEBAR_TITLE, TabBadge, WorkspaceControl,
+        QuotaProvider, SIDEBAR_EMPTY, SIDEBAR_TITLE, ShortcutHintGroup, TabBadge, WorkspaceControl,
         chrome_title_metrics,
     },
 };
@@ -20,6 +20,7 @@ use glyphon::{
     RasterizeCustomGlyphRequest, RasterizedCustomGlyph, SwashCache, TextBounds, Weight, Wrap,
     fontdb,
 };
+use winit::dpi::PhysicalSize;
 
 const OPENAI_BLOSSOM_ID: u16 = 1;
 const CLAUDE_SPLAT_ID: u16 = 2;
@@ -27,6 +28,84 @@ const EON_ICON_ID: u16 = 3;
 const QUOTA_ICON_SIZE: usize = 104;
 /// The sides an Eon icon image may have, in pixels.
 const EON_ICON_SIDES: std::ops::RangeInclusive<usize> = 16..=512;
+/// The last row of a keycap popup that cannot list every hint: the Shortcuts viewer lists them.
+const HINT_POPUP_MORE: (&str, &str) = ("Alt+/", "lists all");
+
+/// The edge of the bar a tooltip opens from: below the header at this top, or above the
+/// shortcut hints with this bottom.
+#[derive(Clone, Copy, Debug, PartialEq)]
+enum TooltipEdge {
+    Below(f32),
+    Above(f32),
+}
+
+/// Where the tooltip of the bar item at `anchor` opens: above the hints for the version label,
+/// which sits in them, and below the header for the rest.
+fn tooltip_edge(workspace: &WorkspaceScene, anchor: SceneRect, padding: f32) -> TooltipEdge {
+    match &workspace.hints {
+        Some(hints) if anchor.top >= hints.rect.top => {
+            TooltipEdge::Above(hints.rect.top - padding / 3.0)
+        }
+        _ => TooltipEdge::Below(workspace.header.bottom() + padding / 3.0),
+    }
+}
+
+/// The widest and tallest a tooltip opening at `edge` in a window `size` may be: 40 ems at
+/// most, and never past the window's padding, the header or the hints.
+fn tooltip_room(
+    size: PhysicalSize<u32>,
+    metrics: CellMetrics,
+    workspace: &WorkspaceScene,
+    edge: TooltipEdge,
+) -> (f32, f32) {
+    let padding = metrics.padding;
+    let width = (size.width as f32 - padding * 2.0).min(metrics.font_size * 40.0);
+    let height = match edge {
+        TooltipEdge::Below(top) => size.height as f32 - top - padding,
+        TooltipEdge::Above(bottom) => bottom - workspace.header.bottom() - padding / 3.0,
+    };
+    (width, height)
+}
+
+/// A tooltip `width` by `height` at `anchor`'s left, kept inside a window `window` wide, on the
+/// `edge` it names.
+fn tooltip_rect(
+    window: f32,
+    padding: f32,
+    anchor: f32,
+    width: f32,
+    height: f32,
+    edge: TooltipEdge,
+) -> SceneRect {
+    SceneRect {
+        left: anchor.clamp(padding, (window - width - padding).max(padding)),
+        top: match edge {
+            TooltipEdge::Below(top) => top,
+            TooltipEdge::Above(bottom) => bottom - height,
+        },
+        width,
+        height,
+    }
+}
+
+/// The rows of a keycap's popup with room for `lines` lines, its title among them: every hint,
+/// or as many as fit before a last row that points at full help. None without room for a row.
+fn hint_popup_rows(group: &ShortcutHintGroup, lines: f32) -> Option<Vec<(&str, &str)>> {
+    if !lines.is_finite() || lines < 2.0 {
+        return None;
+    }
+    let lines = lines as usize;
+    let mut rows = group
+        .rows
+        .iter()
+        .map(|(key, description)| (key.as_str(), description.as_str()))
+        .collect::<Vec<_>>();
+    if rows.len() >= lines {
+        rows.truncate(lines - 2);
+        rows.push(HINT_POPUP_MORE);
+    }
+    Some(rows)
+}
 
 fn contrast(a: SceneColor, b: SceneColor) -> f32 {
     let luminance = |color: SceneColor| {
@@ -146,6 +225,8 @@ pub(super) struct HeaderInteraction {
     hovered_header: Option<(WorkspaceFocus, String)>,
     quota_hovered: Option<usize>,
     version_hovered: bool,
+    hint_group_hovered: Option<usize>,
+    hint_popup: bool,
     cpu_hovered: bool,
     ram_hovered: bool,
     disk_hovered: bool,
@@ -831,6 +912,13 @@ impl Renderer {
         self.header.version_hovered = hovered;
     }
 
+    /// The shortcut hints keycap under the pointer, and whether its popup listing the group's
+    /// hints shows (Escape or a press hides it until the pointer leaves the keycap).
+    pub fn set_hint_group_hovered(&mut self, group: Option<usize>, popup: bool) {
+        self.header.hint_group_hovered = group;
+        self.header.hint_popup = popup;
+    }
+
     pub fn set_cpu_hovered(&mut self, hovered: bool) {
         self.header.cpu_hovered = hovered;
     }
@@ -996,11 +1084,23 @@ impl Renderer {
         fit_header_text(&mut self.fonts.font_system, self.metrics, label, width)
     }
 
+    /// The tooltip of the hovered bar item, or the popup of the hovered shortcut hints keycap.
     pub(super) fn build_header_tooltip(
         &mut self,
         workspace: &WorkspaceScene,
         rectangles: &mut RectangleBatch,
     ) {
+        let padding = self.metrics.padding;
+        if let Some(hints) = &workspace.hints
+            && self.header.hint_popup
+            && let Some(group) = self
+                .header
+                .hint_group_hovered
+                .and_then(|index| hints.groups.get(index))
+        {
+            self.build_hint_popup(workspace, hints.rect.top - padding / 3.0, group, rectangles);
+            return;
+        }
         let hovered_tab = workspace
             .tabs
             .iter()
@@ -1054,24 +1154,22 @@ impl Renderer {
         } else {
             return;
         };
-        let padding = self.metrics.padding;
-        let top = workspace.header.bottom() + padding / 3.0;
-        let width = (self.config.width as f32 - padding * 2.0).min(self.metrics.font_size * 40.0);
-        let height = self.config.height as f32 - top - padding;
+        let edge = tooltip_edge(workspace, anchor, padding);
+        let (width, height) = self.tooltip_room(workspace, edge);
         if width <= padding * 2.0 || height <= padding * 2.0 {
             return;
         }
-        let before = self.text.len();
+        let first = self.text.len();
         self.push_text(
             label,
-            0.0,
-            top + padding,
+            padding,
+            padding,
             width - padding * 2.0,
             height - padding * 2.0,
             palette::PRIMARY_TEXT,
             DrawStyleKind::Status(Wrap::WordOrGlyph),
         );
-        let Some(text) = self.text.get_mut(before) else {
+        let Some(text) = self.text.get(first) else {
             return;
         };
         let mut text_width = 0.0_f32;
@@ -1080,18 +1178,117 @@ impl Renderer {
             text_width = text_width.max(run.line_w);
             text_height = text_height.max(run.line_top + run.line_height);
         }
-        let width = (text_width.ceil() + padding * 2.0).min(width);
-        let height = (text_height.ceil() + padding * 2.0).min(height);
-        let left = anchor.left.clamp(
-            padding,
-            (self.config.width as f32 - width - padding).max(padding),
+        self.place_tooltip(
+            first,
+            (text_width.ceil() + padding * 2.0).min(width),
+            (text_height.ceil() + padding * 2.0).min(height),
+            anchor.left,
+            edge,
+            rectangles,
         );
-        let tooltip = SceneRect {
-            left,
-            top,
+    }
+
+    fn tooltip_room(&self, workspace: &WorkspaceScene, edge: TooltipEdge) -> (f32, f32) {
+        tooltip_room(
+            PhysicalSize::new(self.config.width, self.config.height),
+            self.metrics,
+            workspace,
+            edge,
+        )
+    }
+
+    /// Lists a hovered keycap's hints above it: a title row with the group's full names, then
+    /// each hint's keys and what they do. Rows that do not fit give way to a pointer at full help.
+    fn build_hint_popup(
+        &mut self,
+        workspace: &WorkspaceScene,
+        bottom: f32,
+        group: &ShortcutHintGroup,
+        rectangles: &mut RectangleBatch,
+    ) {
+        let padding = self.metrics.padding;
+        let line = chrome_title_metrics(self.metrics).line_height;
+        let edge = TooltipEdge::Above(bottom);
+        let (room, height) = self.tooltip_room(workspace, edge);
+        let Some(rows) = hint_popup_rows(group, (height - padding * 2.0) / line) else {
+            return;
+        };
+        if room <= padding * 2.0 {
+            return;
+        }
+        let mut measure = |text: &str| self.measure_header_text(text).1.ceil();
+        let title = measure(&group.name);
+        let keys = rows.iter().map(|(key, _)| measure(key)).fold(0.0, f32::max);
+        let descriptions = rows
+            .iter()
+            .map(|(_, description)| measure(description))
+            .fold(0.0, f32::max);
+        let content = title.max(keys + padding + descriptions);
+        let width = (content + padding * 2.0).min(room);
+        let inner = width - padding * 2.0;
+        let first = self.text.len();
+        self.push_text(
+            &group.name,
+            padding,
+            padding,
+            inner,
+            line,
+            palette::HINT_MODIFIER_TEXT,
+            DrawStyleKind::Status(Wrap::None),
+        );
+        for (index, (key, description)) in rows.iter().enumerate() {
+            let top = padding + line * (index + 1) as f32;
+            self.push_text(
+                key,
+                padding,
+                top,
+                keys.max(1.0),
+                line,
+                palette::ACCENT,
+                DrawStyleKind::Status(Wrap::None),
+            );
+            self.push_text(
+                description,
+                padding + keys + padding,
+                top,
+                (inner - keys - padding).max(1.0),
+                line,
+                palette::PRIMARY_TEXT,
+                DrawStyleKind::Status(Wrap::None),
+            );
+        }
+        self.place_tooltip(
+            first,
+            width,
+            line * (rows.len() + 1) as f32 + padding * 2.0,
+            group.rect.left,
+            edge,
+            rectangles,
+        );
+    }
+
+    /// Box the texts pushed since `first`, laid out from the origin, as a tooltip `width` by
+    /// `height` at `anchor`'s left, kept inside the window, on the `edge` it names. It covers the
+    /// text beneath it and the scrollback pill yields to it.
+    fn place_tooltip(
+        &mut self,
+        first: usize,
+        width: f32,
+        height: f32,
+        anchor: f32,
+        edge: TooltipEdge,
+        rectangles: &mut RectangleBatch,
+    ) {
+        let padding = self.metrics.padding;
+        let tooltip = tooltip_rect(
+            self.config.width as f32,
+            padding,
+            anchor,
             width,
             height,
-        };
+            edge,
+        );
+        let SceneRect { left, top, .. } = tooltip;
         if self
             .terminal
             .scrollback_rect
@@ -1099,13 +1296,16 @@ impl Renderer {
         {
             self.terminal.scrollback_rect = None;
         }
-        text.left = left + padding;
-        text.bound_left = text.left.floor() as i32;
-        text.right = (left + width - padding).ceil() as i32;
-        text.bound_top = (top + padding).floor() as i32;
-        text.bottom = (top + height - padding).ceil() as i32;
+        for text in &mut self.text[first..] {
+            text.left += left;
+            text.top += top;
+            text.bound_left = (left + padding).floor() as i32;
+            text.right = (left + width - padding).ceil() as i32;
+            text.bound_top = (top + padding).floor() as i32;
+            text.bottom = (top + height - padding).ceil() as i32;
+        }
         self.text_overlay = Some((
-            before,
+            first,
             TextBounds {
                 left: left.floor() as i32,
                 top: top.floor() as i32,
@@ -1371,29 +1571,37 @@ impl Renderer {
             rectangles.clip = None;
         }
         if let Some(hints) = &workspace.hints {
-            // The hints sit bare in the margin below the cards.
+            // The hints sit bare in the margin below the cards; only keycaps have a fill.
+            let padding = self.metrics.padding;
+            for (index, group) in hints.groups.iter().enumerate() {
+                rectangles.push_rounded(
+                    group.rect,
+                    padding / 2.0,
+                    if self.header.hint_group_hovered == Some(index) {
+                        palette::CHROME_HIGHLIGHT
+                    } else {
+                        palette::HINT_KEYCAP
+                    },
+                );
+                let width = (group.rect.width - padding).max(0.0);
+                self.push_text_clipped(
+                    &group.legend,
+                    group.rect.left + padding / 2.0,
+                    group.rect.top,
+                    width,
+                    width,
+                    group.rect.height,
+                    palette::HINT_MODIFIER_TEXT,
+                    DrawStyleKind::Status(Wrap::None),
+                    group.rect,
+                );
+            }
             for hint in &hints.pieces {
-                if !hint.modifiers.is_empty() {
-                    rectangles.push_rounded(
-                        SceneRect {
-                            width: hint.key_offset - self.metrics.padding,
-                            ..hint.rect
-                        },
-                        self.metrics.padding / 2.0,
-                        palette::HINT_KEYCAP,
-                    );
-                }
                 for (text, left, width, color) in [
                     (
-                        hint.modifiers.as_str(),
-                        hint.rect.left + self.metrics.padding / 2.0,
-                        hint.key_offset - self.metrics.padding * 1.5,
-                        palette::HINT_MODIFIER_TEXT,
-                    ),
-                    (
                         hint.key.as_str(),
-                        hint.rect.left + hint.key_offset,
-                        hint.label_offset - hint.key_offset,
+                        hint.rect.left,
+                        hint.label_offset,
                         palette::ACCENT,
                     ),
                     (
@@ -1402,10 +1610,7 @@ impl Renderer {
                         hint.rect.width - hint.label_offset,
                         palette::SECONDARY_TEXT,
                     ),
-                ]
-                .into_iter()
-                .filter(|(text, _, _, _)| !text.is_empty())
-                {
+                ] {
                     self.push_text_clipped(
                         text,
                         left,
@@ -1418,6 +1623,24 @@ impl Renderer {
                         hint.rect,
                     );
                 }
+            }
+            // The version label stays plain text, at the hints' right end.
+            if let Some(version) = &workspace.version {
+                self.push_text_clipped(
+                    &version.label,
+                    version.rect.left,
+                    version.rect.top,
+                    version.rect.width,
+                    version.rect.width,
+                    version.rect.height,
+                    palette::VERSION_TEXT,
+                    DrawStyleKind::Monospace,
+                    SceneRect {
+                        left: version.rect.left,
+                        width: version.rect.width,
+                        ..hints.rect
+                    },
+                );
             }
         }
         rectangles.clip = Some(workspace.tab_viewport);
@@ -1506,7 +1729,7 @@ impl Renderer {
                     .push_badge(badge, Backing::Disc(palette::BAR_BACKGROUND), rectangles);
             }
         }
-        // Quota chips and readings share the tabs' band; the version label stays plain.
+        // Quota chips and readings share the tabs' band.
         for quota in &workspace.quotas {
             let visual = workspace.bar_pill_rect(
                 header_item_visual(quota.rect, self.metrics.padding),
@@ -1540,29 +1763,26 @@ impl Renderer {
                 );
             }
         }
-        for (label, color, pill) in [
-            (&workspace.cpu, palette::SECONDARY_TEXT, true),
-            (&workspace.ram, palette::SECONDARY_TEXT, true),
-            (&workspace.disk, palette::SECONDARY_TEXT, true),
-            (&workspace.clock, palette::SECONDARY_TEXT, true),
-            (&workspace.version, palette::VERSION_TEXT, false),
+        for label in [
+            &workspace.cpu,
+            &workspace.ram,
+            &workspace.disk,
+            &workspace.clock,
         ] {
             let Some(label) = label else {
                 continue;
             };
             let color = match label.load {
-                Load::Normal => color,
+                Load::Normal => palette::SECONDARY_TEXT,
                 Load::High => palette::LOAD_HIGH,
                 Load::Critical => palette::LOAD_CRITICAL,
             };
             let content = workspace.bar_item_rect(label.rect, self.metrics);
-            if pill {
-                let visual = workspace.bar_pill_rect(
-                    header_item_visual(label.rect, self.metrics.padding),
-                    self.metrics,
-                );
-                push_bar_widget(rectangles, visual, self.border_width, self.metrics.scale);
-            }
+            let visual = workspace.bar_pill_rect(
+                header_item_visual(label.rect, self.metrics.padding),
+                self.metrics,
+            );
+            push_bar_widget(rectangles, visual, self.border_width, self.metrics.scale);
             let width = (label.rect.width - self.metrics.padding * 2.0).max(0.0);
             // A label narrower than its chip sits in the middle; every label is ASCII in cells.
             let slack = (width - label.label.len() as f32 * self.metrics.width).max(0.0);
@@ -2005,6 +2225,112 @@ mod tests {
                 );
             }
         }
+    }
+
+    #[test]
+    fn hint_popup_sits_above_its_keycap_inside_the_window() {
+        use crate::{ShortcutHint, ShortcutHintsScene};
+        let snapshot = crate::scene::tests::bar::one_pane_snapshot();
+        // Alt+Shift's fourteen default hints, and one Alt hint.
+        let hint = |modifiers: &str, names: &str, key: &str| ShortcutHint {
+            modifiers: modifiers.into(),
+            modifier_names: names.into(),
+            key: key.into(),
+            label: key.to_lowercase(),
+            description: format!("Run the {key} action"),
+            accessible_label: format!("{names}+{key} — Run the {key} action"),
+            priority: 0,
+        };
+        let hints = std::iter::once(hint("A", "Alt", "M"))
+            .chain(
+                "TWZNDBHJLYAMSE"
+                    .chars()
+                    .map(|key| hint("AS", "Alt+Shift", &key.to_string())),
+            )
+            .collect::<Vec<_>>();
+        let metrics = CellMetrics::for_scale(1.0);
+        let measure = |text: &str| text.chars().count() as f32 * metrics.width;
+        let line = chrome_title_metrics(metrics).line_height;
+        let padding = metrics.padding;
+        for (width, height, cut) in [(1280, 800, false), (400, 300, true)] {
+            let size = PhysicalSize::new(width, height);
+            let workspace = WorkspaceScene::from_snapshot_with_bar(
+                &snapshot,
+                crate::EonBar {
+                    version: Some("9.8.7"),
+                    ..crate::EonBar::default()
+                },
+                size,
+                metrics,
+                0.0,
+                0.0,
+                |_, text| (text.to_owned(), measure(text)),
+                Some(ShortcutHintsScene::new(
+                    hints.clone(),
+                    size,
+                    metrics,
+                    Some(measure("EON 9.8.7")),
+                    measure,
+                )),
+            );
+            let footer = workspace.hints.as_ref().unwrap();
+            for group in &footer.groups {
+                let edge = TooltipEdge::Above(footer.rect.top - padding / 3.0);
+                let (room, tall) = tooltip_room(size, metrics, &workspace, edge);
+                let rows = hint_popup_rows(group, (tall - padding * 2.0) / line).unwrap();
+                let popup_height = line * (rows.len() + 1) as f32 + padding * 2.0;
+                // Wider than the window, so the clamp keeps it inside.
+                let popup_width = room;
+                let popup = tooltip_rect(
+                    width as f32,
+                    padding,
+                    group.rect.left,
+                    popup_width,
+                    popup_height,
+                    edge,
+                );
+                assert!(
+                    (popup.bottom() - (footer.rect.top - padding / 3.0)).abs() < 0.01,
+                    "{width}"
+                );
+                assert!(popup.top >= workspace.header.bottom(), "{width}: {popup:?}");
+                assert!(popup.left >= padding && popup.right() <= width as f32 - padding);
+                // A popup that fits sits at its keycap's left.
+                let narrow = tooltip_rect(width as f32, padding, group.rect.left, 1.0, 1.0, edge);
+                assert_eq!(narrow.left, group.rect.left);
+                let cut_here = rows.last() == Some(&HINT_POPUP_MORE);
+                assert_eq!(cut_here, cut && group.name == "Alt+Shift", "{width}");
+                if !cut_here {
+                    assert_eq!(rows.len(), group.rows.len());
+                }
+                assert!(rows.len() < group.rows.len() + usize::from(cut_here) + 1);
+            }
+            // The version's tooltip opens above it; a header item's below the header.
+            let version = workspace.version.as_ref().unwrap();
+            assert_eq!(
+                tooltip_edge(&workspace, version.rect, padding),
+                TooltipEdge::Above(footer.rect.top - padding / 3.0)
+            );
+            assert_eq!(
+                tooltip_edge(&workspace, workspace.tabs[0].rect, padding),
+                TooltipEdge::Below(workspace.header.bottom() + padding / 3.0)
+            );
+        }
+        // Too little room for one row shows no popup.
+        let group = ShortcutHintGroup {
+            name: "Alt".into(),
+            legend: "Alt".into(),
+            rect: SceneRect::default(),
+            hover: SceneRect::default(),
+            rows: vec![("M".into(), "Create pane".into())],
+            accessible_label: String::new(),
+        };
+        assert_eq!(hint_popup_rows(&group, 1.9), None);
+        assert_eq!(
+            hint_popup_rows(&group, 2.0),
+            Some(vec![("M", "Create pane")])
+        );
+        assert_eq!(hint_popup_rows(&group, f32::NAN), None);
     }
 
     #[test]

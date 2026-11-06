@@ -488,116 +488,236 @@ fn quota_pace_colors_fresh_windows_and_says_so_in_words() {
     }
 }
 
-#[test]
-fn shortcut_hints_drop_whole_pairs_and_rebuild_modifier_headers() {
-    let hints = vec![
-        ShortcutHint {
-            modifiers: "Alt".into(),
-            key: "M".into(),
-            label: "pane".into(),
-            accessible_label: "Alt+M — New pane".into(),
-            priority: 1,
-        },
-        ShortcutHint {
-            modifiers: "Alt".into(),
-            key: "/".into(),
-            label: "all keys".into(),
-            accessible_label: "Alt+/ — All keys".into(),
-            priority: 0,
-        },
-        ShortcutHint {
-            modifiers: "Super".into(),
-            key: "F".into(),
-            label: "界".repeat(80),
-            accessible_label: "Super+F — Long custom tool".into(),
-            priority: 4,
-        },
-        ShortcutHint {
-            modifiers: "Ctrl+Shift".into(),
-            key: "C".into(),
-            label: "copy".into(),
-            accessible_label: "Ctrl+Shift+C — Copy".into(),
-            priority: 3,
-        },
-    ];
-    for scale in [1.0, 1.25, 1.5, 2.0] {
-        let metrics = CellMetrics::for_scale(scale);
-        for width in [0, 10, 120, 320, 340, 2000, 4000] {
-            let scene = ShortcutHintsScene::new(
-                hints.clone(),
-                PhysicalSize::new((f64::from(width) * scale) as u32, 600),
-                metrics,
-                |text| text.chars().count() as f32 * metrics.width,
+/// Hints shaped like Venus's defaults while the tabs have focus: four modifier groups, then two
+/// expanded hints.
+fn default_like_hints() -> Vec<ShortcutHint> {
+    let hint = |modifiers: &str, names: &str, key: &str, label: &str, priority| ShortcutHint {
+        modifiers: modifiers.into(),
+        modifier_names: names.into(),
+        key: key.into(),
+        label: label.into(),
+        description: format!("{label} in full"),
+        accessible_label: format!("{names}+{key} — {label} in full"),
+        priority,
+    };
+    vec![
+        hint("A", "Alt", "HJKL · 1..9", "focus", 1),
+        hint("A", "Alt", "M", "pane", 1),
+        hint("CA", "Ctrl+Alt", "M", "col", 3),
+        hint("AS", "Alt+Shift", "T", "tab", 1),
+        hint("CA", "Ctrl+Alt", "HJKL", "mv pane", 3),
+        hint("CAS", "Ctrl+Alt+Shift", "HL", "mv tab", 3),
+        hint("AS", "Alt+Shift", "B", "hints", 0),
+        hint("", "", "Escape", "terminal", 0),
+        hint("", "", "Left/Right", "tabs", 1),
+    ]
+}
+
+/// Sweeps window widths at one scale, checking each step of the narrow-window order, and
+/// returns which steps showed: centred beside the version, shifted to clear it, version hidden,
+/// expanded hints dropped, and short legends.
+fn sweep_footer(
+    hints: &[ShortcutHint],
+    scale: f64,
+    metrics: CellMetrics,
+    mut measure: impl FnMut(&str) -> f32,
+) -> [bool; 5] {
+    // As the application measures it: ASCII length times the terminal cell width.
+    let version = "EON 0.1.18".len() as f32 * metrics.width;
+    let padding = metrics.padding;
+    let mut seen = [false; 5];
+    let mut previous: Option<ShortcutHintsScene> = None;
+    for logical in (200..=2400).step_by(2) {
+        let width = (f64::from(logical) * scale) as u32;
+        let scene = ShortcutHintsScene::new(
+            hints.to_vec(),
+            PhysicalSize::new(width, (800.0 * scale) as u32),
+            metrics,
+            Some(version),
+            &mut measure,
+        );
+        let width = width as f32;
+        let (start, end) = (padding, width - padding);
+        // Keycaps never drop: one per modifier group, in the hints' order, each with its
+        // group's rows and accessible chords.
+        let names = scene
+            .groups
+            .iter()
+            .map(|group| group.name.as_str())
+            .collect::<Vec<_>>();
+        assert_eq!(names, ["Alt", "Ctrl+Alt", "Alt+Shift", "Ctrl+Alt+Shift"]);
+        for group in &scene.groups {
+            let rows = hints
+                .iter()
+                .filter(|hint| hint.modifier_names == group.name)
+                .map(|hint| (hint.key.clone(), hint.description.clone()))
+                .collect::<Vec<_>>();
+            assert_eq!(group.rows, rows);
+            assert!(
+                group
+                    .accessible_label
+                    .starts_with(&format!("{}+", group.name))
             );
-            let chrome = pane_chrome_rect(
-                SceneRect {
-                    width: (f64::from(width) * scale) as u32 as f32,
-                    height: 600.0,
-                    ..SceneRect::default()
-                },
-                metrics,
-            );
-            assert_eq!(scene.rect.left, chrome.left);
-            assert_eq!(scene.rect.right(), chrome.right());
-            assert_eq!(scene.rect.bottom(), 600.0);
-            for piece in &scene.pieces {
-                assert!(piece.key_offset >= 0.0 && piece.key_offset < piece.label_offset);
-                assert!(piece.label_offset < piece.rect.width);
-                assert_eq!(piece.key_offset == 0.0, piece.modifiers.is_empty());
-                if !piece.modifiers.is_empty() {
-                    let text_width = piece.modifiers.chars().count() as f32 * metrics.width;
-                    assert!((piece.key_offset - text_width - metrics.padding * 2.0).abs() < 0.01);
-                }
-                assert!(piece.rect.left >= metrics.padding);
-                assert!(piece.rect.right() <= scene.rect.right() - metrics.padding);
-                assert!(piece.rect.bottom() <= scene.rect.bottom());
-            }
-            if let Some((first, last)) = scene.pieces.first().zip(scene.pieces.last()) {
-                let left = first.rect.left - scene.rect.left;
-                let right = scene.rect.right() - last.rect.right();
-                assert!((left - right).abs() < 0.01);
-                if scene
-                    .pieces
+            let legends = [
+                group.name.as_str(),
+                &hints
                     .iter()
-                    .filter(|p| !p.modifiers.is_empty())
-                    .count()
-                    > 1
-                {
-                    assert!((left - metrics.padding).abs() < 0.01);
-                }
-            }
-            let mut group_gap: Option<f32> = None;
-            for pair in scene.pieces.windows(2) {
-                let gap = pair[1].rect.left - pair[0].rect.right();
-                if pair[1].modifiers.is_empty() {
-                    assert!((gap - metrics.padding * 0.75).abs() < 0.01);
-                } else {
-                    assert!(gap >= metrics.padding * 0.75 - 0.01);
-                    if let Some(previous) = group_gap {
-                        assert!((gap - previous).abs() < 0.01);
-                    }
-                    group_gap = Some(gap);
-                }
-            }
-            if width == 340 {
-                assert!(!scene.complete);
+                    .find(|hint| hint.modifier_names == group.name)
+                    .unwrap()
+                    .modifiers,
+            ];
+            assert!(legends.contains(&group.legend.as_str()));
+            assert!((group.rect.width - measure(&group.legend) - padding).abs() < 0.01);
+            assert!(group.hover.contains(group.rect.left, group.rect.top));
+            assert_eq!(group.hover.top, scene.rect.top);
+            assert_eq!(group.hover.bottom(), scene.rect.bottom());
+        }
+        let short = scene.groups[0].legend == "A";
+        assert!(
+            scene
+                .groups
+                .iter()
+                .all(|group| (group.legend == group.name) != short)
+        );
+        // The cluster: keycaps, then expanded hints, one padding apart.
+        let items = scene
+            .groups
+            .iter()
+            .map(|group| group.rect)
+            .chain(scene.pieces.iter().map(|piece| piece.rect))
+            .collect::<Vec<_>>();
+        for pair in items.windows(2) {
+            assert!((pair[1].left - pair[0].right() - padding).abs() < 0.01);
+        }
+        let left = items[0].left;
+        let right = items.last().unwrap().right();
+        let centred = ((left + right) / 2.0 - width / 2.0).abs() < 0.5;
+        if !short {
+            assert!(left >= start - 0.01 && right <= end + 0.01, "{logical}");
+        }
+        match scene.version {
+            Some(rect) => {
+                assert!((rect.right() - end).abs() < 0.01);
+                assert!((rect.width - version).abs() < 0.01);
+                assert!(right + padding <= rect.left + 0.01, "{logical}");
                 assert_eq!(scene.pieces.len(), 2);
-                assert_eq!(scene.pieces[0].key, "M");
-                assert_eq!(scene.pieces[0].modifiers, "Alt");
-                assert_eq!(scene.pieces[1].key, "/");
-                assert!(scene.pieces[1].modifiers.is_empty());
-            }
-            if width >= 2000 {
-                assert!(scene.complete);
-                assert_eq!(
-                    scene
-                        .pieces
-                        .iter()
-                        .filter(|p| !p.modifiers.is_empty())
-                        .count(),
-                    3
+                // Off centre only to clear the version.
+                assert!(
+                    centred || (right + padding - rect.left).abs() < 0.01,
+                    "{logical}"
                 );
+                if !centred {
+                    assert!(width / 2.0 + (right - left) / 2.0 + padding > rect.left);
+                }
             }
+            None => {
+                // Hidden only once the cluster would cross the start beside it.
+                let full = hints.iter().fold(Vec::new(), |mut names, hint| {
+                    if !hint.modifiers.is_empty() && !names.contains(&hint.modifier_names) {
+                        names.push(hint.modifier_names.clone());
+                    }
+                    names
+                });
+                let mut cluster = padding * 5.0;
+                for name in &full {
+                    cluster += measure(name) + padding;
+                }
+                for hint in hints.iter().filter(|hint| hint.modifiers.is_empty()) {
+                    cluster += measure(&hint.key) + measure(" ") + measure(&hint.label);
+                }
+                assert!(end - version - padding - cluster < start, "{logical}");
+                assert!(centred || short && left == start, "{logical}");
+            }
+        }
+        // Short legends only once no expanded hint is left.
+        assert!(!short || scene.pieces.is_empty());
+        assert_eq!(
+            scene.complete,
+            scene.version.is_some() && scene.pieces.len() == 2 && !short
+        );
+        // Widening never hides anything: each step gives way in its order.
+        if let Some(previous) = previous {
+            assert!(previous.version.is_none() || scene.version.is_some());
+            assert!(scene.pieces.len() >= previous.pieces.len());
+            assert!(previous.groups[0].legend == "A" || scene.groups[0].legend == "Alt");
+        }
+        seen[match (scene.version.is_some(), centred, scene.pieces.len(), short) {
+            (true, true, ..) => 0,
+            (true, false, ..) => 1,
+            (false, _, 2, false) => 2,
+            (false, _, _, false) => 3,
+            (false, _, _, true) => 4,
+        }] = true;
+        previous = Some(scene);
+    }
+    assert!(previous.unwrap().complete);
+    seen
+}
+
+#[test]
+fn footer_centres_full_name_keycaps_and_keeps_the_version_clear() {
+    let hints = default_like_hints();
+    for scale in [1.0, 2.0] {
+        let metrics = CellMetrics::for_scale(scale);
+        let seen = sweep_footer(&hints, scale, metrics, |text: &str| {
+            text.chars().count() as f32 * metrics.width
+        });
+        assert_eq!(seen, [true; 5], "every step shows at scale {scale}");
+    }
+    // The same order holds with Eon's packaged font, whose measured widths decide each step,
+    // and a 1280-pixel window keeps every hint centred beside the version.
+    let font = std::env::var_os("EON_VENUS_TEST_SANS_FONT")
+        .expect("EON_VENUS_TEST_SANS_FONT names Eon's packaged DejaVu Sans; run in nix develop");
+    let mut fonts = crate::render::FontSetup::new(&crate::render::FontSettings::default()).unwrap();
+    fonts
+        .set_header_font_file(std::path::Path::new(&font))
+        .unwrap();
+    for scale in [1.0, 2.0] {
+        let metrics = fonts.metrics(scale);
+        let seen = sweep_footer(&hints, scale, metrics, |text: &str| {
+            fonts.measure_header_text(metrics, text)
+        });
+        assert_eq!(
+            seen, [true; 5],
+            "every step shows in DejaVu Sans at scale {scale}"
+        );
+        let scene = ShortcutHintsScene::new(
+            hints.clone(),
+            PhysicalSize::new((1280.0 * scale) as u32, (800.0 * scale) as u32),
+            metrics,
+            Some("EON 0.1.18".len() as f32 * metrics.width),
+            |text| fonts.measure_header_text(metrics, text),
+        );
+        let left = scene.groups[0].rect.left;
+        let right = scene.pieces.last().unwrap().rect.right();
+        assert!(scene.complete);
+        assert!(((left + right) / 2.0 - 640.0 * scale as f32).abs() < 0.5);
+    }
+    // While the inbox is open, its keys alone centre.
+    let metrics = CellMetrics::for_scale(1.0);
+    let inbox = ShortcutHintsScene::new(
+        attention_inbox_hints(),
+        PhysicalSize::new(1280, 800),
+        metrics,
+        Some(100.0),
+        |text| text.chars().count() as f32 * metrics.width,
+    );
+    assert!(inbox.groups.is_empty() && inbox.pieces.len() == 4 && inbox.complete);
+    let (first, last) = (&inbox.pieces[0], &inbox.pieces[3]);
+    assert!(((first.rect.left + last.rect.right()) / 2.0 - 640.0).abs() < 0.5);
+    // A row too short for text shows nothing.
+    for height in [0, 1, 10, 40] {
+        let scene = ShortcutHintsScene::new(
+            hints.clone(),
+            PhysicalSize::new(1280, height),
+            CellMetrics::for_scale(1.0),
+            Some(100.0),
+            |text| text.chars().count() as f32 * 10.0,
+        );
+        assert!(scene.rect.top >= 0.0 && scene.rect.bottom() <= height as f32);
+        if scene.rect.height < CellMetrics::for_scale(1.0).height {
+            assert!(scene.groups.is_empty() && scene.pieces.is_empty());
+            assert!(scene.version.is_none() && !scene.complete);
         }
     }
     let small_metrics = CellMetrics {
@@ -607,35 +727,16 @@ fn shortcut_hints_drop_whole_pairs_and_rebuild_modifier_headers() {
         ..CellMetrics::for_scale(1.0)
     };
     let small = ShortcutHintsScene::new(
-        hints.clone(),
+        hints,
         PhysicalSize::new(320, 600),
         small_metrics,
+        None,
         |text| text.chars().count() as f32 * small_metrics.width,
     );
     assert!(
         small.rect.height >= small_metrics.padding,
         "the hints row keeps at least the edge padding height"
     );
-    for height in [0, 1, 10, 40] {
-        let scene = ShortcutHintsScene::new(
-            hints.clone(),
-            PhysicalSize::new(320, height),
-            CellMetrics::for_scale(1.0),
-            |text| text.chars().count() as f32 * 10.0,
-        );
-        assert!(scene.rect.top >= 0.0 && scene.rect.bottom() <= height as f32);
-        assert!(scene.pieces.is_empty());
-    }
-    let scene = ShortcutHintsScene::new(
-        hints,
-        PhysicalSize::new(220, 600),
-        CellMetrics::for_scale(1.0),
-        |text| text.chars().count() as f32 * 10.0,
-    );
-    assert_eq!(scene.pieces.len(), 1);
-    assert_eq!(scene.pieces[0].key, "/");
-    assert_eq!(scene.pieces[0].modifiers, "Alt");
-    assert_eq!(scene.pieces[0].label, "all keys");
 }
 
 #[test]
@@ -794,7 +895,7 @@ fn eon_bar_keeps_tabs_controls_and_drag_hits_disjoint_under_pressure() {
             0.0,
             0.0,
             |_, text| (text.into(), text.len() as f32 * metrics.width),
-            hints.then(|| ShortcutHintsScene::new(Vec::new(), size, metrics, |_| 0.0)),
+            hints.then(|| ShortcutHintsScene::new(Vec::new(), size, metrics, None, |_| 0.0)),
         )
     };
     // One pane, no hints: the top gap yields before the nominal 30 px pills shrink.
@@ -1691,7 +1792,8 @@ fn eon_icon_leads_the_bar_and_yields_first() {
                     // It costs nothing: the whole strip fits unscrolled with it, and every chip
                     // and reading that has data shows, at any tab scroll.
                     assert!(iconic.tab_scroll_limit() <= 0.5, "{scale} {logical_width}");
-                    assert_eq!(iconic.version.is_some(), version.is_some());
+                    // The version label sits in the shortcut hints, never the header.
+                    assert!(iconic.version.is_none());
                     assert_eq!(iconic.ram.is_some(), ram.is_some());
                     assert_eq!(iconic.version, plain.version);
                     assert_eq!(iconic.ram, plain.ram);
@@ -2228,10 +2330,10 @@ fn a_full_bar_with_room_shows_the_icon() {
     }
 }
 
-#[test]
-fn shortcuts_version_and_close_end_the_bar_one_edge_from_the_corner() {
+/// One tab with one pane.
+pub(crate) fn one_pane_snapshot() -> Snapshot {
     use eon_workspace_protocol::v34::{Pane, PopupGeometry, Tab};
-    let snapshot = Snapshot {
+    Snapshot {
         workspace: "w1".into(),
         active_workspace: "w1".into(),
         workspaces: Vec::new(),
@@ -2270,17 +2372,33 @@ fn shortcuts_version_and_close_end_the_bar_one_edge_from_the_corner() {
         busy: None,
         sidebar: eon_workspace_protocol::v34::Sidebar::Open,
         attention_queue: Vec::new(),
-    };
+    }
+}
+
+#[test]
+fn shortcuts_and_close_end_the_bar_one_edge_from_the_corner() {
+    let snapshot = one_pane_snapshot();
     let used = crate::RamUse::parse("MemTotal: 100000 kB\nMemAvailable: 50000 kB\n")
         .unwrap()
         .rated(crate::LoadLevels::default());
     for scale in [1.0, 1.25, 2.0] {
         let metrics = CellMetrics::for_scale(scale);
         let width = 1280.0 * scale as f32;
-        for (version, ram) in [Some("9.8.7"), None]
-            .into_iter()
-            .flat_map(|version| [(version, None), (version, Some(&used))])
-        {
+        let size = PhysicalSize::new(width as u32, (800.0 * scale) as u32);
+        for (version, ram, shown) in [Some("9.8.7"), None].into_iter().flat_map(|version| {
+            [(None, true), (Some(&used), true), (None, false)]
+                .map(|(ram, shown)| (version, ram, shown))
+        }) {
+            let measure = |text: &str| text.chars().count() as f32 * metrics.width;
+            let hints = shown.then(|| {
+                ShortcutHintsScene::new(
+                    default_like_hints(),
+                    size,
+                    metrics,
+                    version.map(|version| measure(&format!("EON {version}"))),
+                    measure,
+                )
+            });
             let scene = WorkspaceScene::from_snapshot_with_bar(
                 &snapshot,
                 EonBar {
@@ -2289,7 +2407,7 @@ fn shortcuts_version_and_close_end_the_bar_one_edge_from_the_corner() {
                     icon: true,
                     ..EonBar::default()
                 },
-                PhysicalSize::new(width as u32, (800.0 * scale) as u32),
+                size,
                 metrics,
                 0.0,
                 0.0,
@@ -2299,7 +2417,7 @@ fn shortcuts_version_and_close_end_the_bar_one_edge_from_the_corner() {
                         text.chars().count() as f32 * 10.0 * scale as f32,
                     )
                 },
-                None,
+                hints,
             );
             let [_, shortcuts, close] = scene.controls;
             let height = scene.header.height;
@@ -2313,7 +2431,7 @@ fn shortcuts_version_and_close_end_the_bar_one_edge_from_the_corner() {
                 close.centre - close.rect.left,
                 shortcuts.rect.right() - shortcuts.centre
             );
-            // Shortcuts, then the version label, then Close; Shortcuts keeps its whole target.
+            // Shortcuts, then Close; Shortcuts keeps its whole target.
             assert_eq!(
                 shortcuts.centre,
                 shortcuts.rect.right() - scene.controls[0].rect.width / 2.0
@@ -2334,13 +2452,15 @@ fn shortcuts_version_and_close_end_the_bar_one_edge_from_the_corner() {
                 assert_eq!(shortcuts.rect.width, scene.controls[0].rect.width);
             }
             assert!(shortcuts.rect.width >= metrics.height.round());
-            match &scene.version {
-                Some(label) => {
-                    assert_eq!(label.label, "EON 9.8.7");
-                    assert_eq!(label.rect.left, shortcuts.rect.right());
-                    assert_eq!(label.rect.right(), close.rect.left);
-                }
-                None => assert_eq!(shortcuts.rect.right(), close.rect.left),
+            assert_eq!(shortcuts.rect.right(), close.rect.left);
+            // The version label sits at the right end of the hints, and hides with them.
+            assert_eq!(scene.version.is_some(), version.is_some() && shown);
+            if let Some(label) = &scene.version {
+                let hints = scene.hints.as_ref().unwrap();
+                assert_eq!(label.label, "EON 9.8.7");
+                assert_eq!(label.tooltip, "Eon version 9.8.7");
+                assert!(label.rect.top >= hints.rect.top);
+                assert!((label.rect.right() - (width - metrics.padding)).abs() < 0.01);
             }
             let middle = height / 2.0;
             for (x, hit) in [
@@ -2358,7 +2478,8 @@ fn shortcuts_version_and_close_end_the_bar_one_edge_from_the_corner() {
             }
             if let Some(label) = &scene.version {
                 let centre = label.rect.left + label.rect.width / 2.0;
-                assert_eq!(scene.hit_test(centre, middle), Some(WorkspaceHit::Version));
+                let row = label.rect.top + label.rect.height / 2.0;
+                assert_eq!(scene.hit_test(centre, row), Some(WorkspaceHit::Version));
             }
             // The Eon icon and the round Shortcuts button are as tall as the tab pills, centred
             // on them, and the button's circle stays inside its target.
@@ -2390,6 +2511,77 @@ fn shortcuts_version_and_close_end_the_bar_one_edge_from_the_corner() {
                 "{scale}"
             );
         }
+    }
+}
+
+#[test]
+fn hint_keycap_hover_hits_its_group() {
+    let snapshot = one_pane_snapshot();
+    let metrics = CellMetrics::for_scale(1.0);
+    let size = PhysicalSize::new(1280, 800);
+    let measure = |text: &str| text.chars().count() as f32 * metrics.width;
+    let hints = ShortcutHintsScene::new(
+        default_like_hints(),
+        size,
+        metrics,
+        Some(measure("EON 9.8.7")),
+        measure,
+    );
+    let scene = WorkspaceScene::from_snapshot_with_bar(
+        &snapshot,
+        EonBar {
+            version: Some("9.8.7"),
+            ..EonBar::default()
+        },
+        size,
+        metrics,
+        0.0,
+        0.0,
+        |_, text| (text.to_owned(), measure(text)),
+        Some(hints.clone()),
+    );
+    for (index, group) in hints.groups.iter().enumerate() {
+        let hit = Some(WorkspaceHit::HintGroup(index));
+        let middle = group.rect.top + group.rect.height / 2.0;
+        // The keycap, its edges, and the footer band's top and bottom above and below it.
+        for (x, y) in [
+            (group.rect.left + 0.5, middle),
+            (group.rect.right() - 0.5, middle),
+            (group.rect.left + 1.0, hints.rect.top + 0.5),
+            (group.rect.left + 1.0, hints.rect.bottom() - 0.5),
+        ] {
+            assert_eq!(scene.hit_test(x, y), hit, "{index} at {x},{y}");
+        }
+    }
+    // Half a gap belongs to each neighbour, so the band between keycaps hits one of them.
+    let [first, second, ..] = hints.groups.as_slice() else {
+        unreachable!()
+    };
+    let between = (first.rect.right() + second.rect.left) / 2.0;
+    assert_eq!(
+        scene.hit_test(between - 0.5, first.rect.top),
+        Some(WorkspaceHit::HintGroup(0))
+    );
+    assert_eq!(
+        scene.hit_test(between + 0.5, first.rect.top),
+        Some(WorkspaceHit::HintGroup(1))
+    );
+    let version = scene.version.as_ref().unwrap().rect;
+    assert_eq!(
+        scene.hit_test(version.left + 1.0, version.top + 1.0),
+        Some(WorkspaceHit::Version)
+    );
+    // Expanded hints, the space beside the cluster, and the pane card are no keycap.
+    let piece = hints.pieces[0].rect;
+    for (x, y) in [
+        (piece.left + 1.0, piece.top + 1.0),
+        (metrics.padding, first.rect.top),
+        (640.0, 400.0),
+    ] {
+        assert!(!matches!(
+            scene.hit_test(x, y),
+            Some(WorkspaceHit::HintGroup(_))
+        ));
     }
 }
 

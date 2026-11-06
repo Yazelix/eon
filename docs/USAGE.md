@@ -257,12 +257,13 @@ chooses the path the disk chip measures.
 A reading that can't be taken shows no label rather than 0%. A 24-hour clock
 follows and shows local time; hover it for the date and UTC offset, and it stays
 hidden if the local time zone can't be determined. The `EON <version>` label, in
-softened cyan, sits between `?` and `×`; it names the running supervisor, so
-updating the installation doesn't change it. The Eon logo leads the bar, before
-the tabs. `[bar] widgets` chooses which of these show and in what order (see
+softened cyan, sits at the right end of the bottom hints bar and hides with it;
+it names the running supervisor, so updating the installation doesn't change
+it, and its hover opens above it. The Eon logo leads the bar, before the tabs.
+`[bar] widgets` chooses which of these show and in what order (see
 [Configuration](CONFIGURATION.md#configuration-behavior)). When the bar runs
-short of space the Eon logo hides first; then the clock, then disk, RAM, CPU
-and the version label, before any quota chip. The logo also hides whenever the
+short of space the Eon logo hides first; then the clock, then disk, RAM and
+CPU, before any quota chip. The logo also hides whenever the
 tabs would not all fit beside it, however wide the window, so tabs never lose
 room to it, and it leaves room for a chip for each window each provider's latest
 read reported and for each reading, all at their widest, so a changing quota,
@@ -278,21 +279,30 @@ window, returning or reserving its space without restarting terminals; the
 choice lasts through tab and popup switches and resizes. Each press toggles
 once; repeats and releases never reach the terminal, and toggling keeps focus
 and the selected tab and pane. Hidden hints leave no accessible footer; visible
-hints are read-only text, with no extra focus stops or announcements. The
+hints are read-only, with no extra focus stops or announcements. The
 initial window adds the footer's space, so configured `rows` stay terminal
 rows. Hints follow the current bindings, enabled popup catalog and native
-focus; narrow windows omit whole hints, keeping the hints-toggle hint longest
-and dropping popup hints other than Git and Agent first, the last modifier
-group's last hint first (for the default catalog, from its end). With Eon's
-packaged font (DejaVu Sans) at the default size, a 1280-pixel-wide window shows
-every other hint. Alt+Shift+D shows `detach`, and Alt+Shift+H shows `side` unless the
-sidebar is turned off; the Scrollback popup's hint reads `Scroll` unless its
-label is configured. Alt+/, the Alt+Q inbox, Alt+Shift+Q quit, the
-Ctrl+Alt+Shift+H/L tab moves, Alt+G and Alt+Shift+G, F6, Ctrl+Tab and
-Ctrl+Shift+Tab, and Quick search (Alt+Z) have no hint but stay in full help.
-Hints that create something name the tab, pane, column or window. Compact groups spread across the bar with
-equal gaps and the outer groups near its edges; a lone group stays centered. Hint spacing stays compact.
-Only modifier headers have padded rounded backgrounds. Each pane is its own
+focus. Each set of modifiers shows as one keycap, named in full: `Alt`,
+`Ctrl+Alt`, `Alt+Shift` and `Ctrl+Alt+Shift` (on macOS, `Option`,
+`Control+Option` and so on). The keycaps form one cluster centred on the
+window. Keys without modifiers follow them, written out: `Escape terminal`, and
+the arrows while the tabs, panes or agent sidebar have focus; while the
+attention inbox is open, the cluster is only the inbox's own keys. Pointing at
+a keycap opens a popup above it: its title is the keycap's name, then one row
+per key, with what the key does as full help says it. The popup never takes
+focus. Escape or a click closes it until the pointer leaves the keycap; Escape
+still does what it always does, and a click on a keycap does nothing else. A
+popup with more keys than the window has room for ends with `Alt+/ lists all`. Narrow windows give way in
+this order: the cluster moves left to stay one padding clear of the version
+label, then the version label hides, then keys without modifiers drop whole
+(`Escape terminal` last), and in the narrowest windows the keycaps switch to the
+short legends `A`, `CA`, `AS` and `CAS`; keycaps never drop. With Eon's
+packaged font (DejaVu Sans) at the default size, a 1280-pixel-wide window
+shows every hint centred, clear of the version label. Screen readers read each
+keycap by its full name, such as `Alt+Shift shortcuts`, with every chord in
+it and what it does. Alt+/, the Alt+Q inbox, Alt+Shift+Q quit, Alt+G and
+Alt+Shift+G, F6, Ctrl+Tab and Ctrl+Shift+Tab, and Quick search (Alt+Z) have no
+hint but stay in full help. Each pane is its own
 rounded card, stacked without gaps in its column's allocated card area. Even
 outer gaps surround and separate the allocated column areas. Pane titles sit
 in rounded edges, with neutral outlines sized by `border_width`. Collapsed rows'
@@ -323,12 +333,12 @@ rounded outer edges in the same way, with their titles on the boundary. Header
 scrolling keeps the fill's top fixed. Frameless mode keeps terminal-background
 strips across the window below the bar, including the sidebar and footer.
 
-Steel-blue modifier badges use plain aliases, such as AS, before mint keys and gray
-labels. The compact tab range is 1..9; Alt+0 still selects the tenth tab.
-Copy/Paste and Open link stay in full help, without footer hints.
-Each group uses C for Ctrl, A for Alt, and S for Shift, written together.
-The `mv pane` hint shows HJKL under CA. One `focus` hint shows HJKL · 1..9
-under A, and create hints read `pane`, `col`, `tab` and `window`. Full help and
+Keycaps are steel blue and brighten under the pointer; in their popups keys
+are mint and descriptions white, and the expanded hints show mint keys before
+gray labels. The compact tab range is 1..9; Alt+0 still selects the tenth tab.
+Copy/Paste and Open link stay in full help, without footer hints. The `Alt`
+popup lists one `focus` row, HJKL · 1..9, the `Ctrl+Alt` popup one row for the
+HJKL pane moves, and the `Ctrl+Alt+Shift` popup the HL tab moves. Full help and
 screen-reader labels keep complete chords and action names. The header `?`
 always shows; it and Alt+/ open the complete Shortcuts viewer, including the
 hints toggle. Eon has no minor modes yet.

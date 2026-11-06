@@ -190,15 +190,17 @@ is ignored with a warning. `[bar] show_version`, deprecated in v0.1.2, reads as
 
 `[bar] widgets` chooses which Eon Bar widgets show and their order, left to
 right between the tabs and the Shortcuts button, except `version`, which sits
-between the Shortcuts and Close buttons: the Codex and Claude quota chips, CPU,
-RAM and disk use, the local clock and `EON <version>`. The Eon logo at the
+at the right end of the bottom shortcut hints while they show, wherever it is
+in the list: the Codex and Claude quota chips, CPU, RAM and disk use, the local
+clock and `EON <version>`. The Eon logo at the
 bar's left end is not a widget and shows whatever the list holds. Each name
 appears at most once. A widget left out doesn't show, `widgets = []` leaves
 only the logo, the tabs and the buttons, and omitting the key uses the built-in
 list above. The list applies when a window next opens or reopens. Unknown names
 are ignored with a warning; repeated known names are a configuration error. Narrow windows hide the Eon
-logo first, then the clock, then disk, RAM, CPU and the version, whatever the
-order, then quota chips one by one, the one closest to the tabs first. The logo
+logo first, then the clock, then disk, RAM and CPU, whatever the order, then
+quota chips one by one, the one closest to the tabs first; the version hides
+once the shortcut hints have no room for it beside their keycaps. The logo
 also hides whenever the tabs would not all fit beside it, however wide the
 window, and it leaves room for a chip for each selected window each provider's latest
 read reported and for every reading, all at their widest, so their changing

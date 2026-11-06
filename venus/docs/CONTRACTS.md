@@ -1479,7 +1479,9 @@ re-proved when that platform or feature is next touched.
 
 ## VEN-C21 — Native Eon Bar workspace header
 
-- **Status:** Proven
+- **Status:** Proven. Amended on 2026-11-06 (approved by Lucca, "B", relayed by
+  eon-overseer) by `eon-e3a1z.1`: the version label moves to the bottom hints bar's right
+  end.
 - **Consumer:** One person using a Venus surface controlled by a full Eon
   workspace.
 - **Trigger:** The person points at, focuses, or activates the workspace header;
@@ -1518,7 +1520,8 @@ re-proved when that platform or feature is next touched.
   overflow, reveal, selection, hover path, stable identity, and accessibility.
   New tab follows the rightmost tab when tabs fit and stays at the tab-region
   edge during overflow. Keyboard shortcuts, which always show,
-  and active-tab Close remain trailing controls, with the version label between them.
+  and active-tab Close remain trailing controls. The version label sits at the right
+  end of the bottom shortcut hints, not in the header (EON-C32).
   Close tab is available on the final tab and goes through the same
   VEN-C8 final-close prompt as Alt+Shift+W. The buttons use the existing CreateTab and exact-active-tab CloseTab
   EONW actions and the existing local VEN-C20 viewer. Their tooltips and
@@ -1622,6 +1625,19 @@ re-proved when that platform or feature is next touched.
     `live_items_never_show_or_hide_the_icon_or_move_the_tabs` and
     `quota_facts_and_windows_appearing_may_hide_the_icon_once` updated; the
     isolated installed observation recorded in `eon-nfrbn`.
+  - **Version in the hints bar (`eon-e3a1z.1`):** added checks
+    `footer_centres_full_name_keycaps_and_keeps_the_version_clear`,
+    `hint_keycap_hover_hits_its_group` and
+    `hint_popup_sits_above_its_keycap_inside_the_window`;
+    `shortcuts_and_close_end_the_bar_one_edge_from_the_corner` (renamed from
+    `shortcuts_version_and_close_end_the_bar_one_edge_from_the_corner`) and
+    `version_label_sits_after_the_hints_and_has_no_actions` (renamed from
+    `version_label_uses_only_spare_space_and_has_no_actions`) updated, with
+    `eon_icon_leads_the_bar_and_yields_first`,
+    `local_clock_yields_first_and_has_no_actions`,
+    `readings_yield_after_the_clock_and_have_no_actions` and
+    `eon_orders_and_omits_bar_items`; the isolated installed observation
+    recorded in `eon-e3a1z.1`.
   - **Workspace label (`eon-workspace-switching-shn4.7`):** added checks
     `workspace_label_leads_the_tabs_and_opens_the_picker`,
     `eon_bar_controls_reuse_existing_actions_and_local_viewer` and

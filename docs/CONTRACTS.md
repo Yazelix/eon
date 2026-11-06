@@ -3636,7 +3636,9 @@ socket names, JSON fields and protocol identifiers retain their spellings.
   recorded on the bead) by `eon-0oh9v`: the CPU label colours by the use it
   shows, and its hover gives the average. Amended on 2026-11-03 (approved by
   Lucca, relayed by eon-overseer) by `eon-369s`: the Eon icon leads the Eon Bar,
-  and the version label sits between Shortcuts and Close.
+  and the version label sits between Shortcuts and Close. Amended on 2026-11-06
+  (approved by Lucca, "B", relayed by eon-overseer) by `eon-e3a1z.1`: the version
+  label moves to the bottom hints bar's right end.
 - **Consumer:** Full-Eon workspace users.
 - **Trigger:** A workspace window opens or reopens.
 - **Result:** `[bar] widgets` is an ordered list of unique names from
@@ -3646,8 +3648,9 @@ socket names, JSON fields and protocol identifiers retain their spellings.
   windows, and `claude_quota_scoped` selects every model-scoped Claude window.
   Unknown names warn and are ignored.
   The Eon Bar shows the listed widgets left to right in that order, between the
-  drag region and Shortcuts, except `version`, which sits between Shortcuts and
-  Close. The quota widgets select Codex and Claude windows (EON-C27), `cpu`
+  drag region and Shortcuts, except `version`, which sits at the right end of the
+  bottom shortcut hints while they show, whatever its place in the list. The
+  quota widgets select Codex and Claude windows (EON-C27), `cpu`
   and `ram` the whole-machine CPU and memory use labels, `disk` the used
   percentage of the filesystem holding the configured path, `clock` the local
   24-hour clock, and `version` the read-only `EON <version>` label of the
@@ -3728,7 +3731,12 @@ socket names, JSON fields and protocol identifiers retain their spellings.
     extended `version_badge_uses_supervising_product_and_visibility_at_each_launch`
     and `bare_eon_attaches_only_to_the_live_current_generation`, Venus's
     `eon_icon_is_a_workspace_only_absolute_path`, and the isolated installed
-    observation recorded in `eon-369s`.
+    observation recorded in `eon-369s`. For the version in the hints bar,
+    Venus's `shortcuts_and_close_end_the_bar_one_edge_from_the_corner`,
+    `footer_centres_full_name_keycaps_and_keeps_the_version_clear`,
+    `version_label_sits_after_the_hints_and_has_no_actions` and
+    `eon_orders_and_omits_bar_items`, and the isolated installed observation
+    recorded in `eon-e3a1z.1`.
 
 ## EON-C33 — Several workspaces in one window
 
