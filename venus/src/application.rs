@@ -1432,6 +1432,7 @@ impl Application {
         let state = self.window.as_ref()?;
         self.workspace_model.snapshot().map(|snapshot| {
             let picker = workspace_picker_tooltip(&snapshot.entries);
+            let now = local_now();
             WorkspaceScene::from_snapshot_with_zoom(
                 snapshot,
                 EonBar {
@@ -1442,6 +1443,7 @@ impl Application {
                     ram: self.ram.as_ref(),
                     disk: self.disk.as_ref(),
                     clock: self.clock.as_ref(),
+                    now: now.as_ref(),
                     workspace_picker: picker.as_deref(),
                     quota_windows: &self.quota_windows,
                 },
@@ -2027,6 +2029,7 @@ impl Application {
         self.quota_widths.clear();
         self.fitted_texts.clear();
         let picker = workspace_picker_tooltip(&snapshot.entries);
+        let now = local_now();
         Some(WorkspaceScene::from_snapshot_with_zoom(
             snapshot,
             EonBar {
@@ -2037,6 +2040,7 @@ impl Application {
                 ram: self.ram.as_ref(),
                 disk: self.disk.as_ref(),
                 clock: self.clock.as_ref(),
+                now: now.as_ref(),
                 workspace_picker: picker.as_deref(),
                 quota_windows: &self.quota_windows,
             },
@@ -5359,10 +5363,15 @@ impl ApplicationHandler<UserEvent> for Application {
     }
 }
 
+/// The local wall-clock time, or none rather than UTC when the local time zone is unknown.
+fn local_now() -> Option<jiff::Zoned> {
+    Some(jiff::Timestamp::now().to_zoned(jiff::tz::TimeZone::try_system().ok()?))
+}
+
 /// Reads the local wall clock and the wait until its next minute. An unknown local time zone
 /// yields no clock rather than UTC.
 fn read_local_clock() -> Option<(LocalClock, Duration)> {
-    let now = jiff::Timestamp::now().to_zoned(jiff::tz::TimeZone::try_system().ok()?);
+    let now = local_now()?;
     let elapsed = Duration::from_secs(now.second().unsigned_abs().into())
         + Duration::from_nanos(now.subsec_nanosecond().unsigned_abs().into());
     Some((LocalClock::new(&now), MINUTE.saturating_sub(elapsed)))

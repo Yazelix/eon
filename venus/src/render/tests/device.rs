@@ -47,6 +47,7 @@ fn content_cache_separates_generations_and_viewer_state() {
         ram: None,
         disk: None,
         clock: None,
+        quota_tooltips: Vec::new(),
         images: Vec::new(),
     };
 
@@ -68,6 +69,14 @@ fn content_cache_separates_generations_and_viewer_state() {
     assert_ne!(key(1, None), key(2, None));
     assert_ne!(key(1, None), key(1, viewer(0.0)));
     assert_ne!(key(1, viewer(0.0)), key(1, viewer(1.0)));
+    // A quota hover's reset wording turns with the local day, without a new generation.
+    assert_ne!(
+        key(1, None),
+        ContentKey {
+            quota_tooltips: vec!["Codex 5h window\nResets Thu 00:30".into()],
+            ..key(1, None)
+        }
+    );
     // The prompt replaces the viewer's text at the same scroll.
     assert_ne!(
         key(1, viewer(0.0)),

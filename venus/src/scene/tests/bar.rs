@@ -79,7 +79,7 @@ fn quota_without_reset_retains_percent_and_accessible_freshness() {
             resets_at: None,
             scope: None,
         };
-        let text = quota_text(QuotaProvider::Claude, state, 100, Some(&window));
+        let text = quota_text(QuotaProvider::Claude, state, 100, Some(&window), None);
         let suffix = if state == CodexQuotaState::Stale {
             " old"
         } else {
@@ -153,6 +153,211 @@ fn quota_shortfall_projects_linear_pace_with_a_basis_only() {
 }
 
 #[test]
+fn quota_tooltip_lists_what_the_chip_does_not_show() {
+    use CodexQuotaState::{Blocked, Fresh, Stale, Unknown};
+    use QuotaProvider::{Claude, Codex};
+
+    // Wednesday 4 November 2026, 12:00 at UTC−03:00.
+    let local = |offset| {
+        jiff::civil::date(2026, 11, 4)
+            .at(12, 0, 0, 0)
+            .to_zoned(jiff::tz::TimeZone::fixed(offset))
+            .unwrap()
+    };
+    let now = local(jiff::tz::offset(-3));
+    let observed_at = now.timestamp().as_second() as u64;
+    let quota = |duration_minutes, remaining_percent, resets_in: Option<u64>| QuotaWindow {
+        duration_minutes,
+        remaining_percent,
+        resets_at: resets_in.map(|seconds| observed_at + seconds),
+        scope: None,
+    };
+    let fable = QuotaWindow {
+        scope: Some("Fable".into()),
+        ..quota(10_080, 60, Some(100_800))
+    };
+    for (provider, state, window, tooltip) in [
+        // Today gives the time alone.
+        (
+            Codex,
+            Fresh,
+            Some(quota(300, 50, Some(9_000))),
+            "Codex 5h window\nResets at 14:30\nLasts until reset at this pace",
+        ),
+        // Within the next six days, the weekday.
+        (
+            Codex,
+            Fresh,
+            Some(quota(10_080, 50, Some(378_000))),
+            "Codex 7d window\nResets Sun 21:00\nRuns out about 1d18h before reset",
+        ),
+        (
+            Claude,
+            Fresh,
+            Some(quota(300, 0, Some(17_000))),
+            "Claude 5h window\nResets at 16:43\nUsed up until reset",
+        ),
+        (
+            Claude,
+            Fresh,
+            Some(fable),
+            "Claude Fable-only 7d window\nResets Thu 16:00\nLasts until reset at this pace",
+        ),
+        // Too young to judge the pace.
+        (
+            Codex,
+            Fresh,
+            Some(quota(300, 50, Some(17_940))),
+            "Codex 5h window\nResets at 16:59",
+        ),
+        // After that, the date.
+        (
+            Codex,
+            Fresh,
+            Some(quota(10_080, 50, Some(601_200))),
+            "Codex 7d window\nResets 11 Nov 11:00",
+        ),
+        (
+            Codex,
+            Fresh,
+            Some(quota(300, 50, None)),
+            "Codex 5h window\nReset time unavailable",
+        ),
+        (
+            Codex,
+            Stale,
+            Some(quota(10_080, 50, Some(378_000))),
+            "Codex 7d window\nResets Sun 21:00\nData is stale",
+        ),
+        (Codex, Blocked, None, "Codex quota\nPermission blocked"),
+        (Codex, Unknown, None, "Codex quota\nPermission unknown"),
+    ] {
+        let text = quota_text(provider, state, observed_at, window.as_ref(), Some(&now));
+        assert_eq!(text.tooltip, tooltip, "{}", text.label);
+        assert!(!text.tooltip.contains('%'), "{tooltip}");
+    }
+
+    // A stale reading names the same reset however old it is, and says when that has passed.
+    let reset = QuotaWindow {
+        resets_at: Some(observed_at + 1_800),
+        ..quota(300, 50, None)
+    };
+    for age in [0, 7_200, 20_000] {
+        let text = quota_text(Codex, Stale, observed_at - age, Some(&reset), Some(&now));
+        assert_eq!(
+            text.tooltip, "Codex 5h window\nResets at 12:30\nData is stale",
+            "{age}"
+        );
+    }
+    let later = now.checked_add(jiff::Span::new().hours(1)).unwrap();
+    let text = quota_text(Codex, Stale, observed_at, Some(&reset), Some(&later));
+    assert_eq!(
+        text.tooltip,
+        "Codex 5h window\nHas reset since this reading\nData is stale"
+    );
+    // The reset follows the local time zone, and without one hover leaves it out.
+    let text = quota_text(
+        Codex,
+        Fresh,
+        observed_at,
+        Some(&reset),
+        Some(&local(jiff::tz::Offset::UTC)),
+    );
+    assert!(
+        text.tooltip.contains("\nResets at 15:30\n"),
+        "{}",
+        text.tooltip
+    );
+    let text = quota_text(Codex, Fresh, observed_at, Some(&reset), None);
+    assert_eq!(
+        text.tooltip,
+        "Codex 5h window\nLasts until reset at this pace"
+    );
+    assert!(text.description.contains("observed 4h30m into 5h"));
+}
+
+#[test]
+fn quota_reset_follows_local_days_offsets_and_expiry() {
+    let at = |zone: &jiff::tz::TimeZone, date: jiff::civil::Date, hour, minute| {
+        date.at(hour, minute, 0, 0).to_zoned(zone.clone()).unwrap()
+    };
+    let utc = |date: jiff::civil::Date, hour| {
+        at(&jiff::tz::TimeZone::UTC, date, hour, 0)
+            .timestamp()
+            .as_second() as u64
+    };
+    let seconds = |zoned: &jiff::Zoned| zoned.timestamp().as_second() as u64;
+    let zone = jiff::tz::TimeZone::fixed(jiff::tz::offset(-3));
+    let wednesday = jiff::civil::date(2026, 11, 4);
+
+    // Days are local: at 23:30 on Wednesday (02:30 Thursday in UTC), 00:30 is Thursday and
+    // 23:50 still today, though both fall on Thursday in UTC.
+    let late = at(&zone, wednesday, 23, 30);
+    assert_eq!(late.timestamp().to_zoned(jiff::tz::TimeZone::UTC).day(), 5);
+    for (reset, line) in [
+        (seconds(&late) + 3_600, "Resets Thu 00:30"),
+        (seconds(&late) + 1_200, "Resets at 23:50"),
+    ] {
+        assert_eq!(quota_reset(reset, &late).as_deref(), Some(line));
+    }
+
+    // The weekday covers the next six days, through Tuesday 23:59, and the date follows.
+    let noon = at(&zone, wednesday, 12, 0);
+    for (reset, line) in [
+        (seconds(&noon) + 561_540, "Resets Tue 23:59"),
+        (seconds(&noon) + 561_600, "Resets 11 Nov 00:00"),
+        // A reset at now has passed; a minute later has not.
+        (seconds(&noon) + 60, "Resets at 12:01"),
+    ] {
+        assert_eq!(quota_reset(reset, &noon).as_deref(), Some(line));
+    }
+    assert_eq!(quota_reset(seconds(&noon), &noon), None);
+
+    // The reset takes its own instant's offset: New York leaves daylight saving at 02:00 on
+    // Sunday 1 November 2026, so 23:00 UTC that day reads 18:00, not the 19:00 that
+    // Saturday's offset would give. A POSIX rule names the zone without needing a zoneinfo
+    // database in the test sandbox.
+    let new_york = jiff::tz::TimeZone::posix("EST5EDT,M3.2.0,M11.1.0").unwrap();
+    let saturday = at(&new_york, jiff::civil::date(2026, 10, 31), 12, 0);
+    assert_eq!(saturday.offset(), jiff::tz::offset(-4));
+    assert_eq!(
+        quota_reset(utc(jiff::civil::date(2026, 11, 1), 23), &saturday).as_deref(),
+        Some("Resets Sun 18:00")
+    );
+
+    // A fresh reading whose reset has passed drops the pace from hover, which would look
+    // ahead to it, and keeps it in the accessible description.
+    let window = QuotaWindow {
+        duration_minutes: 300,
+        remaining_percent: 50,
+        resets_at: Some(seconds(&noon) + 1_800),
+        scope: None,
+    };
+    for minutes in [30, 31] {
+        let now = noon
+            .checked_add(jiff::Span::new().minutes(minutes))
+            .unwrap();
+        let text = quota_text(
+            QuotaProvider::Codex,
+            CodexQuotaState::Fresh,
+            seconds(&noon),
+            Some(&window),
+            Some(&now),
+        );
+        assert_eq!(
+            text.tooltip, "Codex 5h window\nHas reset since this reading",
+            "{minutes}"
+        );
+        assert!(
+            text.description
+                .ends_with("At this pace it lasts until reset."),
+            "{}",
+            text.description
+        );
+    }
+}
+
+#[test]
 fn quota_pace_colors_fresh_windows_and_says_so_in_words() {
     let observed_at = 1_000_000;
     // Five hours: 2h30m in, 50% left, on pace. Seven days: 2d15h in, 50% left,
@@ -190,6 +395,7 @@ fn quota_pace_colors_fresh_windows_and_says_so_in_words() {
             CodexQuotaState::Fresh,
             observed_at,
             Some(window),
+            None,
         );
         assert_eq!(text.label, label);
         let pace = text.pace.expect("each fresh chip judges its one window");
@@ -211,6 +417,7 @@ fn quota_pace_colors_fresh_windows_and_says_so_in_words() {
         CodexQuotaState::Fresh,
         observed_at,
         Some(&used_up),
+        None,
     );
     assert!(text.pace.is_some());
     assert!(
@@ -230,6 +437,7 @@ fn quota_pace_colors_fresh_windows_and_says_so_in_words() {
         CodexQuotaState::Fresh,
         observed_at,
         Some(&barely),
+        None,
     );
     assert!(
         text.description
@@ -244,6 +452,7 @@ fn quota_pace_colors_fresh_windows_and_says_so_in_words() {
             resets_at: Some(observed_at + 305_700),
             ..barely
         }),
+        None,
     );
     assert!(
         text.description
@@ -272,7 +481,7 @@ fn quota_pace_colors_fresh_windows_and_says_so_in_words() {
         (CodexQuotaState::Unknown, None, "unknown"),
         (CodexQuotaState::Fresh, Some(&young), "1m/5h 50%"),
     ] {
-        let text = quota_text(QuotaProvider::Codex, state, observed_at, window);
+        let text = quota_text(QuotaProvider::Codex, state, observed_at, window, None);
         assert_eq!(text.label, label);
         assert!(text.pace.is_none());
         assert!(!text.description.contains("pace") && !text.description.contains("Used up"));
@@ -930,11 +1139,16 @@ fn cpu_and_ram_chips_colour_under_load_and_say_so() {
         .unwrap()
         .rated(levels)
     };
-    for (percent, load, words) in [
-        (79, Load::Normal, ""),
-        (80, Load::High, ": under pressure"),
-        (89, Load::High, ": under pressure"),
-        (90, Load::Critical, ": under heavy pressure"),
+    for (percent, load, words, line) in [
+        (79, Load::Normal, "", ""),
+        (80, Load::High, ": under pressure", "\nUnder pressure"),
+        (89, Load::High, ": under pressure", "\nUnder pressure"),
+        (
+            90,
+            Load::Critical,
+            ": under heavy pressure",
+            "\nUnder heavy pressure",
+        ),
     ] {
         let shown = ram(percent, levels);
         assert_eq!(shown.load, load, "{percent}%");
@@ -942,6 +1156,8 @@ fn cpu_and_ram_chips_colour_under_load_and_say_so() {
             shown.description,
             format!("RAM use {percent}% of 0.1 GiB{words}")
         );
+        // Hover leaves out the use the chip shows, and lists pressure on its own line.
+        assert_eq!(shown.tooltip, format!("RAM \u{b7} 0.1 GiB{line}"));
     }
     let configured = LoadLevels {
         ram_warning_percent: 50,
@@ -992,6 +1208,11 @@ fn cpu_and_ram_chips_colour_under_load_and_say_so() {
             average(16, 30)
         )
     );
+    // Hover lists the average and the load on their own lines, without the use the chip shows.
+    assert_eq!(
+        busy.tooltip,
+        "CPU \u{b7} 1 logical CPU\n16% on average over the last 30 s\nUnder high load"
+    );
     // The level is inclusive and follows the shown use, whatever the average.
     let mut readings = CpuReadings::default();
     let mut at_level = vec![10; 17];
@@ -1015,6 +1236,10 @@ fn cpu_and_ram_chips_colour_under_load_and_say_so() {
             average(95, 30)
         )
     );
+    assert_eq!(
+        shown.tooltip,
+        "CPU \u{b7} 1 logical CPU\n95% on average over the last 30 s"
+    );
     // The average shows only once the readings span the window.
     let mut readings = CpuReadings::default();
     let shown = run(&mut readings, levels, 0, &[95; 16]);
@@ -1023,6 +1248,10 @@ fn cpu_and_ram_chips_colour_under_load_and_say_so() {
     assert_eq!(
         shown[14].as_ref().unwrap().description,
         "CPU use 95% across 1 logical CPU, over the last 2 seconds: under high load"
+    );
+    assert_eq!(
+        shown[14].as_ref().unwrap().tooltip,
+        "CPU \u{b7} 1 logical CPU\nUnder high load"
     );
     assert!(
         shown[15]
@@ -1162,6 +1391,8 @@ fn cpu_and_ram_chips_colour_under_load_and_say_so() {
         ram.description,
         "RAM use 91% of 0.1 GiB: under heavy pressure"
     );
+    assert_eq!(cpu.tooltip, busy.tooltip);
+    assert_eq!(ram.tooltip, "RAM \u{b7} 0.1 GiB\nUnder heavy pressure");
 }
 
 #[test]
@@ -1223,11 +1454,11 @@ fn disk_chip_shows_filesystem_use_and_colours_only_when_filling_up() {
         .unwrap()
         .rated(levels)
     };
-    for (percent, load, words) in [
-        (84, Load::Normal, ""),
-        (85, Load::High, ": filling up"),
-        (94, Load::High, ": filling up"),
-        (95, Load::Critical, ": nearly full"),
+    for (percent, load, words, line) in [
+        (84, Load::Normal, "", ""),
+        (85, Load::High, ": filling up", "\nFilling up"),
+        (94, Load::High, ": filling up", "\nFilling up"),
+        (95, Load::Critical, ": nearly full", "\nNearly full"),
     ] {
         let shown = disk(percent, levels);
         assert_eq!(shown.label, format!("DISK {percent}%"));
@@ -1236,6 +1467,14 @@ fn disk_chip_shows_filesystem_use_and_colours_only_when_filling_up() {
             shown.description,
             format!(
                 "Disk use {percent}% of 1000.0 GiB on /, {}.0 GiB free{words}",
+                (100 - percent) * 10
+            )
+        );
+        // Hover leaves out the use the chip shows, and lists how full it is on its own line.
+        assert_eq!(
+            shown.tooltip,
+            format!(
+                "Disk \u{b7} /\n{}.0 GiB free of 1000.0 GiB{line}",
                 (100 - percent) * 10
             )
         );
@@ -1318,6 +1557,10 @@ fn disk_chip_shows_filesystem_use_and_colours_only_when_filling_up() {
     assert_eq!(shown.label, "DISK 95%");
     assert_eq!(shown.load, Load::Critical);
     assert_eq!(shown.description, full.description);
+    assert_eq!(
+        shown.tooltip,
+        "Disk \u{b7} /\n50.0 GiB free of 1000.0 GiB\nNearly full"
+    );
     // Sized for `DISK 100%`, so the bar never shifts as the use changes.
     assert_eq!(
         shown.rect.width,
@@ -1576,6 +1819,7 @@ fn live_items_never_show_or_hide_the_icon_or_move_the_tabs() {
         .rated(levels);
     let clock = LocalClock {
         label: "23:58".into(),
+        tooltip: "Clock".into(),
         description: "Clock".into(),
     };
     let observed_at = 1_000_000;
@@ -1647,6 +1891,7 @@ fn live_items_never_show_or_hide_the_icon_or_move_the_tabs() {
     let cpu = |percent: u64| crate::CpuUse {
         percent,
         label: format!("CPU {percent}%"),
+        tooltip: "CPU".into(),
         description: "CPU".into(),
         load: Load::Normal,
     };
@@ -1929,11 +2174,13 @@ fn a_full_bar_with_room_shows_the_icon() {
     let cpu = crate::CpuUse {
         percent: 12,
         label: "CPU 12%".into(),
+        tooltip: "CPU".into(),
         description: "CPU".into(),
         load: Load::Normal,
     };
     let clock = LocalClock {
         label: "09:20".into(),
+        tooltip: "Clock".into(),
         description: "Clock".into(),
     };
     for tabs in [
@@ -2407,6 +2654,7 @@ fn quota_window_widgets_filter_order_and_reserve_only_selected_windows() {
     let cpu = crate::CpuUse {
         percent: 12,
         label: "CPU 12%".into(),
+        tooltip: "CPU".into(),
         description: "CPU".into(),
         load: Load::Normal,
     };

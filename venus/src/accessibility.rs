@@ -1342,6 +1342,7 @@ mod tests {
                             );
                             if let Some(version) = &scene.version {
                                 assert_eq!(version.label, "EON 9.8.7-alpha.2+proof");
+                                assert_eq!(version.tooltip, "Eon version 9.8.7-alpha.2+proof");
                                 assert_eq!(
                                     version.rect.width,
                                     version.label.len() as f32 * metrics.width
@@ -1408,15 +1409,17 @@ mod tests {
                     .unwrap(),
             )
         };
-        for (clock, label, description) in [
+        for (clock, label, tooltip, description) in [
             (
                 at(14, 5, jiff::tz::offset(-3)),
                 "14:05",
+                "Wednesday 21 October 2026\nUTC\u{2212}03:00",
                 "Local time 14:05, Wednesday 21 October 2026, UTC\u{2212}03:00",
             ),
             (
                 at(0, 0, jiff::tz::Offset::UTC),
                 "00:00",
+                "Wednesday 21 October 2026\nUTC+00:00",
                 "Local time 00:00, Wednesday 21 October 2026, UTC+00:00",
             ),
             (
@@ -1426,6 +1429,7 @@ mod tests {
                     jiff::tz::Offset::from_seconds(5 * 3600 + 45 * 60).unwrap(),
                 ),
                 "23:59",
+                "Wednesday 21 October 2026\nUTC+05:45",
                 "Local time 23:59, Wednesday 21 October 2026, UTC+05:45",
             ),
         ] {
@@ -1469,6 +1473,7 @@ mod tests {
             );
             let shown = workspace.clock.unwrap();
             assert_eq!(shown.label, label);
+            assert_eq!(shown.tooltip, tooltip);
             assert_eq!(shown.description, description);
         }
     }
@@ -2376,9 +2381,14 @@ mod tests {
         ];
         for state in [ClaudeQuotaState::Fresh, ClaudeQuotaState::Stale] {
             // Only fresh windows are judged for pace.
-            let (suffix, freshness, pace) = match state {
-                ClaudeQuotaState::Fresh => ("", "fresh", " At this pace it lasts until reset."),
-                ClaudeQuotaState::Stale => (" old", "stale", ""),
+            let (suffix, freshness, pace, last) = match state {
+                ClaudeQuotaState::Fresh => (
+                    "",
+                    "fresh",
+                    " At this pace it lasts until reset.",
+                    "Lasts until reset at this pace",
+                ),
+                ClaudeQuotaState::Stale => (" old", "stale", "", "Data is stale"),
             };
             for windows in &claude_windows {
                 for providers in 0..4 {
@@ -2431,9 +2441,17 @@ mod tests {
                             running: None,
                             busy: None,
                         };
+                        // Thursday 1 January 1970, 00:16:40 UTC, as the readings were observed.
+                        let now = jiff::Timestamp::from_second(1000)
+                            .unwrap()
+                            .to_zoned(jiff::tz::TimeZone::UTC);
                         let project = |snapshot: &WorkspaceSnapshot, width| {
-                            WorkspaceScene::from_snapshot(
+                            WorkspaceScene::from_snapshot_with_bar(
                                 snapshot,
+                                EonBar {
+                                    now: Some(&now),
+                                    ..EonBar::default()
+                                },
                                 PhysicalSize::new(width, 600),
                                 metrics,
                                 0.0,
@@ -2444,6 +2462,7 @@ mod tests {
                                         text.chars().count() as f32 * 10.0 * scale as f32,
                                     )
                                 },
+                                None,
                             )
                         };
                         let identities = |workspace: &WorkspaceScene| {
@@ -2535,11 +2554,12 @@ mod tests {
                                     continue;
                                 }
                                 // A Claude chip shows and describes only its own window.
-                                let (label, detail, other) = match quota.window {
+                                let (label, detail, other, reset) = match quota.window {
                                     Some(QuotaWindowIdentity::Claude(300)) => (
                                         "4h10m/5h 98%",
                                         "5h window: 98% remaining; observed 4h10m into 5h.",
                                         "7d",
+                                        "at 01:06",
                                     ),
                                     Some(QuotaWindowIdentity::ClaudeScoped(index)) => match windows
                                         .iter()
@@ -2550,17 +2570,20 @@ mod tests {
                                             "Fable 5d20h/7d 60%",
                                             "Fable-only 7d window: 60% remaining; observed 5d20h into 7d.",
                                             "5h",
+                                            "Fri 03:46",
                                         ),
                                         _ => (
                                             "Muse 5d20h/7d 30%",
                                             "Muse-only 7d window: 30% remaining; observed 5d20h into 7d.",
                                             "5h",
+                                            "Fri 03:46",
                                         ),
                                     },
                                     _ => (
                                         "5d20h/7d 100%",
                                         "7d window: 100% remaining; observed 5d20h into 7d.",
                                         "5h",
+                                        "Fri 03:46",
                                     ),
                                 };
                                 assert_eq!(quota.label, format!("{label}{suffix}"));
@@ -2573,6 +2596,13 @@ mod tests {
                                     format!("Claude quota state: {freshness}. {detail}{pace}")
                                 );
                                 assert!(!quota.description.contains(other));
+                                // Hover lists the window, its reset in local time and its pace
+                                // or staleness, without the share and time the chip shows.
+                                let window = detail.split(':').next().unwrap();
+                                assert_eq!(
+                                    quota.tooltip,
+                                    format!("Claude {window}\nResets {reset}\n{last}")
+                                );
                             }
                             children.extend([SHORTCUTS, CLOSE_TAB, PANE_PANEL]);
                             assert_eq!(node(&update, WINDOW).children(), children);

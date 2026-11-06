@@ -231,11 +231,14 @@ struct ContentKey {
     /// The whole dialog, since its rows and kind change without a new generation.
     dialog: Option<DialogScene>,
     /// CPU, RAM and disk use and the clock change without a new presentation generation. The
-    /// readings key on their descriptions, whose details the hover shows and the label does not.
+    /// readings key on their accessible descriptions, which hold both the use the label shows and
+    /// every fact the hover lists.
     cpu: Option<String>,
     ram: Option<String>,
     disk: Option<String>,
     clock: Option<String>,
+    /// Quota hovers name resets against the local day, which turns without a new generation.
+    quota_tooltips: Vec<String>,
     /// Each drawn terminal's image band, the selected terminal's first, then the other columns'.
     /// An upload, a freed texture, or a marker coming due changes it, so it stands in for a
     /// version of the resident set (VEN-C31).
@@ -1484,6 +1487,15 @@ impl Renderer {
             clock: workspace
                 .and_then(|workspace| workspace.clock.as_ref())
                 .map(|clock| clock.label.clone()),
+            quota_tooltips: workspace
+                .map(|workspace| {
+                    workspace
+                        .quotas
+                        .iter()
+                        .map(|quota| quota.tooltip.clone())
+                        .collect()
+                })
+                .unwrap_or_default(),
         };
         if self.content_key.as_ref() == Some(&key) {
             return false;

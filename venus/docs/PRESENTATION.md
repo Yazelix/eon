@@ -46,19 +46,28 @@ order, selection, and popups; Venus draws the visible scene.
   seven-day, each with its provider's mark (the monochrome OpenAI Blossom, or
   Claude's splat in its terracotta `#D97757`),
   its elapsed/total window position and remaining percentage. A window without
-  a reset shows no position. Hover and accessibility name the provider and
-  that window, and say how far into it the observation is, or that its reset
-  time is unavailable. Claude's model-scoped weekly windows follow its
-  unscoped chips, one chip each in EONW order, with the scope before the
-  position (`Fable 3d/7d 60%`); hover and accessibility name it, as in
-  `Fable-only 7d window`. Chips disappear one by one, the one closest to the tabs
-  first, before tabs, controls or dragging lose space. `old` stays visible on
-  every stale chip; blocked and unknown Codex observations show one chip with
-  their state. Missing facts and transport loss remove the affected chips.
+  a reset shows no position. Accessibility names the provider and that window,
+  its remaining percentage, and how far into it the observation is, or that its
+  reset time is unavailable. Hover lists the provider and window, then when it
+  resets in local time, in the clock's time zone: the time alone today (`Resets
+  at 18:30`), with the weekday within the next six days (`Resets Tue 18:30`),
+  and with the date after that (`Resets 14 Nov 18:30`), so it stays right
+  however old the reading is; `Has reset since this reading` once that time has
+  passed, with no pace line then, or `Reset time unavailable`. Without a local
+  time zone hover leaves the reset out, as the bar leaves out the clock. A hover
+  shown across midnight keeps its wording until the bar next redraws, and the
+  next hover reads the new day. Claude's model-scoped weekly
+  windows follow its unscoped chips, one chip each in EONW order, with the
+  scope before the position (`Fable 3d/7d 60%`); hover and accessibility name
+  it, as in `Fable-only 7d window`. Chips disappear one by one, the one
+  closest to the tabs first, before tabs, controls or dragging lose space.
+  `old` stays visible on every stale chip; blocked and unknown Codex
+  observations show one chip with their state. Missing facts and transport
+  loss remove the affected chips.
   A window whose length is not a whole number of hours shows it in exact
   minutes, such as `90m`. A stale chip that cannot fit its label with `old`
-  disappears rather than drop `old`. Hover and accessibility describe times as
-  positions within the window, never as raw epoch timestamps.
+  disappears rather than drop `old`. Hover and accessibility never show raw
+  epoch timestamps.
 - A fresh window with a reset, past its first tenth, colours its chip's label by
   pace on a continuous green, yellow, orange and red scale, projecting the
   snapshot's used and elapsed shares of the window linearly to the reset: green
@@ -76,10 +85,11 @@ order, selection, and popups; Venus draws the visible scene.
   MemAvailable over MemTotal on Linux, and Activity Monitor's Memory Used over
   physical memory on macOS, and appears with its first reading, when the window
   opens. Each chip keeps the width of `CPU 100%` with its text centred, so
-  neighbouring items never shift. Hover and accessibility say, for example, `CPU
-  use 12% across 16 logical CPUs, over the last 2 seconds` and `RAM use 43% of
-  31.3 GiB`. A reading that cannot be taken shows no label, never 0%, until the
-  next valid one. Other platforms show neither label.
+  neighbouring items never shift. Accessibility says, for example, `CPU use 12%
+  across 16 logical CPUs, over the last 2 seconds` and `RAM use 43% of 31.3
+  GiB`; hover lists `CPU · 16 logical CPUs` and `RAM · 31.3 GiB`. A reading
+  that cannot be taken shows no label, never 0%, until the next valid one.
+  Other platforms show neither label.
 - `DISK 80%` shows the used share of the filesystem holding the path Eon's
   `[bar] disk_path` names, by default the home directory, as GNU df computes it
   from `statvfs` on Linux and macOS: used blocks over used plus available ones,
@@ -88,36 +98,52 @@ order, selection, and popups; Venus draws the visible scene.
   disk use changes slowly. The reading runs off the window's thread, so a slow
   or hung filesystem never freezes the window; the chip keeps its last reading
   meanwhile. The chip keeps the width of `DISK 100%` with its text centred.
-  Hover and accessibility say, for example, `Disk use 80% of 929.4 GiB on /,
-  181.2 GiB free`, naming the topmost directory above the path on the same
-  filesystem (device), usually its mount point, or the path itself when that
-  cannot be found. Sizes keep one decimal, like RAM's. A path that does not
-  exist, or a reading that cannot be taken, shows no label, never 0%, until the
-  next valid one. Other platforms show no label.
+  Accessibility says, for example, `Disk use 80% of 929.4 GiB on /, 181.2 GiB
+  free`, and hover lists `Disk · /` then `181.2 GiB free of 929.4 GiB`, naming
+  the topmost directory above the path on the same filesystem (device),
+  usually its mount point, or the path itself when that cannot be found.
+  Sizes keep one decimal, like RAM's. A path that does not exist, or a
+  reading that cannot be taken, shows no label, never 0%, until the next valid
+  one. Other platforms show no label.
 - CPU, RAM and disk chips colour only under load, and a healthy machine looks
   quiet: by default RAM is orange from 80% use and red from 90%, disk orange
   from 85% and red from 95%, and CPU orange while the 2-second use it shows is
-  90% or more, so bursts show. Hover and accessibility say why in words, such
+  90% or more, so bursts show. Accessibility says why in words, such
   as `RAM use 91% of 31.3 GiB: under heavy pressure`,
   `Disk use 87% of 929.4 GiB on /, 120.8 GiB free: filling up` (`: nearly full`
   when red) or
   `CPU use 99% across 16 logical CPUs, over the last 2 seconds: under high load`,
-  so colour is never the only signal. CPU's hover and accessibility also give
-  its average over the last 30 seconds, such as
-  `; 45% on average over the last 30 seconds`. The average needs a full window
-  of unbroken readings, so it starts over after a failed reading or a stall.
+  and hover adds the line `Under heavy pressure` (`Under pressure` when
+  orange), `Filling up` (`Nearly full` when red) or `Under high load`, so
+  colour is never the only signal. CPU also gives its average over the last 30
+  seconds: accessibility appends `; 45% on average over the last 30 seconds`,
+  and hover lists `45% on average over the last 30 s` before the load line.
+  The average needs a full window of unbroken readings, so it starts over
+  after a failed reading or a stall.
   The orange and red are the quota pace scale's, at 4.5:1 or more on the bar.
   Eon's `[bar]` sets the levels and the averaging window; macOS uses the same
   ones.
 - The clock shows local 24-hour `HH:MM` and changes within a second of each
   minute; after suspend or a system clock change it corrects within a minute.
-  Hover and accessibility name the time, date and UTC offset, such as `Local
-  time 14:05, Wednesday 21 October 2026, UTC−03:00`. When the local time zone
+  Accessibility names the time, date and UTC offset, such as `Local time 14:05,
+  Wednesday 21 October 2026, UTC−03:00`; hover lists the date then the offset,
+  `Wednesday 21 October 2026` and `UTC−03:00`. When the local time zone
   cannot be determined, no clock shows, never UTC in its place.
 - `EON <version>` names the supervising Eon that serves the window, in regular
-  terminal monospace and softened cyan, with the full version on hover and in
-  its accessible label. Updating the installation does not relabel a running
-  supervisor. Without a version from Eon, no label shows.
+  terminal monospace and softened cyan. Hover reads `Eon version 0.1.18`, and
+  its accessible label names the version too. Updating the installation does
+  not relabel a running supervisor. Without a version from Eon, no label shows.
+- Each item's hover is a short list, one fact per line: the first line names
+  the item, except the clock's, whose date is self-evident, and the rest give
+  only facts its chip does not show. Normal states stay quiet; stale data,
+  blocked or unknown permission, high load, memory pressure and a filling or
+  nearly full disk each add their own line. A quota hover reads, for example,
+  `Codex 7d window`, `Resets Sun 21:00`, `Runs out about 1d18h before reset`
+  (or `Lasts until reset at this pace`, or `Used up until reset`), then `Data
+  is stale`, `Permission blocked` or `Permission unknown` when so; blocked and
+  unknown observations have no window, so their first line is `Codex quota`.
+  Accessibility keeps one sentence per item with every fact, including what
+  the chip shows.
 - Eon's `[bar] widgets` chooses which of these items show and their order, left
   to right between the drag region and Shortcuts; the version always sits
   between Shortcuts and Close. By default the order

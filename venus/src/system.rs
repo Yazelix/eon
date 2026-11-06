@@ -130,6 +130,9 @@ impl CpuTimes {
 pub struct CpuUse {
     pub(crate) percent: u64,
     pub(crate) label: String,
+    /// The hover list: one fact per line, without the use the label shows.
+    pub(crate) tooltip: String,
+    /// The accessible value: every fact in one sentence.
     pub(crate) description: String,
     pub(crate) load: Load,
 }
@@ -150,6 +153,7 @@ impl CpuUse {
         Some(Self {
             percent,
             label: format!("CPU {percent}%"),
+            tooltip: format!("CPU \u{b7} {cpus} logical CPU{plural}"),
             description: format!(
                 "CPU use {percent}% across {cpus} logical CPU{plural}, over the last 2 seconds"
             ),
@@ -199,15 +203,22 @@ impl CpuReadings {
             self.readings.pop_front();
         }
         let mut shown = shown?;
-        if shown.percent >= u64::from(levels.cpu_warning_percent) {
+        let high = shown.percent >= u64::from(levels.cpu_warning_percent);
+        if high {
             shown.load = Load::High;
             shown.description.push_str(": under high load");
         }
         if let Some(average) = self.average(now, window) {
+            let seconds = window.as_secs();
             shown.description.push_str(&format!(
-                "; {average}% on average over the last {} seconds",
-                window.as_secs()
+                "; {average}% on average over the last {seconds} seconds"
             ));
+            shown.tooltip.push_str(&format!(
+                "\n{average}% on average over the last {seconds} s"
+            ));
+        }
+        if high {
+            shown.tooltip.push_str("\nUnder high load");
         }
         Some(shown)
     }
@@ -232,6 +243,9 @@ impl CpuReadings {
 #[derive(Debug, PartialEq, Eq)]
 pub struct RamUse {
     pub(crate) label: String,
+    /// The hover list: one fact per line, without the use the label shows.
+    pub(crate) tooltip: String,
+    /// The accessible value: every fact in one sentence.
     pub(crate) description: String,
     pub(crate) load: Load,
     pub(crate) percent: u64,
@@ -295,9 +309,11 @@ impl RamUse {
             return None;
         }
         let percent = percent(used, total);
+        let total = total as f64 / per_gib;
         Some(Self {
             label: format!("RAM {percent}%"),
-            description: format!("RAM use {percent}% of {:.1} GiB", total as f64 / per_gib),
+            tooltip: format!("RAM \u{b7} {total:.1} GiB"),
+            description: format!("RAM use {percent}% of {total:.1} GiB"),
             load: Load::Normal,
             percent,
         })
@@ -311,11 +327,13 @@ impl RamUse {
             levels.ram_warning_percent,
             levels.ram_critical_percent,
         );
-        self.description.push_str(match self.load {
-            Load::Normal => "",
-            Load::High => ": under pressure",
-            Load::Critical => ": under heavy pressure",
-        });
+        let (words, line) = match self.load {
+            Load::Normal => ("", ""),
+            Load::High => (": under pressure", "\nUnder pressure"),
+            Load::Critical => (": under heavy pressure", "\nUnder heavy pressure"),
+        };
+        self.description.push_str(words);
+        self.tooltip.push_str(line);
         self
     }
 }
@@ -324,6 +342,9 @@ impl RamUse {
 #[derive(Debug, PartialEq, Eq)]
 pub struct DiskUse {
     pub(crate) label: String,
+    /// The hover list: one fact per line, without the use the label shows.
+    pub(crate) tooltip: String,
+    /// The accessible value: every fact in one sentence.
     pub(crate) description: String,
     pub(crate) load: Load,
     percent: u64,
@@ -367,12 +388,12 @@ impl DiskUse {
         }
         let percent = (u128::from(used) * 100).div_ceil(u128::from(counted)) as u64;
         let gib = |bytes: u64| bytes as f64 / f64::from(1 << 30);
+        let (size, available) = (gib(size), gib(available));
         Some(Self {
             label: format!("DISK {percent}%"),
+            tooltip: format!("Disk \u{b7} {mount}\n{available:.1} GiB free of {size:.1} GiB"),
             description: format!(
-                "Disk use {percent}% of {:.1} GiB on {mount}, {:.1} GiB free",
-                gib(size),
-                gib(available)
+                "Disk use {percent}% of {size:.1} GiB on {mount}, {available:.1} GiB free"
             ),
             load: Load::Normal,
             percent,
@@ -387,11 +408,13 @@ impl DiskUse {
             levels.disk_warning_percent,
             levels.disk_critical_percent,
         );
-        self.description.push_str(match self.load {
-            Load::Normal => "",
-            Load::High => ": filling up",
-            Load::Critical => ": nearly full",
-        });
+        let (words, line) = match self.load {
+            Load::Normal => ("", ""),
+            Load::High => (": filling up", "\nFilling up"),
+            Load::Critical => (": nearly full", "\nNearly full"),
+        };
+        self.description.push_str(words);
+        self.tooltip.push_str(line);
         self
     }
 }
@@ -557,11 +580,13 @@ mod tests {
             shown.description,
             "CPU use 30% across 16 logical CPUs, over the last 2 seconds"
         );
+        assert_eq!(shown.tooltip, "CPU \u{b7} 16 logical CPUs");
         let shown = CpuUse::between(times(earlier_line), times(later_line)).unwrap();
         assert_eq!(
             shown.description,
             "CPU use 30% across 1 logical CPU, over the last 2 seconds"
         );
+        assert_eq!(shown.tooltip, "CPU \u{b7} 1 logical CPU");
         // Whole percentages round to nearest, from 0 to 100.
         let at = |busy, idle| times(&format!("cpu {busy} 0 0 {idle} 0 0 0 0"));
         for (busy, idle, label) in [
@@ -630,6 +655,7 @@ mod tests {
         let shown = RamUse::from_host_pages(pages, 16_384, 16 << 30).unwrap();
         assert_eq!(shown.label, "RAM 56%");
         assert_eq!(shown.description, "RAM use 56% of 16.0 GiB");
+        assert_eq!(shown.tooltip, "RAM \u{b7} 16.0 GiB");
         for (pages, page_size, memsize) in [
             ([0, 0, 0, 0], 16_384, 0),
             ([1, 2, 0, 0], 16_384, 1 << 30),
@@ -654,6 +680,7 @@ mod tests {
         .unwrap();
         assert_eq!(shown.label, "RAM 43%");
         assert_eq!(shown.description, "RAM use 43% of 31.3 GiB");
+        assert_eq!(shown.tooltip, "RAM \u{b7} 31.3 GiB");
         // Whole percentages round to nearest, from 0 to 100.
         for (total, available, label) in [
             (3, 3, "RAM 0%"),
@@ -677,12 +704,17 @@ mod tests {
             shown.description,
             "Disk use 85% of 100.0 GiB on /home, 15.0 GiB free"
         );
+        assert_eq!(
+            shown.tooltip,
+            "Disk \u{b7} /home\n15.0 GiB free of 100.0 GiB"
+        );
         // GiB keep one decimal, like RAM's total.
         let shown = DiskUse::of(9 * gib + gib / 2, 3 * gib, 3 * gib, 4096, "/").unwrap();
         assert_eq!(
             shown.description,
             "Disk use 69% of 9.5 GiB on /, 3.0 GiB free"
         );
+        assert_eq!(shown.tooltip, "Disk \u{b7} /\n3.0 GiB free of 9.5 GiB");
         // Whole percentages round up, from 0 to 100.
         for (blocks, free, available, label) in [
             (3, 3, 3, "DISK 0%"),

@@ -544,6 +544,9 @@ pub(crate) struct WorkspaceQuota {
     /// the window; negative means it lasts with that share spare. None means no judgment.
     pub(crate) pace: Option<f32>,
     pub(crate) accessible_label: String,
+    /// The hover list: one fact per line, without what the chip shows.
+    pub(crate) tooltip: String,
+    /// The accessible description: every fact, including what the chip shows.
     pub(crate) description: String,
 }
 
@@ -564,6 +567,9 @@ pub(crate) enum QuotaWindowIdentity {
 pub(crate) struct WorkspaceLabel {
     pub(crate) rect: SceneRect,
     pub(crate) label: String,
+    /// The hover list: one fact per line, without what the label shows.
+    pub(crate) tooltip: String,
+    /// The accessible value: every fact, including what the label shows.
     pub(crate) description: String,
     /// The machine load a CPU, RAM or disk label shows; other labels stay normal.
     pub(crate) load: Load,
@@ -690,6 +696,9 @@ pub struct EonBar<'a> {
     pub ram: Option<&'a RamUse>,
     pub disk: Option<&'a DiskUse>,
     pub clock: Option<&'a LocalClock>,
+    /// The local wall-clock time the scene is built at, which places quota resets in local
+    /// time; none when the local time zone is unknown.
+    pub now: Option<&'a jiff::Zoned>,
     /// The `workspaces` popup entry's label and chord, while Eon configures that entry; the
     /// workspace label then opens it.
     pub workspace_picker: Option<&'a str>,
@@ -777,6 +786,7 @@ impl Default for EonBar<'_> {
             ram: None,
             disk: None,
             clock: None,
+            now: None,
             workspace_picker: None,
             quota_windows: &NO_QUOTA_WINDOWS,
         }
@@ -787,6 +797,7 @@ impl Default for EonBar<'_> {
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct LocalClock {
     label: String,
+    tooltip: String,
     description: String,
 }
 
@@ -797,13 +808,13 @@ impl LocalClock {
         let offset = now.offset().seconds();
         let sign = if offset < 0 { '\u{2212}' } else { '+' };
         let minutes = offset.unsigned_abs() / 60;
-        let description = format!(
-            "Local time {label}, {}, UTC{sign}{:02}:{:02}",
-            now.strftime("%A %-d %B %Y"),
-            minutes / 60,
-            minutes % 60,
-        );
-        Self { label, description }
+        let date = now.strftime("%A %-d %B %Y");
+        let offset = format!("UTC{sign}{:02}:{:02}", minutes / 60, minutes % 60);
+        Self {
+            tooltip: format!("{date}\n{offset}"),
+            description: format!("Local time {label}, {date}, {offset}"),
+            label,
+        }
     }
 }
 
@@ -2378,11 +2389,36 @@ fn quota_window_text(window: &QuotaWindow, observed_at: u64) -> String {
     }
 }
 
-/// One provider chip's label with its pace, and its description.
+/// One provider chip's label with its pace, its hover list, and its accessible description.
 struct QuotaText {
     label: String,
     pace: Option<f32>,
+    tooltip: String,
     description: String,
+}
+
+/// When a window resets, in `now`'s local time: the time alone today, with the weekday within
+/// the next six days, and with the date after that, or none once it has passed. Being absolute,
+/// it stays true however old the reading is.
+fn quota_reset(resets_at: u64, now: &jiff::Zoned) -> Option<String> {
+    let Some(reset) = i64::try_from(resets_at)
+        .ok()
+        .and_then(|seconds| jiff::Timestamp::from_second(seconds).ok())
+    else {
+        return Some("Reset time unavailable".into());
+    };
+    if reset <= now.timestamp() {
+        return None;
+    }
+    let reset = reset.to_zoned(now.time_zone().clone());
+    let format = if reset.date() == now.date() {
+        "at %H:%M"
+    } else if reset.date() <= now.date().saturating_add(jiff::Span::new().days(6)) {
+        "%a %H:%M"
+    } else {
+        "%-d %b %H:%M"
+    };
+    Some(format!("Resets {}", reset.strftime(format)))
 }
 
 fn quota_text(
@@ -2390,6 +2426,7 @@ fn quota_text(
     state: CodexQuotaState,
     observed_at: u64,
     window: Option<&QuotaWindow>,
+    now: Option<&jiff::Zoned>,
 ) -> QuotaText {
     let mut label = match state {
         CodexQuotaState::Fresh | CodexQuotaState::Stale => quota_window_text(
@@ -2418,6 +2455,9 @@ fn quota_text(
             CodexQuotaState::Unknown => "permission: unknown.",
         }
     );
+    // Hover lists one fact per line and leaves out what the chip shows: the remaining share
+    // and the time into the window.
+    let mut tooltip = format!("{name} quota");
     if let Some(window) = window {
         let duration = quota_duration(window.duration_minutes);
         let scope = window
@@ -2429,16 +2469,36 @@ fn quota_text(
             "{scope} {duration} window: {}% remaining; ",
             window.remaining_percent
         );
+        tooltip = format!("{name}{scope} {duration} window");
         if let Some(position) = quota_window_position(window, observed_at) {
             let _ = write!(description, "observed {position} into {duration}.");
         } else {
             description.push_str("reset time unavailable.");
         }
+        // Once the reset has passed, hover drops the pace, which looks ahead to it.
+        let mut passed = false;
+        match (window.resets_at, now) {
+            (Some(reset), Some(now)) => match quota_reset(reset, now) {
+                Some(line) => {
+                    let _ = write!(tooltip, "\n{line}");
+                }
+                None => {
+                    passed = true;
+                    tooltip.push_str("\nHas reset since this reading");
+                }
+            },
+            // Without a local time zone hover leaves the reset out, as the bar leaves out the
+            // clock, rather than state it in UTC.
+            (Some(_), None) => {}
+            (None, _) => tooltip.push_str("\nReset time unavailable"),
+        }
         if let Some(shortfall) = pace {
-            if window.remaining_percent == 0 {
+            let line = if window.remaining_percent == 0 {
                 description.push_str(" Used up until reset.");
+                "Used up until reset".to_owned()
             } else if shortfall <= 0.0 {
                 description.push_str(" At this pace it lasts until reset.");
+                "Lasts until reset at this pace".to_owned()
             } else {
                 // State the shortfall to the nearest unit the window counts in (hours for
                 // day-long windows), and at least one.
@@ -2451,17 +2511,28 @@ fn quota_text(
                     as u64)
                     .max(1)
                     * unit;
+                let early = quota_minutes(early, window.duration_minutes);
                 let _ = write!(
                     description,
-                    " At this pace it runs out about {} before reset.",
-                    quota_minutes(early, window.duration_minutes)
+                    " At this pace it runs out about {early} before reset."
                 );
+                format!("Runs out about {early} before reset")
+            };
+            if !passed {
+                let _ = write!(tooltip, "\n{line}");
             }
         }
     }
+    tooltip.push_str(match state {
+        CodexQuotaState::Fresh => "",
+        CodexQuotaState::Stale => "\nData is stale",
+        CodexQuotaState::Blocked => "\nPermission blocked",
+        CodexQuotaState::Unknown => "\nPermission unknown",
+    });
     QuotaText {
         label,
         pace,
+        tooltip,
         description,
     }
 }
@@ -2805,6 +2876,7 @@ impl WorkspaceScene {
                                             quota.state,
                                             quota.observed_at,
                                             Some(window),
+                                            bar.now,
                                         ),
                                     )
                                 })
@@ -2822,6 +2894,7 @@ impl WorkspaceScene {
                                     quota.state,
                                     quota.observed_at,
                                     None,
+                                    bar.now,
                                 ),
                             )]
                         }
@@ -2862,6 +2935,7 @@ impl WorkspaceScene {
                                                 state,
                                                 quota.observed_at,
                                                 Some(window),
+                                                bar.now,
                                             ),
                                         )
                                     })
@@ -2889,6 +2963,7 @@ impl WorkspaceScene {
                     accessible_label: format!("{} {label}", provider.name()),
                     label,
                     pace: text.pace,
+                    tooltip: text.tooltip,
                     description: text.description,
                 }
             })
@@ -2907,7 +2982,7 @@ impl WorkspaceScene {
             // Only Codex reports no windows, while blocked or unknown: the wider word holds.
             let no_window = [CodexQuotaState::Blocked, CodexQuotaState::Unknown]
                 .map(|state| {
-                    let text = quota_text(QuotaProvider::Codex, state, 0, None).label;
+                    let text = quota_text(QuotaProvider::Codex, state, 0, None, None).label;
                     header_text(HeaderText::Fact, &text).1
                 })
                 .into_iter()
@@ -2987,6 +3062,7 @@ impl WorkspaceScene {
                     accessible_label: String::new(),
                     label: String::new(),
                     pace: None,
+                    tooltip: String::new(),
                     description: String::new(),
                 }));
             }
@@ -3161,8 +3237,15 @@ impl WorkspaceScene {
         let readings = "CPU 100%".len();
         // The widest layout reserves every listed reading and the clock, with or without data.
         let placeholder = |item, label: &str, cells| {
-            (widest && reading(item))
-                .then(|| (label.to_owned(), String::new(), cells, Load::Normal))
+            (widest && reading(item)).then(|| {
+                (
+                    label.to_owned(),
+                    String::new(),
+                    String::new(),
+                    cells,
+                    Load::Normal,
+                )
+            })
         };
         let mut labels = [
             bar.version
@@ -3170,6 +3253,7 @@ impl WorkspaceScene {
                 .map(|version| {
                     (
                         format!("EON {version}"),
+                        format!("Eon version {version}"),
                         format!("Running Eon version {version}"),
                         0,
                         Load::Normal,
@@ -3180,6 +3264,7 @@ impl WorkspaceScene {
                 .map(|cpu| {
                     (
                         cpu.label.clone(),
+                        cpu.tooltip.clone(),
                         cpu.description.clone(),
                         readings,
                         cpu.load,
@@ -3191,6 +3276,7 @@ impl WorkspaceScene {
                 .map(|ram| {
                     (
                         ram.label.clone(),
+                        ram.tooltip.clone(),
                         ram.description.clone(),
                         readings,
                         ram.load,
@@ -3202,6 +3288,7 @@ impl WorkspaceScene {
                 .map(|disk| {
                     (
                         disk.label.clone(),
+                        disk.tooltip.clone(),
                         disk.description.clone(),
                         "DISK 100%".len(),
                         disk.load,
@@ -3213,6 +3300,7 @@ impl WorkspaceScene {
                 .map(|clock| {
                     (
                         clock.label.clone(),
+                        clock.tooltip.clone(),
                         clock.description.clone(),
                         0,
                         Load::Normal,
@@ -3221,18 +3309,22 @@ impl WorkspaceScene {
                 .or_else(|| placeholder(BarItem::Clock, "00:00", 0)),
         ]
         .map(|label| {
-            label.map(|(label, description, cells, load)| WorkspaceLabel {
-                rect: SceneRect {
-                    // Every label is ASCII (launch validation bounds the version), and
-                    // rendering uses terminal cell spacing.
-                    width: label.len().max(cells) as f32 * metrics.width + metrics.padding * 2.0,
-                    height: tab_height,
-                    ..SceneRect::default()
+            label.map(
+                |(label, tooltip, description, cells, load)| WorkspaceLabel {
+                    rect: SceneRect {
+                        // Every label is ASCII (launch validation bounds the version), and
+                        // rendering uses terminal cell spacing.
+                        width: label.len().max(cells) as f32 * metrics.width
+                            + metrics.padding * 2.0,
+                        height: tab_height,
+                        ..SceneRect::default()
+                    },
+                    label,
+                    tooltip,
+                    description,
+                    load,
                 },
-                label,
-                description,
-                load,
-            })
+            )
         });
         // The first reading to show before Shortcuts also takes the space before its button,
         // unless a quota chip already took it.

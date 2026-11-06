@@ -237,8 +237,8 @@ authentication. Codex also needs a compatible `codex` executable on `PATH`.
 Codex chips show its white mark and Claude chips its orange splat.
 Both providers show one chip per available window, five-hour then seven-day,
 then one Claude chip for each model-scoped weekly window, such as `Fable`.
-Each window shows its remaining percentage, with reset and freshness details
-on hover. Missing resets stay unknown.
+Each window shows its remaining percentage; hover lists when it resets, in
+local time, the pace, and whether the reading is old. Missing resets stay unknown.
 Readings say `old` once they are more than an hour old and disappear after 24
 hours. Chips hide one by one under width pressure, the one closest to the tabs
 first, before tabs and controls, and unavailable quota leaves the bar unchanged.
@@ -247,6 +247,8 @@ After the quota chips, `CPU 12%` shows whole-machine CPU use over the last 2
 seconds, `RAM 43%` shows whole-machine memory in use, and `DISK 80%` shows how
 full the filesystem holding your home directory is, refreshed every 30 seconds;
 hover them for details, such as the disk's size, mount point and free space.
+Each hover is a short list, one fact per line, that leaves out what the chip
+already shows; screen readers read one sentence with every fact.
 They turn orange or red when the machine is under load or the disk fills up, at
 the levels [`[bar]`](CONFIGURATION.md#configuration-behavior) sets, which also
 chooses the path the disk chip measures.

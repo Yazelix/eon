@@ -953,27 +953,27 @@ impl Renderer {
             .quota_hovered
             .and_then(|index| workspace.quotas.get(index))
         {
-            (quota.description.as_str(), quota.rect)
+            (quota.tooltip.as_str(), quota.rect)
         } else if self.header.version_hovered
             && let Some(version) = &workspace.version
         {
-            (version.description.as_str(), version.rect)
+            (version.tooltip.as_str(), version.rect)
         } else if self.header.cpu_hovered
             && let Some(cpu) = &workspace.cpu
         {
-            (cpu.description.as_str(), cpu.rect)
+            (cpu.tooltip.as_str(), cpu.rect)
         } else if self.header.ram_hovered
             && let Some(ram) = &workspace.ram
         {
-            (ram.description.as_str(), ram.rect)
+            (ram.tooltip.as_str(), ram.rect)
         } else if self.header.disk_hovered
             && let Some(disk) = &workspace.disk
         {
-            (disk.description.as_str(), disk.rect)
+            (disk.tooltip.as_str(), disk.rect)
         } else if self.header.clock_hovered
             && let Some(clock) = &workspace.clock
         {
-            (clock.description.as_str(), clock.rect)
+            (clock.tooltip.as_str(), clock.rect)
         } else if let Some(tab) = hovered_tab {
             (tab.accessible_label(), tab.rect)
         } else if let Some((label, tooltip)) = workspace

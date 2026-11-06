@@ -5,6 +5,15 @@ installation, and proven contract changes.
 
 ## Unreleased
 
+- Eon Bar hover tooltips show a short list, one fact per line, instead of
+  one long sentence, and leave out what the chip already shows: a quota
+  tooltip names its window, then when it resets in local time and the pace,
+  such as `Codex 7d window`, `Resets Sun 21:00`, `Runs out about 1d18h before
+  reset`; CPU lists its logical CPU count and average, RAM its size, and disk
+  its mount point and free space, each with a load line only under load; the
+  clock lists the date and UTC offset. Stale data and blocked or unknown
+  permission get their own line. Screen readers still read the full sentence
+  (`eon-y22fl`).
 - `eon window ls [--json]` lists every running Eon window, the default
   window included, with its ID, name, version, start time, terminals and
   whether this `eon` controls it directly. It replaces `eon windows` and

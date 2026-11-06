@@ -105,17 +105,20 @@ fn compact_pane_headers_share_title_height_and_full_row_targets() {
             let cpu = CpuUse {
                 percent: 12,
                 label: "CPU 12%".into(),
+                tooltip: "CPU".into(),
                 description: "CPU".into(),
                 load: crate::Load::Normal,
             };
             let ram = RamUse {
                 label: "RAM 43%".into(),
+                tooltip: "RAM".into(),
                 description: "RAM".into(),
                 load: crate::Load::Normal,
                 percent: 43,
             };
             let clock = LocalClock {
                 label: "15:43".into(),
+                tooltip: "Clock".into(),
                 description: "Clock".into(),
             };
             let widgets = WorkspaceScene::from_snapshot_with_bar(
