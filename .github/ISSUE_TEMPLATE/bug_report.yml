@@ -17,8 +17,8 @@ body:
   - type: input
     id: generation
     attributes:
-      label: Generation
-      description: The relevant generation from `eon generations`, if the bug involves running work.
+      label: Window
+      description: The relevant window from `eon window ls --json`, if the bug involves running work.
     validations:
       required: false
   - type: dropdown

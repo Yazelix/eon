@@ -76,7 +76,7 @@ Detach whenever you like. To come back or end work:
 
 ```sh
 eon attach               # return to your terminals
-eon generations          # list running and older generations
+eon window ls            # list running windows
 eon stop GENERATION      # end one generation's terminals
 ```
 

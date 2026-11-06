@@ -147,6 +147,14 @@ Under Codex's shared background daemon, your commands carry the `EON_TERMINAL`
 of the terminal that started it, or none, so `caller` may name another pane or
 be null; Codex in Eon needs `codex --no-daemon`.
 
+## Windows
+
+`eon window ls --json` lists every running Eon window. `id` is the full
+window ID, and `default` is the window bare `eon` opens. In
+`eon window attach` and `eon window stop`, an ID or any unique prefix of
+at least 4 characters selects a window. Stop or attach only windows the
+person asked about.
+
 ## Handle exit status
 
 | Status | Meaning |
@@ -154,7 +162,7 @@ be null; Codex in Eon needs `codex --no-daemon`.
 | 0 | Success, including a Stop or close confirmation declined at a terminal |
 | 1 | Command understood but refused or failed, including no yes for a confirmation without a terminal |
 | 2 | Invalid command or arguments |
-| 3 | Named tab, pane, terminal, popup, generation or window not found |
+| 3 | Named tab, pane, terminal, popup, generation or window not found, or a window ID prefix that matches several windows |
 | 4 | Supervisor not running or did not answer |
 | 5 | `pane send` refused with `person-typing`; nothing was sent |
 | 130 | Interrupted with Ctrl+C |

@@ -495,6 +495,27 @@ pub(super) struct GenerationRecord {
     launcher: Option<PathBuf>,
 }
 
+impl GenerationRecord {
+    /// Whether this build started it.
+    pub(super) fn current(&self) -> bool {
+        self.kind == "current"
+    }
+
+    /// Its name and Eon version, as a window listing names it.
+    pub(super) fn label(&self) -> String {
+        format!(
+            "{}, Eon {}",
+            terminal_text(self.name.as_deref().unwrap_or("unnamed")),
+            terminal_text(self.eon_version.as_deref().unwrap_or("unknown"))
+        )
+    }
+
+    /// Whether this `eon` presents and controls it directly.
+    fn compatible(&self) -> bool {
+        self.state == "live" && self.launcher.is_none() && self.attach.available
+    }
+}
+
 fn discover_generations(
     inputs: &Inputs,
     root: &Path,
@@ -1023,15 +1044,129 @@ fn json_option(value: Option<&str>) -> String {
     )
 }
 
+/// One `eon window ls --json` window (EON-C23), with no trailing newline.
+pub(super) fn window_json(record: &GenerationRecord, id: &str, short_id: &str) -> String {
+    let mut output = format!(
+        "{{\"id\":\"{}\",\"short_id\":\"{}\",\"name\":{},\"current\":{},\"generation\":\"{}\",\"state\":\"{}\",\"compatible\":{},\"eon_version\":{},\"workspace_protocol\":{},\"started_at\":{},\"terminals\":[",
+        json_escape(id),
+        json_escape(short_id),
+        json_option(record.name.as_deref()),
+        record.current(),
+        json_escape(&record.id),
+        record.state,
+        record.compatible(),
+        json_option(record.eon_version.as_deref()),
+        record
+            .workspace_protocol
+            .map_or_else(|| "null".into(), |value| value.to_string()),
+        record
+            .started_at
+            .map_or_else(|| "null".into(), |value| value.to_string()),
+    );
+    for (index, session) in record.sessions.iter().enumerate() {
+        if index != 0 {
+            output.push(',');
+        }
+        output.push_str(&format!("\"{}\"", json_escape(session)));
+    }
+    output.push_str("],\"busy\":");
+    super::workspace::json_busy(&mut output, record.busy.as_ref());
+    output.push_str(&format!(
+        ",\"attach\":{{\"available\":{},\"reason\":\"{}\"}},\"stop\":{{\"available\":{},\"reason\":\"{}\"}},\"executable\":{},\"detail\":\"{}\",\"component_report\":{}}}",
+        record.attach.available,
+        json_escape(&record.attach.reason),
+        record.stop.available,
+        json_escape(&record.stop.reason),
+        json_option(
+            record
+                .launcher
+                .as_ref()
+                .map(|eon| eon.to_string_lossy())
+                .as_deref()
+        ),
+        json_escape(&record.detail),
+        json_option(record.component_report.as_deref()),
+    ));
+    output
+}
+
+/// A window's `eon window ls` cells after its ID: NAME, VERSION, STARTED,
+/// TERMINALS and COMPATIBLE.
+pub(super) fn window_cells(record: &GenerationRecord, current_components: &str) -> [String; 5] {
+    const NAME_WIDTH: usize = 24;
+    let name = record.name.as_deref().map_or_else(
+        || "-".into(),
+        |name| {
+            let name = terminal_text(name);
+            if name.chars().count() > NAME_WIDTH {
+                name.chars().take(NAME_WIDTH).chain(['…']).collect()
+            } else {
+                name
+            }
+        },
+    );
+    let live = record.state == "live";
+    let compatible = match record.state {
+        _ if record.compatible() => "yes",
+        "live" if record.component_report.as_deref() != Some(current_components) => {
+            "no (other build)"
+        }
+        "live" => "no",
+        "incompatible" => "no (other EONW)",
+        "unreachable" => "no (not answering)",
+        _ => "no (corrupt)",
+    };
+    [
+        name,
+        record
+            .eon_version
+            .as_deref()
+            .map_or_else(|| "-".into(), terminal_text),
+        record.started_at.map_or_else(|| "-".into(), local_minute),
+        if live {
+            record.sessions.len().to_string()
+        } else {
+            "-".into()
+        },
+        compatible.into(),
+    ]
+}
+
+/// A Unix millisecond time as a local `%Y-%m-%d %H:%M`, or `-`.
+fn local_minute(unix_ms: u64) -> String {
+    let Ok(seconds) = libc::time_t::try_from(unix_ms / 1000) else {
+        return "-".into();
+    };
+    // SAFETY: tm is plain data that localtime_r fills; it reports failure as null.
+    let mut tm = unsafe { std::mem::zeroed::<libc::tm>() };
+    if unsafe { libc::localtime_r(&seconds, &mut tm) }.is_null() {
+        return "-".into();
+    }
+    let mut buffer = [0u8; 32];
+    // SAFETY: strftime writes at most buffer.len() bytes and returns how many.
+    let length = unsafe {
+        libc::strftime(
+            buffer.as_mut_ptr().cast(),
+            buffer.len(),
+            c"%Y-%m-%d %H:%M".as_ptr(),
+            &tm,
+        )
+    };
+    if length == 0 {
+        return "-".into();
+    }
+    String::from_utf8_lossy(&buffer[..length]).into_owned()
+}
+
 pub(super) fn attach_generation(
     inputs: &Inputs,
+    root: &Path,
     target: Option<&str>,
     product: &str,
 ) -> Result<i32, Error> {
-    let root = runtime_directory(product);
     let current = current_generation(inputs)?;
     let target = target.unwrap_or(&current);
-    let record = inspect_selected_generation(inputs, &root, &current, target)?
+    let record = inspect_selected_generation(inputs, root, &current, target)?
         .ok_or_else(|| Error::missing(format!("generation {target} was not found")))?;
     if !record.attach.available {
         let versions = match (&record.eon_version, record.workspace_protocol) {
@@ -1049,16 +1184,32 @@ pub(super) fn attach_generation(
     if let Some(eon) = &record.launcher
         && env::var_os(DELEGATED).is_none_or(|delegated| delegated != target)
     {
-        let error = Command::new(eon)
-            .env(DELEGATED, target)
-            .arg("attach")
-            .arg(target)
-            .exec();
+        let mut command = Command::new(eon);
+        command.env(DELEGATED, target).arg("attach").arg(target);
+        // That build attaches in this generation's namespace.
+        if product == "eon" {
+            if is_default_namespace(root) {
+                command.env_remove(WINDOW_RUNTIME);
+            } else {
+                command.env(WINDOW_RUNTIME, root);
+            }
+        }
+        let error = command.exec();
         return Err(format!("cannot run {}: {error}", eon.display()).into());
     }
     let (mode, supervisor) = probe_supervisor(inputs, &record.runtime.join("eon.sock"), target)
         .map_err(|error| error.detail)?;
     present_at(inputs, &record.runtime, target, mode, supervisor).map_err(Error::from)
+}
+
+/// The raw names of the entries under `root`'s generation directory that name
+/// no generation.
+pub(super) fn damaged_generations(root: &Path) -> Result<Vec<String>, String> {
+    Ok(generation_candidates(root)?
+        .into_iter()
+        .map(|(name, _)| name.to_string_lossy().into_owned())
+        .filter(|name| !valid_generation(name))
+        .collect())
 }
 
 /// The generations of the window at `root` whose supervisor has not ended,
@@ -1109,23 +1260,6 @@ fn preferred_window_generation<'a>(current: &str, live: &'a [String]) -> Option<
         .find(|id| *id == current)
         .or_else(|| (live.len() == 1).then(|| &live[0]))
         .map(String::as_str)
-}
-
-/// The `eon windows` inventory of the window at `root`: its running
-/// generations, or `None` once the window has ended.
-pub(super) fn window_inventory(
-    inputs: &Inputs,
-    root: &Path,
-    json: bool,
-) -> Result<Option<String>, String> {
-    let records = running_generations(inputs, root)?;
-    Ok((!records.is_empty()).then(|| {
-        if json {
-            generations_json(&records)
-        } else {
-            generations_human(&records)
-        }
-    }))
 }
 
 /// How a human-mode Stop asks first.
@@ -1497,10 +1631,29 @@ fn confirmation_status(answer: &[u8], terminal: bool) -> Confirmation {
     }
 }
 
+/// The generations of a namespace that a Stop selects.
+pub(super) enum Select<'a> {
+    Current,
+    Previous,
+    All,
+    Generation(&'a str),
+}
+
+impl Select<'_> {
+    fn includes(&self, record: &GenerationRecord) -> bool {
+        match self {
+            Self::Current => record.current(),
+            Self::Previous => !record.current(),
+            Self::All => true,
+            Self::Generation(generation) => record.id == *generation,
+        }
+    }
+}
+
 pub(super) fn stop_generations(
     inputs: &Inputs,
     root: &Path,
-    include_current: bool,
+    select: Select,
     json: bool,
     ask: &Ask,
 ) -> Result<i32, String> {
@@ -1513,7 +1666,7 @@ pub(super) fn stop_generations(
     let mut separator = "";
     let mut status = 0;
     for record in records {
-        if record.state == "dead" || (!include_current && record.kind == "current") {
+        if record.state == "dead" || !select.includes(&record) {
             continue;
         }
         if json {

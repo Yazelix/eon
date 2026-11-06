@@ -703,6 +703,7 @@ fn failure_status(code: &str) -> u8 {
         "unknown-tab" | "unknown-pane" | "unknown-id" | "unknown-session" | "unknown-popup"
         | "stale-popup" | "stale-target" | "unknown-generation" | "unknown-caller"
         | "unknown-workspace" | "unknown-window" | "unknown-target" => MISSING,
+        "ambiguous-window-id" => MISSING,
         "missing-supervisor" | "supervisor-unavailable" => UNREACHABLE,
         "person-typing" => TYPING,
         _ => FAILED,

@@ -205,7 +205,7 @@ pub(super) fn running_notice(others: &[WindowEntry], omitted: u16) -> Option<Str
         "windows are"
     };
     Some(format!(
-        "{count} other Eon {windows} still running: {labels}\nSee them: eon workspace · Quit one: attach to it, then Commands > Quit this window"
+        "{count} other Eon {windows} still running: {labels}\nSee them: eon window ls · Quit one: eon window stop ID"
     ))
 }
 
@@ -386,8 +386,7 @@ mod tests {
             live_terminals: None,
             state: WindowState::Live,
         };
-        let hint =
-            "See them: eon workspace · Quit one: attach to it, then Commands > Quit this window";
+        let hint = "See them: eon window ls · Quit one: eon window stop ID";
         assert_eq!(running_notice(&[], 0), None);
         assert_eq!(
             running_notice(std::slice::from_ref(&entry), 0).unwrap(),

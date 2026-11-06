@@ -5,6 +5,19 @@ installation, and proven contract changes.
 
 ## Unreleased
 
+- `eon window ls [--json]` lists every running Eon window, the default
+  window included, with its ID, name, version, start time, terminals and
+  whether this `eon` controls it directly. It replaces `eon windows` and
+  `eon generations`, which are removed (`eon-7cf0y.22`, EON-C23, EON-C11).
+  `eon window attach` and `eon window stop` take `default` for the window
+  bare `eon` opens, an older build's window by the ID `eon window ls` shows,
+  and any unique prefix of at least 4 characters. An ambiguous prefix exits
+  3 and lists the matches. `eon window attach` without an ID reopens
+  `default`, and `eon window stop ID --json` prints
+  `[{"window": ID, "results": [...]}]`. The other-windows hint in a new
+  window's quick search reads "See them: eon window ls · Quit one: eon
+  window stop ID", and Commands drops "List generations" while "List
+  windows" runs `eon window ls`. EONW is unchanged.
 - An agent's finish or error in the selected terminal stays unread, in the
   sidebar, the attention inbox and Alt+G's queue, while another app has
   focus; it becomes read once Eon's window has focus with that terminal

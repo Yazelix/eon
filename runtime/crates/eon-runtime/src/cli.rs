@@ -4,8 +4,9 @@ use super::{
         send_action_from, send_action_from_until, validate_action, write_stdout,
     },
     generation::{
-        Ask, WorkspaceTarget, attach_generation, confirm, current_generation, generations_command,
-        resolve_workspace, stop_generation, stop_generations, valid_generation,
+        Ask, Select, WorkspaceTarget, attach_generation, confirm, current_generation,
+        generations_command, resolve_workspace, stop_generation, stop_generations,
+        valid_generation,
     },
     managed_environment,
     running::running_notice,
@@ -129,8 +130,7 @@ const RUNNER_COMMANDS: &[(&str, &[&str], RunnerOutput)] = {
             Close,
         ),
         ("Show workspace", &["workspace"], Keep),
-        ("List windows", &["windows"], Keep),
-        ("List generations", &["generations"], Keep),
+        ("List windows", &["window", "ls"], Keep),
         ("Stop older generations", &["stop", "previous"], Keep),
         ("Show versions", &["versions"], Keep),
         ("Show config path", &["config-path"], Keep),
@@ -620,8 +620,17 @@ fn execute(inputs: &Inputs, arguments: Vec<OsString>) -> Result<i32, Error> {
     let result = match arguments.as_slice() {
         [] => launch_current(inputs, LaunchMode::Workspace, &[], true, false, "eon"),
         [command, action] if command == "window" && action == "new" => windows::new_window(inputs),
+        [command, action] if command == "window" && action == "ls" => {
+            windows::list_windows(inputs, false)
+        }
+        [command, action, flag] if command == "window" && action == "ls" && flag == "--json" => {
+            windows::list_windows(inputs, true)
+        }
+        [command, action] if command == "window" && action == "attach" => {
+            Ok(windows::attach_window(inputs, None)?)
+        }
         [command, action, id] if command == "window" && action == "attach" => {
-            Ok(windows::attach_window(inputs, id)?)
+            Ok(windows::attach_window(inputs, Some(id))?)
         }
         [command, action, all] if command == "window" && action == "stop" && all == "all" => {
             Ok(windows::stop_namespaces(false, false)?)
@@ -632,16 +641,12 @@ fn execute(inputs: &Inputs, arguments: Vec<OsString>) -> Result<i32, Error> {
             Ok(windows::stop_namespaces(false, true)?)
         }
         [command, action, id] if command == "window" && action == "stop" => {
-            Ok(windows::stop_window(id, false)?)
+            Ok(windows::stop_window(inputs, id, false)?)
         }
         [command, action, id, flag]
             if command == "window" && action == "stop" && flag == "--json" =>
         {
-            Ok(windows::stop_window(id, true)?)
-        }
-        [command] if command == "windows" => windows::list_windows(inputs, false),
-        [command, flag] if command == "windows" && flag == "--json" => {
-            windows::list_windows(inputs, true)
+            Ok(windows::stop_window(inputs, id, true)?)
         }
         [command, child @ ..] if command == "anima" => {
             let error = Command::new(&inputs.anima)
@@ -756,18 +761,19 @@ const HELP_SECTIONS: &[(&str, &[(&str, &str)])] = &[
         &[
             ("quit [--json]", "End this window and its terminals"),
             ("quit --all [--json]", "End every window's terminals"),
+            ("window ls [--json]", "Every running window: ID, name,"),
+            ("", "version, started, terminals,"),
+            ("", "compatible or not"),
             ("window new", "Open an independent window"),
-            ("window attach ID", "Reopen a window"),
+            ("window attach [ID]", "Reopen a window (no ID: default)"),
             ("window stop ID [--json]", "End that window's terminals"),
             ("window stop all [--json]", "End every window's terminals"),
-            ("windows [--json]", "List independent windows"),
         ],
     ),
     (
         "Attach & stop",
         &[
             ("attach [GENERATION]", "Reattach to current or named work"),
-            ("generations [--json]", "List current and older work"),
             (
                 "stop GENERATION|previous|all [--json]",
                 "End selected terminals",
@@ -983,7 +989,7 @@ fn help_text(version: &str, color: bool) -> String {
     let examples = help_rows(
         &[
             ("eon run -- eon-nu -c 'print hello'", "Start with a command"),
-            ("eon windows --json", "Inspect windows as JSON"),
+            ("eon window ls --json", "Inspect windows as JSON"),
             ("eon anima --help", "Browse animation styles/options"),
         ],
         color,
@@ -998,6 +1004,8 @@ fn help_text(version: &str, color: bool) -> String {
 Alt+Shift+D detaches a window; closing it or eon quit ends it.
 Inside Eon, workspace commands use the calling terminal's supervisor/workspace.
 Pane creation and moves, and tab moves, retain their calling-tab rules.
+window attach and window stop take default, an independent window's
+ID, or a unique prefix of 4+ characters, as eon window ls shows them.
 Workspace flags: --generation GENERATION / --window ID, before any --.
 Explicit targets still validate EON_TERMINAL; window-only uses attach's rule.
 Results name generation, window (null for default), and workspace.
@@ -1090,12 +1098,19 @@ fn lifecycle_command(
     product: &str,
 ) -> Result<Option<i32>, Error> {
     Ok(Some(match arguments {
-        [command] if command == "attach" => attach_generation(inputs, None, product)?,
-        [command, generation] if command == "attach" => {
-            attach_generation(inputs, Some(generation_argument(generation)?), product)?
+        [command] if command == "attach" => {
+            attach_generation(inputs, &runtime_directory(product), None, product)?
         }
-        [command] if command == "generations" => generations_command(inputs, false, product)?,
-        [command, flag] if command == "generations" && flag == "--json" => {
+        [command, generation] if command == "attach" => attach_generation(
+            inputs,
+            &runtime_directory(product),
+            Some(generation_argument(generation)?),
+            product,
+        )?,
+        [command] if command == "generations" && product == "eonbase" => {
+            generations_command(inputs, false, product)?
+        }
+        [command, flag] if command == "generations" && flag == "--json" && product == "eonbase" => {
             generations_command(inputs, true, product)?
         }
         [command, generation] if command == "stop" => {
@@ -1119,9 +1134,11 @@ fn stop_argument(
     let root = runtime_directory(product);
     Ok(match argument.to_str() {
         Some("previous") if product == "eon" => {
-            stop_generations(inputs, &root, false, json, &Ask::Stop)?
+            stop_generations(inputs, &root, Select::Previous, json, &Ask::Stop)?
         }
-        Some("all") if product == "eon" => stop_generations(inputs, &root, true, json, &Ask::Stop)?,
+        Some("all") if product == "eon" => {
+            stop_generations(inputs, &root, Select::All, json, &Ask::Stop)?
+        }
         _ => stop_generation(
             inputs,
             &root,

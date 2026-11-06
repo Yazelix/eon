@@ -38,7 +38,7 @@ fn cli_path(action: &Action) -> CliPath {
         Action::Workspace(action) => match action {
             WorkspaceAction::Inspect => words(&["workspace"]),
             WorkspaceAction::InspectRuntime | WorkspaceAction::InspectPresentation => {
-                return Lifecycle("generations");
+                return Lifecycle("window ls");
             }
             WorkspaceAction::Present { .. } => return Lifecycle("attach"),
             WorkspaceAction::CreateTab => words(&["tab", "create"]),

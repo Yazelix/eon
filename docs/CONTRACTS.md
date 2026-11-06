@@ -1112,6 +1112,8 @@ socket names, JSON fields and protocol identifiers retain their spellings.
   by `eon-agent-parity-a9g0.3`: `eon tab close TAB [--yes] [--json]` and
   `eon pane close PANE [--yes] [--json]` resolve in any tab of the addressed
   workspace without moving focus and use target-scoped busy confirmation.
+  Amended on 2026-11-06 (approved by Lucca, relayed by eon-overseer) by
+  `eon-7cf0y.22` (S1): window IDs, prefixes and `eon window ls`.
 - **Consumer:** One local CLI or approved composition controlling a live Eon
   supervisor.
 - **Trigger:** The client submits one versioned workspace or supervisor-lifecycle
@@ -1141,7 +1143,8 @@ socket names, JSON fields and protocol identifiers retain their spellings.
   - `eon` and `eonbase` exit 0 on success, 1 when a command is refused or
     fails, 2 for invalid command lines and argument syntax (including
     `invalid-tab` and `malformed-action`), 3 when a named tab, pane, terminal,
-    popup, generation or window is missing or stale, 4 when the supervisor is
+    popup, generation or window is missing or stale or a window ID prefix
+    matches several windows (EON-C23), 4 when the supervisor is
     missing or unreachable, 5 when `eon pane send` is refused because a person
     is typing, with nothing sent (EON-C36), and 130 on interrupt, identically
     with and without `--json`. The CLI projection derives the status from the
@@ -1465,7 +1468,7 @@ socket names, JSON fields and protocol identifiers retain their spellings.
   Commands defaults to Alt+Shift+M and runs a transient fzf list of existing
   `eon` commands: tab, pane and window creation, closing or moving the popup's
   own tab, quitting this window, switching, creating, renaming or closing a
-  workspace (EON-C33), the workspace, window and generation
+  workspace (EON-C33), the workspace and window
   listings, `stop previous`, `versions`, `config-path` and `--help`. Each line
   names the command it runs. Enter runs it in the popup's terminal, with that
   terminal's `EON_TERMINAL` and `EON_TAB`: pane creation and tab moves act for
@@ -1801,7 +1804,9 @@ socket names, JSON fields and protocol identifiers retain their spellings.
   proven by its amendment proof below. Amended on 2026-11-03 (approved under
   eon-7cf0y's approval mode, relayed by eon-overseer) by `eon-7cf0y.9`: a
   generation from another EONW version is stopped through the `eon` it
-  recorded, proven by its amendment proof below.
+  recorded, proven by its amendment proof below. Amended on 2026-11-06
+  (approved by Lucca, relayed by eon-overseer) by `eon-7cf0y.22` (S1):
+  window IDs, prefixes and `eon window ls`.
 - **Consumer:** Eon and eonbase users launching or targeting a product generation.
 - **Trigger:** Launch current generation, inspect an older live generation,
   present a compatible existing surface, stop one generation, stop a selected
@@ -1820,7 +1825,7 @@ socket names, JSON fields and protocol identifiers retain their spellings.
     generation from a build with another EONW version is listed as
     incompatible, and this `eon` does not inspect it. When that generation
     recorded its `eon` (below) and the recorded file exists and is executable,
-    `eon generations` and `eon windows` report its `stop` as available.
+    `eon window ls` reports its `stop` as available.
 
     Every Stop of it, through `eon stop`, `eon window stop`, `eon quit` or
     `eon quit --all`, runs that `eon` as `stop GENERATION --json` in the
@@ -1922,9 +1927,9 @@ socket names, JSON fields and protocol identifiers retain their spellings.
     attach never substitutes another generation, and discovery distinguishes
     current, previous, dead, incompatible, and corrupt candidates. A live full-Eon
     candidate also reports its window name and the Unix millisecond time its
-    supervisor started (EON-C23); `eon generations --json` and `eon windows --json`
-    print them as `name` and `started_at`, and its busy terminals as `busy`,
-    null for any other candidate.
+    supervisor started (EON-C23); `eon window ls --json` prints them as `name`
+    and `started_at`, and its busy terminals as `busy`, null for any other
+    window.
   - One per-generation lifecycle lock covers listener and runtime teardown so a
     replacement cannot overlap cleanup; concurrent launch converges on one
     supervisor and terminal set.
@@ -2721,22 +2726,53 @@ socket names, JSON fields and protocol identifiers retain their spellings.
 
 ## EON-C23 — Independent Eon windows
 
-- **Status:** Proven
+- **Status:** Proven. Amended on 2026-11-06 (approved by Lucca, relayed by
+  eon-overseer) by `eon-7cf0y.22` (S1): window IDs, prefixes and
+  `eon window ls`.
 - **Consumer:** A full-Eon user on native x86_64 Linux Wayland.
 - **Trigger:** `eon window new`, the desktop launcher's New Eon Window action,
   or Venus's Alt+Shift+N shortcut.
 - **Result:** A fresh directory picker opens in a second native window with its
   own Eon supervisor, tabs, focus, and durable Orbit terminals. The original
   window and its terminals remain unchanged. `window new` reports a stable ID;
-  `eon windows` discovers it and `eon window stop ID` stops only its
+  `eon window ls` lists it and `eon window stop ID` stops only its
   terminals. `eon window attach ID` presents the window's live generation,
   whichever Eon build started it. When this `eon` cannot present it (another
   EONW version or component graph), the command runs the `eon` of the build
   that started it, as that generation recorded it, to present it. When no such
   record exists, it exits 1 and names the generation, the versions it
   reports, and that the build that started it can attach or stop it.
-  `eon windows` shows each window's live generation, and lists a window with
-  no live supervisor as ended instead of as the current generation.
+  **Window IDs.** Every running full-Eon window has one ID. An independent
+  window's ID is its eight-hex-digit ID. In the default namespace, the window
+  of the running `eon`'s own build is `default`. A window that another build
+  started there has as its ID the 32 hex digits of its generation. Wherever
+  `eon` takes a window ID (`eon window attach` and `eon window stop`), the
+  exact ID or any prefix of at least 4 characters selects a window. An exact
+  ID wins. Otherwise the prefix must begin the ID of exactly one running
+  window. A prefix that begins several fails with `ambiguous-window-id` (exit
+  3) and names each match. One that begins none fails with `unknown-window`
+  (exit 3). An ID or prefix that is shorter than 4 characters, or that is
+  neither lowercase hex nor a prefix of `default`, is invalid syntax (exit 2).
+  Matching only selects among existing windows, and the command then acts on
+  the full ID. `default` and an independent window's exact ID select that
+  window even when it is not running: attaching it then exits 4, and stopping
+  it stops nothing.
+  `eon window ls [--json]` lists every running window, a window with no live
+  supervisor left out. It lists the default namespace first, this build's
+  window before the others, then independent windows by ID. Human output
+  prints one row per window: its ID as the shortest prefix of at least 4
+  characters that no other listed ID shares (`default` in full), its name, Eon
+  version, local start time, live terminal count, and whether this `eon`
+  presents and controls it directly (`yes`, or `no` with the reason). For
+  each window this `eon` cannot stop, a line after the table says why.
+  `--json` prints `{"windows":[...]}`. Each window holds `id` (the full ID),
+  `short_id`, `name`, `current` (whether this `eon`'s build started it),
+  `generation`, `state` (`live`, `incompatible`, `unreachable` or `corrupt`),
+  `compatible`, `eon_version`, `workspace_protocol`, `started_at`,
+  `terminals` (their `session-N` IDs), `busy`, `attach` and `stop` (each with
+  `available` and `reason`), `executable` (the recorded `eon` it runs
+  through, else null), `detail` and `component_report`. A value that is not
+  known is null.
   Each full-Eon window keeps a running-windows summary. `this` names the
   window: its window ID (null in the default namespace), generation, name, the
   Unix millisecond time its supervisor started, and its live terminals, which
@@ -2771,11 +2807,12 @@ socket names, JSON fields and protocol identifiers retain their spellings.
   own window last; existing `eon stop all` remains scoped to the caller's
   current runtime namespace. `eon quit --all` covers both (EON-C11). Piped
   confirmations remain available to later windows, one answer per prompt.
-  With `--json`, `eon window stop all` asks for
-  no confirmation and prints one JSON array holding one
+  With `--json`, `eon window stop ID` and `eon window stop all` ask for no
+  confirmation and print one JSON array holding one
   `{"window": ID, "results": [...]}` object per window, in stop order with the
-  caller's own window last; `results` is that window's `eon stop all --json`
-  result array. It exits with the highest status among those Stops.
+  caller's own window last. `window` is the window's full ID, and `results` is
+  that window's array of EON-C11 Stop results. It exits with the highest
+  status among those Stops.
 - **Important failures:** Identity collision, unsafe runtime path, failed
   startup, or stale target neither replaces an existing window nor stops or
   retargets its terminals. An uncertain startup retains its ID, process, and
@@ -2791,6 +2828,8 @@ socket names, JSON fields and protocol identifiers retain their spellings.
   have independent workspaces; no terminal, tab, pane, or focus state is shared.
   The eight-hex-digit ID is unique by atomic directory reservation, not a
   secret. This does not establish macOS or another distribution channel.
+  A window ID prefix is a convenience for typing, not an identity: scripts
+  keep the full `id` from `eon window ls --json`.
 - **Proof:** `795d735a8f61ef439c56d68e1cc4d3929af0dfcf`, `eon-monorepo-2oko.6`.
   - **Environment:** Automated tier; installed tier.
   - **Evidence:** `new_windows_keep_independent_supervisors_and_stop_by_window_id`

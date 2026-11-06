@@ -49,9 +49,10 @@ window is ready. Press any key other than the style-browsing keys to dismiss it;
 set `[anima].enabled = false` in `config.toml` to skip it. Quick search then
 opens over the first tab's Files. When other Eon windows still run, a new
 window's first quick search says how many in its header, names up to three,
-and says how to see and quit them; `eon workspace` lists them (JSON
-`running.others`). Press Enter to use a Zoxide history match, or Tab to move
-Files there and browse with Yazi, where Alt+Enter uses a folder (see
+and says how to see and quit them; `eon window ls` lists them, and
+`eon workspace --json` carries them as `running.others`. Press Enter to use a
+Zoxide history match, or Tab to move Files there and browse with Yazi, where
+Alt+Enter uses a folder (see
 [Eon Bar and tabs](#eon-bar-and-tabs) for every key). New tabs start in your
 home directory. Escape closes quick search and opens a terminal there, keeping
 the tab. Close the tab with Alt+Shift+W if you no longer want it. The initial
@@ -105,7 +106,7 @@ nix profile add --refresh github:Yazelix/eon/main
 To inspect or stop work explicitly:
 
 ```sh
-eon generations
+eon window ls
 eon stop GENERATION
 eon stop previous
 eon stop all
@@ -147,10 +148,11 @@ recorded file is missing or not executable, the Stop names it and the
 command to run once that build is restored, quoted so that POSIX shells and
 Nushell run it as printed; a path that no quoting suits in both gets one
 command for sh and one for Nushell. Each generation records its own
-build's `eon`, and `eon generations` lists it as the executable of a generation
-this `eon` cannot present. `eon attach GENERATION` and `eon window attach ID`
-present such a generation by running that build's `eon`. Generations started
-before Eon recorded it need that build's `eon` by hand.
+build's `eon`, and `eon window ls --json` lists it as the `executable` of a
+window this `eon` cannot present. `eon attach GENERATION` and
+`eon window attach ID` present such a generation by running that build's
+`eon`. Generations started before Eon recorded it need that build's `eon` by
+hand.
 The runtime extraction changes the component graph and selects a new generation.
 Reattach earlier work with its retained exact Eon or eonbase executable.
 `previous` attempts every non-dead generation except the exact current
@@ -367,7 +369,7 @@ way, the same Yazi stays as the tab's Files.
 
 Commands lists Eon commands you can search and run: new tab, pane or
 window, close or move the tab, quit this window, switch, create, rename or
-close a workspace, show the workspace, windows, generations, versions or config
+close a workspace, show the workspace, windows, versions or config
 path, stop older generations, and command help. Each line shows the `eon`
 command it runs. Enter runs it from the popup
 for that tab, with the command's own checks and confirmations. New pane
@@ -494,14 +496,13 @@ line points agents to `eon --skill`.
 | `eon anima [STYLE] [CHILD OPTIONS...]` | Run pinned Anima in the caller's terminal without starting a workspace; `--help` lists styles and options |
 | `eon run [-- COMMAND...]` | Start a fresh workspace on quick search, optionally for an exact first command |
 | `eon window new` | Open an independent Eon window and print its window ID |
-| `eon windows [--json]` | List independent windows and their running generations, or that a window has ended, with each live generation's name, start time and busy terminals (`busy` in JSON) |
-| `eon window attach ID` | Present one window's live generation after detach, through the Eon build that started it when needed |
-| `eon window stop ID [--json]` | Stop only the selected window's terminals |
+| `eon window ls [--json]` | List every running window, the default window first: its ID (shortest unique prefix in text), name, Eon version, start time, live terminals and whether this `eon` controls it directly. Each window this `eon` cannot stop gets a line saying why. JSON adds the full `id`, `current`, `generation`, `state`, `busy`, `attach`, `stop` and `executable` |
+| `eon window attach [ID]` | Present a window after detach (no ID: `default`), through the Eon build that started it when needed |
+| `eon window stop ID [--json]` | Stop only the selected window's terminals; `--json` prints `[{"window": ID, "results": [...]}]` |
 | `eon window stop all [--json]` | Attempt Stop in every independent window |
 | `eon quit [--json]` | Quit the window of the calling terminal, stopping its terminals; it asks first only while another terminal of the window runs something other than its idle shell, and names those terminals (the Files and Git popups never count; the Agent popup does); outside Eon, quit the only running window, or list the running windows and stop nothing when several run |
 | `eon quit --all [--json]` | Attempt Stop in the default window and in every independent window, the caller's window last, asking for each window as `eon quit` does |
 | `eon attach [GENERATION]` | Present the current or one selected compatible generation |
-| `eon generations [--json]` | List validated current and older generations, with each live one's window name, start time and busy terminals (`busy` in JSON) |
 | `eon stop GENERATION [--json]` | Stop one generation through its supervisor |
 | `eon stop previous [--json]` | Attempt every other non-dead generation |
 | `eon stop all [--json]` | Attempt every non-dead generation, including current |
@@ -533,6 +534,16 @@ line points agents to `eon --skill`.
 | `eon config-dir` | Create and print the configuration root |
 | `eon config defaults [--json]` | Print built-in defaults as commented TOML or a nested JSON object, without reading user configuration |
 | `eon --skill` | Print the `eon` agent skill this build ships, without starting a workspace or reading configuration |
+
+Window IDs: `default` is the window bare `eon` opens. One that another Eon build
+opened that way, such as the old build's window after an upgrade, has the 32 hex
+digits of its generation as its ID, and an independent window has the ID
+`eon window new` printed. `eon window attach` and `eon window stop` take a full
+ID or any prefix of at least 4 characters. An exact ID wins; otherwise the
+prefix must start exactly one running window's ID. A prefix that starts several
+exits 3 and lists them, and one that starts none exits 3 too. Text output shows
+each ID as its shortest unique prefix; scripts should keep the full `id` from
+`eon window ls --json`, since a short prefix can become ambiguous later.
 
 A window holds one or more workspaces and shows one at a time; hidden
 workspaces keep their terminals running. WS is a workspace ID (`w1`, `w2`, ...),
@@ -802,7 +813,7 @@ with `codex --no-daemon`.
 | 0 | Success, including a Stop or close confirmation declined at a terminal |
 | 1 | The command was understood but refused or failed, including a confirmation that got no yes when stdin is not a terminal |
 | 2 | Invalid command or arguments, such as a malformed tab or generation ID |
-| 3 | The named tab, pane, terminal, popup, generation or window was not found |
+| 3 | The named tab, pane, terminal, popup, generation or window was not found, or a window ID prefix matched several windows |
 | 4 | The supervisor is not running or did not answer; outside Eon, run `eon` first |
 | 5 | `pane send` refused because a person is typing; nothing was sent |
 | 130 | Interrupted with Ctrl+C |
@@ -989,7 +1000,7 @@ composition.
   environment is outside the supported boundary.
 
 Report reproducible failures in [GitHub Issues](https://github.com/Yazelix/eon/issues/new?template=bug_report.yml).
-Include `eon versions`, the relevant generation from `eon generations`, your
+Include `eon versions`, the relevant window from `eon window ls --json`, your
 distribution, compositor, GPU, and the exact command and error. Remove paths,
 environment values, terminal content, and credentials that should remain
 private.
