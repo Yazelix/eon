@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+- VEN-C21: the clock in the bottom shortcut hints is plain text in the version
+  label's colour, with no outline, its inset mirroring the version's; the
+  keycap hover popup has no title row
+  (`eon-e3a1z.3`). No wire change.
 - VEN-C21: the clock moves from the header to the left end of the bottom
   shortcut hints, which hide it with them (`eon-e3a1z.2`). No wire change.
 - VEN-C21: the version label moves from the header to the right end of the

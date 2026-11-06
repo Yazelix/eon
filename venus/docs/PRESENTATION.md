@@ -126,10 +126,12 @@ order, selection, and popups; Venus draws the visible scene.
 - The clock shows local 24-hour `HH:MM` and changes within a second of each
   minute; after suspend or a system clock change it corrects within a minute.
   It sits at the left end of the bottom shortcut hints, one padding from the
-  window edge, in a widget outline as tall as the tab pills and centred on the
-  hints' line, five cells of terminal monospace wide so it never shifts the
-  keycaps; it hides with the hints, and in windows too narrow for it beside
-  their keycaps once the version has hidden. Its hover opens above it.
+  window edge, as plain text in the version label's terminal monospace and
+  softened cyan, with no outline, on the version's row, as far from the left
+  edge as the version ends from the right; it is five cells of terminal
+  monospace wide so it never shifts the keycaps; it hides with the hints, and
+  in windows too narrow for it beside their keycaps once the version has
+  hidden. Its hover opens above it.
   Accessibility names the time, date and UTC offset, such as `Local time 14:05,
   Wednesday 21 October 2026, UTC−03:00`; hover lists the date then the offset,
   `Wednesday 21 October 2026` and `UTC−03:00`. When the local time zone

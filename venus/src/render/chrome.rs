@@ -88,10 +88,10 @@ fn tooltip_rect(
     }
 }
 
-/// The rows of a keycap's popup with room for `lines` lines, its title among them: every hint,
-/// or as many as fit before a last row that points at full help. None without room for a row.
+/// The rows of a keycap's popup with room for `lines` lines: every hint, or as many as fit
+/// before a last row that points at full help. None without room for a row.
 fn hint_popup_rows(group: &ShortcutHintGroup, lines: f32) -> Option<Vec<(&str, &str)>> {
-    if !lines.is_finite() || lines < 2.0 {
+    if !lines.is_finite() || lines < 1.0 {
         return None;
     }
     let lines = lines as usize;
@@ -100,8 +100,8 @@ fn hint_popup_rows(group: &ShortcutHintGroup, lines: f32) -> Option<Vec<(&str, &
         .iter()
         .map(|(key, description)| (key.as_str(), description.as_str()))
         .collect::<Vec<_>>();
-    if rows.len() >= lines {
-        rows.truncate(lines - 2);
+    if rows.len() > lines {
+        rows.truncate(lines - 1);
         rows.push(HINT_POPUP_MORE);
     }
     Some(rows)
@@ -1197,8 +1197,8 @@ impl Renderer {
         )
     }
 
-    /// Lists a hovered keycap's hints above it: a title row with the group's full names, then
-    /// each hint's keys and what they do. Rows that do not fit give way to a pointer at full help.
+    /// Lists a hovered keycap's hints above it: each hint's keys and what they do. Rows that do
+    /// not fit give way to a pointer at full help.
     fn build_hint_popup(
         &mut self,
         workspace: &WorkspaceScene,
@@ -1217,27 +1217,16 @@ impl Renderer {
             return;
         }
         let mut measure = |text: &str| self.measure_header_text(text).1.ceil();
-        let title = measure(&group.name);
         let keys = rows.iter().map(|(key, _)| measure(key)).fold(0.0, f32::max);
         let descriptions = rows
             .iter()
             .map(|(_, description)| measure(description))
             .fold(0.0, f32::max);
-        let content = title.max(keys + padding + descriptions);
-        let width = (content + padding * 2.0).min(room);
+        let width = (keys + padding + descriptions + padding * 2.0).min(room);
         let inner = width - padding * 2.0;
         let first = self.text.len();
-        self.push_text(
-            &group.name,
-            padding,
-            padding,
-            inner,
-            line,
-            palette::HINT_MODIFIER_TEXT,
-            DrawStyleKind::Status(Wrap::None),
-        );
         for (index, (key, description)) in rows.iter().enumerate() {
-            let top = padding + line * (index + 1) as f32;
+            let top = padding + line * index as f32;
             self.push_text(
                 key,
                 padding,
@@ -1260,7 +1249,7 @@ impl Renderer {
         self.place_tooltip(
             first,
             width,
-            line * (rows.len() + 1) as f32 + padding * 2.0,
+            line * rows.len() as f32 + padding * 2.0,
             group.rect.left,
             edge,
             rectangles,
@@ -1571,28 +1560,6 @@ impl Renderer {
             rectangles.clip = None;
         }
         if let Some(hints) = &workspace.hints {
-            // The clock keeps its widget outline at the hints' left end, its time centred in it.
-            if let Some(clock) = &workspace.clock {
-                push_bar_widget(
-                    rectangles,
-                    clock.rect,
-                    self.border_width,
-                    self.metrics.scale,
-                );
-                let width = (clock.rect.width - self.metrics.padding * 2.0).max(0.0);
-                let slack = (width - clock.label.len() as f32 * self.metrics.width).max(0.0);
-                self.push_text_clipped(
-                    &clock.label,
-                    clock.rect.left + self.metrics.padding + slack / 2.0,
-                    clock.rect.top + (clock.rect.height - self.metrics.height).max(0.0) / 2.0,
-                    width,
-                    width,
-                    self.metrics.height.min(clock.rect.height),
-                    palette::SECONDARY_TEXT,
-                    DrawStyleKind::Monospace,
-                    clock.rect,
-                );
-            }
             // The hints sit bare in the margin below the cards; only keycaps have a fill.
             let padding = self.metrics.padding;
             for (index, group) in hints.groups.iter().enumerate() {
@@ -1646,20 +1613,21 @@ impl Renderer {
                     );
                 }
             }
-            // The version label stays plain text, at the hints' right end.
-            if let Some(version) = &workspace.version {
+            // The clock and the version label are plain text in one colour at the hints' two
+            // ends, each one padding from the window edge.
+            for label in [&workspace.clock, &workspace.version].into_iter().flatten() {
                 self.push_text_clipped(
-                    &version.label,
-                    version.rect.left,
-                    version.rect.top,
-                    version.rect.width,
-                    version.rect.width,
-                    version.rect.height,
+                    &label.label,
+                    label.rect.left,
+                    label.rect.top,
+                    label.rect.width,
+                    label.rect.width,
+                    label.rect.height,
                     palette::VERSION_TEXT,
                     DrawStyleKind::Monospace,
                     SceneRect {
-                        left: version.rect.left,
-                        width: version.rect.width,
+                        left: label.rect.left,
+                        width: label.rect.width,
                         ..hints.rect
                     },
                 );
@@ -2269,7 +2237,12 @@ mod tests {
         let measure = |text: &str| text.chars().count() as f32 * metrics.width;
         let line = chrome_title_metrics(metrics).line_height;
         let padding = metrics.padding;
-        for (width, height, cut) in [(1280, 800, false), (400, 300, true)] {
+        for (width, height, cut) in [
+            (1280, 800, false),
+            (800, 600, false),
+            (400, 300, true),
+            (330, 300, true),
+        ] {
             let size = PhysicalSize::new(width, height);
             let workspace = WorkspaceScene::from_snapshot_with_bar(
                 &snapshot,
@@ -2296,7 +2269,7 @@ mod tests {
                 let edge = TooltipEdge::Above(footer.rect.top - padding / 3.0);
                 let (room, tall) = tooltip_room(size, metrics, &workspace, edge);
                 let rows = hint_popup_rows(group, (tall - padding * 2.0) / line).unwrap();
-                let popup_height = line * (rows.len() + 1) as f32 + padding * 2.0;
+                let popup_height = line * rows.len() as f32 + padding * 2.0;
                 // Wider than the window, so the clamp keeps it inside.
                 let popup_width = room;
                 let popup = tooltip_rect(
@@ -2321,7 +2294,7 @@ mod tests {
                 if !cut_here {
                     assert_eq!(rows.len(), group.rows.len());
                 }
-                assert!(rows.len() < group.rows.len() + usize::from(cut_here) + 1);
+                assert!(rows.len() <= group.rows.len());
             }
             // The version's tooltip opens above it; a header item's below the header.
             let version = workspace.version.as_ref().unwrap();
@@ -2343,10 +2316,23 @@ mod tests {
             rows: vec![("M".into(), "Create pane".into())],
             accessible_label: String::new(),
         };
-        assert_eq!(hint_popup_rows(&group, 1.9), None);
+        assert_eq!(hint_popup_rows(&group, 0.9), None);
         assert_eq!(
-            hint_popup_rows(&group, 2.0),
+            hint_popup_rows(&group, 1.0),
             Some(vec![("M", "Create pane")])
+        );
+        // Without room for every row, the last line points at full help.
+        let two = ShortcutHintGroup {
+            rows: vec![
+                ("M".into(), "Create pane".into()),
+                ("T".into(), "Create tab".into()),
+            ],
+            ..group.clone()
+        };
+        assert_eq!(hint_popup_rows(&two, 1.0), Some(vec![HINT_POPUP_MORE]));
+        assert_eq!(
+            hint_popup_rows(&two, 2.0),
+            Some(vec![("M", "Create pane"), ("T", "Create tab")])
         );
         assert_eq!(hint_popup_rows(&group, f32::NAN), None);
     }

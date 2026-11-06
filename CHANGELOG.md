@@ -5,8 +5,13 @@ installation, and proven contract changes.
 
 ## Unreleased
 
+- The bottom hints bar's clock drops its outline and shows as plain text in the
+  version label's softened cyan, as far from the left edge as the version is
+  from the right, so the two match at the bar's ends. A keycap's
+  hover popup no longer repeats the keycap's name above its keys
+  (`eon-e3a1z.3`, VEN-C21).
 - The clock moves from the Eon Bar to the left end of the bottom hints bar,
-  keeping its outline, format and hover, which now opens above it. It hides
+  keeping its format and hover, which now opens above it. It hides
   with the bar (Alt+Shift+B), and in narrow windows after the version label,
   before any hint drops. The Eon Bar's quota chips and CPU, RAM and disk readings get
   its room; narrow windows now hide the Eon logo, then disk, RAM and CPU, then

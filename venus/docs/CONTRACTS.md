@@ -1482,7 +1482,11 @@ re-proved when that platform or feature is next touched.
 - **Status:** Proven. Amended on 2026-11-06 (approved by Lucca, "B", relayed by
   eon-overseer) by `eon-e3a1z.1`: the version label moves to the bottom hints bar's right
   end. Amended on 2026-11-06 (approved by Lucca, "lets do it", relayed by eon-overseer)
-  by `eon-e3a1z.2`: the clock moves to the bottom hints bar's left end.
+  by `eon-e3a1z.2`: the clock moves to the bottom hints bar's left end. Amended on
+  2026-11-06 (approved by Lucca, "no outline for the clock", relayed by eon-overseer)
+  by `eon-e3a1z.3`: the clock is plain text in the version label's colour. Amended on
+  2026-11-06 (eon-overseer's decision, under Lucca's "your decision") by `eon-e3a1z.3`:
+  the clock's inset mirrors the version's.
 - **Consumer:** One person using a Venus surface controlled by a full Eon
   workspace.
 - **Trigger:** The person points at, focuses, or activates the workspace header;
@@ -1494,8 +1498,9 @@ re-proved when that platform or feature is next touched.
   allocated card areas start below them so that the space between the pills and the tops of the card
   titles' capital letters equals the space above the pills. The widgets draw no fill: each is a
   rounded outline at the pane cards' neutral border width and outline color, with its text and icons on the opaque bar
-  background. The version label stays plain text. Keyboard shortcuts is a round outlined button as
-  tall as the tab pills, with its glyph's ink centred in the circle, and New tab, Keyboard
+  background. The clock and the version label are plain text in one colour.
+  Keyboard shortcuts is a round outlined button as tall as the tab pills, with
+  its glyph's ink centred in the circle, and New tab, Keyboard
   shortcuts and Close centre on the same line. The decorative Eon icon, when Eon supplies one,
   leads the bar before the workspace label and tabs, two logical pixels shorter than the tab pills
   and centred on them, with no action, hover or accessible node. It shows only while the bar
@@ -1649,6 +1654,14 @@ re-proved when that platform or feature is next touched.
     `local_clock_names_minute_date_and_offset` and
     `eon_orders_and_omits_bar_items`; the isolated installed observation
     recorded in `eon-e3a1z.2`.
+  - **Plain clock and title-less popup (`eon-e3a1z.3`):**
+    `hint_popup_sits_above_its_keycap_inside_the_window` updated to the
+    title-less popup at 1280, 800, 400 and 330 pixels;
+    `footer_centres_full_name_keycaps_and_keeps_the_version_clear` checks the
+    clock's mirrored inset and row, and
+    `local_clock_leads_the_bottom_bar_and_has_no_actions` its text-wide rect;
+    the clock and version share one draw call; the isolated
+    installed observation recorded in `eon-e3a1z.3`.
   - **Workspace label (`eon-workspace-switching-shn4.7`):** added checks
     `workspace_label_leads_the_tabs_and_opens_the_picker`,
     `eon_bar_controls_reuse_existing_actions_and_local_viewer` and

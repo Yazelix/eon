@@ -1560,7 +1560,7 @@ mod tests {
                         };
                         let size =
                             PhysicalSize::new((logical_width as f32 * metrics.scale) as u32, 600);
-                        let clock_width = 5.0 * metrics.width + metrics.padding * 2.0;
+                        let clock_width = 5.0 * metrics.width;
                         // One keycap; the clock's room while it is listed and the hints show.
                         let project = |clock: Option<&crate::LocalClock>, hints: bool| {
                             let footer = hints.then(|| {

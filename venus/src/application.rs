@@ -2030,14 +2030,11 @@ impl Application {
                     .map(|version| {
                         format!("EON {version}").len() as f32 * state.renderer.metrics().width
                     }),
-                // The clock's `HH:MM` is drawn in cells too, inside its outline's padding.
+                // The clock's `HH:MM` is drawn in cells too.
                 self.clock
                     .as_ref()
                     .filter(|_| self.bar_items.contains(&BarItem::Clock))
-                    .map(|_| {
-                        let metrics = state.renderer.metrics();
-                        "00:00".len() as f32 * metrics.width + metrics.padding * 2.0
-                    }),
+                    .map(|_| "00:00".len() as f32 * state.renderer.metrics().width),
                 |text| state.renderer.measure_header_text(text).1,
             )
         });

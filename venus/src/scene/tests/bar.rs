@@ -541,8 +541,8 @@ fn sweep_footer(
         );
         let width = width as f32;
         let (start, end) = (padding, width - padding);
-        // The clock sits at the start, as tall as the tab pills within the bar, centred on the
-        // keycaps' line; the cluster keeps one padding after it.
+        // The clock's text sits at the start, on the version's row and centred on the keycaps'
+        // line; the cluster keeps one padding after it.
         let low = scene.clock.map_or(start, |rect| rect.right() + padding);
         if let Some(rect) = scene.clock {
             assert_eq!(rect.left, start);
@@ -694,12 +694,12 @@ fn sweep_footer(
 #[test]
 fn footer_centres_full_name_keycaps_and_keeps_the_version_clear() {
     let hints = default_like_hints();
-    // As the application measures it: `HH:MM` in cells, inside its outline's padding. Without
-    // a clock no step keeps one; with it every step shows.
+    // As the application measures it: `HH:MM` in cells. Without a clock no step keeps one;
+    // with it every step shows.
     let clocks = |metrics: CellMetrics| {
         [
             (None, [true, true, false, true, true, true]),
-            (Some(5.0 * metrics.width + metrics.padding * 2.0), [true; 6]),
+            (Some(5.0 * metrics.width), [true; 6]),
         ]
     };
     for scale in [1.0, 2.0] {
@@ -738,6 +738,13 @@ fn footer_centres_full_name_keycaps_and_keeps_the_version_clear() {
             let right = scene.pieces.last().unwrap().rect.right();
             assert!(scene.complete);
             assert!(((left + right) / 2.0 - 640.0 * scale as f32).abs() < 0.5);
+            // The clock's text starts as far from the left edge as the version's ends from the
+            // right, on the same row.
+            if let Some(clock) = scene.clock {
+                let version = scene.version.unwrap();
+                assert_eq!(clock.left, 1280.0 * scale as f32 - version.right());
+                assert_eq!((clock.top, clock.height), (version.top, version.height));
+            }
         }
         // With the terminal focused (keycaps only), at the widths the bead names: 1280 and 800
         // show the clock, the centred full names and the version; 400 keeps the full names
@@ -759,7 +766,7 @@ fn footer_centres_full_name_keycaps_and_keeps_the_version_clear() {
                 PhysicalSize::new(width, (800.0 * scale) as u32),
                 metrics,
                 Some("EON 0.1.18".len() as f32 * metrics.width),
-                Some(5.0 * metrics.width + metrics.padding * 2.0),
+                Some(5.0 * metrics.width),
                 |text| fonts.measure_header_text(metrics, text),
             );
             assert_eq!(scene.clock.is_some(), shown, "{logical} at {scale}");

@@ -255,9 +255,10 @@ They turn orange or red when the machine is under load or the disk fills up, at
 the levels [`[bar]`](CONFIGURATION.md#configuration-behavior) sets, which also
 chooses the path the disk chip measures.
 A reading that can't be taken shows no label rather than 0%. A 24-hour clock
-showing local time sits at the left end of the bottom hints bar and hides with
-it; hover it for the date and UTC offset, and it stays hidden if the local time
-zone can't be determined. The `EON <version>` label, in
+showing local time sits at the left end of the bottom hints bar, as plain text
+in the version label's softened cyan, and hides with it; hover it for the date
+and UTC offset, and it stays hidden if the local time zone can't be
+determined. The `EON <version>` label, in
 softened cyan, sits at the right end of the bottom hints bar and hides with it;
 it names the running supervisor, so updating the installation doesn't change
 it, and its hover opens above it. The Eon logo leads the bar, before the tabs.
@@ -289,8 +290,8 @@ focus. Each set of modifiers shows as one keycap, named in full: `Alt`,
 window. Keys without modifiers follow them, written out: `Escape terminal`, and
 the arrows while the tabs, panes or agent sidebar have focus; while the
 attention inbox is open, the cluster is only the inbox's own keys. Pointing at
-a keycap opens a popup above it: its title is the keycap's name, then one row
-per key, with what the key does as full help says it. The popup never takes
+a keycap opens a popup above it with one row per key, with what the key does
+as full help says it; the keycap below already names the modifiers. The popup never takes
 focus. Escape or a click closes it until the pointer leaves the keycap; Escape
 still does what it always does, and a click on a keycap does nothing else. A
 popup with more keys than the window has room for ends with `Alt+/ lists all`. Narrow windows give way in

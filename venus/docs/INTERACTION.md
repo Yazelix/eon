@@ -144,16 +144,18 @@ cluster centred on the window's centre line, one padding apart; keys without
 modifiers follow inside the cluster, written out (`Escape terminal`, and the
 arrows while the tabs, panes or sidebar have focus). While the attention inbox
 is open, the cluster is only its keys. The clock sits at the bar's left end
-and `EON <version>` at its right end, each one padding from the window edge,
+and `EON <version>` at its right end, each one padding from the window edge
+and both plain text in the version's softened cyan,
 while `clock` and `version` are in `[bar] widgets`; they hide with the bar,
 and their tooltips open above them. Neither takes focus or acts on a press.
 
 Pointing at a keycap fills it with the chrome highlight and opens a popup above
 it, inside Venus's own surface: its left edge at the keycap's, kept inside the
-window, and its bottom a third of a padding above the bar. Its title row is the
-keycap's full name; then one row per hint in bar order, the keys in mint and
-what they do, as full help says it, in white. It is never taller than the room
-between the header and the bar; when rows are cut, its last row reads `Alt+/
+window, and its bottom a third of a padding above the bar. It has no title,
+since the keycap below names its modifiers: one row per hint in bar order, the
+keys in mint and what they do, as full help says it, in white. It is never
+taller than the room between the header and the bar; when rows are cut, its
+last row reads `Alt+/
 lists all`. The popup never takes keyboard focus or changes terminal focus, and
 a press on a keycap or the version does nothing else. Escape or a pointer press
 hides the popup until the pointer leaves that keycap's hover band, as a tooltip

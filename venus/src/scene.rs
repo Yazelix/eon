@@ -907,7 +907,7 @@ pub(crate) struct ShortcutHintPiece {
 pub struct ShortcutHintsScene {
     pub rect: SceneRect,
     pub complete: bool,
-    /// The local clock's outline, while it shows.
+    /// The local clock's text rect, while it shows.
     pub(crate) clock: Option<SceneRect>,
     pub(crate) groups: Vec<ShortcutHintGroup>,
     pub(crate) pieces: Vec<ShortcutHintPiece>,
@@ -1105,8 +1105,6 @@ impl ShortcutHintsScene {
                 piece
             })
             .collect::<Vec<_>>();
-        // The clock is as tall as the tab pills, within the band, and centres on the hint line.
-        let pill = nominal_pill_height(metrics).min(frame.height);
         Self {
             rect: frame,
             complete: total > 0
@@ -1117,9 +1115,8 @@ impl ShortcutHintsScene {
                 && clock_shown == clock.is_some(),
             clock: clock.filter(|_| clock_shown).map(|width| SceneRect {
                 left: start,
-                top: row.top + (row.height - pill) / 2.0,
                 width,
-                height: pill,
+                ..row
             }),
             groups,
             pieces,
