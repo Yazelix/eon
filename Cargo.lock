@@ -765,6 +765,10 @@ dependencies = [
 ]
 
 [[package]]
+name = "eon-bench"
+version = "0.1.0"
+
+[[package]]
 name = "eon-manifest"
 version = "0.1.0"
 dependencies = [

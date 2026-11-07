@@ -1034,6 +1034,19 @@
               wrapProgram "$out/bin/mac-proof" --prefix PATH : ${lib.makeBinPath [ pkgs.git pkgs.gnutar ]}
             '';
           };
+          # The benchmark harness (docs/DEVELOPMENT.md), a development tool
+          # outside Eon's closure. eon-test runs its tests.
+          benchPackage = pkgs.rustPlatform.buildRustPackage {
+            pname = "eon-bench";
+            inherit ((builtins.fromTOML (builtins.readFile ./eon/tools/eon-bench/Cargo.toml)).package) version;
+            src = crateSource;
+            cargoLock = workspaceCargoLock;
+            cargoBuildFlags = [
+              "--package"
+              "eon-bench"
+            ];
+            doCheck = false;
+          };
           bundleRelink = import ./nix/bundle-relink.nix {
             inherit pkgs eonPackage wrapperArgs;
             wrappers = [
@@ -1101,6 +1114,7 @@
           packages.${system} = {
             default = eonPackage;
             eonbase = eonbasePackage;
+            bench = benchPackage;
             helix-grammar-sources = helix.packages.${system}.grammar-sources;
           } // lib.optionalAttrs pkgs.stdenv.isLinux rec {
             installer = import ./nix/installer.nix { inherit pkgs; };
@@ -1123,6 +1137,10 @@
             eonbase = {
               type = "app";
               program = "${eonbasePackage}/bin/eonbase";
+            };
+            bench = {
+              type = "app";
+              program = "${benchPackage}/bin/eon-bench";
             };
             mac-proof = {
               type = "app";

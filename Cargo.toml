@@ -9,6 +9,7 @@ members = [
     "eon/crates/eon",
     "eon/crates/eon-manifest",
     "eon/tools/mac-proof",
+    "eon/tools/eon-bench",
 ]
 resolver = "3"
 

@@ -190,6 +190,21 @@ stops the check; a rerun starts over, and leftovers may need
 `eon window stop all` with the private runtime environment recorded in
 `manual/final.log`.
 
+## Benchmark harness
+
+`nix run .#bench -- <suite> --out DIR` runs a suite of `eon-bench`
+(`eon/tools/eon-bench`), a std-only development tool outside Eon's closure;
+`eon-test` runs its tests. Its only suite, `corpus`, writes the benchmark
+corpora to `DIR/<id>.vt` with a `DIR/SHA256SUMS` that `sha256sum -c` checks:
+`ascii`, `styled-light`, `styled-heavy`, `unicode` and `cursor` (16 MiB each)
+and `cat64` (64 MiB of the `ascii` generator). Each is generated from a fixed
+seed, ends on a whole line or escape sequence, uses CRLF line ends (a PTY's
+ONLCR delivers them as CR CR LF), and must match the length and SHA-256
+recorded in `src/corpus.rs`; the run fails otherwise. `cursor` addresses an
+80x24 grid. `--only ID` writes one corpus, and `eon-bench corpus --help` lists
+them with their hashes. Corpus files are outputs; keep them out of the
+repository.
+
 ## Sources of truth
 
 - [`docs/ARCHITECTURE.md`](ARCHITECTURE.md) — naming, ownership, and sequencing;
