@@ -981,7 +981,10 @@ re-proved when that platform or feature is next touched.
   t2 became active still names t1 and p1; no automated test drives
   `send_close`. Command+Q on macOS (`eon-7cf0y.15`): the key predicate and
   the viewer row by `quit_key_lists_hints_and_yields_to_a_popup`; the native
-  key path awaits the mac-proof `quit` step. Pending
+  key path by the mac-proof `quit` step in run 42333827154 (code tree
+  `da49b40`, aarch64 macOS GitHub runner): with a command running, Command+Q
+  asks and Escape keeps Venus, the supervisor and every terminal; Command+Q
+  then Return quits; with an idle shell, Command+Q quits without asking. Pending
   re-proof in this repository: the ignored native long-label header regression and reader
   announcement of a workspace failure notice.
 

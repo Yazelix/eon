@@ -445,8 +445,7 @@ names its socket. JSON fields and protocol identifiers retain their spellings.
   behavior remain unproved. Machine-restart recovery is not supported.
   On Apple Silicon, a physical Retina panel, a second display, input methods,
   the agent sidebar with Claude Code and Command+C to another app are
-  unobserved, as are VEN-C16's open items. Command+Q closes Venus without
-  Eon's Quit prompt until `eon-7cf0y.15` lands.
+  unobserved, as are VEN-C16's open items.
   `eon-prove-full-eon-apple-silicon-macos-t8o` owns the full-Eon proof and
   full macOS support, and compile/evaluation is insufficient.
 
