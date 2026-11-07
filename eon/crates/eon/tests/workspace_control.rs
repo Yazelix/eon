@@ -1197,10 +1197,13 @@ fn endpoint_identity(path: &Path) -> EndpointIdentity {
     }
 }
 
+/// Writes `message` to a management client. A client that went away, as a
+/// supervisor killed mid-request does, shows on the next read, which releases
+/// its lease as a real Orbit does.
 fn write_management(stream: &mut UnixStream, message: ManagementServerMessage) {
     let bytes = management::encode_server_message(&message).unwrap();
     stream.set_nonblocking(false).unwrap();
-    stream.write_all(&bytes).unwrap();
+    let _ = stream.write_all(&bytes);
     stream.set_nonblocking(true).unwrap();
 }
 
@@ -1379,7 +1382,12 @@ fn managed_orbit_helper() {
                     client = Some((stream, Vec::new(), false));
                 }
             }
-            Err(error) if error.kind() == std::io::ErrorKind::WouldBlock => {}
+            // macOS reports a client that left before its accept.
+            Err(error)
+                if matches!(
+                    error.kind(),
+                    std::io::ErrorKind::WouldBlock | std::io::ErrorKind::ConnectionAborted
+                ) => {}
             Err(error) => panic!("cannot accept management client: {error}"),
         }
 
@@ -2731,9 +2739,14 @@ impl QuickSearch {
                         continue;
                     };
                     stream.set_nonblocking(false).unwrap();
-                    stream
+                    // macOS refuses the timeout on a connection whose peer
+                    // already closed, as a probe's may have.
+                    if stream
                         .set_read_timeout(Some(Duration::from_millis(500)))
-                        .unwrap();
+                        .is_err()
+                    {
+                        continue;
+                    }
                     let mut request = Vec::new();
                     let mut buffer = [0; 256];
                     // A probe connects and closes without a request.
@@ -3630,9 +3643,9 @@ fn a_stalled_subscriber_never_delays_requests_another_subscriber_or_stop() {
     let read_by_b = received_bytes.load(Ordering::Relaxed);
 
     // A reaches end of stream, having been held to its connection's buffer.
-    stalled
-        .set_read_timeout(Some(Duration::from_secs(10)))
-        .unwrap();
+    // macOS refuses the timeout once the supervisor has closed A's
+    // connection; its reads then end without waiting.
+    let _ = stalled.set_read_timeout(Some(Duration::from_secs(10)));
     let mut read_by_a = 0u64;
     let mut buffer = vec![0; 64 * 1024];
     loop {
@@ -13357,8 +13370,12 @@ fn pane_send_pastes_then_waits_for_enter_and_exits_by_failure() {
     // with nothing in it yet, as agents' shells give commands, an ended one, or
     // one read to its end, still sends Enter alone.
     let log = sent();
+    // Whether the last delayed write landed past the CLI's 100 ms wait, counted
+    // from before the spawn, so before the wait began.
+    let late = std::cell::Cell::new(false);
     let send_enter =
         |json: bool, stdin: Stdio, mut writer: Option<Box<dyn Write>>, delay: Option<Duration>| {
+            let spawned = Instant::now();
             let mut child = eon(&root)
                 .args(["pane", "send", "p1", "--enter"])
                 .args(json.then_some("--json"))
@@ -13369,7 +13386,14 @@ fn pane_send_pastes_then_waits_for_enter_and_exits_by_failure() {
                 .unwrap();
             if let (Some(writer), Some(delay)) = (&mut writer, delay) {
                 thread::sleep(delay);
-                writer.write_all(b"lost text").unwrap();
+                let wrote = writer.write_all(b"lost text");
+                let after = spawned.elapsed();
+                late.set(after >= Duration::from_millis(100));
+                // Eon gone before the wait's bound did not wait.
+                assert!(
+                    wrote.is_ok() || late.get(),
+                    "Eon ended within {after:?} of its start, inside the stdin wait: {wrote:?}"
+                );
             }
             wait_for_exit(&mut child);
             drop(writer);
@@ -13392,16 +13416,32 @@ fn pane_send_pastes_then_waits_for_enter_and_exits_by_failure() {
     };
     let file = root.join("piped-text");
     fs::write(&file, "lost text").unwrap();
+    let mut late_enters = 0;
     for json in [false, true] {
         let (written, mut writer) = pipe();
         writer.as_mut().unwrap().write_all(b"lost text").unwrap();
         drop(writer);
         let refused = [
             send_enter(json, written, None, None),
-            // Below the wait's bound, so only the wait sees these bytes.
+            // Below the wait's bound, so only the wait sees these bytes. A
+            // write a loaded machine delays past the bound proves nothing, so
+            // that run, which may have sent Enter, goes again.
             {
-                let (stdin, writer) = pipe();
-                send_enter(json, stdin, writer, Some(Duration::from_millis(30)))
+                let mut runs = 0;
+                loop {
+                    runs += 1;
+                    let (stdin, writer) = pipe();
+                    let output = send_enter(json, stdin, writer, Some(Duration::from_millis(30)));
+                    if !late.get() {
+                        break output;
+                    }
+                    assert!(runs < 5, "the write landed past the wait {runs} times");
+                    match output.status.code() {
+                        Some(0) => late_enters += 1,
+                        Some(2) => {}
+                        code => panic!("a run whose write came late exited {code:?}"),
+                    }
+                }
             },
             {
                 let (stdin, writer) = socket();
@@ -13427,6 +13467,7 @@ fn pane_send_pastes_then_waits_for_enter_and_exits_by_failure() {
             );
         }
     }
+    let log = log + &"session-1 Enter\n".repeat(late_enters);
     assert_eq!(sent(), log);
     let mut read = fs::File::open(&file).unwrap();
     read.read_to_end(&mut Vec::new()).unwrap();

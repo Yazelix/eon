@@ -910,21 +910,23 @@ mod tests {
             })
             .unwrap()
         };
-        // An 8 MiB reply, drained 64 KiB every 100 ms: whole, it would take
-        // about 13 s.
+        // An 8 MiB reply, drained 32 KiB every 20 ms: whole, it would take
+        // about 5 s. Reads that close together keep the reader well inside
+        // CLIENT_IO_TIMEOUT on a loaded machine, so only the deadline stops
+        // the reply.
         let full = history("a".repeat(8 * 1024 * 1024));
         let size = super::encode_response(&full).unwrap().len();
         let (stream, mut peer) = UnixStream::pair().unwrap();
         peer.write_all(&request("slow")).unwrap();
         let slow = thread::spawn(move || {
             let mut received = 0;
-            let mut chunk = vec![0; 64 * 1024];
+            let mut chunk = vec![0; 32 * 1024];
             loop {
                 match peer.read(&mut chunk) {
                     Ok(0) | Err(_) => return received,
                     Ok(read) => received += read,
                 }
-                thread::sleep(Duration::from_millis(100));
+                thread::sleep(Duration::from_millis(20));
             }
         });
         let start = Instant::now();
