@@ -94,9 +94,7 @@ fn cli_path(action: &Action) -> CliPath {
                 "eon-agent-parity-a9g0.6 adds column, sidebar and attention commands",
             );
         }
-        Action::Subscribe { .. } => {
-            return Exception("eon-ciwn.8 adds `eon events` and eon-ciwn.9 `eon pane wait`");
-        }
+        Action::Subscribe { .. } => return Lifecycle("events"),
         Action::ReadTerminal { target } => words(&["pane", "read", target]),
         Action::ReadTerminalHistory { target } => words(&["pane", "history", target]),
         Action::EditTerminalHistory { target } => words(&["pane", "history", target, "--edit"]),

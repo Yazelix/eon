@@ -8,6 +8,10 @@ installation, and proven contract changes.
 - The RAM chip's hover shows how much memory is in use next to the total, as
   `RAM` then `18.4 GiB used of 31.1 GiB`, and its accessible description says
   `RAM use 59%, 18.4 GiB of 31.1 GiB` (`eon-ram-tooltip-used-u532r`).
+- `eon events [--json]` subscribes to session, tab, pane, popup, attention,
+  queue and busy changes without polling (`eon-ciwn.8`, EON-C39). Repeatable
+  filters, resume cursors and overflow snapshots support agent consumers;
+  human output limits attention to state, app and name.
 - On macOS, `eon pane history` of a long history no longer risks failing as
   unavailable after 2 s: the supervisor read Orbit's answer in time that grew
   with the square of its size over macOS's 8 KiB socket pieces, and now reads

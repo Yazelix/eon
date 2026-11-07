@@ -1,3 +1,5 @@
+mod events;
+
 use super::{
     control::{
         ControlResponse, EndpointFailure, EndpointFailureKind, Error, failure, report_failure,
@@ -618,6 +620,12 @@ fn execute(inputs: &Inputs, arguments: Vec<OsString>) -> Result<i32, Error> {
     if let Some(result) = command_help(inputs.version, &arguments) {
         return result;
     }
+    if arguments.first().is_some_and(|word| word == "events")
+        || (arguments.first().is_some_and(|word| word == "--window")
+            && arguments.get(2).is_some_and(|word| word == "events"))
+    {
+        return events::execute(inputs, &arguments);
+    }
     if let Some((all, json)) = parse_quit_arguments(&arguments)? {
         return if all {
             windows::stop_windows(inputs, windows::Bulk::Quit, json)
@@ -817,6 +825,13 @@ const HELP_SECTIONS: &[(&str, &[(&str, &str)])] = &[
         &[
             ("session ls [--json]", "List this window's sessions"),
             ("session [--json]", "Inspect the session"),
+            ("events [--json]", "Subscribe to this window's events"),
+            (
+                "  --session SESSION --tab TAB --target ID",
+                "Repeatable filters (AND across,",
+            ),
+            ("  --kind KIND --state STATE", "OR within each flag)"),
+            ("  --after STREAM:SEQ", "Resume, or take a fresh snapshot"),
             (
                 "session new [--json] [--no-focus]",
                 "Add a session and show it",

@@ -1063,3 +1063,40 @@ clears it, and Escape cancels. Pins follow pane moves and survive presentation
 detach/reattach, but end with the pane or supervisor and are not recovered.
 `eon session --json` and action replies expose each pane's full `label` and
 nullable `pinned_name`, including panes without agent-attention records.
+
+## Subscribe to events
+
+`eon events --json` prints one NDJSON snapshot, then events, gaps and an end.
+It observes the whole window without moving focus. Use `--window ID` for an
+explicit window; `EON_TERMINAL` is validated as for other session commands.
+
+```sh
+eon events --json --tab t2 --kind attention --state needs-input
+eon events --json --session s1 --target p2
+eon events --json --after STREAM:SEQ
+```
+
+Repeat `--session`, `--tab`, `--target`, `--kind` or `--state`: values within
+one flag combine with OR, different flags with AND. Kinds are `session`, `tab`,
+`pane`, `popup`, `attention`, `queue` and `busy`. States use `needs-input`,
+`error`, `finished`, `working`, `background`, `idle` and `unavailable`.
+Attention matches its previous or current state. A target follows its terminal
+when a popup becomes a pane. Session selectors resolve once by ID or exact name.
+
+The first line gives `stream`, `seq`, `resumed`, `generation`, `window`, `caller`
+and state (`sessions`, `tabs`, `attention_queue`, `busy`). Save `STREAM:SEQ` to
+resume retained events; a successful resume has null state, otherwise a fresh
+snapshot. Sequence numbers advance before filtering, so skips are normal.
+A `gap` with reason `overflow` replaces state with its `snapshot`. Handle it
+before subsequent events. The retained log holds at most 1024 events / 8 MiB;
+pending events are bounded by 1 MiB. A subscriber stalled for 30 seconds closes.
+
+Human refusals go to stderr; JSON refusals go to stdout.
+Without `--json`, output is one human line per message; attention shows only
+state, app and name. JSON includes the full attention record, including untrusted
+title and message text. End reasons `ended` and `targets-gone` exit 0;
+`too-slow` exits 1 only when its complete end arrives, otherwise connection loss
+exits 4. Refusals exit 1 for `subscriber-limit` or `ambiguous-session`, 3 for
+missing/stale targets or callers; invalid arguments exit 2, unreachable or
+incompatible supervisors or other EONW failures exit 4; interrupt exits 130. Closed stdout exits 0.
+`eon pane wait` is planned under `eon-ciwn.9`.

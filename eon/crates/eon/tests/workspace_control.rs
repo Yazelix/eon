@@ -3496,6 +3496,213 @@ fn stop_result_covers_queued_operation_and_managed_cleanup() {
     fs::remove_dir_all(root).unwrap();
 }
 
+#[test]
+fn events_cli_streams_resumes_interrupts_and_exits_on_closed_stdout() {
+    let root = temporary_directory();
+    let runtime = root.join("runtime");
+    let config = root.join("config");
+    configure_mock_desktop(&config);
+    let stop = root.join("stop");
+    let orbit = root.join("orbit");
+    let venus = root.join("venus");
+    managed_orbit_executable(&orbit);
+    executable(&venus, "#!/bin/sh\ncat >/dev/null\n");
+    let binary = Path::new(env!("CARGO_BIN_EXE_eon"));
+    let mut supervisor = TestProcess {
+        child: eon_command(binary)
+            .arg("run")
+            .env("EON_RUNTIME_DIR", &runtime)
+            .env("EON_CONFIG_HOME", &config)
+            .env("EON_ORBIT", &orbit)
+            .env("EON_VENUS", &venus)
+            .env("EON_TEST_STOP", &stop)
+            .stdout(Stdio::null())
+            .stderr(Stdio::null())
+            .spawn()
+            .unwrap(),
+        stop: stop.clone(),
+    };
+    let generation = generation_runtime(&runtime);
+    wait_for_connection(&generation.join("eon.sock"));
+    let stream_command = || {
+        let mut command = eon_command(binary);
+        command
+            .args(["events", "--json", "--kind", "session", "--kind", "session"])
+            .env("EON_RUNTIME_DIR", &runtime)
+            .env("EON_CONFIG_HOME", &config);
+        command
+    };
+    let log = root.join("events");
+    let mut reader = TestProcess {
+        child: stream_command()
+            .stdout(fs::File::create(&log).unwrap())
+            .spawn()
+            .unwrap(),
+        stop: stop.clone(),
+    };
+    let first: serde_json::Value = serde_json::from_str(&wait_for_lines(&log, 1)[0]).unwrap();
+    assert_eq!(first["type"], "snapshot");
+    let filtered_log = root.join("filtered");
+    let mut filtered = TestProcess {
+        child: eon_command(binary)
+            .args(["events", "--json", "--tab", "t1", "--kind", "tab"])
+            .env("EON_RUNTIME_DIR", &runtime)
+            .env("EON_CONFIG_HOME", &config)
+            .stdout(fs::File::create(&filtered_log).unwrap())
+            .spawn()
+            .unwrap(),
+        stop: stop.clone(),
+    };
+    wait_for_lines(&filtered_log, 1);
+    // Creating t2 is excluded; the admitted t1 change is an ordered delivery barrier.
+    assert!(
+        invoke(
+            binary,
+            &runtime,
+            &config,
+            &[
+                "tab",
+                "create",
+                "--no-focus",
+                "--json",
+                "--directory",
+                root.to_str().unwrap()
+            ]
+        )
+        .status
+        .success()
+    );
+    assert!(
+        invoke(
+            binary,
+            &runtime,
+            &config,
+            &[
+                "tab",
+                "directory",
+                "t1",
+                "--json",
+                "--",
+                root.to_str().unwrap()
+            ]
+        )
+        .status
+        .success()
+    );
+    let filtered_lines = wait_for_lines(&filtered_log, 2);
+    assert_eq!(filtered_lines.len(), 2, "excluded tab produced a line");
+    let admitted: serde_json::Value = serde_json::from_str(&filtered_lines[1]).unwrap();
+    assert_eq!(admitted["event"], "tab-directory");
+    assert_eq!(admitted["tab"]["id"], "t1");
+    let created = invoke(
+        binary,
+        &runtime,
+        &config,
+        &[
+            "session",
+            "new",
+            "--no-focus",
+            "--name",
+            "event-proof",
+            "--json",
+        ],
+    );
+    assert!(created.status.success(), "{}", stdout(&created));
+    let lines = wait_for_lines(&log, 2);
+    let event: serde_json::Value = serde_json::from_str(&lines[1]).unwrap();
+    assert_eq!(event["event"], "session-created");
+    assert_eq!(event["session"]["name"], "event-proof");
+    let cursor = format!("{}:{}", first["stream"].as_str().unwrap(), first["seq"]);
+    let resumed_log = root.join("resumed");
+    let mut resumed = TestProcess {
+        child: stream_command()
+            .args(["--after", &cursor])
+            .stdout(fs::File::create(&resumed_log).unwrap())
+            .spawn()
+            .unwrap(),
+        stop: stop.clone(),
+    };
+    let replay = wait_for_lines(&resumed_log, 2);
+    let snapshot: serde_json::Value = serde_json::from_str(&replay[0]).unwrap();
+    assert_eq!(snapshot["resumed"], true);
+    assert_eq!(
+        serde_json::from_str::<serde_json::Value>(&replay[1]).unwrap(),
+        event
+    );
+    assert_eq!(
+        unsafe { libc::kill(resumed.child.id() as i32, libc::SIGINT) },
+        0
+    );
+    assert_eq!(wait_for_exit(&mut resumed.child).code(), Some(130));
+    let mut closed = TestProcess {
+        child: stream_command().stdout(Stdio::piped()).spawn().unwrap(),
+        stop: stop.clone(),
+    };
+    let mut pipe = closed.child.stdout.take().unwrap();
+    pipe.read_exact(&mut [0]).unwrap();
+    drop(pipe);
+    wait_for_successful_exit(&mut closed.child);
+    let refused = stream_command()
+        .env("EON_TERMINAL", "terminal-99999")
+        .output()
+        .unwrap();
+    assert_eq!(refused.status.code(), Some(3));
+    let human_refused = eon_command(binary)
+        .args(["events", "--target", "p9999"])
+        .env("EON_RUNTIME_DIR", &runtime)
+        .env("EON_CONFIG_HOME", &config)
+        .output()
+        .unwrap();
+    assert_eq!(human_refused.status.code(), Some(3));
+    assert!(human_refused.stdout.is_empty());
+    assert!(String::from_utf8_lossy(&human_refused.stderr).contains("p9999"));
+    let (closed_peer, closed_errors) = UnixStream::pair().unwrap();
+    drop(closed_peer);
+    let stderr_failed = eon_command(binary)
+        .arg("events")
+        .env("EON_TERMINAL", "!")
+        .stdout(Stdio::piped())
+        .stderr(Stdio::from(std::os::fd::OwnedFd::from(closed_errors)))
+        .output()
+        .unwrap();
+    assert_eq!(stderr_failed.status.code(), Some(3));
+    assert!(stderr_failed.stdout.is_empty());
+    let (closed_peer, closed_output) = UnixStream::pair().unwrap();
+    drop(closed_peer);
+    let closed_startup = TestProcess {
+        child: stream_command()
+            .env("EON_TERMINAL", "!")
+            .stdout(Stdio::from(std::os::fd::OwnedFd::from(closed_output)))
+            .stderr(Stdio::piped())
+            .spawn()
+            .unwrap(),
+        stop: stop.clone(),
+    };
+    let cancelled = closed_startup.wait_with_output().unwrap();
+    assert_eq!(cancelled.status.code(), Some(0));
+    assert!(cancelled.stderr.is_empty());
+    let invalid = stream_command().args(["--after", "bad"]).output().unwrap();
+    assert_eq!(invalid.status.code(), Some(2));
+    let stopped = invoke(
+        binary,
+        &runtime,
+        &config,
+        &["window", "stop", "default", "--json"],
+    );
+    assert!(stopped.status.success(), "{}", stdout(&stopped));
+    wait_for_successful_exit(&mut reader.child);
+    assert!(
+        fs::read_to_string(log)
+            .unwrap()
+            .contains("\"reason\":\"ended\"")
+    );
+    wait_for_successful_exit(&mut supervisor.child);
+    // Prevent the guards from recreating stop markers after removing the root.
+    wait_for_successful_exit(&mut filtered.child);
+    drop((reader, resumed, closed, filtered, supervisor));
+    fs::remove_dir_all(root).unwrap();
+}
+
 /// Connects and subscribes to every event of the window behind `socket`.
 fn subscription(socket: &Path, id: &str) -> UnixStream {
     let request = encode_request(&Request {

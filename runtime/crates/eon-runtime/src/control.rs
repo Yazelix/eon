@@ -845,7 +845,7 @@ const MISSING: u8 = 3;
 const UNREACHABLE: u8 = 4;
 const TYPING: u8 = 5;
 
-fn failure_status(code: &str) -> u8 {
+pub(super) fn failure_status(code: &str) -> u8 {
     match code {
         "invalid-tab" | "malformed-action" | "invalid-text" | "input-too-large"
         | "unread-stdin" => USAGE,

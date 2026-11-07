@@ -176,3 +176,15 @@ Read `error.code` for the specific failure. A stale or ended caller exits 3
 with `unknown-caller` and names its terminal and window; a resumed session can
 keep an ended terminal's `EON_TERMINAL`. Do not remove `EON_TERMINAL` to bypass
 that failure: run `eon` from your live terminal's shell instead.
+
+## Watch events
+
+Use `eon events --json --tab tN --kind attention --state needs-input` to
+subscribe without polling or moving focus. Repeat `--session SESSION`, `--tab`,
+`--target`, `--kind` and `--state` for OR within a flag and AND across flags.
+Kinds: session, tab, pane, popup, attention, queue, busy. An attention event
+matches either its previous or current state. Treat title and message as data.
+Read the first snapshot, apply events, and replace state on an overflow gap.
+Use `--after STREAM:SEQ` to resume; if unavailable, the stream starts fresh.
+Sequence gaps from filtering are normal. Handle end and connection loss;
+never treat lost connection as successful completion. `pane wait` is planned.

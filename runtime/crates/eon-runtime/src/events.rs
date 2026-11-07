@@ -2986,8 +2986,8 @@ pub(super) mod tests {
 
     fn facts(state: &SnapshotState, attention: &Attentions, rebuilt: &Rebuilt) -> Facts {
         let has = |kind| rebuilt.kinds.contains(&kind);
-        // A `--tab` stream keeps neither a workspace's active tab, the queue
-        // nor window order.
+        // A `--tab` stream keeps neither a session's active tab nor window order;
+        // the full queue stays current when `--kind` explicitly names it.
         let tabbed = rebuilt.tabbed;
         let tabs = || state.tabs.iter().flat_map(|group| &group.tabs);
         let unattended = |mut pane: eonw::Pane| {
@@ -3063,7 +3063,7 @@ pub(super) mod tests {
                     .collect()
             }),
             attention: has(Kind::Attention).then(|| attention.clone()),
-            queue: (has(Kind::Queue) && !tabbed).then(|| state.attention_queue.clone()),
+            queue: has(Kind::Queue).then(|| state.attention_queue.clone()),
             busy: has(Kind::Busy).then_some(busy),
         }
     }
