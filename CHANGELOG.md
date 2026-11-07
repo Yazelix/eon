@@ -5,9 +5,6 @@ installation, and proven contract changes.
 
 ## Unreleased
 
-- On macOS, `eon events` subscribers get the socket buffer they have on Linux
-  instead of macOS's 8 KiB, so a reader that keeps up no longer falls into a
-  gap when a burst of events arrives (`eon-mac-launch-kz4p.55`).
 - On macOS, Command+Q in an Eon window quits the window as Option+Shift+Q
   does, asking first while a terminal runs something, instead of only closing
   Venus and leaving the terminals running; Shortcuts lists it beside

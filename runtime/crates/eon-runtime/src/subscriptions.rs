@@ -187,8 +187,6 @@ impl Subscribers {
         if stream.set_nonblocking(true).is_err() {
             return;
         }
-        #[cfg(target_os = "macos")]
-        super::platform::widen_send_buffer(&stream);
         subscriber.stream = Some(stream);
         subscriber.moved = now;
         if subscriber.flush(now) == Flushed::Open {
@@ -767,6 +765,29 @@ pub(crate) mod tests {
         messages
     }
 
+    /// Reads `peer`, the subscriber at `index`, as a continuously draining
+    /// reader would: on through turns that publish nothing until nothing is
+    /// pending, since a turn's events can outgrow the connection (macOS gives
+    /// it 8 KiB). Output that stops moving fails the test rather than spin:
+    /// a whole PENDING_BOUND takes about 130 turns at 8 KiB each.
+    fn read_through(
+        subscribers: &mut Subscribers,
+        index: usize,
+        peer: &mut Peer,
+        window: &Projection,
+        now: Instant,
+    ) -> Vec<SubscriptionMessage> {
+        let mut messages = read_available(peer);
+        for _ in 0..1000 {
+            if subscribers.subscribers[index].frames.is_empty() {
+                return messages;
+            }
+            subscribers.turn(window.clone(), now);
+            messages.extend(read_available(peer));
+        }
+        panic!("subscriber {index} still has output pending after 1000 turns");
+    }
+
     /// Every byte already written, without waiting for more.
     fn read_available_bytes(peer: &mut Peer) -> Vec<u8> {
         let mut bytes = Vec::new();
@@ -1122,7 +1143,7 @@ pub(crate) mod tests {
         for turn in 0..80 {
             window = rename(&window, turn);
             subscribers.turn(window.clone(), now);
-            read_by_reader.extend(read_available(&mut reader));
+            read_by_reader.extend(read_through(&mut subscribers, 1, &mut reader, &window, now));
         }
         // The reader saw every event in order, and no gap.
         assert_eq!(
@@ -1153,7 +1174,13 @@ pub(crate) mod tests {
         }
         window = rename(&window, 80);
         subscribers.turn(window.clone(), now);
-        messages.extend(read_available(&mut stalled));
+        messages.extend(read_through(
+            &mut subscribers,
+            0,
+            &mut stalled,
+            &window,
+            now,
+        ));
         let gaps: Vec<_> = messages
             .iter()
             .enumerate()
