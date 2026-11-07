@@ -193,17 +193,49 @@ stops the check; a rerun starts over, and leftovers may need
 ## Benchmark harness
 
 `nix run .#bench -- <suite> --out DIR` runs a suite of `eon-bench`
-(`eon/tools/eon-bench`), a std-only development tool outside Eon's closure;
-`eon-test` runs its tests. Its only suite, `corpus`, writes the benchmark
-corpora to `DIR/<id>.vt` with a `DIR/SHA256SUMS` that `sha256sum -c` checks:
-`ascii`, `styled-light`, `styled-heavy`, `unicode` and `cursor` (16 MiB each)
-and `cat64` (64 MiB of the `ascii` generator). Each is generated from a fixed
-seed, ends on a whole line or escape sequence, uses CRLF line ends (a PTY's
-ONLCR delivers them as CR CR LF), and must match the length and SHA-256
-recorded in `src/corpus.rs`; the run fails otherwise. `cursor` addresses an
-80x24 grid. `--only ID` writes one corpus, and `eon-bench corpus --help` lists
-them with their hashes. Corpus files are outputs; keep them out of the
-repository.
+(`eon/tools/eon-bench`), a development tool outside Eon's closure; `eon-test`
+runs its tests. Its one dependency, `libc`, supplies PTYs, termios and the
+machine facts, whose layouts differ by platform. `eon-bench COMMAND --help`
+documents each command, its flags and defaults.
+
+`corpus` writes the benchmark corpora to `DIR/<id>.vt` with a
+`DIR/SHA256SUMS` that `sha256sum -c` checks: `ascii`, `styled-light`,
+`styled-heavy`, `unicode` and `cursor` (16 MiB each) and `cat64` (64 MiB of
+the `ascii` generator). Each is generated from a fixed seed, ends on a whole
+line or escape sequence, uses CRLF line ends (a PTY's ONLCR delivers them as
+CR CR LF), and must match the length and SHA-256 recorded in `src/corpus.rs`;
+the run fails otherwise. `cursor` addresses an 80x24 grid. `--only ID` writes
+one corpus, and `eon-bench corpus --help` lists them with their hashes. Corpus
+files are outputs; keep them out of the repository.
+
+`write FILE --report REPORT` is the completion writer, run inside a terminal:
+it discards queued input, writes FILE, asks for a status report (DSR,
+`ESC[5n`) and stops its clock at the terminal's reply, so a terminal cannot
+score by skipping work. Without a reply within 60 s it fails; either way it
+restores the terminal's mode. REPORT gets the bytes and seconds.
+
+`floor --layer pty` is the kernel floor: each corpus drained from a bare 80x24
+PTY by eon-bench, in nonblocking reads that wait only when the PTY is empty,
+while the writer writes it. Every sample must drain exactly the corpus, one CR
+per LF and the query, and fails after 60 s of silence. Before each sample it waits while the
+1-minute load is above `--max-load` (online CPUs / 4 by default), for at most
+10 minutes; `--cpus LIST` pins it on Linux. Two warmup rounds, then ten
+sample rounds, each running every corpus once (`--quick`: one and three).
+Throughput is MB (10^6 bytes) of corpus per second.
+
+A suite writes `DIR/result.json`, schema 1: the suite, its settings and start
+and end times; `environment` (OS and version, CPU, online, pinned and
+allowed CPUs, governor, kernel, 1-minute load at start and end, grid, tool
+versions, and `build`: the running eon-bench's path, SHA-256 and profile,
+with the Eon commit and dirty flag that `nix build .#bench` recorded, or that
+a Cargo build's checkout holds when the run starts, marked
+`checkout-at-run`); and one cell per workload, layer and subject with every
+sample's seconds, load and counters, plus `stats`
+(count, median, nearest-rank p95, min and max of the seconds, and the
+matching MB/s, whose `p95` is the slow tail) and a summary of each counter.
+Below 20 samples the p95 is the slowest sample.
+Samples are the data; the summaries are recomputed from them. The `pty` layer
+counts `pty_bytes` and `pty_reads`.
 
 ## Sources of truth
 

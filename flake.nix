@@ -1045,6 +1045,8 @@
               "--package"
               "eon-bench"
             ];
+            # Results name the Eon commit the binary was built from.
+            EON_BENCH_REVISION = self.rev or self.dirtyRev or "";
             doCheck = false;
           };
           bundleRelink = import ./nix/bundle-relink.nix {

@@ -1,14 +1,30 @@
-//! Eon's benchmark harness (docs/DEVELOPMENT.md), a development tool outside
-//! Eon's closure. Each suite writes its evidence under `--out`.
-
-mod corpus;
-mod sha256;
+//! The `eon-bench` command line.
 
 use std::{path::PathBuf, process::ExitCode};
 
+use eon_bench::{corpus, floor, writer};
+
 const USAGE: &str = "\
 usage: eon-bench corpus --out DIR [--only ID]...
-       eon-bench corpus --help";
+       eon-bench floor --layer pty --out DIR [OPTIONS]
+       eon-bench write FILE --report REPORT
+       eon-bench COMMAND --help";
+
+const WRITE_HELP: &str = "\
+eon-bench write FILE --report REPORT: the completion writer
+
+Run inside a terminal: turns off line editing and echo on stdin and discards
+input already queued, writes FILE to stdout, asks for a status report (ESC[5n)
+and waits up to 60 s for the terminal's reply (ESC[0n), then restores stdin.
+REPORT gets {\"bytes\": N, \"seconds\": S}, the time from the first write to the
+reply. Exits 0 on a reply, 1 on a failure, an ESC[3n reply or no reply, and 2
+for a usage error.";
+
+enum Command {
+    Corpus(PathBuf, Vec<&'static corpus::Corpus>),
+    Floor(floor::Options),
+    Write(PathBuf, PathBuf),
+}
 
 fn corpus_help() -> String {
     let mut help = format!(
@@ -39,28 +55,50 @@ Corpora:",
 
 fn main() -> ExitCode {
     let arguments: Vec<String> = std::env::args().skip(1).collect();
-    let options = match arguments.first().map(String::as_str) {
-        Some("corpus") => corpus_options(&arguments[1..]),
+    let rest = arguments.get(1..).unwrap_or_default();
+    let command = match arguments.first().map(String::as_str) {
+        Some("corpus") => corpus_options(rest).map(|(out, only)| Command::Corpus(out, only)),
+        Some("floor") => floor::options(rest).map(Command::Floor),
+        Some("write") => write_options(rest).map(|(file, report)| Command::Write(file, report)),
         Some("--help" | "-h") => {
             println!("{USAGE}");
             return ExitCode::SUCCESS;
         }
         _ => Err(USAGE.to_owned()),
     };
-    let (out, only) = match options {
-        Ok(options) => options,
+    let command = match command {
+        Ok(command) => command,
         Err(message) if message.is_empty() => return ExitCode::SUCCESS,
         Err(message) => {
             eprintln!("eon-bench: {message}");
             return ExitCode::from(2);
         }
     };
-    match corpus::write_files(&out, &only) {
+    let outcome = match command {
+        Command::Corpus(out, only) => corpus::write_files(&out, &only),
+        Command::Floor(options) => floor::run(&options),
+        Command::Write(file, report) => writer::run(&file, &report),
+    };
+    match outcome {
         Ok(()) => ExitCode::SUCCESS,
         Err(error) => {
             eprintln!("eon-bench: {error}");
             ExitCode::FAILURE
         }
+    }
+}
+
+/// `--help` prints the help and ends with an empty error.
+fn write_options(arguments: &[String]) -> Result<(PathBuf, PathBuf), String> {
+    match arguments {
+        [help] if matches!(help.as_str(), "--help" | "-h") => {
+            println!("{WRITE_HELP}");
+            Err(String::new())
+        }
+        [file, flag, report] if flag == "--report" => {
+            Ok((PathBuf::from(file), PathBuf::from(report)))
+        }
+        _ => Err(format!("write takes FILE --report REPORT\n{USAGE}")),
     }
 }
 

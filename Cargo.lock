@@ -767,6 +767,9 @@ dependencies = [
 [[package]]
 name = "eon-bench"
 version = "0.1.0"
+dependencies = [
+ "libc",
+]
 
 [[package]]
 name = "eon-manifest"

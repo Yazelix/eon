@@ -4,3 +4,8 @@ version = "0.1.0"
 edition = "2024"
 rust-version = "1.95"
 publish = false
+
+[dependencies]
+# PTYs, termios, poll, load, uname and CPU affinity with each platform's
+# layouts and constants; already locked, and pinned as Orbit and Eon pin it.
+libc = "=0.2.189"
