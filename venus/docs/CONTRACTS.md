@@ -1691,6 +1691,14 @@ re-proved when that platform or feature is next touched.
     `local_clock_leads_the_bottom_bar_and_has_no_actions` its text-wide rect;
     the clock and version share one draw call; the isolated
     installed observation recorded in `eon-e3a1z.3`.
+  - **Keys popup in sections (`eon-e3a1z.4`):**
+    `hint_popup_sits_above_its_keycap_inside_the_window` rewritten for the
+    Actions and Popups columns: eight lines at 1280, 800, 400 and 330 pixels
+    wide, and wrapped columns ending in `Alt+/ lists all` at 330x200; added
+    checks `hint_popup_sections_wrap_into_columns`,
+    `hint_popup_keeps_the_pointer_and_shows_a_row_in_full_above` and
+    `hint_popup_full_text_counts_every_wrapped_line`; the isolated installed
+    observation recorded in `eon-e3a1z.4`.
   - **Workspace label (`eon-workspace-switching-shn4.7`):** added checks
     `workspace_label_leads_the_tabs_and_opens_the_picker`,
     `eon_bar_controls_reuse_existing_actions_and_local_viewer` and

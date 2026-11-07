@@ -286,11 +286,18 @@ focus. Each set of modifiers shows as one keycap, named in full: `Alt`,
 window. Keys without modifiers follow them, written out: `Escape terminal`, and
 the arrows while the tabs, panes or agent sidebar have focus; while the
 attention inbox is open, the cluster is only the inbox's own keys. Pointing at
-a keycap opens a popup above it with one row per key, with what the key does
-as full help says it; the keycap below already names the modifiers. The popup never takes
-focus. Escape or a click closes it until the pointer leaves the keycap; Escape
-still does what it always does, and a click on a keycap does nothing else. A
-popup with more keys than the window has room for ends with `Alt+/ lists all`. Narrow windows give way in
+a keycap opens a popup above it with its keys in two sections side by side:
+Actions, by what they act on (tab, pane, window, then the hints and sidebar
+toggles), and Popups, with custom popups after the built-in ones. Each key has
+a short label such as `New tab` or `Detach`; the keycap below already names the
+modifiers. The popup stays open while the pointer is over it, and resting the
+pointer on an action shows what it does as full help says it, in a box just
+above. A section taller than the window has room for continues in the next
+column; when the columns are wider than the window, the last one that fits ends
+with `Alt+/ lists all`. The popup never takes focus. Escape or a click closes it
+until the pointer leaves the keycap and the popup; Escape still does what it
+always does, a click on a keycap does nothing else, and a click over the popup
+goes where it would without it. Narrow windows give way in
 this order: the cluster moves to stay one padding clear of the clock and the
 version label, then the version label hides, then the clock hides, then keys
 without modifiers drop whole (`Escape terminal` last), and in the narrowest
@@ -300,9 +307,9 @@ a 1280-pixel-wide window shows every hint centred, clear of the clock and the
 version label; with the terminal focused, an 800-pixel window still shows
 both, a 400-pixel window the full-name keycaps alone, and a 330-pixel window
 the short legends. Screen readers read each
-keycap by its full name, such as `Alt+Shift shortcuts`, with every chord in
-it and what it does. Alt+/, the Alt+Q inbox, Alt+Shift+Q quit, Alt+G and
-Alt+Shift+G, F6, Ctrl+Tab and Ctrl+Shift+Tab, and Quick search (Alt+Z) have no
+keycap by its full name, such as `Alt+Shift shortcuts`, with its sections and
+every chord in them and what it does as full help says it. Alt+/, the Alt+Q
+inbox, Alt+Shift+Q quit, Alt+G and Alt+Shift+G, F6, Ctrl+Tab and Ctrl+Shift+Tab, and Quick search (Alt+Z) have no
 hint but stay in full help. Each pane is its own
 rounded card, stacked without gaps in its column's allocated card area. Even
 outer gaps surround and separate the allocated column areas. Pane titles sit

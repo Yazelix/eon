@@ -3722,11 +3722,13 @@ impl Application {
             return None;
         }
         let metrics = state.renderer.metrics();
-        if !self.status_for(unshifted).is_empty()
+        // The notice and a keycap's popup cover the terminal beneath them.
+        if (!self.status_for(unshifted).is_empty()
             && state
                 .renderer
                 .notice_rect(workspace.as_ref())
-                .contains(x, y)
+                .contains(x, y))
+            || self.hint_popup_under(x, y).is_some()
         {
             return None;
         }
@@ -3747,6 +3749,16 @@ impl Application {
             columns: link.columns,
             uri: link.uri.into_owned(),
         })
+    }
+
+    /// The shown keycap popup at `x`, `y`: its group, and the row there. Once Escape or a press
+    /// hides it, its last frame's place no longer counts.
+    fn hint_popup_under(&self, x: f32, y: f32) -> Option<(usize, Option<usize>)> {
+        self.window
+            .as_ref()?
+            .renderer
+            .hint_popup_at(x, y)
+            .filter(|(group, _)| self.hint_popup.shown() == Some(*group))
     }
 
     /// Re-derives the hovered target from the visible scene, returning whether it changed.
@@ -4333,16 +4345,21 @@ impl Application {
         let scrollback_label = self.visible_scrollback_label(workspace.as_ref());
         let prior_scrollback_target = self.scrollback_rect(workspace.as_ref());
         let highlighted_link = shown.as_ref().map(|link| (link.row, link.column));
-        let hovered_hit = (dialog.is_none()
+        let hovering = dialog.is_none()
             && self.window_focused
             && self.links.pointer_inside
-            && !self.input.pointer_busy())
-        .then(|| {
-            workspace
-                .as_ref()
-                .and_then(|scene| scene.hit_test(self.cursor.x as f32, self.cursor.y as f32))
-        })
-        .flatten();
+            && !self.input.pointer_busy();
+        // A keycap's popup stays open while the pointer is over it, and covers what is beneath.
+        let popup_hit = (hovering && workspace.is_some())
+            .then(|| self.hint_popup_under(self.cursor.x as f32, self.cursor.y as f32))
+            .flatten();
+        let hovered_hit = (hovering && popup_hit.is_none())
+            .then(|| {
+                workspace
+                    .as_ref()
+                    .and_then(|scene| scene.hit_test(self.cursor.x as f32, self.cursor.y as f32))
+            })
+            .flatten();
         let hovered_header = match hovered_hit {
             Some(WorkspaceHit::Tab(id)) => Some((WorkspaceFocus::Tabs, id.to_owned())),
             Some(WorkspaceHit::Pane(id)) => Some((WorkspaceFocus::Panes, id.to_owned())),
@@ -4358,10 +4375,9 @@ impl Application {
             None
         };
         let version_hovered = matches!(hovered_hit, Some(WorkspaceHit::Version));
-        let hint_group_hovered = if let Some(WorkspaceHit::HintGroup(index)) = hovered_hit {
-            Some(index)
-        } else {
-            None
+        let hint_group_hovered = match (popup_hit, hovered_hit) {
+            (Some((index, _)), _) | (None, Some(WorkspaceHit::HintGroup(index))) => Some(index),
+            _ => None,
         };
         let hint_popup = self.hint_popup.popup(hint_group_hovered);
         let cpu_hovered = matches!(hovered_hit, Some(WorkspaceHit::Cpu));
@@ -4380,9 +4396,11 @@ impl Application {
         state.renderer.set_hovered_header(hovered_header);
         state.renderer.set_quota_hovered(quota_hovered);
         state.renderer.set_version_hovered(version_hovered);
-        state
-            .renderer
-            .set_hint_group_hovered(hint_group_hovered, hint_popup);
+        state.renderer.set_hint_group_hovered(
+            hint_group_hovered,
+            hint_popup,
+            popup_hit.and_then(|(_, row)| row),
+        );
         state.renderer.set_cpu_hovered(cpu_hovered);
         state.renderer.set_ram_hovered(ram_hovered);
         state.renderer.set_disk_hovered(disk_hovered);
@@ -4731,7 +4749,13 @@ impl ApplicationHandler<UserEvent> for Application {
                         }
                     })
                 };
+                let popup_at = |position: PhysicalPosition<f64>| {
+                    state
+                        .renderer
+                        .hint_popup_at(position.x as f32, position.y as f32)
+                };
                 if header_at(self.cursor) != header_at(position)
+                    || popup_at(self.cursor) != popup_at(position)
                     || (!self.links.pointer_inside && header_at(position).is_some())
                 {
                     state.window.request_redraw();

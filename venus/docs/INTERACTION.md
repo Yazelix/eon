@@ -158,14 +158,29 @@ and their tooltips open above them. Neither takes focus or acts on a press.
 Pointing at a keycap fills it with the chrome highlight and opens a popup above
 it, inside Venus's own surface: its left edge at the keycap's, kept inside the
 window, and its bottom a third of a padding above the bar. It has no title,
-since the keycap below names its modifiers: one row per hint in bar order, the
-keys in mint and what they do, as full help says it, in white. It is never
-taller than the room between the header and the bar; when rows are cut, its
-last row reads `Alt+/
-lists all`. The popup never takes keyboard focus or changes terminal focus, and
-a press on a keycap or the version does nothing else. Escape or a pointer press
-hides the popup until the pointer leaves that keycap's hover band, as a tooltip
-does; the key or press still goes where it would without the popup.
+since the keycap below names its modifiers. Its hints sit in sections side by
+side, one padding apart: `Actions` in the first column, then `Popups`, each
+under a small title in the secondary text colour, each hint in bar order with
+its keys in mint and a short label in white (`New tab`, `Close tab`, `Zoom
+pane`, `New window`, `Detach`, `Hints`, `Sidebar` for Alt+Shift; the popups'
+own labels). Actions follow the bar order, which runs tab, pane, window, then
+the chrome toggles; custom popups follow the built-in ones. The popup is never
+taller than the room between the header and the bar: a section with more rows
+than fit continues in the next column under an empty title line, so rows line
+up. When its columns are wider than the room (40 ems at most), the columns that
+do not fit give way and the last one shown ends with `Alt+/ lists all`, which
+takes a full column's last row, or its title when only one row sits under it.
+
+The popup stays open while the pointer is over it or the gap below it, and the
+chrome and terminal links beneath it then take no hover. Resting the pointer on
+a row whose full help says more than its label (every action) opens a box a
+third of a padding above the popup, as wide as it, with that sentence in white,
+word-wrapped; it shows only when the whole sentence fits below the header, so
+very short windows show no box. The popup never takes keyboard focus
+or changes terminal focus, and a press on a keycap or the version does nothing
+else. Escape or a pointer press hides the popup until the pointer leaves that
+keycap's hover band and the popup, as a tooltip does; the key or press still
+goes where it would without the popup.
 
 Narrow windows give way in this order, and keycaps never drop: the cluster
 stays centred while it clears the clock and the version by one padding, then
@@ -241,8 +256,10 @@ names.
 The header `?` always shows; it and Alt+/ open the complete viewer. Hints are
 read-only, including for screen readers: AccessKit reads them as one group,
 "Eon shortcut hints", holding a label per keycap named by its full modifiers,
-such as "Alt+Shift shortcuts", whose value lists each chord and what it does,
-then one label for the expanded keys; the version label follows the group.
+such as "Alt+Shift shortcuts", whose value names each section in turn
+("Actions: ", then "Popups: ") before its chords and what each does as full
+help says it, then one label for the expanded keys; the version label follows
+the group.
 They add no keyboard stops or actions. Eon has no minor modes yet.
 
 ### Labels and header scrolling

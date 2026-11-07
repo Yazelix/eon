@@ -496,7 +496,9 @@ fn default_like_hints() -> Vec<ShortcutHint> {
         modifier_names: names.into(),
         key: key.into(),
         label: label.into(),
+        short: label.into(),
         description: format!("{label} in full"),
+        section: crate::HintSection::Actions,
         accessible_label: format!("{names}+{key} — {label} in full"),
         priority,
     };
@@ -563,13 +565,32 @@ fn sweep_footer(
             let rows = hints
                 .iter()
                 .filter(|hint| hint.modifier_names == group.name)
-                .map(|hint| (hint.key.clone(), hint.description.clone()))
+                .map(|hint| {
+                    (
+                        hint.key.clone(),
+                        hint.short.clone(),
+                        hint.description.clone(),
+                        hint.section,
+                    )
+                })
                 .collect::<Vec<_>>();
-            assert_eq!(group.rows, rows);
+            assert_eq!(
+                group
+                    .rows
+                    .iter()
+                    .map(|row| (
+                        row.key.clone(),
+                        row.short.clone(),
+                        row.description.clone(),
+                        row.section
+                    ))
+                    .collect::<Vec<_>>(),
+                rows
+            );
             assert!(
                 group
                     .accessible_label
-                    .starts_with(&format!("{}+", group.name))
+                    .starts_with(&format!("Actions: {}+", group.name))
             );
             let legends = [
                 group.name.as_str(),

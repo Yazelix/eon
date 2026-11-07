@@ -5,6 +5,14 @@ installation, and proven contract changes.
 
 ## Unreleased
 
+- The keys popup that opens over a hints bar keycap is shorter
+  (`eon-e3a1z.4`): its keys sit in two sections side by side, Actions and
+  Popups, each with a short label such as "New tab", "Zoom pane" or "Detach"
+  instead of a sentence, so Alt+Shift takes 8 lines instead of 14. Resting the
+  pointer on an action shows its full description in a box above, the popup
+  stays open while the pointer is over it, and a section too tall for the
+  window continues in another column. Custom popups list after the built-in
+  ones under Popups. Screen readers hear the section names before their keys.
 - Every Stop is now the Reserved Stop, one message whose bytes no later Eon
   changes, so `eon window stop`, `eon quit`, `eon quit --all` and Venus's Quit
   stop a window of another Eon build without running that build's `eon`,

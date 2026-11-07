@@ -8,7 +8,7 @@ use winit::{
     event::MouseButton,
     keyboard::{KeyCode, PhysicalKey},
 };
-use yazelix_venus::{ShortcutGroup, ShortcutHint, ShortcutRow, WorkspaceFocus};
+use yazelix_venus::{HintSection, ShortcutGroup, ShortcutHint, ShortcutRow, WorkspaceFocus};
 
 pub(super) fn paste_shortcut(
     physical_key: PhysicalKey,
@@ -741,6 +741,11 @@ impl HintPopupLatch {
         self.shown.is_some()
     }
 
+    /// The keycap whose popup shows.
+    pub(super) fn shown(&self) -> Option<usize> {
+        self.shown
+    }
+
     /// Hides the open popup; true when one was open.
     pub(super) fn dismiss(&mut self) -> bool {
         let Some(group) = self.shown.take() else {
@@ -769,25 +774,35 @@ pub(super) fn shortcut_hints_for(
         }
         use NativeShortcutAction as Action;
         use WorkspaceDirection::{Down, Left, Right, Up};
-        let (label, priority) = match shortcut.action {
-            Action::ToggleHints => ("hints", 0),
-            Action::ToggleSidebar => ("side", 2),
-            Action::Focus(_) => ("focus", 1),
-            Action::FocusTabPosition => ("focus", 3),
-            Action::CreatePane => ("pane", 1),
-            Action::CreateColumn => ("col", 3),
-            Action::CreateTab => ("tab", 1),
-            Action::CloseTab => ("close tab", 3),
-            Action::ClosePane => ("close pane", 3),
-            Action::ToggleZoom => ("zoom", 3),
-            Action::Move(Left | Right) => ("mv tab", 3),
-            Action::Move(Up | Down) | Action::MovePaneSideways(_) => ("mv pane", 3),
-            Action::NewWindow => ("window", 3),
-            Action::Detach => ("detach", 2),
-            Action::ReturnToTerminal if focus != WorkspaceFocus::Terminal => ("terminal", 0),
-            Action::TraverseChrome(Left | Right) if focus == WorkspaceFocus::Tabs => ("tabs", 1),
-            Action::TraverseChrome(Up | Down) if focus == WorkspaceFocus::Panes => ("panes", 1),
-            Action::TraverseChrome(Up | Down) if focus == WorkspaceFocus::Sidebar => ("agents", 1),
+        // The bar's label, the popup's short label (keys without modifiers have no popup), and
+        // the priority to keep the hint.
+        let (label, short, priority) = match shortcut.action {
+            Action::ToggleHints => ("hints", "Hints", 0),
+            Action::ToggleSidebar => ("side", "Sidebar", 2),
+            Action::Focus(_) => ("focus", "Focus", 1),
+            Action::FocusTabPosition => ("focus", "Focus", 3),
+            Action::CreatePane => ("pane", "New pane", 1),
+            Action::CreateColumn => ("col", "New column", 3),
+            Action::CreateTab => ("tab", "New tab", 1),
+            Action::CloseTab => ("close tab", "Close tab", 3),
+            Action::ClosePane => ("close pane", "Close pane", 3),
+            Action::ToggleZoom => ("zoom", "Zoom pane", 3),
+            Action::Move(Left | Right) => ("mv tab", "Move tab", 3),
+            Action::Move(Up | Down) | Action::MovePaneSideways(_) => ("mv pane", "Move pane", 3),
+            Action::NewWindow => ("window", "New window", 3),
+            Action::Detach => ("detach", "Detach", 2),
+            Action::ReturnToTerminal if focus != WorkspaceFocus::Terminal => {
+                ("terminal", "terminal", 0)
+            }
+            Action::TraverseChrome(Left | Right) if focus == WorkspaceFocus::Tabs => {
+                ("tabs", "tabs", 1)
+            }
+            Action::TraverseChrome(Up | Down) if focus == WorkspaceFocus::Panes => {
+                ("panes", "panes", 1)
+            }
+            Action::TraverseChrome(Up | Down) if focus == WorkspaceFocus::Sidebar => {
+                ("agents", "agents", 1)
+            }
             _ => continue,
         };
         let axis = match shortcut.action {
@@ -854,7 +869,9 @@ pub(super) fn shortcut_hints_for(
                 modifier_names,
                 key: key.into(),
                 label: label.into(),
+                short: short.into(),
                 description: shortcut.label.into(),
+                section: HintSection::Actions,
                 accessible_label,
                 priority,
             });
@@ -870,7 +887,10 @@ pub(super) fn shortcut_hints_for(
                 modifier_names: physical_modifiers_label_for(platform, shortcut.modifiers, false),
                 key: physical_key_label(&shortcut.key).into(),
                 label: entry.label.clone(),
+                short: entry.label.clone(),
                 description: entry.label.clone(),
+                // Custom popups follow the built-ins in the runtime's order.
+                section: HintSection::Popups,
                 accessible_label: format!(
                     "{} — {}",
                     physical_shortcut_label_for(platform, shortcut.modifiers, &shortcut.key),
@@ -1155,14 +1175,12 @@ mod tests {
     use super::*;
     use eon_workspace_protocol::v37::WorkspaceInfo;
 
-    #[test]
-    fn default_hints_fit_a_1280_pixel_window() {
+    /// Eon's default popup catalog, copied from eon/crates/eon/src/product.rs, which this crate
+    /// cannot depend on; keep the two in step.
+    fn default_entries() -> [PopupEntry; 8] {
         use eon_workspace_protocol::v37::{ALT, SHIFT, Shortcut};
-        use yazelix_venus::{FontSettings, FontSetup, ShortcutHintsScene};
 
-        // Eon's default popup catalog, copied from eon/crates/eon/src/product.rs, which this
-        // crate cannot depend on; keep the two in step.
-        let entries = [
+        [
             ("project", "Quick search", "KeyZ", ALT),
             ("git", "Git", "KeyJ", ALT | SHIFT),
             ("agent", "Agent", "KeyL", ALT | SHIFT),
@@ -1179,7 +1197,88 @@ mod tests {
                 modifiers,
                 key: key.into(),
             }),
-        });
+        })
+    }
+
+    #[test]
+    fn keys_popup_lists_actions_then_popups_by_short_label() {
+        use eon_workspace_protocol::v37::{ALT, CTRL, Shortcut};
+
+        // A custom popup follows the built-ins under Popups, in the runtime's order.
+        let entries = default_entries().into_iter().chain([PopupEntry {
+            id: "monitor".into(),
+            label: "Monitor".into(),
+            shortcut: PopupKey::Bound(Shortcut {
+                modifiers: CTRL | ALT,
+                key: "KeyO".into(),
+            }),
+        }]);
+        let hints = shortcut_hints_for(
+            NativePlatform::Linux,
+            WorkspaceFocus::Terminal,
+            &entries.collect::<Vec<_>>(),
+            Sidebar::Open,
+            true,
+        );
+        let group = |names: &str| {
+            hints
+                .iter()
+                .filter(|hint| hint.modifier_names == names)
+                .map(|hint| (hint.key.as_str(), hint.short.as_str(), hint.section))
+                .collect::<Vec<_>>()
+        };
+        use HintSection::{Actions, Popups};
+        // Actions by what they act on: tab, pane, window, then the chrome toggles.
+        assert_eq!(
+            group("Alt+Shift"),
+            [
+                ("T", "New tab", Actions),
+                ("W", "Close tab", Actions),
+                ("Z", "Zoom pane", Actions),
+                ("N", "New window", Actions),
+                ("D", "Detach", Actions),
+                ("B", "Hints", Actions),
+                ("H", "Sidebar", Actions),
+                ("J", "Git", Popups),
+                ("L", "Agent", Popups),
+                ("Y", "Files", Popups),
+                ("A", "Anima", Popups),
+                ("M", "Commands", Popups),
+                ("S", "Sessions", Popups),
+                ("E", "Scrollback", Popups),
+            ]
+        );
+        assert_eq!(
+            group("Alt"),
+            [
+                ("HJKL · 1..9", "Focus", Actions),
+                ("M", "New pane", Actions),
+                ("W", "Close pane", Actions),
+            ]
+        );
+        assert_eq!(
+            group("Ctrl+Alt"),
+            [
+                ("M", "New column", Actions),
+                ("HJKL", "Move pane", Actions),
+                ("O", "Monitor", Popups),
+            ]
+        );
+        assert_eq!(group("Ctrl+Alt+Shift"), [("HL", "Move tab", Actions)]);
+        // Full help keeps its sentence, which the popup shows on hover and screen readers read.
+        let detach = hints.iter().find(|hint| hint.short == "Detach").unwrap();
+        assert_eq!(
+            detach.description,
+            "Detach: hide the window, keep terminals running"
+        );
+        assert!(detach.accessible_label.ends_with(&detach.description));
+    }
+
+    #[test]
+    fn default_hints_fit_a_1280_pixel_window() {
+        use yazelix_venus::{FontSettings, FontSetup, ShortcutHintsScene};
+
+        let entries = default_entries();
         // Eon's packaged sans face, the exact file its Nix build and dev shell name, which hosts
         // without their own fontconfig use. A host's sans-serif alias, such as Open Sans, may set
         // hints narrower; another copy of DejaVu Sans may differ.
@@ -1769,8 +1868,10 @@ mod tests {
         let mut latch = HintPopupLatch::default();
         assert!(!latch.dismiss(), "nothing to hide yet");
         assert!(latch.popup(Some(2)));
+        assert_eq!(latch.shown(), Some(2));
         // Escape (or a press) hides it, and it stays hidden while the pointer rests there.
         assert!(latch.dismiss());
+        assert_eq!(latch.shown(), None);
         assert!(!latch.popup(Some(2)));
         assert!(!latch.popup(Some(2)));
         assert!(!latch.dismiss(), "already hidden");

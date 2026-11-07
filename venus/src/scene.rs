@@ -869,10 +869,41 @@ pub struct ShortcutHint {
     pub modifier_names: String,
     pub key: String,
     pub label: String,
+    /// What the keys do in a word or two, as the keycap's popup lists them.
+    pub short: String,
     /// What the keys do, as full help says it.
     pub description: String,
+    pub section: HintSection,
     pub accessible_label: String,
     pub priority: u8,
+}
+
+/// The section of a keycap's popup that lists a hint.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum HintSection {
+    Actions,
+    Popups,
+}
+
+impl HintSection {
+    pub const ALL: [Self; 2] = [Self::Actions, Self::Popups];
+
+    #[must_use]
+    pub fn title(self) -> &'static str {
+        match self {
+            Self::Actions => "Actions",
+            Self::Popups => "Popups",
+        }
+    }
+}
+
+/// One hint as a keycap's popup lists it.
+#[derive(Clone, Debug, PartialEq)]
+pub(crate) struct HintRow {
+    pub key: String,
+    pub short: String,
+    pub description: String,
+    pub section: HintSection,
 }
 
 /// One modifier group collapsed into a keycap; hovering it lists the group's hints.
@@ -885,9 +916,9 @@ pub(crate) struct ShortcutHintGroup {
     pub rect: SceneRect,
     /// The keycap widened to the footer band and half a gap on each side.
     pub hover: SceneRect,
-    /// Each hint's keys and description, in bar order.
-    pub rows: Vec<(String, String)>,
-    /// Each hint's chords and full-help text.
+    /// Each hint, in bar order.
+    pub rows: Vec<HintRow>,
+    /// Each section's title, then each of its hints' chords and full-help text.
     pub accessible_label: String,
 }
 
@@ -990,11 +1021,22 @@ impl ShortcutHintsScene {
                     groups.len() - 1
                 });
             let group = &mut groups[index];
-            if !group.accessible_label.is_empty() {
+            if group.rows.last().map(|row| row.section) != Some(hint.section) {
+                if !group.accessible_label.is_empty() {
+                    group.accessible_label.push_str("; ");
+                }
+                group.accessible_label.push_str(hint.section.title());
+                group.accessible_label.push_str(": ");
+            } else {
                 group.accessible_label.push_str("; ");
             }
             group.accessible_label.push_str(&hint.accessible_label);
-            group.rows.push((hint.key, hint.description));
+            group.rows.push(HintRow {
+                key: hint.key,
+                short: hint.short,
+                description: hint.description,
+                section: hint.section,
+            });
         }
         let total = groups.iter().map(|group| group.rows.len()).sum::<usize>() + pieces.len();
         let count = pieces.len();
@@ -1230,7 +1272,9 @@ pub fn attention_inbox_hints() -> Vec<ShortcutHint> {
         modifier_names: String::new(),
         key: key.into(),
         label: label.into(),
+        short: label.into(),
         description: label.into(),
+        section: crate::HintSection::Actions,
         accessible_label: format!("{key} {label}"),
         priority: 0,
     })

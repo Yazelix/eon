@@ -878,6 +878,8 @@ pub struct Renderer {
     text_renderer: TextRenderer,
     text_overlay: Option<(usize, TextBounds)>,
     text: Vec<PlacedText>,
+    /// The keycap popup this frame drew, for the pointer.
+    hint_popup_hit: Option<chrome::HintPopupHit>,
     content_key: Option<ContentKey>,
     notice_lines: usize,
     terminal: TerminalLayer,
@@ -1128,6 +1130,7 @@ impl Renderer {
             text_renderer,
             text_overlay: None,
             text: Vec::new(),
+            hint_popup_hit: None,
             content_key: None,
             notice_lines: 1,
             terminal: TerminalLayer {
@@ -1505,6 +1508,7 @@ impl Renderer {
 
         self.text.clear();
         self.text_overlay = None;
+        self.hint_popup_hit = None;
         self.spinners.clear();
         self.terminal.scrollback_rect = None;
         let viewport = workspace.map_or(

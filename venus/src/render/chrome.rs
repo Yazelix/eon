@@ -10,8 +10,8 @@ use crate::{
     DialogKind, DialogScene, Load, SceneRect, WorkspaceFocus, WorkspaceHeaderControl,
     WorkspaceScene,
     scene::{
-        QuotaProvider, SIDEBAR_EMPTY, SIDEBAR_TITLE, ShortcutHintGroup, ShortcutHintsScene,
-        TabBadge, WorkspaceControl, chrome_title_metrics,
+        HintSection, QuotaProvider, SIDEBAR_EMPTY, SIDEBAR_TITLE, ShortcutHintGroup,
+        ShortcutHintsScene, TabBadge, WorkspaceControl, chrome_title_metrics,
     },
 };
 use eon_workspace_protocol::v37::AttentionState;
@@ -28,7 +28,7 @@ const EON_ICON_ID: u16 = 3;
 const QUOTA_ICON_SIZE: usize = 104;
 /// The sides an Eon icon image may have, in pixels.
 const EON_ICON_SIDES: std::ops::RangeInclusive<usize> = 16..=512;
-/// The last row of a keycap popup that cannot list every hint: the Shortcuts viewer lists them.
+/// The last row of a keycap popup that cannot show every column: the Shortcuts viewer lists them.
 const HINT_POPUP_MORE: (&str, &str) = ("Alt+/", "lists all");
 
 /// The edge of the bar a tooltip opens from: below the header at this top, or above the
@@ -88,23 +88,119 @@ fn tooltip_rect(
     }
 }
 
-/// The rows of a keycap's popup with room for `lines` lines: every hint, or as many as fit
-/// before a last row that points at full help. None without room for a row.
-fn hint_popup_rows(group: &ShortcutHintGroup, lines: f32) -> Option<Vec<(&str, &str)>> {
-    if !lines.is_finite() || lines < 1.0 {
+/// One line of a keycap popup's column.
+#[derive(Clone, Copy, Debug, PartialEq)]
+enum HintPopupLine<'a> {
+    /// A section's title, or none above the rest of a section's rows.
+    Title(Option<&'a str>),
+    /// Keys and their short label, with the index of the group row they list; none for the
+    /// pointer at full help.
+    Row(&'a str, &'a str, Option<usize>),
+}
+
+/// One column of a keycap popup: its lines, the width of their keys, and its whole width.
+#[derive(Clone, Debug, PartialEq)]
+struct HintPopupColumn<'a> {
+    lines: Vec<HintPopupLine<'a>>,
+    keys: f32,
+    width: f32,
+}
+
+/// A keycap popup's columns with room for `lines` lines: each section starts a column with its
+/// title, and rows past the room continue in the next column under an empty title. None without
+/// room for a title and a row.
+fn hint_popup_columns(
+    group: &ShortcutHintGroup,
+    lines: f32,
+) -> Option<Vec<Vec<HintPopupLine<'_>>>> {
+    if !lines.is_finite() || lines < 2.0 {
         return None;
     }
     let lines = lines as usize;
-    let mut rows = group
-        .rows
-        .iter()
-        .map(|(key, description)| (key.as_str(), description.as_str()))
-        .collect::<Vec<_>>();
-    if rows.len() > lines {
-        rows.truncate(lines - 1);
-        rows.push(HINT_POPUP_MORE);
+    let mut columns: Vec<Vec<HintPopupLine<'_>>> = Vec::new();
+    for section in HintSection::ALL {
+        let mut title = Some(section.title());
+        for (index, row) in group.rows.iter().enumerate() {
+            if row.section != section {
+                continue;
+            }
+            if let Some(title) = title.take() {
+                columns.push(vec![HintPopupLine::Title(Some(title))]);
+            } else if columns.last().is_some_and(|column| column.len() == lines) {
+                columns.push(vec![HintPopupLine::Title(None)]);
+            }
+            if let Some(column) = columns.last_mut() {
+                column.push(HintPopupLine::Row(&row.key, &row.short, Some(index)));
+            }
+        }
     }
-    Some(rows)
+    Some(columns)
+}
+
+/// A keycap popup laid out with room for `lines` lines and `room` pixels across, columns one
+/// padding apart inside one padding of margin. Columns past the room give way to a last row
+/// that points at full help. None without room for a title and a row.
+fn hint_popup_layout<'a>(
+    group: &'a ShortcutHintGroup,
+    lines: f32,
+    room: f32,
+    padding: f32,
+    mut measure: impl FnMut(&str) -> f32,
+) -> Option<Vec<HintPopupColumn<'a>>> {
+    let mut column = |lines: Vec<HintPopupLine<'a>>| {
+        let (mut keys, mut labels, mut titles) = (0.0_f32, 0.0_f32, 0.0_f32);
+        for line in &lines {
+            match *line {
+                HintPopupLine::Title(title) => titles = titles.max(title.map_or(0.0, &mut measure)),
+                HintPopupLine::Row(key, label, _) => {
+                    keys = keys.max(measure(key));
+                    labels = labels.max(measure(label));
+                }
+            }
+        }
+        HintPopupColumn {
+            width: titles.max(keys + padding + labels),
+            lines,
+            keys,
+        }
+    };
+    let most = lines as usize;
+    let all = hint_popup_columns(group, lines)?
+        .into_iter()
+        .map(&mut column)
+        .collect::<Vec<_>>();
+    let across = |columns: &[HintPopupColumn<'_>]| {
+        columns
+            .iter()
+            .map(|column| column.width + padding)
+            .sum::<f32>()
+            + padding
+    };
+    if all.len() < 2 || across(&all) <= room {
+        return Some(all);
+    }
+    // The most columns that fit with the pointer ending the last, and at least the first.
+    let mut count = all.len() - 1;
+    loop {
+        let mut lines = all[count - 1].lines.clone();
+        if lines.len() == most {
+            // The pointer takes the last row's place; above only a title, the title's.
+            let last = lines.len() - 1;
+            let title = matches!(lines[last - 1], HintPopupLine::Title(_));
+            lines.remove(if title { last - 1 } else { last });
+        }
+        lines.push(HintPopupLine::Row(
+            HINT_POPUP_MORE.0,
+            HINT_POPUP_MORE.1,
+            None,
+        ));
+        let mut kept = all[..count - 1].to_vec();
+        kept.push(column(lines));
+        if count == 1 || across(&kept) <= room {
+            return Some(kept);
+        }
+        count -= 1;
+    }
 }
 
 fn contrast(a: SceneColor, b: SceneColor) -> f32 {
@@ -227,6 +323,8 @@ pub(super) struct HeaderInteraction {
     version_hovered: bool,
     hint_group_hovered: Option<usize>,
     hint_popup: bool,
+    /// The row of the hovered keycap's popup under the pointer.
+    hint_row_hovered: Option<usize>,
     cpu_hovered: bool,
     ram_hovered: bool,
     disk_hovered: bool,
@@ -239,6 +337,106 @@ impl HeaderInteraction {
         self.hovered_header
             .as_ref()
             .is_some_and(|(region, target)| *region == focus && target == id)
+    }
+}
+
+/// The drawn keycap popup, for the pointer: its group, its box down to the bar, and each listed
+/// row's line.
+#[derive(Clone, Debug, PartialEq)]
+pub(super) struct HintPopupHit {
+    group: usize,
+    rect: SceneRect,
+    rows: Vec<(SceneRect, usize)>,
+}
+
+impl HintPopupHit {
+    /// Group `group`'s popup drawn at `popup` above a bar whose top is `bar`, with each row's
+    /// line laid out from the popup's corner. The pointer keeps the popup from the bar up, across
+    /// the gap below it.
+    fn new(group: usize, popup: SceneRect, bar: f32, rows: Vec<(SceneRect, usize)>) -> Self {
+        Self {
+            group,
+            rect: SceneRect {
+                height: bar.max(popup.bottom()) - popup.top,
+                ..popup
+            },
+            rows: rows
+                .into_iter()
+                .map(|(rect, row)| {
+                    (
+                        SceneRect {
+                            left: rect.left + popup.left,
+                            top: rect.top + popup.top,
+                            ..rect
+                        },
+                        row,
+                    )
+                })
+                .collect(),
+        }
+    }
+
+    /// The popup's group and the row at `x`, `y`, when the pointer there is over the popup.
+    fn at(&self, x: f32, y: f32) -> Option<(usize, Option<usize>)> {
+        self.rect.contains(x, y).then(|| {
+            (
+                self.group,
+                self.rows
+                    .iter()
+                    .find(|(rect, _)| rect.contains(x, y))
+                    .map(|(_, row)| *row),
+            )
+        })
+    }
+}
+
+/// The height of every line `text` wraps to in word-wrapped status typography `width` pixels
+/// wide.
+fn wrapped_text_height(
+    font_system: &mut FontSystem,
+    metrics: CellMetrics,
+    cell_font: super::cells::CellFont,
+    text: &str,
+    width: f32,
+) -> f32 {
+    super::shape_styled_text(
+        font_system,
+        metrics,
+        cell_font,
+        text,
+        width,
+        f32::MAX,
+        DrawStyleKind::Status(Wrap::Word),
+    )
+    .layout_runs()
+    .map(|run| run.line_top + run.line_height)
+    .fold(0.0, f32::max)
+}
+
+/// The box above a keycap popup at `popup` that holds a row's full-help text `text_height`
+/// high: the popup's width, a third of a padding above it. None when it would reach within a
+/// third of a padding of the header, whose bottom is `top`.
+fn hint_detail_rect(
+    popup: SceneRect,
+    text_height: f32,
+    padding: f32,
+    top: f32,
+) -> Option<SceneRect> {
+    let height = text_height.ceil() + padding * 2.0;
+    let rect = SceneRect {
+        top: popup.top - padding / 3.0 - height,
+        height,
+        ..popup
+    };
+    (text_height > 0.0 && rect.top >= top + padding / 3.0).then_some(rect)
+}
+
+fn text_bounds(rect: SceneRect) -> TextBounds {
+    TextBounds {
+        left: rect.left.floor() as i32,
+        top: rect.top.floor() as i32,
+        right: rect.right().ceil() as i32,
+        bottom: rect.bottom().ceil() as i32,
     }
 }
 
@@ -1000,11 +1198,24 @@ impl Renderer {
         self.header.version_hovered = hovered;
     }
 
-    /// The shortcut hints keycap under the pointer, and whether its popup listing the group's
-    /// hints shows (Escape or a press hides it until the pointer leaves the keycap).
-    pub fn set_hint_group_hovered(&mut self, group: Option<usize>, popup: bool) {
+    /// The shortcut hints keycap under the pointer, or whose popup it is over; whether that
+    /// popup listing the group's hints shows (Escape or a press hides it until the pointer leaves
+    /// them); and the popup row under the pointer.
+    pub fn set_hint_group_hovered(
+        &mut self,
+        group: Option<usize>,
+        popup: bool,
+        row: Option<usize>,
+    ) {
         self.header.hint_group_hovered = group;
         self.header.hint_popup = popup;
+        self.header.hint_row_hovered = row;
+    }
+
+    /// The keycap popup drawn under the pointer at `x`, `y`: its group, and the row there.
+    #[must_use]
+    pub fn hint_popup_at(&self, x: f32, y: f32) -> Option<(usize, Option<usize>)> {
+        self.hint_popup_hit.as_ref()?.at(x, y)
     }
 
     pub fn set_cpu_hovered(&mut self, hovered: bool) {
@@ -1221,12 +1432,18 @@ impl Renderer {
         let padding = self.metrics.padding;
         if let Some(hints) = &workspace.hints
             && self.header.hint_popup
-            && let Some(group) = self
+            && let Some((index, group)) = self
                 .header
                 .hint_group_hovered
-                .and_then(|index| hints.groups.get(index))
+                .and_then(|index| Some((index, hints.groups.get(index)?)))
         {
-            self.build_hint_popup(workspace, hints.rect.top - padding / 3.0, group, rectangles);
+            self.build_hint_popup(
+                workspace,
+                hints.rect.top - padding / 3.0,
+                index,
+                group,
+                rectangles,
+            );
             return;
         }
         let hovered_tab = workspace
@@ -1325,12 +1542,14 @@ impl Renderer {
         )
     }
 
-    /// Lists a hovered keycap's hints above it: each hint's keys and what they do. Rows that do
-    /// not fit give way to a pointer at full help.
+    /// Lists a hovered keycap's hints above it in sections side by side, each key with its
+    /// short label; columns that do not fit give way to a pointer at full help. The row under the
+    /// pointer shows what it does as full help says it in a box just above, when that says more.
     fn build_hint_popup(
         &mut self,
         workspace: &WorkspaceScene,
         bottom: f32,
+        index: usize,
         group: &ShortcutHintGroup,
         rectangles: &mut RectangleBatch,
     ) {
@@ -1338,50 +1557,136 @@ impl Renderer {
         let line = chrome_title_metrics(self.metrics).line_height;
         let edge = TooltipEdge::Above(bottom);
         let (room, height) = self.tooltip_room(workspace, edge);
-        let Some(rows) = hint_popup_rows(group, (height - padding * 2.0) / line) else {
-            return;
-        };
         if room <= padding * 2.0 {
             return;
         }
-        let mut measure = |text: &str| self.measure_header_text(text).1.ceil();
-        let keys = rows.iter().map(|(key, _)| measure(key)).fold(0.0, f32::max);
-        let descriptions = rows
+        let Some(columns) = hint_popup_layout(
+            group,
+            (height - padding * 2.0) / line,
+            room,
+            padding,
+            |text| self.measure_header_text(text).1.ceil(),
+        ) else {
+            return;
+        };
+        let width = (columns
             .iter()
-            .map(|(_, description)| measure(description))
-            .fold(0.0, f32::max);
-        let width = (keys + padding + descriptions + padding * 2.0).min(room);
-        let inner = width - padding * 2.0;
+            .map(|column| column.width + padding)
+            .sum::<f32>()
+            + padding)
+            .min(room);
+        let lines = columns
+            .iter()
+            .map(|column| column.lines.len())
+            .max()
+            .unwrap_or_default();
         let first = self.text.len();
-        for (index, (key, description)) in rows.iter().enumerate() {
-            let top = padding + line * index as f32;
-            self.push_text(
-                key,
-                padding,
-                top,
-                keys.max(1.0),
-                line,
-                palette::ACCENT,
-                DrawStyleKind::Status(Wrap::None),
-            );
-            self.push_text(
-                description,
-                padding + keys + padding,
-                top,
-                (inner - keys - padding).max(1.0),
-                line,
-                palette::PRIMARY_TEXT,
-                DrawStyleKind::Status(Wrap::None),
-            );
+        let mut rows = Vec::new();
+        let mut left = padding;
+        for column in &columns {
+            for (number, entry) in column.lines.iter().enumerate() {
+                let top = padding + line * number as f32;
+                match *entry {
+                    HintPopupLine::Title(None) => {}
+                    HintPopupLine::Title(Some(title)) => {
+                        self.push_text(
+                            title,
+                            left,
+                            top,
+                            column.width.max(1.0),
+                            line,
+                            palette::SECONDARY_TEXT,
+                            DrawStyleKind::PopupLabel,
+                        );
+                    }
+                    HintPopupLine::Row(key, label, row) => {
+                        self.push_text(
+                            key,
+                            left,
+                            top,
+                            column.keys.max(1.0),
+                            line,
+                            palette::ACCENT,
+                            DrawStyleKind::Status(Wrap::None),
+                        );
+                        self.push_text(
+                            label,
+                            left + column.keys + padding,
+                            top,
+                            (column.width - column.keys - padding).max(1.0),
+                            line,
+                            palette::PRIMARY_TEXT,
+                            DrawStyleKind::Status(Wrap::None),
+                        );
+                        if let Some(row) = row {
+                            rows.push((
+                                SceneRect {
+                                    left,
+                                    top,
+                                    width: column.width,
+                                    height: line,
+                                },
+                                row,
+                            ));
+                        }
+                    }
+                }
+            }
+            left += column.width + padding;
         }
-        self.place_tooltip(
+        let popup = self.place_tooltip(
             first,
             width,
-            line * rows.len() as f32 + padding * 2.0,
+            line * lines as f32 + padding * 2.0,
             group.rect.left,
             edge,
             rectangles,
         );
+        let bar = workspace
+            .hints
+            .as_ref()
+            .map_or(popup.bottom(), |hints| hints.rect.top);
+        self.hint_popup_hit = Some(HintPopupHit::new(index, popup, bar, rows));
+        let Some(row) = self
+            .header
+            .hint_row_hovered
+            .and_then(|row| group.rows.get(row))
+            .filter(|row| row.description != row.short)
+        else {
+            return;
+        };
+        let top = workspace.header.bottom();
+        let inner = (width - padding * 2.0).max(1.0);
+        // The whole wrapped text decides whether the box fits; none of it is cut.
+        let text_height = wrapped_text_height(
+            &mut self.fonts.font_system,
+            self.metrics,
+            self.cell_font,
+            &row.description,
+            inner,
+        );
+        let Some(rect) = hint_detail_rect(popup, text_height, padding, top) else {
+            return;
+        };
+        let detail = self.text.len();
+        self.push_text(
+            &row.description,
+            padding,
+            padding,
+            inner,
+            text_height.ceil().max(1.0),
+            palette::PRIMARY_TEXT,
+            DrawStyleKind::Status(Wrap::Word),
+        );
+        self.place_box(detail, rect, rectangles);
+        // One cover over both boxes, which share their left edge and width.
+        self.text_overlay = Some((
+            first,
+            text_bounds(SceneRect {
+                height: popup.bottom() - rect.top,
+                ..rect
+            }),
+        ));
     }
 
     /// Box the texts pushed since `first`, laid out from the origin, as a tooltip `width` by
@@ -1395,21 +1700,34 @@ impl Renderer {
         anchor: f32,
         edge: TooltipEdge,
         rectangles: &mut RectangleBatch,
-    ) {
-        let padding = self.metrics.padding;
+    ) -> SceneRect {
         let tooltip = tooltip_rect(
             self.config.width as f32,
-            padding,
+            self.metrics.padding,
             anchor,
             width,
             height,
             edge,
         );
-        let SceneRect { left, top, .. } = tooltip;
+        self.place_box(first, tooltip, rectangles);
+        self.text_overlay = Some((first, text_bounds(tooltip)));
+        tooltip
+    }
+
+    /// Box the texts pushed since `first`, laid out from the origin, at `rect`; the scrollback
+    /// pill yields to it.
+    fn place_box(&mut self, first: usize, rect: SceneRect, rectangles: &mut RectangleBatch) {
+        let padding = self.metrics.padding;
+        let SceneRect {
+            left,
+            top,
+            width,
+            height,
+        } = rect;
         if self
             .terminal
             .scrollback_rect
-            .is_some_and(|pill| pill.intersection(tooltip).is_some())
+            .is_some_and(|pill| pill.intersection(rect).is_some())
         {
             self.terminal.scrollback_rect = None;
         }
@@ -1421,16 +1739,7 @@ impl Renderer {
             text.bound_top = (top + padding).floor() as i32;
             text.bottom = (top + height - padding).ceil() as i32;
         }
-        self.text_overlay = Some((
-            first,
-            TextBounds {
-                left: left.floor() as i32,
-                top: top.floor() as i32,
-                right: (left + width).ceil() as i32,
-                bottom: (top + height).ceil() as i32,
-            },
-        ));
-        rectangles.push_rounded(tooltip, padding / 2.0, palette::TOOLTIP_BACKGROUND);
+        rectangles.push_rounded(rect, padding / 2.0, palette::TOOLTIP_BACKGROUND);
     }
 
     pub(super) fn build_dialog(&mut self, viewer: &DialogScene, rectangles: &mut RectangleBatch) {
@@ -2333,36 +2642,50 @@ mod tests {
         }
     }
 
-    #[test]
-    fn hint_popup_sits_above_its_keycap_inside_the_window() {
-        use crate::{ShortcutHint, ShortcutHintsScene};
-        let snapshot = crate::scene::tests::bar::one_pane_snapshot();
-        // Alt+Shift's fourteen default hints, and one Alt hint.
-        let hint = |modifiers: &str, names: &str, key: &str| ShortcutHint {
+    /// Alt+Shift's fourteen default hints, seven actions then seven popups, after one Alt hint.
+    fn default_popup_hints() -> Vec<crate::ShortcutHint> {
+        let hint = |modifiers: &str, names: &str, key: char, section| crate::ShortcutHint {
             modifiers: modifiers.into(),
             modifier_names: names.into(),
             key: key.into(),
-            label: key.to_lowercase(),
-            description: format!("Run the {key} action"),
-            accessible_label: format!("{names}+{key} — Run the {key} action"),
+            label: key.to_lowercase().collect(),
+            short: format!("Do {key}"),
+            description: format!("Run the {key} action in full"),
+            section,
+            accessible_label: format!("{names}+{key} — Run the {key} action in full"),
             priority: 0,
         };
-        let hints = std::iter::once(hint("A", "Alt", "M"))
+        std::iter::once(hint("A", "Alt", 'M', HintSection::Actions))
             .chain(
-                "TWZNDBHJLYAMSE"
+                "TWZNDBH"
                     .chars()
-                    .map(|key| hint("AS", "Alt+Shift", &key.to_string())),
+                    .map(|key| hint("AS", "Alt+Shift", key, HintSection::Actions)),
             )
-            .collect::<Vec<_>>();
+            .chain(
+                "JLYAMSE"
+                    .chars()
+                    .map(|key| hint("AS", "Alt+Shift", key, HintSection::Popups)),
+            )
+            .collect()
+    }
+
+    #[test]
+    fn hint_popup_sits_above_its_keycap_inside_the_window() {
+        use crate::ShortcutHintsScene;
+        let snapshot = crate::scene::tests::bar::one_pane_snapshot();
+        let hints = default_popup_hints();
         let metrics = CellMetrics::for_scale(1.0);
         let measure = |text: &str| text.chars().count() as f32 * metrics.width;
         let line = chrome_title_metrics(metrics).line_height;
         let padding = metrics.padding;
-        for (width, height, cut) in [
-            (1280, 800, false),
-            (800, 600, false),
-            (400, 300, true),
-            (330, 300, true),
+        // Whether Alt+Shift's sections wrap into more columns, and whether they then point at
+        // full help.
+        for (width, height, wraps, cut) in [
+            (1280, 800, false, false),
+            (800, 600, false, false),
+            (400, 300, false, false),
+            (330, 300, false, false),
+            (330, 200, true, true),
         ] {
             let size = PhysicalSize::new(width, height);
             let workspace = WorkspaceScene::from_snapshot_with_bar(
@@ -2389,10 +2712,21 @@ mod tests {
             for group in &footer.groups {
                 let edge = TooltipEdge::Above(footer.rect.top - padding / 3.0);
                 let (room, tall) = tooltip_room(size, metrics, &workspace, edge);
-                let rows = hint_popup_rows(group, (tall - padding * 2.0) / line).unwrap();
-                let popup_height = line * rows.len() as f32 + padding * 2.0;
-                // Wider than the window, so the clamp keeps it inside.
-                let popup_width = room;
+                let lines = (tall - padding * 2.0) / line;
+                let columns = hint_popup_layout(group, lines, room, padding, measure).unwrap();
+                let popup_height = line
+                    * columns
+                        .iter()
+                        .map(|column| column.lines.len())
+                        .max()
+                        .unwrap() as f32
+                    + padding * 2.0;
+                let popup_width = columns
+                    .iter()
+                    .map(|column| column.width + padding)
+                    .sum::<f32>()
+                    + padding;
+                assert!(popup_width <= room, "{width}: {popup_width} > {room}");
                 let popup = tooltip_rect(
                     width as f32,
                     padding,
@@ -2410,12 +2744,33 @@ mod tests {
                 // A popup that fits sits at its keycap's left.
                 let narrow = tooltip_rect(width as f32, padding, group.rect.left, 1.0, 1.0, edge);
                 assert_eq!(narrow.left, group.rect.left);
-                let cut_here = rows.last() == Some(&HINT_POPUP_MORE);
-                assert_eq!(cut_here, cut && group.name == "Alt+Shift", "{width}");
-                if !cut_here {
-                    assert_eq!(rows.len(), group.rows.len());
+                let shown = columns
+                    .iter()
+                    .flat_map(|column| &column.lines)
+                    .filter_map(|line| match line {
+                        HintPopupLine::Row(_, _, row) => Some(*row),
+                        HintPopupLine::Title(_) => None,
+                    })
+                    .collect::<Vec<_>>();
+                let cut_here = shown.last() == Some(&None);
+                let alt_shift = group.name == "Alt+Shift";
+                assert_eq!(cut_here, cut && alt_shift, "{width}x{height}");
+                assert_eq!(
+                    hint_popup_columns(group, lines).unwrap().len() > 2,
+                    wraps && alt_shift,
+                    "{width}x{height}"
+                );
+                // The rows show in bar order, all of them unless the last points at full help.
+                let rows = shown.iter().flatten().copied().collect::<Vec<_>>();
+                assert_eq!(rows, (0..rows.len()).collect::<Vec<_>>());
+                assert_eq!(rows.len() == group.rows.len(), !cut_here, "{width}");
+                if alt_shift && !wraps {
+                    // Actions beside Popups, eight lines high.
+                    assert_eq!(columns.len(), 2, "{width}");
+                    assert_eq!(columns[0].lines[0], HintPopupLine::Title(Some("Actions")));
+                    assert_eq!(columns[1].lines[0], HintPopupLine::Title(Some("Popups")));
+                    assert_eq!(popup_height, line * 8.0 + padding * 2.0);
                 }
-                assert!(rows.len() <= group.rows.len());
             }
             // The version's tooltip opens above it; a header item's below the header.
             let version = workspace.version.as_ref().unwrap();
@@ -2428,34 +2783,203 @@ mod tests {
                 TooltipEdge::Below(workspace.header.bottom() + padding / 3.0)
             );
         }
-        // Too little room for one row shows no popup.
+    }
+
+    #[test]
+    fn hint_popup_keeps_the_pointer_and_shows_a_row_in_full_above() {
+        let padding = 9.0;
+        let popup = SceneRect {
+            left: 100.0,
+            top: 400.0,
+            width: 160.0,
+            height: 80.0,
+        };
+        let bar = popup.bottom() + padding / 3.0;
+        let line = |top| SceneRect {
+            left: padding,
+            top,
+            width: 70.0,
+            height: 17.0,
+        };
+        let hit = HintPopupHit::new(
+            2,
+            popup,
+            bar,
+            vec![(line(padding), 0), (line(padding + 17.0), 5)],
+        );
+        // Over a row, over the popup's margin, and across the gap down to the bar.
+        assert_eq!(
+            hit.at(100.0 + padding + 1.0, 400.0 + padding + 18.0),
+            Some((2, Some(5)))
+        );
+        assert_eq!(
+            hit.at(100.0 + padding + 1.0, 400.0 + padding + 1.0),
+            Some((2, Some(0)))
+        );
+        assert_eq!(hit.at(101.0, 401.0), Some((2, None)));
+        assert_eq!(hit.at(150.0, bar - 0.5), Some((2, None)));
+        // Not at the bar, beside the popup or above it.
+        assert_eq!(hit.at(150.0, bar), None);
+        assert_eq!(hit.at(99.0, 450.0), None);
+        assert_eq!(hit.at(150.0, 399.0), None);
+        // The full text sits just above, the popup's width; never into the header.
+        let detail = hint_detail_rect(popup, 33.2, padding, 40.0).unwrap();
+        assert_eq!(detail.left, popup.left);
+        assert_eq!(detail.width, popup.width);
+        assert_eq!(detail.height, 34.0 + padding * 2.0);
+        assert!((popup.top - detail.bottom() - padding / 3.0).abs() < 0.01);
+        let header = detail.top - padding / 3.0;
+        assert_eq!(hint_detail_rect(popup, 33.2, padding, header), Some(detail));
+        assert_eq!(hint_detail_rect(popup, 33.2, padding, header + 1.0), None);
+        assert_eq!(hint_detail_rect(popup, 0.0, padding, 40.0), None);
+    }
+
+    #[test]
+    fn hint_popup_full_text_counts_every_wrapped_line() {
+        let mut fonts = FontSystem::new();
+        let metrics = CellMetrics::for_scale(1.0);
+        let cell_font = fitted_cell_font(&mut fonts, metrics, None, false);
+        let text = "Detach: hide the window, keep terminals running";
+        let one_line = wrapped_text_height(&mut fonts, metrics, cell_font, text, 10_000.0);
+        assert!(one_line > 0.0);
+        // Half its one-line width wraps it onto more lines, and every one counts, where a
+        // buffer cut to the room for one line lays out only that line.
+        let width = shape_styled_text(
+            &mut fonts,
+            metrics,
+            cell_font,
+            text,
+            10_000.0,
+            f32::MAX,
+            DrawStyleKind::Status(Wrap::Word),
+        )
+        .layout_runs()
+        .map(|run| run.line_w)
+        .fold(0.0, f32::max)
+            / 2.0;
+        let wrapped = wrapped_text_height(&mut fonts, metrics, cell_font, text, width);
+        assert!(
+            wrapped >= one_line * 2.0,
+            "{wrapped} for one line {one_line}"
+        );
+        let cut = shape_styled_text(
+            &mut fonts,
+            metrics,
+            cell_font,
+            text,
+            width,
+            one_line,
+            DrawStyleKind::Status(Wrap::Word),
+        )
+        .layout_runs()
+        .map(|run| run.line_top + run.line_height)
+        .fold(0.0, f32::max);
+        assert!(cut < wrapped, "{cut} against {wrapped}");
+        // With room above for the cut text but not the whole of it, no box shows.
+        let padding = metrics.padding;
+        let popup = SceneRect {
+            left: 0.0,
+            top: 500.0,
+            width,
+            height: 100.0,
+        };
+        let room = hint_detail_rect(popup, cut, padding, 0.0).unwrap();
+        let header = room.top - padding / 3.0;
+        assert!(hint_detail_rect(popup, cut, padding, header).is_some());
+        assert_eq!(hint_detail_rect(popup, wrapped, padding, header), None);
+    }
+
+    #[test]
+    fn hint_popup_sections_wrap_into_columns() {
+        use crate::scene::HintRow;
+        use HintPopupLine::{Row, Title};
+        let row = |key: &str, section| HintRow {
+            key: key.into(),
+            short: format!("Do {key}"),
+            description: format!("Run the {key} action in full"),
+            section,
+        };
         let group = ShortcutHintGroup {
-            name: "Alt".into(),
-            legend: "Alt".into(),
+            name: "Alt+Shift".into(),
+            legend: "Alt+Shift".into(),
             rect: SceneRect::default(),
             hover: SceneRect::default(),
-            rows: vec![("M".into(), "Create pane".into())],
+            rows: "TWZ"
+                .chars()
+                .map(|key| row(&key.to_string(), HintSection::Actions))
+                .chain(
+                    "JL".chars()
+                        .map(|key| row(&key.to_string(), HintSection::Popups)),
+                )
+                .collect(),
             accessible_label: String::new(),
         };
-        assert_eq!(hint_popup_rows(&group, 0.9), None);
+        let key = |index: usize| group.rows[index].key.as_str();
+        let short = |index: usize| group.rows[index].short.as_str();
+        let at = |index: usize| Row(key(index), short(index), Some(index));
+        // With room, one column per section.
         assert_eq!(
-            hint_popup_rows(&group, 1.0),
-            Some(vec![("M", "Create pane")])
+            hint_popup_columns(&group, 9.0),
+            Some(vec![
+                vec![Title(Some("Actions")), at(0), at(1), at(2)],
+                vec![Title(Some("Popups")), at(3), at(4)],
+            ])
         );
-        // Without room for every row, the last line points at full help.
-        let two = ShortcutHintGroup {
-            rows: vec![
-                ("M".into(), "Create pane".into()),
-                ("T".into(), "Create tab".into()),
-            ],
+        // A section past the room goes on under an empty title, so rows line up.
+        assert_eq!(
+            hint_popup_columns(&group, 2.0),
+            Some(vec![
+                vec![Title(Some("Actions")), at(0)],
+                vec![Title(None), at(1)],
+                vec![Title(None), at(2)],
+                vec![Title(Some("Popups")), at(3)],
+                vec![Title(None), at(4)],
+            ])
+        );
+        // A group with one section has one column.
+        let actions = ShortcutHintGroup {
+            rows: group.rows[..2].to_vec(),
             ..group.clone()
         };
-        assert_eq!(hint_popup_rows(&two, 1.0), Some(vec![HINT_POPUP_MORE]));
         assert_eq!(
-            hint_popup_rows(&two, 2.0),
-            Some(vec![("M", "Create pane"), ("T", "Create tab")])
+            hint_popup_columns(&actions, 3.5),
+            Some(vec![vec![Title(Some("Actions")), at(0), at(1)]])
         );
-        assert_eq!(hint_popup_rows(&group, f32::NAN), None);
+        // No popup without room for a title and a row.
+        assert_eq!(hint_popup_columns(&group, 1.9), None);
+        assert_eq!(hint_popup_columns(&group, f32::NAN), None);
+        // Columns past the room give way to a last row pointing at full help. One character is
+        // one pixel and the padding one: Actions is its title's 7 wide, Popups its rows' 1 + 1 +
+        // 4, so both take 1 + 7 + 1 + 6 + 1.
+        let measure = |text: &str| text.chars().count() as f32;
+        let more = Row(HINT_POPUP_MORE.0, HINT_POPUP_MORE.1, None);
+        fn lines(columns: Vec<HintPopupColumn<'_>>) -> Vec<Vec<HintPopupLine<'_>>> {
+            columns.into_iter().map(|column| column.lines).collect()
+        }
+        let all = hint_popup_layout(&group, 9.0, 16.0, 1.0, measure).unwrap();
+        assert_eq!(all[0].keys, 1.0);
+        assert_eq!(all[0].width, "Actions".len() as f32);
+        assert_eq!(lines(all), hint_popup_columns(&group, 9.0).unwrap());
+        assert_eq!(
+            lines(hint_popup_layout(&group, 9.0, 15.0, 1.0, measure).unwrap()),
+            vec![vec![Title(Some("Actions")), at(0), at(1), at(2), more]]
+        );
+        // In a full column, the pointer takes the last row's place.
+        assert_eq!(
+            lines(hint_popup_layout(&group, 4.0, 15.0, 1.0, measure).unwrap()),
+            vec![vec![Title(Some("Actions")), at(0), at(1), more]]
+        );
+        // With room for one row under a title, the pointer takes the title's place, not the
+        // row's.
+        assert_eq!(
+            lines(hint_popup_layout(&group, 2.0, 7.0, 1.0, measure).unwrap()),
+            vec![vec![at(0), more]]
+        );
+        // The first column stays, however narrow the room.
+        assert_eq!(
+            lines(hint_popup_layout(&actions, 9.0, 0.0, 1.0, measure).unwrap()),
+            vec![vec![Title(Some("Actions")), at(0), at(1)]]
+        );
     }
 
     #[test]
@@ -4275,7 +4799,9 @@ mod tests {
                     modifier_names: String::new(),
                     key: "Left/Right".into(),
                     label: "gpy-jq".into(),
+                    short: "gpy-jq".into(),
                     description: "gpy-jq".into(),
+                    section: crate::HintSection::Actions,
                     accessible_label: "Left/Right gpy-jq".into(),
                     priority: 0,
                 }],

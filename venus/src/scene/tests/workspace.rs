@@ -728,7 +728,9 @@ fn popup_outer_chrome_reuses_the_pane_stack_rectangle() {
             modifier_names: String::new(),
             key: "Escape".into(),
             label: "terminal".into(),
+            short: "terminal".into(),
             description: "Return focus to the terminal".into(),
+            section: crate::HintSection::Actions,
             accessible_label: "Escape — Return focus to the terminal".into(),
             priority: 0,
         };

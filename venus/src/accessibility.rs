@@ -1315,7 +1315,9 @@ mod tests {
                                             modifier_names: "Alt".into(),
                                             key: "/".into(),
                                             label: "keys".into(),
+                                            short: "keys".into(),
                                             description: "Show or close shortcuts".into(),
+                                            section: crate::HintSection::Actions,
                                             accessible_label: "Alt+/ — Show or close shortcuts"
                                                 .into(),
                                             priority: 0,
@@ -1570,7 +1572,9 @@ mod tests {
                                         modifier_names: "Alt+Shift".into(),
                                         key: "T".into(),
                                         label: "tab".into(),
+                                        short: "tab".into(),
                                         description: "Create tab".into(),
+                                        section: crate::HintSection::Actions,
                                         accessible_label: "Alt+Shift+T — Create tab".into(),
                                         priority: 0,
                                     }],
@@ -3709,7 +3713,13 @@ mod tests {
             modifier_names: names.into(),
             key: key.into(),
             label: action.to_lowercase(),
+            short: action.to_lowercase(),
             description: action.into(),
+            section: if action == "Git" {
+                crate::HintSection::Popups
+            } else {
+                crate::HintSection::Actions
+            },
             accessible_label: if names.is_empty() {
                 format!("{key} — {action}")
             } else {
@@ -3722,6 +3732,7 @@ mod tests {
                 hint("AS", "Alt+Shift", "T", "Create tab"),
                 hint("A", "Alt", "M", "Create pane"),
                 hint("AS", "Alt+Shift", "W", "Close active tab"),
+                hint("AS", "Alt+Shift", "J", "Git"),
                 hint("", "", "Escape", "Terminal"),
             ],
             size,
@@ -3748,8 +3759,8 @@ mod tests {
         let hints = node(&update, HINTS);
         assert_eq!(hints.role(), Role::Group);
         assert_eq!(hints.label(), Some("Eon shortcut hints"));
-        // Each keycap names its modifiers in full and reads its chords; the expanded hints
-        // follow in one label. None of them takes focus or a click.
+        // Each keycap names its modifiers in full and reads its chords by section; the expanded
+        // hints follow in one label. None of them takes focus or a click.
         let children = hints.children().to_vec();
         assert_eq!(children.len(), 3);
         let read = |id| {
@@ -3766,14 +3777,18 @@ mod tests {
             read(children[0]),
             (
                 Some("Alt+Shift shortcuts".into()),
-                Some("Alt+Shift+T — Create tab; Alt+Shift+W — Close active tab".into())
+                Some(
+                    "Actions: Alt+Shift+T — Create tab; Alt+Shift+W — Close active tab; \
+                     Popups: Alt+Shift+J — Git"
+                        .into()
+                )
             )
         );
         assert_eq!(
             read(children[1]),
             (
                 Some("Alt shortcuts".into()),
-                Some("Alt+M — Create pane".into())
+                Some("Actions: Alt+M — Create pane".into())
             )
         );
         assert_eq!(
