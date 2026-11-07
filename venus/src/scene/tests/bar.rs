@@ -1341,18 +1341,31 @@ fn cpu_and_ram_chips_colour_under_load_and_say_so() {
     let levels = LoadLevels::default();
     let ram = |percent: u64, levels| {
         RamUse::parse(&format!(
-            "MemTotal: 100000 kB\nMemAvailable: {} kB\n",
-            (100 - percent) * 1000
+            "MemTotal: 10000000 kB\nMemAvailable: {} kB\n",
+            (100 - percent) * 100_000
         ))
         .unwrap()
         .rated(levels)
     };
-    for (percent, load, words, line) in [
-        (79, Load::Normal, "", ""),
-        (80, Load::High, ": under pressure", "\nUnder pressure"),
-        (89, Load::High, ": under pressure", "\nUnder pressure"),
+    for (percent, used, load, words, line) in [
+        (79, "7.5", Load::Normal, "", ""),
+        (
+            80,
+            "7.6",
+            Load::High,
+            ": under pressure",
+            "\nUnder pressure",
+        ),
+        (
+            89,
+            "8.5",
+            Load::High,
+            ": under pressure",
+            "\nUnder pressure",
+        ),
         (
             90,
+            "8.6",
             Load::Critical,
             ": under heavy pressure",
             "\nUnder heavy pressure",
@@ -1362,10 +1375,13 @@ fn cpu_and_ram_chips_colour_under_load_and_say_so() {
         assert_eq!(shown.load, load, "{percent}%");
         assert_eq!(
             shown.description,
-            format!("RAM use {percent}% of 0.1 GiB{words}")
+            format!("RAM use {percent}%, {used} GiB of 9.5 GiB{words}")
         );
-        // Hover leaves out the use the chip shows, and lists pressure on its own line.
-        assert_eq!(shown.tooltip, format!("RAM \u{b7} 0.1 GiB{line}"));
+        // Hover leaves out the percentage the chip shows, and lists pressure on its own line.
+        assert_eq!(
+            shown.tooltip,
+            format!("RAM\n{used} GiB used of 9.5 GiB{line}")
+        );
     }
     let configured = LoadLevels {
         ram_warning_percent: 50,
@@ -1600,10 +1616,13 @@ fn cpu_and_ram_chips_colour_under_load_and_say_so() {
     assert_eq!(cpu.description, busy.description);
     assert_eq!(
         ram.description,
-        "RAM use 91% of 0.1 GiB: under heavy pressure"
+        "RAM use 91%, 8.7 GiB of 9.5 GiB: under heavy pressure"
     );
     assert_eq!(cpu.tooltip, busy.tooltip);
-    assert_eq!(ram.tooltip, "RAM \u{b7} 0.1 GiB\nUnder heavy pressure");
+    assert_eq!(
+        ram.tooltip,
+        "RAM\n8.7 GiB used of 9.5 GiB\nUnder heavy pressure"
+    );
 }
 
 #[test]

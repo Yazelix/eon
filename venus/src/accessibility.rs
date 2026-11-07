@@ -1851,7 +1851,7 @@ mod tests {
                         CPU,
                         "CPU use 12% across 2 logical CPUs, over the last 2 seconds",
                     ),
-                    (RAM, "RAM use 43% of 31.3 GiB"),
+                    (RAM, "RAM use 43%, 13.5 GiB of 31.3 GiB"),
                     (DISK, "Disk use 80% of 1000.0 GiB on /, 200.0 GiB free"),
                 ] {
                     if (id == RAM && scene.ram.is_none()) || (id == DISK && scene.disk.is_none()) {

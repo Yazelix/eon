@@ -91,8 +91,9 @@ order, selection, and popups; Venus draws the visible scene.
   each reading in words. Each reading chip keeps the width of its icon and
   ` 100%`, six cells, with its text centred, so neighbouring items never shift.
   Accessibility says, for example, `CPU use 12% across 16 logical CPUs, over
-  the last 2 seconds` and `RAM use 43% of 31.3 GiB`; hover lists
-  `CPU · 16 logical CPUs` and `RAM · 31.3 GiB`. A reading that cannot be taken
+  the last 2 seconds` and `RAM use 43%, 13.5 GiB of 31.3 GiB`; hover lists
+  `CPU · 16 logical CPUs`, and `RAM` then `13.5 GiB used of 31.3 GiB`, the
+  same use the percentage comes from. A reading that cannot be taken
   shows no label, never 0%, until the next valid one. Other platforms show
   neither label.
 - The disk chip shows, as its icon and a percentage, the used share of the
@@ -114,7 +115,7 @@ order, selection, and popups; Venus draws the visible scene.
   quiet: by default RAM is orange from 80% use and red from 90%, disk orange
   from 85% and red from 95%, and CPU orange while the 2-second use it shows is
   90% or more, so bursts show. Accessibility says why in words, such
-  as `RAM use 91% of 31.3 GiB: under heavy pressure`,
+  as `RAM use 91%, 28.5 GiB of 31.3 GiB: under heavy pressure`,
   `Disk use 87% of 929.4 GiB on /, 120.8 GiB free: filling up` (`: nearly full`
   when red) or
   `CPU use 99% across 16 logical CPUs, over the last 2 seconds: under high load`,

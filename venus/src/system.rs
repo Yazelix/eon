@@ -249,7 +249,7 @@ impl CpuReadings {
 #[derive(Debug, PartialEq, Eq)]
 pub struct RamUse {
     pub(crate) label: String,
-    /// The hover list: one fact per line, without the use the label shows.
+    /// The hover list: one fact per line, without the percentage the label shows.
     pub(crate) tooltip: String,
     /// The accessible value: every fact in one sentence.
     pub(crate) description: String,
@@ -315,11 +315,11 @@ impl RamUse {
             return None;
         }
         let percent = percent(used, total);
-        let total = total as f64 / per_gib;
+        let (used, total) = (used as f64 / per_gib, total as f64 / per_gib);
         Some(Self {
             label: format!("{RAM_ICON} {percent}%"),
-            tooltip: format!("RAM \u{b7} {total:.1} GiB"),
-            description: format!("RAM use {percent}% of {total:.1} GiB"),
+            tooltip: format!("RAM\n{used:.1} GiB used of {total:.1} GiB"),
+            description: format!("RAM use {percent}%, {used:.1} GiB of {total:.1} GiB"),
             load: Load::Normal,
             percent,
         })
@@ -660,8 +660,8 @@ mod tests {
         let pages = [7 * gib, gib, 2 * gib, gib];
         let shown = RamUse::from_host_pages(pages, 16_384, 16 << 30).unwrap();
         assert_eq!(shown.label, "\u{efc5} 56%");
-        assert_eq!(shown.description, "RAM use 56% of 16.0 GiB");
-        assert_eq!(shown.tooltip, "RAM \u{b7} 16.0 GiB");
+        assert_eq!(shown.description, "RAM use 56%, 9.0 GiB of 16.0 GiB");
+        assert_eq!(shown.tooltip, "RAM\n9.0 GiB used of 16.0 GiB");
         for (pages, page_size, memsize) in [
             ([0, 0, 0, 0], 16_384, 0),
             ([1, 2, 0, 0], 16_384, 1 << 30),
@@ -685,8 +685,8 @@ mod tests {
         )
         .unwrap();
         assert_eq!(shown.label, "\u{efc5} 43%");
-        assert_eq!(shown.description, "RAM use 43% of 31.3 GiB");
-        assert_eq!(shown.tooltip, "RAM \u{b7} 31.3 GiB");
+        assert_eq!(shown.description, "RAM use 43%, 13.5 GiB of 31.3 GiB");
+        assert_eq!(shown.tooltip, "RAM\n13.5 GiB used of 31.3 GiB");
         // Whole percentages round to nearest, from 0 to 100.
         for (total, available, label) in [
             (3, 3, "\u{efc5} 0%"),
