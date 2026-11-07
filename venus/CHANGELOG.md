@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- VEN-C8: Quit sends EON-C11's Reserved Stop and reads its reply, in place of
+  the EONW Stop that v37 removes (`eon-7cf0y.17`). Venus consumes EONW v37.
 - VEN-C8: on macOS, Command+Q in an Eon workspace window acts as a close
   request; Venus takes it off winit's default app menu, and the Shortcuts row
   reads "Option+Shift+Q or Command+Q". A standalone Orbit session keeps

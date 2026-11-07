@@ -1,11 +1,10 @@
 use super::cli::Inputs;
 use super::control::{
-    CONTROL_TIMEOUT, ControlResponse, EndpointFailure, EndpointFailureKind, Error, connect_control,
-    failure, probe_generation_runtime, probe_generation_runtime_from,
+    CONTROL_TIMEOUT, ControlResponse, EndpointFailure, EndpointFailureKind, Error, StopAnswer,
+    connect_control, failure, probe_generation_runtime, probe_generation_runtime_from,
     probe_generation_runtime_until, remove_socket_if_identity, report_failure,
-    send_action_from_until, send_action_on, socket_identity, socket_identity_from, write_stdout,
+    send_action_from_until, send_stop_on, socket_identity, socket_identity_from, write_stdout,
 };
-use super::sessions::TERMINAL_VARIABLE;
 use super::supervisor::{
     base_runtime_directory, effective_uid, present_at, probe_supervisor, runtime_directory,
     supervisor_lock_path, try_lock_supervisor_lifecycle, validate_private_directory,
@@ -15,9 +14,10 @@ use super::windows::{
     runtime_window,
 };
 use super::workspace::{json_escape, terminal_text};
-use eon_workspace_protocol::v36::{
-    Action, Availability, BusyTerminals, Failure, LifecycleResponse, MAX_RUNNING_WINDOWS, Response,
-    Stopped, WindowEntry, WindowState, WorkspaceAction,
+use eon_workspace_protocol::stop;
+use eon_workspace_protocol::v37::{
+    Action, Availability, BusyTerminals, Failure, MAX_RUNNING_WINDOWS, Response, WindowEntry,
+    WindowState, WorkspaceAction,
 };
 use std::{
     env,
@@ -31,7 +31,7 @@ use std::{
         process::CommandExt,
     },
     path::{Path, PathBuf},
-    process::{Command, ExitStatus, Stdio},
+    process::Command,
     thread,
     time::{Duration, Instant},
 };
@@ -64,67 +64,31 @@ pub(super) fn generation_directory(root: &Path, generation: &str) -> PathBuf {
     root.join("generations").join(generation)
 }
 
-/// The runtime root that holds a generation's directory.
-fn generations_root(runtime: &Path) -> &Path {
-    runtime.parent().and_then(Path::parent).unwrap_or(runtime)
-}
-
 /// The link in a generation's directory to the `eon` of the build that started
 /// it, which a later build runs to present a generation it cannot present.
 const LAUNCHER: &str = "eon";
-/// Set on a delegated attach to the generation it presents.
-const DELEGATED: &str = "EON_ATTACH_DELEGATED";
-/// Set on a delegated Stop to the generation it stops.
-const STOP_DELEGATED: &str = "EON_STOP_DELEGATED";
-/// The delegation markers, which never reach what Eon starts.
-pub(super) const DELEGATION_MARKERS: [&str; 2] = [STOP_DELEGATED, DELEGATED];
-/// The last EONW version whose builds take `stop GENERATION` and
-/// `attach GENERATION`; newer builds take `window stop ID` and
-/// `window attach ID` (EON-C11). It goes with eon-7cf0y.17's
-/// version-independent Stop.
-const LAST_GENERATION_FORMS: u16 = 34;
+/// Set on a delegated attach to the generation it presents, and removed from
+/// everything Eon starts.
+pub(super) const DELEGATION_MARKER: &str = "EON_ATTACH_DELEGATED";
 
-/// What a delegation asks another build's `eon` to do.
-#[derive(Clone, Copy)]
-enum Delegated {
-    Stop { json: bool },
-    Attach,
-}
-
-/// How this build runs another build's recorded `eon` to stop or present one
-/// of that build's generations (EON-C11, Delegation).
+/// How this build runs another build's recorded `eon` to present one of that
+/// build's generations (EON-C11, Delegation).
 #[derive(Debug, PartialEq)]
 struct Delegation {
     /// The generation's independent window root, else none for the default
     /// namespace.
     window: Option<PathBuf>,
-    /// The marker variable, set to `generation`.
-    marker: &'static str,
     generation: String,
     arguments: Vec<String>,
 }
 
-/// The delegation of `kind` for `generation` in namespace `root`, in the form
-/// that `protocol`, the EONW version its supervisor reported, takes. An
-/// unknown version is taken as an older one.
-fn delegation(root: &Path, generation: &str, protocol: Option<u16>, kind: Delegated) -> Delegation {
-    let generation_forms = protocol.is_none_or(|protocol| protocol <= LAST_GENERATION_FORMS);
+/// The delegated attach of `generation` in namespace `root`.
+fn delegation(root: &Path, generation: &str) -> Delegation {
     let window = runtime_window(root).unwrap_or_else(|| DEFAULT_WINDOW.into());
-    let (marker, arguments) = match (kind, generation_forms) {
-        (Delegated::Stop { .. }, true) => (STOP_DELEGATED, vec!["stop", generation]),
-        (Delegated::Stop { .. }, false) => (STOP_DELEGATED, vec!["window", "stop", &window]),
-        (Delegated::Attach, true) => (DELEGATED, vec!["attach", generation]),
-        (Delegated::Attach, false) => (DELEGATED, vec!["window", "attach", &window]),
-    };
-    let mut arguments: Vec<String> = arguments.into_iter().map(str::to_owned).collect();
-    if let Delegated::Stop { json: true } = kind {
-        arguments.push("--json".into());
-    }
     Delegation {
         window: (!is_default_namespace(root)).then(|| root.to_owned()),
-        marker,
         generation: generation.to_owned(),
-        arguments,
+        arguments: vec!["window".into(), "attach".into(), window],
     }
 }
 
@@ -134,52 +98,37 @@ impl Delegation {
         let mut command = Command::new(eon);
         command
             .args(&self.arguments)
-            .env(self.marker, &self.generation);
+            .env(DELEGATION_MARKER, &self.generation);
         match &self.window {
             Some(root) => command.env(WINDOW_RUNTIME, root),
             None => command.env_remove(WINDOW_RUNTIME),
         };
         command
     }
-
-    /// `eon` run as this delegation, as `env` words a person can run.
-    fn words(&self, eon: &Path) -> Vec<String> {
-        let mut words = vec!["env".to_owned()];
-        match &self.window {
-            Some(root) => words.push(format!("{WINDOW_RUNTIME}={}", root.display())),
-            None => words.extend(["-u".to_owned(), WINDOW_RUNTIME.to_owned()]),
-        }
-        words.push(format!("{}={}", self.marker, self.generation));
-        words.push(eon.display().to_string());
-        words.extend(self.arguments.iter().cloned());
-        words
-    }
 }
 
-/// The generation a delegated Stop (`stop`) or attach names, else none: set,
-/// the marker must name this build's own generation, since a build is only
-/// ever delegated its own (EON-C11). It narrows the named window to that
-/// generation and never selects another.
-pub(super) fn delegated_generation(inputs: &Inputs, stop: bool) -> Result<Option<String>, Error> {
-    let marker = if stop { STOP_DELEGATED } else { DELEGATED };
-    let Some(value) = env::var_os(marker) else {
+/// The generation a delegated attach names, else none: set, the marker must
+/// name this build's own generation, since a build is only ever delegated its
+/// own (EON-C11). It narrows the named window to that generation and never
+/// selects another.
+pub(super) fn delegated_generation(inputs: &Inputs) -> Result<Option<String>, Error> {
+    let Some(value) = env::var_os(DELEGATION_MARKER) else {
         return Ok(None);
     };
     let current = current_generation(inputs)?;
     if value != current.as_str() {
         return Err(Error::usage(format!(
-            "{marker} does not name this Eon's generation; nothing was sent"
+            "{DELEGATION_MARKER} does not name this Eon's generation; nothing was sent"
         )));
     }
     Ok(Some(current))
 }
 
-/// The failure for marker `stop` (as `delegated_generation`) on window
-/// `shown`, which does not run this build's generation.
-pub(super) fn delegated_elsewhere(stop: bool, shown: &str) -> Error {
-    let marker = if stop { STOP_DELEGATED } else { DELEGATED };
+/// The failure for the marker on window `shown`, which does not run this
+/// build's generation.
+pub(super) fn delegated_elsewhere(shown: &str) -> Error {
     Error::usage(format!(
-        "{marker} names this Eon's generation, which window {shown} does not run; nothing was sent"
+        "{DELEGATION_MARKER} names this Eon's generation, which window {shown} does not run; nothing was sent"
     ))
 }
 
@@ -212,102 +161,6 @@ fn recorded_launcher(runtime: &Path) -> Option<PathBuf> {
         return None;
     }
     fs::read_link(link).ok().filter(|eon| eon.is_absolute())
-}
-
-/// Why a recorded `eon` cannot run, or none while it is an executable file.
-fn launcher_fault(eon: &Path) -> Option<&'static str> {
-    match fs::metadata(eon) {
-        Ok(metadata) if metadata.is_file() && metadata.mode() & 0o111 != 0 => None,
-        Ok(_) => Some("is not an executable file"),
-        Err(_) => Some("is missing"),
-    }
-}
-
-/// What to run to stop a generation through `eon`, as `stop` delegates it.
-/// It is one command when each word has a form that POSIX shells and Nushell
-/// both read back, else one command for each.
-fn stop_advice(eon: &Path, stop: &Delegation) -> String {
-    let words = stop.words(eon);
-    if let Some(command) = words
-        .iter()
-        .map(|word| shared_word(word))
-        .collect::<Option<Vec<_>>>()
-    {
-        return format!("then run {}", command.join(" "));
-    }
-    let command = |quote: fn(&str) -> String| {
-        words
-            .iter()
-            .map(|word| quote(word))
-            .collect::<Vec<_>>()
-            .join(" ")
-    };
-    format!(
-        "then run, in sh:\n    {}\n  or in Nushell:\n    {}",
-        command(posix_word),
-        command(nu_word)
-    )
-}
-
-fn bare_word(word: &str) -> bool {
-    !word.is_empty()
-        && word
-            .chars()
-            .all(|character| character.is_ascii_alphanumeric() || "_@%+=:,./-".contains(character))
-}
-
-/// `word` in a form that POSIX shells and Nushell both read back as written:
-/// bare, in single quotes, or, with an apostrophe, in double quotes with `\`,
-/// `"` and `$` escaped. An apostrophe beside a backquote or `!`, or a control
-/// character, has no such form.
-fn shared_word(word: &str) -> Option<String> {
-    if bare_word(word) {
-        return Some(word.to_owned());
-    }
-    if word.chars().any(char::is_control) {
-        return None;
-    }
-    if !word.contains('\'') {
-        return Some(format!("'{word}'"));
-    }
-    if word.contains(['`', '!']) {
-        return None;
-    }
-    let mut quoted = String::from('"');
-    for character in word.chars() {
-        if matches!(character, '\\' | '"' | '$') {
-            quoted.push('\\');
-        }
-        quoted.push(character);
-    }
-    quoted.push('"');
-    Some(quoted)
-}
-
-/// `word` for a POSIX shell: bare, else in single quotes.
-fn posix_word(word: &str) -> String {
-    if bare_word(word) {
-        word.to_owned()
-    } else {
-        format!("'{}'", word.replace('\'', "'\\''"))
-    }
-}
-
-/// `word` for Nushell: bare, else a raw string with more `#` than any run
-/// after an apostrophe in it.
-fn nu_word(word: &str) -> String {
-    if bare_word(word) {
-        return word.to_owned();
-    }
-    let hashes = word
-        .split('\'')
-        .skip(1)
-        .map(|after| after.len() - after.trim_start_matches('#').len())
-        .max()
-        .unwrap_or(0)
-        + 1;
-    let hashes = "#".repeat(hashes);
-    format!("r{hashes}'{word}'{hashes}")
 }
 
 fn is_default_namespace(root: &Path) -> bool {
@@ -950,7 +803,8 @@ fn inspect_generation(
                 info.attach = Availability {
                     available: false,
                     reason: "component graph differs from the current Eon build; \
-                             the Eon build that started it can attach or stop it"
+                             the Eon build that started it can attach it, and any later \
+                             Eon build can stop it"
                         .into(),
                 };
             }
@@ -977,29 +831,21 @@ fn inspect_generation(
             let mut record = failed_generation(id, kind, runtime.clone(), error);
             if cleanup && record.state == "incompatible" {
                 record.launcher = recorded_launcher(&runtime);
-                if let Some(eon) = &record.launcher {
-                    let stop = delegation(
-                        generations_root(&runtime),
-                        id,
-                        record.workspace_protocol,
-                        Delegated::Stop { json: false },
-                    );
-                    record.stop = match launcher_fault(eon) {
-                        None => Availability {
-                            available: true,
-                            reason: "stop runs the Eon build that started it".into(),
-                        },
-                        Some(fault) => Availability {
-                            available: false,
-                            reason: format!(
-                                "{}; its recorded eon {} {fault}; restore that build, {}",
-                                record.detail,
-                                eon.display(),
-                                stop_advice(eon, &stop)
-                            ),
-                        },
-                    };
-                }
+                // From the first Reserved Stop on, every supervisor answers it,
+                // whatever its EONW, so no build is needed to stop it (EON-C11).
+                record.stop = match record.workspace_protocol {
+                    Some(version) if version < stop::FIRST_VERSION => Availability {
+                        available: false,
+                        reason: format!(
+                            "supervisor uses EONW {version}, which predates the reserved Stop; \
+                             {QUIT_FROM_INSIDE}"
+                        ),
+                    },
+                    _ => Availability {
+                        available: true,
+                        reason: "stop sends the reserved Stop".into(),
+                    },
+                };
             }
             if cleanup
                 && dead
@@ -1374,11 +1220,9 @@ pub(super) fn attach_generation(
     // That build presents its own generation with its own components. The
     // marker stops a record that names this build from delegating again.
     if let Some(eon) = &record.launcher
-        && env::var_os(DELEGATED).is_none_or(|delegated| delegated != target)
+        && env::var_os(DELEGATION_MARKER).is_none_or(|delegated| delegated != target)
     {
-        let error = delegation(root, target, record.workspace_protocol, Delegated::Attach)
-            .command(eon)
-            .exec();
+        let error = delegation(root, target).command(eon).exec();
         return Err(format!("cannot run {}: {error}", eon.display()).into());
     }
     let (mode, supervisor) = probe_supervisor(inputs, &record.runtime.join("eon.sock"), target)
@@ -1547,20 +1391,6 @@ pub(super) fn stop_generation(
             json,
         );
     };
-    // That build stops its own generation; a delegated Stop never delegates
-    // the same generation again.
-    if record.state == "incompatible"
-        && record.stop.available
-        && let Some(eon) = &record.launcher
-    {
-        if env::var_os(STOP_DELEGATED).is_some_and(|delegated| delegated == target) {
-            return report_failure(
-                &failure("stop-unavailable", format!("{subject}: {}", record.detail)),
-                json,
-            );
-        }
-        return delegated_stop(&record, eon, root, json, ask);
-    }
     if !record.stop.available {
         return report_failure(
             &failure(
@@ -1588,6 +1418,7 @@ pub(super) fn stop_generation(
     };
     let question = match ask {
         _ if json => None,
+        _ if record.state == "incompatible" => Some(unknown_terminals_question(&record, ask)),
         Ask::Stop | Ask::StopWindow(_) => Some((
             format!(
                 "Stop {subject} and {} live terminal{} [{}]? [y/N] ",
@@ -1632,106 +1463,68 @@ pub(super) fn stop_generation(
             json,
         );
     }
-    let response = match send_action_on(
-        stream,
-        Action::Workspace(WorkspaceAction::Stop {
-            generation: target.into(),
-        }),
-    ) {
-        Ok(response) => response,
-        Err(error) => {
-            return report_failure(&failure("stop-failed", error.detail), json);
+    match send_stop_on(stream, target) {
+        Ok(StopAnswer::Reply(stop::Reply::Stopped {
+            generation,
+            terminals,
+        })) if generation == target => report_stopped(&generation, &terminals, json, &subject),
+        Ok(StopAnswer::Reply(stop::Reply::Failure { code, detail })) => {
+            report_failure(&Failure { code, detail }, json)
         }
-    };
-    match response {
-        ControlResponse::Lifecycle(LifecycleResponse::Stopped(stopped))
-            if stopped.generation == target =>
-        {
-            report_stopped(&stopped, json, &subject)
-        }
-        ControlResponse::Lifecycle(LifecycleResponse::Failure(failure)) => {
-            report_failure(&failure, json)
-        }
-        _ => report_failure(
+        Ok(StopAnswer::Reply(stop::Reply::Stopped { .. })) => report_failure(
             &failure(
                 "stop-failed",
                 "supervisor returned the wrong EONW result for stop",
             ),
             json,
         ),
+        Ok(StopAnswer::Predates(version)) => report_failure(
+            &failure(
+                "stop-unavailable",
+                format!(
+                    "{subject} runs EONW {version}, which predates the reserved Stop; {}",
+                    predates_advice(ask)
+                ),
+            ),
+            json,
+        ),
+        Err(error) => report_failure(&failure("stop-failed", error.detail), json),
     }
 }
 
-/// Prints `stopped`, calling its target `subject` in human mode.
-fn report_stopped(stopped: &Stopped, json: bool, subject: &str) -> Result<i32, String> {
+/// How to end a window whose supervisor predates the Reserved Stop: from
+/// inside it, since only its own build reaches it and an older `eon` takes no
+/// `window attach ID`.
+const QUIT_FROM_INSIDE: &str =
+    "quit it from inside its window: Alt+Shift+Q, or `eon quit` in one of its terminals";
+
+/// What to do with a generation whose supervisor predates the Reserved Stop.
+fn predates_advice(ask: &Ask) -> &'static str {
+    match ask {
+        Ask::Stop => "stop it with the build that started it",
+        Ask::StopWindow(_) | Ask::Quit { .. } => QUIT_FROM_INSIDE,
+    }
+}
+
+/// Prints that `generation` stopped `terminals`, calling it `subject` in
+/// human mode.
+fn report_stopped(
+    generation: &str,
+    terminals: &[String],
+    json: bool,
+    subject: &str,
+) -> Result<i32, String> {
     if json {
-        write_stdout(stopped_json(stopped))?;
+        write_stdout(stopped_json(generation, terminals))?;
     } else {
-        write_stdout(format!(
-            "stopped {subject}: {}\n",
-            stopped.sessions.join(", ")
-        ))?;
+        write_stdout(format!("stopped {subject}: {}\n", terminals.join(", ")))?;
     }
     Ok(0)
 }
 
-/// Stops a generation of another EONW version by running its recorded `eon`
-/// as its Delegation, with `--json` and without input (EON-C11). This build asks any question first and reports the result as
-/// its own.
-fn delegated_stop(
-    record: &GenerationRecord,
-    eon: &Path,
-    root: &Path,
-    json: bool,
-    ask: &Ask,
-) -> Result<i32, String> {
-    let target = record.id.as_str();
-    if !json {
-        let (question, cancelled) = delegated_question(record, ask);
-        if let Some(status) = confirm(&question, &cancelled)? {
-            return Ok(status);
-        }
-    }
-    let stop = delegation(
-        root,
-        target,
-        record.workspace_protocol,
-        Delegated::Stop { json: true },
-    );
-    // The window ID that the window form's result names.
-    let window = (stop.arguments[0] == "window").then(|| stop.arguments[2].as_str());
-    let mut command = stop.command(eon);
-    command
-        .env_remove(TERMINAL_VARIABLE)
-        .stdin(Stdio::null())
-        .stderr(Stdio::inherit());
-    let result = match command.output() {
-        Ok(output) => delegated_result(&output.stdout, output.status, target, window)
-            .unwrap_or_else(|| {
-                Err(failure(
-                    "stop-failed",
-                    format!(
-                        "{} {} ended with {} and no complete Stop result",
-                        eon.display(),
-                        stop.arguments.join(" "),
-                        output.status
-                    ),
-                ))
-            }),
-        Err(error) => Err(failure(
-            "stop-failed",
-            format!("cannot run {}: {error}", eon.display()),
-        )),
-    };
-    match result {
-        Ok(stopped) => report_stopped(&stopped, json, &ask.subject(target)),
-        Err(failure) => report_failure(&failure, json),
-    }
-}
-
-/// A delegated Stop's question and its decline: its terminals are unknown
-/// here, so it always asks.
-fn delegated_question(record: &GenerationRecord, ask: &Ask) -> (String, String) {
+/// The question and decline for a Stop of another build's generation: its
+/// terminals are unknown here, so it always asks.
+fn unknown_terminals_question(record: &GenerationRecord, ask: &Ask) -> (String, String) {
     const UNKNOWN: &str = "It runs another Eon build, so its terminals are unknown. [y/N] ";
     let subject = ask.subject(&record.id);
     match ask {
@@ -1750,69 +1543,6 @@ fn delegated_question(record: &GenerationRecord, ask: &Ask) -> (String, String) 
                 format!("cancelled; {window} keeps running\n"),
             )
         }
-    }
-}
-
-/// The one Stop result for `target` that a delegated Stop printed and
-/// completed, else none: a Stop that a signal ended is not complete, nor is a
-/// `stopped` result whose `eon` failed. `stop GENERATION --json` prints that
-/// result alone; `window stop ID --json`, with `window` that ID, prints it as
-/// its window's one result, or prints a selection failure alone.
-fn delegated_result(
-    stdout: &[u8],
-    status: ExitStatus,
-    target: &str,
-    window: Option<&str>,
-) -> Option<Result<Stopped, Failure>> {
-    #[derive(serde::Deserialize)]
-    #[serde(rename_all = "lowercase")]
-    enum Delegated {
-        Stopped {
-            generation: String,
-            // Builds before v0.1.20 name the list `sessions`.
-            #[serde(alias = "sessions")]
-            terminals: Vec<String>,
-        },
-        Error {
-            code: String,
-            detail: String,
-        },
-    }
-    #[derive(serde::Deserialize)]
-    struct Window {
-        window: String,
-        results: Vec<Delegated>,
-    }
-    #[derive(serde::Deserialize)]
-    #[serde(untagged)]
-    enum Output {
-        Windows(Vec<Window>),
-        One(Delegated),
-    }
-    let result = match (serde_json::from_slice(stdout).ok()?, window) {
-        (Output::One(result), None) => result,
-        (Output::One(result @ Delegated::Error { .. }), Some(_)) => result,
-        (Output::Windows(windows), Some(id)) => match <[Window; 1]>::try_from(windows) {
-            Ok([Window { window, results }]) if window == id => {
-                let [result] = <[Delegated; 1]>::try_from(results).ok()?;
-                result
-            }
-            _ => return None,
-        },
-        _ => return None,
-    };
-    match result {
-        Delegated::Stopped {
-            generation,
-            terminals,
-        } if generation == target && status.success() => Some(Ok(Stopped {
-            generation,
-            sessions: terminals,
-        })),
-        Delegated::Error { code, detail } if !code.is_empty() && status.code().is_some() => {
-            Some(Err(failure(code, detail)))
-        }
-        _ => None,
     }
 }
 
@@ -1911,12 +1641,12 @@ pub(super) fn stop_generations(
     Ok(status)
 }
 
-fn stopped_json(stopped: &Stopped) -> String {
+fn stopped_json(generation: &str, terminals: &[String]) -> String {
     let mut output = format!(
         "{{\"stopped\":{{\"generation\":\"{}\",\"terminals\":[",
-        json_escape(&stopped.generation)
+        json_escape(generation)
     );
-    for (index, session) in stopped.sessions.iter().enumerate() {
+    for (index, session) in terminals.iter().enumerate() {
         if index != 0 {
             output.push(',');
         }
@@ -2040,7 +1770,7 @@ mod tests {
 
     #[test]
     fn read_only_discovery_excludes_terminal_only_supervisors() {
-        use eon_workspace_protocol::v36::{
+        use eon_workspace_protocol::v37::{
             Availability, HEADER_BYTES, LifecycleResponse, Runtime, declared_message_len,
             encode_lifecycle_response,
         };
@@ -2072,7 +1802,7 @@ mod tests {
                 name: None,
                 started_at: 123,
                 eon_version: "fixture".into(),
-                workspace_protocol: eon_workspace_protocol::v36::VERSION,
+                workspace_protocol: eon_workspace_protocol::v37::VERSION,
                 component_report: "fixture".into(),
                 sessions: vec!["terminal-1".into()],
                 attach: available.clone(),
@@ -2178,7 +1908,7 @@ mod tests {
 
     #[test]
     fn quit_asks_only_while_busy_in_window_language() {
-        use eon_workspace_protocol::v36::{BusyTerminal, TargetId, TerminalTarget};
+        use eon_workspace_protocol::v37::{BusyTerminal, TargetId, TerminalTarget};
         let mut record = super::dead_generation("g1", "current", "/runtime".into(), "ended");
         let sessions = ["terminal-1".to_owned(), "terminal-2".to_owned()];
         let busy = |names: &[&str], omitted| BusyTerminals {
@@ -2240,10 +1970,10 @@ mod tests {
     }
 
     #[test]
-    fn delegated_question_names_another_build() {
+    fn another_builds_question_says_its_terminals_are_unknown() {
         let record = super::dead_generation("g1", "previous", "/runtime".into(), "ended");
         assert_eq!(
-            super::delegated_question(&record, &super::Ask::Stop),
+            super::unknown_terminals_question(&record, &super::Ask::Stop),
             (
                 "Stop generation g1? It runs another Eon build, so its terminals are unknown. [y/N] "
                     .into(),
@@ -2252,7 +1982,7 @@ mod tests {
         );
         // The window commands name the window by its ID, never the generation.
         assert_eq!(
-            super::delegated_question(&record, &super::Ask::StopWindow("3f9a")),
+            super::unknown_terminals_question(&record, &super::Ask::StopWindow("3f9a")),
             (
                 "Stop window 3f9a? It runs another Eon build, so its terminals are unknown. [y/N] "
                     .into(),
@@ -2260,7 +1990,7 @@ mod tests {
             )
         );
         assert_eq!(
-            super::delegated_question(
+            super::unknown_terminals_question(
                 &record,
                 &super::Ask::Quit {
                     caller: None,
@@ -2277,241 +2007,21 @@ mod tests {
     }
 
     #[test]
-    fn stop_advice_runs_as_printed_in_sh_and_nushell() {
-        use std::process::{Command, Stdio};
-        let base = temporary_directory();
-        let log = base.join("log");
-        let window = base.join("e r").join("w").join("0000abcd");
-        // Each directory names the recorded `eon`; the last two have no form
-        // that both shells read, so their advice has one command per shell.
-        for (directory, shared) in [
-            ("e r", true),
-            ("it's", true),
-            ("bang!", true),
-            ("it's!", false),
-            ("it's`#'#", false),
-        ] {
-            let eon = base.join(directory).join("eon");
-            fs::create_dir_all(eon.parent().unwrap()).unwrap();
-            fs::write(
-                &eon,
-                format!(
-                    "#!/bin/sh\nprintf '%s|%s|%s\\n' \"$*\" \"${{EON_WINDOW_RUNTIME_DIR-unset}}\" \"${{EON_STOP_DELEGATED-unset}}\" >> '{}'\n",
-                    log.display()
-                ),
-            )
-            .unwrap();
-            fs::set_permissions(&eon, fs::Permissions::from_mode(0o755)).unwrap();
-            let default = crate::supervisor::base_runtime_directory("eon");
-            // A build of EONW 34 takes `stop G`, a newer one `window stop ID`.
-            for (namespace, protocol) in [
-                (None, Some(34)),
-                (Some(window.as_path()), Some(34)),
-                (None, Some(36)),
-                (Some(window.as_path()), Some(36)),
-            ] {
-                let stop = super::delegation(
-                    namespace.unwrap_or(&default),
-                    "g1-x",
-                    protocol,
-                    super::Delegated::Stop { json: false },
-                );
-                let advice = super::stop_advice(&eon, &stop);
-                let commands = match advice.strip_prefix("then run ") {
-                    Some(command) => vec![("sh", command), ("nu", command)],
-                    None => {
-                        let lines: Vec<_> = advice.lines().collect();
-                        assert_eq!(lines[0], "then run, in sh:", "{advice}");
-                        assert_eq!(lines[2], "  or in Nushell:", "{advice}");
-                        vec![("sh", lines[1].trim_start()), ("nu", lines[3].trim_start())]
-                    }
-                };
-                assert_eq!(advice.starts_with("then run env"), shared, "{advice}");
-                for (shell, command) in commands {
-                    let mut run = if shell == "sh" {
-                        Command::new("/bin/sh")
-                    } else {
-                        let mut nu = Command::new("nu");
-                        nu.arg("--no-config-file");
-                        nu
-                    };
-                    let output = run
-                        .args(["-c", command])
-                        .env("EON_WINDOW_RUNTIME_DIR", base.join("elsewhere"))
-                        .stdin(Stdio::null())
-                        .output()
-                        .unwrap();
-                    assert!(output.status.success(), "{shell}: {command}: {output:?}");
-                    let expected = namespace
-                        .map_or_else(|| "unset".to_owned(), |root| root.display().to_string());
-                    assert_eq!(
-                        fs::read_to_string(&log).unwrap(),
-                        format!("{}|{expected}|g1-x\n", stop.arguments.join(" ")),
-                        "{shell}: {command}"
-                    );
-                    fs::remove_file(&log).unwrap();
-                }
-            }
-        }
-        fs::remove_dir_all(base).unwrap();
-    }
-
-    #[test]
-    fn delegation_follows_the_recorded_builds_eonw() {
-        use super::{Delegated, Delegation, delegation};
+    fn delegation_attaches_the_window_by_its_id() {
+        use super::{Delegation, delegation};
         let default = crate::supervisor::base_runtime_directory("eon");
         let window = default.join("w").join("0000abcd");
         let generation = "g1-0123456789abcdef0123456789abcdef";
-        let expected =
-            |window: Option<&Path>, marker: &'static str, arguments: &[&str]| Delegation {
-                window: window.map(Path::to_owned),
-                marker,
-                generation: generation.into(),
-                arguments: arguments.iter().map(|word| (*word).to_owned()).collect(),
-            };
-        let stop = Delegated::Stop { json: true };
-        // EONW 34 and older, and an unknown version, take the generation forms.
-        for protocol in [None, Some(11), Some(34)] {
-            assert_eq!(
-                delegation(&default, generation, protocol, stop),
-                expected(None, "EON_STOP_DELEGATED", &["stop", generation, "--json"])
-            );
-            assert_eq!(
-                delegation(&window, generation, protocol, Delegated::Attach),
-                expected(
-                    Some(&window),
-                    "EON_ATTACH_DELEGATED",
-                    &["attach", generation]
-                )
-            );
-        }
-        // Newer builds take the window forms, naming the window by its ID.
-        for protocol in [Some(35), Some(36)] {
-            assert_eq!(
-                delegation(&default, generation, protocol, stop),
-                expected(
-                    None,
-                    "EON_STOP_DELEGATED",
-                    &["window", "stop", "default", "--json"]
-                )
-            );
-            assert_eq!(
-                delegation(&window, generation, protocol, stop),
-                expected(
-                    Some(&window),
-                    "EON_STOP_DELEGATED",
-                    &["window", "stop", "0000abcd", "--json"]
-                )
-            );
-            assert_eq!(
-                delegation(&default, generation, protocol, Delegated::Attach),
-                expected(
-                    None,
-                    "EON_ATTACH_DELEGATED",
-                    &["window", "attach", "default"]
-                )
-            );
-            assert_eq!(
-                delegation(
-                    &window,
-                    generation,
-                    protocol,
-                    Delegated::Stop { json: false }
-                )
-                .arguments,
-                ["window", "stop", "0000abcd"]
-            );
-        }
-    }
-
-    #[test]
-    fn delegated_result_accepts_one_stop_result_only() {
-        use std::os::unix::process::ExitStatusExt;
-        let exited = |code: i32| std::process::ExitStatus::from_raw(code << 8);
-        let killed = std::process::ExitStatus::from_raw(libc::SIGKILL);
-        for output in [
-            b"{\"stopped\":{\"generation\":\"g1\",\"terminals\":[\"terminal-1\"]}}\n".as_slice(),
-            // A build before v0.1.20 prints `sessions`.
-            b"{\"stopped\":{\"generation\":\"g1\",\"sessions\":[\"terminal-1\"],\"hint\":1}}",
-        ] {
-            let stopped = super::delegated_result(output, exited(0), "g1", None);
-            assert!(
-                matches!(&stopped, Some(Ok(stopped)) if stopped.sessions == ["terminal-1"]),
-                "{stopped:?}"
-            );
-        }
-        let failed = super::delegated_result(
-            b"{\"error\":{\"code\":\"supervisor-unavailable\",\"detail\":\"d\"}}",
-            exited(4),
-            "g1",
-            None,
+        let expected = |window: Option<&Path>, id: &str| Delegation {
+            window: window.map(Path::to_owned),
+            generation: generation.into(),
+            arguments: ["window", "attach", id].map(str::to_owned).to_vec(),
+        };
+        assert_eq!(delegation(&default, generation), expected(None, "default"));
+        assert_eq!(
+            delegation(&window, generation),
+            expected(Some(&window), "0000abcd")
         );
-        assert!(
-            matches!(&failed, Some(Err(failure)) if failure.code == "supervisor-unavailable" && failure.detail == "d"),
-            "{failed:?}"
-        );
-        let stopped = b"{\"stopped\":{\"generation\":\"g1\",\"terminals\":[]}}".as_slice();
-        let error = b"{\"error\":{\"code\":\"stop-failed\",\"detail\":\"d\"}}".as_slice();
-        for (output, status) in [
-            (stopped, exited(1)),
-            (stopped, killed),
-            (error, killed),
-            (b"{\"stopped\":{\"generation\":\"g2\",\"terminals\":[]}}".as_slice(), exited(0)),
-            (b"{\"stopped\":{\"generation\":\"g1\"}}", exited(0)),
-            (b"{\"stopped\":{\"generation\":\"g1\",\"terminals\":[]},\"error\":{\"code\":\"c\",\"detail\":\"d\"}}", exited(0)),
-            (b"{\"stopped\":{\"generation\":\"g1\",\"terminals\":[]}}{\"stopped\":{\"generation\":\"g1\",\"terminals\":[]}}", exited(0)),
-            (b"[{\"stopped\":{\"generation\":\"g1\",\"terminals\":[]}}]", exited(0)),
-            (b"{\"error\":{\"code\":\"\",\"detail\":\"d\"}}", exited(1)),
-            (b"", exited(0)),
-            (b"stopped generation g1: terminal-1\n", exited(0)),
-        ] {
-            assert!(
-                super::delegated_result(output, status, "g1", None).is_none(),
-                "{} {status}",
-                String::from_utf8_lossy(output)
-            );
-        }
-        // `window stop ID --json` prints its one window's one result, or a
-        // selection failure alone.
-        let window =
-            |results: &str| format!("[{{\"window\":\"default\",\"results\":[{results}]}}]\n");
-        let one = window("{\"stopped\":{\"generation\":\"g1\",\"terminals\":[\"terminal-1\"]}}");
-        assert!(
-            matches!(super::delegated_result(one.as_bytes(), exited(0), "g1", Some("default")), Some(Ok(stopped)) if stopped.sessions == ["terminal-1"])
-        );
-        let refused = window("{\"error\":{\"code\":\"stop-unavailable\",\"detail\":\"d\"}}");
-        assert!(
-            matches!(super::delegated_result(refused.as_bytes(), exited(1), "g1", Some("default")), Some(Err(failure)) if failure.code == "stop-unavailable")
-        );
-        assert!(matches!(
-            super::delegated_result(error, exited(1), "g1", Some("default")),
-            Some(Err(failure)) if failure.code == "stop-failed"
-        ));
-        let stopped_one = "{\"stopped\":{\"generation\":\"g1\",\"terminals\":[]}}";
-        for (output, status) in [
-            (one.clone(), killed),
-            (one.clone(), exited(1)),
-            (window(""), exited(0)),
-            (window(&format!("{stopped_one},{stopped_one}")), exited(0)),
-            (one.replace("default", "0000abcd"), exited(0)),
-            (format!("{}{}", one.trim_end(), one), exited(0)),
-            (
-                one.replace(
-                    "]\n",
-                    &format!(",{{\"window\":\"default\",\"results\":[{stopped_one}]}}]\n"),
-                ),
-                exited(0),
-            ),
-            (window(&stopped_one.replace("g1", "g2")), exited(0)),
-            (stopped_one.to_owned(), exited(0)),
-        ] {
-            assert!(
-                super::delegated_result(output.as_bytes(), status, "g1", Some("default")).is_none(),
-                "{output} {status}"
-            );
-        }
-        // The generation form never takes a window array.
-        assert!(super::delegated_result(one.as_bytes(), exited(0), "g1", None).is_none());
     }
 
     #[test]

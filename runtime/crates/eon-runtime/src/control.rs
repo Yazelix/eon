@@ -7,7 +7,8 @@ use super::{
     },
     workspace,
 };
-use eon_workspace_protocol::v36::{
+use eon_workspace_protocol::stop;
+use eon_workspace_protocol::v37::{
     Action, Error as ProtocolError, Failure, HEADER_BYTES, LifecycleResponse, MAX_DETAIL_BYTES,
     Request, Response, Runtime, VERSION, WorkspaceAction, declared_message_len,
     declared_response_len, decode_lifecycle_response, decode_request, decode_response,
@@ -83,12 +84,26 @@ pub(super) enum ControlResponse {
     Lifecycle(LifecycleResponse),
 }
 
+/// What a control client sent: the Reserved Stop of a generation, or a
+/// versioned request.
+#[derive(Debug, PartialEq)]
+pub(super) enum Incoming {
+    Stop(String),
+    Request(Request),
+}
+
+/// A Stop can wait behind one in-flight operation, then for the bounded
+/// managed Stop itself.
+pub(super) const STOP_TIMEOUT: Duration = CONTROL_TIMEOUT.saturating_add(SESSION_START_TIMEOUT);
+
 /// What the supervisor does with a request: reply and close the connection,
 /// shutting down after a stopping reply, or keep the connection for an
 /// event subscription (EON-C39).
 #[allow(clippy::large_enum_variant)]
 pub(super) enum Dispatched {
     Reply(ControlResponse, bool),
+    /// The answer to a Reserved Stop, in its own framing.
+    Stop(stop::Reply, bool),
     Subscribe(Box<Subscriber>),
 }
 
@@ -233,19 +248,13 @@ fn prepare_action(
     caller: Option<String>,
     action: Action,
 ) -> Result<(bool, Vec<u8>, Duration), EndpointFailure> {
-    let timeout = if matches!(action, Action::Workspace(WorkspaceAction::Stop { .. })) {
-        // One in-flight operation may precede the bounded managed Stop.
-        CONTROL_TIMEOUT.saturating_add(SESSION_START_TIMEOUT)
-    } else {
-        CONTROL_TIMEOUT
-    };
+    let timeout = CONTROL_TIMEOUT;
     let lifecycle = matches!(
         action,
         Action::Workspace(
             WorkspaceAction::InspectRuntime
                 | WorkspaceAction::InspectPresentation
                 | WorkspaceAction::Present { .. }
-                | WorkspaceAction::Stop { .. }
         )
     );
     let request = encode_request(&Request {
@@ -268,13 +277,91 @@ fn send_prepared_action(
     deadline: Option<Instant>,
 ) -> Result<ControlResponse, EndpointFailure> {
     let deadline = deadline.unwrap_or_else(|| Instant::now() + timeout);
-    let mut bytes = request.as_slice();
-    while !bytes.is_empty() {
-        bound_io(
-            &stream,
-            stream.set_write_timeout(Some(time_left(deadline)?)),
+    write_until(&mut stream, &request, deadline)?;
+    let mut response = vec![0; HEADER_BYTES];
+    read_until(&mut stream, &mut response, deadline)?;
+    let length = declared_response_len(&response).map_err(protocol_endpoint_failure)?;
+    response.resize(length, 0);
+    read_until(&mut stream, &mut response[HEADER_BYTES..], deadline)?;
+    if lifecycle {
+        decode_lifecycle_response(&response)
+            .map(ControlResponse::Lifecycle)
+            .map_err(protocol_endpoint_failure)
+    } else {
+        decode_response(&response)
+            .map(ControlResponse::Workspace)
+            .map_err(protocol_endpoint_failure)
+    }
+}
+
+/// What a supervisor answered the Reserved Stop.
+#[derive(Debug, PartialEq)]
+pub(super) enum StopAnswer {
+    Reply(stop::Reply),
+    /// A reply in the framing of this EONW version, whose supervisor
+    /// predates the Reserved Stop and stopped nothing.
+    Predates(u16),
+}
+
+/// Sends the Reserved Stop of `generation` on `stream` (EON-C11). The reply's
+/// first six bytes say whether its supervisor answered it.
+pub(super) fn send_stop_on(
+    mut stream: UnixStream,
+    generation: &str,
+) -> Result<StopAnswer, EndpointFailure> {
+    let request = stop::encode_request(generation).map_err(|error| {
+        EndpointFailure::new(
+            EndpointFailureKind::InvalidAction,
+            format!("cannot encode Eon Stop: {error}"),
         )
-        .map_err(|error| io_endpoint_failure(error, "cannot bound Eon action"))?;
+    })?;
+    let deadline = Instant::now() + STOP_TIMEOUT;
+    write_until(&mut stream, &request, deadline)?;
+    let mut reply = vec![0; stop::HEADER_BYTES];
+    read_until(&mut stream, &mut reply, deadline)?;
+    let invalid = |error: stop::Error| {
+        EndpointFailure::new(
+            EndpointFailureKind::Corrupt,
+            format!("invalid Stop reply: {error}"),
+        )
+    };
+    match stop::version(&reply) {
+        Some(_) if stop::is_reserved(&reply) => {}
+        Some(version) if version < stop::FIRST_VERSION => {
+            return Ok(StopAnswer::Predates(version));
+        }
+        Some(version) => {
+            return Err(EndpointFailure::new(
+                EndpointFailureKind::Corrupt,
+                format!(
+                    "supervisor of EONW {version} answered the reserved Stop in its \
+                     versioned framing"
+                ),
+            ));
+        }
+        None => {
+            return Err(EndpointFailure::new(
+                EndpointFailureKind::Corrupt,
+                "supervisor's Stop reply is not an EONW message",
+            ));
+        }
+    }
+    let length = stop::reply_len(&reply).map_err(invalid)?;
+    reply.resize(length, 0);
+    read_until(&mut stream, &mut reply[stop::HEADER_BYTES..], deadline)?;
+    stop::decode_reply(&reply)
+        .map(StopAnswer::Reply)
+        .map_err(invalid)
+}
+
+fn write_until(
+    stream: &mut UnixStream,
+    mut bytes: &[u8],
+    deadline: Instant,
+) -> Result<(), EndpointFailure> {
+    while !bytes.is_empty() {
+        bound_io(stream, stream.set_write_timeout(Some(time_left(deadline)?)))
+            .map_err(|error| io_endpoint_failure(error, "cannot bound Eon action"))?;
         match stream.write(bytes) {
             Ok(0) => {
                 return Err(io_endpoint_failure(
@@ -287,42 +374,32 @@ fn send_prepared_action(
             Err(error) => return Err(io_endpoint_failure(error, "cannot send Eon action")),
         }
     }
+    Ok(())
+}
 
-    let mut read_exact = |mut bytes: &mut [u8]| -> Result<(), EndpointFailure> {
-        while !bytes.is_empty() {
-            bound_io(&stream, stream.set_read_timeout(Some(time_left(deadline)?)))
-                .map_err(|error| io_endpoint_failure(error, "cannot bound Eon action result"))?;
-            match stream.read(bytes) {
-                Ok(0) => {
-                    return Err(io_endpoint_failure(
-                        std::io::ErrorKind::UnexpectedEof.into(),
-                        "cannot read Eon action result",
-                    ));
-                }
-                Ok(read) => bytes = &mut bytes[read..],
-                Err(error) if error.kind() == std::io::ErrorKind::Interrupted => {}
-                Err(error) => {
-                    return Err(io_endpoint_failure(error, "cannot read Eon action result"));
-                }
+fn read_until(
+    stream: &mut UnixStream,
+    mut bytes: &mut [u8],
+    deadline: Instant,
+) -> Result<(), EndpointFailure> {
+    while !bytes.is_empty() {
+        bound_io(stream, stream.set_read_timeout(Some(time_left(deadline)?)))
+            .map_err(|error| io_endpoint_failure(error, "cannot bound Eon action result"))?;
+        match stream.read(bytes) {
+            Ok(0) => {
+                return Err(io_endpoint_failure(
+                    std::io::ErrorKind::UnexpectedEof.into(),
+                    "cannot read Eon action result",
+                ));
+            }
+            Ok(read) => bytes = &mut bytes[read..],
+            Err(error) if error.kind() == std::io::ErrorKind::Interrupted => {}
+            Err(error) => {
+                return Err(io_endpoint_failure(error, "cannot read Eon action result"));
             }
         }
-        Ok(())
-    };
-
-    let mut response = vec![0; HEADER_BYTES];
-    read_exact(&mut response)?;
-    let length = declared_response_len(&response).map_err(protocol_endpoint_failure)?;
-    response.resize(length, 0);
-    read_exact(&mut response[HEADER_BYTES..])?;
-    if lifecycle {
-        decode_lifecycle_response(&response)
-            .map(ControlResponse::Lifecycle)
-            .map_err(protocol_endpoint_failure)
-    } else {
-        decode_response(&response)
-            .map(ControlResponse::Workspace)
-            .map_err(protocol_endpoint_failure)
     }
+    Ok(())
 }
 
 fn time_left(deadline: Instant) -> Result<Duration, EndpointFailure> {
@@ -353,10 +430,20 @@ fn protocol_endpoint_failure(error: ProtocolError) -> EndpointFailure {
     match error {
         ProtocolError::UnsupportedVersion { version } => EndpointFailure::incompatible(
             version,
-            format!(
-                "supervisor uses EONW {version}, this Eon uses EONW {VERSION}; \
-                 the Eon build that started it can attach or stop it"
-            ),
+            if version < stop::FIRST_VERSION {
+                format!(
+                    "supervisor uses EONW {version}, this Eon uses EONW {VERSION}; it \
+                     predates the reserved Stop, so the Eon build that started it can \
+                     attach it and it is quit from inside its window"
+                )
+            } else {
+                format!(
+                    "supervisor uses EONW {version}, this Eon uses EONW {VERSION}; the \
+                     Eon build that started it can attach it, and any Eon build of EONW \
+                     {} or later can stop it",
+                    stop::FIRST_VERSION
+                )
+            },
         ),
         _ => EndpointFailure::new(
             EndpointFailureKind::Corrupt,
@@ -555,7 +642,7 @@ impl ControlListener {
 
     pub(super) fn accept<D: Into<Dispatched>>(
         &self,
-        dispatch: impl FnOnce(Request) -> D,
+        dispatch: impl FnOnce(Incoming) -> D,
     ) -> Result<Accepted, String> {
         match self.listener.accept() {
             Ok((stream, _)) => Ok(handle_client(stream, dispatch)),
@@ -580,7 +667,7 @@ impl Drop for ControlListener {
 
 fn handle_client<D: Into<Dispatched>>(
     mut stream: UnixStream,
-    dispatch: impl FnOnce(Request) -> D,
+    dispatch: impl FnOnce(Incoming) -> D,
 ) -> Accepted {
     let unserved = Accepted::Replied { shutdown: false };
     // Accepted sockets inherit the listener's nonblocking mode on macOS.
@@ -593,27 +680,50 @@ fn handle_client<D: Into<Dispatched>>(
     {
         return unserved;
     }
-    let (response, shutdown) = match read_request(&mut stream)
-        .map(|request| dispatch(request).into())
-    {
-        Ok(Dispatched::Reply(response, shutdown)) => (response, shutdown),
-        // The supervisor writes to a subscriber without waiting.
-        Ok(Dispatched::Subscribe(subscriber)) => return Accepted::Subscribed(stream, subscriber),
-        Err(error) => (ControlResponse::Workspace(Response::Failure(error)), false),
-    };
-    let encoded = match &response {
-        ControlResponse::Workspace(response) => encode_response(response),
-        ControlResponse::Lifecycle(response) => encode_lifecycle_response(response),
-    };
-    if let Ok(encoded) = encoded.or_else(|error| {
-        encode_response(&Response::Failure(failure(
+    let unrepresentable = |error: String| {
+        failure(
             "unrepresentable-state",
             format!("cannot encode Eon session result: {error}"),
-        )))
-    }) {
+        )
+    };
+    let (encoded, shutdown) = match read_incoming(&mut stream)
+        .map(|incoming| dispatch(incoming).into())
+        .unwrap_or_else(|unread| unread)
+    {
+        Dispatched::Reply(response, shutdown) => (
+            match &response {
+                ControlResponse::Workspace(response) => encode_response(response),
+                ControlResponse::Lifecycle(response) => encode_lifecycle_response(response),
+            }
+            .or_else(|error| {
+                encode_response(&Response::Failure(unrepresentable(error.to_string())))
+            })
+            .ok(),
+            shutdown,
+        ),
+        Dispatched::Stop(reply, shutdown) => (
+            stop::encode_reply(&reply)
+                .or_else(|error| {
+                    stop::encode_reply(&stop_failure(unrepresentable(error.to_string())))
+                })
+                .ok(),
+            shutdown,
+        ),
+        // The supervisor writes to a subscriber without waiting.
+        Dispatched::Subscribe(subscriber) => return Accepted::Subscribed(stream, subscriber),
+    };
+    if let Some(encoded) = encoded {
         write_reply(&mut stream, &encoded, Instant::now() + REPLY_DEADLINE);
     }
     Accepted::Replied { shutdown }
+}
+
+/// `failure` as a Reserved Stop reply.
+pub(super) fn stop_failure(failure: Failure) -> stop::Reply {
+    stop::Reply::Failure {
+        code: failure.code,
+        detail: failure.detail,
+    }
 }
 
 /// Writes `reply` until `deadline`, and drops the client once it has accepted
@@ -664,21 +774,50 @@ fn write_reply(stream: &mut UnixStream, mut reply: &[u8], deadline: Instant) {
     }
 }
 
-fn read_request(stream: &mut impl Read) -> Result<Request, Failure> {
+/// Reads one request. The Reserved Stop is recognised before any version
+/// check and answered in its own framing, whatever this build's EONW
+/// (EON-C11).
+// The error is the one reply the connection gets, so it is not boxed.
+#[allow(clippy::result_large_err)]
+fn read_incoming(stream: &mut impl Read) -> Result<Incoming, Dispatched> {
     let incomplete = |error| {
         failure(
             "malformed-action",
             format!("cannot read complete EONW request: {error}"),
         )
     };
+    let workspace = |failure| {
+        Dispatched::Reply(
+            ControlResponse::Workspace(Response::Failure(failure)),
+            false,
+        )
+    };
+    let reserved = |failure| Dispatched::Stop(stop_failure(failure), false);
     let mut message = vec![0; HEADER_BYTES];
-    stream.read_exact(&mut message).map_err(&incomplete)?;
-    let length = declared_message_len(&message).map_err(protocol_failure)?;
+    stream
+        .read_exact(&mut message)
+        .map_err(|error| workspace(incomplete(error)))?;
+    if stop::is_reserved(&message) {
+        let malformed =
+            |error: stop::Error| reserved(failure("malformed-action", error.to_string()));
+        let length = stop::request_len(&message).map_err(malformed)?;
+        message.resize(length, 0);
+        stream
+            .read_exact(&mut message[HEADER_BYTES..])
+            .map_err(|error| reserved(incomplete(error)))?;
+        return stop::decode_request(&message)
+            .map(Incoming::Stop)
+            .map_err(malformed);
+    }
+    let length =
+        declared_message_len(&message).map_err(|error| workspace(protocol_failure(error)))?;
     message.resize(length, 0);
     stream
         .read_exact(&mut message[HEADER_BYTES..])
-        .map_err(incomplete)?;
-    decode_request(&message).map_err(protocol_failure)
+        .map_err(|error| workspace(incomplete(error)))?;
+    decode_request(&message)
+        .map(Incoming::Request)
+        .map_err(|error| workspace(protocol_failure(error)))
 }
 
 fn protocol_failure(error: ProtocolError) -> Failure {
@@ -826,9 +965,7 @@ mod tests {
         let request = super::Request {
             id: "r1".into(),
             caller: None,
-            action: super::Action::Workspace(super::WorkspaceAction::Stop {
-                generation: "g1".into(),
-            }),
+            action: super::Action::Workspace(super::WorkspaceAction::InspectRuntime),
         };
         peer.write_all(&super::encode_request(&request).unwrap())
             .unwrap();
@@ -836,7 +973,7 @@ mod tests {
 
         assert!(
             super::handle_client(stream, |received| {
-                assert_eq!(received, request);
+                assert_eq!(received, super::Incoming::Request(request));
                 (
                     super::ControlResponse::Workspace(super::Response::Failure(super::failure(
                         "stopped", "done",
@@ -845,6 +982,98 @@ mod tests {
                 )
             })
             .shutdown()
+        );
+    }
+
+    /// A versioned reply to the Reserved Stop names its supervisor's EONW:
+    /// below the first that answers the Reserved Stop it predates it, and
+    /// from that one on it is no Stop result.
+    #[test]
+    fn a_versioned_stop_reply_predates_only_below_the_first_reserved_stop() {
+        use eon_workspace_protocol::stop;
+        const GENERATION: &str = "g1-0123456789abcdef0123456789abcdef";
+        let answer = |version: u16| {
+            let (stream, mut peer) = UnixStream::pair().unwrap();
+            let server = std::thread::spawn(move || {
+                let mut request = [0; stop::REQUEST_BYTES];
+                peer.read_exact(&mut request).unwrap();
+                let mut reply = super::encode_response(&super::Response::Failure(super::failure(
+                    "unsupported-version",
+                    "not this EONW",
+                )))
+                .unwrap();
+                reply[4..6].copy_from_slice(&version.to_le_bytes());
+                peer.write_all(&reply).unwrap();
+            });
+            let answer = super::send_stop_on(stream, GENERATION);
+            server.join().unwrap();
+            answer
+        };
+        let last = stop::FIRST_VERSION - 1;
+        assert!(
+            matches!(answer(last), Ok(super::StopAnswer::Predates(version)) if version == last)
+        );
+        for version in [stop::FIRST_VERSION, super::VERSION + 1] {
+            let Err(failure) = answer(version) else {
+                panic!("EONW {version} gave a Stop result");
+            };
+            assert_eq!(failure.kind, super::EndpointFailureKind::Corrupt);
+            assert!(
+                failure.detail.contains(&format!("EONW {version}")),
+                "{}",
+                failure.detail
+            );
+        }
+    }
+
+    /// The supervisor recognises the Reserved Stop before its version check
+    /// and answers it, and anything that goes wrong with it, in its framing.
+    #[test]
+    fn handle_client_answers_the_reserved_stop_in_its_framing() {
+        use eon_workspace_protocol::stop;
+        const GENERATION: &str = "g1-0123456789abcdef0123456789abcdef";
+        let exchange = |request: &[u8], reply: Option<stop::Reply>| {
+            let (stream, mut peer) = UnixStream::pair().unwrap();
+            peer.write_all(request).unwrap();
+            peer.shutdown(std::net::Shutdown::Write).unwrap();
+            let dispatched = std::cell::Cell::new(false);
+            let accepted = super::handle_client(stream, |received| {
+                dispatched.set(true);
+                assert_eq!(received, super::Incoming::Stop(GENERATION.into()));
+                super::Dispatched::Stop(reply.clone().unwrap(), true)
+            });
+            let mut received = Vec::new();
+            peer.read_to_end(&mut received).unwrap();
+            (
+                dispatched.get(),
+                accepted.shutdown(),
+                stop::decode_reply(&received),
+            )
+        };
+        let request = stop::encode_request(GENERATION).unwrap();
+        let stopped = stop::Reply::Stopped {
+            generation: GENERATION.into(),
+            terminals: vec!["terminal-1".into()],
+        };
+        assert_eq!(
+            exchange(&request, Some(stopped.clone())),
+            (true, true, Ok(stopped))
+        );
+        // A forged length is refused from the header alone, which is all
+        // the peer sends: unread bytes would reset the connection on close.
+        let mut forged = request[..stop::HEADER_BYTES].to_vec();
+        forged[8] = 36;
+        let (dispatched, shutdown, reply) = exchange(&forged, None);
+        assert!(!dispatched && !shutdown);
+        assert!(
+            matches!(&reply, Ok(stop::Reply::Failure { code, .. }) if code == "malformed-action"),
+            "{reply:?}"
+        );
+        let (dispatched, _, reply) = exchange(&request[..30], None);
+        assert!(!dispatched);
+        assert!(
+            matches!(&reply, Ok(stop::Reply::Failure { code, .. }) if code == "malformed-action"),
+            "{reply:?}"
         );
     }
 
@@ -869,7 +1098,7 @@ mod tests {
         });
 
         let shutdown = super::handle_client(stream, |received| {
-            assert_eq!(received, request);
+            assert_eq!(received, super::Incoming::Request(request));
             (super::ControlResponse::Workspace(response), true)
         })
         .shutdown();
@@ -881,16 +1110,16 @@ mod tests {
     #[test]
     fn a_slow_reader_holds_the_supervisor_no_longer_than_the_reply_deadline() {
         let history = |text: String| {
-            super::Response::History(eon_workspace_protocol::v36::TerminalHistory {
-                target: eon_workspace_protocol::v36::TerminalTarget {
+            super::Response::History(eon_workspace_protocol::v37::TerminalHistory {
+                target: eon_workspace_protocol::v37::TerminalTarget {
                     workspace: "s1".into(),
                     tab: "t1".into(),
-                    id: eon_workspace_protocol::v36::TargetId::Pane("p1".into()),
+                    id: eon_workspace_protocol::v37::TargetId::Pane("p1".into()),
                     terminal: "terminal-1".into(),
                 },
                 caller: None,
                 revision: 1,
-                screen: eon_workspace_protocol::v36::Screen::Primary,
+                screen: eon_workspace_protocol::v37::Screen::Primary,
                 rows: 24,
                 columns: 80,
                 title: String::new(),
@@ -982,7 +1211,7 @@ mod tests {
         fs::set_permissions(&socket, fs::Permissions::from_mode(0o600)).unwrap();
         let server = thread::spawn(move || {
             let (mut stream, _) = listener.accept().unwrap();
-            super::read_request(&mut stream).unwrap();
+            assert!(super::read_incoming(&mut stream).is_ok());
             let response = super::encode_response(&super::Response::Failure(super::failure(
                 "unknown-caller",
                 "not owned",

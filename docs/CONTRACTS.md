@@ -742,7 +742,7 @@ names its socket. CLI JSON names a session `session` and a terminal
 - **Owner:** Eon Runtime session topology, identity, focus, pruning and action
   enforcement; Eon supplies product defaults/policy. Orbit owns terminals and
   Venus owns native materialization.
-- **Consumes:** Current EONW v36 session/popup values, Orbit terminal
+- **Consumes:** Current EONW v37 session/popup values, Orbit terminal
   identities/endpoints and Venus `VEN-C8`.
 - **Boundary:** No arbitrary split tree, vertical splits, column resizing,
   arbitrary reorder target, cross-tab pane movement, picker relocation, durable layout
@@ -1462,7 +1462,7 @@ names its socket. CLI JSON names a session `session` and a terminal
 - **Owner:** Eon Runtime supervisor session/action state and CLI projection;
   its canonical EONW package owns types, codec and result ordering. Eon supplies
   validated component facts and product defaults.
-- **Consumes:** Current EONW v36 and accepted Orbit management operations.
+- **Consumes:** Current EONW v37 and accepted Orbit management operations.
 - **Boundary:** Additive lifecycle tags do not widen the pinned Venus workspace
   consumer. There is no event stream or subscription policy other than
   EON-C39's event subscription, and no remote transport,
@@ -1474,7 +1474,7 @@ names its socket. CLI JSON names a session `session` and a terminal
   child-protocol escape hatch.
 - **Package owner:** The canonical EONW crate lives in
   `runtime/crates/eon-workspace-protocol` with its accepted package/API and
-  v36 bytes. Venus, Eon Runtime and Eon consume it by path.
+  v37 bytes. Venus, Eon Runtime and Eon consume it by path.
   See [package selection](ARCHITECTURE.md#in-tree-package-selection).
 - **Runtime policy:** Project is required and defaults to Alt+Z; it has no
   command of its own and shows the tab's pair (EON-C18) on quick search. Git
@@ -1556,8 +1556,8 @@ names its socket. CLI JSON names a session `session` and a terminal
   fzf list of the popup's window's sessions (EON-C33's picker); Commands >
   Switch session runs the same list in the Commands popup. Each row shows
   the session's name, or its `sN` when unnamed, its tab count, and
-  ` · needs input` when its EONW v36 `attention` is needs input. Rows run by
-  EONW v36 `recency`, most recently shown first, with the shown session last
+  ` · needs input` when its EONW v37 `attention` is needs input. Rows run by
+  EONW v37 `recency`, most recently shown first, with the shown session last
   and marked ` · shown`, and the query matches only that name or `sN`. Enter on the highlighted row,
   including on an empty query, runs `eon session switch sN` once the CLI
   has checked again that the `sN` is live; otherwise it changes nothing and
@@ -1887,6 +1887,11 @@ names its socket. CLI JSON names a session `session` and a terminal
   their terminal IDs.
   Amended on 2026-11-07 (approved by eon-overseer under Lucca's standing rule)
   by `eon-30skm` (S3): its prose says session for the product concept.
+  Amended on 2026-11-07 (approved by eon-overseer under Lucca's 2026-11-06
+  rule) by `eon-7cf0y.17`: every Stop is the Reserved Stop, whose bytes no
+  EONW revision changes, so a window of another EONW version is stopped
+  without its build; Delegation serves attach only, proven by its amendment
+  proof below.
 - **Consumer:** Eon and eonbase users launching or targeting a product generation.
 - **Trigger:** Launch current generation, inspect an older live generation,
   present a compatible existing surface, stop one window, stop a selected set of
@@ -1903,56 +1908,61 @@ names its socket. CLI JSON names a session `session` and a terminal
     presentable when compatible, and stoppable through their own supervisor;
     presentation still requires the exact current EONW and component graph. A
     generation from a build with another EONW version is listed as
-    incompatible, and this `eon` does not inspect it. When that generation
-    recorded its `eon` (below) and the recorded file exists and is executable,
-    `eon window ls` reports its `stop` as available.
+    incompatible, with the EONW version its replies carry, and this `eon` does
+    not inspect it. `eon window ls` reports its `stop` as available when that
+    version is EONW 37 or later, the first that answers the Reserved Stop, and
+    otherwise as unavailable, naming its version and how to quit it (below).
 
-    Every Stop of it, through `eon window stop`, `eon quit` or
-    `eon quit --all`, runs that `eon` as Delegation (below) describes, in the
-    generation's namespace, without standard input, after this `eon` asks any
-    question the command asks. Its live and busy terminals are unknown here,
-    so human-mode `eon window stop`, `eon quit` and `eon quit --all` always ask.
-    They name the window by its ID as `eon window ls` shows it: `Quit window ID?
-    It runs another Eon build, so its terminals are unknown. [y/N]`, or `Stop
-    window ID? …` for `eon window stop`.
+    Every Stop of it, through `eon window stop`, `eon quit` or `eon quit
+    --all`, sends the Reserved Stop (below) after this `eon` asks any question
+    the command asks. Its live and busy terminals are unknown here, so
+    human-mode `eon window stop`, `eon quit` and `eon quit --all` always ask.
+    They name the window by its ID as `eon window ls` shows it: `Quit window
+    ID? It runs another Eon build, so its terminals are unknown. [y/N]`, or
+    `Stop window ID? …` for `eon window stop`.
 
-    This `eon` reports that `eon`'s Stop result as its own; a build before
-    v0.1.20 names the result's terminals `sessions`, which it reads as
-    `terminals`. Output that is not
-    one Stop result, a Stop that a signal ends, and a `stopped` result from an
-    `eon` that exits unsuccessfully are `stop-failed`, and a delegated Stop
-    never delegates the same generation again.
-
-    Without a record, the Stop is `stop-unavailable` and says the build that
-    started it can stop it. With a record whose file is missing or not
-    executable, the Stop is `stop-unavailable`, names the recorded path, and
-    prints the command that stops it once that build is restored: the
-    Delegation form for that build's EONW, run with `EON_STOP_DELEGATED` set
-    to GENERATION, in the generation's namespace.
+    A supervisor of EONW 36 or older predates the Reserved Stop and answers
+    it in its own EONW framing. Its Stop is `stop-unavailable`, sends nothing
+    when the listing already knows its version, names that version, and says
+    to quit it from inside its window: Alt+Shift+Q, or `eon quit` in one of
+    its terminals. A supervisor of EONW 37 or later that answers in its
+    versioned framing is `stop-failed`.
   - A generation records the `eon` executable of the build that started it, an
-    opaque launch input, so a later build can name or run it; `eon window
+    opaque launch input, so a later build can run it; `eon window
     attach` runs it, as Delegation describes, when this build cannot present
     that window.
-  - **Delegation.** To stop or present a generation that another build
-    started, `eon` runs that build's recorded `eon` in the generation's
-    namespace (`EON_WINDOW_RUNTIME_DIR` set to an independent window's root,
-    else unset), with `EON_STOP_DELEGATED` or `EON_ATTACH_DELEGATED` set to
-    the generation. The form follows the EONW version that the generation's
-    supervisor reports: a build of EONW 34 or older, or one whose version is
-    unknown, runs as `stop GENERATION --json` or `attach GENERATION`; a newer
-    one as `window stop ID --json` or `window attach ID`, ID being `default` in
-    the default namespace and the independent window's ID otherwise. A build
-    is only ever delegated its own generation, so a marker must name the
-    generation of the `eon` that reads it, and the named window must run that
-    generation: `default`, or an independent window that holds it. Then
-    `eon window stop ID` stops only that generation of the window and
-    `eon window attach ID` presents only it. Any other value, or a window that
-    does not run it, is invalid (exit 2) and sends nothing: a marker narrows
-    the named window and never selects another. So a delegated Stop or attach
-    reaches only its generation and never delegates it again. Eon removes both
-    variables from the environment of every supervisor, terminal and Venus it
-    starts. `eon stop` and `eon attach` are invalid commands (exit 2), with or
-    without these variables.
+  - **Reserved Stop.** Every Stop, of any window and from any build
+    (`eon`, `eonbase` and Venus's Quit), is one request whose bytes no EONW
+    revision changes. Every supervisor answers it before it checks the EONW
+    version. Integers are little-endian; a string is a `u16` byte length and
+    its bytes. The request is `EONW`, version `0` (which no EONW revision
+    uses), kind `1`, flags `0`, payload length `37`, then the generation as a
+    string: 49 bytes. A reply is `EONW`, version `0`, its kind, flags `0` and
+    its payload length, then the payload of that kind: kind `132`, Stopped
+    (the generation, then a `u16` count of at most 256 stopped terminal IDs,
+    each 1 to 128 bytes of ASCII letters, digits, `-`, `_` and `.`), or kind
+    `130`, Failure (a code of 1 to 128 such bytes, then a detail of 1 to 1024
+    bytes of UTF-8). The
+    supervisor answers a request for another generation with
+    `generation-mismatch` and a malformed one with `malformed-action`, both
+    Failure replies, and stops nothing. The first 6 bytes of every EONW
+    message, `EONW` and the `u16` version, keep this layout in every
+    revision, so a reply in another framing names that supervisor's version.
+  - **Delegation.** To present a generation that another build started,
+    `eon` runs that build's recorded `eon` as `window attach ID` in the
+    generation's namespace (`EON_WINDOW_RUNTIME_DIR` set to an independent
+    window's root, else unset), with `EON_ATTACH_DELEGATED` set to the
+    generation, ID being `default` in the default namespace and the
+    independent window's ID otherwise. A build is only ever delegated its own
+    generation, so the marker must name the generation of the `eon` that
+    reads it, and the named window must run that generation: `default`, or an
+    independent window that holds it. Then `eon window attach ID` presents
+    only that generation. Any other value, or a window that does not run it,
+    is invalid (exit 2) and sends nothing: the marker narrows the named
+    window and never selects another, so a delegated attach reaches only its
+    generation and never delegates it again. Eon removes the variable from
+    the environment of every supervisor, terminal and Venus it starts. `eon
+    stop` and `eon attach` are invalid commands (exit 2).
   - `eon window stop previous` and `eon window stop all` (EON-C23) attempt each
     selected window with the existing validated Stop of each of its generations.
     Human mode confirms each window, while `--json` returns the result array
@@ -2059,6 +2069,8 @@ names its socket. CLI JSON names a session `session` and a terminal
   and Ready negotiation remain bounded by the shared five-second deadline.
   Eon requires no cgroup membership or delegation; Orbit owns bounded PTY
   shutdown through its accepted ORB-C12/ORB-C13 management boundary.
+  A Reserved Stop reply that is not one complete reply of the layout above is
+  `stop-failed`.
 - **Owner:** Eon Runtime generation identity/selection, namespaces, discovery,
   Present, explicit Stop and exact owned residue; Eon supplies immutable
   assembly/default/validator/graph/Cargo/Nix-generated inputs.
@@ -2150,6 +2162,20 @@ names its socket. CLI JSON names a session `session` and a terminal
   - **Evidence:** `older_eonw_generations_stop_through_their_recorded_eon` and
     `quit_listing_names_only_working_stop_commands`; the installed steps are
     recorded on the bead.
+  - Superseded by the Reserved Stop (`eon-7cf0y.17`); the delegated Stop it
+    proved is gone.
+- **Amendment proof (`eon-7cf0y.17`, Reserved Stop):** the `eon-7cf0y.17`
+  commit.
+  - **Environment:** sandboxed `nix develop -c eon-test`, x86_64 Linux;
+    isolated installed observation recorded on the bead.
+  - **Evidence:** `reserved_stop_keeps_its_bytes`,
+    `reserved_stop_rejects_forged_bounds`,
+    `handle_client_answers_the_reserved_stop_in_its_framing`,
+    `other_eonw_windows_stop_with_the_reserved_stop`,
+    `generations_that_predate_the_reserved_stop_say_how_to_quit_them`,
+    `quit_listing_names_the_stop_of_every_window`, Venus's
+    `workspace_worker_sends_the_reserved_stop`, and every supervisor Stop
+    test, which now sends it.
 - **Open proof:** Pending re-proof in this repository: native Present of a live
   surface and launch with `/sys/fs/cgroup` hidden.
 
@@ -2499,7 +2525,7 @@ names its socket. CLI JSON names a session `session` and a terminal
   - `eon tab create --directory DIRECTORY` skips the pending pair: its tab is
     never pending and its first pane starts at DIRECTORY (EON-C10). A bare `eon
     tab create` and Venus's new-tab action keep the pending pair.
-  - EONW v36 exposes the pair as the tab's `files` popup endpoint, never as a
+  - EONW v37 exposes the pair as the tab's `files` popup endpoint, never as a
     normal `pN` pane; a pending tab holds exactly that one selected popup and
     no pane. The pair tab may remain live while another durable tab is active.
     A pair-owned pending tab remains pane-free, with an absent selected pane
@@ -2550,7 +2576,7 @@ names its socket. CLI JSON names a session `session` and a terminal
   Yazi owns filesystem browsing, and Anima owns style selection, rendering,
   input dismissal, playback timing, and terminal restoration. Eon consumes one
   picked directory per pick without interpreting Yazi's navigation state.
-- **Consumes:** EON-C17, current EONW v36 popup/pending-tab values, Orbit's
+- **Consumes:** EON-C17, current EONW v37 popup/pending-tab values, Orbit's
   accepted terminal startup/attachment/exit/stop contracts and the selected exact
   Venus consumer.
 - **Boundary:** No custom filesystem walker, file opening from a pending tab's
@@ -2710,7 +2736,7 @@ names its socket. CLI JSON names a session `session` and a terminal
   tutorial, telemetry, momentary mode, dependency, or platform expansion.
   Venus derives overrides from the popup catalog it already receives over
   EONW. Exceptions: the viewer reads `sidebar` and each popup entry's override
-  from EONW v36.
+  from EONW v37.
 - **Proof:** `795d735a8f61ef439c56d68e1cc4d3929af0dfcf`, `eon-monorepo-2oko.6`.
   - **Environment:** Automated tier; installed tier.
   - **Evidence:** `popup_configuration_owns_defaults_overrides_and_collisions`;
@@ -2800,13 +2826,13 @@ names its socket. CLI JSON names a session `session` and a terminal
 - **Owner:** Eon owns the exact graph, product policy, profile delivery and
   installed acceptance; Eon Runtime owns session identity/actions. Venus
   owns header geometry, rendering, input, native drag, tooltips, and accessibility.
-- **Consumes:** Venus VEN-C21, EONW v7 (v36 for the EON-C31 tab attention
+- **Consumes:** Venus VEN-C21, EONW v7 (v37 for the EON-C31 tab attention
   marker) and Orbit terminals.
 - **Boundary:** EON-C27 separately owns the optional quota projection. The core
   header adds no Eon-rendered chrome, second row, widget framework, agent status,
   polling, configuration, protocol change, inactive-tab close, native window
   controls, macOS claim or distribution expansion. The one exception is the
-  EON-C31 tab attention marker, which Venus reads from the EONW v36 snapshot it
+  EON-C31 tab attention marker, which Venus reads from the EONW v37 snapshot it
   already polls.
 - **Proof:** `795d735a8f61ef439c56d68e1cc4d3929af0dfcf`, `eon-monorepo-2oko.6`.
   - **Environment:** Automated tier; installed tier.
@@ -2872,7 +2898,8 @@ names its socket. CLI JSON names a session `session` and a terminal
   EONW version or component graph), the command runs the `eon` of the build
   that started it, as that generation recorded it, to present it. When no such
   record exists, it exits 1 and names the window, the versions it
-  reports, and that the build that started it can attach or stop it.
+  reports, and that the build that started it can attach it; any Eon build
+  of EONW 37 or later stops a window of EONW 37 or later.
   **Window IDs.** Every running full-Eon window has one ID. An independent
   window's ID is its eight-hex-digit ID. In the default namespace, the window
   of the running `eon`'s own build is `default`. A window that another build
@@ -2942,7 +2969,7 @@ names its socket. CLI JSON names a session `session` and a terminal
   completed inspection. Keeping it current wakes no idle process and sends
   nothing to another supervisor while nothing changes, and background
   inspection never removes another generation's files. Venus receives the
-  summary in every EONW v36 snapshot; the CLI prints it as `running`
+  summary in every EONW v37 snapshot; the CLI prints it as `running`
   (EON-C10).
   `eon window stop ID` stops one window. For an independent window, it stops
   every running generation of its namespace. `eon window stop previous` stops
@@ -3077,7 +3104,7 @@ names its socket. CLI JSON names a session `session` and a terminal
 - **Ownership:** Pinned CodexBar owns provider collection and credential access;
   Runtime owns bounded subprocesses, validation, freshness and the stored
   readings; canonical EONW permits absent resets; Venus consumes typed facts
-  through its existing chip owners. Eon owns exact Nix composition. EONW v36
+  through its existing chip owners. Eon owns exact Nix composition. EONW v37
   carries each window's scope and each provider's last failure.
 - **Failure policy:** Each read has a ten-second deadline and 64 KiB output cap.
   A failed read keeps retained data unchanged; age alone marks it old after one
@@ -3191,6 +3218,9 @@ names its socket. CLI JSON names a session `session` and a terminal
   eon-overseer) by `eon-7cf0y.22` (S4): `eon config dir`.
   Amended on 2026-11-07 (approved by eon-overseer under Lucca's standing rule)
   by `eon-30skm` (S3): its prose says session for the product concept.
+  Amended on 2026-11-07 (approved by eon-overseer under Lucca's 2026-11-06
+  rule) by `eon-7cf0y.17`: older 1.x generations are stopped with the Reserved
+  Stop, whose bytes and the EONW prefix no 1.x release changes.
 - **Consumer:** People, scripts and agents that use Eon 1.0 on x86_64 Linux on
   native Wayland and upgrade within 1.x.
 - **Trigger:** Installing a later 1.x release over 1.0 or another 1.x release.
@@ -3226,16 +3256,18 @@ names its socket. CLI JSON names a session `session` and a terminal
     Alt+0 through Alt+9, and Alt+H, Alt+J, Alt+K and Alt+L), which 1.x never
     enlarges.
   - **Upgrades:** installing a later 1.x never stops live terminals. The new
-    `eon` lists and stops every older 1.x generation through
-    [EON-C11](#eon-c11--runtime-generations-and-presentation), with its own
-    codec or by running the generation's recorded `eon`.
+    `eon` lists every older 1.x generation through
+    [EON-C11](#eon-c11--runtime-generations-and-presentation) with its own
+    codec, and stops it with EON-C11's Reserved Stop, whether or not the
+    older build is still installed.
     `eon window attach ID` presents one only when its presentation is
     compatible, directly or through its recorded `eon`, which 1.x does not
     guarantee.
 - **Important failures:** A 1.x release that rejects a 1.0 configuration,
   renames or removes a listed command, managed command name, flag, JSON field
   or environment variable, changes a documented exit status or a default
-  shortcut's action, drops a 1.x lifecycle codec, or stops live terminals on
+  shortcut's action, drops a 1.x lifecycle codec, changes the Reserved Stop
+  or the 6-byte EONW prefix (EON-C11), or stops live terminals on
   install breaks this contract; such a change waits for 2.0. Unknown
   configuration keys are ignored with a warning naming the key and file, so
   typos stay visible. In a configuration written for a newer 1.x, an older
@@ -3244,11 +3276,13 @@ names its socket. CLI JSON names a session `session` and a terminal
   value of a known key may still fail.
 - **Owner:** Eon owns the promise, the release review against it and the
   managed command names its Nix composition installs. Eon Runtime owns the
-  commands, JSON, exit statuses, lifecycle codecs and configuration parsing
-  that carry it; Venus owns its fixed session bindings under EON-C20.
+  commands, JSON, exit statuses, lifecycle codecs, the Reserved Stop and
+  configuration parsing that carry it; Venus owns its fixed session bindings
+  under EON-C20.
 - **Boundary:** Not covered: how appearance and layout render; behavior that
   no document states; the ORBS and ORBF protocols, EONW beyond the lifecycle
-  codecs kept above, and the component manifest format, which carry their own
+  codecs, the Reserved Stop and the prefix kept above, and the component
+  manifest format, which carry their own
   versions; internal helpers that no document lists; the unprefixed tool names
   inside terminals; Anima's styles and options; eonbase; the behavior of pinned
   tools such as Helix, Yazi and Nushell when their pins update; reattaching
@@ -3264,7 +3298,11 @@ names its socket. CLI JSON names a session `session` and a terminal
   class; and the 1.0 default shortcut actions, with one configured override.
   It also extends the `managed-command-path` flake check to every documented
   `eon-` managed command name. Each later EONW revision adds its predecessor
-  to the previous-generation Stop test. Each 1.x release's proof adds a
+  to the previous-generation test, which lists it through its codec and stops
+  it with the Reserved Stop. The Reserved Stop's golden test pins its bytes,
+  and a fixture supervisor of another EONW version answers it with no
+  recorded `eon`; `eon-igae.11.3` adds the 1.0 build's bytes as a fixture
+  that every 1.x supervisor must answer. Each 1.x release's proof adds a
   review of changed defaults against the changelog and one installed upgrade
   observation in which the previous release's live terminals keep running and
   the new release lists and stops them.
@@ -3600,7 +3638,7 @@ names its socket. CLI JSON names a session `session` and a terminal
   - **Orbit** owns the records, their neutral facts and the terminal title.
   - **Venus** owns presentation and hiding for width (VEN-C30).
 - **Consumes:** ORB-C15, ORB-C13 generation 7, EON-C8 topology, and EON-C10
-  (EONW v36, request and response). EON-C39 plans a stream of its changes.
+  (EONW v37, request and response). EON-C39 plans a stream of its changes.
 - **Boundary:**
   - no hooks and no edits to agent configuration;
   - no provider parsing; the Runtime passes `app` and `name` through unchanged, and Venus maps
@@ -4530,7 +4568,9 @@ names its socket. CLI JSON names a session `session` and a terminal
 
 - **Status:** Planned (`eon-c8ytm`, approved by Lucca 2026-10-31, relayed by
   eon-overseer). It binds from the announcement: the macOS launch or the first
-  public announcement, whichever comes first.
+  public announcement, whichever comes first. Amended on 2026-11-07 (approved by
+  eon-overseer under Lucca's 2026-11-06 rule) by `eon-7cf0y.17`: older
+  generations are stopped with the Reserved Stop.
 - **Consumer:** People, scripts and agents that use Eon 0.x on x86_64 Linux on
   native Wayland and upgrade or roll back within 0.x.
 - **Trigger:** Installing a later 0.x release over an earlier one at or above
@@ -4543,8 +4583,8 @@ names its socket. CLI JSON names a session `session` and a terminal
   Eon never rewrites `config.toml` on its own. Durable state written at or
   above the floor is read or migrated, and the earlier file stays readable by
   the earlier release, so rollback within the floor loses no setting.
-  Installing never stops live terminals, and the new `eon` lists and stops
-  older generations directly or through their recorded `eon`.
+  Installing never stops live terminals, and the new `eon` lists older
+  generations and stops them with EON-C11's Reserved Stop.
 - **Important failures:** A release that fails on, or silently changes the
   meaning of, a configuration that loaded at its floor; deletes migration code
   above its floor; or rewrites user configuration without an explicit command.
@@ -4672,7 +4712,7 @@ names its socket. CLI JSON names a session `session` and a terminal
   - `eon pane wait TARGET --until done|needs-input|attention|ended
     [--timeout SECONDS] [--json]`.
 - **Result:**
-  - **One subscription.** The CLI sends one EONW v36 `Subscribe` request.
+  - **One subscription.** The CLI sends one EONW v37 `Subscribe` request.
     The supervisor either refuses it with an ordinary EONW `Failure` reply
     and closes the connection, or answers `SUBSCRIBED` and keeps the
     connection open for `TABS`, `EVENT`, `GAP` and `END` messages. A
@@ -4854,7 +4894,7 @@ names its socket. CLI JSON names a session `session` and a terminal
     subscriber, the attention poller or Stop.
 - **Owner:** Eon Runtime: the event projection, sequence, retained events,
   filters, subscriber bounds and CLI projection. Its canonical EONW package
-  owns the v36 `Subscribe` action and the `SUBSCRIBED`, `TABS`, `EVENT`,
+  owns the v37 `Subscribe` action and the `SUBSCRIBED`, `TABS`, `EVENT`,
   `GAP` and `END` messages.
 - **Consumes:** EON-C10 (EONW v30 from `eon-ciwn.6`, targeting, exit codes),
   EON-C31 (attention records, the queue and its CLI visibility), EON-C11

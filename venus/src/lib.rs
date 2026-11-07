@@ -36,6 +36,6 @@ pub use scene::{
 pub(crate) use system::{CPU_ICON, DISK_ICON, Load, RAM_ICON};
 pub use system::{CpuReadings, CpuTimes, CpuUse, DiskUse, LoadLevels, RamUse};
 pub use transport::{
-    SendError, Transport, TransportEvent, WorkspaceEvent, WorkspaceTransport,
+    Outgoing, SendError, Transport, TransportEvent, WorkspaceEvent, WorkspaceTransport,
     read_workspace_response,
 };

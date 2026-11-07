@@ -1,4 +1,5 @@
-use eon_workspace_protocol::v36::{
+use eon_workspace_protocol::stop;
+use eon_workspace_protocol::v37::{
     self as workspace, Action as WorkspaceAction, Request as WorkspaceRequest,
     Response as WorkspaceResponse,
 };
@@ -75,7 +76,7 @@ pub enum WorkspaceEvent {
     },
 }
 
-/// Bounded semantic-action handle for EONW v36.
+/// Bounded semantic-action handle for EONW v37.
 pub struct WorkspaceTransport {
     actions: mpsc::SyncSender<WorkerItem>,
     events: Arc<WorkspaceEventQueue>,
@@ -85,8 +86,22 @@ pub struct WorkspaceTransport {
     notify: Arc<Notify>,
 }
 
-/// An action for the workspace worker and its ticket; a refresh carries none.
-type WorkerItem = (WorkspaceAction, Option<u64>);
+/// What Venus asks of Eon: a versioned action, or the Reserved Stop of its window's
+/// generation, whose bytes no EONW revision changes (EON-C11).
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum Outgoing {
+    Action(WorkspaceAction),
+    Stop { generation: String },
+}
+
+impl From<WorkspaceAction> for Outgoing {
+    fn from(action: WorkspaceAction) -> Self {
+        Self::Action(action)
+    }
+}
+
+/// A request for the workspace worker and its ticket; a refresh carries none.
+type WorkerItem = (Outgoing, Option<u64>);
 
 /// The fallback refresh; an event the subscription reads refreshes at once.
 const WORKSPACE_REFRESH_INTERVAL: Duration = Duration::from_millis(250);
@@ -132,8 +147,8 @@ impl Waits {
         }
     }
 
-    fn timeout(&self, action: &WorkspaceAction) -> Duration {
-        if is_stop(action) {
+    fn timeout(&self, outgoing: &Outgoing) -> Duration {
+        if matches!(outgoing, Outgoing::Stop { .. }) {
             self.stop
         } else {
             self.answer
@@ -206,10 +221,10 @@ impl WorkspaceTransport {
     }
 
     /// Queues `action` and returns the ticket its `WorkspaceEvent::Answered` carries.
-    pub fn send(&self, action: WorkspaceAction) -> Result<u64, SendError> {
+    pub fn send(&self, outgoing: impl Into<Outgoing>) -> Result<u64, SendError> {
         let ticket = self.tickets.fetch_add(1, Ordering::Relaxed);
         self.actions
-            .try_send((action, Some(ticket)))
+            .try_send((outgoing.into(), Some(ticket)))
             .map(|()| ticket)
             .map_err(|error| match error {
                 mpsc::TrySendError::Full(_) => SendError::Full,
@@ -348,7 +363,9 @@ fn exchange_until_dropped(
         .as_nanos();
     let mut counter = 0;
     // Refreshes carry no ticket.
-    let mut action = WorkspaceAction::Workspace(workspace::WorkspaceAction::Inspect);
+    let mut action = Outgoing::Action(WorkspaceAction::Workspace(
+        workspace::WorkspaceAction::Inspect,
+    ));
     let mut ticket = None;
     loop {
         let begun = subscription.presented().hides;
@@ -372,7 +389,9 @@ fn exchange_until_dropped(
                 (action, ticket)
             }
             Err(mpsc::RecvTimeoutError::Timeout) => (
-                WorkspaceAction::Workspace(workspace::WorkspaceAction::Inspect),
+                Outgoing::Action(WorkspaceAction::Workspace(
+                    workspace::WorkspaceAction::Inspect,
+                )),
                 None,
             ),
             Err(mpsc::RecvTimeoutError::Disconnected) => break,
@@ -756,7 +775,9 @@ fn queue_refresh(worker: Option<&mpsc::SyncSender<WorkerItem>>, due: &mut bool) 
         *due = worker.is_some_and(|worker| {
             worker
                 .try_send((
-                    WorkspaceAction::Workspace(workspace::WorkspaceAction::Inspect),
+                    Outgoing::Action(WorkspaceAction::Workspace(
+                        workspace::WorkspaceAction::Inspect,
+                    )),
                     None,
                 ))
                 .is_ok()
@@ -840,13 +861,6 @@ const WORKSPACE_EXCHANGE_TIMEOUT: Duration = Duration::from_secs(6);
 /// then five seconds for the Stop itself.
 const STOP_EXCHANGE_TIMEOUT: Duration = Duration::from_secs(41);
 
-fn is_stop(action: &WorkspaceAction) -> bool {
-    matches!(
-        action,
-        WorkspaceAction::Workspace(workspace::WorkspaceAction::Stop { .. })
-    )
-}
-
 /// Why a workspace request has no answer.
 #[derive(Debug, PartialEq)]
 enum ExchangeError {
@@ -882,17 +896,22 @@ fn workspace_exchange(
     socket: &Path,
     nonce: u128,
     counter: usize,
-    action: WorkspaceAction,
+    outgoing: Outgoing,
     waits: &Waits,
 ) -> Result<WorkspaceResponse, ExchangeError> {
-    let timeout = Some(waits.timeout(&action));
-    let stop = is_stop(&action);
-    let request = WorkspaceRequest {
-        id: format!("venus-{}-{nonce}-{counter}", std::process::id()),
-        caller: None,
-        action,
-    };
-    let encoded = workspace::encode_request(&request).map_err(|error| {
+    let timeout = Some(waits.timeout(&outgoing));
+    let encoded = match &outgoing {
+        Outgoing::Action(action) => workspace::encode_request(&WorkspaceRequest {
+            id: format!("venus-{}-{nonce}-{counter}", std::process::id()),
+            caller: None,
+            action: action.clone(),
+        })
+        .map_err(|error| error.to_string()),
+        Outgoing::Stop { generation } => {
+            stop::encode_request(generation).map_err(|error| error.to_string())
+        }
+    }
+    .map_err(|error| {
         ExchangeError::Invalid(format!("Cannot encode Eon workspace action: {error}"))
     })?;
     let mut stream = UnixStream::connect(socket).map_err(|error| {
@@ -911,22 +930,41 @@ fn workspace_exchange(
         ExchangeError::NotAnswering(format!("Cannot send Eon workspace action: {error}"))
     })?;
 
-    let response = read_workspace_message(&mut stream)?;
-    if !stop {
+    if !matches!(outgoing, Outgoing::Stop { .. }) {
+        let response = read_workspace_message(&mut stream)?;
         return workspace::decode_response(&response).map_err(invalid_response);
     }
-    // Stop answers with a lifecycle reply: `Stopped` ends the generation as `Ended` does.
-    match workspace::decode_lifecycle_response(&response).map_err(invalid_response)? {
-        workspace::LifecycleResponse::Stopped(stopped) => {
-            Ok(WorkspaceResponse::Ended(workspace::Ended {
-                generation: stopped.generation,
+    // `Stopped` ends the generation as `Ended` does.
+    match read_stop_reply(&mut stream)? {
+        stop::Reply::Stopped { generation, .. } => {
+            Ok(WorkspaceResponse::Ended(workspace::Ended { generation }))
+        }
+        stop::Reply::Failure { code, detail } => {
+            Ok(WorkspaceResponse::Failure(workspace::Failure {
+                code,
+                detail,
             }))
         }
-        workspace::LifecycleResponse::Failure(failure) => Ok(WorkspaceResponse::Failure(failure)),
-        workspace::LifecycleResponse::Runtime(_) => Err(ExchangeError::Invalid(
-            "Eon answered Stop with a runtime report".into(),
-        )),
     }
+}
+
+/// Reads one bounded Reserved Stop reply.
+fn read_stop_reply(stream: &mut impl Read) -> Result<stop::Reply, ExchangeError> {
+    let invalid = |error: stop::Error| {
+        ExchangeError::Invalid(format!("Eon sent an invalid Stop reply: {error}"))
+    };
+    let mut reply = vec![0; stop::HEADER_BYTES];
+    stream.read_exact(&mut reply).map_err(|error| {
+        ExchangeError::NotAnswering(format!("Cannot read Eon Stop reply header: {error}"))
+    })?;
+    let length = stop::reply_len(&reply).map_err(invalid)?;
+    reply.resize(length, 0);
+    stream
+        .read_exact(&mut reply[stop::HEADER_BYTES..])
+        .map_err(|error| {
+            ExchangeError::NotAnswering(format!("Cannot read complete Eon Stop reply: {error}"))
+        })?;
+    stop::decode_reply(&reply).map_err(invalid)
 }
 
 fn invalid_response(error: workspace::Error) -> ExchangeError {
@@ -1318,7 +1356,7 @@ fn protocol_loss(error: session::Error) -> TransportEvent {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use eon_workspace_protocol::v36::{
+    use eon_workspace_protocol::v37::{
         InvokeIntent, Pane, Popup, PopupEntry, PopupKey, Shortcut, Snapshot, Tab,
     };
     use orbit_protocol::{
@@ -1925,7 +1963,7 @@ mod tests {
             &socket.path,
             1,
             0,
-            WorkspaceAction::Workspace(workspace::WorkspaceAction::Inspect),
+            WorkspaceAction::Workspace(workspace::WorkspaceAction::Inspect).into(),
             &WAITS,
         )
         .unwrap_err();
@@ -1954,7 +1992,8 @@ mod tests {
             &socket.path,
             1,
             0,
-            WorkspaceAction::Workspace(workspace::WorkspaceAction::CreatePane { focus: true }),
+            WorkspaceAction::Workspace(workspace::WorkspaceAction::CreatePane { focus: true })
+                .into(),
             &WAITS,
         );
 
@@ -2156,31 +2195,38 @@ mod tests {
     }
 
     #[test]
-    fn workspace_worker_reads_stop_as_a_lifecycle_reply() {
-        let stop = || {
-            WorkspaceAction::Workspace(workspace::WorkspaceAction::Stop {
-                generation: "g7".into(),
-            })
+    fn workspace_worker_sends_the_reserved_stop() {
+        const GENERATION: &str = "g1-00000000000000000000000000000007";
+        let stop = || Outgoing::Stop {
+            generation: GENERATION.into(),
         };
         let failure = workspace::Failure {
             code: "stop-failed".into(),
             detail: "an Orbit host refused".into(),
         };
         let replies = [
-            workspace::LifecycleResponse::Stopped(workspace::Stopped {
-                generation: "g7".into(),
-                sessions: vec!["session-p1".into()],
-            }),
-            workspace::LifecycleResponse::Failure(failure.clone()),
+            stop::Reply::Stopped {
+                generation: GENERATION.into(),
+                terminals: vec!["terminal-1".into()],
+            },
+            stop::Reply::Failure {
+                code: failure.code.clone(),
+                detail: failure.detail.clone(),
+            },
         ];
         let socket = TestSocket::new();
         let listener = UnixListener::bind(&socket.path).unwrap();
         let server = thread::spawn(move || {
             for reply in replies {
-                let (mut stream, action) = accept_workspace_action(&listener);
-                assert_eq!(action, stop());
+                let (mut stream, _) = listener.accept().unwrap();
+                let mut request = [0; stop::REQUEST_BYTES];
+                stream.read_exact(&mut request).unwrap();
+                assert_eq!(
+                    request.as_slice(),
+                    stop::encode_request(GENERATION).unwrap()
+                );
                 stream
-                    .write_all(&workspace::encode_lifecycle_response(&reply).unwrap())
+                    .write_all(&stop::encode_reply(&reply).unwrap())
                     .unwrap();
             }
         });
@@ -2188,7 +2234,7 @@ mod tests {
         assert_eq!(
             workspace_exchange(&socket.path, 1, 0, stop(), &WAITS),
             Ok(WorkspaceResponse::Ended(workspace::Ended {
-                generation: "g7".into()
+                generation: GENERATION.into()
             }))
         );
         assert_eq!(
@@ -2199,9 +2245,7 @@ mod tests {
         // Stop waits as long as `eon quit` does: one in-flight operation, then the Stop.
         assert_eq!(WAITS.timeout(&stop()), Duration::from_secs(41));
         assert_eq!(
-            WAITS.timeout(&WorkspaceAction::Workspace(
-                workspace::WorkspaceAction::Inspect
-            )),
+            WAITS.timeout(&WorkspaceAction::Workspace(workspace::WorkspaceAction::Inspect).into()),
             WORKSPACE_EXCHANGE_TIMEOUT
         );
     }
@@ -2931,7 +2975,7 @@ mod tests {
         Snapshot {
             workspace: "s1".into(),
             active_workspace: "s1".into(),
-            workspaces: vec![eon_workspace_protocol::v36::WorkspaceInfo {
+            workspaces: vec![eon_workspace_protocol::v37::WorkspaceInfo {
                 id: "s1".into(),
                 name: None,
                 tab_count: 1,
@@ -2952,7 +2996,7 @@ mod tests {
                 id: "t1".into(),
                 directory: b"/tmp/eon".to_vec(),
                 selected_pane: Some("pane-1".into()),
-                columns: vec![eon_workspace_protocol::v36::Column {
+                columns: vec![eon_workspace_protocol::v37::Column {
                     panes: vec![Pane {
                         label: "pane-1".into(),
                         pinned_name: None,
@@ -2966,7 +3010,7 @@ mod tests {
                 }],
                 attention_rollup: None,
             }],
-            geometry: eon_workspace_protocol::v36::PopupGeometry {
+            geometry: eon_workspace_protocol::v37::PopupGeometry {
                 side_margin: 8.0,
                 vertical_margin: 4.0,
             },
@@ -2984,7 +3028,7 @@ mod tests {
             claude_quota_failure: None,
             running: None,
             busy: None,
-            sidebar: eon_workspace_protocol::v36::Sidebar::Open,
+            sidebar: eon_workspace_protocol::v37::Sidebar::Open,
             attention_queue: Vec::new(),
         }
     }
@@ -2997,7 +3041,7 @@ mod tests {
             id: "t2".into(),
             directory: b"/tmp/nova".to_vec(),
             selected_pane: Some("pane-2".into()),
-            columns: vec![eon_workspace_protocol::v36::Column {
+            columns: vec![eon_workspace_protocol::v37::Column {
                 panes: vec![Pane {
                     label: "pane-2".into(),
                     pinned_name: None,

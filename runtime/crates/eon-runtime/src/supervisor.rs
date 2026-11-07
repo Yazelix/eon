@@ -3,8 +3,8 @@ use super::{
     cli::Inputs,
     control::{
         Accepted, ControlListener, ControlResponse, Dispatched, EndpointFailure,
-        EndpointFailureKind, SocketIdentity, connect_control, failure, probe_launch_mode,
-        probe_presentable_runtime, send_action_on, socket_identity,
+        EndpointFailureKind, Incoming, SocketIdentity, connect_control, failure, probe_launch_mode,
+        probe_presentable_runtime, send_action_on, socket_identity, stop_failure,
     },
     diagnostics::DiagnosticLog,
     events::Projection,
@@ -21,9 +21,9 @@ use super::{
     subscriptions::{Subscriber, Subscribers},
     workspace::{self, LaunchCommand, SessionEnd, SessionOperation, WorkspaceSet},
 };
-use eon_workspace_protocol::v36::{
+use eon_workspace_protocol::v37::{
     Action, Availability, BusyTerminals, Editing, Ended, FILES_ENTRY, Failure, InvokeIntent,
-    LifecycleResponse, Request, Response, Runtime, Screen, Sent, Snapshot, Stopped, TargetId,
+    LifecycleResponse, Request, Response, Runtime, Screen, Sent, Snapshot, TargetId,
     TerminalHistory, TerminalInput, TerminalText, VERSION, WindowEntry, WindowState,
     WorkspaceAction,
 };
@@ -679,7 +679,7 @@ impl PresentationProcess {
                 };
                 if let Some(snapshot) = snapshot {
                     let bytes =
-                        eon_workspace_protocol::v36::encode_response(&Response::Snapshot(snapshot))
+                        eon_workspace_protocol::v37::encode_response(&Response::Snapshot(snapshot))
                             .map_err(|error| format!("cannot encode startup snapshot: {error}"))?;
                     let mut remaining = bytes.as_slice();
                     while !remaining.is_empty() {
@@ -2350,13 +2350,21 @@ pub(super) fn try_lock_supervisor_lifecycle(path: &Path) -> Result<Option<fs::Fi
 /// events, the request's change included, are published first and written
 /// before the reply as far as each subscriber takes them without waiting.
 fn dispatch(
-    request: Request,
+    incoming: Incoming,
     state: &mut SupervisorState,
     inputs: &Inputs,
     config: &Path,
     runtime: &Path,
     generation: &str,
 ) -> Dispatched {
+    let request = match incoming {
+        Incoming::Stop(target) => {
+            let reply = stop_window(&target, state, runtime, generation);
+            state.serve_subscribers(Instant::now());
+            return reply;
+        }
+        Incoming::Request(request) => request,
+    };
     if matches!(request.action, Action::Subscribe { .. }) && !state.stopping {
         return match subscribe(state, inputs, config, &request, generation) {
             Ok(subscriber) => Dispatched::Subscribe(Box::new(subscriber)),
@@ -2416,6 +2424,41 @@ fn stop_incomplete(mode: LaunchMode, window: Option<&str>, generation: &str) -> 
     }
 }
 
+/// Answers the Reserved Stop of `target`, also while an earlier Stop is
+/// incomplete, so it retries that Stop (EON-C11).
+fn stop_window(
+    target: &str,
+    state: &mut SupervisorState,
+    runtime: &Path,
+    generation: &str,
+) -> Dispatched {
+    if target != generation {
+        let error = failure(
+            "generation-mismatch",
+            format!("supervisor owns generation {generation}, not {target}"),
+        );
+        return Dispatched::Stop(stop_failure(error), false);
+    }
+    let result = stop_generation_sessions(state, runtime, launch_mode(state));
+    let shutdown = result.is_ok();
+    let reply = match result {
+        Ok(terminals) => eon_workspace_protocol::stop::Reply::Stopped {
+            generation: generation.into(),
+            terminals,
+        },
+        Err(detail) => stop_failure(failure("stop-failed", detail)),
+    };
+    Dispatched::Stop(reply, shutdown)
+}
+
+fn launch_mode(state: &SupervisorState) -> LaunchMode {
+    if state.workspaces.is_some() {
+        LaunchMode::Workspace
+    } else {
+        LaunchMode::Terminal
+    }
+}
+
 fn dispatch_control_request(
     request: Request,
     state: &mut SupervisorState,
@@ -2424,18 +2467,12 @@ fn dispatch_control_request(
     runtime: &Path,
     generation: &str,
 ) -> (ControlResponse, bool) {
-    let mode = if state.workspaces.is_some() {
-        LaunchMode::Workspace
-    } else {
-        LaunchMode::Terminal
-    };
+    let mode = launch_mode(state);
     if state.stopping
         && !matches!(
             request.action,
             Action::Workspace(
-                WorkspaceAction::InspectRuntime
-                    | WorkspaceAction::InspectPresentation
-                    | WorkspaceAction::Stop { .. }
+                WorkspaceAction::InspectRuntime | WorkspaceAction::InspectPresentation
             )
         )
     {
@@ -2596,30 +2633,6 @@ fn dispatch_control_request(
                     false,
                 ),
             }
-        }
-        Request {
-            action: Action::Workspace(WorkspaceAction::Stop { generation: target }),
-            ..
-        } => {
-            if target != generation {
-                return (
-                    ControlResponse::Lifecycle(LifecycleResponse::Failure(failure(
-                        "generation-mismatch",
-                        format!("supervisor owns generation {generation}, not {target}"),
-                    ))),
-                    false,
-                );
-            }
-            let result = stop_generation_sessions(state, runtime, mode);
-            let shutdown = result.is_ok();
-            let response = match result {
-                Ok(sessions) => LifecycleResponse::Stopped(Stopped {
-                    generation: generation.into(),
-                    sessions,
-                }),
-                Err(detail) => LifecycleResponse::Failure(failure("stop-failed", detail)),
-            };
-            (ControlResponse::Lifecycle(response), shutdown)
         }
         Request {
             action: Action::Workspace(WorkspaceAction::CloseWorkspace { ref workspace }),
@@ -3485,14 +3498,14 @@ mod tests {
         };
         let subscribe = |state: &mut SupervisorState, caller: Option<&str>, filter| {
             super::dispatch(
-                super::Request {
+                super::Incoming::Request(super::Request {
                     id: "subscribe-1".into(),
                     caller: caller.map(Into::into),
                     action: Action::Subscribe {
                         filter,
                         after: None,
                     },
-                },
+                }),
                 state,
                 &inputs,
                 &root,
@@ -3517,16 +3530,16 @@ mod tests {
         state
             .subscribers
             .attach(stream, *subscriber, Instant::now());
-        let mut message = vec![0; eon_workspace_protocol::v36::HEADER_BYTES];
+        let mut message = vec![0; eon_workspace_protocol::v37::HEADER_BYTES];
         peer.read_exact(&mut message).unwrap();
         message.resize(
-            eon_workspace_protocol::v36::declared_message_len(&message).unwrap(),
+            eon_workspace_protocol::v37::declared_message_len(&message).unwrap(),
             0,
         );
-        peer.read_exact(&mut message[eon_workspace_protocol::v36::HEADER_BYTES..])
+        peer.read_exact(&mut message[eon_workspace_protocol::v37::HEADER_BYTES..])
             .unwrap();
-        let eon_workspace_protocol::v36::SubscriptionMessage::Subscribed(subscribed) =
-            eon_workspace_protocol::v36::decode_subscription_message(&message).unwrap()
+        let eon_workspace_protocol::v37::SubscriptionMessage::Subscribed(subscribed) =
+            eon_workspace_protocol::v37::decode_subscription_message(&message).unwrap()
         else {
             panic!("no SUBSCRIBED");
         };
@@ -3542,7 +3555,7 @@ mod tests {
         assert_eq!(state.workspace_snapshot_in(None).unwrap(), before);
         assert!(state.venus.is_none());
 
-        let missing = eon_workspace_protocol::v36::Filter {
+        let missing = eon_workspace_protocol::v37::Filter {
             workspaces: vec!["s9".into()],
             ..Default::default()
         };
@@ -3653,7 +3666,7 @@ mod tests {
     /// A pending window with one unfiltered subscriber that has read its
     /// snapshot, and that subscriber's end of the connection.
     fn subscribed_window() -> (PathBuf, crate::cli::Inputs, SupervisorState, UnixStream) {
-        use eon_workspace_protocol::v36::SubscriptionMessage;
+        use eon_workspace_protocol::v37::SubscriptionMessage;
         let root = temporary_directory();
         let inputs = crate::fixtures::inputs();
         let workspace = WorkspaceSet::pending(
@@ -3688,14 +3701,14 @@ mod tests {
             log: DiagnosticLog::open_in(Ok(root.join("logs")), "g1-test", "eon"),
         };
         let Dispatched::Subscribe(subscriber) = super::dispatch(
-            super::Request {
+            super::Incoming::Request(super::Request {
                 id: "subscribe-1".into(),
                 caller: None,
                 action: Action::Subscribe {
                     filter: Default::default(),
                     after: None,
                 },
-            },
+            }),
             &mut state,
             &inputs,
             &root,
@@ -3724,9 +3737,9 @@ mod tests {
         mut peer: UnixStream,
     ) -> std::thread::JoinHandle<(
         super::Response,
-        Vec<eon_workspace_protocol::v36::SubscriptionMessage>,
+        Vec<eon_workspace_protocol::v37::SubscriptionMessage>,
     )> {
-        use eon_workspace_protocol::v36::{
+        use eon_workspace_protocol::v37::{
             HEADER_BYTES, declared_message_len, decode_response, encode_request,
         };
         use std::io::Write;
@@ -3772,9 +3785,9 @@ mod tests {
 
     /// The names of the `workspace-renamed` events in `messages`.
     fn renames(
-        messages: &[eon_workspace_protocol::v36::SubscriptionMessage],
+        messages: &[eon_workspace_protocol::v37::SubscriptionMessage],
     ) -> Vec<Option<String>> {
-        use eon_workspace_protocol::v36::{Change, SubscriptionMessage, WorkspaceChange};
+        use eon_workspace_protocol::v37::{Change, SubscriptionMessage, WorkspaceChange};
         messages
             .iter()
             .filter_map(|message| match message {
@@ -3793,8 +3806,8 @@ mod tests {
     /// Every whole subscription message already written to `peer`.
     fn subscription_messages(
         peer: &mut UnixStream,
-    ) -> Vec<eon_workspace_protocol::v36::SubscriptionMessage> {
-        use eon_workspace_protocol::v36::{declared_message_len, decode_subscription_message};
+    ) -> Vec<eon_workspace_protocol::v37::SubscriptionMessage> {
+        use eon_workspace_protocol::v37::{declared_message_len, decode_subscription_message};
         peer.set_nonblocking(true).unwrap();
         let mut bytes = Vec::new();
         let mut buffer = [0; 65536];
@@ -3822,7 +3835,7 @@ mod tests {
     #[cfg(target_os = "linux")]
     #[test]
     fn attention_reaches_subscribers_in_the_loop_turn_that_polls_it() {
-        use eon_workspace_protocol::v36::{AttentionState, Change, SubscriptionMessage};
+        use eon_workspace_protocol::v37::{AttentionState, Change, SubscriptionMessage};
         let root = temporary_directory();
         let inputs = crate::fixtures::inputs();
         let session = leased_orbit(
@@ -3867,17 +3880,17 @@ mod tests {
             log: DiagnosticLog::open_in(Ok(root.join("logs")), "g1-test", "eon"),
         };
         let Dispatched::Subscribe(subscriber) = super::dispatch(
-            super::Request {
+            super::Incoming::Request(super::Request {
                 id: "subscribe-1".into(),
                 caller: None,
                 action: Action::Subscribe {
-                    filter: eon_workspace_protocol::v36::Filter {
-                        kinds: vec![eon_workspace_protocol::v36::EventKind::Attention],
+                    filter: eon_workspace_protocol::v37::Filter {
+                        kinds: vec![eon_workspace_protocol::v37::EventKind::Attention],
                         ..Default::default()
                     },
                     after: None,
                 },
-            },
+            }),
             &mut state,
             &inputs,
             &root,
@@ -4011,8 +4024,8 @@ mod tests {
     fn inspected(
         state: &mut SupervisorState,
     ) -> (
-        Option<eon_workspace_protocol::v36::Attention>,
-        Vec<eon_workspace_protocol::v36::QueueEntry>,
+        Option<eon_workspace_protocol::v37::Attention>,
+        Vec<eon_workspace_protocol::v37::QueueEntry>,
     ) {
         // Each request ID is accepted once.
         static INSPECTIONS: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
@@ -4031,10 +4044,10 @@ mod tests {
         );
         assert!(!ended);
         let snapshot = match response {
-            super::ControlResponse::Workspace(eon_workspace_protocol::v36::Response::Snapshot(
+            super::ControlResponse::Workspace(eon_workspace_protocol::v37::Response::Snapshot(
                 snapshot,
             )) => snapshot,
-            super::ControlResponse::Workspace(eon_workspace_protocol::v36::Response::Failure(
+            super::ControlResponse::Workspace(eon_workspace_protocol::v37::Response::Failure(
                 failure,
             )) => panic!("Inspect failed: {} {}", failure.code, failure.detail),
             _ => panic!("Inspect answers with a snapshot"),
@@ -4053,9 +4066,9 @@ mod tests {
     fn raise_finish(
         state: &mut SupervisorState,
         gate: &Path,
-    ) -> eon_workspace_protocol::v36::AttentionState {
-        use eon_workspace_protocol::v36::AttentionState;
-        let changed = |attention: &Option<eon_workspace_protocol::v36::Attention>| {
+    ) -> eon_workspace_protocol::v37::AttentionState {
+        use eon_workspace_protocol::v37::AttentionState;
+        let changed = |attention: &Option<eon_workspace_protocol::v37::Attention>| {
             attention
                 .as_ref()
                 .and_then(|attention| attention.record.as_ref())
@@ -4088,7 +4101,7 @@ mod tests {
     #[cfg(target_os = "linux")]
     #[test]
     fn selected_raise_waits_for_native_window_focus() {
-        use eon_workspace_protocol::v36::AttentionState::{Finished, Idle};
+        use eon_workspace_protocol::v37::AttentionState::{Finished, Idle};
         use std::io::Write;
         let root = temporary_directory();
         let (mut state, gate) = finishing_window(&root);
@@ -4209,7 +4222,7 @@ mod tests {
     #[cfg(target_os = "linux")]
     #[test]
     fn replacement_venus_does_not_inherit_focus() {
-        use eon_workspace_protocol::v36::AttentionState::{Finished, Idle};
+        use eon_workspace_protocol::v37::AttentionState::{Finished, Idle};
         use std::{io::Write, net::Shutdown};
         let root = temporary_directory();
         let (mut state, gate) = finishing_window(&root);
@@ -5181,7 +5194,7 @@ mod tests {
 
     #[test]
     fn startup_snapshot_transfer_uses_the_admission_deadline() {
-        use eon_workspace_protocol::v36::{
+        use eon_workspace_protocol::v37::{
             Column, Pane, PopupGeometry, Response, Snapshot, Tab, encode_response,
         };
         use std::time::{Duration, Instant};
@@ -5190,7 +5203,7 @@ mod tests {
         let snapshot = Snapshot {
             workspace: "s1".into(),
             active_workspace: "s1".into(),
-            workspaces: vec![eon_workspace_protocol::v36::WorkspaceInfo {
+            workspaces: vec![eon_workspace_protocol::v37::WorkspaceInfo {
                 id: "s1".into(),
                 name: None,
                 tab_count: 64,
@@ -5232,7 +5245,7 @@ mod tests {
             claude_quota_failure: None,
             running: None,
             busy: None,
-            sidebar: eon_workspace_protocol::v36::Sidebar::Open,
+            sidebar: eon_workspace_protocol::v37::Sidebar::Open,
             attention_queue: Vec::new(),
         };
         let expected = encode_response(&Response::Snapshot(snapshot.clone())).unwrap();

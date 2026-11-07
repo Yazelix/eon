@@ -21,7 +21,7 @@ use super::{
         terminal_sent_json, terminal_text_json,
     },
 };
-use eon_workspace_protocol::v36::{
+use eon_workspace_protocol::v37::{
     Action, AttentionState, Direction, Failure, MAX_HISTORY_TEXT_BYTES, MAX_PASTE_BYTES, Pane,
     PopupTarget, Response, Side, Snapshot, Tab, TerminalHistory, TerminalInput, VERSION,
     WorkspaceAction, WorkspaceInfo, valid_caller, validate_paste,
@@ -1715,7 +1715,7 @@ fn close_question(
     let Some(target_label) = close_target_label(action) else {
         return Ok(None);
     };
-    let tab_terminals = |tab: &eon_workspace_protocol::v36::Tab| -> Vec<(String, String)> {
+    let tab_terminals = |tab: &eon_workspace_protocol::v37::Tab| -> Vec<(String, String)> {
         tab.panes()
             .map(|pane| (pane.session.clone(), pane.label.clone()))
             .chain(tab.popups.iter().map(|popup| {
@@ -2147,7 +2147,7 @@ fn parse_pane_rename_arguments(arguments: &[OsString]) -> Result<(Action, bool),
         _ => return Err(Error::usage(EON_USAGE)),
     };
     if let Some(name) = name {
-        eon_workspace_protocol::v36::validate_pane_name(name)
+        eon_workspace_protocol::v37::validate_pane_name(name)
             .map_err(|error| Error::usage(error.to_string()))?;
     }
     Ok((
@@ -3127,7 +3127,7 @@ mod tests {
 
     #[test]
     fn close_question_is_target_scoped_and_conservative() {
-        use eon_workspace_protocol::v36::{
+        use eon_workspace_protocol::v37::{
             BusyTerminal, BusyTerminals, Column, Pane, Popup, PopupEntry, PopupGeometry, PopupKey,
             Sidebar, Tab, TargetId, TerminalTarget,
         };
@@ -3375,7 +3375,7 @@ mod tests {
 
     #[test]
     fn close_question_combines_busy_and_final_warnings_once() {
-        use eon_workspace_protocol::v36::{
+        use eon_workspace_protocol::v37::{
             BusyTerminal, BusyTerminals, Column, Pane, Popup, PopupEntry, PopupGeometry, PopupKey,
             Sidebar, Tab, TargetId, TerminalTarget,
         };

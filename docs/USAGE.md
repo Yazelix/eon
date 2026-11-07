@@ -147,25 +147,24 @@ including end of input, exits 1 with `not-confirmed` and sends no Stop.
 Previous generations that use the current EONW can be stopped
 through their own supervisor even when the current desktop cannot attach to them.
 A generation from a build with another EONW version is listed as incompatible;
-`eon window stop`, `eon quit` and `eon quit --all` stop it by running the
-`eon` it recorded. In human mode they always ask first, as in
+`eon window stop`, `eon quit` and `eon quit --all` stop it with the Reserved
+Stop, one message that every Eon build from 0.1.21 on answers, whether or not
+that build is still installed. In human mode they always ask first, as in
 `Quit window 3f9a? It runs another Eon build, so its terminals are
-unknown. [y/N]`, because this `eon` cannot see its terminals. When that
-recorded file is missing or not executable, the Stop names it and the
-command to run once that build is restored, quoted so that POSIX shells and
-Nushell run it as printed; a path that no quoting suits in both gets one
-command for sh and one for Nushell. Each generation records its own
-build's `eon`, and `eon window ls --json` lists it as the `executable` of a
-window this `eon` cannot present. `eon window attach ID` presents such a
-window by running that build's `eon`. A build of EONW 34 or older is run as
-`stop GENERATION --json` or `attach GENERATION`, a newer one as `window stop
-ID --json` or `window attach ID`, with `EON_STOP_DELEGATED` or
-`EON_ATTACH_DELEGATED` naming the generation. A marker must name the
+unknown. [y/N]`, because this `eon` cannot see its terminals. A window of
+Eon 0.1.20 or older predates the Reserved Stop: `eon window ls` shows its
+Stop as unavailable, and its Stop fails with `stop-unavailable` and says to
+quit it from inside its window, with Alt+Shift+Q or `eon quit` in one of its
+terminals. Each generation
+records its own build's `eon`, and `eon window ls --json` lists it as the
+`executable` of a window this `eon` cannot present. `eon window attach ID`
+presents such a window by running that build's `eon` as `window attach ID`,
+with `EON_ATTACH_DELEGATED` naming the generation. The marker must name the
 generation of the `eon` that reads it, in a window that runs it; any other
-exits 2 and sends nothing, and Eon never passes a marker to what it starts.
-An Eon 0.1.18 or older `eon` runs the old form, which this release rejects,
-so it cannot stop or attach a window of this release. Generations started
-before Eon recorded it need that build's `eon` by hand.
+exits 2 and sends nothing, and Eon never passes the marker to what it starts.
+An Eon 0.1.18 or older `eon` takes another form, which this release rejects,
+so it cannot attach a window of this release. Generations started before Eon
+recorded it need that build's `eon` by hand.
 The runtime extraction changes the component graph and selects a new generation.
 Reattach earlier work with its retained exact Eon or eonbase executable.
 

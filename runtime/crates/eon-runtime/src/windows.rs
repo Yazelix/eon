@@ -2,7 +2,7 @@ use super::{
     cli::{Inputs, calling_terminal},
     control::{Error, failure, report_failure, write_stdout},
     generation::{
-        Ask, DELEGATION_MARKERS, GenerationRecord, WorkspaceTarget, attach_generation,
+        Ask, DELEGATION_MARKER, GenerationRecord, WorkspaceTarget, attach_generation,
         caller_generation, current_generation, damaged_generations, delegated_elsewhere,
         delegated_generation, generation_directory, generation_running, private_directory_exists,
         resolve_workspace, running_generations, stop_generation, stop_generations,
@@ -15,7 +15,7 @@ use super::{
     },
     workspace::{failure_json, json_escape, terminal_text},
 };
-use eon_workspace_protocol::v36::Failure;
+use eon_workspace_protocol::v37::Failure;
 use std::{
     collections::hash_map::RandomState,
     env,
@@ -441,9 +441,7 @@ fn window_command(root: &Path) -> Result<Command, String> {
         .map_err(|error| format!("cannot find the running Eon executable: {error}"))?;
     let mut command = Command::new(binary);
     command.env(WINDOW_RUNTIME, root);
-    for marker in DELEGATION_MARKERS {
-        command.env_remove(marker);
-    }
+    command.env_remove(DELEGATION_MARKER);
     Ok(command)
 }
 
@@ -657,7 +655,7 @@ pub(super) fn new_window(inputs: &Inputs) -> Result<i32, String> {
 /// generation, in the selected window's namespace (EON-C11).
 pub(super) fn attach_window(inputs: &Inputs, argument: Option<&OsStr>) -> Result<i32, Error> {
     let argument = argument.map(window_id_argument).transpose()?;
-    let delegated = delegated_generation(inputs, false)?;
+    let delegated = delegated_generation(inputs)?;
     let (window, shown) = match argument {
         None => (Window::Default, DEFAULT_WINDOW.to_owned()),
         Some(argument) => match select_window(inputs, argument) {
@@ -673,7 +671,7 @@ pub(super) fn attach_window(inputs: &Inputs, argument: Option<&OsStr>) -> Result
         (Window::Independent { root, .. }, Some(generation)) if runs(&root, &generation) => {
             attach_generation(inputs, &root, Some(&generation), Some(&shown))
         }
-        (_, Some(_)) => Err(delegated_elsewhere(false, &shown)),
+        (_, Some(_)) => Err(delegated_elsewhere(&shown)),
         (Window::Default, None) => {
             let current = current_generation(inputs)?;
             if !generation_running(inputs, &base, &current)? {
@@ -692,18 +690,16 @@ pub(super) fn attach_window(inputs: &Inputs, argument: Option<&OsStr>) -> Result
 }
 
 /// `eon window stop ID`: Stop of the selected window's running generations,
-/// asking first in human mode (EON-C23). A delegated Stop stops only its
-/// marked generation of that window (EON-C11).
+/// asking first in human mode (EON-C23).
 pub(super) fn stop_window(inputs: &Inputs, argument: &OsStr, json: bool) -> Result<i32, Error> {
     let argument = window_id_argument(argument)?;
-    let delegated = delegated_generation(inputs, true)?;
     let (window, shown) = match select_window(inputs, argument) {
         Ok(selected) => selected,
         Err(failure) => return Ok(report_failure(&failure, json)?),
     };
     let base = base_runtime_directory("eon");
-    // `default`, another build's window and a delegated Stop each name one
-    // generation, which is stopped without listing its namespace.
+    // `default` and another build's window each name one generation, which
+    // is stopped without listing its namespace.
     let (id, root, exact) = match window {
         Window::Default => (
             DEFAULT_WINDOW.to_owned(),
@@ -712,14 +708,6 @@ pub(super) fn stop_window(inputs: &Inputs, argument: &OsStr, json: bool) -> Resu
         ),
         Window::Other(generation) => (generation[3..].to_owned(), base, Some(generation)),
         Window::Independent { id, root } => (id, root, None),
-    };
-    // A delegated Stop narrows the window to this build's generation, which
-    // it must run.
-    let exact = match (delegated, exact) {
-        (None, exact) => exact,
-        (Some(generation), Some(exact)) if generation == exact => Some(generation),
-        (Some(generation), None) if runs(&root, &generation) => Some(generation),
-        (Some(_), _) => return Err(delegated_elsewhere(true, &shown)),
     };
     // Scripts keep full IDs; people read the IDs `eon window ls` shows.
     let label: &str = if json { &id } else { &shown };

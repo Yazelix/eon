@@ -1,10 +1,11 @@
 //! Agent parity (AGENTS.md, Humans and Agents): each EONW action has an `eon`
 //! command or a named exception. `cli_path` matches without a wildcard, so a
 //! new action fails the test build until it is mapped here; give it a sample
-//! in the test too.
+//! in the test too. The Reserved Stop, outside the versioned actions, is
+//! `eon window stop` and `eon quit`.
 
 use super::*;
-use eon_workspace_protocol::v36::{Filter, InvokeIntent, TerminalInput};
+use eon_workspace_protocol::v37::{Filter, InvokeIntent, TerminalInput};
 
 enum CliPath {
     /// These arguments parse to exactly this action.
@@ -74,7 +75,6 @@ fn cli_path(action: &Action) -> CliPath {
                 words(&["pane", "move", direction(to)])
             }
             WorkspaceAction::CloseTab { tab } => words(&["tab", "close", tab]),
-            WorkspaceAction::Stop { .. } => return Lifecycle("window stop"),
             WorkspaceAction::SetTabDirectory { tab, directory } => [
                 words(&["tab", "directory", tab, "--"]),
                 vec![bytes(directory)],
@@ -194,9 +194,6 @@ fn every_eonw_action_has_a_cli_path_or_a_named_exception() {
         WorkspaceAction::CreatePane { focus: false },
         WorkspaceAction::FocusId(text("p2")),
         WorkspaceAction::CloseTab { tab: text("t2") },
-        WorkspaceAction::Stop {
-            generation: text("g1-0123456789abcdef0123456789abcdef"),
-        },
         WorkspaceAction::SetTabDirectory {
             tab: text("t1"),
             directory: b"/tmp/a\xff".to_vec(),

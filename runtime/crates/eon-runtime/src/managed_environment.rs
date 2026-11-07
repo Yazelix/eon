@@ -17,7 +17,7 @@ use std::{
     time::{Duration, Instant},
 };
 
-use eon_workspace_protocol::v36::{
+use eon_workspace_protocol::v37::{
     ALT, CTRL, MAX_ENTER_DELAY_MS, MAX_ENTRIES, MAX_ENTRY_ID_BYTES, MAX_LABEL_BYTES, PopupGeometry,
     PopupKey, SHIFT, SUPER, Shortcut,
 };
@@ -1452,7 +1452,7 @@ fn remove_agent_environment(
     }
     for name in AGENT_SESSION_VARIABLES
         .iter()
-        .chain(&super::generation::DELEGATION_MARKERS)
+        .chain(&[super::generation::DELEGATION_MARKER])
     {
         command.env_remove(name);
     }
@@ -1597,12 +1597,10 @@ pub(crate) fn command(
         Tool::LazyGit => &programs.lazygit,
     };
     let mut command = Command::new(program);
-    // Nothing started inside the terminal inherits the one-shot marker, or a
-    // delegation marker, which names one delegated Stop or attach (EON-C11).
+    // Nothing started inside the terminal inherits the one-shot marker, or
+    // the delegation marker, which names one delegated attach (EON-C11).
     command.env_remove(CONFIG_WARNED_VARIABLE);
-    for marker in super::generation::DELEGATION_MARKERS {
-        command.env_remove(marker);
-    }
+    command.env_remove(super::generation::DELEGATION_MARKER);
     match tool {
         Tool::Nu => {
             command.arg("--experimental-options=native-clip");
@@ -3759,13 +3757,11 @@ label = "Browse"
             Tool::LazyGit,
         ] {
             let command = managed_command(tool, &programs, config, &[], &inputs.defaults).unwrap();
-            for marker in ["EON_STOP_DELEGATED", "EON_ATTACH_DELEGATED"] {
-                assert_eq!(
-                    command_environment(&command, marker),
-                    Some(None),
-                    "{tool:?} passes on {marker}"
-                );
-            }
+            assert_eq!(
+                command_environment(&command, "EON_ATTACH_DELEGATED"),
+                Some(None),
+                "{tool:?} passes on the delegation marker"
+            );
         }
     }
 
@@ -3800,21 +3796,20 @@ label = "Browse"
 
     #[test]
     fn children_never_inherit_a_delegation_marker() {
-        // A marker names one delegated Stop or attach (EON-C11); a terminal that
-        // inherited one would carry it into every `eon` run there.
+        // The marker names one delegated attach (EON-C11); a terminal that
+        // inherited it would carry it into every `eon` run there.
         let mut command = Command::new("/managed/orbit");
-        for name in ["EON_STOP_DELEGATED", "EON_ATTACH_DELEGATED"] {
-            command.env(name, "g1-00000000000000000000000000000001");
-        }
+        command.env(
+            "EON_ATTACH_DELEGATED",
+            "g1-00000000000000000000000000000001",
+        );
         remove_agent_session(&mut command);
-        for name in ["EON_STOP_DELEGATED", "EON_ATTACH_DELEGATED"] {
-            assert!(
-                command
-                    .get_envs()
-                    .any(|(variable, value)| variable == name && value.is_none()),
-                "{name} reaches the child"
-            );
-        }
+        assert!(
+            command
+                .get_envs()
+                .any(|(variable, value)| variable == "EON_ATTACH_DELEGATED" && value.is_none()),
+            "the marker reaches the child"
+        );
     }
 
     #[test]

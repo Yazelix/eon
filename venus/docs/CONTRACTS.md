@@ -5,7 +5,7 @@ remaining limitations. Beads and Git retain execution history; `CHANGELOG.md`
 retains accepted user-visible chronology.
 
 `VEN-C16` owns platform scope. Venus consumes ORBF v3 / ORBS v14 through the
-in-tree `orbit-protocol` crate and canonical EONW v36 through the in-tree
+in-tree `orbit-protocol` crate and canonical EONW v37 through the in-tree
 `eon-workspace-protocol` crate. A protocol version named in a contract below
 records when that behavior entered the wire; the current consumer is the
 in-tree version. VEN-C31 entered with ORBF v3 in ORBS v14.
@@ -580,6 +580,8 @@ re-proved when that platform or feature is next touched.
   close says it closes the session.
   Amended on 2026-11-07 (approved by eon-overseer under Lucca's standing rule)
   by `eon-30skm` (S3): its prose says session for the product concept.
+  Amended on 2026-11-07 (approved by eon-overseer under Lucca's standing
+  rule) by `eon-7cf0y.17`: Quit sends EON-C11's Reserved Stop.
 - **Consumer:** One Venus surface controlled by an Eon workspace.
 - **Trigger:** Outside visible `VEN-C18` popup presentation, Eon supplies
   durable topology, a workspace action changes tab, pane, focus, order,
@@ -779,8 +781,9 @@ re-proved when that platform or feature is next touched.
     that response's snapshot says; a `stop-incomplete` failure leaves the
     retained snapshot to decide, because the supervisor refuses refreshes
     after a failed Stop, and any other failure leaves the decision to the
-    next snapshot. Enter sends EONW Stop for `running.this.generation`; Venus
-    reads its lifecycle reply: `Stopped` exits as `Ended` does (VEN-C14), and
+    next snapshot. Enter sends EON-C11's Reserved Stop for
+    `running.this.generation`; Venus reads its reply: `Stopped` exits as
+    `Ended` does (VEN-C14), and
     `Failure` shows as a refused action's notice. Until the Stop is answered,
     Alt+Shift+Q does nothing, and Venus consumes each unmodified Enter press
     and its matching release without forwarding either to the selected

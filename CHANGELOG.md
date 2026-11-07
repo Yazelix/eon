@@ -5,6 +5,18 @@ installation, and proven contract changes.
 
 ## Unreleased
 
+- Every Stop is now the Reserved Stop, one message whose bytes no later Eon
+  changes, so `eon window stop`, `eon quit`, `eon quit --all` and Venus's Quit
+  stop a window of another Eon build without running that build's `eon`,
+  whether or not it is still installed (`eon-7cf0y.17`, EON-C11). The
+  delegated Stop and `EON_STOP_DELEGATED` are gone; `eon window attach ID`
+  still runs another build's recorded `eon`, always as `window attach ID`. A
+  window of Eon 0.1.20 or older predates the Reserved Stop: `eon window ls`
+  shows its Stop as unavailable, and its Stop fails with `stop-unavailable`
+  and says to quit it from inside its window (Alt+Shift+Q, or `eon quit` in
+  one of its terminals).
+  EONW v37 carries the change and Eon is 0.1.21: restart running windows so
+  that any later build can stop them.
 - Venus and the documentation say session too (`eon-30skm`, slice 3): the
   Eon Bar label's accessible name reads "Session NAME, 2 of 3" and adds
   ", another session needs input", attention inbox rows in another session

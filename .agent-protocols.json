@@ -112,7 +112,7 @@
     },
     {
       "path": "runtime",
-      "sha256": "9cf15ff1288c88556ae46e36c1eb7f2730d1f7d66d4bac33b345483562b7dbc0"
+      "sha256": "ecc93930b4872e7403ad2a6e9cb9dc534c136ab099cfd83f59097dae3c9128cd"
     },
     {
       "path": "venus",

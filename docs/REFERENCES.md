@@ -529,6 +529,27 @@ Composition](DISTRIBUTION.md#reference-routing), their owning policy document.
   `Cargo.lock` and one component graph. Reject Git pins on in-tree crates, local
   maintained copies and a second component graph.
 
+### How does any Eon build stop a window of another EONW version?
+
+- **Owner:** Eon Runtime (EONW and the Reserved Stop, EON-C11)
+- **Read first:** LSP 3.17's [`exit`
+  notification](https://github.com/microsoft/language-server-protocol/blob/440d8b0/_specifications/lsp/3.17/general/initialize.md),
+  which a server accepts before `initialize`, and tmux 3.8's
+  `peer_check_version` (`proc.c:100`), which answers any other protocol
+  version with `MSG_VERSION` before dispatch, so `kill-server` cannot cross
+  versions.
+- **Read additionally only if:** Read zellij v0.45.1's
+  `CLIENT_SERVER_CONTRACT_VERSION` (`zellij-utils/src/consts.rs:26`) only
+  when versioning the socket path is proposed: it hides other servers
+  instead of stopping them. Read X11's connection-setup `Failed` reply only
+  when a reject frame's layout is in question.
+- **Preserve / reject:** Keep one stop message whose bytes never change,
+  recognised before the version check, and a frozen 6-byte prefix (`EONW`
+  and the version) so a reply in another framing names its version. Reject
+  a stable rejection with no stable action, as in tmux, a versioned
+  rendezvous path, as in zellij, and running the other build's `eon` to
+  stop its window. Evidence: `eon-7cf0y.17`'s reference gate.
+
 ## Review record template
 
 Add this evidence to the implementing bead:
