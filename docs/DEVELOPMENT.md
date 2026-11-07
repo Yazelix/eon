@@ -113,6 +113,23 @@ never creates one on a person's own Mac; macOS keeps one ColorSync profile for
 the virtual display's fixed identity, which `leftovers` logs.
 `mac-proof scenario --help` lists the steps and what each needs.
 
+The `app-bundle` step uses LaunchServices (`open`) to start the package's
+`Applications/Eon.app` with the system-only PATH, private HOME/configuration/
+runtime roots and no shell-startup marker. A fixture login profile exposes a
+command only in `~/.nix-profile/bin`. The managed shell must resolve that
+command and the candidate's packaged `eon` and `hx`; the step then types
+`eon hx`, observes the Helix process, captures it when permitted and stops its
+private workspace. The main CLI/driver scenario runs separately. Linux's
+`macos-app` Nix check builds the icon/resources and tests the native launcher's
+bounded PATH import; it proves no LaunchServices behavior.
+
+The current automatic step and private guided test app supply `run` arguments;
+neither proves the product bundle's no-argument Finder/Dock launch or a click
+while Eon runs. `eon-mac-launch-kz4p.59` owns native reopen/Quit and
+`eon-mac-launch-kz4p.60` owns the dispatcher and bundled Venus presenter,
+including those missing lifecycle checks. A passing preliminary app step or
+guided item does not close the bundle's EON-C7 proof gap.
+
 ### Yu's final check
 
 Run `nix run github:Yazelix/eon/<rev>#mac-proof -- final` on the Apple Silicon
@@ -141,9 +158,14 @@ can still show names: item 5's tab opens in HOME and its label shows the account
 name. Look inside the archive before sending it.
 
 The automatic part runs first and takes hours. Leave the Mac awake and
-untouched until it rings: the GUI scenario types into Eon. The eight manual
+untouched until it rings: the GUI scenario types into Eon. The nine manual
 items are Look, Second display (answer s to skip if you have only one), Typing
-and input methods, Fonts, Keyboard, Yazi images, Agent, and Copy out.
+and input methods, Fonts, Keyboard, Yazi images, Agent, Copy out, and Finder
+and Dock. The last item uses the private test app printed by the check:
+restart it from Finder and the Dock, verify `which eon hx`, and open Helix
+with `eon hx`. Remove this temporary app from the Dock afterward. Its wrapper
+retains the check's private roots even after all its windows are stopped;
+it invokes the candidate's actual app launcher and packaged composition.
 `mac-proof final --help` prints each action and expected result. Eon uses the
 default configuration with private state, while keeping your HOME and shell
 environment so your logged-in Claude Code works.

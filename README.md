@@ -57,6 +57,16 @@ Run `eon`. After a short animation (most keys skip it), pick a directory: press
 Enter for a Zoxide match, or Tab to browse with Yazi and Alt+Enter to use a
 folder. A terminal opens there.
 
+On macOS, the Nix package also includes `Eon.app`. In Finder, use **Go > Go
+to Folder** and enter `~/.nix-profile/Applications`, then open `Eon.app`.
+Drag that app to the Dock to keep it there. A plain `nix profile` install
+exposes the bundle in the profile; it does not copy it into `/Applications`.
+Home Manager and nix-darwin users can use their existing application
+integration; see [distribution](docs/DISTRIBUTION.md#nix-channel).
+The no-argument Finder/Dock launch and a click while Eon runs remain unproved;
+the [macOS proof](docs/DEVELOPMENT.md#macos-proof-harness) describes the pending
+native lifecycle work.
+
 | Shortcut | Action |
 |---|---|
 | Alt+/ | Show every shortcut |

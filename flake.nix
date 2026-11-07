@@ -137,6 +137,8 @@
               ./docs/USAGE.md
               ./eon/skills/eon/SKILL.md
               ./nix/shell-environment.nix
+              ./nix/macos-app.nix
+              ./launcher
             ];
           };
           workspaceCargoLock = {
@@ -794,6 +796,10 @@
             };
             prefix.TERMINFO_DIRS = [ "${orbitPackage}/share/terminfo" ];
           };
+          macosApp = import ./nix/macos-app.nix {
+            inherit pkgs nushellPackage bashPackage;
+            inherit (eonCargo.package) version;
+          };
           eonPackage =
             assert workspaceVersions;
             assert nixpkgs.rev == "567a49d1913ce81ac6e9582e3553dd90a955875f";
@@ -921,6 +927,10 @@
                 install -Dm444 ${helix}/LICENSE "$out/share/licenses/eon/helix/LICENSE"
                 install -Dm444 ${yazi}/LICENSE "$out/share/licenses/eon/yazi/LICENSE"
                 install -Dm444 ${lazygitPackage.src}/LICENSE "$out/share/licenses/eon/lazygit/LICENSE"
+              '' + lib.optionalString pkgs.stdenv.isDarwin ''
+                cp -R ${macosApp}/Applications "$out/Applications"
+                chmod -R u+w "$out/Applications"
+                printf '%s' "$out/bin/eon" > "$out/Applications/Eon.app/Contents/Resources/eon-command"
               '';
               postFixup = ''
                 substituteInPlace "$out/share/applications/eon.desktop" \
@@ -1130,6 +1140,7 @@
           };
           checks.${system} = {
             default = eonPackage;
+            macos-app = macosApp;
             helix-grammars = helix.checks.${system}.codeberg_grammars;
             eonbase-closure = eonbaseClosureCheck;
             managed-command-path = managedCommandPathCheck;

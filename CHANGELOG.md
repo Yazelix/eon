@@ -23,6 +23,12 @@ installation, and proven contract changes.
 - On macOS, a client competing for a terminal's management lease reports
   that the run is already managed even when Orbit closes the refusal socket
   before the client checks its peer credentials (`eon-mac-launch-kz4p.53`).
+- The Apple Silicon Nix package includes `Eon.app` for Finder and Dock
+  launch, with the Eon icon and a bounded import of the user's login PATH.
+  Native bundle-launch proof is pending (`eon-mac-launch-kz4p.54`, EON-C7).
+- Managed Bash restores Eon's command directory after a system `/etc/bashrc`
+  replaces PATH, before loading the user's `.bashrc`, and leaves an existing
+  entry in place (`eon-mac-launch-kz4p.54`).
 - On macOS, `eon pane history` of a long history no longer risks failing as
   unavailable after 2 s: the supervisor read Orbit's answer in time that grew
   with the square of its size over macOS's 8 KiB socket pieces, and now reads

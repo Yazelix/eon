@@ -66,6 +66,41 @@ package installs the `eon` command, an Eon desktop entry, and its icon. The
 runtime commands, configuration paths, and detach behavior live in the Eon
 binary rather than the Nix wrapper.
 
+On Apple Silicon macOS the same package contains
+`Applications/Eon.app`, with its version, Eon icon and a native launcher for
+the package's exact `eon` command. With a plain Nix profile install, open
+`~/.nix-profile/Applications` through Finder's **Go > Go to Folder**, then
+open `Eon.app` or drag it to the Dock. Keep the Dock target through the
+profile path so upgrades follow the profile. Nix does not copy profile apps
+into the user's Applications folder automatically.
+
+Existing nix-darwin `environment.systemPackages` integration copies app
+bundles into `/Applications/Nix Apps`. Home Manager `home.packages`
+integration uses `~/Applications/Home Manager Apps`; its
+`targets.darwin.copyApps` copies bundles (default with stateVersion 25.11 or
+later), while older `targets.darwin.linkApps` links them. Eon supplies the
+conventional package layout and requires no Eon-specific module. These
+integration tools own their activation and updates; this package changes
+neither the user's Dock nor their application directories. Spotlight indexing
+is not promised by a plain profile install.
+
+The app launcher looks up the account's login shell in macOS's account
+database and asks it for PATH in login/interactive mode. Only PATH is imported;
+shell startup output and other environment changes are discarded. Eon's
+packaged commands are prepended afterward. A five-second safety limit prevents
+a broken startup file from blocking launch: lookup, shell failure or timeout
+appends a diagnostic to `$XDG_STATE_HOME/eon/logs/app-launch.log` (default
+`~/.local/state/eon/logs/app-launch.log`) and retains the launching
+environment's PATH. The supported login-shell modes are Bash, zsh and
+Nushell; another account
+shell uses the same logged fallback. No shell-startup marker or hardcoded
+host-tool directory list supplies the environment. Bundle launch remains
+unproved until the exact candidate's mac-proof and Yu's Dock check pass.
+The current harness supplies launch arguments: it does not prove the
+no-argument Finder/Dock launch or a click while Eon runs. Those are follow-ups
+`eon-mac-launch-kz4p.59` (native reopen/Quit) and `eon-mac-launch-kz4p.60`
+(dispatcher and Venus in the bundle).
+
 The Nix channel follows these boundaries:
 
 - Eon code accepts component paths and versions through explicit inputs.

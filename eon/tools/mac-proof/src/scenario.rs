@@ -95,6 +95,20 @@ const STEPS: &[Spec] = &[
         body: session,
     },
     Spec {
+        name: "app-bundle",
+        needs: KEYS,
+        requires: &["session"],
+        proves: "LaunchServices opens Eon.app with only the system PATH and private roots; \
+                 its managed shell resolves the candidate's eon/hx and a user-profile-only \
+                 command, and typing eon hx starts Helix. No terminal environment or \
+                 shell-startup marker supplies the tools. This supplies run arguments; \
+                 no-argument Finder/Dock launch and a click while Eon runs remain unproved \
+                 (eon-mac-launch-kz4p.59 native reopen/Quit; .60 dispatcher and bundled Venus)",
+        window: false,
+        timeout: Duration::from_secs(5 * 60),
+        body: app_bundle,
+    },
+    Spec {
         name: "launch",
         needs: GUI,
         requires: &["session"],
@@ -648,6 +662,7 @@ pub struct Scenario {
     screen: Availability,
     keys: Availability,
     supervisor: Option<Child>,
+    app: bool,
     backdrop: Option<Backdrop>,
     /// Every process of the scenario seen so far, as pid and command.
     seen: BTreeMap<u32, String>,
@@ -686,6 +701,7 @@ impl Scenario {
             screen: unprobed(),
             keys: unprobed(),
             supervisor: None,
+            app: false,
             backdrop: None,
             seen: BTreeMap::new(),
             desktop: None,
@@ -838,6 +854,7 @@ impl Scenario {
 
     /// Starts a supervisor in its own process group, its output in eon.log.
     pub(crate) fn start(&mut self, arguments: &[&str], log: &mut Log) -> Outcome {
+        self.app = false;
         let output = File::options()
             .create(true)
             .append(true)
@@ -856,6 +873,50 @@ impl Scenario {
             .map_err(|error| Failure::Command(format!("cannot start eon: {error}")))?;
         log.line(&format!("mac-proof: supervisor pid {}", child.id()));
         self.supervisor = Some(child);
+        Ok(())
+    }
+
+    fn app_command(&self, bundle: &Path) -> Command {
+        let mut command = Command::new("/usr/bin/open");
+        command.env_clear().args(["-n", "-W", "-a"]).arg(bundle);
+        // LaunchServices does not inherit a shell's environment reliably; give
+        // it only the isolated roots and the same minimal PATH as a Dock launch.
+        for (name, value) in self.eon(&[]).get_envs() {
+            if let Some(value) = value {
+                command.arg("--env").arg(format!(
+                    "{}={}",
+                    name.to_string_lossy(),
+                    value.to_string_lossy()
+                ));
+            }
+        }
+        let output = self.evidence.join("eon.log");
+        command
+            .args(["--stdout"])
+            .arg(&output)
+            .args(["--stderr"])
+            .arg(output);
+        // An inert startup comment tags even a supervisor that fails before Venus
+        // appears, so failure cleanup can identify it without scanning other Eons.
+        command
+            .args(["--args", "run", "--", "eon-nu", "--execute"])
+            .arg(format!("# {}/", self.root.display()));
+        command
+    }
+
+    pub(crate) fn start_app(&mut self, bundle: &Path, log: &mut Log) -> Outcome {
+        let mut command = self.app_command(bundle);
+        command
+            .stdin(Stdio::null())
+            .stdout(Stdio::null())
+            .stderr(Stdio::null());
+        log.line(&format!("$ {command:?} &"));
+        self.supervisor = Some(
+            command
+                .spawn()
+                .map_err(|error| Failure::Command(format!("open Eon.app: {error}")))?,
+        );
+        self.app = true;
         Ok(())
     }
 
@@ -896,7 +957,22 @@ impl Scenario {
             format!("{}/", self.runtime.display()),
             format!("{}/", self.root.display()),
         ];
-        let roots: Vec<u32> = self.supervisor.iter().map(Child::id).collect();
+        let mut roots: Vec<u32> = self.supervisor.iter().map(Child::id).collect();
+        if self.app {
+            // LaunchServices' supervisor is not a child of `open -W`. Its Venus
+            // carries our private control-socket root in argv; include its parent.
+            roots.extend(
+                listing
+                    .iter()
+                    .filter(|process| {
+                        process.name().contains("yazelix-venus")
+                            && markers
+                                .iter()
+                                .any(|marker| process.command.contains(marker))
+                    })
+                    .map(|process| process.parent),
+            );
+        }
         let ours = ours(&listing, &roots, &markers);
         for process in &ours {
             let previous = self.seen.insert(process.pid, process.command.clone());
@@ -918,7 +994,11 @@ impl Scenario {
     ) -> Result<Option<u32>, Failure> {
         let supervisor = self.supervisor.as_ref().map_or(0, Child::id);
         let processes = self.processes(log, deadline)?;
-        let under = ours(&processes, &[supervisor], &[]);
+        let under = if self.app {
+            processes
+        } else {
+            ours(&processes, &[supervisor], &[])
+        };
         Ok(under
             .iter()
             .find(|process| process.name().contains("yazelix-venus"))
@@ -1335,7 +1415,7 @@ fn exchange(
 }
 
 /// Quotes `text` as one /bin/sh word.
-fn quote(text: &str) -> String {
+pub(crate) fn quote(text: &str) -> String {
     format!("'{}'", text.replace('\'', r"'\''"))
 }
 
@@ -1569,6 +1649,107 @@ fn session(scenario: &mut Scenario, log: &mut Log, deadline: Instant) -> Outcome
         ));
     }
     Ok(())
+}
+
+fn app_bundle(scenario: &mut Scenario, log: &mut Log, deadline: Instant) -> Outcome {
+    let mut app = Scenario::new(
+        scenario.package.clone(),
+        scenario.evidence.join("app"),
+        Environment::Private,
+        scenario.personal_mac,
+    );
+    app.root = scenario.root.with_extension("app");
+    app.runtime = PathBuf::from(format!("/tmp/ea-{}", std::process::id()));
+    let result = (|| {
+        app.prepare()?;
+        let failed = |error: io::Error| Failure::Check(format!("app fixture: {error}"));
+        fs::write(
+            app.home().join(".config/eon/config.toml"),
+            "[anima]\nenabled = false\n",
+        )
+        .map_err(failed)?;
+        let profile = app.home().join(".nix-profile/bin");
+        fs::create_dir_all(&profile).map_err(failed)?;
+        let probe = profile.join("eon-host-path-probe");
+        fs::write(&probe, "#!/bin/sh\nprintf 'eon-host-path-ok\\n'\n").map_err(failed)?;
+        use std::os::unix::fs::PermissionsExt;
+        fs::set_permissions(&probe, fs::Permissions::from_mode(0o700)).map_err(failed)?;
+        for name in [".profile", ".bash_profile", ".zprofile", ".zshrc"] {
+            fs::write(
+                app.home().join(name),
+                "export PATH=\"$HOME/.nix-profile/bin:$PATH\"\n",
+            )
+            .map_err(failed)?;
+        }
+        fs::create_dir_all(app.home().join(".config/fish")).map_err(failed)?;
+        fs::write(
+            app.home().join(".config/fish/config.fish"),
+            "set -gx PATH $HOME/.nix-profile/bin $PATH\n",
+        )
+        .map_err(failed)?;
+        app.start_app(&app.package.join("Applications/Eon.app"), log)?;
+        app.wait_for_workspace(log, deadline)?;
+        app.wait_for_venus(log, deadline)?;
+        until(deadline, || {
+            app.press(&[ESCAPE], log, deadline)?;
+            thread::sleep(PAUSE);
+            let workspace = app.workspace(log, deadline)?;
+            Ok((panes(&workspace).len() == 1
+                && workspace["busy"]["terminals"]
+                    .as_array()
+                    .is_some_and(Vec::is_empty))
+            .then_some(()))
+        })?;
+        let pane = panes(&app.workspace(log, deadline)?).remove(0).id;
+        app.typed(&pane, "# mac-proof app ready", log, deadline)?;
+        let paths = app.root.join("paths.json");
+        let ran = app.root.join("host-tool");
+        let text = format!(
+            "which eon hx eon-host-path-probe | get path | to json | save --force {}; eon-host-path-probe | save --force {}; eon hx",
+            quote(&paths.to_string_lossy()),
+            quote(&ran.to_string_lossy())
+        );
+        app.copy(&text, log, deadline)?;
+        app.press(&[PASTE, RETURN], log, deadline)?;
+        let resolved: Vec<String> = until(deadline, || {
+            Ok(fs::read(&paths)
+                .ok()
+                .and_then(|bytes| serde_json::from_slice(&bytes).ok()))
+        })?;
+        let expected = vec![
+            app.package.join("libexec/eon/bin/eon"),
+            app.package.join("libexec/eon/bin/hx"),
+            probe,
+        ];
+        check(
+            resolved.iter().map(PathBuf::from).collect::<Vec<_>>() == expected,
+            || format!("app shell resolved {resolved:?}, expected {expected:?}"),
+        )?;
+        until(deadline, || {
+            Ok(fs::read_to_string(&ran)
+                .is_ok_and(|text| text.trim() == "eon-host-path-ok")
+                .then_some(()))
+        })?;
+        log.line(&format!(
+            "mac-proof: bundle shell resolved {resolved:?}; profile-only tool ran"
+        ));
+        until(deadline, || {
+            Ok(app
+                .processes(log, deadline)?
+                .iter()
+                .any(|process| matches!(process.name(), "hx" | ".hx-wrapped"))
+                .then_some(()))
+        })?;
+        log.line("mac-proof: typing eon hx started the packaged Helix");
+        if scenario.screen.is_ok() {
+            app.window_capture("app-helix", log, deadline)?;
+        }
+        stop(&mut app, log, deadline)
+    })();
+    if result.is_err() {
+        app.clean(log);
+    }
+    result
 }
 
 fn launch(scenario: &mut Scenario, log: &mut Log, deadline: Instant) -> Outcome {
@@ -2490,6 +2671,47 @@ pub(crate) fn stop(scenario: &mut Scenario, log: &mut Log, deadline: Instant) ->
 mod tests {
     use super::*;
     use serde_json::json;
+
+    #[test]
+    fn app_launch_supplies_private_roots_but_no_managed_tools_or_shell_marker() {
+        let scenario = Scenario::new(
+            PathBuf::from("/package"),
+            PathBuf::from("/evidence"),
+            Environment::Private,
+            true,
+        );
+        let command = scenario.app_command(Path::new("/package/Applications/Eon.app"));
+        assert_eq!(command.get_program(), "/usr/bin/open");
+        assert_eq!(command.get_envs().count(), 0);
+        let args: Vec<_> = command
+            .get_args()
+            .map(|arg| arg.to_string_lossy())
+            .collect();
+        assert_eq!(
+            &args[..4],
+            ["-n", "-W", "-a", "/package/Applications/Eon.app"]
+        );
+        assert!(
+            args.iter()
+                .any(|arg| arg == "PATH=/usr/bin:/bin:/usr/sbin:/sbin")
+        );
+        assert!(
+            args.iter()
+                .any(|arg| arg == &format!("EON_RUNTIME_DIR={}", scenario.runtime.display()))
+        );
+        for forbidden in [
+            "EON_SESSION_BIN=",
+            "EON_HX=",
+            "EON_NU=",
+            "__NIX_DARWIN",
+            "__ETC_",
+        ] {
+            assert!(
+                !args.iter().any(|arg| arg.contains(forbidden)),
+                "{forbidden}: {args:?}"
+            );
+        }
+    }
 
     #[test]
     fn unavailable_retina_setup_still_fails_if_cleanup_fails() {

@@ -28,6 +28,24 @@ pkgs.runCommand "eon-managed-command-path-check" { } ''
     exit 1
   }
   export HOME="$TMPDIR" EON_CONFIG_HOME="$TMPDIR/config" PATH=${eonPackage}/libexec/eon/bin
+  # Model the PATH left by a system bashrc that discarded Runtime's prefix.
+  PATH=/usr/bin:/bin ${pkgs.bashInteractive}/bin/bash \
+    --rcfile ${eonPackage}/libexec/eon/shell/eon.bashrc -i -c \
+    'test "$(command -v eon)" = "${eonPackage}/libexec/eon/shell/../bin/eon" && test "$(command -v hx)" = "${eonPackage}/libexec/eon/shell/../bin/hx"' \
+    || fail "managed Bash did not restore Eon's commands after system startup"
+  EON_SESSION_BIN=${eonPackage}/libexec/eon/bin \
+    PATH=${eonPackage}/libexec/eon/bin:/usr/bin:/bin ${pkgs.bashInteractive}/bin/bash \
+    --rcfile ${eonPackage}/libexec/eon/shell/eon.bashrc -i -c '
+      expected=$(${pkgs.coreutils}/bin/realpath -m "$EON_SESSION_BIN")
+      IFS=: read -ra entries <<< "$PATH"
+      count=0
+      for entry in "''${entries[@]}"; do
+        if [[ $(${pkgs.coreutils}/bin/realpath -m "$entry") == "$expected" ]]; then
+          ((count += 1))
+        fi
+      done
+      test "$count" = 1
+    ' || fail "managed Bash duplicated the existing session bin"
   # Interactive Bash reads the host's /etc/bashrc before eon.bashrc, and
   # macOS builds have no sandbox to hide it. The user's ~/.bashrc, which
   # eon.bashrc sources before its integrations, undoes what a host file

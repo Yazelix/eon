@@ -359,6 +359,8 @@ names its socket. CLI JSON names a session `session` and a terminal
   auto-approve rule) by `eon-igae.5`: the Apple Silicon macOS preview tier.
   Amended on 2026-11-07 (approved by eon-overseer under Lucca's standing rule)
   by `eon-30skm` (S3): its prose says session for the product concept.
+  Amended on 2026-11-07 (approved by eon-overseer under Lucca's standing
+  minor-contract rule) by `eon-mac-launch-kz4p.54`: Nix app-bundle launch.
 - **Consumer:** A user launching a supported Eon distribution on an approved
   native platform.
 - **Trigger:** Build, install, or launch an approved Eon channel.
@@ -368,6 +370,14 @@ names its socket. CLI JSON names a session `session` and a terminal
   contracts, and Nix-only channel while platform mechanics remain with
   their existing owners. Each channel names its proved architectures and launch
   environments.
+  On Apple Silicon macOS, the Nix Eon package includes Eon.app. Opening that
+  bundle from Finder or the Dock starts the same selected Eon composition as
+  the eon CLI, without requiring a launching terminal. Its terminals resolve
+  eon and hx to that build's packaged commands without relying on a launching
+  terminal's PATH or shell-startup markers. The package exposes the bundle
+  under Applications in its Nix output; making it discoverable through the
+  user's Applications directory is installation integration, documented for
+  plain Nix profiles, Home Manager and nix-darwin.
 - **Important failures:** Systemd-only lifecycle assumptions, X11 fallback, a
   second component graph, hidden child substitution, or an unproved
   architecture or compile-only runtime claim is rejected.
@@ -453,6 +463,13 @@ names its socket. CLI JSON names a session `session` and a terminal
   unobserved, as are VEN-C16's open items.
   `eon-prove-full-eon-apple-silicon-macos-t8o` owns the full-Eon proof and
   full macOS support, and compile/evaluation is insufficient.
+  Finder/Dock bundle launch and its managed-command environment are unproved
+  until the exact candidate passes mac-proof's LaunchServices bundle check
+  and Yu's Dock check; Linux build and Darwin evaluation alone do not prove
+  this behavior.
+  The no-argument Finder/Dock launch and a click while Eon runs are unproved;
+  `eon-mac-launch-kz4p.59` owns native reopen/Quit, and
+  `eon-mac-launch-kz4p.60` owns the dispatcher and bundled Venus presenter.
 
 ## EON-C8 — Durable tab and pane workspace
 

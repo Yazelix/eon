@@ -2,7 +2,7 @@
 
 use crate::{
     mac, retina, run,
-    scenario::{self, Environment, Scenario},
+    scenario::{self, Environment, Scenario, quote as shell_word},
     step::{Failure, Log, execute, progress, succeed},
 };
 use serde_json::{Value, json};
@@ -73,6 +73,12 @@ const ITEMS: &[Item] = &[
         action: "Select text in Eon with the pointer, press Command+C and paste into another app (for example Notes).",
         expected: "the same text arrives.",
         slug: "copy-out",
+    },
+    Item {
+        title: "Finder and Dock",
+        action: "Use Finder's Go > Go to Folder to open the private test-app folder printed above. Drag its Eon.app to the Dock. In Eon run `eon quit --all`, then double-click Eon.app in Finder. Dismiss quick search with Escape, run `which eon hx`, then `eon quit --all`. Click Eon in the Dock, dismiss quick search, and run `eon hx`. Remove this test app from the Dock when done.",
+        expected: "Finder and the Dock each open a private Eon window without a Terminal launch, the shell finds packaged eon and hx, and eon hx opens Helix.",
+        slug: "finder-and-dock",
     },
 ];
 
@@ -964,7 +970,7 @@ fn manual(
     log: &mut Log,
     input: &mut impl BufRead,
 ) {
-    let mut scenario = Scenario::new(package, out.join("manual"), Environment::User, true);
+    let mut scenario = Scenario::new(package.clone(), out.join("manual"), Environment::User, true);
     let launched = (|| {
         scenario.prepare()?;
         fs::write(
@@ -979,7 +985,56 @@ fn manual(
             .map(drop)
         })
         .map_err(|error| Failure::Check(format!("manual files: {error}")))?;
-        scenario.start(&["run"], log)?;
+        let test_app = scenario.work().join("Eon.app");
+        let deadline = Instant::now() + MINUTE;
+        succeed(
+            log,
+            Command::new("cp")
+                .arg("-R")
+                .arg(package.join("Applications/Eon.app"))
+                .arg(&test_app),
+            deadline,
+            false,
+        )?;
+        succeed(
+            log,
+            Command::new("chmod").args(["-R", "u+w"]).arg(&test_app),
+            deadline,
+            false,
+        )?;
+        // A Dock click has no environment arguments: this private copy supplies
+        // only the test's roots, then runs the candidate's actual native launcher.
+        let mut wrapper = "#!/bin/sh\n".to_owned();
+        for (name, value) in scenario.eon(&[]).get_envs() {
+            let name = name.to_string_lossy();
+            wrapper += &match value {
+                Some(value) => format!("export {name}={}\n", shell_word(&value.to_string_lossy())),
+                None => format!("unset {name}\n"),
+            };
+        }
+        wrapper += &format!(
+            "cd {} || exit 1\n",
+            shell_word(&scenario.work().to_string_lossy())
+        );
+        wrapper += &format!(
+            "if [ \"$#\" -eq 0 ]; then set -- run -- eon-nu --execute {}; fi\nexec {} \"$@\"\n",
+            shell_word(&format!(
+                "# {}/",
+                scenario.work().parent().unwrap().display()
+            )),
+            shell_word(
+                &package
+                    .join("Applications/Eon.app/Contents/MacOS/Eon")
+                    .to_string_lossy()
+            )
+        );
+        fs::write(test_app.join("Contents/MacOS/Eon"), wrapper)
+            .map_err(|error| Failure::Check(format!("private Dock launcher: {error}")))?;
+        progress(&format!(
+            "Private Finder/Dock test app: {} (Finder > Go > Go to Folder)",
+            scenario.work().display()
+        ));
+        scenario.start_app(&test_app, log)?;
         let deadline = Instant::now() + 5 * MINUTE;
         scenario.wait_for_workspace(log, deadline)?;
         scenario.wait_for_venus(log, deadline)?;
@@ -1708,6 +1763,7 @@ mod tests {
                 "unanswered",
                 "unanswered",
                 "unanswered",
+                "unanswered",
                 "unanswered"
             ]
         );
@@ -1724,7 +1780,7 @@ mod tests {
         assert_eq!(items[1].answer, "unanswered");
         assert!(items[0].capture.is_none());
         let (items, closed) = walk(
-            &mut ("\np\n\n".repeat(7) + "\np\n").as_bytes(),
+            &mut ("\np\n\n".repeat(ITEMS.len() - 1) + "\np\n").as_bytes(),
             |_| Ok(None),
             &mut Vec::new(),
         );

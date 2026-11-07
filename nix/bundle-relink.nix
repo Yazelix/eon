@@ -100,6 +100,8 @@ let
       ];
     };
     cargoLock.lockFile = ../launcher/Cargo.lock;
+    cargoBuildFlags = [ "--bin" "eon-launcher" ];
+    cargoTestFlags = [ "--bin" "eon-launcher" ];
     EON_LAUNCHER_TABLE = table;
   };
 

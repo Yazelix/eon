@@ -160,6 +160,12 @@ let
 
   bashRc = pkgs.writeText "eon.bashrc" ''
     _eon_shell_init=''${BASH_SOURCE[0]%/*}/init
+    # /etc/bashrc may replace the PATH that Runtime supplied before this file runs.
+    _eon_bin=''${EON_SESSION_BIN:-''${BASH_SOURCE[0]%/*}/../bin}
+    case ":$PATH:" in
+      *":$_eon_bin:"*) ;;
+      *) export PATH="$_eon_bin:$PATH" ;;
+    esac
     _eon_default_ps1=$PS1
     _eon_default_ps2=$PS2
     if [[ -r ~/.bashrc ]]; then
@@ -193,7 +199,7 @@ let
       && _eon_mise=$(type -P mise); then
       _eon_mise=$("$_eon_mise" activate bash 2>/dev/null) && [[ -n $_eon_mise ]] && eval "$_eon_mise"
     fi
-    unset _eon_shell_init _eon_default_ps1 _eon_default_ps2 _eon_mise
+    unset _eon_bin _eon_shell_init _eon_default_ps1 _eon_default_ps2 _eon_mise
   '';
 
   shellTree = pkgs.runCommand "eon-shell" { } ''
