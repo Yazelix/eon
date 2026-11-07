@@ -4257,7 +4257,7 @@ impl Application {
         if let Some(socket) = &self.workspace_socket
             && self.workspace_model.snapshot().is_none()
         {
-            return format!("Connecting to Eon workspace at {}", socket.display());
+            return format!("Connecting to Eon window at {}", socket.display());
         }
         match self.terminal.model.connection() {
             ConnectionState::Connecting | ConnectionState::Attached

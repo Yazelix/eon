@@ -5,7 +5,7 @@ Both crates build and test without the Eon crates.
 
 | Package | Owns | Version |
 |---|---|---|
-| `eon-runtime` | Invocation, terminal lifecycle, workspace state, configuration parsing and generation identity | `0.1.0` |
+| `eon-runtime` | Invocation, terminal lifecycle, session state, configuration parsing and generation identity | `0.1.0` |
 | `eon-workspace-protocol` | EONW v36 types and bounded codec | `0.1.0` |
 
 ## Consumer boundary
@@ -19,20 +19,20 @@ one family's or command's lines of it after one or two command words,
 with terminal-only color and concise usage errors; child options remain forwarded.
 
 Popup configuration rejects Alt+Slash, reserved for the shortcut viewer, and
-Alt+0 through Alt+9, reserved for tab positions, before creating workspace
+Alt+0 through Alt+9, reserved for tab positions, before creating session
 state. A popup configured on Alt+H, Alt+J, Alt+K or Alt+L, reserved for moving
 focus, loads without a key and logs a configuration warning naming the popup
 and the key. A popup on the key of any other native binding takes that key.
 
 Runtime parses `[bar] widgets` against the assembly-supplied widget names when
-opening or reopening a workspace presentation and passes the list to Venus
+opening or reopening a window presentation and passes the list to Venus
 unchanged; the version launch input, which carries the supervising product
 version, goes only when the list names `version`.
 
 Later tabs begin in the current user's native home directory, validated before
 creation. Closing a pending tab's Files popup keeps the tab and starts its first
 pane at that directory; an explicit tab close removes it without a replacement.
-Initial workspace launch and explicit directory selection retain their own paths.
+Initial session launch and explicit directory selection retain their own paths.
 A failed first-pane fallback reports the error and leaves other tabs running.
 
 Eon supplies its own product version, agent skill, chosen defaults, validated
@@ -103,7 +103,7 @@ and lifecycle inspection (EON-C11). v28 adds the running-windows summary and
 supervisor name and start time (EON-C23). v27 adds a scope to quota windows
 and each provider's last failed quota read (EON-C27). v26 adds terminal reads
 and sends for EON-C35 and EON-C36: a request that reads a pane's or popup's
-visible text in any workspace of the window, one that pastes text or sends
+visible text in any session of the window, one that pastes text or sends
 Enter to it, and their replies. v25 adds the window-wide
 EON-C31 `attention_queue` in Runtime's total order; consumers never sort it.
 v24 adds a directory-based tab launch request,
@@ -192,7 +192,7 @@ the next gate. Discovery opens existing locks read-only and never cleans up
 another generation. The owner updates its generation directory mtime when its
 name or terminal count changes so peers can observe those changes without an
 idle polling worker.
-Compatible terminal-only supervisors have no workspace name and are excluded,
+Compatible terminal-only supervisors have no session name and are excluded,
 including when an explicit `EON_RUNTIME_DIR` is shared with full Eon.
 Discovery retains inactive generation watch identities so a supervisor recovered
 in an existing directory is found again. When a blocked control loop resumes,

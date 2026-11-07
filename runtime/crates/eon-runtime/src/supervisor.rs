@@ -146,7 +146,7 @@ pub(super) enum LaunchMode {
 impl LaunchMode {
     fn name(self) -> &'static str {
         match self {
-            Self::Workspace => "workspace",
+            Self::Workspace => "eon",
             Self::Terminal => "eonbase",
         }
     }
@@ -680,7 +680,7 @@ impl PresentationProcess {
                 if let Some(snapshot) = snapshot {
                     let bytes =
                         eon_workspace_protocol::v36::encode_response(&Response::Snapshot(snapshot))
-                            .map_err(|error| format!("cannot encode startup workspace: {error}"))?;
+                            .map_err(|error| format!("cannot encode startup snapshot: {error}"))?;
                     let mut remaining = bytes.as_slice();
                     while !remaining.is_empty() {
                         bound_io(
@@ -690,7 +690,7 @@ impl PresentationProcess {
                         .map_err(|error| error.to_string())?;
                         match process.control.write(remaining) {
                             Ok(0) => {
-                                return Err("Venus closed while receiving startup workspace".into());
+                                return Err("Venus closed while receiving startup snapshot".into());
                             }
                             Ok(count) => remaining = &remaining[count..],
                             Err(error) if error.kind() == std::io::ErrorKind::Interrupted => {
@@ -3347,7 +3347,7 @@ mod tests {
     #[test]
     fn a_scrollback_record_precedes_its_editor_and_only_a_confirmed_failure_discards() {
         let runtime = temporary_directory();
-        let log = DiagnosticLog::open_in(Ok(runtime.join("logs")), "g1-test", "workspace");
+        let log = DiagnosticLog::open_in(Ok(runtime.join("logs")), "g1-test", "eon");
         let mut store = Snapshots::new(&runtime);
         let session = |id: &str| Session {
             id: id.into(),
@@ -3481,7 +3481,7 @@ mod tests {
             notices: crate::notification::Notices::default(),
             subscribers: crate::subscriptions::Subscribers::new("g1-test"),
             scrollback: crate::scrollback::Snapshots::new(Path::new("/unused")),
-            log: DiagnosticLog::open_in(Ok(root.join("logs")), "g1-test", "workspace"),
+            log: DiagnosticLog::open_in(Ok(root.join("logs")), "g1-test", "eon"),
         };
         let subscribe = |state: &mut SupervisorState, caller: Option<&str>, filter| {
             super::dispatch(
@@ -3685,7 +3685,7 @@ mod tests {
             notices: crate::notification::Notices::default(),
             subscribers: crate::subscriptions::Subscribers::new("g1-test"),
             scrollback: crate::scrollback::Snapshots::new(Path::new("/unused")),
-            log: DiagnosticLog::open_in(Ok(root.join("logs")), "g1-test", "workspace"),
+            log: DiagnosticLog::open_in(Ok(root.join("logs")), "g1-test", "eon"),
         };
         let Dispatched::Subscribe(subscriber) = super::dispatch(
             super::Request {
@@ -3864,7 +3864,7 @@ mod tests {
             notices: crate::notification::Notices::default(),
             subscribers: crate::subscriptions::Subscribers::new("g1-test"),
             scrollback: crate::scrollback::Snapshots::new(Path::new("/unused")),
-            log: DiagnosticLog::open_in(Ok(root.join("logs")), "g1-test", "workspace"),
+            log: DiagnosticLog::open_in(Ok(root.join("logs")), "g1-test", "eon"),
         };
         let Dispatched::Subscribe(subscriber) = super::dispatch(
             super::Request {
@@ -3980,7 +3980,7 @@ mod tests {
             notices: crate::notification::Notices::default(),
             subscribers: crate::subscriptions::Subscribers::new("g1-test"),
             scrollback: Snapshots::new(Path::new("/unused")),
-            log: DiagnosticLog::open_in(Ok(root.join("logs")), "g1-test", "workspace"),
+            log: DiagnosticLog::open_in(Ok(root.join("logs")), "g1-test", "eon"),
         };
         (state, gate)
     }
@@ -4269,7 +4269,7 @@ mod tests {
     fn attaching_an_already_presented_window_retries_notice_close() {
         let root = temporary_directory();
         let inputs = crate::fixtures::inputs();
-        let log = DiagnosticLog::open_in(Ok(root.join("logs")), "g1-test", "workspace");
+        let log = DiagnosticLog::open_in(Ok(root.join("logs")), "g1-test", "eon");
         let session = leased_orbit(&root, "exec sleep 30");
         let workspace = WorkspaceSet::with_recovered_sessions(
             root.clone(),
@@ -4367,7 +4367,7 @@ mod tests {
         // The pending tab's pair, which detachment dismisses and keeps.
         let mut pair = leased_orbit(&pair_root, "exec sleep 30");
         pair.id = "terminal-2".into();
-        let log = DiagnosticLog::open_in(Ok(root.join("logs")), "g1-test", "workspace");
+        let log = DiagnosticLog::open_in(Ok(root.join("logs")), "g1-test", "eon");
         let mut command = Command::new("/bin/sh");
         command.args(["-c", "exit 0"]);
         let mut venus = super::PresentationProcess::start(
@@ -4493,7 +4493,7 @@ mod tests {
             .collect::<Vec<_>>();
         sessions[1].id = "terminal-2".into();
         sessions[2].id = "terminal-3".into();
-        let log = DiagnosticLog::open_in(Ok(roots[0].join("logs")), "g1-test", "workspace");
+        let log = DiagnosticLog::open_in(Ok(roots[0].join("logs")), "g1-test", "eon");
         // A dead worker sends Orbit down its failure path, which removes its
         // Live record and publishes no result: the run reconciles as ended.
         let first_orbit_log = sessions[0].orbit_log.clone().unwrap();
@@ -4589,7 +4589,7 @@ mod tests {
         for (number, session) in sessions.iter_mut().enumerate() {
             session.id = format!("terminal-{}", number + 1);
         }
-        let log = DiagnosticLog::open_in(Ok(roots[0].join("logs")), "g1-test", "workspace");
+        let log = DiagnosticLog::open_in(Ok(roots[0].join("logs")), "g1-test", "eon");
         // A record that no longer validates leaves terminal-4 unreconcilable.
         let record = sessions::tests::record(&sessions[3]).to_path_buf();
         fs::set_permissions(&record, fs::Permissions::from_mode(0o644)).unwrap();
@@ -4661,7 +4661,7 @@ mod tests {
         for (number, session) in sessions.iter_mut().enumerate() {
             session.id = format!("terminal-{}", number + 1);
         }
-        let log = DiagnosticLog::open_in(Ok(roots[0].join("logs")), "g1-test", "workspace");
+        let log = DiagnosticLog::open_in(Ok(roots[0].join("logs")), "g1-test", "eon");
         // Two runs whose cleanup never completes: each could hold the close
         // for the whole bound by itself.
         sessions::tests::stall(&sessions[0]);
@@ -4753,7 +4753,7 @@ mod tests {
             notices: crate::notification::Notices::default(),
             subscribers: crate::subscriptions::Subscribers::new("g1-test"),
             scrollback: crate::scrollback::Snapshots::new(Path::new("/unused")),
-            log: DiagnosticLog::open_in(Ok(roots[0].join("logs")), "g1-test", "workspace"),
+            log: DiagnosticLog::open_in(Ok(roots[0].join("logs")), "g1-test", "eon"),
         };
         let inputs = crate::fixtures::inputs();
         for _ in 0..2 {
@@ -4880,7 +4880,7 @@ mod tests {
             notices: crate::notification::Notices::default(),
             subscribers: crate::subscriptions::Subscribers::new("g1-test"),
             scrollback: crate::scrollback::Snapshots::new(Path::new("/unused")),
-            log: DiagnosticLog::open_in(Ok(root.join("logs")), "g1-test", "workspace"),
+            log: DiagnosticLog::open_in(Ok(root.join("logs")), "g1-test", "eon"),
         };
         let inputs = crate::fixtures::inputs();
         let deadline = std::time::Instant::now() + std::time::Duration::from_secs(5);
@@ -4937,7 +4937,7 @@ mod tests {
             notices: crate::notification::Notices::default(),
             subscribers: crate::subscriptions::Subscribers::new("g1-test"),
             scrollback: crate::scrollback::Snapshots::new(Path::new("/unused")),
-            log: DiagnosticLog::open_in(Ok(root.join("logs")), "g1-test", "workspace"),
+            log: DiagnosticLog::open_in(Ok(root.join("logs")), "g1-test", "eon"),
         };
 
         let error = stop_generation_sessions(&mut state, &root, LaunchMode::Workspace).unwrap_err();
@@ -5117,7 +5117,7 @@ mod tests {
             sessions::mark_pending_pair(&endpoint).unwrap();
             // A commit settles the marker through the supervisor.
             let inputs = crate::fixtures::inputs();
-            let log = DiagnosticLog::open_in(Ok(root.join("logs")), "g1-test", "workspace");
+            let log = DiagnosticLog::open_in(Ok(root.join("logs")), "g1-test", "eon");
             let mut owned = vec![session];
             apply_session_operation(
                 &inputs,
@@ -5237,7 +5237,7 @@ mod tests {
         };
         let expected = encode_response(&Response::Snapshot(snapshot.clone())).unwrap();
         let received = root.join("snapshot");
-        let log = DiagnosticLog::open_in(Ok(root.join("logs")), "g1-test", "workspace");
+        let log = DiagnosticLog::open_in(Ok(root.join("logs")), "g1-test", "eon");
         let mut command = Command::new("/bin/sh");
         command.args([
             "-c",
@@ -5296,7 +5296,7 @@ mod tests {
         };
 
         let root = temporary_directory();
-        let log = DiagnosticLog::open_in(Ok(root.join("logs")), "g1-test", "workspace");
+        let log = DiagnosticLog::open_in(Ok(root.join("logs")), "g1-test", "eon");
         let mut command = Command::new("/bin/sh");
         command.args([
             "-c",

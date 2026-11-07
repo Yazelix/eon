@@ -419,7 +419,7 @@ mod tests {
     #[test]
     fn copied_output_stops_below_the_bound_and_records_still_fit() {
         let root = crate::supervisor::temporary_directory();
-        let log = DiagnosticLog::open_in(Ok(root.join("logs")), GENERATION, "workspace");
+        let log = DiagnosticLog::open_in(Ok(root.join("logs")), GENERATION, "eon");
         let chunk = vec![b'x'; 8192];
         for _ in 0..(LOG_BYTES / 8192 + 2) {
             log.append(&chunk, false);

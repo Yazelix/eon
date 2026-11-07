@@ -176,7 +176,7 @@ pub(super) static FIXED_SHORTCUTS: &[NativeShortcut] = &[
     },
     NativeShortcut {
         group: "Navigate",
-        label: "Show workspace by position",
+        label: "Show session by position",
         trigger: NativeShortcutTrigger::AltShiftDigits,
         action: NativeShortcutAction::ShowWorkspacePosition,
     },
@@ -2241,17 +2241,14 @@ mod tests {
             )
             .iter()
             .flat_map(|group| &group.rows)
-            .find(|row| row.action.starts_with("Show workspace by position"))
+            .find(|row| row.action.starts_with("Show session by position"))
             .map(|row| row.action.clone())
         };
         assert_eq!(
             row(&snapshot.entries, true).as_deref(),
-            Some("Show workspace by position (Alt+Shift+1 overridden by First)")
+            Some("Show session by position (Alt+Shift+1 overridden by First)")
         );
-        assert_eq!(
-            row(&[], true).as_deref(),
-            Some("Show workspace by position")
-        );
+        assert_eq!(row(&[], true).as_deref(), Some("Show session by position"));
         assert_eq!(row(&[], false), None);
     }
 

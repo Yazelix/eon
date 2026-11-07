@@ -514,7 +514,7 @@ impl Snapshot {
                 nodes.push((WORKSPACE_LABEL, node));
             }
             let mut tab_list = Node::new(Role::TabList);
-            tab_list.set_label("Eon workspace tabs");
+            tab_list.set_label("Eon session tabs");
             tab_list.set_orientation(Orientation::Horizontal);
             tab_list.set_bounds(rect(workspace.tab_viewport));
             tab_list.set_clips_children();
@@ -2778,7 +2778,7 @@ mod tests {
         }
         let row = &viewer.attention_rows[0];
         let id = tree_node_id(&update, &row.accessible_label);
-        assert!(row.accessible_label.contains(", in workspace Review"));
+        assert!(row.accessible_label.contains(", in session Review"));
         assert_eq!(update.focus, id);
         assert_eq!(snapshot.action_target(CONTENT, Action::Focus), None);
         assert_eq!(
@@ -2791,7 +2791,7 @@ mod tests {
         );
         assert_eq!(row.detail, "now · Review");
         assert_eq!(row.message.as_deref(), Some("Approve?"));
-        assert_eq!(row.accessible_label.matches("workspace Review").count(), 1);
+        assert_eq!(row.accessible_label.matches("session Review").count(), 1);
         let sidebar = WorkspaceScene::from_snapshot(
             &workspace,
             size,
@@ -3955,7 +3955,7 @@ mod tests {
             sidebar: eon_workspace_protocol::v36::Sidebar::Open,
             attention_queue: Vec::new(),
         };
-        let picker = "Workspaces — Alt+Shift+S";
+        let picker = "Sessions — Alt+Shift+S";
         let project = |snapshot: &WorkspaceSnapshot, width, picker, tab_scroll| {
             WorkspaceScene::from_snapshot_with_bar(
                 snapshot,
@@ -4014,7 +4014,7 @@ mod tests {
         );
         let button = node(&tree, WORKSPACE_LABEL);
         assert_eq!(button.role(), Role::Button);
-        assert_eq!(button.label(), Some("Workspace notes, 2 of 2"));
+        assert_eq!(button.label(), Some("Session notes, 2 of 2"));
         assert_eq!(button.description(), Some(picker));
         assert_eq!(button.bounds(), Some(rect(label.rect)));
         for (action, activate) in [(Action::Focus, false), (Action::Click, true)] {
@@ -4052,7 +4052,7 @@ mod tests {
         accessible.set_workspace(Some(&badged));
         assert_eq!(
             node(&accessible.tree(), WORKSPACE_LABEL).label(),
-            Some("Workspace notes, 2 of 2, another workspace needs input")
+            Some("Session notes, 2 of 2, another session needs input")
         );
 
         // A long name is clipped to a tab's widest text, and the position stays whole.
@@ -4070,14 +4070,14 @@ mod tests {
                 <= WorkspaceScene::tab_text_width(PhysicalSize::new(1200, 600), metrics)
                     + metrics.padding * 2.0
         );
-        assert_eq!(label.accessible_label, format!("Workspace {long}, 1 of 2"));
+        assert_eq!(label.accessible_label, format!("Session {long}, 1 of 2"));
 
         // One named workspace shows its name alone.
         let named = project(&snapshot(&[Some("notes")], "s1"), 1200, Some(picker), 0.0);
         let label = named.workspace_label.as_ref().unwrap();
         assert_eq!(
             (label.label.as_str(), label.accessible_label.as_str()),
-            ("notes", "Workspace notes, 1 of 1")
+            ("notes", "Session notes, 1 of 1")
         );
 
         // Without the picker's entry the label is inert text.
@@ -4088,7 +4088,7 @@ mod tests {
         let tree = accessible.tree();
         let text = node(&tree, WORKSPACE_LABEL);
         assert_eq!(text.role(), Role::Label);
-        assert_eq!(text.value(), Some("Workspace notes, 2 of 2"));
+        assert_eq!(text.value(), Some("Session notes, 2 of 2"));
         assert!(!text.supports_action(Action::Click) && !text.supports_action(Action::Focus));
         assert_eq!(
             accessible.action_target(WORKSPACE_LABEL, Action::Click),

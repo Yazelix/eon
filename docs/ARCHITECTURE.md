@@ -25,7 +25,7 @@ seam.
 | LazyGit | LazyGit | Git TUI behavior and configuration | A pinned executable and native configuration inputs |
 | Ratconfig | Ratconfig | User-facing configuration editing | A schema-aware configuration artifact and output contract |
 | Eon | Eon orchestrator | Eon and eonbase assembly, version, defaults, component selection, updates, integration checks, distribution | In-tree subsystems, exact external revisions, and their declared artifacts |
-| Eon (`runtime/`) | Runtime library and EONW | Invocation, terminal lifecycle, workspace topology, strict configuration parsing, generation identity and canonical EONW codecs | In-tree runtime and canonical codec packages |
+| Eon (`runtime/`) | Runtime library and EONW | Invocation, terminal lifecycle, session topology, strict configuration parsing, generation identity and canonical EONW codecs | In-tree runtime and canonical codec packages |
 
 Nova stays independent. Eon may reuse proven ideas from Nova through explicit
 contracts, but the repositories do not share release identity or require each
@@ -35,21 +35,22 @@ other at runtime.
 
 Public documentation presents the full composition as **Eon** and its reusable
 terminal product as **eonbase**. Their only command spellings are `eon` and
-`eonbase`. A **workspace** contains **tabs** and **panes**. Each tab groups
+`eonbase`. A **session** contains **tabs** and **panes**. Each tab groups
 panes around a launch directory and arranges them in up to four side-by-side
 **columns**, each a vertical stack with one expanded pane; a pane is a view of
 a persistent **terminal**.
 Orbit owns that terminal's process, PTY and terminal state. Detaching its window
 (Alt+Shift+D) keeps the terminal; closing the window or explicitly stopping it
 ends the terminal.
-Under planned [EON-C33](CONTRACTS.md#eon-c33--several-workspaces-in-one-window),
-an Eon **window** holds one or more workspaces and shows one at a time;
-switching the shown workspace keeps every terminal running. A workspace may
+Under [EON-C33](CONTRACTS.md#eon-c33--several-sessions-in-one-window),
+an Eon **window** holds one or more sessions and shows one at a time;
+switching the shown session keeps every terminal running. A session may
 have a name, but its `sN` identity identifies it.
 
 Product text uses these terms without requiring subsystem names. Each terminal
 has a `terminal-N` identity, which also names its Orbit socket
 (`terminal-N.sock`). In CLI JSON, `session` names a session and `terminal` a
+terminal. Orbit calls one terminal's run a Session; Eon product text says
 terminal. Protocol names remain unchanged.
 
 Documentation names the subsystems **Orbit**, **Venus** and **Eon Runtime**
@@ -130,12 +131,12 @@ and `active_workspace` names the one shown in the window. A request carrying a
 validated caller projects that terminal's workspace; a request without a caller
 projects the shown workspace. The four workspace requests operate on Runtime's
 workspace set. The `eon session ls` and `eon session new|switch|rename|close`
-CLI is their front end, and the Workspaces picker (`eon-sessions`,
-Alt+Shift+S) and the Commands workspace entries run that CLI as the popup's
+CLI is their front end, and the Sessions picker (`eon-sessions`,
+Alt+Shift+S) and the Commands session entries run that CLI as the popup's
 caller.
 `RenamePane` targets an explicit pane in that addressed workspace.
 Runtime's independent read-only ORBS observers cover every pane, including
-background tabs and hidden workspaces. They supply title/directory display data;
+background tabs and hidden sessions. They supply title/directory display data;
 Runtime combines it with its pane pin and launch-directory context into `label`.
 The pin is separate from terminal title and attention, follows the pane object,
 and is absent after supervisor recovery. Venus consumes the label without a
@@ -174,7 +175,7 @@ terminal, optionally preserving focus (EON-C10). v23 adds the background
 attention state, for an agent that reported done or idle while processes it
 started still run, ranked between working and idle (EON-C31). v22 gives each
 workspace summary its attention rollup and its recency rank, which the
-Workspaces picker orders by and the Eon Bar label's badge reads (EON-C33). v21
+Sessions picker orders by and the Eon Bar label's badge reads (EON-C33). v21
 gives each popup entry a shortcut, or none because the configuration unbound
 it or because another entry holds its default shortcut (EON-C10). v20 adds the
 window's ordered workspace summaries, shown identity and caller projection,
@@ -248,12 +249,12 @@ Paths below are relative to the repository root.
 - **Owns:** `cli.rs` owns invocation selection, CLI argument and output projection, and
   managed-tool dispatch; `main.rs` owns executable composition and top-level error-to-exit
   mapping
-- **Does not own:** Supervisor lifecycle, generation policy, EONW transport, workspace
+- **Does not own:** Supervisor lifecycle, generation policy, EONW transport, session
   state, child mechanisms, or rendering
-- **Agent parity:** The CLI is the agent's projection of every Runtime workspace action.
+- **Agent parity:** The CLI is the agent's projection of every Runtime session action.
   Each EONW `Action` a client can send has a CLI command or a named exception;
   `runtime/crates/eon-runtime/src/cli/parity.rs` maps them, and its test checks
-  that each workspace command parses to its action and each lifecycle command is
+  that each session command parses to its action and each lifecycle command is
   in `eon --help`. Venus-local view state is listed as an exception and has no
   EONW action. See [Humans and Agents](AGENT-RULES.md#humans-and-agents). Open
   gaps: `eon-agent-parity-a9g0`.
@@ -274,7 +275,7 @@ Paths below are relative to the repository root.
 - **Owns:** Owned mode-`0600` endpoint validation, bounded client connection and
   length-delimited request/response I/O, listener lifetime, socket identity, protocol
   failure projection, and concrete client probes
-- **Does not own:** Workspace or supervisor action policy, Orbit lifecycle, EONW values and
+- **Does not own:** Session or supervisor action policy, Orbit lifecycle, EONW values and
   codec, authorization, or rendering
 
 ### Generation lifecycle
@@ -294,7 +295,7 @@ Paths below are relative to the repository root.
   same-boot recovery, Orbit launch and rollback, management Stop, terminal-record and
   endpoint reconciliation, durable and transient terminal cleanup, and live terminal
   bookkeeping
-- **Does not own:** Orbit-owned shutdown mechanics and terminal state, workspace topology,
+- **Does not own:** Orbit-owned shutdown mechanics and terminal state, session topology,
   EONW transport, Venus presentation, or generation discovery
 
 ### Workspace state
@@ -349,7 +350,7 @@ The supervisor is the composition root for runtime policy. An opaque source-
 and-graph digest selects its private generation namespace. Candidate directories
 locate control endpoints, but only a bounded EONW response establishes live
 identity and capabilities. A bare launch never adopts or stops a different
-generation. Workspace and lifecycle state cross process boundaries only through
+generation. Session and lifecycle state cross process boundaries only through
 EONW for Eon clients; canonical Orbit management records and leases remain the
 private child-lifecycle boundary. Nix resolves the canonical component graph and
 injects paths without becoming a runtime owner. A subsystem review includes its
@@ -471,7 +472,7 @@ the user activates an implementation bead and its prerequisite proofs exist. The
 active Eon slice launches one accepted Venus and Orbit pair, supplies the
 accepted managed environment, preserves Eon component and native shell
 configuration boundaries, reports component identity through one Nix-managed
-path, and exposes its live workspace through EONW v36. Venus consumes a new EONW
+path, and exposes its live sessions through EONW v36. Venus consumes a new EONW
 version only after Eon Runtime's producer proof; the graph's interface versions
 change only after Venus's consumer proof exists. Later slices earn their scope
 through dogfooding. Direct distribution has its own activation gate.
@@ -495,4 +496,4 @@ remote authority.
 | Eon | Remote launch policy and disconnect-versus-Stop policy |
 | Eon Runtime | Supervisor start on the server (headless start open in `eon-remote-ssh-x7dr.3`) and any Eon-owned survival mechanism (open in `eon-remote-ssh-x7dr.2`) |
 | Orbit | Terminal authority over local Unix sockets; any row-patch protocol for slow links is a separate decision |
-| Venus | Presentation of the workspace, including the attached machine if Venus stays local |
+| Venus | Presentation of the session, including the attached machine if Venus stays local |

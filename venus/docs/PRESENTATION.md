@@ -3,7 +3,7 @@
 ## Native window and workspace
 
 Venus presents one native Wayland window on Linux. It can show one local Orbit
-Session or an Eon workspace. In workspace mode Eon supplies the tabs, pane
+terminal or an Eon window. In workspace mode Eon supplies the tabs, pane
 order, selection, and popups; Venus draws the visible scene.
 
 ### Eon Bar
@@ -20,7 +20,7 @@ order, selection, and popups; Venus draws the visible scene.
   neutral colour and `border_width`. The header controls share their centre.
   Hover and accessibility bounds stay unchanged.
 - The Eon logo, in its own colours and two logical pixels shorter than the tab
-  pills, leads the bar before the workspace label and tabs. Its centre is as far
+  pills, leads the bar before the session label and tabs. Its centre is as far
   from the window's left edge as the bar's centre line is below the window top,
   and the next item starts as far after it as it is from the left edge. It is
   decorative, with no action, hover or accessible node. It shows only while
@@ -243,7 +243,7 @@ is unavailable, the marker falls back to ` · zoom`. The marker
 and `, zoomed` accessible name show while zoom is visible, and the pane panel
 is named `Zoomed pane <label>`. Popups cover zoom and hide its marker until they close.
 
-A fresh workspace or tab can begin with its Files popup, on quick search, and no
+A fresh session or tab can begin with its Files popup, on quick search, and no
 pane. Popups draw as one card over every column, with Eon's
 logical margins around their terminal. Tabs remain available. A tab with only hidden popups has an
 empty body and keeps focus on its tab until a catalog shortcut reopens work.
@@ -285,7 +285,7 @@ request, and the window still opens.
 
 ```text
 Eon                     -> product policy, composition, distribution
-Eon Runtime             -> workspace mechanisms, canonical EONW
+Eon Runtime             -> session mechanisms, canonical EONW
 Venus                   -> native presentation, interaction, client failure UX
 Orbit                   -> PTYs, terminal state, session lifetime, wire authority
 ```
@@ -293,17 +293,17 @@ Orbit                   -> PTYs, terminal state, session lifetime, wire authorit
 Venus consumes EONW v36 through the in-tree `eon-workspace-protocol` 0.1.0
 crate. Eon supplies popup definitions,
 commands and geometry defaults. The runtime validates configuration and owns
-live workspace and popup state, Session mappings, and provider quota collection
+live session and popup state, Session mappings, and provider quota collection
 and normalization. Venus consumes
 the in-tree `orbit-protocol` 0.1.0 crate with ORBF v3 and ORBS v14. One reducer turns complete canonical
 frames into immutable scene data used by drawing and accessibility. The native
 host owns the local socket, window, input mapping, and redraw lifecycle; it owns
 no terminal state.
 
-Each Eon workspace pane references an independent Orbit Session. Venus keeps
+Each Eon pane references an independent Orbit terminal. Venus keeps
 the EONW connection for workspace state/actions and one presentation connection
 to the selected popup or each column's expanded pane. Runtime owns read-only
-metadata observers for panes in every tab and workspace and supplies semantic
+metadata observers for panes in every tab and session and supplies semantic
 labels over EONW. Venus opens no separate label observers. Hidden terminals keep
 running; the columns that zoom hides retain their presentation connections.
 

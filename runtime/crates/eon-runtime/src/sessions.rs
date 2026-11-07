@@ -2840,7 +2840,7 @@ pub(crate) mod tests {
         fs::set_permissions(root, fs::Permissions::from_mode(0o700)).unwrap();
         let mut inputs = crate::fixtures::inputs();
         inputs.orbit = orbit.into();
-        let log = DiagnosticLog::open_in(Ok(root.join("launch-logs")), "g1-test", "workspace");
+        let log = DiagnosticLog::open_in(Ok(root.join("launch-logs")), "g1-test", "eon");
         super::start_orbit(
             &inputs,
             root,
@@ -2867,7 +2867,7 @@ pub(crate) mod tests {
         );
         let mut inputs = crate::fixtures::inputs();
         inputs.orbit = launcher;
-        let log = DiagnosticLog::open_in(Ok(root.join("launch-logs")), "g1-test", "workspace");
+        let log = DiagnosticLog::open_in(Ok(root.join("launch-logs")), "g1-test", "eon");
         let error = super::start_orbit(
             &inputs,
             &root,
@@ -3088,7 +3088,7 @@ pub(crate) mod tests {
     #[test]
     fn terminal_requests_map_every_answer_and_queue_behind_the_request_in_flight() {
         let root = temporary_directory();
-        let log = DiagnosticLog::open_in(Ok(root.join("logs")), "g1-test", "workspace");
+        let log = DiagnosticLog::open_in(Ok(root.join("logs")), "g1-test", "eon");
         let (mut session, peer, tombstone) =
             tombstoned_session(&root, 1, TerminationReason::NaturalExit);
         let code =
@@ -3296,7 +3296,7 @@ pub(crate) mod tests {
     #[test]
     fn a_real_orbit_shows_lease_input_in_its_visible_text() {
         let root = temporary_directory();
-        let log = DiagnosticLog::open_in(Ok(root.join("logs")), "g1-test", "workspace");
+        let log = DiagnosticLog::open_in(Ok(root.join("logs")), "g1-test", "eon");
         let mut session = leased_orbit(&root, "printf 'ready\\n'; exec cat");
         let read_until = |session: &mut RunningSession, wanted: &dyn Fn(&str) -> bool| {
             let deadline = Instant::now() + Duration::from_secs(5);
@@ -3351,7 +3351,7 @@ pub(crate) mod tests {
     fn attach_allow_shares_the_request_slot_and_names_the_one_peer_orbit_admits() {
         let root = temporary_directory();
         let mut session = leased_orbit(&root, "exec sleep 30");
-        let log = DiagnosticLog::open_in(Ok(root.join("logs")), "g1-test", "workspace");
+        let log = DiagnosticLog::open_in(Ok(root.join("logs")), "g1-test", "eon");
         let mut other = Command::new("sleep").arg("30").spawn().unwrap();
         let other_name = AttachName::of(other.id()).unwrap();
         let own = AttachName::of(std::process::id()).unwrap();

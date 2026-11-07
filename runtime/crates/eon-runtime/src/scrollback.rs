@@ -404,7 +404,7 @@ pub(crate) mod tests {
     #[test]
     fn the_start_sweep_keeps_adopted_and_running_snapshots_and_ends_remove_them() {
         let runtime = temporary_directory();
-        let log = DiagnosticLog::open_in(Ok(runtime.join("logs")), "g1-test", "workspace");
+        let log = DiagnosticLog::open_in(Ok(runtime.join("logs")), "g1-test", "eon");
         let mut writer = Snapshots::new(&runtime);
         let mut write = |terminal: Option<&str>| {
             let snapshot = writer.write("p1", &history(Screen::Primary, 0, 0)).unwrap();
@@ -460,7 +460,7 @@ pub(crate) mod tests {
     #[test]
     fn a_failed_removal_is_retried_on_later_turns() {
         let runtime = temporary_directory();
-        let log = DiagnosticLog::open_in(Ok(runtime.join("logs")), "g1-test", "workspace");
+        let log = DiagnosticLog::open_in(Ok(runtime.join("logs")), "g1-test", "eon");
         let mut store = Snapshots::new(&runtime);
         let ended = store.write("p1", &history(Screen::Primary, 0, 0)).unwrap();
         let discarded = store.write("p2", &history(Screen::Primary, 0, 0)).unwrap();

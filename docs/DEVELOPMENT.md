@@ -274,7 +274,7 @@ br show <id>
 ## Demo media
 
 From the repository root, `nix run .#record-demo` records a scripted Eon
-workspace on an isolated Wayland display. Install Codex CLI and sign in with
+session on an isolated Wayland display. Install Codex CLI and sign in with
 `codex login` first; the Agent popup uses that login for a fresh, read-only
 session. The capture uses a soft focus wallpaper behind translucent terminals
 and writes the GIF, MP4, and PNG poster to `assets/demo/`.

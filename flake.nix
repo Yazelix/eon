@@ -496,7 +496,7 @@
           desktopItem = pkgs.makeDesktopItem {
             name = "eon";
             desktopName = "Open Eon";
-            comment = "Open an Eon workspace with persistent terminals";
+            comment = "Open an Eon window with persistent terminals";
             exec = "eon";
             actions.NewWindow = {
               name = "New Eon Window";
@@ -512,6 +512,7 @@
             keywords = [
               "terminal"
               "shell"
+              "session"
               "workspace"
             ];
           };
@@ -927,7 +928,7 @@
                 wrapProgram "$out/bin/eon" ${wrapperArgs (eonEnvironment (placeholder "out"))}
               '';
               meta = {
-                description = "Native terminal workspaces with persistent terminals";
+                description = "Native sessions with persistent terminals";
                 license = lib.licenses.asl20;
                 mainProgram = "eon";
                 platforms = [ system ];

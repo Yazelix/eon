@@ -240,8 +240,8 @@ refresh is fixed, since disk use changes slowly. Like the other `[bar]` keys,
 they apply when a window next opens or reopens.
 
 Omitting `cursor_trail_color` chooses a random color that lasts as long as the
-running workspace, so `eon window attach` reopens with the same color; a new
-workspace picks again. eonbase keeps one color across reopens, though its
+running window, so `eon window attach` reopens with the same color; a new
+window picks again. eonbase keeps one color across reopens, though its
 first window may differ. Explicit
 values are `random`, `preset:<name>`, or `custom:#RRGGBB`. The presets are
 `magma`, `solar`, `lime`, `forest`, `ice`, `ocean`, `nebula`, and `bubblegum`;
@@ -263,7 +263,7 @@ own colours. It accepts
 `preset:<name>` from the cursor presets above or `custom:#RRGGBB`; `random` is
 invalid. The setting is omitted by default, leaving Venus's built-in focus
 colour in use. The example selects `custom:#b207fb`. F6 keyboard focus in the chrome keeps
-its mint pill outline. This setting applies to full-Eon workspace surfaces;
+its mint pill outline. This setting applies to full-Eon surfaces;
 eonbase has no pane outline.
 
 `border_width` sizes neutral pane-card, agent-sidebar-card and popup outlines,
@@ -273,7 +273,7 @@ are omitted, leaving Venus's built-in widths in use. With the example's widths,
 physical widths are `max(1, round(width * scale))`:
 at scale 1.3 they draw at 1 and 1 physical pixels, and at scale 2 at 2
 and 2. Pane frames off hides pane and sidebar outlines and title rules;
-popups keep their outline. These settings apply to full-Eon workspace surfaces;
+popups keep their outline. These settings apply to full-Eon surfaces;
 eonbase receives neither override. The current agent row and F6 focus pills
 keep their one-physical-pixel outlines.
 
@@ -337,7 +337,7 @@ The terminal settings apply when a surface opens or reopens. Shell settings are
 read for each terminal. Invalid startup configuration creates no fresh terminal;
 a failed replacement leaves existing terminals and commands alive.
 
-On a fresh full-Eon workspace, Anima plays after the desktop is ready and before
+On a fresh full-Eon window, Anima plays after the desktop is ready and before
 the first tab's quick search. Press any key other than its previous/next style
 keys to dismiss it immediately. `enabled = false` skips startup playback;
 `style` is passed to the pinned Anima executable, and `duration_seconds` accepts
@@ -346,13 +346,13 @@ animation continues to quick search. Attachment, recovery, later tabs, and
 eonbase do not play the startup animation.
 
 Closing the last tab quits its window and stops its terminals. While the
-window holds other workspaces, it closes only that workspace.
+window holds other sessions, it closes only that session.
 `warning_close_last_tab = true` makes `eon tab close` and
 `eon pane close` ask first when run from a terminal, listing the terminals that
-will stop and, while other workspaces remain, naming the workspace that
+will stop and, while other sessions remain, naming the session that
 closes; `--json` never asks. In the window, Alt+Shift+W, the bar's `×` and
 Alt+W on the last pane show a prompt listing the same terminals: Enter quits,
-or closes the workspace while others remain, Escape cancels, and Alt+Shift+D
+or closes the session while others remain, Escape cancels, and Alt+Shift+D
 keeps them running instead. With `false`, both close an idle final tab at
 once. The CLI's busy confirmation for `eon tab close` and `eon pane close` does
 not depend on this setting: when a terminal the close stops is busy or its busy
@@ -384,7 +384,7 @@ See [Agent sidebar](USAGE.md#agent-sidebar).
 (with `--edit` too) and `eon pane send` may reach this window's terminals.
 
 - `"window"`, the default, lets any process running as you read or send to any
-  pane or popup of the window, in any workspace, shown or hidden.
+  pane or popup of the window, in any session, shown or hidden.
 - `"none"` refuses all three with `terminal-access-off` and reveals no
   terminal content. It also refuses a terminal's request to open Scrollback;
   the window's Scrollback key keeps working.
@@ -405,7 +405,7 @@ interval. Like the other agent settings, the window reads it when it starts.
 
 Pane labels use a fixed policy: a pin, then sanitized terminal title, then compact
 working directory, with differing-directory context. Commands and `eon pane rename`
-set or clear a pin; pins are workspace state rather than configuration. The pane
+set or clear a pin; pins are session state rather than configuration. The pane
 ID dims only when the resolved fill and configured opacity permit readable contrast.
 
 ## Agent quota
@@ -424,7 +424,7 @@ The duration names select unscoped windows only; `claude_quota_scoped` selects
 all model-scoped Claude windows, in provider order. All five widgets are listed
 by default. Codex's 5h widget also shows its blocked or unknown observation
 when no windows are available.
-Unscoped Codex windows of other durations remain in workspace JSON but have no bar widget.
+Unscoped Codex windows of other durations remain in session JSON but have no bar widget.
 For example, to leave out Fable
 and other scoped Claude chips:
 
@@ -466,7 +466,7 @@ holds only windows, remaining percentages, resets and when they were read.
 Claude needs no status-line setup.
 
 Existing Eon windows retain their running build after installation updates;
-start a fresh workspace with the updated command to use this backend.
+start a fresh window with the updated command to use this backend.
 
 ## Popups
 
@@ -483,7 +483,7 @@ keep_alive = true
 
 Built-in popup commands, labels and shortcuts are listed in the defaults above.
 Every built-in popup accepts `keybinding` and `label`. Git, Agent, Commands and
-Workspaces also accept `command`, `enabled` and `keep_alive`, and
+Sessions also accept `command`, `enabled` and `keep_alive`, and
 Agent's `command` may also be `"auto"`. Anima and Scrollback also accept
 `enabled`; they reject `command` and `keep_alive = true`. Project has no
 command of its own:
@@ -514,10 +514,10 @@ end are fixed for safety and by Orbit's history contract (ORB-C17).
 [Reading a terminal](USAGE.md#reading-a-terminal)); with Scrollback disabled
 it exits 3 with `unknown-popup`.
 Commands searches and runs Eon commands.
-Workspaces lists this window's workspaces most recently shown first, the shown
+Sessions lists this window's sessions most recently shown first, the shown
 one last, marking one that needs input: Enter shows the highlighted one, and
-Enter on a name that matches none creates a workspace with that name.
-Set `enabled = false` on Git, Agent, Anima, Scrollback, Commands, Workspaces,
+Enter on a name that matches none creates a session with that name.
+Set `enabled = false` on Git, Agent, Anima, Scrollback, Commands, Sessions,
 or a custom popup to disable it.
 
 A `keybinding` you configure, on a custom popup or a built-in one, takes its
@@ -527,7 +527,7 @@ lists it under its default key as overridden by the popup that holds it.
 `keybinding = ""` leaves any popup, Project included, without a key. Until the
 CLI path `eon-agent-parity-a9g0.1` lands, a popup without a key cannot be
 opened from the window, except that a new tab still opens on quick search and
-the Eon Bar's workspace label still opens Workspaces.
+the Eon Bar's session label still opens Sessions.
 Two configured popups on one key fail at load, except on a key reserved for
 moving focus, where both load without a key. A popup shortcut on the key of a
 built-in Eon shortcut takes that key, and Alt+/ lists the built-in one as

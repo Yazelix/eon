@@ -5,6 +5,17 @@ installation, and proven contract changes.
 
 ## Unreleased
 
+- Venus and the documentation say session too (`eon-30skm`, slice 3): the
+  Eon Bar label's accessible name reads "Session NAME, 2 of 3" and adds
+  ", another session needs input", attention inbox rows in another session
+  add ", in session NAME", the tab list is "Eon session tabs", the Shortcuts
+  dialog lists "Show session by position", and a refused action's notice reads
+  "Eon CODE: DETAIL" instead of "Eon workspace CODE: DETAIL". Venus's
+  connection notices read "Connecting to Eon window at PATH" and "Cannot
+  connect to Eon window at PATH: ERROR". The desktop entry opens "an Eon
+  window" and adds the search keyword `session` beside `workspace`, the
+  package description reads "Native sessions with persistent terminals", and
+  the docs and contracts call the product concept a session.
 - The workspace commands are now session commands (`eon-30skm`, slice 2):
   `eon session` inspects, `eon session ls` lists, and
   `eon session new|switch|rename|close SESSION` replace `eon workspace` and

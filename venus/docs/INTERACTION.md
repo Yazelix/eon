@@ -35,13 +35,13 @@ fractional-scale proof remain open.
 The accepted Eon snapshot supplies the authoritative terminal endpoints: the
 active tab's selected popup, otherwise the expanded Orbit pane of each of its
 columns. Input goes to the popup or the selected pane. An empty body
-detaches the presentation without stopping hidden Sessions.
-While the window is open, Venus subscribes to Eon's workspace events and
-re-inspects Eon as soon as one arrives, so accepted workspace changes from
-another client appear without a click or restart; it also re-inspects every
-250 ms as a fallback, which alone keeps it current while no subscription is
-open. A hidden popup stops showing as soon as its event arrives, before that
-re-inspection answers.
+detaches the presentation without stopping hidden terminals.
+While the window is open, Venus subscribes to Eon's events (session, tab,
+pane and the rest) and re-inspects Eon as soon as one arrives, so accepted
+changes from another client appear without a click or restart; it also
+re-inspects every 250 ms as a fallback, which alone keeps it current while
+no subscription is open. A hidden popup stops showing as soon as its event
+arrives, before that re-inspection answers.
 Recovery continues only while that exact attachment remains current and live;
 endpoint replacement or authoritative offline state cancels obsolete retry
 state.
@@ -52,13 +52,13 @@ Click a tab or pane header to select it, or click another column's terminal
 to select that column's expanded pane. The fixed controls in the Eon Bar are
 `+` for a tab, `?` for Shortcuts, and `×` to close the exact active tab. Only
 the empty region between tabs and controls drags an undecorated window.
-While the snapshot lists two or more workspaces, or its one workspace has a
-name, an outlined label leads the tabs with the shown workspace's name or `sN`
+While the snapshot lists two or more sessions, or its one session has a
+name, an outlined label leads the tabs with the shown session's name or `sN`
 and, with several, its `N/M` position. A click, or Enter or Space when it has
 focus, invokes Eon's `sessions` popup entry as that entry's key does; without
 that entry the label is inert text. A final close shows the close prompt
-whatever the workspace count; while other workspaces remain, it says it closes
-the workspace, by name or `sN`, and its footer reads `Enter Close`.
+whatever the session count; while other sessions remain, it says it closes
+the session, by name or `sN`, and its footer reads `Enter Close`.
 
 | Keys | Action |
 |---|---|
@@ -73,8 +73,8 @@ the workspace, by name or `sN`, and its footer reads `Enter Close`.
 | Alt+M | Create a pane in the selected column |
 | Ctrl+Alt+M | Create a column right of the selected one |
 | Alt+Shift+Z | Show the selected pane alone across the tab, or restore the columns |
-| Alt+W | Close the selected pane; the final tab's last pane quits the window, or closes the workspace while others remain |
-| Alt+Shift+W | Close the active tab; closing the final tab quits the window, or closes the workspace while others remain |
+| Alt+W | Close the selected pane; the final tab's last pane quits the window, or closes the session while others remain |
+| Alt+Shift+W | Close the active tab; closing the final tab quits the window, or closes the session while others remain |
 | Alt+Shift+N | Open an independent Eon window when supervised by Eon |
 | Alt+Shift+D | Detach: hide the window, keep terminals running |
 | Alt+Shift+Q (on macOS, also Command+Q) | Quit: close the window, stop its terminals; asks first while a terminal is busy, and is absent without Eon's running-windows summary |
@@ -95,7 +95,7 @@ does. A close request carries no reason, so a desktop that closes each window
 at logout, such as KDE Plasma, gets the same quit; Alt+Shift+D before logging
 out keeps the terminals there.
 
-On macOS, Command+Q in an Eon workspace window is such a close request, and
+On macOS, Command+Q in an Eon window is such a close request, and
 Shortcuts lists it beside Option+Shift+Q. Venus takes the key off winit's app
 menu, whose Quit item stays and still only exits Venus, leaving the window's
 terminals running. A standalone Orbit session keeps AppKit's Command+Q, which
@@ -103,7 +103,7 @@ exits Venus and leaves Orbit live.
 
 In the attention inbox, Left/Right cycle All, Needs input, Error and Finished;
 Up/Down highlight a row. Enter, Space or a row click sends that row's
-`FocusAttention` and closes the dialog; the jump can show another workspace.
+`FocusAttention` and closes the dialog; the jump can show another session.
 Escape or Alt+Q closes without a jump. Wheel, PageUp/PageDown, Home and End
 scroll. The filters keep Eon's queue order and show whole-queue counts. The
 inbox captures other input while open and restores prior keyboard focus on
@@ -125,7 +125,7 @@ jump leaves focus on the row beside its notice. Keyboard focus returns to the
 terminal when the sidebar closes or hides for width, or loses the focused
 row. Arrow keys traverse focused tabs or panes, and Left/Right with tabs
 focused walks columns before tabs like Alt+H/L; Tab and Shift+Tab traverse
-header controls, the workspace label first while it opens the picker; Enter or
+header controls, the session label first while it opens the picker; Enter or
 Space activates one. Focus on the label moves to the tabs when it hides or
 turns inert. Escape returns chrome focus to
 the terminal. With terminal focus, Escape, Ctrl+C, Tab, and Enter reach Orbit as

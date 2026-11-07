@@ -802,7 +802,7 @@ mod linux {
                 }),
                 ..Notices::default()
             };
-            let log = DiagnosticLog::open_in(Err("no log in this test".into()), "g1", "workspace");
+            let log = DiagnosticLog::open_in(Err("no log in this test".into()), "g1", "eon");
             let window = || NoticeWindow {
                 name: "w".into(),
                 id: None,

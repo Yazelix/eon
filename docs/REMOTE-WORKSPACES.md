@@ -14,16 +14,16 @@ when the text lands. Existing approved contracts and proof remain unchanged.
 ## Office to home, with one active PC
 
 `homePC` stays connected to the server at the office. On arriving home, the
-user can continue the same workspace from `linglong` without disconnecting
+user can continue the same session from `linglong` without disconnecting
 `homePC`. The [accepted flow](https://github.com/Yazelix/eon/pull/3#issuecomment-6596829642) follows
 [Lucca's simpler model](https://github.com/Yazelix/eon/pull/3#issuecomment-6595927531):
 
-- Both PCs keep their connection, but a workspace has only one active client.
+- Both PCs keep their connection, but a session has only one active client.
   The active PC receives live terminal output, sends program input and supplies
   terminal sizes. Orbit remains the sole terminal-state/PTY authority.
 - The other PC keeps its last view frozen and dimmed, with a notice naming the
   active PC. It is not a live output monitor or a second input source.
-- A key or click in that inactive workspace requests takeover. That first
+- A key or click in that inactive session requests takeover. That first
   interaction only takes over; it is not sent to the program. After successful
   takeover, redraw from current authoritative state at the new PC's sizes
   before accepting subsequent program input. Returning to the office works
@@ -51,12 +51,12 @@ an existing attachment, so switching safely is not already implemented.
 ## One host per window
 
 Yu also accepted [one machine per window](https://github.com/Yazelix/eon/pull/3#issuecomment-6596085306).
-Multiple machines use multiple windows; each workspace belongs to one host.
+Multiple machines use multiple windows; each session belongs to one host.
 A failed connection therefore affects its host's window, not part of a mixed
 window. There is no cross-host retargeting of an existing window in this plan.
 
-After SSH attach exists, the Workspaces picker may become one place to find
-workspaces on other machines. Choosing one would open or focus that machine's
+After SSH attach exists, the Sessions picker may become one place to find
+sessions on other machines. Choosing one would open or focus that machine's
 window. That later discovery slice does not introduce mixed-host tabs, a
 second SSH selector, or a new global attention ordering. Sidebar/attention
 navigation remains scoped to the window's host unless separately amended.
@@ -71,7 +71,7 @@ navigation remains scoped to the window's host unless separately amended.
   over. Takeover transfers interactive presentation/input, not Orbit's
   supervisor lifecycle lease or process ownership.
 - Closing a pane stops its shared terminal; closing a tab stops its terminals.
-  Workspace Stop addresses one explicit host/workspace ID, not every workspace
+  Session Stop addresses one explicit host/session ID, not every session
   in the window or on a previously visited host. Other clients see the same
   lifecycle result when current state is presented. A parked terminal image
   stays visibly stale; authoritative lifecycle/connection notices may change
@@ -108,7 +108,7 @@ navigation remains scoped to the window's host unless separately amended.
   Runtime does not query or persist Nix store paths; retain one component graph.
 - Every new user action has an ID-targeted `eon` CLI path in its owning slice,
   amending EON-C10 as needed. Cached remote state is labelled in both CLI and
-  presentation. A failed remote lookup never becomes local workspace creation.
+  presentation. A failed remote lookup never becomes local session creation.
   Background connection/output is not proof that attention was seen; this plan
   adds no cross-device OS-notification or global read-state scheme.
 
@@ -201,7 +201,7 @@ published history. The existing slice-1 bead is `eon-remote-workspaces-52i4.4`.
 
 **All rows are future runtime proof, NOT RUN.** Every accepted proof records
 exact source/component/wire versions, artifacts, platform, hosting mode and
-commands/observations/results. Use independently identified sibling workspaces
+commands/observations/results. Use independently identified sibling sessions
 and hosts to prove isolation. Process identities and advancing counters prove
 continuity; screenshots or reconstructed layout alone do not. Portable and
 managed each need installed evidence. No prototype or unrelated platform proof
@@ -210,17 +210,17 @@ The final history/network proof is needed before issue #1 is complete.
 
 | ID | Phase | Scenario / cheapest falsifier | Required outcome |
 | --- | --- | --- | --- |
-| I1 | 2a | Two workspaces with one directory/duplicate names; rename; reopen registry and restart supervisor | Distinct persistent IDs; rename preserves ID; registrations survive; no claim of layout/process recovery |
+| I1 | 2a | Two sessions with one directory/duplicate names; rename; reopen registry and restart supervisor | Distinct persistent IDs; rename preserves ID; registrations survive; no claim of layout/process recovery |
 | I2 | 2a | Concurrent registry mutations; interrupted/failed durable write; creation commits but its reply is lost at a request/reply boundary | Serialized atomic state or explicit failure; no reused ID or partly successful registration. A missing reply does not imply rollback. If the committed result cannot be reliably identified, report uncertainty without guessing from possibly duplicate names; do not automatically reissue an uncertain creation as a new request |
 | I3 | 2a | Corrupt/unknown registry version, stale/ambiguous ID/name | No overwrite, guessed/rebound target, destructive cleanup or duplicate launch |
-| I4 | Discovery/lifecycle | Forget live, confirmed-stopped, cached-stopped and unreachable workspaces | Only authoritative confirmed-stopped registration can be forgotten |
+| I4 | Discovery/lifecycle | Forget live, confirmed-stopped, cached-stopped and unreachable sessions | Only authoritative confirmed-stopped registration can be forgotten |
 | R1 | 2b | Normal supervisor exit and replacement with multiple layouts/popups | Original IDs/groups/layout and verified live Orbit/PTY identities; counters advance |
 | R2 | 2b | Supervisor crash and concurrent replacements | One supervisor/lifecycle ownership winner; no duplicate terminals or split lease |
 | R3 | 2b | Corrupt/unknown snapshot; missing/extra run | Honest blocked/partial recovery; missing slots stopped; no unsafe adoption, restart or Stop |
 | R4 | 2b/3 | PID reuse, wrong UID/start-time, replaced inode or stale lease | Refusal without signal, deletion or attachment to substituted owner |
 | L1 | 2b/3 | Detach (Alt+Shift+D) a local window, or close or detach a remote window; reconnect repeatedly | Work survives; same persistent target and fresh authoritative display |
 | L2 | 3/Discovery | SSH loss; input/Stop while offline; reconnect | Disabled/rejected offline actions; no replay; process counter continues |
-| L3 | Lifecycle/Discovery | Stop workspace A while another host is open in another window | Only A stops; unrelated workspace/host tasks remain; final Stop retains empty window/picker |
+| L3 | Lifecycle/Discovery | Stop session A while another host is open in another window | Only A stops; unrelated session/host tasks remain; final Stop retains empty window/picker |
 | L4 | Lifecycle | Partial Stop or lost acknowledgement | Remaining work retained; explicit partial/unknown outcome; query before further action on that target; unrelated work remains usable; no automatic replay |
 | L5 | 3, before takeover | Second interactive attachment without takeover support | Explicit busy result preserves the existing attachment and work; no silent takeover |
 | M1 | Takeover | A active, B connected/frozen; B presses a key or clicks, then A does likewise | Both stay connected; exactly one active; parked view dimmed/names active PC; triggering interaction consumed; new active view freshly redrawn at its size |
@@ -228,7 +228,7 @@ The final history/network proof is needed before issue #1 is complete.
 | M3 | Takeover | Active PC resizes then disconnects | Only valid active resize applies; last PTY size remains until explicit activation; truthful disconnected/no-active status; no task Stop or unattended stale-input replay |
 | M4 | Takeover | Key press/release/repeat, paste and pointer sequence at activation, with resize | Entire activation interaction/residual phases consumed; no program input until activation/redraw coherent; stale mouse coordinates rejected |
 | M5 | Takeover | Competing takeover requests; old active sends late input; target deleted while parked | One authoritative active client, old input fenced; stale targets rejected before input; no ID rebinding or phantom terminal recreation |
-| M6 | Takeover/lifecycle | Pane/tab close or explicit workspace Stop succeeds, partially fails or loses reply | Exact shared target only; authoritative stopped/partial/unknown result; parked image not claimed current; reconcile before takeover input |
+| M6 | Takeover/lifecycle | Pane/tab close or explicit session Stop succeeds, partially fails or loses reply | Exact shared target only; authoritative stopped/partial/unknown result; parked image not claimed current; reconcile before takeover input |
 | M7 | Discovery/Takeover | Parked device/control status and attention; other host disconnects in another window | No inferred read acknowledgement/notification-owner transfer; lifecycle notices truthful; other window/host remains isolated |
 | M8 | Takeover | Parked/active window closed or disconnected while the other connection remains; repeated returns | Local disconnect stops no remote task/other connection; explicit activation resumes usable current state; bounded clients/queues and no master leaks |
 | S1 | 3 | Configured hosts and ProxyJump, using separate host windows; remote Project/Git/Agent/panes | Venus local; directories/work remote; OpenSSH config respected; no mixed-host window |
@@ -241,10 +241,10 @@ The final history/network proof is needed before issue #1 is complete.
 | H3 | Managed | Managed service fails; systemd present but portable explicitly selected | No silent fallback; explicit selected startup owner respected; changing modes never kills/replaces live work |
 | H4 | Managed | Restart supervisor service while Orbit/task counter runs | Independent Orbit/PTY survives with original identity; layout recoverable |
 | H5 | Managed | Nix GC, HM switch/rollback and compatible upgrade with live tasks | Headless package excludes Venus/graphics; no graphical-session binding or overwrite of HM units; resources rooted and tasks preserved; runtime no Nix/store query or durable store identity |
-| D1 | Discovery | Fzf and ID-targeted CLI listing/inspection/actions | Same host/workspace targets, freshness and outcomes; each new action has CLI parity |
+| D1 | Discovery | Fzf and ID-targeted CLI listing/inspection/actions | Same host/session targets, freshness and outcomes; each new action has CLI parity |
 | D2 | Discovery | Failed/offline host lookup with unmatched query; known cached row selected | No accidental local/replacement creation; cached explicit; exact ID resolved; other host opens/focuses its window |
 | D3 | Discovery | Sidebar/attention and navigation through host/offline/stopped states | Truthful host-scoped status; no cached attention shown as live or mixed-host attention queue inferred |
-| D4 | Discovery | Background agent create/rename/Stop/Forget and explicit window/workspace selection | Unrelated view/focus preserved; explicit movement only; typed failures affect no other target |
+| D4 | Discovery | Background agent create/rename/Stop/Forget and explicit window/session selection | Unrelated view/focus preserved; explicit movement only; typed failures affect no other target |
 | P1 | Incremental | Representative output/graphics/resources against full-frame baseline on active client | Same authoritative visible state; missing/out-of-order deltas resynchronize; no live frame fanout to parked PCs promised |
 | P2 | Incremental/Takeover | Slow/stalled active receiver and subsequent takeover/reconnect | Bounded queues/memory; coherent fresh resync; parked client cannot block owner or leak stale input |
 | P3 | History/performance | Read anchors under output/pruning/reflow and RTT/bandwidth constraints | Stable reading or explicit invalidation, bounded paging and measured bytes/CPU/latency/queue comparison |

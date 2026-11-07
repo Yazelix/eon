@@ -79,6 +79,8 @@ names its socket. CLI JSON names a session `session` and a terminal
   (S3): `eon window attach` reopens a window. Amended on 2026-11-06 (approved
   by Lucca, relayed by eon-overseer) by `eon-7cf0y.22` (S4): `eon -V` and
   `eon --version`.
+  Amended on 2026-11-07 (approved by eon-overseer under Lucca's standing rule)
+  by `eon-30skm` (S3): its prose says session for the product concept.
 - **Consumer:** A user launching Eon or eonbase from one accepted product
   generation.
 - **Trigger:** Eon starts a new composed runtime or adopts an exact live run.
@@ -102,9 +104,9 @@ names its socket. CLI JSON names a session `session` and a terminal
     Orbit owns words at two clicks, space/tab-delimited punctuation spans at
     three and logical lines at four or later, with native drag and frozen copy.
   - Full Eon can invoke the manifest-pinned Anima executable for the optional
-    fresh-workspace welcome step and `eon anima [style] [child options]`.
+    fresh-window welcome step and `eon anima [style] [child options]`.
     The direct command uses the caller's terminal and returns the child's
-    exit result without starting or attaching a workspace.
+    exit result without starting or attaching a session.
   - Optional `[terminal] cursor_trail_color` is forwarded unchanged on new or
     reopened surfaces. Omission emits no override; Venus keeps one random
     preset per live supervisor endpoint, so a full-Eon window reopened by
@@ -143,7 +145,7 @@ names its socket. CLI JSON names a session `session` and a terminal
     launch value and owns bounded motion,
     including healthy pane/tab/layout continuity. No separate child configuration.
 - **Important failures:** Missing, malformed, incompatible, replaced, or
-  non-ready components fail before publishing a usable workspace or terminal.
+  non-ready components fail before publishing a usable session or terminal.
 - **Owner:** Eon graph validation, icon selection and desktop metadata; Eon
   Runtime implements launch orchestration. Nix derives/installs artifacts;
   child components own their internal readiness and state.
@@ -355,12 +357,14 @@ names its socket. CLI JSON names a session `session` and a terminal
   2026-10-27, relayed by eon-overseer; `EON-C37` scope answered by Lucca
   2026-11-06; exact text approved by eon-overseer under Lucca's 2026-11-04
   auto-approve rule) by `eon-igae.5`: the Apple Silicon macOS preview tier.
+  Amended on 2026-11-07 (approved by eon-overseer under Lucca's standing rule)
+  by `eon-30skm` (S3): its prose says session for the product concept.
 - **Consumer:** A user launching a supported Eon distribution on an approved
   native platform.
 - **Trigger:** Build, install, or launch an approved Eon channel.
 - **Result:** Eon uses native Wayland on x86_64 Linux and the native macOS host
   on `aarch64-darwin`, without requiring a particular init or service manager.
-  Both consume the same component graph, orchestration path, workspace
+  Both consume the same component graph, orchestration path, session
   contracts, and Nix-only channel while platform mechanics remain with
   their existing owners. Each channel names its proved architectures and launch
   environments.
@@ -463,12 +467,14 @@ names its socket. CLI JSON names a session `session` and a terminal
   Amended on 2026-11-07 (approved by eon-overseer under Lucca's standing rule)
   by `eon-30skm` (S1): `[session] warning_close_last_tab`; the final close says
   it closes the session; EONW v36.
-- **Consumer:** One local Eon workspace user.
+  Amended on 2026-11-07 (approved by eon-overseer under Lucca's standing rule)
+  by `eon-30skm` (S3): its prose says session for the product concept.
+- **Consumer:** One local Eon session user.
 - **Trigger:** Launch, create or close a tab, create, close or rename a pane, create a column, traverse focus,
   reorder the active tab or selected pane, move the selected pane into a neighbouring column, zoom the
   selected pane, receive terminal exit, quit the window, or recover accepted same-boot runs.
 - **Result:**
-  - A workspace contains horizontal tabs. Each established tab with panes
+  - A session contains horizontal tabs. Each established tab with panes
     holds an ordered row of one to four columns (pending and popup-only tabs
     hold none); each column is a vertical accordion of panes with exactly
     one expanded pane. Each pane views an independent persistent terminal.
@@ -491,7 +497,7 @@ names its socket. CLI JSON names a session `session` and a terminal
     name. Context uses a relative path, or the compact path when shorter; compact paths use `~` for home
     and `~/` for its descendants. Labels preserve explicit offline, connecting and unavailable states.
     Program metadata is untrusted display text, never identity or command input.
-  - `eon pane rename PANE NAME [--json]` pins a name; `eon pane rename PANE --clear [--json]` restores automatic naming. `--` permits an option-looking NAME. Names are trimmed; an empty result clears the pin. Invalid names fail without mutation. Rename addresses an explicit pane anywhere in the addressed workspace and changes no workspace, tab, pane or popup selection or desktop focus. Window rename and clear actions use the same mutation. Pins follow pane moves, survive presentation detach and reattach, and end with the pane or supervisor; recovery does not restore them. Workspace inspection and action replies expose each pane's `label` and nullable `pinned_name`, independently of attention records.
+  - `eon pane rename PANE NAME [--json]` pins a name; `eon pane rename PANE --clear [--json]` restores automatic naming. `--` permits an option-looking NAME. Names are trimmed; an empty result clears the pin. Invalid names fail without mutation. Rename addresses an explicit pane anywhere in the addressed session and changes no session, tab, pane or popup selection or desktop focus. Window rename and clear actions use the same mutation. Pins follow pane moves, survive presentation detach and reattach, and end with the pane or supervisor; recovery does not restore them. Session inspection and action replies expose each pane's `label` and nullable `pinned_name`, independently of attention records.
   - On each new or reopened full-Eon surface, `[terminal] pane_frames` in
     `config.toml` defaults to `true` and draws each pane as its own card,
     stacked without gaps in its column's allocated card area: a rounded border
@@ -551,7 +557,7 @@ names its socket. CLI JSON names a session `session` and a terminal
   - Zooming shows the selected pane alone across the area all of the tab's cards
     cover, as one card with its label in the top edge; the tab's other panes keep
     running, hidden. Venus maps Alt+Shift+Z to it as transient
-    window state that no workspace action, EONW field or attachment carries.
+    window state that no session action, EONW field or attachment carries.
     Zoom ends with any change of the active tab, its panes or columns, or its
     selected pane, so Alt+H/J/K/L unzooms and then moves, and adding, closing or
     moving a pane ends it. Toggling again restores
@@ -579,10 +585,10 @@ names its socket. CLI JSON names a session `session` and a terminal
     `eon pane move` and `eon pane create` act on the calling terminal's tab
     and pane instead of the active tab and its selected pane (EON-C10).
     Explicit close targets follow the close rules below.
-  - Closing names an exact live `tN` in the addressed workspace (EON-C10),
+  - Closing names an exact live `tN` in the addressed session (EON-C10),
     whether or not that tab is active. A close of a background tab preserves
     the active tab's identity, selected column and pane, shown and selected
-    popup, and desktop focus. It does not show a hidden workspace. A
+    popup, and desktop focus. It does not show a hidden session. A
     non-final pending tab first stops its exact picker, then disappears;
     remaining selection follows the ended-terminal rules below. Eon
     stops the tab's pane and popup terminals together, under one shared
@@ -593,14 +599,14 @@ names its socket. CLI JSON names a session `session` and a terminal
     stays represented in the partially pruned tab. A terminal that ended
     naturally during the request is reconciled and pruned as an exit rather
     than reported as a successful Stop.
-    Closing the final tab of the window's last workspace (EON-C33) ends the
+    Closing the final tab of the window's last session (EON-C33) ends the
     window. Eon stops its pane and popup
     terminals as above, then, as Stop does, any run of the generation that no
     tab tracks; once every stop is confirmed it ends the generation, as when
     the last terminal exits. The reply is EONW `Ended`, and Venus then exits.
-    While other workspaces remain, closing a workspace's final tab stops that
-    tab's pane and popup terminals and removes the workspace; if it was shown, the
-    most recently shown remaining workspace is shown. The reply is that
+    While other sessions remain, closing a session's final tab stops that
+    tab's pane and popup terminals and removes the session; if it was shown, the
+    most recently shown remaining session is shown. The reply is that
     snapshot, and the window stays.
     A failed tab stop keeps the window
     and its remaining terminals, as a partial close does; a failed stop of an
@@ -612,19 +618,19 @@ names its socket. CLI JSON names a session `session` and a terminal
     snapshot, then "Enter Quit · Esc Cancel", then the hint line "Alt+Shift+D
     keeps it running instead", which is left out while a popup takes
     Alt+Shift+D (EON-C20); Alt+Shift+D works while the prompt is open. While
-    other workspaces remain, the prompt shows too, with EON-C33's wording:
+    other sessions remain, the prompt shows too, with EON-C33's wording:
     "This closes session NAME and stops N terminals." and "Enter Close ·
     Esc Cancel". The prompt follows the current snapshot, so an open prompt
-    re-words when the workspace count changes. If the snapshot gains a tab
+    re-words when the session count changes. If the snapshot gains a tab
     while the prompt is open, Enter closes only the named tab and the window
     stays. When the setting is false, a final close happens at once.
     Venus receives the setting as a launch argument (VEN-C8).
     Venus maps Alt+Shift+W directly to this stable-target action; lowercase
-    Ctrl+W remains terminal input. Alt+Shift+D detaches every workspace
-    together without asking; attach then shows the last shown workspace
+    Ctrl+W remains terminal input. Alt+Shift+D detaches every session
+    together without asking; attach then shows the last shown session
     (EON-C11). Closing the window itself quits it as Alt+Shift+Q does, prompt
     included, and a close request while the quit prompt is open leaves it
-    open; where there is no Quit key (eonbase), while the workspace is
+    open; where there is no Quit key (eonbase), while the session is
     unavailable, or while it refuses refreshes after a failed Stop, closing the
     window detaches as Alt+Shift+D does. A close request carries no reason, so
     a desktop that closes each window at logout, such as KDE Plasma, quits an
@@ -664,7 +670,7 @@ names its socket. CLI JSON names a session `session` and a terminal
     Venus crash sends none, nor does a detach while the supervisor is
     stopping. Linux only; on macOS a detach sends no notification.
     Alt+Shift+Q quits the window: Venus sends the Stop that `eon quit` uses
-    (EON-C11) for the window's generation, which ends every workspace, and
+    (EON-C11) for the window's generation, which ends every session, and
     exits once it is confirmed. While the snapshot lists a busy terminal
     (EON-C11), Venus first shows a prompt in the final-close prompt's style:
     "Quit this window?", "This stops N terminals; M still running." (the
@@ -687,17 +693,17 @@ names its socket. CLI JSON names a session `session` and a terminal
     close action without first selecting the named tab. If that tab became
     background while the prompt was open, the current active tab stays active.
   - Closing a pane names an exact live `pN` in any tab of the addressed
-    workspace (EON-C10), independently of the caller's tab and the active tab.
+    session (EON-C10), independently of the caller's tab and the active tab.
     Eon stops that pane's terminal and prunes its confirmed end through the
     normal terminal-exit owner, so its column, its tab and focus follow the
     ended-terminal rules below. Closing the final tab's last pane acts as
     final-tab close does, stopping that tab's popups with it. While a popup
     or picker covers the target tab, a close without a calling terminal is
-    unavailable; a validated calling terminal of the addressed workspace may
+    unavailable; a validated calling terminal of the addressed session may
     close a non-last pane in that tab, leaving its popup shown and selected,
     but may not close the tab's last pane. A close in a background tab
     preserves the active tab's selection and popup and never shows another
-    workspace or moves desktop focus. A close in the active tab keeps every
+    session or moves desktop focus. A close in the active tab keeps every
     surviving selected identity when possible and otherwise follows the
     ended-terminal rules. A failed stop reports failure and keeps the pane;
     a terminal that ended naturally during the request is reconciled as an
@@ -705,9 +711,9 @@ names its socket. CLI JSON names a session `session` and a terminal
     `eon pane close PANE` sends the same target-bearing EONW action.
   - Ended terminals leave no dead pane or empty tab; focus moves deterministically
     to the same identity when possible, otherwise the following sibling at the
-    removed index, otherwise the preceding sibling. A workspace left empty
-    while other workspaces remain is removed, and if it was shown, the most
-    recently shown remaining workspace is shown (EON-C33); the last workspace
+    removed index, otherwise the preceding sibling. A session left empty
+    while other sessions remain is removed, and if it was shown, the most
+    recently shown remaining session is shown (EON-C33); the last session
     left empty closes Venus and the supervisor. A column whose last pane ends disappears; if it
     held the selection, selection moves to the following column, otherwise the
     preceding one.
@@ -717,7 +723,7 @@ names its socket. CLI JSON names a session `session` and a terminal
   - New current-generation full Eon surfaces omit the redundant native title
     bar while retaining the selected terminal title for compositor semantics.
 - **Important failures:** Unknown or stale identity, a close target outside
-  the addressed workspace, pane close under a popup or picker without a
+  the addressed session, pane close under a popup or picker without a
   calling terminal or naming the tab's last pane, creating a fifth column,
   durable close in the picker-bound tab, invalid transition, unavailable
   endpoint, duplicate identity, or partial
@@ -728,20 +734,20 @@ names its socket. CLI JSON names a session `session` and a terminal
   Picker-stop failure changes no topology; durable partial-stop behavior is the
   explicit result above. Exhausted pane numbers fail before terminal start;
   unknown or repeated terminal-exit notices remove nothing; losing a view never
-  silently stops or substitutes a terminal. Rejected workspace actions retain
+  silently stops or substitutes a terminal. Rejected session actions retain
   their explanation across unchanged polls and announce it without moving
-  terminal focus; a changed workspace retires the notice, but a snapshot that
+  terminal focus; a changed session retires the notice, but a snapshot that
   differs only in EON-C31 attention or `sidebar` keeps it and disturbs no
   navigation, scroll or attachment.
-- **Owner:** Eon Runtime workspace topology, identity, focus, pruning and action
+- **Owner:** Eon Runtime session topology, identity, focus, pruning and action
   enforcement; Eon supplies product defaults/policy. Orbit owns terminals and
   Venus owns native materialization.
-- **Consumes:** Current EONW v36 workspace/popup values, Orbit terminal
+- **Consumes:** Current EONW v36 session/popup values, Orbit terminal
   identities/endpoints and Venus `VEN-C8`.
 - **Boundary:** No arbitrary split tree, vertical splits, column resizing,
   arbitrary reorder target, cross-tab pane movement, picker relocation, durable layout
   restoration, a per-pane terminal restart action, closing tabs or panes
-  outside the addressed workspace, terminal
+  outside the addressed session, terminal
   content/history, provider state (except EON-C31's attention values), plugin
   surface, remote access, reconstructed terminal state, or notifications other
   than the detach notice.
@@ -1164,16 +1170,18 @@ names its socket. CLI JSON names a session `session` and a terminal
   their replacement; SESSION names the operand, the Commands entries say
   session, JSON names a target's session `session`, and each pane and popup
   names its terminal `terminal` instead of `session`.
+  Amended on 2026-11-07 (approved by eon-overseer under Lucca's standing rule)
+  by `eon-30skm` (S3): its prose says session for the product concept.
 - **Consumer:** One local CLI or approved composition controlling a live Eon
   supervisor.
-- **Trigger:** The client submits one versioned workspace or supervisor-lifecycle
+- **Trigger:** The client submits one versioned session or supervisor-lifecycle
   action.
 - **Result:**
-  - Eon returns one complete typed result from the sole live workspace owner;
+  - Eon returns one complete typed result from the sole live session owner;
     human-readable CLI output and deterministic structured output project the
     same result.
-  - `eon pane rename PANE NAME [--json]` pins a name; `eon pane rename PANE --clear [--json]` restores automatic naming. `--` permits an option-looking NAME. Names are trimmed; an empty result clears the pin. Invalid names fail without mutation. Rename addresses an explicit pane anywhere in the addressed workspace and changes no workspace, tab, pane or popup selection or desktop focus. Window rename and clear actions use the same mutation. Pins follow pane moves, survive presentation detach and reattach, and end with the pane or supervisor; recovery does not restore them. Workspace inspection and action replies expose each pane's `label` and nullable `pinned_name`, independently of attention records.
-  - Workspace results carry ordered tab, pane, and terminal identities, active
+  - `eon pane rename PANE NAME [--json]` pins a name; `eon pane rename PANE --clear [--json]` restores automatic naming. `--` permits an option-looking NAME. Names are trimmed; an empty result clears the pin. Invalid names fail without mutation. Rename addresses an explicit pane anywhere in the addressed session and changes no session, tab, pane or popup selection or desktop focus. Window rename and clear actions use the same mutation. Pins follow pane moves, survive presentation detach and reattach, and end with the pane or supervisor; recovery does not restore them. Session inspection and action replies expose each pane's `label` and nullable `pinned_name`, independently of attention records.
+  - Session results carry ordered tab, pane, and terminal identities, active
     and selected identities, liveness, exact raw tab launch-directory bytes,
     and exact opaque Orbit endpoint bytes. Lifecycle results carry generation,
     component/protocol identity, live terminals, busy terminals (EON-C11), the
@@ -1186,7 +1194,7 @@ names its socket. CLI JSON names a session `session` and a terminal
     and then a sequence of length-delimited messages; no connection uses
     EOF as framing.
   - The shared 2 MiB frame ceiling admits every snapshot valid at EONW's field
-    and workspace-count bounds.
+    and session-count bounds.
   - Harmless navigation no-ops return the unchanged Snapshot as success
     (EON-C31's empty attention queue is a rejection instead);
     request deduplication and picker/lifecycle restrictions still apply.
@@ -1206,13 +1214,13 @@ names its socket. CLI JSON names a session `session` and a terminal
     cancel note and exits 0. When stdin is not a terminal, it exits 1 with
     `not-confirmed`, end of input included, and a piped yes still confirms.
     `--json` never asks or reads a confirmation from stdin. Stop, Quit,
-    window-stop and workspace-close retain their existing JSON behavior.
+    window-stop and session-close retain their existing JSON behavior.
     Tab and pane close use the separate busy and final-close rules below;
     `--json` alone never confirms a busy close.
   - Every Eon terminal's environment carries `EON_TERMINAL`, an opaque value
     naming that terminal's exact Orbit run; the supervisor's other children
-    never inherit one. For workspace control, `EON_TERMINAL` selects the live supervisor and workspace that own that
-    exact terminal, independently of the invoked CLI build's current generation. Within that workspace,
+    never inherit one. For session control, `EON_TERMINAL` selects the live supervisor and session that own that
+    exact terminal, independently of the invoked CLI build's current generation. Within that session,
     `pane create`, `edit`, `pane move` and `tab move` retain their calling-tab,
     column and pane rules: creation uses the caller's column and moves act on
     its pane or tab. A popup terminal acts
@@ -1220,15 +1228,15 @@ names its socket. CLI JSON names a session `session` and a terminal
     action behaves as it does for the active tab, so `pane create` selects
     the new pane and dismisses the tab's popup; the active tab and desktop
     focus never change. Explicit `tab close TAB` and `pane close PANE`
-    resolve in any tab of that workspace by the close rules below. Other
-    workspace-scoped commands use the caller's workspace and retain their
+    resolve in any tab of that session by the close rules below. Other
+    session-scoped commands use the caller's session and retain their
     existing per-tab rules. Without a calling terminal or explicit target,
-    workspace control uses the invoked build's
-    current generation in the selected runtime namespace and its shown workspace. Launch, lifecycle and
+    session control uses the invoked build's
+    current generation in the selected runtime namespace and its shown session. Launch, lifecycle and
     local information commands retain their existing targeting. Every popup terminal's environment
     also carries `EON_TAB`, the `tN` identity of the tab that owned it when it
     started.
-  - Workspace commands accept `--window ID` before any `--` operand separator,
+  - Session commands accept `--window ID` before any `--` operand separator,
     ID being an EON-C23 window ID or prefix. `--window default`, or the ID of
     another build's default-namespace window, selects that window's exact
     generation in the default namespace. An independent window's ID selects its
@@ -1236,9 +1244,9 @@ names its socket. CLI JSON names a session `session` and a terminal
     current-or-sole-live-generation rule. Without `--window`, the existing
     runtime namespace applies. If `EON_TERMINAL` is set, the selected supervisor
     must validate that caller; explicit targeting does not waive caller
-    validation. Workspace CLI results name the described `generation` and
+    validation. Session CLI results name the described `generation` and
     `window`, with `window` null for the default namespace, and identify the
-    projected workspace through shn4.3's workspace discriminator.
+    projected session through shn4.3's workspace discriminator.
   - `eon session` run from an Eon terminal also names that calling terminal. In JSON, `caller`
     holds its `terminal` (`terminal-N`), its `tab`, and its `pane`, or its `popup` with `pane` null.
     The human output prints a matching `caller` line. Without `EON_TERMINAL`, JSON `caller` is null
@@ -1274,7 +1282,7 @@ names its socket. CLI JSON names a session `session` and a terminal
     Without `--no-focus`, `pane create` selects the new pane and dismisses the
     tab's popup, as above.
   - `eon tab create [--json] [--no-focus] --directory DIRECTORY [-- COMMAND [ARGS...]]`
-    adds a new tab to the addressed workspace with DIRECTORY as its directory
+    adds a new tab to the addressed session with DIRECTORY as its directory
     and no picker, and starts its one pane there. That pane is the default pane
     a picker's accepted choice would start or, with `-- COMMAND`, COMMAND run as
     `pane create -- COMMAND` runs it: exact argv, no shell, the same bounds, a
@@ -1292,37 +1300,37 @@ names its socket. CLI JSON names a session `session` and a terminal
     null for a bare `tab create`, whose pending tab has no pane until its
     pick. A pick (`tab directory` on a pending tab) and `popup hide` of a
     pending tab's pair start that tab's first pane without reporting it in
-    `created`. No other workspace reply carries `created` except
+    `created`. No other session reply carries `created` except
     `session new`, whose `created` is its `sN`, and the human output is
     unchanged.
   - `eon tab directory TAB [--json] -- DIRECTORY` on a pending tab is a pick:
     it commits exactly as a pair pick does (EON-C18).
   - `eon popup hide POPUP [--json]` hides popup `uN` of the addressed
-    workspace, as its owning window's dismissal would:
+    session, as its owning window's dismissal would:
 
     - a keep-alive popup is hidden and keeps running;
     - a transient popup stops;
     - dismissing a pending tab's pair starts its first pane (EON-C18).
 
-    The CLI reads the owning tab from workspace inspection, then sends EONW
+    The CLI reads the owning tab from session inspection, then sends EONW
     `DismissPopup`. It changes no other tab, pane, popup or desktop focus,
     except that a stopped transient popup's tab shows again the popup it
     covered, as the window's own dismissal does (EON-C33). A POPUP that the
-    addressed workspace does not list fails with
+    addressed session does not list fails with
     `unknown-popup`; one that leaves between the read and the dismissal fails
     with `stale-popup`. Both exit 3 and change nothing.
   - `eon tab close TAB [--yes] [--json]` and
     `eon pane close PANE [--yes] [--json]` resolve their explicit live IDs
-    in any tab of the addressed workspace: the validated caller's workspace
-    inside Eon, otherwise the shown workspace of the selected supervisor.
-    The caller's workspace may be hidden; an ID in another workspace is
-    `unknown-tab` or `unknown-pane` (exit 3), with no fallback or workspace
+    in any tab of the addressed session: the validated caller's session
+    inside Eon, otherwise the shown session of the selected supervisor.
+    The caller's session may be hidden; an ID in another session is
+    `unknown-tab` or `unknown-pane` (exit 3), with no fallback or session
     switch. Caller validation and EON-C8's popup and final-pane rules still
-    apply. Closing a background target leaves the shown workspace, active
+    apply. Closing a background target leaves the shown session, active
     tab, surviving selected identities, shown popup and desktop focus alone.
     Selection removed by an active-target close follows EON-C8's exit rules.
   - Before every tab or pane close, including with `--json` or `--yes`, the
-    CLI successfully inspects the addressed workspace and validates the
+    CLI successfully inspects the addressed session and validates the
     named target. It uses EON-C11's busy classification for the terminals
     that this close will stop, including the caller when it is a target.
     An unavailable busy list or a nonzero omitted count is unknown and
@@ -1336,8 +1344,8 @@ names its socket. CLI JSON names a session `session` and a terminal
     Busy confirmation is independent of `warning_close_last_tab`. It uses
     the latest successful inspection, not an atomic inspect-and-close
     transaction; Runtime revalidates the exact live target before stopping.
-  - Closing a workspace's final tab or that tab's last pane ends the window
-    when it is the last workspace (EON-C8), or removes that workspace while
+  - Closing a session's final tab or that tab's last pane ends the window
+    when it is the last session (EON-C8), or removes that session while
     others remain (EON-C33). With `warning_close_last_tab = true`, its
     default, a human-mode CLI at a terminal asks first even when the target
     is idle, unless `--yes` was given. An idle final close in JSON mode or
@@ -1346,7 +1354,7 @@ names its socket. CLI JSON names a session `session` and a terminal
     or with the warning setting false. When both warnings apply, ask once
     with the final-close consequence and busy terminal list. The idle
     final-close question and cancel note retain their existing wording,
-    naming the workspace while other workspaces remain. A close that
+    naming the session while other sessions remain. A close that
     cannot inspect first fails without closing. Successful JSON and human
     result shapes and exit statuses remain unchanged, including `Ended`
     when the window ends. The caller's own terminal may end with it, as
@@ -1365,64 +1373,64 @@ names its socket. CLI JSON names a session `session` and a terminal
     prints one `busy` line per terminal.
     The human projection carries each terminal's attention state, `app` and
     `name` only, and no queue or quotas.
-  - **Several workspaces in one window** (EON-C33):
-    - **Status:** The workspace requests and targeting below are implemented
+  - **Several sessions in one window** (EON-C33):
+    - **Status:** The session requests and targeting below are implemented
       on EONW v20, with their CLI front end
-      (`eon-workspace-switching-shn4.5`), the Workspaces picker and the
+      (`eon-workspace-switching-shn4.5`), the Sessions picker and the
       Commands entries (`eon-workspace-switching-shn4.6`).
-    - **Listing.** `eon session ls [--json]` lists this window's workspaces in
+    - **Listing.** `eon session ls [--json]` lists this window's sessions in
       order, each with `id`, `name` (null when unnamed), `shown`, `tabs`
       (the tab count), `attention` (EON-C33's rollup, spelled as
       `attention_rollup` is, null when none; the text form shows
       `attention=none`) and `recency` (EON-C33's rank, 0 for the shown
-      workspace, which orders the picker), after the `generation`, `window` and caller's
+      session, which orders the picker), after the `generation`, `window` and caller's
       `session` that every result names. This window means the caller's
       window inside Eon, and otherwise the window `eon session` targets
       (`attention` and `recency` since `eon-workspace-switching-shn4.8`, on
       EONW v22).
     - **New.** `eon session new [--name NAME] [--no-focus]` and Commands >
-      New session add a workspace after the shown one. It opens with one
+      New session add a session after the shown one. It opens with one
       pending tab and a fresh directory picker, as a new window does (EON-C23),
-      and becomes the shown workspace unless `--no-focus` is given, as for
+      and becomes the shown session unless `--no-focus` is given, as for
       `pane create`. The reply names the new `sN` in `created`, whether or
       not it is shown, alongside the caller's projected `session`.
     - **Switch.** `eon session switch SESSION` shows SESSION. Switching to the shown
-      workspace returns the unchanged snapshot (EON-C10). Each workspace keeps
+      session returns the unchanged snapshot (EON-C10). Each session keeps
       its active tab, selected pane and popups across switches; zoom ends, as on
       any tab change (EON-C8).
     - **Rename.** `eon session rename [SESSION] NAME` and Commands > Rename
       session set the name; an empty NAME clears it. Without SESSION it renames the
-      caller's workspace. The CLI trims surrounding whitespace from NAME and
+      caller's session. The CLI trims surrounding whitespace from NAME and
       from `--name`, as for pane names, so a blank NAME clears the name and a
       blank `--name` is malformed (exit 2).
     - **Close.** `eon session close SESSION` first asks for confirmation, as `eon
       window stop` does. The prompt names the `sN` and name that SESSION resolves to,
       says that closing stops every terminal in it, and that it quits the window
-      when it is the last workspace. A SESSION that resolves to no workspace or
+      when it is the last session. A SESSION that resolves to no session or
       several fails before asking, with the failures below. Any answer but yes
       changes nothing. After a yes, the CLI checks again that the `sN` is live
       and otherwise changes nothing and exits 3; the check and the close are not
-      atomic, so a workspace closed by another client in between leaves Runtime
-      to resolve that `sN` as any SESSION, which may match another workspace named
+      atomic, so a session closed by another client in between leaves Runtime
+      to resolve that `sN` as any SESSION, which may match another session named
       that `sN`. `--json` asks nothing. Closing then stops every terminal of
-      that workspace, as closing each of its tabs does (EON-C8), and removes it.
-      Closing the last workspace is the window's final close (EON-C8). After a
-      successful close removes the caller's workspace, the reply describes the
-      shown remaining workspace; closing the last workspace returns Ended.
-    - **Targeting.** Run from an Eon terminal, every workspace-scoped command
-      acts in that terminal's workspace, found through `EON_TERMINAL`, and
+      that session, as closing each of its tabs does (EON-C8), and removes it.
+      Closing the last session is the window's final close (EON-C8). After a
+      successful close removes the caller's session, the reply describes the
+      shown remaining session; closing the last session returns Ended.
+    - **Targeting.** Run from an Eon terminal, every session-scoped command
+      acts in that terminal's session, found through `EON_TERMINAL`, and
       EON-C10's per-tab rules apply inside it. Run outside Eon, commands act on
-      the shown workspace. SESSION resolves an exact `sN` first, then an exact name.
-    - **Important failures:** These leave every workspace unchanged and return
+      the shown session. SESSION resolves an exact `sN` first, then an exact name.
+    - **Important failures:** These leave every session unchanged and return
       EON-C10's typed failure: an unknown or stale `sN` or a name that matches
-      nothing (exit 3); a name that matches more than one workspace
-      (`ambiguous-session`, exit 1, naming the matching IDs); a 33rd workspace
+      nothing (exit 3); a name that matches more than one session
+      (`ambiguous-session`, exit 1, naming the matching IDs); a 33rd session
       (`session-limit`, exit 1); a malformed name (exit 2); and a tab, pane or
-      popup identity from another workspace (exit 3), except a `FocusAttention`
+      popup identity from another session (exit 3), except a `FocusAttention`
       target (EON-C31). A request ID repeated
       within the last 256 accepted mutations never repeats a switch, creation
       or close. A failed stop while closing a
-      workspace keeps the workspace and its remaining terminals, as a partial tab
+      session keeps the session and its remaining terminals, as a partial tab
       close does (EON-C8). Switching never moves desktop focus.
 
 - **Important failures:** A caller that the addressed supervisor rejects as
@@ -1431,7 +1439,7 @@ names its socket. CLI JSON names a session `session` and a terminal
   fallback to the active tab. Absence of this CLI build's supervisor does not
   prevent control of the caller's compatible supervisor. Caller resolution uses
   the complete opaque terminal identity and never falls back to another
-  workspace. A malformed caller exits 3; a stale caller exits 3 when discovery
+  session. A malformed caller exits 3; a stale caller exits 3 when discovery
   completes without validating it. When no owner can be found because discovery
   cannot inspect a supervisor, it exits 4 (`supervisor-unavailable`). Failed or
   ambiguous resolution changes nothing. An unavailable or incompatible selected
@@ -1451,7 +1459,7 @@ names its socket. CLI JSON names a session `session` and a terminal
   names affected live terminals, sends canonical Stop through every validated
   management lease before waiting, and returns only after every exact terminal
   record is complete.
-- **Owner:** Eon Runtime supervisor workspace/action state and CLI projection;
+- **Owner:** Eon Runtime supervisor session/action state and CLI projection;
   its canonical EONW package owns types, codec and result ordering. Eon supplies
   validated component facts and product defaults.
 - **Consumes:** Current EONW v36 and accepted Orbit management operations.
@@ -1528,14 +1536,14 @@ names its socket. CLI JSON names a session `session` and a terminal
   Commands defaults to Alt+Shift+M and runs a transient fzf list of existing
   `eon` commands: tab, pane and window creation, closing or moving the popup's
   own tab, quitting this window, switching, creating, renaming or closing a
-  workspace (EON-C33), the workspace and window
+  session (EON-C33), the session and window
   listings, `window stop previous`, `versions`, `config path` and `--help`. Each
   line names the command it runs. Enter runs it in the popup's terminal, with
   that terminal's `EON_TERMINAL` and `EON_TAB`: pane creation and tab moves act
   for the popup's tab under the caller rules above, closing names `EON_TAB`, and
   every command keeps the CLI's own validation, targets and Stop and
   final-close confirmations; it adds no EONW action. A successful action
-  ends the popup, except a close from the workspace list, which shows the
+  ends the popup, except a close from the session list, which shows the
   list again; a listing, `window stop previous`, or a failure reported while the
   popup is still open, waits for Enter. "Quit this window" runs `eon quit`
   (EON-C11) as the popup's terminal, so it stops only the popup's own window,
@@ -1544,12 +1552,12 @@ names its socket. CLI JSON names a session `session` and a terminal
   starts the pane, as Alt+M does, so a failure after that dismissal is not
   shown. Esc, Ctrl+C or no match runs nothing. The Commands popup follows the
   popup catalog's key precedence below.
-  Workspaces defaults to Alt+Shift+S and runs `eon-sessions`, a transient
-  fzf list of the popup's window's workspaces (EON-C33's picker); Commands >
+  Sessions defaults to Alt+Shift+S and runs `eon-sessions`, a transient
+  fzf list of the popup's window's sessions (EON-C33's picker); Commands >
   Switch session runs the same list in the Commands popup. Each row shows
-  the workspace's name, or its `sN` when unnamed, its tab count, and
+  the session's name, or its `sN` when unnamed, its tab count, and
   ` · needs input` when its EONW v36 `attention` is needs input. Rows run by
-  EONW v36 `recency`, most recently shown first, with the shown workspace last
+  EONW v36 `recency`, most recently shown first, with the shown session last
   and marked ` · shown`, and the query matches only that name or `sN`. Enter on the highlighted row,
   including on an empty query, runs `eon session switch sN` once the CLI
   has checked again that the `sN` is live; otherwise it changes nothing and
@@ -1573,7 +1581,7 @@ names its socket. CLI JSON names a session `session` and a terminal
   relaunches in its tab's new directory, and `eon popup hide` keep their
   meaning.
   Commands > New session runs `eon session new`, Rename session reads a
-  name and runs `eon session rename` for the popup's workspace (an empty
+  name and runs `eon session rename` for the popup's session (an empty
   name clears it), and Close this session runs `eon session close` for the
   popup's own `sN`, keeping its confirmation. None adds an EONW action.
 - **Configuration:** Eon fixes popup margins at 8 side and 4 vertical logical
@@ -1588,7 +1596,7 @@ names its socket. CLI JSON names a session `session` and a terminal
   Eon ignores unknown fields with the warning described in EON-C9. It rejects
   malformed shortcuts, reserved shortcuts, two configured popups on one
   shortcut, unbounded values and unavailable executables before mutating
-  workspace state; a configured popup on Alt+H, Alt+J, Alt+K or Alt+L instead
+  session state; a configured popup on Alt+H, Alt+J, Alt+K or Alt+L instead
   loads without a key (EON-C20). Scrollback accepts `keybinding`, `label`
   and `enabled`, and rejects `command` and `keep_alive = true`, as Anima
   does. Its command is not part of the popup catalog. It does
@@ -1877,13 +1885,15 @@ names its socket. CLI JSON names a session `session` and a terminal
   `terminals` instead of `sessions` (a delegated Stop still reads `sessions`
   from builds before v0.1.20), and `eon quit`'s question names terminals by
   their terminal IDs.
+  Amended on 2026-11-07 (approved by eon-overseer under Lucca's standing rule)
+  by `eon-30skm` (S3): its prose says session for the product concept.
 - **Consumer:** Eon and eonbase users launching or targeting a product generation.
 - **Trigger:** Launch current generation, inspect an older live generation,
   present a compatible existing surface, stop one window, stop a selected set of
   windows, or quit one window or every window.
 - **Result:**
   - Eon and eonbase use separate runtime namespaces. Launch and lifecycle defaults use their exact
-    current generation; Eon workspace control follows EON-C10's caller and explicit-target rules.
+    current generation; Eon session control follows EON-C10's caller and explicit-target rules.
   - Generation identity is Runtime's `g1-` hash of Eon's source-tree digest,
     which covers runtime/EONW source and build inputs and Eon
     assembly/default/validator/graph/Cargo/Nix-generated inputs; each
@@ -2005,7 +2015,7 @@ names its socket. CLI JSON names a session `session` and a terminal
     The supervisor derives the list from EON-C31's cached replies and never
     waits on a terminal for it. Each runtime result (a lifecycle inspection
     or Present) and each workspace snapshot of a full-Eon window carries its busy terminals in window order,
-    at most 32, each with its workspace, tab, pane or popup, terminal and name
+    at most 32, each with its session, tab, pane or popup, terminal and name
     (a pane's label, a popup's entry label), and how many more are busy; a
     lifecycle inspection whose request names a live terminal of the window
     leaves that terminal out. eonbase carries none.
@@ -2021,8 +2031,8 @@ names its socket. CLI JSON names a session `session` and a terminal
     replacement cannot overlap cleanup; concurrent launch converges on one
     supervisor and terminal set.
   - Present requests native presentation without replacing the live Venus
-    process, Orbit attachment, or terminal. A detach keeps every workspace of
-    the window, and a Venus that Present starts shows the last shown workspace
+    process, Orbit attachment, or terminal. A detach keeps every session of
+    the window, and a Venus that Present starts shows the last shown session
     (EON-C33; its installed proof is `eon-workspace-switching-shn4.9`).
   - Dead exact residue is removed only after the recorded process is absent or
     dead; a later launch may then create one fresh run.
@@ -2148,31 +2158,33 @@ names its socket. CLI JSON names a session `session` and a terminal
 - **Status:** Proven
   Amended on 2026-11-07 (approved by eon-overseer under Lucca's standing rule)
   by `eon-30skm` (S1): `session-unavailable`.
+  Amended on 2026-11-07 (approved by eon-overseer under Lucca's standing rule)
+  by `eon-30skm` (S3): its prose says session for the product concept.
 - **Consumer:** A local user or approved composition needing one native terminal
-  surface without Eon workspace actions.
+  surface without Eon session actions.
 - **Trigger:** eonbase launches one exact command after `--`.
 - **Result:**
   - `eonbase -- COMMAND...` launches one exact nonempty argv in one Orbit terminal
-    and one Venus surface without workspace topology. Optional
+    and one Venus surface without session topology. Optional
     `--no-decorations` is fixed for the supervisor lifetime.
   - `eonbase generations`, `attach`, and `stop` expose EON-C11 within eonbase's
     separate namespace.
   - Repeated launch presents an attached surface; after detachment it opens one
     replacement against the same live terminal with the original decoration
     choice. Later invocations do not mutate that choice.
-  - Workspace actions return `session-unavailable` and create no hidden
+  - Session actions return `session-unavailable` and create no hidden
     topology.
 - **Important failures:** Missing command, invalid identity, incompatible
   component, startup failure, supervisor loss, or explicit Stop follows the same
-  bounded ownership and cleanup rules without creating workspace state.
+  bounded ownership and cleanup rules without creating session state.
 - **Owner:** Eon defines and packages the standalone product; Eon Runtime
   implements exact-command launch/generation mechanisms. Orbit owns the terminal and
   Venus owns the surface.
 - **Consumes:** EON-C1 through EON-C4, EON-C11, Orbit, and Venus.
 - **Boundary:** eonbase consumes no EON-C9 managed environment and adds no tabs,
-  panes, key remapping, preset, wrapper, persisted mode marker, workspace,
+  panes, key remapping, preset, wrapper, persisted mode marker, session,
   managed-tool/default-shell command, remote access, focus guarantee, or Zellij
-  policy. Bare `eon` and `eon run` retain workspace meanings.
+  policy. Bare `eon` and `eon run` retain session meanings.
 - **Proof:** `795d735a8f61ef439c56d68e1cc4d3929af0dfcf`, `eon-monorepo-2oko.6`.
   - **Environment:** Automated tier; installed tier.
   - **Evidence:** `eonbase_reopens_without_workspace_or_a_second_session`,
@@ -2217,6 +2229,8 @@ names its socket. CLI JSON names a session `session` and a terminal
   supervisor-loss adoption is pending re-proof in this repository.
   Amended on 2026-11-07 (approved by eon-overseer under Lucca's standing rule)
   by `eon-30skm` (S1): terminal IDs `terminal-N`.
+  Amended on 2026-11-07 (approved by eon-overseer under Lucca's standing rule)
+  by `eon-30skm` (S3): its prose says session for the product concept.
 - **Consumer:** One local Eon or eonbase user on the same boot and login.
 - **Trigger:** An Eon-launched Orbit crosses Ready, its supervisor disappears,
   its acquired owner dies, a replacement targets the same exact generation,
@@ -2247,7 +2261,7 @@ names its socket. CLI JSON names a session `session` and a terminal
   - When an acquired Orbit dies without publishing a
     tombstone, Runtime retires only its exact validated Live record and dead
     endpoints and reaps its ended child. Full Eon applies normal ended-pane
-    pruning; healthy terminals and their native workspace remain usable.
+    pruning; healthy terminals and their native session remain usable.
     Owner loss is a local failure, not a canonical terminal outcome or
     successful Stop.
   - When an acquired Orbit stops on its own termination signal (`ORB-C12`),
@@ -2257,7 +2271,7 @@ names its socket. CLI JSON names a session `session` and a terminal
 - **Important failures:** Unsafe, missing, replaced, malformed, oversized,
   incompatible, duplicate, zero, noncanonical, overflowing, wrong-generation,
   wrong-UID, wrong-process, Busy, partial acquisition, unreconciled Orbit exit,
-  deadline, or transport failures publish no partial workspace, launch no
+  deadline, or transport failures publish no partial session, launch no
   duplicate run, and authorize no PID, signal, pathname, process-name, group, cgroup, or pidfd
   fallback. A lost response after completed Stop cannot revive the supervisor.
   Unsolicited, undecodable or unexpected management bytes on one terminal's
@@ -2267,12 +2281,12 @@ names its socket. CLI JSON names a session `session` and a terminal
   A marked Live record rejected after spawn is stopped through canonical
   management using its published identity and is never published as a terminal.
   Failed Stop retains its supervisor and unfinished leases for explicit retry;
-  completed runs leave live inventory. Workspace mutations and presentation
+  completed runs leave live inventory. Session mutations and presentation
   remain unavailable until cleanup succeeds. Failed natural-exit reconciliation
   still collects other results and restores retryable leases. Discovery reaps
   ended untracked direct children before retiring their canonical records.
   During failed cleanup, it still reaps an exited presentation child without
-  changing the workspace or launching replacement terminals.
+  changing the session or launching replacement terminals.
   Stop's result read timeout allows one preceding thirty-five-second startup
   (thirty-second presentation admission, then a five-second first terminal
   start) plus five-second cleanup and a one-second margin; excessive queues can
@@ -2285,7 +2299,7 @@ names its socket. CLI JSON names a session `session` and a terminal
 - **Boundary:** Same boot and login only; no prior-topology persistence, Orbit or
   machine restart recovery, logout/reboot survival, remote authority, service
   manager, broker, or compatibility adapter. Tombstones grant no authority and
-  must be reconciled before their workspace slot is reused.
+  must be reconciled before their session slot is reused.
 - **Proof:** `795d735a8f61ef439c56d68e1cc4d3929af0dfcf`, `eon-monorepo-2oko.6`;
   upgrade and rollback: installed builds
   `/nix/store/gg71kiz3k854f4xihasr1pwligypznl3-eon-0.1.0` of
@@ -2364,8 +2378,10 @@ names its socket. CLI JSON names a session `session` and a terminal
   visit of an accepted `SetTabDirectory`. Amended on 2026-11-03 (approved by
   Lucca, relayed by eon-overseer) by `eon-quick-search-parity-23y9.2`:
   `SetTabDirectory` on a pending tab is a pick of EON-C18's pair.
-- **Consumer:** One local Eon workspace user creating tabs and panes.
-- **Trigger:** Eon creates or recovers a workspace, creates a tab or pane, or an
+  Amended on 2026-11-07 (approved by eon-overseer under Lucca's standing rule)
+  by `eon-30skm` (S3): its prose says session for the product concept.
+- **Consumer:** One local Eon session user creating tabs and panes.
+- **Trigger:** Eon creates or recovers a session, creates a tab or pane, or an
   approved same-user client explicitly retargets one live tab.
 - **Result:**
   - Every live tab has one stable `tN` identity and one authoritative absolute
@@ -2396,7 +2412,7 @@ names its socket. CLI JSON names a session `session` and a terminal
   launch residue.
 - **Owner:** Eon Runtime owns tab identity, launch-directory state, validation,
   mutation, new-tab home resolution and recovery fallback. Orbit owns each
-  terminal's CWD; Venus owns native projection of the authoritative workspace state.
+  terminal's CWD; Venus owns native projection of the authoritative session state.
 - **Consumes:** Current EONW v7, Orbit terminal startup, and Venus `VEN-C8`.
 - **Boundary:** No manual names, path canonicalization, retained directory
   handles, filesystem watching, shell-`cd` tracking, pane-CWD inference,
@@ -2424,18 +2440,20 @@ names its socket. CLI JSON names a session `session` and a terminal
   Files become one directory pair. Re-proof is pending at v31 under this bead.
   Amended on 2026-11-07 (approved by eon-overseer under Lucca's standing rule)
   by `eon-30skm` (S1): EONW v36.
+  Amended on 2026-11-07 (approved by eon-overseer under Lucca's standing rule)
+  by `eon-30skm` (S3): its prose says session for the product concept.
 - **Consumer:** One person starting or using full Eon.
 - **Trigger:** Eon needs the first pane for a new tab, or the person presses
   Alt+Z or Alt+Shift+Y.
 - **Result:**
-  - On a fresh full-Eon workspace, after Venus accepts the initial presentation,
+  - On a fresh full-Eon window, after Venus accepts the initial presentation,
     Eon may play one short Anima animation in the initial pair's terminal
     before its Files Yazi starts. The default is enabled,
     a random native style, and three seconds; `[anima].enabled = false` skips it.
     Any key other than Anima's style-browsing keys dismisses playback without
     becoming quick-search input. This step does not run for later tabs,
     attachment, reconnection, same-boot recovery, or eonbase.
-  - A fresh workspace and every later new tab not created with a directory
+  - A fresh session and every later new tab not created with a directory
     (EON-C10's `tab create --directory`) begin as one active pending tab
     with no durable pane. Eon starts the tab's pair: the exact packaged Files
     Yazi in one Orbit popup terminal at that tab's starting directory (the
@@ -2507,7 +2525,7 @@ names its socket. CLI JSON names a session `session` and a terminal
     that close stops the pair's terminal before removing the tab. Dismissing
     a background pending pair starts that tab's first pane while leaving
     the selected tab in focus. Explicit tab close selects the nearest
-    surviving tab. A workspace with no running terminals ends.
+    surviving tab. A session with no running terminals ends.
     Pairs remain attached across tab switches; established tabs may open
     their own popup while another pair remains live elsewhere. EONW v7 permits
     multiple pending tabs, each retaining its pair across switches;
@@ -2522,7 +2540,7 @@ names its socket. CLI JSON names a session `session` and a terminal
   report the error and remove only the unstartable tab; other tabs and terminals
   remain. Left/right with only one live tab succeeds unchanged. A duplicate
   close cannot stop the pair twice or remove another tab. Invalid Anima settings
-  fail before a fresh workspace starts. Missing, failed, or timed-out playback
+  fail before a fresh window starts. Missing, failed, or timed-out playback
   reports a short diagnostic and continues to the pair.
 - **Owner:** Eon supplies pair/default policy and packaged commands; Eon
   Runtime owns tab binding, command selection, lifecycle, validation, mutation
@@ -2571,6 +2589,8 @@ names its socket. CLI JSON names a session `session` and a terminal
 
 - **Status:** Proven by the automated tier; installed configured typography and
   geometry are pending re-proof in this repository.
+  Amended on 2026-11-07 (approved by eon-overseer under Lucca's standing rule)
+  by `eon-30skm` (S3): its prose says session for the product concept.
 - **Consumer:** Eon and eonbase users opening a native surface.
 - **Trigger:** Create or reopen Venus using one `$EON_CONFIG_HOME/config.toml`
   snapshot.
@@ -2642,19 +2662,21 @@ names its socket. CLI JSON names a session `session` and a terminal
   key.
   Amended on 2026-11-07 (approved by eon-overseer under Lucca's standing rule)
   by `eon-30skm` (S1): EONW v36.
+  Amended on 2026-11-07 (approved by eon-overseer under Lucca's standing rule)
+  by `eon-30skm` (S3): its prose says session for the product concept.
 - **Consumer:** One installed full-Eon user on native Linux Wayland.
-- **Trigger:** The user presses physical Alt+Slash from the Eon workspace.
+- **Trigger:** The user presses physical Alt+Slash from the Eon session.
 - **Result:** The exact accepted Venus client toggles one native, read-only
   shortcut viewer containing its fixed Eon-surface bindings and the current
   enabled popup catalog supplied through current EONW v7. Opening, refreshing,
-  scrolling, resizing, and closing the viewer change no workspace or Orbit
+  scrolling, resizing, and closing the viewer change no session or Orbit
   terminal state. Title, subtitle and first group heading occupy separate
   readable vertical space at normal and compact window sizes. A configured
   popup shortcut on the key of any other fixed binding, except Alt+H, Alt+J,
   Alt+K and Alt+L, takes that key; the fixed binding is unbound while that
   configuration is active, and the viewer lists it as overridden by the popup.
   On Alt+Shift+0 through Alt+Shift+9 a popup takes only its own key: the other
-  workspace position keys stay bound, and the viewer names the taken key as
+  session position keys stay bound, and the viewer names the taken key as
   overridden by the popup.
   A built-in popup whose default key a configured popup holds is listed with
   that key as overridden by the configured popup; a popup configured without a
@@ -2670,7 +2692,7 @@ names its socket. CLI JSON names a session `session` and a terminal
   previous tab" (VEN-C8).
 - **Important failures:** Eon rejects configured popup shortcuts on Alt+Slash
   or positional Alt+0 through Alt+9, a reserved set no 1.x release enlarges,
-  before workspace mutation. A configured popup shortcut on Alt+H, Alt+J,
+  before session mutation. A configured popup shortcut on Alt+H, Alt+J,
   Alt+K or Alt+L instead loads without a key, with a logged configuration
   warning naming the popup and the key; no 1.x release enlarges this set
   either.
@@ -2751,9 +2773,11 @@ names its socket. CLI JSON names a session `session` and a terminal
 - **Status:** Proven
   Amended on 2026-11-07 (approved by eon-overseer under Lucca's standing rule)
   by `eon-30skm` (S1): EONW v36.
+  Amended on 2026-11-07 (approved by eon-overseer under Lucca's standing rule)
+  by `eon-30skm` (S3): its prose says session for the product concept.
 - **Consumer:** One installed full-Eon user on native x86_64 Linux Wayland.
 - **Trigger:** The user points at, focuses, scrolls, or activates the top
-  workspace row, its tabs, New tab, Shortcuts, active-tab Close, or blank drag
+  session row, its tabs, New tab, Shortcuts, active-tab Close, or blank drag
   region.
 - **Result:** Full Eon presents one native Eon Bar at the existing tab-strip
   height. Eon-authored tab identity and action policy feed Venus's tab-first
@@ -2770,11 +2794,11 @@ names its socket. CLI JSON names a session `session` and a terminal
 - **Important failures:** Stale component identity fails before activation.
   Rejected Eon actions never mutate another tab. Narrow surfaces retain the
   active tab and required controls without overlap. A failed native drag causes
-  no workspace action, terminal input, crash, or state mutation. Controls, tab
+  no session action, terminal input, crash, or state mutation. Controls, tab
   gaps, pane chrome, terminal content, popups, tooltips, and the viewer never
   become drag targets or leak a terminal pointer sequence.
 - **Owner:** Eon owns the exact graph, product policy, profile delivery and
-  installed acceptance; Eon Runtime owns workspace identity/actions. Venus
+  installed acceptance; Eon Runtime owns session identity/actions. Venus
   owns header geometry, rendering, input, native drag, tooltips, and accessibility.
 - **Consumes:** Venus VEN-C21, EONW v7 (v36 for the EON-C31 tab attention
   marker) and Orbit terminals.
@@ -2834,6 +2858,8 @@ names its socket. CLI JSON names a session `session` and a terminal
   build record names the window.
   Amended on 2026-11-07 (approved by eon-overseer under Lucca's standing rule)
   by `eon-30skm` (S1): terminal IDs `terminal-N`; EONW v36.
+  Amended on 2026-11-07 (approved by eon-overseer under Lucca's standing rule)
+  by `eon-30skm` (S3): its prose says session for the product concept.
 - **Consumer:** A full-Eon user on native x86_64 Linux Wayland.
 - **Trigger:** `eon window new`, the desktop launcher's New Eon Window action,
   or Venus's Alt+Shift+N shortcut.
@@ -2894,7 +2920,7 @@ names its socket. CLI JSON names a session `session` and a terminal
   are the terminals Stop would end. `others` lists every other live full-Eon
   supervisor of this user under the same runtime directory, in either
   namespace, with the same fields and a `state`. A window's name is its shown
-  workspace's name, else the last component of that workspace's active tab
+  session's name, else the last component of that session's active tab
   directory (`~` for the home directory), at most 64 characters. Characters
   excluded from pane-label plain text are replaced with U+FFFD before applying
   the limit. A supervisor from another EONW version, or one that does not
@@ -2945,7 +2971,7 @@ names its socket. CLI JSON names a session `session` and a terminal
   Orbit owns each terminal and its single presentation attachment.
 - **Consumes:** EON-C1, EON-C8, EON-C11, EON-C15, EONW v7 (v28 for the running-windows summary), and VEN-C23.
 - **Boundary:** Bare `eon` retains its current presentation behavior. Windows
-  have independent workspaces; no terminal, tab, pane, or focus state is shared.
+  have independent sessions; no terminal, tab, pane, or focus state is shared.
   The eight-hex-digit ID is unique by atomic directory reservation, not a
   secret. This does not establish macOS or another distribution channel.
   A window ID prefix is a convenience for typing, not an identity: scripts
@@ -3163,6 +3189,8 @@ names its socket. CLI JSON names a session `session` and a terminal
   by eon-overseer) by `eon-7cf0y.22` (S3): `eon window attach ID` presents an
   older window. Amended on 2026-11-06 (approved by Lucca, relayed by
   eon-overseer) by `eon-7cf0y.22` (S4): `eon config dir`.
+  Amended on 2026-11-07 (approved by eon-overseer under Lucca's standing rule)
+  by `eon-30skm` (S3): its prose says session for the product concept.
 - **Consumer:** People, scripts and agents that use Eon 1.0 on x86_64 Linux on
   native Wayland and upgrade within 1.x.
 - **Trigger:** Installing a later 1.x release over 1.0 or another 1.x release.
@@ -3217,7 +3245,7 @@ names its socket. CLI JSON names a session `session` and a terminal
 - **Owner:** Eon owns the promise, the release review against it and the
   managed command names its Nix composition installs. Eon Runtime owns the
   commands, JSON, exit statuses, lifecycle codecs and configuration parsing
-  that carry it; Venus owns its fixed workspace bindings under EON-C20.
+  that carry it; Venus owns its fixed session bindings under EON-C20.
 - **Boundary:** Not covered: how appearance and layout render; behavior that
   no document states; the ORBS and ORBF protocols, EONW beyond the lifecycle
   codecs kept above, and the component manifest format, which carry their own
@@ -3284,7 +3312,9 @@ names its socket. CLI JSON names a session `session` and a terminal
   Amended on 2026-11-07 (approved by eon-overseer under Lucca's standing rule)
   by `eon-30skm` (S2): the attention queue's entries name their `session`; `eon
   session --json`.
-- **Consumer:** One person supervising coding agents across the tabs and workspaces (EON-C33)
+  Amended on 2026-11-07 (approved by eon-overseer under Lucca's standing rule)
+  by `eon-30skm` (S3): its prose says session for the product concept.
+- **Consumer:** One person supervising coding agents across the tabs and sessions (EON-C33)
   of one full-Eon window.
   eonbase has no poller and no sidebar; its `sidebar` is `Off`.
 - **Trigger:**
@@ -3297,7 +3327,7 @@ names its socket. CLI JSON names a session `session` and a terminal
 - **Result:**
   - **Polling.** A Runtime attention poller runs off the request path, on its own timer, at no
     more than 2 Hz.
-    - It polls only pane and popup terminals, of every workspace of the window,
+    - It polls only pane and popup terminals, of every session of the window,
       never a pending tab's pair.
     - It polls peers concurrently, each with a 250 ms deadline.
     - Each lease has exactly one reader and at most one request in flight. The EOF probe and
@@ -3356,10 +3386,10 @@ names its socket. CLI JSON names a session `session` and a terminal
 
   - **Seen.** Seen is keyed by (run, `id`, raise). A raise becomes seen when a
     Venus is attached, its native window is focused, and its exact terminal is
-    the focused target (the selected pane of the shown workspace's active tab,
+    the focused target (the selected pane of the shown session's active tab,
     or its shown popup) at one of these moments:
     - focus arrives on that terminal, including via `FocusAttention` to a
-      terminal that already has focus, or when its workspace is shown with
+      terminal that already has focus, or when its session is shown with
       that terminal focused;
     - a new raise arrives while that terminal and its native window are focused;
     - a Venus attaches with that terminal focused and reports native window
@@ -3372,11 +3402,11 @@ names its socket. CLI JSON names a session `session` and a terminal
 
     A focus action applies seen to the raise cached when the action was
     handled, and a poll in flight cannot undo it. Needs input is never cleared
-    by viewing. A terminal in a hidden workspace is never the focused target,
-    so focus never sees its raises until its workspace is shown and that exact
+    by viewing. A terminal in a hidden session is never the focused target,
+    so focus never sees its raises until its session is shown and that exact
     terminal and its native window have focus.
 
-    Newer work also sees a finish, with or without a Venus attached and in any workspace. When
+    Newer work also sees a finish, with or without a Venus attached and in any session. When
     a `working` record in a terminal's reply changed later, by ORB-C15 change sequence, than
     the raise of a finished record of the same terminal, that raise is seen: it no longer
     shows, and it does not return when the work stops. An `idle` that keeps its `done`'s raise
@@ -3388,7 +3418,7 @@ names its socket. CLI JSON names a session `session` and a terminal
     newer work saw it. Claude Code goes `working` when its background task ends, so its next
     `done` raises a fresh finish.
   - **Rollup.** A tab's rollup is the highest-priority state among its terminals, and a
-    workspace's rollup the highest among all its terminals (EON-C33), which EONW v22 carries
+    session's rollup the highest among all its terminals (EON-C33), which EONW v22 carries
     as `attention` on each `WorkspaceInfo`. A stale terminal counts with its last state, and
     its badge is dimmed.
   - **Sidebar visibility [Q3].** The Runtime keeps one value per window: `Open` (the default),
@@ -3420,8 +3450,8 @@ names its socket. CLI JSON names a session `session` and a terminal
     - `attention_rollup` on `Tab`;
     - `sidebar` (`Open | Closed | Off`) on `Snapshot`;
     - `attention_queue` on `Snapshot`, which EONW v25 adds: the queue (see NextAttention and
-      PreviousAttention) in its total order, across every workspace of the window, whichever
-      workspace the snapshot projects. Each entry names the terminal's workspace ID, tab ID and
+      PreviousAttention) in its total order, across every session of the window, whichever
+      session the snapshot projects. Each entry names the terminal's session ID, tab ID and
       target (the pane ID or popup instance that `FocusAttention` takes) and carries the
       terminal's attention as its pane or popup does, with state needs input, error or finished.
       The window's 256-terminal limit bounds it. Venus and the CLI never sort it. It is empty
@@ -3467,19 +3497,19 @@ names its socket. CLI JSON names a session `session` and a terminal
     - A stale target is rejected as an EONW action rejection, with no fallback, as EON-C10
       target safety requires. Venus shows it as a VEN-C8 notice.
   - **NextAttention and PreviousAttention.**
-    - **The queue** holds every terminal, of every workspace of the window, whose most urgent
+    - **The queue** holds every terminal, of every session of the window, whose most urgent
       record is needs input, an unseen error, or finished. Its total order is:
       1. class: needs input, then error, then finished;
       2. the fixed change time, oldest first (for needs input, the time it entered `blocked`;
          otherwise the raise's time);
-      3. workspace position in the window;
+      3. session position in the window;
       4. tab position;
       5. terminal position.
-    - **Across workspaces.** A jump to a terminal in a hidden workspace shows that workspace
+    - **Across sessions.** A jump to a terminal in a hidden session shows that session
       (EON-C33), then focuses its target under the covered-target rule. `FocusAttention` names
-      a tab of any workspace of the window. For a tab of the caller's workspace it acts as
-      before. For a tab of another workspace it acts as a queue jump to that target: it shows
-      that workspace, then focuses the target under the covered-target rule, and a stale
+      a tab of any session of the window. For a tab of the caller's session it acts as
+      before. For a tab of another session it acts as a queue jump to that target: it shows
+      that session, then focuses the target under the covered-target rule, and a stale
       target changes nothing. Unlike a queue jump, it resets the cursor, as other focus moves
       do.
     - **The cursor.** The Runtime keeps one cursor per window: the order key of the last jump
@@ -3736,8 +3766,10 @@ names its socket. CLI JSON names a session `session` and a terminal
   to the bottom hints bar's left end.
   Amended on 2026-11-07 (approved by eon-overseer under Lucca's standing rule)
   by `eon-30skm` (S2): `eon session --json`.
-- **Consumer:** Full-Eon workspace users.
-- **Trigger:** A workspace window opens or reopens.
+  Amended on 2026-11-07 (approved by eon-overseer under Lucca's standing rule)
+  by `eon-30skm` (S3): its prose says session for the product concept.
+- **Consumer:** Full-Eon session users.
+- **Trigger:** A full-Eon window opens or reopens.
 - **Result:** `[bar] widgets` is an ordered list of unique names from
   `codex_quota_5h`, `codex_quota_7d`,
   `claude_quota_5h`, `claude_quota_7d`, `claude_quota_scoped`, `cpu`, `ram`,
@@ -3841,7 +3873,7 @@ names its socket. CLI JSON names a session `session` and a terminal
     `eon_orders_and_omits_bar_items`, and the isolated installed observation
     recorded in `eon-e3a1z.2`.
 
-## EON-C33 — Several workspaces in one window
+## EON-C33 — Several sessions in one window
 
 - **Status:** Proven on x86_64 Linux Wayland. Approved by Lucca on 2026-10-22
   (`eon-workspace-switching-shn4.1`, shape D of `eon-n77e`). The children of
@@ -3873,36 +3905,39 @@ names its socket. CLI JSON names a session `session` and a terminal
   Amended on 2026-11-07 (approved by eon-overseer under Lucca's standing rule)
   by `eon-30skm` (S2): `eon session ls` and `eon session
   new|switch|rename|close`, SESSION, the Commands entries say session.
+  Amended on 2026-11-07 (approved by eon-overseer under Lucca's standing rule)
+  by `eon-30skm` (S3): the heading names sessions, and its prose says session
+  for the product concept.
 - **Consumer:** One full-Eon user, or an agent working for them, who keeps
   several separate sets of work in one Eon window.
 - **Trigger:** Alt+Shift+S or Commands > Switch session; Alt+Shift+1
   through Alt+Shift+9 and Alt+Shift+0; Commands > New
   session, Rename session or Close this session; `eon session ls` or
   `eon session new|switch|rename|close`; the final close or last exit in one
-  workspace; an attention jump to a terminal in a hidden workspace; detach,
+  session; an attention jump to a terminal in a hidden session; detach,
   attach or recovery of the window.
 - **Result:**
-  - **Model.** A window holds an ordered list of 1 to 32 workspaces and shows
-    exactly one. Each workspace has its own tabs, panes, popups, focus and
-    terminals, as EON-C8 describes. Each workspace has a stable `sN` identity,
+  - **Model.** A window holds an ordered list of 1 to 32 sessions and shows
+    exactly one. Each session has its own tabs, panes, popups, focus and
+    terminals, as EON-C8 describes. Each session has a stable `sN` identity,
     which is unique for the life of the window's supervisor and never reused
     in it, and an optional name of 1 to 64 characters with no control
     characters. Names are display text, not identity, and need not be unique.
-    Tab, pane and popup identities are unique across the window's workspaces,
-    so a tab or pane action never reaches another workspace; only the Alt+G
-    jump below and `FocusAttention` (EON-C31) cross workspaces. Where a name
-    is shown, an unnamed workspace shows its `sN`.
-  - **Showing.** Venus renders only the shown workspace's tabs and terminals.
-    Terminals in hidden workspaces keep running; only Venus's view of them is
+    Tab, pane and popup identities are unique across the window's sessions,
+    so a tab or pane action never reaches another session; only the Alt+G
+    jump below and `FocusAttention` (EON-C31) cross sessions. Where a name
+    is shown, an unnamed session shows its `sN`.
+  - **Showing.** Venus renders only the shown session's tabs and terminals.
+    Terminals in hidden sessions keep running; only Venus's view of them is
     detached, as for a background tab. Switching never starts, stops or
-    restarts a terminal. A snapshot change confined to hidden workspaces, such
-    as their terminals, attention or tab edits, keeps the shown workspace's
+    restarts a terminal. A snapshot change confined to hidden sessions, such
+    as their terminals, attention or tab edits, keeps the shown session's
     rejected-action notice and disturbs none of its navigation, scroll or
-    attachments. A new window holds one workspace, `s1`, and a window with one
-    unnamed workspace looks and behaves as before, without a label.
-  - **Listing.** `eon session ls [--json]` lists this window's workspaces in
+    attachments. A new window holds one session, `s1`, and a window with one
+    unnamed session looks and behaves as before, without a label.
+  - **Listing.** `eon session ls [--json]` lists this window's sessions in
     order. Each entry gives `id`, `name` (null when unnamed), `shown`, `tabs`
-    (the tab count), `attention` and `recency` (0 for the shown workspace,
+    (the tab count), `attention` and `recency` (0 for the shown session,
     then 1, 2, ... from the most recently shown, the picker's order, so an
     agent reads what a person sees there). `attention` uses exactly the JSON spelling
     of EON-C31 states that `eon session --json` gains with
@@ -3910,122 +3945,122 @@ names its socket. CLI JSON names a session `session` and a terminal
     when no terminal reports one) and carries no title or message. This window
     means the caller's window
     inside Eon, and otherwise the window `eon session` targets.
-    `eon session [--json]` keeps its meaning for the caller's workspace:
-    inside an Eon terminal the terminal's workspace, outside Eon the shown
+    `eon session [--json]` keeps its meaning for the caller's session:
+    inside an Eon terminal the terminal's session, outside Eon the shown
     one.
   - **New.** `eon session new [--name NAME] [--no-focus]` and Commands >
-    New session add a workspace after the shown one. It opens with one
+    New session add a session after the shown one. It opens with one
     pending tab and a fresh directory picker, as a new window does (EON-C23),
-    and becomes the shown workspace unless `--no-focus` is given, as for
+    and becomes the shown session unless `--no-focus` is given, as for
     `pane create`. The reply names the new `sN` in `created`, whether or not
     it is shown.
   - **Switch.** `eon session switch SESSION` shows SESSION. Switching to the shown
-    workspace returns the unchanged snapshot (EON-C10). Each workspace keeps
+    session returns the unchanged snapshot (EON-C10). Each session keeps
     its active tab, selected pane and popups across switches; zoom ends, as on
     any tab change (EON-C8). Alt+Shift+1 through Alt+Shift+9 show the window's
-    first through ninth workspace in `eon session ls` order, and Alt+Shift+0
-    the tenth, as `eon session switch` with that workspace's ID does; a
-    position with no workspace, or the shown workspace's own, changes nothing.
+    first through ninth session in `eon session ls` order, and Alt+Shift+0
+    the tenth, as `eon session switch` with that session's ID does; a
+    position with no session, or the shown session's own, changes nothing.
     `[session] number_keys = false` leaves those keys to the terminal, and a
     popup configured on one of them takes it.
   - **Rename.** `eon session rename [SESSION] NAME` and Commands > Rename
     session set the name; an empty NAME clears it. Without SESSION it renames the
-    caller's workspace.
+    caller's session.
   - **Close.** `eon session close SESSION` and Commands > Close this session
-    ask for confirmation, as `eon window stop` does, naming the workspace and
+    ask for confirmation, as `eon window stop` does, naming the session and
     saying that closing stops every terminal in it, and that it quits the window
     when it is the last one; `--json` asks nothing. Closing then stops every
-    terminal of that workspace, as closing each of its tabs does (EON-C8),
+    terminal of that session, as closing each of its tabs does (EON-C8),
     and removes it.
-    Closing the last workspace is the window's final close (EON-C8).
-  - **Emptying.** When a workspace's final tab closes or its last terminal ends
-    while other workspaces remain, it is removed. If it was shown, the most
-    recently shown remaining workspace is shown; otherwise the shown workspace
-    stays. Only the last workspace's final close or last
-    exit ends the window. While other workspaces remain, the final-close
+    Closing the last session is the window's final close (EON-C8).
+  - **Emptying.** When a session's final tab closes or its last terminal ends
+    while other sessions remain, it is removed. If it was shown, the most
+    recently shown remaining session is shown; otherwise the shown session
+    stays. Only the last session's final close or last
+    exit ends the window. While other sessions remain, the final-close
     prompt reads "Close the last tab? This closes session NAME and stops N
-    terminals."; with one workspace it keeps "This quits the window".
-  - **Targeting.** Run from an Eon terminal, every workspace-scoped command
-    acts in that terminal's workspace, found through `EON_TERMINAL`, and
+    terminals."; with one session it keeps "This quits the window".
+  - **Targeting.** Run from an Eon terminal, every session-scoped command
+    acts in that terminal's session, found through `EON_TERMINAL`, and
     EON-C10's per-tab rules apply inside it. Run outside Eon, commands act on
-    the shown workspace. SESSION resolves an exact `sN` first, then an exact name.
+    the shown session. SESSION resolves an exact `sN` first, then an exact name.
   - **Picker.** Alt+Shift+S and Commands > Switch session open an
     Eon-owned fzf popup over the shown tab (VEN-C18). Rows show the name, or
-    `sN` when unnamed, the tab count, and a marker when the workspace needs
+    `sN` when unnamed, the tab count, and a marker when the session needs
     input. Rows are ordered most recently shown first, with the shown
-    workspace last and marked, so Alt+Shift+S then Enter returns to the
-    previous workspace; the Alt+G jump, not the picker, leads to agents that
-    need input. Enter shows the highlighted workspace, including on an empty
-    query. Enter on a non-empty query that matches no row creates a workspace
+    session last and marked, so Alt+Shift+S then Enter returns to the
+    previous session; the Alt+G jump, not the picker, leads to agents that
+    need input. Enter shows the highlighted session, including on an empty
+    query. Enter on a non-empty query that matches no row creates a session
     with that name and shows it. Esc or Ctrl+C runs nothing. While the picker
     is its tab's selected popup, its own popup key (`[popups.sessions]
     keybinding`, Alt+Shift+S by default) presses Enter in it instead of
     hiding it, so it confirms the highlighted row as Enter does. This
     confirmation sends Enter with no typing quiet interval, because it represents
     the person's own key. Alt+Shift+S
-    twice returns to the previous workspace, and twice again comes back. With
+    twice returns to the previous session, and twice again comes back. With
     keyboard focus elsewhere in the window the key first focuses the picker,
     as for any popup, and a picker shown before its tab's directory changed
     restarts in the new directory (EON-C10). Esc, Ctrl+C and `eon popup hide`
-    still hide it. Ctrl+X on the highlighted row closes that workspace as
+    still hide it. Ctrl+X on the highlighted row closes that session as
     `eon session close` does, after
     the same confirmation in the popup; then the picker lists the remaining
-    workspaces again. Closing the picker's own workspace ends the picker with
-    it, and closing the last workspace is the window's final close (EON-C8).
+    sessions again. Closing the picker's own session ends the picker with
+    it, and closing the last session is the window's final close (EON-C8).
     The marker reads
-    ` · needs input`. EONW v22 gives each workspace its `recency`: 0 for the
+    ` · needs input`. EONW v22 gives each session its `recency`: 0 for the
     shown one, then 1, 2, ... from the most recently shown, which orders the
     rows (`eon-workspace-switching-shn4.6` and
     `eon-workspace-switching-shn4.8`, as EON-C10 describes).
-  - **Eon Bar.** While the window holds two or more workspaces, or its one
-    workspace has a name, the Eon Bar shows a leading label before the tabs:
-    the shown workspace's name or `sN`, followed by `N/M` when there are
-    several. Its accessible name reads "Workspace NAME, N of M", clicking it
-    opens the picker, and it shows a badge while a hidden workspace needs
+  - **Eon Bar.** While the window holds two or more sessions, or its one
+    session has a name, the Eon Bar shows a leading label before the tabs:
+    the shown session's name or `sN`, followed by `N/M` when there are
+    several. Its accessible name reads "Session NAME, N of M", clicking it
+    opens the picker, and it shows a badge while a hidden session needs
     input. The badge is the EON-C31 needs-input tab marker at the label's
     corner; it moves neither the label nor the tabs, and the accessible name
-    then ends with ", another workspace needs input"
+    then ends with ", another session needs input"
     (`eon-workspace-switching-shn4.7` and `eon-workspace-switching-shn4.8`,
     as VEN-C21 describes).
-  - **Attention.** Each workspace carries the most urgent normalized EON-C31
-    state of its terminals. The Alt+G queue (EON-C31) spans every workspace of
-    the window, and a jump to a terminal in a hidden workspace shows that
-    workspace first. Focus sees a raise only while its terminal's workspace
-    is shown, under EON-C31's rules. The sidebar lists the shown workspace's
+  - **Attention.** Each session carries the most urgent normalized EON-C31
+    state of its terminals. The Alt+G queue (EON-C31) spans every session of
+    the window, and a jump to a terminal in a hidden session shows that
+    session first. Focus sees a raise only while its terminal's session
+    is shown, under EON-C31's rules. The sidebar lists the shown session's
     terminals only. Implemented on EONW v22, whose `WorkspaceInfo` carries
-    each workspace's rollup as `attention` (`eon-workspace-switching-shn4.8`).
-  - **Detach, attach and recovery.** Alt+Shift+D detaches every workspace
-    together, and attach shows the last shown workspace; closing the window
+    each session's rollup as `attention` (`eon-workspace-switching-shn4.8`).
+  - **Detach, attach and recovery.** Alt+Shift+D detaches every session
+    together, and attach shows the last shown session; closing the window
     follows EON-C8's close rule. `eon window stop`, `eon quit` and Commands >
-    Quit this window stop every workspace of the window. Same-boot recovery
-    projects every recovered run into one workspace `s1`, as EON-C8 projects
+    Quit this window stop every session of the window. Same-boot recovery
+    projects every recovered run into one session `s1`, as EON-C8 projects
     them into `t1`; names and membership are not recovered.
-- **Important failures:** These leave every workspace unchanged and return
+- **Important failures:** These leave every session unchanged and return
   EON-C10's typed failure: an unknown or stale `sN` or a name that matches
-  nothing (exit 3); a name that matches more than one workspace
-  (`ambiguous-session`, exit 1, naming the matching IDs); a 33rd workspace
+  nothing (exit 3); a name that matches more than one session
+  (`ambiguous-session`, exit 1, naming the matching IDs); a 33rd session
   (`session-limit`, exit 1); a malformed name (exit 2); and a tab, pane or
-  popup identity from another workspace (exit 3), except a `FocusAttention`
+  popup identity from another session (exit 3), except a `FocusAttention`
   target (EON-C31). A request ID repeated
   within the last 256 accepted mutations never repeats a switch, creation
   or close. A failed stop while closing a
-  workspace keeps the workspace and its remaining terminals, as a partial tab
+  session keeps the session and its remaining terminals, as a partial tab
   close does (EON-C8). Switching never moves desktop focus.
-- **Owner:** Eon Runtime owns the workspace list, identities, the shown
-  workspace, names, removal and the per-workspace attention rollup. Eon owns
+- **Owner:** Eon Runtime owns the session list, identities, the shown
+  session, names, removal and the per-session attention rollup. Eon owns
   the picker, the Commands entries and the CLI projection. Venus renders the
-  shown workspace and the bar label (VEN-C8, VEN-C21). Orbit owns every
+  shown session and the bar label (VEN-C8, VEN-C21). Orbit owns every
   terminal.
 - **Consumes:** EON-C8, EON-C10, EON-C11, EON-C15, EON-C23, EON-C31, the next
   EONW version, VEN-C8, VEN-C18 and VEN-C21.
-- **Boundary:** No showing another window's or generation's workspace in this
-  window (Venus never changes supervisor), moving a workspace, tab or pane
-  between workspaces or windows, a window with zero workspaces, names or
+- **Boundary:** No showing another window's or generation's session in this
+  window (Venus never changes supervisor), moving a session, tab or pane
+  between sessions or windows, a window with zero sessions, names or
   membership kept past the supervisor's end or across a reboot
   (`eon-reboot-restore-im8y`), unique names or names as identity,
-  next/previous/last-workspace shortcut beyond the picker's order,
-  per-workspace detach or configuration, or a second workspace in eonbase,
-  which keeps one workspace, no picker and no workspace commands.
+  next/previous/last-session shortcut beyond the picker's order,
+  per-session detach or configuration, or a second session in eonbase,
+  which keeps one session, no picker and no session commands.
 - **Proof:** `eon-workspace-switching-shn4.9`
   - **Environment:** Automated tier and isolated installed dogfood at edge
     `57718aee6278aeb700256d891a7c5fb752cc1bea`; the dogfood ran on x86_64 Linux
@@ -4128,6 +4163,8 @@ names its socket. CLI JSON names a session `session` and a terminal
   `--generation` is removed.
   Amended on 2026-11-07 (approved by eon-overseer under Lucca's standing rule)
   by `eon-30skm` (S2): the target names its `session`; `eon session --json`.
+  Amended on 2026-11-07 (approved by eon-overseer under Lucca's standing rule)
+  by `eon-30skm` (S3): its prose says session for the product concept.
 - **Consumer:** An agent or script running as the person's user, in an Eon
   terminal or outside one.
 - **Trigger:**
@@ -4138,7 +4175,7 @@ names its socket. CLI JSON names a session `session` and a terminal
     selection.
 - **Result:**
   - The supervisor that EON-C10 selects (validating `EON_TERMINAL` when set)
-    resolves TARGET in any workspace of its window, shown or hidden, and reads
+    resolves TARGET in any session of its window, shown or hidden, and reads
     the target's terminal through ORB-C17.
   - JSON carries:
     - the target: `session`, `tab`, `pane` or `popup`, and `terminal`;
@@ -4159,11 +4196,11 @@ names its socket. CLI JSON names a session `session` and a terminal
     as the window's Scrollback popup does (EON-C10), over TARGET's tab, and
     prints nothing (`--json` prints the target, `caller`, `generation`,
     `window`, and `scrollback`: the popup's `popup` ID and `terminal`).
-    TARGET's tab must be its window's active tab in the shown workspace;
+    TARGET's tab must be its window's active tab in the shown session;
     otherwise it changes nothing and fails with `not-active`, exit 1. It
-    changes no active tab, shown workspace or desktop focus.
-  - Reading changes no workspace, tab, pane or popup selection, shown
-    workspace or popup, or desktop focus, and never shows a hidden popup. It
+    changes no active tab, shown session or desktop focus.
+  - Reading changes no session, tab, pane or popup selection, shown
+    session or popup, or desktop focus, and never shows a hidden popup. It
     leaves no visible trace.
   - `[agents] terminal_access` ([Configuration](CONFIGURATION.md#configuration-behavior))
     governs it: `"window"` allows it; `"none"` refuses every read, `history`
@@ -4201,7 +4238,7 @@ names its socket. CLI JSON names a session `session` and a terminal
 - **Boundary:** None of the following:
   - styles, streaming or waiting (eon-cli-action-discovery-ogzi), and
     history beyond ORB-C17's retained history;
-  - `--edit` outside the shown workspace's active tab;
+  - `--edit` outside the shown session's active tab;
   - per-agent tokens, grants, expiry or audit log;
   - remote or MCP exposure (eon-ciwn.3);
   - redaction;
@@ -4366,6 +4403,8 @@ names its socket. CLI JSON names a session `session` and a terminal
   `eon-7cf0y.22` (S3): `--generation` is removed.
   Amended on 2026-11-07 (approved by eon-overseer under Lucca's standing rule)
   by `eon-30skm` (S2): the target names its `session`; `eon session --json`.
+  Amended on 2026-11-07 (approved by eon-overseer under Lucca's standing rule)
+  by `eon-30skm` (S3): its prose says session for the product concept.
 - **Consumer:** An agent or script running as the person's user, in an Eon
   terminal or outside one.
 - **Trigger:** `eon pane send TARGET [--enter] [--force] [--stdin] [--json] [-- TEXT]`,
@@ -4380,7 +4419,7 @@ names its socket. CLI JSON names a session `session` and a terminal
   - EON-C10's `--window` selection applies.
 - **Result:**
   - The supervisor that EON-C10 selects (validating `EON_TERMINAL` when set)
-    resolves TARGET in any workspace of its window, shown or hidden, and
+    resolves TARGET in any session of its window, shown or hidden, and
     pastes TEXT into the target's terminal through ORB-C5's lease input.
     Orbit brackets the paste when the program enabled bracketed paste.
   - With `--enter`, Eon then sends one Enter key after
@@ -4394,8 +4433,8 @@ names its socket. CLI JSON names a session `session` and a terminal
     both the paste and Enter; all other validation and authorization still
     apply. Lease input never extends the typing interval. ORB-C5 defines
     which attached-client input counts as typing.
-  - Sending changes no workspace, tab, pane or popup selection, shown
-    workspace or popup, scroll position or desktop focus. A hidden popup
+  - Sending changes no session, tab, pane or popup selection, shown
+    session or popup, scroll position or desktop focus. A hidden popup
     receives the input and stays hidden. The send leaves no trace beyond what
     the program shows.
   - On success the command exits 0. JSON carries:
@@ -4435,7 +4474,7 @@ names its socket. CLI JSON names a session `session` and a terminal
   - Exit 3: a missing or stale target, generation or window.
   - Exit 4: a missing or unreachable supervisor, including one that speaks
     another EONW version (`supervisor-unavailable`).
-  - No failure changes focus or workspace state.
+  - No failure changes focus or session state.
 - **Owner:**
   - Eon Runtime: policy, TEXT validation, target resolution, the Enter delay,
     the EONW v32 request and the CLI projection;
@@ -4534,19 +4573,21 @@ names its socket. CLI JSON names a session `session` and a terminal
   matrix are in [`REMOTE-WORKSPACES.md`](REMOTE-WORKSPACES.md).
   Amended on 2026-11-07 (approved by eon-overseer under Lucca's standing rule)
   by `eon-30skm` (S1): session IDs `sN`.
-- **Consumer:** Local and remote Eon workspace clients and the host's
-  ID-targeted workspace operations.
-- **Trigger:** Create or rename a workspace, list/read its registration, resolve
-  a target, detach/reattach, or restart the workspace supervisor.
+  Amended on 2026-11-07 (approved by eon-overseer under Lucca's standing rule)
+  by `eon-30skm` (S3): its prose says session for the product concept.
+- **Consumer:** Local and remote Eon session clients and the host's
+  ID-targeted session operations.
+- **Trigger:** Create or rename a session, list/read its registration, resolve
+  a target, detach/reattach, or restart the supervisor.
 - **Result:**
-  - The host owns a durable, opaque workspace ID and a versioned registry.
-    An ID identifies the same registered workspace across client and supervisor
+  - The host owns a durable, opaque session ID and a versioned registry.
+    An ID identifies the same registered session across client and supervisor
     lifetimes. A window's `sN` is a local handle, not durable identity. A remote
-    target includes its host and workspace ID; one window still uses one host.
+    target includes its host and session ID; one window still uses one host.
   - Names and directories are attributes. Renaming keeps the ID; names need
-    not be unique. Separate workspaces may use the same directory, and one
-    workspace may contain multiple directories. A stale/deleted ID is never
-    rebound to a different workspace merely because its name/path matches.
+    not be unique. Separate sessions may use the same directory, and one
+    session may contain multiple directories. A stale/deleted ID is never
+    rebound to a different session merely because its name/path matches.
   - Registry inspection can find registered identities independently of the
     current window's members. Registration is metadata, not proof that any
     terminal is running or that a recorded process may be signalled.
@@ -4575,7 +4616,7 @@ names its socket. CLI JSON names a session `session` and a terminal
   groups/layout and verified run recovery belong to slice 2b and amendments
   to EON-C15/C33, not this proof.
 
-## EON-C39 — Workspace events from the CLI
+## EON-C39 — Session events from the CLI
 
 - **Status:** Planned (`eon-ciwn.1`, approved by Lucca 2026-11-03, relayed by
   eon-overseer). `eon-ciwn.5` builds the Runtime event projection,
@@ -4610,11 +4651,14 @@ names its socket. CLI JSON names a session `session` and a terminal
   by `eon-30skm` (S2): `--session SESSION`, the `session` kind and its
   `session-created`, `session-renamed`, `session-closed` and `session-shown`
   events, and `sessions` and `session` in the stream's JSON.
+  Amended on 2026-11-07 (approved by eon-overseer under Lucca's standing rule)
+  by `eon-30skm` (S3): the heading names session events, and its prose says
+  session for the product concept.
 - **Consumer:** An agent or script running as the person's user, in an Eon
-  terminal or outside one, that must notice workspace and attention changes
+  terminal or outside one, that must notice session and attention changes
   without polling: an overseer answering its tab's questions (`eon-ciwn.4`),
   `eon pane wait`, and a person's own notifier (`eon-sixj`). Venus also
-  subscribes, once per window, so that it re-reads the workspace when it
+  subscribes, once per window, so that it re-reads the session when it
   changes instead of at its next `Inspect` poll.
 - **Trigger:**
   - `eon events [--json]`, with:
@@ -4634,21 +4678,21 @@ names its socket. CLI JSON names a session `session` and a terminal
     connection open for `TABS`, `EVENT`, `GAP` and `END` messages. A
     `SUBSCRIBED` or `GAP` message carries every field of its snapshot but
     `tabs`, and the number of `TABS` messages that follow it: one per
-    workspace with admitted tabs, each holding that workspace's tabs. Every
+    session with admitted tabs, each holding that session's tabs. Every
     message thus fits EON-C10's 2 MiB frame ceiling, and the CLI joins a
     snapshot's messages into one snapshot line. Every message is one
     length-delimited EONW frame; EOF never frames a message.
   - **Snapshot, then events.** The first JSON line is
     `{"type":"snapshot","stream","seq","resumed","generation","window",
     "caller","sessions","tabs","attention_queue","busy"}`. It covers every
-    workspace of the window that the filters admit:
-    - `sessions` holds each workspace as `eon session ls --json` lists it,
+    session of the window that the filters admit:
+    - `sessions` holds each session as `eon session ls --json` lists it,
       plus its `active_tab`;
     - `tabs` holds each tab as `eon session --json` writes it, with its
       panes, popups and attention objects, plus its `session`;
     - `attention_queue` holds the window's queue in its EON-C31 order, each
       entry `{session, tab, target, state}`;
-    - `busy` holds the EON-C11 busy terminals of the workspaces, tabs and
+    - `busy` holds the EON-C11 busy terminals of the sessions, tabs and
       targets the filters admit, as `eon session --json` writes them but
       without its 32-terminal bound (`omitted` is 0), and without the
       calling terminal.
@@ -4668,25 +4712,25 @@ names its socket. CLI JSON names a session `session` and a terminal
     only when `session`, `tab`, `pane` and `popup` are all admitted. Under
     `--tab` or `--target`, `session` and `queue` count as admitted only
     when `--kind` names them. In a `--tab` stream the named tabs and their
-    panes and popups stay current, but workspace-wide values are not
-    rebuilt: a workspace's `active_tab`, the order of other tabs, the queue
+    panes and popups stay current, but session-wide values are not
+    rebuilt: a session's `active_tab`, the order of other tabs, the queue
     and the busy list's window order; a consumer reads `eon session --json`
     for them. Under `--session`, `--target` or `--state` the stream is a
     change feed for the objects it admits, and a consumer reads
     `eon session --json` for full state. The tab `attention_rollup` and the
-    workspace `attention`, `recency` and `tabs` are derived values that no
+    session `attention`, `recency` and `tabs` are derived values that no
     event names; a consumer recomputes them or reads `eon session ls`. A
-    workspace's `active_tab` follows `tab-activated`. Changes within one
+    session's `active_tab` follows `tab-activated`. Changes within one
     supervisor loop turn coalesce, and EON-C31 already coalesces attention
     between polls.
   - **Events.**
     - `session`: `session-created`, `session-renamed`,
-      `session-closed` and `session-shown`, each with the workspace as
+      `session-closed` and `session-shown`, each with the session as
       the snapshot lists it.
     - `tab`: `tab-created`, `tab-moved`, `tab-directory`, `tab-closed` and
       `tab-activated`, each with its `session` and the tab.
       `tab-created`, `tab-moved` and `tab-closed` also carry `tabs`, the
-      workspace's tab IDs in order.
+      session's tab IDs in order.
     - `pane`: `pane-created`, `pane-moved`, `pane-renamed`, `pane-ended`,
       `pane-closed` and `pane-selected`, each with its `session`, `tab`
       and the pane. Each `pane` event, `pane-renamed` included, also carries
@@ -4729,7 +4773,7 @@ names its socket. CLI JSON names a session `session` and a terminal
       state is listed.
     - `session` and `queue` events pass a `--tab` or `--target` filter
       only when `--kind` names them.
-    - When every workspace, tab and target that the filters name is gone,
+    - When every session, tab and target that the filters name is gone,
       the stream ends with `{"type":"end","reason":"targets-gone"}`.
   - **Gaps.** A subscriber may hold 1 MiB of pending event output; snapshot,
     `TABS` and gap frames do not count against it. When pending events pass
@@ -4759,7 +4803,7 @@ names its socket. CLI JSON names a session `session` and a terminal
       `attention` its `state`, `app` and `name` only, as EON-C31's human
       projection;
     - a snapshot or gap line prints `seq`, the stream and its counts of
-      workspaces, tabs and terminals;
+      sessions, tabs and terminals;
     - an end line prints its reason.
   - **`eon pane wait`.** It subscribes filtered to TARGET, a pane or popup
     ID that it follows as `--target` does, and tests its predicate on the
@@ -4778,14 +4822,14 @@ names its socket. CLI JSON names a session `session` and a terminal
     It exits 0 with the target's last attention object (JSON) or state
     (human). Without `--timeout` it waits until the predicate holds or the
     target is gone.
-  - **Side effects.** Subscribing and waiting change no workspace, tab, pane
-    or popup selection, shown workspace or popup, or desktop focus, and
+  - **Side effects.** Subscribing and waiting change no session, tab, pane
+    or popup selection, shown session or popup, or desktop focus, and
     never count as an attached Venus, so they never make a raise seen.
 - **Important failures:**
   - Refusals come as an EONW `Failure` reply before any snapshot:
     - exit 1: `subscriber-limit` (a 33rd subscriber of one supervisor),
       and `ambiguous-session` (EON-C33);
-    - exit 3: a missing or stale workspace, tab, target, generation or
+    - exit 3: a missing or stale session, tab, target, generation or
       window named when subscribing, and `unknown-caller` (EON-C10).
   - Exit 1 after subscribing:
     - `too-slow`: when a subscriber's pending output has not moved for
@@ -4815,7 +4859,7 @@ names its socket. CLI JSON names a session `session` and a terminal
 - **Consumes:** EON-C10 (EONW v30 from `eon-ciwn.6`, targeting, exit codes),
   EON-C31 (attention records, the queue and its CLI visibility), EON-C11
   (busy terminals, generations), EON-C23 (window and supervisor start time)
-  and EON-C33 (workspaces).
+  and EON-C33 (sessions).
 - **Boundary:** None of the following:
   - terminal content beyond what `eon session --json` already carries
     (EON-C10's listed exceptions): no screen content (EON-C35 owns reads)

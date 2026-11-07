@@ -151,11 +151,11 @@ if $count == 1 {
     )?;
     fs::write(
         demo.join("README.md"),
-        "# Eon demo\n\nA durable terminal workspace for a small Rust project.\n",
+        "# Eon demo\n\nA durable terminal session for a small Rust project.\n",
     )?;
     fs::write(
         demo.join("notes.md"),
-        "Sessions keep running when the window detaches.\n",
+        "Terminals keep running when the window detaches.\n",
     )?;
     fs::write(
         demo.join("docs/guide.md"),
@@ -186,7 +186,7 @@ if $count == 1 {
     r.exec(&mut git)?;
     fs::write(
         demo.join("notes.md"),
-        "Sessions keep running when the window detaches.\nTabs and panes organize the work.\n",
+        "Terminals keep running when the window detaches.\nTabs and panes organize the work.\n",
     )?;
     let mut history = isolated(&zoxide, &home);
     history.arg("add").arg(&demo);

@@ -578,6 +578,8 @@ re-proved when that platform or feature is next touched.
   Amended on 2026-11-07 (approved by eon-overseer under Lucca's standing rule)
   by `eon-30skm` (S1): `[session] number_keys`, session IDs `sN`; the final
   close says it closes the session.
+  Amended on 2026-11-07 (approved by eon-overseer under Lucca's standing rule)
+  by `eon-30skm` (S3): its prose says session for the product concept.
 - **Consumer:** One Venus surface controlled by an Eon workspace.
 - **Trigger:** Outside visible `VEN-C18` popup presentation, Eon supplies
   durable topology, a workspace action changes tab, pane, focus, order,
@@ -600,7 +602,7 @@ re-proved when that platform or feature is next touched.
     distinct: selected fill and brighter text identify the active tab without
     an underline; keyboard focus adds a rounded outline. Pane shell navigation
     does not rename or resize tabs.
-  - Runtime supplies labels for every workspace pane, including collapsed panes and panes in
+  - Runtime supplies labels for every pane of every session, including collapsed panes and panes in
     background tabs. Venus consumes those labels without reconstructing their naming policy.
   - While no popup covers the tab, and except as zoom below hides columns,
     each column's live expanded pane is an Orbit attachment resized to its
@@ -647,7 +649,7 @@ re-proved when that platform or feature is next touched.
     allocated column card areas keep it from the window's sides, from each other,
     and below them the footer's band is the margin, or one gap when hints are hidden. In both modes the tab pills
     keep the gap from the window's left edge, so the first pill lines up with
-    the first card, unless the VEN-C21 workspace label leads them; then the
+    the first card, unless the VEN-C21 session label leads them; then the
     label takes that position and the first pill follows it. Pill height follows VEN-C21; the gap between pills and
     header button width stay as before; on a short window the extra inset
     yields before the pills do. On a window too small for the gaps they
@@ -691,7 +693,7 @@ re-proved when that platform or feature is next touched.
     persistent configuration and composed-launch policy.
   - While the agent sidebar is visible (VEN-C30), the cards share the content
     area to its right: the side gaps and the 40-column CreateColumn check are
-    measured from that area, and the first tab pill, or the VEN-C21 workspace
+    measured from that area, and the first tab pill, or the VEN-C21 session
     label leading it, keeps its window-edge position, so its alignment with
     the first card is suspended.
   - Headers show Runtime's bounded pane label. Fitting retains the literal pane identity whenever it
@@ -715,10 +717,10 @@ re-proved when that platform or feature is next touched.
     snapshot and sends the existing stable `tN` through `FocusId`. A missing
     position is consumed without an action or terminal input. Alt+H/L remains
     the traversal path for tabs after position 10.
-  - Physical Alt+Shift+1 through Alt+Shift+9 show the corresponding workspace
-    position in the accepted snapshot's workspace order; Alt+Shift+0 shows
-    position 10. Venus sends that workspace's stable ID through
-    `SwitchWorkspace`. A missing position, or the shown workspace's own, is
+  - Physical Alt+Shift+1 through Alt+Shift+9 show the corresponding session
+    position in the accepted snapshot's session order; Alt+Shift+0 shows
+    position 10. Venus sends that session's stable ID through
+    `SwitchWorkspace`. A missing position, or the shown session's own, is
     consumed without an action or terminal input. With
     `[session] number_keys = false`, passed at launch, the keys reach the
     terminal. A configured popup on one of them takes it (VEN-C20).
@@ -737,7 +739,7 @@ re-proved when that platform or feature is next touched.
     non-repeating close naming the snapshot's active stable `tN`; Alt+W sends
     one EONW v11 close naming the active tab's selected `pN` and is consumed
     without an action when the tab has none. Both may target the final tab and
-    its last pane. Such a final close, whatever the workspace count, when the
+    its last pane. Such a final close, whatever the session count, when the
     `--warning-close-last-tab` launch argument is true (its default), first
     shows the EON-C8 prompt, which Venus owns: Enter sends the held close
     directly by its named target, without first focusing its tab. If another
@@ -748,19 +750,19 @@ re-proved when that platform or feature is next touched.
     The prompt closes itself when its named tab or pane leaves the snapshot or
     the workspace becomes unavailable; it is an AccessKit alert dialog. Venus
     words it from the current snapshot whenever it draws it, so an open prompt
-    re-words when the workspace count changes. While the snapshot lists other
-    workspaces (EON-C33), the close removes only the shown workspace: the
+    re-words when the session count changes. While the snapshot lists other
+    sessions (EON-C33), the close removes only the shown session: the
     subtitle reads "This closes session NAME and stops N terminals.", with
     its name or `sN`, the footer "Enter Close · Esc Cancel", and the AccessKit
     description "Press Enter to close it" where it otherwise reads "Press
     Enter to quit". Runtime decides whether the sent close ends the window or
-    removes the workspace. When the argument is false, the close is sent at
+    removes the session. When the argument is false, the close is sent at
     once. Alt+Shift+D is a non-repeating key that detaches (VEN-C14).
     Alt+Shift+Q is a non-repeating key that quits the window under EON-C8
     while the snapshot carries a running-windows summary. A compositor close
     request acts as Alt+Shift+Q, and detaches without a running-windows
     summary, while the workspace is unavailable, and while it refuses refreshes
-    after a failed Stop. On macOS, Command+Q in an Eon workspace window acts as
+    after a failed Stop. On macOS, Command+Q in an Eon window acts as
     a close request, so it quits as Option+Shift+Q does, prompt included, and
     detaches where a close request detaches, and the viewer lists it beside
     Option+Shift+Q; a popup on one of the two keys takes only that key, and
@@ -1393,6 +1395,8 @@ re-proved when that platform or feature is next touched.
   rule) by `eon-hbpkq`: a popup on one workspace position key takes only that
   key. Amended on 2026-11-04 (approved by eon-overseer under Lucca's standing
   rule) by `eon-gl1xo`: a pointer press outside the dialog closes it.
+  Amended on 2026-11-07 (approved by eon-overseer under Lucca's standing rule)
+  by `eon-30skm` (S3): the Shortcuts row says session.
 - **Consumer:** One person using a Venus surface attached to an Eon workspace.
 - **Trigger:** Physical Alt+Slash toggles the viewer; Escape or a pointer
   press outside the dialog closes it, and that press reaches no other target.
@@ -1407,7 +1411,7 @@ re-proved when that platform or feature is next touched.
   popup, the footer omits the fixed hint, and the viewer row reads "<action>
   (overridden by <popup label>)". A popup on one of Alt+Shift+0 through
   Alt+Shift+9 takes only that key; the other positions stay bound, and the row
-  reads "Show workspace by position (<key> overridden by <popup label>)". Wheel and navigation keys scroll bounded content. Opening,
+  reads "Show session by position (<key> overridden by <popup label>)". Wheel and navigation keys scroll bounded content. Opening,
   refreshing, scrolling, and closing send no terminal bytes or workspace
   action; matching releases remain captured and prior terminal/chrome focus is
   restored on dismissal. The title, subtitle, and first group heading occupy
@@ -1494,7 +1498,7 @@ re-proved when that platform or feature is next touched.
 - **Open proof:** Pending re-proof in this repository: AT-SPI dialog traversal
   and tiny-surface clipping.
 
-## VEN-C21 — Native Eon Bar workspace header
+## VEN-C21 — Native Eon Bar session header
 
 - **Status:** Proven. Amended on 2026-11-06 (approved by Lucca, "B", relayed by
   eon-overseer) by `eon-e3a1z.1`: the version label moves to the bottom hints bar's right
@@ -1506,12 +1510,15 @@ re-proved when that platform or feature is next touched.
   the clock's inset mirrors the version's.
   Amended on 2026-11-07 (approved by eon-overseer under Lucca's standing rule)
   by `eon-30skm` (S1): session IDs `sN` and the `sessions` popup entry.
+  Amended on 2026-11-07 (approved by eon-overseer under Lucca's standing rule)
+  by `eon-30skm` (S3): the heading and label say session, and the label's
+  accessible name, needs-input suffix and tooltip quote the session strings.
 - **Consumer:** One person using a Venus surface controlled by a full Eon
   workspace.
-- **Trigger:** The person points at, focuses, or activates the workspace header;
-  uses the workspace label, New tab, Keyboard shortcuts, or active-tab Close;
+- **Trigger:** The person points at, focuses, or activates the session header;
+  uses the session label, New tab, Keyboard shortcuts, or active-tab Close;
   scrolls the tab region; or left-presses its empty drag region.
-- **Result:** The existing workspace tab strip remains one row at its existing
+- **Result:** The existing session tab strip remains one row at its existing
   height. Tabs keep their filled pills. Tab pills and the quota, CPU, RAM and disk widgets share
   one height and centre line, starting half the card title height below the window's top edge; the
   allocated card areas start below them so that the space between the pills and the tops of the card
@@ -1521,7 +1528,7 @@ re-proved when that platform or feature is next touched.
   Keyboard shortcuts is a round outlined button as tall as the tab pills, with
   its glyph's ink centred in the circle, and New tab, Keyboard
   shortcuts and Close centre on the same line. The decorative Eon icon, when Eon supplies one,
-  leads the bar before the workspace label and tabs, two logical pixels shorter than the tab pills
+  leads the bar before the session label and tabs, two logical pixels shorter than the tab pills
   and centred on them, with no action, hover or accessible node. It shows only while the bar
   would show everything else with it at the widest it can be: for each provider that has a quota
   fact, a chip for each window its latest read reported, each at the widest that window's text
@@ -1558,33 +1565,33 @@ re-proved when that platform or feature is next touched.
   (`New tab`, `Close tab`). A bounded empty region between New tab and the
   trailing controls starts compositor-owned window movement only from its
   immediate left press.
-  The accessibility tree orders the workspace label while it shows, tabs, New
+  The accessibility tree orders the session label while it shows, tabs, New
   tab, optional quota, Shortcuts, then Close tab.
   It yields before tabs or controls when width contracts. Tab and Shift+Tab
   traverse focused header controls; Enter and Space activate them. Hover,
   pressed, and focus states remain distinct, and focus includes an outline.
-- **Workspace label (EON-C33):** While the snapshot lists two or more
-  workspaces, or its one workspace has a name, a label sits at the bar's left
+- **Session label (EON-C33):** While the snapshot lists two or more
+  sessions, or its one session has a name, a label sits at the bar's left
   inset on the tabs' centre line, and the tab region starts one tab gap after
-  it. It reads the shown workspace's name, or its `sN` when unnamed, then
+  it. It reads the shown session's name, or its `sN` when unnamed, then
   ` N/M` when M ≥ 2, where N is its 1-based position in window order and M
   the count. The name is fitted to a tab's widest text, and ` N/M` stays
   whole. It draws like the widgets, an outline with no fill and primary text,
   so it does not read as a tab. A left press and release on it while the
   presentation is current, or Enter or Space after Tab focuses it, invokes the
   snapshot's `sessions` popup entry as that entry's key does. Its tooltip is
-  that entry's label and any chord, such as `Workspaces — Alt+Shift+S`; it takes
+  that entry's label and any chord, such as `Sessions — Alt+Shift+S`; it takes
   the header controls' hover, pressed and focus states and is the first header
   control in Tab order. Without that entry it is inert text with no hover,
   focus, tooltip or action. Its AccessKit node is a button, or a label while
-  inert, named `Workspace NAME, N of M` with the scene's rectangle. While
-  another workspace's `attention` is needs input, the needs-input badge (◆)
+  inert, named `Session NAME, N of M` with the scene's rectangle. While
+  another session's `attention` is needs input, the needs-input badge (◆)
   sits at the label's corner as on a tab, also while the agent sidebar is
   visible, without moving the label or the tabs, and the accessible name ends
-  with `, another workspace needs input`; a change only to another
-  workspace's attention repaints the bar and disturbs nothing else. Quota
+  with `, another session needs input`; a change only to another
+  session's attention repaints the bar and disturbs nothing else. Quota
   chips yield before it, and it is dropped rather than shrink the tabs below
-  their one-pill minimum. With one unnamed workspace the bar is unchanged.
+  their one-pill minimum. With one unnamed session the bar is unchanged.
 - **Attention badges (EON-C31):** These rules apply while the agent sidebar is
   not visible (`Closed`, `Off`, or hidden for width):
   - every tab whose rollup is needs input, error, finished, working or
@@ -1612,14 +1619,14 @@ re-proved when that platform or feature is next touched.
 - **Owner:** Venus Scene owns header geometry and hit identity; the renderer
   owns its native presentation; the application owns input, local viewer state,
   and action routing; AccessKit projects the same rectangles and identities.
-  Eon retains workspace topology and action-policy ownership; winit and the
+  Eon retains session topology and action-policy ownership; winit and the
   compositor own native window movement.
 - **Consumes:** VEN-C8, VEN-C20, canonical EONW, ORBF v2 / ORBS v13, and the
   workspace's patched winit 0.30.13.
 - **Boundary:** No second row, widget framework, status/quota data, polling,
   configuration, Nova compatibility, inactive-tab close, protocol change,
   dependency, native-decoration policy, or platform-support expansion. The
-  exceptions are the EON-C31 tab attention marker and the EON-C33 workspace
+  exceptions are the EON-C31 tab attention marker and the EON-C33 session
   label, read from the EONW v32 snapshot that Venus already polls, the label
   and its badge from its `workspace` and `workspaces`, and the
   `--animate-working-badge` launch argument.
@@ -1803,14 +1810,16 @@ re-proved when that platform or feature is next touched.
 
 ## VEN-C23 — New Eon window shortcut
 
-- **Status:** Proved on x86_64 Linux Wayland.
+- **Status:** Proved on x86_64 Linux Wayland. Amended on 2026-11-07 (approved
+  by eon-overseer under Lucca's standing rule) by `eon-30skm` (S3): it names
+  Orbit's terminals and the new Eon window instead of Sessions and a workspace.
 - **Consumer:** A Venus window supervised by full Eon on x86_64 Linux Wayland.
 - **Trigger:** Physical Alt+Shift+N, including while Shortcuts is open, unless
   a current Eon popup takes that key under VEN-C20.
 - **Result:** Venus runs the exact Eon executable supplied by its supervisor
   with `window new` on a worker thread. The action appears in native Shortcuts;
-  the current terminal does not receive the key. Eon owns the new workspace,
-  process, runtime identity, and Sessions.
+  the current terminal does not receive the key. Eon owns the new window,
+  process, runtime identity, and terminals.
 - **Important failures:** A missing executable, process launch failure, or
   nonzero command status produces a bounded local notice and leaves the current
   Venus window usable. The command receives fixed arguments without a shell or
@@ -1818,9 +1827,9 @@ re-proved when that platform or feature is next touched.
 - **Owner:** Venus owns native key capture, help, command invocation, and local
   failure notice. Eon owns `EON_NEW_WINDOW_EXECUTABLE` and all window policy.
 - **Consumes:** EON-C23 and canonical EONW; Orbit ORBF v2 / ORBS v13 remains the
-  unchanged Session owner.
-- **Boundary:** This creates another Venus process and Eon workspace, not a
-  second view of an Orbit Session or a multi-window Venus event loop. The
+  unchanged terminal owner.
+- **Boundary:** This creates another Venus process and Eon window, not a
+  second view of an Orbit terminal or a multi-window Venus event loop. The
   composed macOS product remains unproved.
 - **Proof:** `795d735a8f61ef439c56d68e1cc4d3929af0dfcf`
   - **Environment:** Automated and installed.
@@ -2426,6 +2435,9 @@ re-proved when that platform or feature is next touched.
 - **Status:** Partially proved: on x86_64 Linux Wayland every clause is proved
   except those listed under Open proof. Approved by Lucca on 2026-10-29
   (relayed by eon-overseer) on `eon-ngwf.2`, which implements it.
+  Amended on 2026-11-07 (approved by eon-overseer under Lucca's standing rule)
+  by `eon-30skm` (S3): its prose says session, and a row of another session
+  adds `, in session NAME` to its accessible name.
 - **Consumer:** One person using a Venus window attached to a full Eon workspace, under every
   `sidebar` value.
 - **Trigger:**
@@ -2440,12 +2452,12 @@ re-proved when that platform or feature is next touched.
     workspace action and no terminal bytes.
   - **Contents.**
     - It lists the snapshot's `attention_queue` (EON-C31) in the order received, across every
-      workspace of the window. Venus never sorts or reclassifies it.
+      session of the window. Venus never sorts or reclassifies it.
     - A row shows the state glyph, the app icon and label as agent sidebar rows choose them
       (VEN-C30), and the age. A needs-input row adds one plain-text, truncated `msg` line. A
       stale record is dimmed and labelled "status stale".
-    - A row of the shown workspace names its tab as sidebar tab headers do (`3  site`) and its
-      source terminal as sidebar rows do. A row of another workspace names that workspace, by
+    - A row of the shown session names its tab as sidebar tab headers do (`3  site`) and its
+      source terminal as sidebar rows do. A row of another session names that session, by
       its name, else its ID, instead.
   - **Filter.** Above the rows sit four filters, All, Needs input, Error and Finished, each with
     its count of entries. All is selected whenever the inbox opens. Left and Right step through
@@ -2468,7 +2480,7 @@ re-proved when that platform or feature is next touched.
     bindings.
   - **Accessibility.** The inbox is one named AccessKit dialog, "Attention inbox". It holds the
     four filters, each named with its count and marked when selected, and the rows, each named
-    as its sidebar row would be, plus its workspace for a row of another workspace. Accessibility
+    as its sidebar row would be, plus `, in session NAME` for a row of another session. Accessibility
     focus follows the highlight.
 - **Important failures:**
   - The inbox never takes desktop focus, never changes Orbit state, and opening it sees no raise.

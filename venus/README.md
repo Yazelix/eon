@@ -1,8 +1,8 @@
 # Venus
 
 Venus is Eon's native client: it renders Orbit Sessions and sends user input
-back to their authoritative runtime. In an Eon workspace, Venus draws the tabs,
-side-by-side pane columns, and popups from Eon's workspace state.
+back to their authoritative runtime. In an Eon window, Venus draws the tabs,
+side-by-side pane columns, and popups from Eon's session state.
 
 ## Demo
 
@@ -43,7 +43,7 @@ percentages, with reset and freshness details on hover and in
 accessibility. Missing reset times stay explicitly unavailable. Narrow windows
 hide optional chips before controls.
 
-Workspace windows show a compact shortcut hints bar. **Alt+Shift+B** hides or
+Eon windows show a compact shortcut hints bar. **Alt+Shift+B** hides or
 shows it for that window; **Alt+/** opens the complete Shortcuts viewer.
 
 [Running Venus](docs/LAUNCH.md) covers fonts, window options, attachment, and

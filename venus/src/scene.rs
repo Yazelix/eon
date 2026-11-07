@@ -1564,7 +1564,7 @@ impl DialogScene {
                 },
             );
             if !local {
-                let _ = write!(row.accessible_label, ", in workspace {source}");
+                let _ = write!(row.accessible_label, ", in session {source}");
             }
             top = row.rect.bottom();
             dialog.attention_rows.push(row);
@@ -2934,7 +2934,7 @@ impl WorkspaceScene {
                     height: (tab_height - inset * 2.0).max(0.0),
                 },
                 label: fitted + &suffix,
-                accessible_label: format!("Workspace {name}, {position} of {count}"),
+                accessible_label: format!("Session {name}, {position} of {count}"),
                 tooltip: bar.workspace_picker.map(str::to_owned),
                 badge: None,
             }
@@ -3232,7 +3232,7 @@ impl WorkspaceScene {
         {
             label
                 .accessible_label
-                .push_str(", another workspace needs input");
+                .push_str(", another session needs input");
             let pill = SceneRect {
                 top: pill_band.start,
                 height: pill_band.end - pill_band.start,

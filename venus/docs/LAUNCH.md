@@ -163,7 +163,7 @@ before window creation. Eon passes its `[session] animate_working_badge`
 setting on every workspace launch.
 
 Pass `--number-keys false` to leave Alt+Shift+1 through Alt+Shift+9 and
-Alt+Shift+0 to the terminal instead of showing workspace positions 1 to 10
+Alt+Shift+0 to the terminal instead of showing session positions 1 to 10
 (VEN-C8); the Shortcuts viewer then leaves them out. The default is `true`.
 Missing, duplicate or invalid boolean values fail before window creation. Eon
 passes its `[session] number_keys` setting on every workspace launch.

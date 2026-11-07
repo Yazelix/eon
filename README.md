@@ -69,7 +69,7 @@ folder. A terminal opens there.
 | Alt+Shift+J | Git popup |
 | Alt+Shift+Y | Files popup (Yazi) |
 | Alt+Shift+M | Commands popup: search and run Eon commands |
-| Alt+Shift+S | Workspaces: switch, create or close a workspace in this window |
+| Alt+Shift+S | Sessions: switch, create or close a session in this window |
 | Alt+Shift+D | Detach: hide the window, keep terminals running |
 | Alt+Shift+Q | Quit this window; closing the window, or Command+Q on macOS, does the same |
 
@@ -124,7 +124,7 @@ welcome: [open an issue](https://github.com/Yazelix/eon/issues/new).
 
 ## Guides
 
-- [Using Eon](docs/USAGE.md): workspace controls, commands, Anima, eonbase and troubleshooting.
+- [Using Eon](docs/USAGE.md): session controls, commands, Anima, eonbase and troubleshooting.
 - [Configuration](docs/CONFIGURATION.md): terminal, shell, popups, agent quota and managed tools.
 - [Distribution](docs/DISTRIBUTION.md): Nix composition, the binary cache and release policy.
 - [Manual Linux bundle](docs/MANUAL-BUNDLE.md) and [Linux installer](docs/INSTALLER.md): unpublished Nix-free candidates.

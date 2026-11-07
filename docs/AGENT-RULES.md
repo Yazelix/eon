@@ -210,7 +210,7 @@ git push origin <sha>:refs/heads/main
 
 ## Humans and Agents
 
-The actions the root rule covers are those over the workspace's tabs, panes,
+The actions the root rule covers are those over sessions and their tabs, panes,
 popups, terminals, agent attention, windows and configuration. A CLI path
 names its target by ID and leaves the person's active tab, selection, shown
 popup and desktop focus as they are unless the agent asks to move them.
@@ -259,8 +259,8 @@ projects outside this repository can use them.
 Yazelix Nova remains an independent product line. Do not make Eon a successor
 repository, compatibility layer, or release channel for Nova.
 
-Use workspace, tab, pane and terminal in product text as defined in
-`docs/ARCHITECTURE.md#naming-boundary`. Technical session identities, JSON fields
+Use session, tab, pane and terminal in product text as defined in
+`docs/ARCHITECTURE.md#naming-boundary`. Technical identities, JSON fields
 and protocol names retain their spellings.
 
 ## Implementation Languages

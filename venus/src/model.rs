@@ -473,7 +473,7 @@ impl WorkspaceModel {
                     WorkspaceNotice::NoAttention(bounded(failure.detail))
                 } else {
                     WorkspaceNotice::Action(bounded(format!(
-                        "Eon workspace {}: {}",
+                        "Eon {}: {}",
                         failure.code, failure.detail
                     )))
                 };
@@ -1414,7 +1414,7 @@ mod tests {
         );
         assert_eq!(
             model.notice(),
-            Some("Eon workspace edge: there is no pane above the selected pane")
+            Some("Eon edge: there is no pane above the selected pane")
         );
         assert_eq!(
             model.apply(WorkspaceResponse::Snapshot(refreshed_quota.clone())),

@@ -897,7 +897,7 @@ fn workspace_exchange(
     })?;
     let mut stream = UnixStream::connect(socket).map_err(|error| {
         ExchangeError::Unreachable(format!(
-            "Cannot connect to Eon workspace at {}: {error}",
+            "Cannot connect to Eon window at {}: {error}",
             socket.display()
         ))
     })?;
@@ -2147,7 +2147,7 @@ mod tests {
                     &events[..],
                     [WorkspaceEvent::Unavailable { notice, detail: Some(detail) }]
                         if notice == "Cannot reach Eon."
-                            && detail.starts_with("Cannot connect to Eon workspace at ")
+                            && detail.starts_with("Cannot connect to Eon window at ")
                             && detail.contains("(os error ")
                 ),
                 "{events:?}"

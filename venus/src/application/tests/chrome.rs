@@ -625,7 +625,7 @@ fn eon_bar_controls_reuse_existing_actions_and_local_viewer() {
     assert_eq!(invoke_popup(&snapshot, WORKSPACES_ENTRY, true), None);
     snapshot.entries.push(PopupEntry {
         id: WORKSPACES_ENTRY.into(),
-        label: "Workspaces".into(),
+        label: "Sessions".into(),
         shortcut: PopupKey::Bound(Shortcut {
             modifiers: eon_workspace_protocol::v36::ALT | eon_workspace_protocol::v36::SHIFT,
             key: "KeyS".into(),
@@ -634,8 +634,8 @@ fn eon_bar_controls_reuse_existing_actions_and_local_viewer() {
     assert_eq!(
         workspace_picker_tooltip(&snapshot.entries).as_deref(),
         Some(match NATIVE_PLATFORM {
-            NativePlatform::Linux => "Workspaces — Alt+Shift+S",
-            NativePlatform::Macos => "Workspaces — Option+Shift+S",
+            NativePlatform::Linux => "Sessions — Alt+Shift+S",
+            NativePlatform::Macos => "Sessions — Option+Shift+S",
         })
     );
     let key = popup_shortcut(KeyCode::KeyS, ALT_SHIFT, &snapshot, true);
@@ -652,7 +652,7 @@ fn eon_bar_controls_reuse_existing_actions_and_local_viewer() {
     snapshot.entries.last_mut().unwrap().shortcut = PopupKey::Unbound;
     assert_eq!(
         workspace_picker_tooltip(&snapshot.entries).as_deref(),
-        Some("Workspaces")
+        Some("Sessions")
     );
     assert_eq!(invoke_popup(&snapshot, WORKSPACES_ENTRY, true), key);
     assert_eq!(

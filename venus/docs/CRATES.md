@@ -63,7 +63,7 @@ for one zero-payload semantic action without a new dependency or adapter.
   `d0a184bb4d45d3e50787f7c17606df652727fb9a`.
 - **Status:** Active for internal development
 - **Owner consequence:** Eon Runtime owns canonical EONW values and validation.
-  The runtime owns workspace topology, pending tabs, tab launch directories,
+  The runtime owns session topology, pending tabs, tab launch directories,
   popup lifecycle, selection, targeted actions and endpoint mappings; Eon
   supplies product policy and composition. Venus owns the request worker and
   native projection.

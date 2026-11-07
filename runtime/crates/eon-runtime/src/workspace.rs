@@ -1342,7 +1342,7 @@ impl Workspace {
             | WorkspaceAction::Stop { .. } => {
                 return Err(action_error(
                     "unavailable",
-                    "supervisor lifecycle actions do not mutate workspace topology",
+                    "supervisor lifecycle actions do not change sessions, tabs or panes",
                 ));
             }
             WorkspaceAction::CreateTab => self.create_tab(ids, allowance, prepare, operate)?,
