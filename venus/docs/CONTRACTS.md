@@ -2003,15 +2003,20 @@ re-proved when that platform or feature is next touched.
       - the app icon: Venus maps `app=claude-code` to the Claude splat and
         `app=codex` to the Codex mark of the quota chips
         ([Eon Bar](PRESENTATION.md#eon-bar));
-      - one label, the first that is not empty of: the attention `name`, for
-        `app=claude-code` only, which Claude Code sets to its session name or
-        title; the record title; and the app's name (`Claude`, `Codex`, or any
-        other `app` verbatim), else `agent`. Venus maps `app` to an icon and to whether its
+      - one label: a pane's nonempty `pinned_name` takes precedence, including over
+        an agent-reported name. This also applies to an attention inbox row whose
+        pane belongs to the shown session. Without a pane pin, use the first
+        nonempty of: the attention `name`, for `app=claude-code` only, which Claude
+        Code sets to its session name or title; the record title; and the app's name
+        (`Claude`, `Codex`, or any other `app` verbatim), else `agent`.
+        Popup agents have no pane pin. An inbox row of another session retains the
+        reported-name/title/app fallback because the queue carries no pane pin.
+        Venus maps `app` to an icon and to whether its
         terminal title names the session; other programs' terminal titles,
         such as Codex's spinner title or a shell's command line, never lead a
         row. It never falls back to the tab's directory leaf, which the tab's
-        header shows. An Agent popup without records shows "status
-        unavailable";
+        header shows. A terminal without records and without a pin shows
+        "status unavailable";
       - the age;
       - the source terminal, by the pane's `pN` identity as in pane headers
         and AccessKit (VEN-C8), or, for a popup, its catalog label such as

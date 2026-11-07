@@ -393,6 +393,140 @@ fn agent_sidebar_rows_show_attention_in_tab_order_and_reveal_the_focused_row() {
         ]
     );
 
+    // Pane pins name both attention surfaces without changing the reporting app or popup.
+    let mut renamed = snapshot.clone();
+    for (app, name, pin, expected, provider) in [
+        ("codex", "", None, "Codex", QuotaProvider::Codex),
+        (
+            "codex",
+            "",
+            Some("events ciwn.8"),
+            "events ciwn.8",
+            QuotaProvider::Codex,
+        ),
+        ("codex", "", None, "Codex", QuotaProvider::Codex),
+        (
+            "claude-code",
+            "eon-overseer",
+            None,
+            "eon-overseer",
+            QuotaProvider::Claude,
+        ),
+        (
+            "claude-code",
+            "eon-overseer",
+            Some("person's choice"),
+            "person's choice",
+            QuotaProvider::Claude,
+        ),
+    ] {
+        let pane = &mut renamed.tabs[1].columns[0].panes[0];
+        pane.pinned_name = pin.map(str::to_owned);
+        let attention = pane.attention.as_mut().unwrap();
+        let record = attention.record.as_mut().unwrap();
+        record.app = app.into();
+        record.name = name.into();
+        record.title.clear();
+        renamed.attention_queue = vec![eon_workspace_protocol::v37::QueueEntry {
+            workspace: renamed.workspace.clone(),
+            tab: "t2".into(),
+            target: "p2".into(),
+            attention: attention.clone(),
+        }];
+        let sidebar = project(&renamed, 800, None);
+        let inbox = DialogScene::attention_inbox(
+            &renamed,
+            AttentionFilter::All,
+            None,
+            PhysicalSize::new(1400, 800),
+            metrics,
+            0.0,
+            NOW,
+        );
+        for row in [sidebar.sidebar_row("p2").unwrap(), &inbox.attention_rows[0]] {
+            assert_eq!(row.title, expected);
+            assert_eq!(row.icon.map(|(provider, _)| provider), Some(provider));
+            if pin.is_some() {
+                assert_eq!(
+                    row.accessible_label,
+                    match provider {
+                        QuotaProvider::Codex =>
+                            "Needs input (permission): Codex, events ciwn.8 \
+                            in tab 2, site, p2, changed 4 minutes ago, 2 more records: \
+                            Allow Bash: cargo test?",
+                        QuotaProvider::Claude =>
+                            "Needs input (permission): Claude eon-overseer, \
+                            person's choice in tab 2, site, p2, changed 4 minutes ago, \
+                            2 more records: Allow Bash: cargo test?",
+                    }
+                );
+            }
+        }
+        assert_eq!(
+            sidebar.sidebar_row("u2").unwrap().title,
+            "status unavailable"
+        );
+    }
+    let mut other_session = renamed.clone();
+    other_session
+        .workspaces
+        .push(eon_workspace_protocol::v37::WorkspaceInfo {
+            id: "s2".into(),
+            name: None,
+            tab_count: 1,
+            attention: Some(AttentionState::NeedsInput),
+            recency: 0,
+        });
+    other_session.attention_queue[0].workspace = "s2".into();
+    assert_eq!(
+        DialogScene::attention_inbox(
+            &other_session,
+            AttentionFilter::All,
+            None,
+            PhysicalSize::new(1400, 800),
+            metrics,
+            0.0,
+            NOW,
+        )
+        .attention_rows[0]
+            .title,
+        "eon-overseer"
+    );
+    renamed.tabs[1].popups[0].attention = renamed.tabs[1].columns[0].panes[0].attention.clone();
+    renamed.attention_queue[0].target = "u2".into();
+    assert_eq!(
+        project(&renamed, 800, None)
+            .sidebar_row("u2")
+            .unwrap()
+            .title,
+        "eon-overseer"
+    );
+    assert_eq!(
+        DialogScene::attention_inbox(
+            &renamed,
+            AttentionFilter::All,
+            None,
+            PhysicalSize::new(1400, 800),
+            metrics,
+            0.0,
+            NOW,
+        )
+        .attention_rows[0]
+            .title,
+        "eon-overseer"
+    );
+    renamed.tabs[1].columns[0].panes[0].attention = Some(Attention {
+        state: AttentionState::Unavailable,
+        record: None,
+    });
+    assert_eq!(
+        project(&renamed, 800, None)
+            .sidebar_row("p2")
+            .unwrap()
+            .title,
+        "person's choice"
+    );
+
     // A row waiting on background work shows its own glyph and word.
     let mut waiting = snapshot.clone();
     if let Some(attention) = &mut waiting.tabs[2].columns[0].panes[0].attention {

@@ -312,7 +312,7 @@ pub struct SidebarRow {
     pub(crate) icon: Option<(QuotaProvider, SceneRect)>,
     /// Where the row's text lines start, after the glyph and any icon.
     pub(crate) text_left: f32,
-    /// Claude Code's session name, else the reported title, else the app's name.
+    /// The pane's pinned name, else Claude's session name, the record title or app name.
     pub(crate) title: String,
     /// The age, the source terminal, "+N" for other records and "status stale".
     pub(crate) detail: String,
@@ -1590,8 +1590,12 @@ impl DialogScene {
                 (name, false, None, None)
             };
             let current = local && focused_terminal(snapshot) == Some(entry.target.as_str());
+            let pinned_name = tab
+                .and_then(|(_, tab)| tab.panes().find(|pane| pane.id == entry.target))
+                .and_then(|pane| pane.pinned_name.as_deref());
             let mut row = attention_row(
                 &entry.attention,
+                pinned_name,
                 &entry.tab,
                 &entry.target,
                 source,
@@ -2042,6 +2046,7 @@ fn sidebar_rect(
 #[allow(clippy::too_many_arguments)]
 fn attention_row(
     attention: &Attention,
+    pinned_name: Option<&str>,
     tab: &str,
     target: &str,
     source: &str,
@@ -2061,6 +2066,7 @@ fn attention_row(
     let spacing = (metrics.width / 2.0).round();
     let content_left = rect.left + metrics.padding / 2.0;
     let top = rect.top;
+    let pinned_name = pinned_name.filter(|name| !name.is_empty());
     let record = attention.record.as_ref();
     let (icon, app) = match record.map(|record| record.app.as_str()) {
         Some("claude-code") => (Some(QuotaProvider::Claude), "Claude"),
@@ -2076,16 +2082,15 @@ fn attention_row(
     let name = record
         .filter(|record| record.app == "claude-code")
         .map_or("", |record| record.name.as_str());
-    // The first of the name, the reported title and the app label, never the
-    // directory leaf that the tab's heading already shows.
-    let title = match record {
-        None => "status unavailable",
-        Some(_) => [name, reported_title.unwrap_or_default(), app]
-            .into_iter()
-            .find(|text| !text.is_empty())
-            .unwrap_or("agent"),
-    }
-    .to_owned();
+    let title = pinned_name
+        .unwrap_or_else(|| match record {
+            None => "status unavailable",
+            Some(_) => [name, reported_title.unwrap_or_default(), app]
+                .into_iter()
+                .find(|text| !text.is_empty())
+                .unwrap_or("agent"),
+        })
+        .to_owned();
     let age = record.map(|record| now.saturating_sub(record.changed_at));
     let ages = age.map(age_labels);
     let others = record.map_or(0, |record| record.others);
@@ -2125,6 +2130,9 @@ fn attention_row(
         if app.is_empty() { "agent" } else { app },
         if name.is_empty() { "" } else { " " },
     );
+    if let Some(pin) = pinned_name {
+        let _ = write!(accessible_label, ", {pin}");
+    }
     if let Some(location) = location {
         let _ = write!(accessible_label, " in {location}, {source}");
     }
@@ -2254,18 +2262,24 @@ fn sidebar_contents(
                     .expect("EONW validates popup entries")
                     .label
                     .as_str();
-                (&popup.id, &popup.attention, label, true)
+                (&popup.id, &popup.attention, label, true, None)
             })
-            .chain(
-                tab.panes()
-                    .map(|pane| (&pane.id, &pane.attention, pane.id.as_str(), false)),
-            );
-        for (target, attention, source, popup) in terminals {
+            .chain(tab.panes().map(|pane| {
+                (
+                    &pane.id,
+                    &pane.attention,
+                    pane.id.as_str(),
+                    false,
+                    pane.pinned_name.as_deref(),
+                )
+            }));
+        for (target, attention, source, popup, pinned_name) in terminals {
             let Some(attention) = attention else {
                 continue;
             };
             let row = attention_row(
                 attention,
+                pinned_name,
                 &tab.id,
                 target,
                 source,

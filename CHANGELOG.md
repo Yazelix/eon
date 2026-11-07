@@ -5,6 +5,9 @@ installation, and proven contract changes.
 
 ## Unreleased
 
+- Agents sidebar rows use a pane's pinned name ahead of the agent's own name,
+  keeping the app icon. The attention inbox does the same for panes in the shown
+  session (`eon-sidebar-pinned-name-asubh`).
 - The CPU chip's hover and accessible description include the CPU name,
   Linux CPU temperature, busiest logical CPU and 1-minute load average.
   Supported Linux CPU sensors also colour the chip orange from 85 °C and

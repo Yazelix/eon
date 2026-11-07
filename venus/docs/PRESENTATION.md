@@ -297,6 +297,21 @@ independent of opacity: an opaque background hides it. The compositor decides
 whether and how strongly to blur; one that does not support blur ignores the
 request, and the window still opens.
 
+## Agents sidebar
+
+An agent row uses the pane's pinned name when it has one, ahead of the agent's
+own reported name. The app icon stays beside it. `eon pane rename` sets or clears
+that pin; without one, rows keep their existing fallback: Claude Code's reported
+session name, then the record title, then the app name (`Claude`, `Codex`, or the
+reported app verbatim), else `agent`. Other apps' terminal titles are not session
+names. With no record and no pin, the row says `status unavailable`.
+
+The attention inbox uses the same name for panes in the shown session. Rows of
+another session retain the reported-name/title/app fallback because the queue
+carries no pane pin. Popup agents have no pane pin and keep that fallback too.
+Rows retain their state, app icon, age, source pane ID or popup label and
+needs-input message; their accessible names include the pin when present.
+
 ## Ownership
 
 ```text

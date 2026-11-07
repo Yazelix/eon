@@ -2,6 +2,9 @@
 
 ## Unreleased
 
+- VEN-C30: a pane's pinned name leads its agent sidebar row and its attention
+  inbox row in the shown session, ahead of reported names, with the app icon
+  retained (`eon-sidebar-pinned-name-asubh`). No wire change.
 - VEN-C8: Quit sends EON-C11's Reserved Stop and reads its reply, in place of
   the EONW Stop that v37 removes (`eon-7cf0y.17`). Venus consumes EONW v37.
 - VEN-C8: on macOS, Command+Q in an Eon workspace window acts as a close
