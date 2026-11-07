@@ -52,6 +52,46 @@ directory without its ownership marker and preserves conflicting commands.
 Run `PREFIX/bin/eon`, or add `PREFIX/bin` to PATH yourself. The installer writes
 no shell startup file or desktop entry and does not replace a Nix profile.
 
+## Release assets
+
+A release carries `eon-VERSION-x86_64-linux.tar.zst`, the static installer as
+`eon-install-x86_64-linux`, `SHA256SUMS` over both and the maintainer's
+`SHA256SUMS.sig`. `nix build .#release` builds the first three from one
+revision. Verify a downloaded installer like the archive: check the signature
+over `SHA256SUMS`, then run `sha256sum -c --ignore-missing SHA256SUMS`
+([manual verification](MANUAL-BUNDLE.md#verification-before-extraction)).
+
+The [release workflow](../.github/workflows/release.yml) builds them on GitHub
+from the commit it is dispatched on, creates a GitHub build-provenance
+attestation for each, and attaches them to a draft release. The tag must be
+`vVERSION`, or `vVERSION-SUFFIX` for a pre-release, where VERSION is the Eon
+package version; an existing tag must name the dispatched commit. A release
+tags its exact proven `edge` commit ([Git Workflow](AGENT-RULES.md#git-workflow)),
+so push the tag first and dispatch the workflow on it. The draft is unsigned.
+Before signing, the maintainer who holds the release key compares its
+`SHA256SUMS` with one from a local `nix build .#release` of the same commit. If
+they differ, do not sign: stop and file a bead, since bit-for-bit parity of the
+hosted and local builds is unproven until a rehearsal shows it. Otherwise sign
+offline and publish:
+
+```sh
+git push origin vVERSION
+gh workflow run release.yml -R Yazelix/eon --ref vVERSION -f tag=vVERSION
+# Once that run has succeeded; each step runs only if the previous one passed.
+gh release download vVERSION -R Yazelix/eon -p SHA256SUMS &&
+  git checkout vVERSION && nix build .#release &&
+  diff SHA256SUMS result/SHA256SUMS &&
+  ssh-keygen -Y sign -f RELEASE_KEY -n eon-bundle SHA256SUMS &&
+  gh release upload vVERSION -R Yazelix/eon SHA256SUMS.sig &&
+  gh release edit vVERSION -R Yazelix/eon --draft=false
+```
+
+Turn on immutable releases for the repository before publishing, so
+publication locks the tag and assets. The signature stays the installer's
+trust anchor. `gh attestation verify FILE -R Yazelix/eon` additionally shows
+that this repository's workflow built a downloaded file; it needs the GitHub
+CLI and network access, and the installer does not run it.
+
 ## Upgrade, rollback and removal
 
 Installing another exact archive performs an upgrade. Payloads live under
@@ -127,12 +167,13 @@ It retains the earlier delivery/lifecycle proof for unchanged runtime behavior.
 
 Draft for `eonterm.com`, pending publication and approval of the release trust anchor:
 
-Download the reviewed Linux `eon-install` bootstrap and inspect its source.
-Use the independently approved Eon signer record to install an exact release
-from `https://github.com/Yazelix/eon/releases/download/APPROVED_TAG/`.
+Download the reviewed Linux bootstrap `eon-install-x86_64-linux` and inspect
+its source. Use the independently approved Eon signer record to install an
+exact release from `https://github.com/Yazelix/eon/releases/download/APPROVED_TAG/`.
 That immutable release must provide `eon-VERSION-x86_64-linux.tar.zst`,
-`SHA256SUMS` and `SHA256SUMS.sig`. Run the install command with `--dry-run`
-first. Run the installed `PREFIX/bin/eon` on native Wayland; Nix is unnecessary.
+`eon-install-x86_64-linux`, `SHA256SUMS` and `SHA256SUMS.sig`. Run the install
+command with `--dry-run` first. Run the installed `PREFIX/bin/eon` on native
+Wayland; Nix is unnecessary.
 Upgrades and removal keep old payloads and live terminals. Manual download,
 verification and extraction remain available.
 

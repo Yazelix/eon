@@ -5,8 +5,9 @@ file identify revisions outside this repository: history, not proof.
 Upstream project revisions keep their usual meaning.
 
 `nix build .#manual-bundle` produces the development archive
-`eon-VERSION-x86_64-linux.tar.zst`, where VERSION is the Eon package version,
-and `SHA256SUMS`. Nix builds the artifact;
+`eon-VERSION-x86_64-linux.tar.zst`, where VERSION is the Eon package version;
+`nix build .#release` adds the installer and `SHA256SUMS` as a release carries
+them ([release assets](INSTALLER.md#release-assets)). Nix builds the artifact;
 the extracted entrypoint requires no installed Nix, store, daemon or evaluator.
 This unpublished candidate targets x86_64 Linux native Wayland. Normal
 installation remains Nix-based; Nix-free install qualification is separate.
@@ -63,8 +64,8 @@ receipt and independently trusted signer record. In a POSIX shell, verify the
 signature and files before extraction or execution:
 
 ```sh
-ssh-keygen -Y verify -f allowed_signers -I eon-candidate -n eon-bundle -s SHA256SUMS.sig < SHA256SUMS
-sha256sum -c SHA256SUMS
+ssh-keygen -Y verify -f allowed_signers -I eon-release -n eon-bundle -s SHA256SUMS.sig < SHA256SUMS
+sha256sum -c --ignore-missing SHA256SUMS
 tar --zstd -xf eon-VERSION-x86_64-linux.tar.zst
 ./eon-VERSION-x86_64-linux/eon versions
 ./eon-VERSION-x86_64-linux/eon

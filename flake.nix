@@ -1071,19 +1071,23 @@
           '';
         in
         {
-          # The installer, the manual bundle, the demo recorder and the bundle
-          # checks are Linux's; Darwin has none of them.
+          # The installer, the manual bundle, the release files, the demo recorder
+          # and the bundle checks are Linux's; Darwin has none of them.
           packages.${system} = {
             default = eonPackage;
             eonbase = eonbasePackage;
             helix-grammar-sources = helix.packages.${system}.grammar-sources;
-          } // lib.optionalAttrs pkgs.stdenv.isLinux {
+          } // lib.optionalAttrs pkgs.stdenv.isLinux rec {
             installer = import ./nix/installer.nix { inherit pkgs; };
             manual-bundle = import ./nix/linux-bundle.nix {
               inherit pkgs eonPackage;
               relink = bundleRelink;
               manifestFile = ./components/eon-v5.json;
               lockFile = ./flake.lock;
+            };
+            release = import ./nix/release.nix {
+              inherit pkgs installer;
+              bundle = manual-bundle;
             };
           };
           apps.${system} = {

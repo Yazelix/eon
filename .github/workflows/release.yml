@@ -1,0 +1,98 @@
+name: Build Linux release assets
+
+# Builds the dispatched commit's release files, attests them and attaches them to a
+# draft release. The maintainer then signs SHA256SUMS offline, uploads
+# SHA256SUMS.sig and publishes; see docs/INSTALLER.md#release-assets.
+on:
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: Release tag, v<package version> or v<package version>-<suffix> for a pre-release
+        required: true
+
+permissions: {}
+
+# One release at a time; never cancel one half way through its upload.
+concurrency:
+  group: eon-release
+  cancel-in-progress: false
+
+jobs:
+  release:
+    # No runs from forks.
+    if: github.repository == 'Yazelix/eon'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 120
+    permissions:
+      contents: write
+      id-token: write
+      attestations: write
+    steps:
+      # The runner's root filesystem also holds /nix; drop preinstalled
+      # toolchains Eon never uses so the bundle build has room.
+      - name: Free runner disk space
+        run: |
+          df -h /
+          sudo rm -rf /usr/share/dotnet /usr/local/lib/android /opt/ghc \
+            /usr/local/.ghcup /opt/hostedtoolcache/CodeQL /usr/local/share/boost \
+            /opt/microsoft /usr/local/share/powershell
+          sudo docker image prune --all --force || true
+          df -h /
+
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          persist-credentials: false
+      - uses: cachix/install-nix-action@13d8dd58da0234aa297dedd986986ccb8e7f3e24 # v31
+        with:
+          # Read-only use of the cache the cachix workflow fills, as flake.nix's nixConfig names it.
+          extra_nix_config: |
+            extra-substituters = https://eon-yazelix.cachix.org
+            extra-trusted-public-keys = eon-yazelix.cachix.org-1:kPIp7u0Gjoz0GNzmRqeaqs798vU2raSOUpK+3xi7oK0=
+
+      - name: Check the tag
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ inputs.tag }}
+        run: |
+          version=$(nix eval --raw .#packages.x86_64-linux.default.version)
+          if [[ ! "$TAG" =~ ^v([0-9]+\.[0-9]+\.[0-9]+)(-[0-9A-Za-z.]+)?$ ]] \
+            || [ "${BASH_REMATCH[1]}" != "$version" ]; then
+            echo "::error::Tag $TAG is not v$version or v$version-<suffix>."
+            exit 1
+          fi
+          if [ -n "${BASH_REMATCH[2]}" ]; then
+            echo PRERELEASE=true >> "$GITHUB_ENV"
+          fi
+          refs=$(git ls-remote --tags origin "refs/tags/$TAG")
+          if [ -n "$refs" ]; then
+            git fetch --depth=1 origin "refs/tags/$TAG:refs/tags/$TAG"
+            if [ "$(git rev-parse "$TAG^{commit}")" != "$GITHUB_SHA" ]; then
+              echo "::error::Tag $TAG exists at another commit than $GITHUB_SHA."
+              exit 1
+            fi
+          fi
+          # Drafts have no tag yet, so only the releases API sees an earlier draft.
+          if found=$(gh release view "$TAG" --repo "$GITHUB_REPOSITORY" 2>&1); then
+            echo "::error::A release for $TAG already exists."
+            exit 1
+          elif [[ "$found" != *"release not found"* ]]; then
+            echo "::error::Could not check for a release for $TAG: $found"
+            exit 1
+          fi
+
+      - name: Build the release files
+        run: nix build --print-build-logs --out-link "$RUNNER_TEMP/release" .#release
+
+      - uses: actions/attest@1e69f48acb82d1966a394da916b4c1698aa569d6 # v4.2.2
+        with:
+          subject-path: ${{ runner.temp }}/release/*
+
+      - name: Create the draft release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ inputs.tag }}
+        run: |
+          gh release create "$TAG" --repo "$GITHUB_REPOSITORY" --draft --prerelease="${PRERELEASE:-false}" \
+            --target "$GITHUB_SHA" --title "$TAG" \
+            --notes "Unsigned draft: add SHA256SUMS.sig before publishing (docs/INSTALLER.md#release-assets)." \
+            "$RUNNER_TEMP"/release/*

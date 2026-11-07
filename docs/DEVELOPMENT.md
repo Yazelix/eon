@@ -198,7 +198,9 @@ so Nix rebuilds Orbit and Venus after edits under `eon/` or `runtime/` too.
 `nix build .#manual-bundle` assembles the unpublished Linux direct candidate
 from the relinked tree described below. Its [manual delivery
 contract](MANUAL-BUNDLE.md) records verification, host prerequisites, native
-proof and publication limits.
+proof and publication limits. `nix build .#release` (`nix/release.nix`) adds
+the static installer and one `SHA256SUMS` over both: the files the
+[release workflow](INSTALLER.md#release-assets) attests and attaches.
 `nix/linux-bundle.nix` owns archive assembly: the tree, an `eon` entrypoint
 linked to the tree's launcher, and the receipts. `provenance.json` names the
 glibc floor, the excluded store paths and the substitutes, and

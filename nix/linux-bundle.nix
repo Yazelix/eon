@@ -32,6 +32,4 @@ pkgs.runCommand "${name}-bundle" {
   cp ${../LICENSE} ${name}/licenses/eon
   tar --sort=name --mtime=@1 --owner=0 --group=0 --numeric-owner \
     -cf - ${name} | zstd -T2 -10 -o "$out/${name}.tar.zst"
-  cd "$out"
-  sha256sum ${name}.tar.zst > SHA256SUMS
 ''
