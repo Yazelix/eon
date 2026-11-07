@@ -1,0 +1,23 @@
+--- a/src/lib.rs
++++ b/src/lib.rs
+@@ -326,13 +326,14 @@
+ 
+ impl AddFilesByExt for cc::Build {
+     fn add_files_by_ext(&mut self, dir: &Path, ext: &str) -> Result<&mut Self, Box<dyn Error>> {
+-        for entry in fs::read_dir(dir)
++        let mut paths: Vec<_> = fs::read_dir(dir)
+             .context(|| format!("Cannot read '{}'", dir.display()))?
+             .filter_map(|e| e.ok())
+-            .filter(|e| e.path().extension() == Some(ext.as_ref()))
+-        {
+-            self.file(entry.path());
+-        }
+-        Ok(self)
++            .map(|e| e.path())
++            .filter(|path| path.extension() == Some(ext.as_ref()))
++            .collect();
++        // Directory order varies by filesystem; sorted input keeps the link order reproducible.
++        paths.sort();
++        Ok(self.files(paths))
+     }
+ }

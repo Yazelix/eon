@@ -326,6 +326,12 @@
                 test ''${#realPty[@]} = 1
                 install -Dm755 "''${workers[0]}" "$out/libexec/yazelix-orbit/yazelix-orbit-worker"
                 install -Dm755 "''${realPty[0]}" "$tests/libexec/real-pty"
+                ${lib.optionalString pkgs.stdenv.hostPlatform.isLinux ''
+                  # Zig numbers libghostty's anonymous data symbols by compiler thread, so
+                  # their names differed between hosts; dropping them keeps the release
+                  # archive reproducible and every other symbol name for backtraces.
+                  objcopy --wildcard --strip-symbol='__anon_*' "$out/bin/yazelix-orbit"
+                ''}
                 mkdir -p "$out/share/terminfo"
                 ${
                   if pkgs.stdenv.hostPlatform.isDarwin then
@@ -439,6 +445,13 @@
             assert yazi.rev == yaziIdentity.revision;
             assert pkgs.yazi-unwrapped.version == yaziIdentity.version;
             pkgs.yazi-unwrapped.overrideAttrs (old: {
+              # The vendored lua-src hands Lua's C files to cc in directory order, which
+              # differs between filesystems, so yazi's link order did between hosts.
+              postPatch = (old.postPatch or "") + ''
+                luaSrc=("$cargoDepsCopy"/*/lua-src-*)
+                test ''${#luaSrc[@]} = 1
+                patch -d "''${luaSrc[0]}" -p1 < ${./nix/lua-src-sorted-sources.patch}
+              '';
               passthru = old.passthru // {
                 srcs = old.passthru.srcs // {
                   code_src = yazi // {
