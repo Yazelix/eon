@@ -2151,6 +2151,13 @@ impl PairWindow {
             root,
         };
         configure_mock_desktop(&window.config);
+        // No quota chips, so no quota read lands between two snapshots.
+        fs::OpenOptions::new()
+            .append(true)
+            .open(window.config.join("config.toml"))
+            .unwrap()
+            .write_all(b"\n[bar]\nwidgets = []\n")
+            .unwrap();
         let session_bin = window.root.join("session-bin");
         for directory in [&window.launch, &window.home, &window.xdg, &session_bin] {
             fs::create_dir(directory).unwrap();
