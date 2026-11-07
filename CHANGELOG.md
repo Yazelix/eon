@@ -5,6 +5,11 @@ installation, and proven contract changes.
 
 ## Unreleased
 
+- The CPU chip's hover and accessible description include the CPU name,
+  Linux CPU temperature, busiest logical CPU and 1-minute load average.
+  Supported Linux CPU sensors also colour the chip orange from 85 °C and
+  red from 95 °C, configurable with `[bar] cpu_temperature_warning_celsius`
+  and `cpu_temperature_critical_celsius` (`eon-cpu-tooltip-detail-6mnd1`).
 - The RAM chip's hover shows how much memory is in use next to the total, as
   `RAM` then `18.4 GiB used of 31.1 GiB`, and its accessible description says
   `RAM use 59%, 18.4 GiB of 31.1 GiB` (`eon-ram-tooltip-used-u532r`).

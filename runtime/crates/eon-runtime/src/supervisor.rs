@@ -495,7 +495,11 @@ fn venus_command(
                 .arg("--cpu-warning-percent")
                 .arg(load.cpu_warning_percent.to_string())
                 .arg("--cpu-average-seconds")
-                .arg(load.cpu_average_seconds.to_string());
+                .arg(load.cpu_average_seconds.to_string())
+                .arg("--cpu-temperature-warning-celsius")
+                .arg(load.cpu_temperature_warning_celsius.to_string())
+                .arg("--cpu-temperature-critical-celsius")
+                .arg(load.cpu_temperature_critical_celsius.to_string());
         }
         if shown("disk") {
             command
@@ -5441,6 +5445,8 @@ mod tests {
                 "--ram-critical-percent",
                 "--cpu-warning-percent",
                 "--cpu-average-seconds",
+                "--cpu-temperature-warning-celsius",
+                "--cpu-temperature-critical-celsius",
                 "--disk-warning-percent",
                 "--disk-critical-percent",
                 "--disk-path",
@@ -5457,7 +5463,7 @@ mod tests {
         fs::write(root.join("config.toml"), "").unwrap();
         assert_eq!(
             levels(&inputs, LaunchMode::Workspace),
-            ["80", "90", "90", "30", "85", "95", home]
+            ["80", "90", "90", "30", "85", "95", "85", "95", home]
         );
         fs::write(
             root.join("config.toml"),
@@ -5466,16 +5472,16 @@ mod tests {
         .unwrap();
         assert_eq!(
             levels(&inputs, LaunchMode::Workspace),
-            ["1", "1", "", "", "", "", ""]
+            ["1", "1", "", "", "", "", "", "", ""]
         );
         fs::write(
             root.join("config.toml"),
-            "[bar]\nwidgets = ['cpu']\ncpu_warning_percent = 100\ncpu_average_seconds = 600\n",
+            "[bar]\nwidgets = ['cpu']\ncpu_warning_percent = 100\ncpu_average_seconds = 600\ncpu_temperature_warning_celsius = 30\ncpu_temperature_critical_celsius = 120\n",
         )
         .unwrap();
         assert_eq!(
             levels(&inputs, LaunchMode::Workspace),
-            ["", "", "100", "600", "", "", ""]
+            ["", "", "100", "600", "30", "120", "", "", ""]
         );
         for (path, measured) in [
             ("~/work/eon", format!("{home}/work/eon")),
@@ -5491,13 +5497,13 @@ mod tests {
             .unwrap();
             assert_eq!(
                 levels(&inputs, LaunchMode::Workspace),
-                ["", "", "", "", "1", "100", &measured],
+                ["", "", "", "", "", "", "1", "100", &measured],
                 "{path}"
             );
         }
         assert_eq!(
             levels(&inputs, LaunchMode::Terminal),
-            ["", "", "", "", "", "", ""]
+            ["", "", "", "", "", "", "", "", ""]
         );
         inputs.defaults.bar_widgets = &["ram", "clock"];
         fs::write(root.join("config.toml"), "[bar]\nunknown = true\n").unwrap();
@@ -6051,6 +6057,10 @@ rows = 30
                 "90",
                 "--cpu-average-seconds",
                 "30",
+                "--cpu-temperature-warning-celsius",
+                "85",
+                "--cpu-temperature-critical-celsius",
+                "95",
                 "--bar-items",
                 "cpu",
                 "--pane-frames",

@@ -1676,11 +1676,11 @@ mod tests {
     #[test]
     fn readings_yield_disk_first_and_have_no_actions() {
         let cpu = crate::CpuUse::between(
-            crate::CpuTimes::parse(
+            &crate::CpuTimes::parse(
                 "cpu 0 0 0 0 0 0 0 0\ncpu0 0 0 0 0 0 0 0 0\ncpu1 0 0 0 0 0 0 0 0",
             )
             .unwrap(),
-            crate::CpuTimes::parse(
+            &crate::CpuTimes::parse(
                 "cpu 12 0 0 88 0 0 0 0\ncpu0 6 0 0 44 0 0 0 0\ncpu1 6 0 0 44 0 0 0 0",
             )
             .unwrap(),
@@ -1871,11 +1871,11 @@ mod tests {
     #[test]
     fn eon_orders_and_omits_bar_items() {
         let cpu = crate::CpuUse::between(
-            crate::CpuTimes::parse(
+            &crate::CpuTimes::parse(
                 "cpu 0 0 0 0 0 0 0 0\ncpu0 0 0 0 0 0 0 0 0\ncpu1 0 0 0 0 0 0 0 0",
             )
             .unwrap(),
-            crate::CpuTimes::parse(
+            &crate::CpuTimes::parse(
                 "cpu 12 0 0 88 0 0 0 0\ncpu0 6 0 0 44 0 0 0 0\ncpu1 6 0 0 44 0 0 0 0",
             )
             .unwrap(),

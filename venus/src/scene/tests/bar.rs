@@ -1438,7 +1438,7 @@ fn cpu_and_ram_chips_colour_under_load_and_say_so() {
     // Hover lists the average and the load on their own lines, without the use the chip shows.
     assert_eq!(
         busy.tooltip,
-        "CPU \u{b7} 1 logical CPU\n16% on average over the last 30 s\nUnder high load"
+        "CPU\n1 logical CPU\n16% on average over the last 30 s\nUnder high load"
     );
     // The level is inclusive and follows the shown use, whatever the average.
     let mut readings = CpuReadings::default();
@@ -1465,7 +1465,7 @@ fn cpu_and_ram_chips_colour_under_load_and_say_so() {
     );
     assert_eq!(
         shown.tooltip,
-        "CPU \u{b7} 1 logical CPU\n95% on average over the last 30 s"
+        "CPU\n1 logical CPU\n95% on average over the last 30 s"
     );
     // The average shows only once the readings span the window.
     let mut readings = CpuReadings::default();
@@ -1478,7 +1478,7 @@ fn cpu_and_ram_chips_colour_under_load_and_say_so() {
     );
     assert_eq!(
         shown[14].as_ref().unwrap().tooltip,
-        "CPU \u{b7} 1 logical CPU\nUnder high load"
+        "CPU\n1 logical CPU\nUnder high load"
     );
     assert!(
         shown[15]

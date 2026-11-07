@@ -92,10 +92,22 @@ order, selection, and popups; Venus draws the visible scene.
   ` 100%`, six cells, with its text centred, so neighbouring items never shift.
   Accessibility says, for example, `CPU use 12% across 16 logical CPUs, over
   the last 2 seconds` and `RAM use 43%, 13.5 GiB of 31.3 GiB`; hover lists
-  `CPU · 16 logical CPUs`, and `RAM` then `13.5 GiB used of 31.3 GiB`, the
+  `CPU` then `16 logical CPUs`, and `RAM` then `13.5 GiB used of 31.3 GiB`, the
   same use the percentage comes from. A reading that cannot be taken
   shows no label, never 0%, until the next valid one. Other platforms show
-  neither label.
+  neither label. CPU hover's title appends the CPU name when available, as
+  `CPU · 13th Gen Intel Core i5-13450HX`, with `(R)`, `(TM)` and `(C)` marks
+  removed and spaces collapsed. The name is read once: Linux's `/proc/cpuinfo`
+  `model name`, macOS's `machdep.cpu.brand_string`. The logical-CPU count line
+  adds ` · 59 °C` when Linux hwmon exposes coretemp's `Package id 0` or
+  k10temp's `Tctl` (or `Tdie` without Tctl); ACPI and board sensors are not CPU
+  readings. macOS has no temperature reading. After the average, hover lists
+  the busiest logical CPU over the same 2-second interval, `CPU 3 at 97%`,
+  numbered from zero, then `Load 1.2 over 1 min`, from Linux's `/proc/loadavg`
+  or macOS's `getloadavg`. A changed online CPU set or invalid per-CPU delta
+  omits the busiest line; an unavailable detail omits only that detail.
+  Accessibility appends the same name, temperature, busiest CPU and load,
+  separated by semicolons.
 - The disk chip shows, as its icon and a percentage, the used share of the
   filesystem holding the path Eon's `[bar] disk_path` names, by default the
   home directory, as GNU df computes it from `statvfs` on Linux and macOS: used
@@ -114,7 +126,10 @@ order, selection, and popups; Venus draws the visible scene.
 - CPU, RAM and disk chips colour only under load, and a healthy machine looks
   quiet: by default RAM is orange from 80% use and red from 90%, disk orange
   from 85% and red from 95%, and CPU orange while the 2-second use it shows is
-  90% or more, so bursts show. Accessibility says why in words, such
+  90% or more, so bursts show. A supported Linux CPU temperature also colours
+  the whole CPU chip orange from 85 °C and red from 95 °C, using the stronger
+  temperature or utilization severity. Hover adds `Running hot` and
+  accessibility appends `; running hot` at either thermal level. Accessibility says why in words, such
   as `RAM use 91%, 28.5 GiB of 31.3 GiB: under heavy pressure`,
   `Disk use 87% of 929.4 GiB on /, 120.8 GiB free: filling up` (`: nearly full`
   when red) or

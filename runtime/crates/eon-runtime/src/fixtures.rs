@@ -31,6 +31,8 @@ pub(crate) fn inputs() -> Inputs {
                 ram_critical_percent: 90,
                 cpu_warning_percent: 90,
                 cpu_average_seconds: 30,
+                cpu_temperature_warning_celsius: 85,
+                cpu_temperature_critical_celsius: 95,
                 disk_warning_percent: 85,
                 disk_critical_percent: 95,
             },

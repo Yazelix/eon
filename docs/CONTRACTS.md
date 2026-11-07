@@ -3838,6 +3838,9 @@ names its socket. CLI JSON names a session `session` and a terminal
   by `eon-30skm` (S2): `eon session --json`.
   Amended on 2026-11-07 (approved by eon-overseer under Lucca's standing rule)
   by `eon-30skm` (S3): its prose says session for the product concept.
+  Amended on 2026-11-07 (pre-approved by Lucca in
+  `eon-cpu-tooltip-detail-6mnd1`): the CPU temperature threshold keys; installed
+  proof of this amendment is pending.
 - **Consumer:** Full-Eon session users.
 - **Trigger:** A full-Eon window opens or reopens.
 - **Result:** `[bar] widgets` is an ordered list of unique names from
@@ -3867,7 +3870,12 @@ names its socket. CLI JSON names a session `session` and a terminal
   and 90); `cpu_warning_percent` sets the CPU use the label shows, over the last
   2 seconds, from which the CPU label turns orange (default 90), and
   `cpu_average_seconds` the window of the average CPU use that its hover and
-  accessibility text also give (default 30). `disk_path` (default `~`) names
+  accessibility text also give (default 30). `cpu_temperature_warning_celsius` and
+  `cpu_temperature_critical_celsius` set the CPU temperature from which the CPU
+  label turns orange and red (defaults 85 and 95 °C). Both are whole degrees
+  Celsius from 30 through 120, and the critical level is not below the warning
+  level. Temperature is available only on Linux with a supported CPU sensor;
+  unavailable temperature does not colour the label. `disk_path` (default `~`) names
   the path whose filesystem `disk` measures: `~` or a path starting with `~/`
   under HOME, or an absolute path.
   `disk_warning_percent` and `disk_critical_percent` set the disk use from which

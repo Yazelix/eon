@@ -4,7 +4,8 @@
 
 use std::collections::VecDeque;
 use std::os::unix::fs::MetadataExt;
-use std::path::Path;
+use std::path::{Path, PathBuf};
+use std::sync::{Mutex, OnceLock};
 use std::time::{Duration, Instant};
 
 /// The Symbols Nerd Font icons that lead the CPU, RAM and disk labels: `nf-oct-cpu`,
@@ -43,6 +44,8 @@ pub struct LoadLevels {
     pub ram_critical_percent: u8,
     pub cpu_warning_percent: u8,
     pub cpu_average: Duration,
+    pub cpu_temperature_warning_celsius: u8,
+    pub cpu_temperature_critical_celsius: u8,
     pub disk_warning_percent: u8,
     pub disk_critical_percent: u8,
 }
@@ -54,6 +57,8 @@ impl Default for LoadLevels {
             ram_critical_percent: 90,
             cpu_warning_percent: 90,
             cpu_average: Duration::from_secs(30),
+            cpu_temperature_warning_celsius: 85,
+            cpu_temperature_critical_celsius: 95,
             disk_warning_percent: 85,
             disk_critical_percent: 95,
         }
@@ -66,11 +71,15 @@ fn percent(part: u64, whole: u64) -> u64 {
 }
 
 /// Cumulative whole-machine CPU time since boot, in kernel ticks, and the logical CPUs online.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub struct CpuTimes {
     busy: u64,
     total: u64,
     cpus: usize,
+    per_cpu: Option<Vec<(usize, [u64; 8])>>,
+    name: Option<&'static str>,
+    temperature: Option<u64>,
+    load_average: Option<String>,
 }
 
 impl CpuTimes {
@@ -78,11 +87,67 @@ impl CpuTimes {
     /// reading.
     #[must_use]
     pub fn read() -> Option<Self> {
-        if cfg!(target_os = "linux") {
-            return Self::parse(&std::fs::read_to_string("/proc/stat").ok()?);
-        }
-        let (ticks, cpus) = host::cpu_load()?;
-        Some(Self::from_host_ticks(ticks, cpus))
+        static NAME: OnceLock<Option<String>> = OnceLock::new();
+        static TEMPERATURE_INPUT: Mutex<Option<TemperatureInput>> = Mutex::new(None);
+        let mut times = if cfg!(target_os = "linux") {
+            Self::parse(&std::fs::read_to_string("/proc/stat").ok()?)?
+        } else {
+            let (ticks, cpus) = host::cpu_load()?;
+            let mut times = Self::from_host_ticks(ticks, cpus);
+            times.per_cpu = host::per_cpu_load().map(|per_cpu| {
+                per_cpu
+                    .into_iter()
+                    .enumerate()
+                    .map(|(id, [user, system, idle, nice])| {
+                        (
+                            id,
+                            [
+                                u64::from(user),
+                                u64::from(nice),
+                                u64::from(system),
+                                u64::from(idle),
+                                0,
+                                0,
+                                0,
+                                0,
+                            ],
+                        )
+                    })
+                    .collect()
+            });
+            times
+        };
+        times.name = NAME
+            .get_or_init(|| {
+                if cfg!(target_os = "linux") {
+                    let info = std::fs::read_to_string("/proc/cpuinfo").ok()?;
+                    info.lines()
+                        .filter_map(|line| line.split_once(':'))
+                        .find_map(|(key, value)| {
+                            (key.trim() == "model name")
+                                .then(|| clean_cpu_name(value))
+                                .flatten()
+                        })
+                } else {
+                    host::cpu_name().and_then(|name| clean_cpu_name(&name))
+                }
+            })
+            .as_deref();
+        times.temperature = cfg!(target_os = "linux")
+            .then(|| {
+                TEMPERATURE_INPUT.lock().ok().and_then(|mut input| {
+                    cpu_temperature(Path::new("/sys/class/hwmon"), &mut input)
+                })
+            })
+            .flatten();
+        times.load_average = if cfg!(target_os = "linux") {
+            std::fs::read_to_string("/proc/loadavg")
+                .ok()
+                .and_then(|load| parse_load(&load))
+        } else {
+            host::load_average().and_then(format_load)
+        };
+        Some(times)
     }
 
     /// Takes Mach's whole-machine `HOST_CPU_LOAD_INFO` ticks, in its order user, system, idle,
@@ -94,6 +159,10 @@ impl CpuTimes {
             busy,
             total: busy + u64::from(idle),
             cpus,
+            per_cpu: None,
+            name: None,
+            temperature: None,
+            load_average: None,
         }
     }
 
@@ -107,28 +176,194 @@ impl CpuTimes {
         if fields.next()? != "cpu" {
             return None;
         }
-        let mut ticks = [0_u64; 8];
-        for tick in &mut ticks {
-            *tick = fields.next()?.parse().ok()?;
-        }
-        let total = ticks
-            .iter()
-            .try_fold(0_u64, |sum, tick| sum.checked_add(*tick))?;
-        let cpus = lines
+        let (busy, total) = cpu_totals(&linux_ticks(fields)?)?;
+        let lines: Vec<_> = lines
             .take_while(|line| {
                 line.strip_prefix("cpu")
                     .is_some_and(|rest| rest.starts_with(|c: char| c.is_ascii_digit()))
             })
-            .count();
+            .collect();
+        let cpus = lines.len();
         if cpus == 0 {
             return None;
         }
+        let per_cpu = lines
+            .into_iter()
+            .map(|line| {
+                let mut fields = line.split_ascii_whitespace();
+                let id = fields.next()?.strip_prefix("cpu")?.parse().ok()?;
+                let ticks = linux_ticks(fields)?;
+                cpu_totals(&ticks)?;
+                Some((id, ticks))
+            })
+            .collect::<Option<Vec<_>>>()
+            .filter(|cpus| cpus.windows(2).all(|pair| pair[0].0 < pair[1].0));
         Some(Self {
-            busy: total - ticks[3] - ticks[4],
+            busy,
             total,
             cpus,
+            per_cpu,
+            name: None,
+            temperature: None,
+            load_average: None,
         })
     }
+
+    fn busiest(&self, later: &Self) -> Option<(usize, u64)> {
+        let (before, after) = (self.per_cpu.as_ref()?, later.per_cpu.as_ref()?);
+        if before.len() != after.len() {
+            return None;
+        }
+        let mut busiest = None;
+        for (&(id, earlier), &(next_id, later)) in before.iter().zip(after) {
+            if id != next_id {
+                return None;
+            }
+            let mut deltas = [0; 8];
+            // A field can go backwards even while its busy/total sums advance (e.g. iowait).
+            for (delta, (before, after)) in deltas.iter_mut().zip(earlier.iter().zip(later)) {
+                *delta = after.checked_sub(*before)?;
+            }
+            let (busy, total) = cpu_totals(&deltas)?;
+            if total == 0 || busy > total {
+                return None;
+            }
+            if busiest.is_none_or(|(_, highest_busy, highest_total)| {
+                u128::from(busy) * u128::from(highest_total)
+                    > u128::from(highest_busy) * u128::from(total)
+            }) {
+                busiest = Some((id, busy, total));
+            }
+        }
+        busiest.map(|(id, busy, total)| (id, percent(busy, total)))
+    }
+}
+
+fn linux_ticks(mut fields: std::str::SplitAsciiWhitespace<'_>) -> Option<[u64; 8]> {
+    let mut ticks = [0_u64; 8];
+    for tick in &mut ticks {
+        *tick = fields.next()?.parse().ok()?;
+    }
+    Some(ticks)
+}
+
+fn cpu_totals(ticks: &[u64; 8]) -> Option<(u64, u64)> {
+    let total = ticks
+        .iter()
+        .try_fold(0_u64, |sum, tick| sum.checked_add(*tick))?;
+    Some((total - ticks[3] - ticks[4], total))
+}
+
+fn clean_cpu_name(name: &str) -> Option<String> {
+    let name = name
+        .replace("(R)", "")
+        .replace("(TM)", "")
+        .replace("(C)", "")
+        .split_whitespace()
+        .collect::<Vec<_>>()
+        .join(" ");
+    (!name.is_empty()).then_some(name)
+}
+
+fn parse_load(load: &str) -> Option<String> {
+    format_load(load.split_ascii_whitespace().next()?.parse().ok()?)
+}
+
+fn format_load(load: f64) -> Option<String> {
+    (load.is_finite() && load >= 0.0).then(|| format!("{load:.1}"))
+}
+
+struct TemperatureInput {
+    path: PathBuf,
+    driver: &'static str,
+    label: &'static str,
+}
+
+impl TemperatureInput {
+    fn read(&self) -> Option<u64> {
+        let name = std::fs::read_to_string(self.path.parent()?.join("name")).ok()?;
+        let stem = self.path.file_name()?.to_str()?.strip_suffix("_input")?;
+        let label =
+            std::fs::read_to_string(self.path.with_file_name(format!("{stem}_label"))).ok()?;
+        if name.trim() != self.driver || label.trim() != self.label {
+            return None;
+        }
+        read_temperature(&self.path)
+    }
+}
+
+/// Only CPU package sensors: ACPI/board zones do not measure this CPU.
+fn cpu_temperature(root: &Path, cached: &mut Option<TemperatureInput>) -> Option<u64> {
+    if let Some(temperature) = cached.as_ref().and_then(TemperatureInput::read) {
+        return Some(temperature);
+    }
+    *cached = None;
+    let mut devices = std::fs::read_dir(root)
+        .ok()?
+        .filter_map(Result::ok)
+        .map(|entry| entry.path())
+        .collect::<Vec<_>>();
+    devices.sort();
+    for device in devices {
+        let Ok(name) = std::fs::read_to_string(device.join("name")) else {
+            continue;
+        };
+        let (driver, labels): (&str, &[&str]) = match name.trim() {
+            "coretemp" => ("coretemp", &["Package id 0"]),
+            "k10temp" => ("k10temp", &["Tctl", "Tdie"]),
+            _ => continue,
+        };
+        let Ok(entries) = std::fs::read_dir(&device) else {
+            continue;
+        };
+        let mut paths = entries
+            .filter_map(Result::ok)
+            .map(|entry| entry.path())
+            .collect::<Vec<_>>();
+        paths.sort();
+        for wanted in labels {
+            for path in &paths {
+                let Some(stem) = path
+                    .file_name()
+                    .and_then(|name| name.to_str())
+                    .and_then(|name| name.strip_suffix("_label"))
+                else {
+                    continue;
+                };
+                if !stem
+                    .strip_prefix("temp")
+                    .is_some_and(|id| !id.is_empty() && id.bytes().all(|b| b.is_ascii_digit()))
+                {
+                    continue;
+                }
+                if std::fs::read_to_string(path)
+                    .ok()
+                    .is_none_or(|label| label.trim() != *wanted)
+                {
+                    continue;
+                }
+                let input = device.join(format!("{stem}_input"));
+                if let Some(temperature) = read_temperature(&input) {
+                    *cached = Some(TemperatureInput {
+                        path: input,
+                        driver,
+                        label: wanted,
+                    });
+                    return Some(temperature);
+                }
+            }
+        }
+    }
+    None
+}
+
+fn read_temperature(path: &Path) -> Option<u64> {
+    let millidegrees = std::fs::read_to_string(path)
+        .ok()?
+        .trim()
+        .parse::<u64>()
+        .ok()?;
+    (millidegrees <= 150_000).then(|| (millidegrees + 500) / 1000)
 }
 
 /// CPU use between two readings, as shown in the workspace header.
@@ -147,7 +382,7 @@ impl CpuUse {
     /// Whole-percent use between two readings. Counters that did not advance or went backwards
     /// give no value rather than a false 0% or 100%.
     #[must_use]
-    pub(crate) fn between(earlier: CpuTimes, later: CpuTimes) -> Option<Self> {
+    pub(crate) fn between(earlier: &CpuTimes, later: &CpuTimes) -> Option<Self> {
         let total = later.total.checked_sub(earlier.total)?;
         let busy = later.busy.checked_sub(earlier.busy)?;
         if total == 0 || busy > total {
@@ -159,9 +394,21 @@ impl CpuUse {
         Some(Self {
             percent,
             label: format!("{CPU_ICON} {percent}%"),
-            tooltip: format!("CPU \u{b7} {cpus} logical CPU{plural}"),
+            tooltip: format!(
+                "CPU{}\n{cpus} logical CPU{plural}{}",
+                later
+                    .name
+                    .map_or(String::new(), |name| format!(" · {name}")),
+                later
+                    .temperature
+                    .map_or(String::new(), |temperature| format!(" · {temperature} °C"))
+            ),
             description: format!(
-                "CPU use {percent}% across {cpus} logical CPU{plural}, over the last 2 seconds"
+                "CPU use {percent}% across {cpus} logical CPU{plural}, over the last 2 seconds{}{}",
+                later.name.map_or(String::new(), |name| format!("; {name}")),
+                later
+                    .temperature
+                    .map_or(String::new(), |temperature| format!("; {temperature} °C"))
             ),
             load: Load::Normal,
         })
@@ -193,12 +440,21 @@ impl CpuReadings {
             .readings
             .back()
             .filter(|(taken, _)| now.duration_since(*taken) < gap)
-            .zip(times)
-            .and_then(|((_, earlier), later)| CpuUse::between(*earlier, later));
+            .zip(times.as_ref())
+            .and_then(|((_, earlier), later)| CpuUse::between(earlier, later));
         if shown.is_none() {
             self.readings.clear();
         }
         let times = times?;
+        let busiest = self
+            .readings
+            .back()
+            .and_then(|(_, earlier)| earlier.busiest(&times));
+        if let Some((_, earlier)) = self.readings.back_mut() {
+            earlier.per_cpu = None;
+        }
+        let temperature = times.temperature;
+        let load_average = times.load_average.clone();
         self.readings.push_back((now, times));
         let window = levels.cpu_average;
         while self
@@ -223,8 +479,34 @@ impl CpuReadings {
                 "\n{average}% on average over the last {seconds} s"
             ));
         }
+        if let Some((cpu, percent)) = busiest {
+            shown
+                .tooltip
+                .push_str(&format!("\nCPU {cpu} at {percent}%"));
+            shown
+                .description
+                .push_str(&format!("; CPU {cpu} at {percent}%"));
+        }
+        if let Some(load) = load_average {
+            shown.tooltip.push_str(&format!("\nLoad {load} over 1 min"));
+            shown
+                .description
+                .push_str(&format!("; Load {load} over 1 min"));
+        }
         if high {
             shown.tooltip.push_str("\nUnder high load");
+        }
+        if let Some(temperature) = temperature {
+            let thermal = Load::of(
+                temperature,
+                levels.cpu_temperature_warning_celsius,
+                levels.cpu_temperature_critical_celsius,
+            );
+            if thermal != Load::Normal {
+                shown.load = thermal;
+                shown.tooltip.push_str("\nRunning hot");
+                shown.description.push_str("; running hot");
+            }
         }
         Some(shown)
     }
@@ -232,11 +514,11 @@ impl CpuReadings {
     /// Whole-percent use over exactly the last `window`, once the readings span it. Only the share
     /// of the oldest interval inside the window counts, taking use as even within it.
     fn average(&self, now: Instant, window: Duration) -> Option<u64> {
-        let (&(first, earliest), &(next, after)) = (self.readings.front()?, self.readings.get(1)?);
-        let latest = self.readings.back()?.1;
+        let ((first, earliest), (next, after)) = (self.readings.front()?, self.readings.get(1)?);
+        let latest = &self.readings.back()?.1;
         // Pruning keeps `next` younger than the window, so the share is in [0, 1).
-        let outside = (now.duration_since(first).checked_sub(window)?).as_secs_f64()
-            / next.duration_since(first).as_secs_f64();
+        let outside = (now.duration_since(*first).checked_sub(window)?).as_secs_f64()
+            / next.duration_since(*first).as_secs_f64();
         let at_start =
             |from: u64, to: u64| from as f64 + (to.saturating_sub(from)) as f64 * outside;
         let busy = latest.busy as f64 - at_start(earliest.busy, after.busy);
@@ -497,6 +779,92 @@ mod host {
         Some((info.cpu_ticks, cpus))
     }
 
+    pub(super) fn cpu_name() -> Option<String> {
+        let mut name = [0_u8; 256];
+        let mut len = name.len();
+        // SAFETY: name is NUL-terminated, output has len writable bytes, and no value is set.
+        let status = unsafe {
+            libc::sysctlbyname(
+                c"machdep.cpu.brand_string".as_ptr(),
+                name.as_mut_ptr().cast(),
+                &raw mut len,
+                std::ptr::null_mut(),
+                0,
+            )
+        };
+        if status != 0 || len == 0 || len > name.len() {
+            return None;
+        }
+        let bytes = &name[..len];
+        let end = bytes
+            .iter()
+            .position(|byte| *byte == 0)
+            .unwrap_or(bytes.len());
+        std::str::from_utf8(&bytes[..end]).ok().map(str::to_owned)
+    }
+
+    pub(super) fn load_average() -> Option<f64> {
+        let mut load = 0.0;
+        // SAFETY: load is writable for the one requested double.
+        (unsafe { libc::getloadavg(&raw mut load, 1) } == 1).then_some(load)
+    }
+
+    #[allow(deprecated)]
+    pub(super) fn per_cpu_load() -> Option<Vec<[u32; 4]>> {
+        let mut cpus = 0;
+        let mut info = std::ptr::null_mut();
+        let mut count = 0;
+        // SAFETY: all output pointers are writable; Mach allocates the returned count integers.
+        let status = unsafe {
+            libc::host_processor_info(
+                port(),
+                libc::PROCESSOR_CPU_LOAD_INFO,
+                &raw mut cpus,
+                &raw mut info,
+                &raw mut count,
+            )
+        };
+        if status != libc::KERN_SUCCESS {
+            return None;
+        }
+        // The supported Darwin target is 64-bit; count and cpus are 32-bit.
+        let bytes = count as usize * size_of::<libc::integer_t>();
+        let valid = !info.is_null() && cpus > 0 && cpus as usize * 4 == count as usize;
+        let result = if valid {
+            // SAFETY: the successful call returned count integers, checked as four per CPU.
+            let ticks = unsafe { std::slice::from_raw_parts(info, count as usize) };
+            Some(
+                ticks
+                    .chunks_exact(4)
+                    .map(|ticks| {
+                        [
+                            ticks[0] as u32,
+                            ticks[1] as u32,
+                            ticks[2] as u32,
+                            ticks[3] as u32,
+                        ]
+                    })
+                    .collect(),
+            )
+        } else {
+            None
+        };
+        if !info.is_null() {
+            // SAFETY: return this Mach allocation, in bytes, to the task that received it.
+            let released = unsafe {
+                libc::vm_deallocate(
+                    libc::mach_task_self(),
+                    info as libc::vm_address_t,
+                    bytes as libc::vm_size_t,
+                )
+            };
+            if released != libc::KERN_SUCCESS {
+                return None;
+            }
+        }
+        result
+    }
+
     /// Internal, purgeable, wired and compressed page counts, the page size in bytes and the
     /// physical memory in bytes.
     pub(super) fn memory() -> Option<([u64; 4], u64, u64)> {
@@ -553,6 +921,16 @@ mod host {
         None
     }
 
+    pub(super) fn cpu_name() -> Option<String> {
+        None
+    }
+    pub(super) fn load_average() -> Option<f64> {
+        None
+    }
+    pub(super) fn per_cpu_load() -> Option<Vec<[u32; 4]>> {
+        None
+    }
+
     pub(super) fn memory() -> Option<([u64; 4], u64, u64)> {
         None
     }
@@ -561,6 +939,216 @@ mod host {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn cpu_detail_parsers_reject_bad_readings() {
+        assert_eq!(
+            clean_cpu_name("  13th Gen Intel(R) Core(TM)  i5 (C) "),
+            Some("13th Gen Intel Core i5".into())
+        );
+        assert_eq!(clean_cpu_name(" (R) (TM) (C) "), None);
+        assert_eq!(parse_load("1.24 2.5 3.6 1/500 123"), Some("1.2".into()));
+        for invalid in ["", "NaN", "inf", "-1.2", "no load"] {
+            assert_eq!(parse_load(invalid), None, "{invalid}");
+        }
+    }
+
+    #[test]
+    fn busiest_cpu_uses_matching_online_identities_and_valid_deltas() {
+        let before = CpuTimes::parse(
+            "cpu 100 0 0 100 0 0 0 0\ncpu0 50 0 0 50 0 0 0 0\ncpu3 50 0 0 50 0 0 0 0",
+        )
+        .unwrap();
+        let after = CpuTimes::parse(
+            "cpu 210 0 0 190 0 0 0 0\ncpu0 63 0 0 137 0 0 0 0\ncpu3 147 0 0 53 0 0 0 0",
+        )
+        .unwrap();
+        assert_eq!(before.busiest(&after), Some((3, 97)));
+        for stat in [
+            "cpu 210 0 0 190 0 0 0 0\ncpu3 147 0 0 53 0 0 0 0",
+            "cpu 210 0 0 190 0 0 0 0\ncpu1 63 0 0 137 0 0 0 0\ncpu3 147 0 0 53 0 0 0 0",
+            "cpu 210 0 0 190 0 0 0 0\ncpu0 49 0 0 137 0 0 0 0\ncpu3 147 0 0 53 0 0 0 0",
+            "cpu 210 0 0 190 0 0 0 0\ncpu0 broken\ncpu3 147 0 0 53 0 0 0 0",
+        ] {
+            assert_eq!(
+                before.busiest(&CpuTimes::parse(stat).unwrap()),
+                None,
+                "{stat}"
+            );
+        }
+        assert_eq!(before.busiest(&before), None);
+        let first =
+            CpuTimes::parse("cpu 0 0 0 0 0 0 0 0\ncpu0 0 0 0 0 0 0 0 0\ncpu1 0 0 0 0 0 0 0 0")
+                .unwrap();
+        let rounded_tie = CpuTimes::parse(
+            "cpu 1003 0 0 997 0 0 0 0\ncpu0 501 0 0 499 0 0 0 0\ncpu1 502 0 0 498 0 0 0 0",
+        )
+        .unwrap();
+        assert_eq!(first.busiest(&rounded_tie), Some((1, 50)));
+    }
+
+    #[test]
+    fn a_per_cpu_field_rollback_omits_busiest_cpu() {
+        let before = CpuTimes::parse(
+            "cpu 200 0 0 200 200 0 0 0\ncpu0 100 0 0 100 100 0 0 0\ncpu1 100 0 0 100 100 0 0 0",
+        )
+        .unwrap();
+        let after = CpuTimes::parse(
+            "cpu 310 0 0 300 150 0 0 0\ncpu0 150 0 0 160 50 0 0 0\ncpu1 160 0 0 140 100 0 0 0",
+        )
+        .unwrap();
+        // CPU 0's decreasing iowait would falsely beat CPU 1's real 60% use.
+        assert_eq!(before.busiest(&after), None);
+        let now = Instant::now();
+        let mut readings = CpuReadings::default();
+        let gap = Duration::from_secs(3);
+        let levels = LoadLevels::default();
+        readings.push(now, Some(before), gap, levels);
+        let shown = readings
+            .push(now + Duration::from_secs(2), Some(after), gap, levels)
+            .unwrap();
+        assert_eq!(shown.tooltip, "CPU\n2 logical CPUs");
+        assert!(!shown.description.contains("CPU 0 at"));
+        assert!(!shown.description.contains("CPU 1 at"));
+    }
+
+    #[test]
+    fn averaged_readings_keep_per_cpu_ticks_only_for_the_latest_interval() {
+        let now = Instant::now();
+        let mut readings = CpuReadings::default();
+        for step in 0..4 {
+            let times = CpuTimes::parse(&format!(
+                "cpu {step} 0 0 {step} 0 0 0 0\ncpu0 {step} 0 0 {step} 0 0 0 0"
+            ))
+            .unwrap();
+            let shown = readings.push(
+                now + Duration::from_secs(step * 2),
+                Some(times),
+                Duration::from_secs(3),
+                LoadLevels::default(),
+            );
+            if step > 0 {
+                assert!(shown.unwrap().tooltip.ends_with("CPU 0 at 50%"));
+            }
+        }
+        assert_eq!(readings.readings.len(), 4);
+        assert!(readings.readings.back().unwrap().1.per_cpu.is_some());
+        assert!(
+            readings
+                .readings
+                .iter()
+                .take(3)
+                .all(|(_, times)| times.per_cpu.is_none())
+        );
+    }
+
+    #[test]
+    fn cpu_details_follow_title_detail_layout_and_thermal_levels() {
+        let now = Instant::now();
+        let gap = Duration::from_secs(3);
+        let levels = LoadLevels {
+            cpu_average: Duration::from_secs(2),
+            ..LoadLevels::default()
+        };
+        let first = CpuTimes::parse("cpu 0 0 0 0 0 0 0 0\ncpu0 0 0 0 0 0 0 0 0").unwrap();
+        let mut later = CpuTimes::parse("cpu 5 0 0 95 0 0 0 0\ncpu0 5 0 0 95 0 0 0 0").unwrap();
+        later.name = Some("Example CPU");
+        later.load_average = Some("1.2".into());
+        for (temperature, load, hot) in [
+            (59, Load::Normal, false),
+            (84, Load::Normal, false),
+            (85, Load::High, true),
+            (94, Load::High, true),
+            (95, Load::Critical, true),
+        ] {
+            later.temperature = Some(temperature);
+            let mut readings = CpuReadings::default();
+            readings.push(now, Some(first.clone()), gap, levels);
+            let shown = readings
+                .push(
+                    now + Duration::from_secs(2),
+                    Some(later.clone()),
+                    gap,
+                    levels,
+                )
+                .unwrap();
+            assert_eq!(shown.load, load);
+            assert_eq!(
+                shown.tooltip,
+                format!(
+                    "CPU · Example CPU\n1 logical CPU · {temperature} °C\n5% on average over the last 2 s\nCPU 0 at 5%\nLoad 1.2 over 1 min{}",
+                    if hot { "\nRunning hot" } else { "" }
+                )
+            );
+            assert_eq!(
+                shown.description,
+                format!(
+                    "CPU use 5% across 1 logical CPU, over the last 2 seconds; Example CPU; {temperature} °C; 5% on average over the last 2 seconds; CPU 0 at 5%; Load 1.2 over 1 min{}",
+                    if hot { "; running hot" } else { "" }
+                )
+            );
+        }
+    }
+
+    #[test]
+    fn hwmon_selects_only_cpu_package_sensors() {
+        let root = std::env::temp_dir().join(format!("venus-hwmon-{}", std::process::id()));
+        std::fs::create_dir(&root).unwrap();
+        let sensor = |device: &str, name: &str, readings: &[(&str, &str, &str)]| {
+            let dir = root.join(device);
+            std::fs::create_dir(&dir).unwrap();
+            std::fs::write(dir.join("name"), name).unwrap();
+            for (id, label, value) in readings {
+                std::fs::write(dir.join(format!("temp{id}_label")), label).unwrap();
+                std::fs::write(dir.join(format!("temp{id}_input")), value).unwrap();
+            }
+        };
+        let mut cached = None;
+        sensor("hwmon0", "acpitz\n", &[("1", "Package id 0", "98000")]);
+        assert_eq!(cpu_temperature(&root, &mut cached), None);
+        sensor(
+            "hwmon1",
+            "coretemp\n",
+            &[("1", "Core 0", "80000"), ("2", "Package id 0", "59499")],
+        );
+        assert_eq!(cpu_temperature(&root, &mut cached), Some(59));
+        assert_eq!(
+            cached.as_ref().map(|input| &input.path),
+            Some(&root.join("hwmon1/temp2_input"))
+        );
+        std::fs::write(root.join("hwmon1/temp2_input"), "60500").unwrap();
+        assert_eq!(cpu_temperature(&root, &mut cached), Some(61));
+        // Linux can recycle hwmon IDs without an intervening failed input read.
+        std::fs::write(root.join("hwmon1/name"), "acpitz\n").unwrap();
+        assert_eq!(cpu_temperature(&root, &mut cached), None);
+        assert!(cached.is_none());
+        std::fs::write(root.join("hwmon1/name"), "coretemp\n").unwrap();
+        assert_eq!(cpu_temperature(&root, &mut cached), Some(61));
+        std::fs::write(root.join("hwmon1/temp2_label"), "Board\n").unwrap();
+        assert_eq!(cpu_temperature(&root, &mut cached), None);
+        assert!(cached.is_none());
+        std::fs::remove_dir_all(root.join("hwmon1")).unwrap();
+        sensor(
+            "hwmon2",
+            "k10temp\n",
+            &[("1", "Tdie", "60500"), ("2", "Tctl", "70500")],
+        );
+        assert_eq!(cpu_temperature(&root, &mut cached), Some(71));
+        assert_eq!(
+            cached.as_ref().map(|input| &input.path),
+            Some(&root.join("hwmon2/temp2_input"))
+        );
+        std::fs::remove_file(root.join("hwmon2/temp2_input")).unwrap();
+        assert_eq!(cpu_temperature(&root, &mut cached), Some(61));
+        assert_eq!(
+            cached.as_ref().map(|input| &input.path),
+            Some(&root.join("hwmon2/temp1_input"))
+        );
+        std::fs::write(root.join("hwmon2/temp1_input"), "broken").unwrap();
+        assert_eq!(cpu_temperature(&root, &mut cached), None);
+        assert!(cached.is_none());
+        std::fs::remove_dir_all(root).unwrap();
+    }
 
     /// A reading whose aggregate line is `line`, from a machine with `cpus` logical CPUs.
     fn times_on(cpus: usize, line: &str) -> CpuTimes {
@@ -580,19 +1168,20 @@ mod tests {
         let earlier_line = "cpu  100 0 0 800 100 0 0 0 50 50";
         // 30 busy (10 of it steal) and 70 idle (20 of it iowait); guest moves but is not counted.
         let later_line = "cpu  115 0 5 850 120 0 0 10 90 90";
-        let shown = CpuUse::between(times_on(16, earlier_line), times_on(16, later_line)).unwrap();
+        let shown =
+            CpuUse::between(&times_on(16, earlier_line), &times_on(16, later_line)).unwrap();
         assert_eq!(shown.label, "\u{f4bc} 30%");
         assert_eq!(
             shown.description,
             "CPU use 30% across 16 logical CPUs, over the last 2 seconds"
         );
-        assert_eq!(shown.tooltip, "CPU \u{b7} 16 logical CPUs");
-        let shown = CpuUse::between(times(earlier_line), times(later_line)).unwrap();
+        assert_eq!(shown.tooltip, "CPU\n16 logical CPUs");
+        let shown = CpuUse::between(&times(earlier_line), &times(later_line)).unwrap();
         assert_eq!(
             shown.description,
             "CPU use 30% across 1 logical CPU, over the last 2 seconds"
         );
-        assert_eq!(shown.tooltip, "CPU \u{b7} 1 logical CPU");
+        assert_eq!(shown.tooltip, "CPU\n1 logical CPU");
         // Whole percentages round to nearest, from 0 to 100.
         let at = |busy, idle| times(&format!("cpu {busy} 0 0 {idle} 0 0 0 0"));
         for (busy, idle, label) in [
@@ -602,7 +1191,7 @@ mod tests {
             (5, 0, "\u{f4bc} 100%"),
         ] {
             assert_eq!(
-                CpuUse::between(at(0, 0), at(busy, idle)).unwrap().label,
+                CpuUse::between(&at(0, 0), &at(busy, idle)).unwrap().label,
                 label
             );
         }
@@ -631,7 +1220,7 @@ mod tests {
             "cpu 90 0 0 120 0 0 0 0",
             "cpu 120 0 0 90 0 0 0 0",
         ] {
-            assert_eq!(CpuUse::between(base, times(later)), None, "{later:?}");
+            assert_eq!(CpuUse::between(&base, &times(later)), None, "{later:?}");
         }
     }
 
@@ -640,7 +1229,7 @@ mod tests {
         // user system idle nice
         let earlier = CpuTimes::from_host_ticks([100, 50, 800, 10], 10);
         let later = CpuTimes::from_host_ticks([115, 60, 870, 15], 10);
-        let shown = CpuUse::between(earlier, later).unwrap();
+        let shown = CpuUse::between(&earlier, &later).unwrap();
         assert_eq!(shown.label, "\u{f4bc} 30%");
         assert_eq!(
             shown.description,
@@ -649,7 +1238,7 @@ mod tests {
         // A counter that wrapped shows nothing for that interval.
         let wrapped = CpuTimes::from_host_ticks([u32::MAX, 0, 800, 0], 10);
         let after_wrap = CpuTimes::from_host_ticks([5, 0, 801, 0], 10);
-        assert_eq!(CpuUse::between(wrapped, after_wrap), None);
+        assert_eq!(CpuUse::between(&wrapped, &after_wrap), None);
     }
 
     #[test]

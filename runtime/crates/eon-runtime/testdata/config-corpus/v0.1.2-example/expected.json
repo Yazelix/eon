@@ -12,6 +12,8 @@
     },
     "bar": {
       "cpu_average_seconds": 30,
+      "cpu_temperature_critical_celsius": 95,
+      "cpu_temperature_warning_celsius": 85,
       "cpu_warning_percent": 90,
       "disk_critical_percent": 95,
       "disk_path": "~",

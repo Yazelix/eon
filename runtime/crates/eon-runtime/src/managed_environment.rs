@@ -126,6 +126,10 @@ pub struct BarLoad {
     pub cpu_warning_percent: u8,
     /// How many seconds of CPU use the average in the CPU chip's hover covers.
     pub cpu_average_seconds: u16,
+    /// CPU temperature in Celsius from which the CPU chip is orange.
+    pub cpu_temperature_warning_celsius: u8,
+    /// CPU temperature in Celsius from which the CPU chip is red.
+    pub cpu_temperature_critical_celsius: u8,
     /// Disk use, in whole percent, from which the disk chip is orange.
     pub disk_warning_percent: u8,
     /// Disk use, in whole percent, from which the disk chip is red.
@@ -162,6 +166,8 @@ struct BarSettings {
     ram_critical_percent: Option<u64>,
     cpu_warning_percent: Option<u64>,
     cpu_average_seconds: Option<u64>,
+    cpu_temperature_warning_celsius: Option<u64>,
+    cpu_temperature_critical_celsius: Option<u64>,
     disk_warning_percent: Option<u64>,
     disk_critical_percent: Option<u64>,
     disk_path: Option<String>,
@@ -228,6 +234,27 @@ pub(crate) fn bar(
     if ram_critical_percent < ram_warning_percent {
         return Err("bar.ram_critical_percent must not be below bar.ram_warning_percent".into());
     }
+    let temperature = |key: &str, value: Option<u64>, default: u8| {
+        value.map_or(Ok(default), |value| {
+            u8::try_from(value)
+                .ok()
+                .filter(|value| (30..=120).contains(value))
+                .ok_or_else(|| format!("bar.{key} must be from 30 through 120"))
+        })
+    };
+    let cpu_temperature_warning_celsius = temperature(
+        "cpu_temperature_warning_celsius",
+        settings.cpu_temperature_warning_celsius,
+        defaults.bar_load.cpu_temperature_warning_celsius,
+    )?;
+    let cpu_temperature_critical_celsius = temperature(
+        "cpu_temperature_critical_celsius",
+        settings.cpu_temperature_critical_celsius,
+        defaults.bar_load.cpu_temperature_critical_celsius,
+    )?;
+    if cpu_temperature_critical_celsius < cpu_temperature_warning_celsius {
+        return Err("bar.cpu_temperature_critical_celsius must not be below bar.cpu_temperature_warning_celsius".into());
+    }
     let disk_warning_percent = percent(
         "disk_warning_percent",
         settings.disk_warning_percent,
@@ -249,6 +276,8 @@ pub(crate) fn bar(
         nonempty_environment_path("HOME"),
     )?;
     let load = BarLoad {
+        cpu_temperature_warning_celsius,
+        cpu_temperature_critical_celsius,
         ram_warning_percent,
         ram_critical_percent,
         cpu_warning_percent: percent(
@@ -551,6 +580,8 @@ pub(crate) fn print_defaults(defaults: &Defaults, json: bool) -> Result<String, 
             "ram_critical_percent": defaults.bar_load.ram_critical_percent,
             "cpu_warning_percent": defaults.bar_load.cpu_warning_percent,
             "cpu_average_seconds": defaults.bar_load.cpu_average_seconds,
+            "cpu_temperature_warning_celsius": defaults.bar_load.cpu_temperature_warning_celsius,
+            "cpu_temperature_critical_celsius": defaults.bar_load.cpu_temperature_critical_celsius,
             "disk_warning_percent": defaults.bar_load.disk_warning_percent,
             "disk_critical_percent": defaults.bar_load.disk_critical_percent,
             "disk_path": defaults.bar_disk_path,
@@ -615,6 +646,12 @@ fn defaults_table(
             "ram_warning_percent" => "RAM use from which the RAM chip turns orange.",
             "ram_critical_percent" => "RAM use from which the RAM chip turns red.",
             "cpu_warning_percent" => "CPU use from which the CPU chip turns orange.",
+            "cpu_temperature_warning_celsius" => {
+                "CPU temperature in Celsius from which the CPU chip turns orange (Linux CPU sensors only)."
+            }
+            "cpu_temperature_critical_celsius" => {
+                "CPU temperature in Celsius from which the CPU chip turns red (Linux CPU sensors only)."
+            }
             "cpu_average_seconds" => "Seconds of CPU use that the hover's average covers.",
             "disk_warning_percent" => "Disk use from which the disk chip turns orange.",
             "disk_critical_percent" => "Disk use from which the disk chip turns red.",
@@ -2002,6 +2039,47 @@ mod tests {
         thread,
         time::{Duration, Instant},
     };
+
+    #[test]
+    fn cpu_temperature_levels_validate_range_order_and_types() {
+        let root = crate::supervisor::temporary_directory();
+        let defaults = crate::fixtures::inputs().defaults;
+        let read = |settings: &str| {
+            fs::write(root.join("config.toml"), format!("[bar]\n{settings}")).unwrap();
+            super::bar(&root, &defaults, None)
+        };
+        assert_eq!(read("").unwrap().load.cpu_temperature_warning_celsius, 85);
+        assert_eq!(read("").unwrap().load.cpu_temperature_critical_celsius, 95);
+        let valid =
+            read("cpu_temperature_warning_celsius = 30\ncpu_temperature_critical_celsius = 120\n")
+                .unwrap()
+                .load;
+        assert_eq!(
+            (
+                valid.cpu_temperature_warning_celsius,
+                valid.cpu_temperature_critical_celsius
+            ),
+            (30, 120)
+        );
+        assert!(
+            read("cpu_temperature_warning_celsius = 95\ncpu_temperature_critical_celsius = 95\n")
+                .is_ok()
+        );
+        for settings in [
+            "cpu_temperature_warning_celsius = 29",
+            "cpu_temperature_critical_celsius = 121",
+            "cpu_temperature_warning_celsius = 256",
+            "cpu_temperature_critical_celsius = 0",
+            "cpu_temperature_warning_celsius = 96",
+            "cpu_temperature_critical_celsius = 84",
+            "cpu_temperature_warning_celsius = -1",
+            "cpu_temperature_critical_celsius = 90.5",
+            "cpu_temperature_warning_celsius = 'hot'",
+        ] {
+            assert!(read(settings).is_err(), "accepted {settings}");
+        }
+        fs::remove_dir_all(root).unwrap();
+    }
 
     #[test]
     fn disk_path_expands_home_and_keeps_absolute_paths() {

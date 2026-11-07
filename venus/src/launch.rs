@@ -23,7 +23,7 @@ const CURSOR_COLOR_PRESETS: [(&str, Color); 8] = [
     ("nebula", rgb(0xa970ff)),
     ("bubblegum", rgb(0xff5da2)),
 ];
-const USAGE: &str = "usage: yazelix-venus [--application-id ID] [--no-decorations] [--pane-frames true|false] [--focus-color preset:NAME|custom:#RRGGBB] [--border-width 1..3] [--focus-border-width 1..3] [--warning-close-last-tab true|false] [--animate-working-badge true|false] [--number-keys true|false] [--eon-version VERSION] [--eon-icon ABSOLUTE_PATH] [--bar-items ITEM,...] [--ram-warning-percent 1..100] [--ram-critical-percent 1..100] [--cpu-warning-percent 1..100] [--cpu-average-seconds 2..600] [--disk-warning-percent 1..100] [--disk-critical-percent 1..100] [--disk-path ABSOLUTE_PATH] [--background-opacity VALUE] [--background-blur] [--padding-color extend|extend-always|background] [--cursor-trail-color random|preset:NAME|custom:#RRGGBB] [--cursor-effect-v1 none|tail] [--cursor-trail-color-v1 #RRGGBB] [--cursor-trail-duration-v1 0|0.25..4.0] [--font-family FAMILY] [--font-fallback FAMILY] [--font-size 6..96] [--line-height 1..3] [--columns N] [--rows N] [ORBIT_SOCKET | --workspace EON_WORKSPACE_SOCKET]";
+const USAGE: &str = "usage: yazelix-venus [--application-id ID] [--no-decorations] [--pane-frames true|false] [--focus-color preset:NAME|custom:#RRGGBB] [--border-width 1..3] [--focus-border-width 1..3] [--warning-close-last-tab true|false] [--animate-working-badge true|false] [--number-keys true|false] [--eon-version VERSION] [--eon-icon ABSOLUTE_PATH] [--bar-items ITEM,...] [--ram-warning-percent 1..100] [--ram-critical-percent 1..100] [--cpu-warning-percent 1..100] [--cpu-average-seconds 2..600] [--cpu-temperature-warning-celsius 30..120] [--cpu-temperature-critical-celsius 30..120] [--disk-warning-percent 1..100] [--disk-critical-percent 1..100] [--disk-path ABSOLUTE_PATH] [--background-opacity VALUE] [--background-blur] [--padding-color extend|extend-always|background] [--cursor-trail-color random|preset:NAME|custom:#RRGGBB] [--cursor-effect-v1 none|tail] [--cursor-trail-color-v1 #RRGGBB] [--cursor-trail-duration-v1 0|0.25..4.0] [--font-family FAMILY] [--font-fallback FAMILY] [--font-size 6..96] [--line-height 1..3] [--columns N] [--rows N] [ORBIT_SOCKET | --workspace EON_WORKSPACE_SOCKET]";
 
 #[derive(Debug)]
 pub(super) struct LaunchArguments {
@@ -81,6 +81,8 @@ pub(super) fn launch_arguments(
     let mut ram_critical_percent = None;
     let mut cpu_warning_percent = None;
     let mut cpu_average_seconds = None;
+    let mut cpu_temperature_warning_celsius = None;
+    let mut cpu_temperature_critical_celsius = None;
     let mut disk_warning_percent = None;
     let mut disk_critical_percent = None;
     let mut disk_path: Option<PathBuf> = None;
@@ -157,6 +159,18 @@ pub(super) fn launch_arguments(
             };
             option_value(percent, arguments.next())?;
             if !percent.is_some_and(|percent| (1..=100).contains(&percent)) {
+                return Err(USAGE.into());
+            }
+        } else if argument == "--cpu-temperature-warning-celsius"
+            || argument == "--cpu-temperature-critical-celsius"
+        {
+            let temperature = if argument == "--cpu-temperature-warning-celsius" {
+                &mut cpu_temperature_warning_celsius
+            } else {
+                &mut cpu_temperature_critical_celsius
+            };
+            option_value(temperature, arguments.next())?;
+            if !temperature.is_some_and(|value| (30..=120).contains(&value)) {
                 return Err(USAGE.into());
             }
         } else if argument == "--cpu-average-seconds" {
@@ -318,6 +332,8 @@ pub(super) fn launch_arguments(
     let load_given = ram_warning_percent
         .or(ram_critical_percent)
         .or(cpu_warning_percent)
+        .or(cpu_temperature_warning_celsius)
+        .or(cpu_temperature_critical_celsius)
         .or(disk_warning_percent)
         .or(disk_critical_percent)
         .is_some()
@@ -329,10 +345,15 @@ pub(super) fn launch_arguments(
         ram_critical_percent: ram_critical_percent.unwrap_or(defaults.ram_critical_percent),
         cpu_warning_percent: cpu_warning_percent.unwrap_or(defaults.cpu_warning_percent),
         cpu_average: cpu_average_seconds.map_or(defaults.cpu_average, Duration::from_secs),
+        cpu_temperature_warning_celsius: cpu_temperature_warning_celsius
+            .unwrap_or(defaults.cpu_temperature_warning_celsius),
+        cpu_temperature_critical_celsius: cpu_temperature_critical_celsius
+            .unwrap_or(defaults.cpu_temperature_critical_celsius),
         disk_warning_percent: disk_warning_percent.unwrap_or(defaults.disk_warning_percent),
         disk_critical_percent: disk_critical_percent.unwrap_or(defaults.disk_critical_percent),
     };
-    if load_levels.ram_critical_percent < load_levels.ram_warning_percent
+    if load_levels.cpu_temperature_critical_celsius < load_levels.cpu_temperature_warning_celsius
+        || load_levels.ram_critical_percent < load_levels.ram_warning_percent
         || load_levels.disk_critical_percent < load_levels.disk_warning_percent
         || ((eon_version.is_some() || eon_icon.is_some() || bar_items.is_some() || load_given)
             && workspace_socket.is_none())
@@ -662,6 +683,10 @@ mod tests {
                 "100",
                 "--cpu-average-seconds",
                 "600",
+                "--cpu-temperature-warning-celsius",
+                "30",
+                "--cpu-temperature-critical-celsius",
+                "120",
                 "--disk-warning-percent",
                 "1",
                 "--disk-critical-percent",
@@ -674,6 +699,8 @@ mod tests {
                 ram_critical_percent: 1,
                 cpu_warning_percent: 100,
                 cpu_average: Duration::from_secs(600),
+                cpu_temperature_warning_celsius: 30,
+                cpu_temperature_critical_celsius: 120,
                 disk_warning_percent: 1,
                 disk_critical_percent: 100,
             }
@@ -722,6 +749,19 @@ mod tests {
             vec!["--ram-warning-percent", "0"],
             vec!["--ram-critical-percent", "101"],
             vec!["--cpu-warning-percent", "-1"],
+            vec!["--cpu-temperature-warning-celsius", "29"],
+            vec!["--cpu-temperature-critical-celsius", "121"],
+            vec!["--cpu-temperature-warning-celsius", "96"],
+            vec!["--cpu-temperature-critical-celsius", "84"],
+            vec!["--cpu-temperature-warning-celsius", "-1"],
+            vec!["--cpu-temperature-warning-celsius", "85.5"],
+            vec![
+                "--cpu-temperature-warning-celsius",
+                "85",
+                "--cpu-temperature-warning-celsius",
+                "85",
+            ],
+            vec!["--cpu-temperature-critical-celsius"],
             vec!["--cpu-average-seconds", "1"],
             vec!["--cpu-average-seconds", "601"],
             vec!["--cpu-average-seconds", "2.5"],
@@ -733,6 +773,8 @@ mod tests {
         }
         for flag in [
             ["--cpu-warning-percent", "90"],
+            ["--cpu-temperature-warning-celsius", "85"],
+            ["--cpu-temperature-critical-celsius", "95"],
             ["--disk-warning-percent", "90"],
             ["--disk-path", "/srv"],
         ] {
