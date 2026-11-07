@@ -4785,7 +4785,7 @@ names its socket. CLI JSON names a session `session` and a terminal
     `--tab` or `--target`, `session` and `queue` count as admitted only
     when `--kind` names them. In a `--tab` stream the named tabs and their
     panes and popups stay current, but session-wide values are not
-    rebuilt: a session's `active_tab`, the order of other tabs, the queue
+    rebuilt: a session's `active_tab`, the order of other tabs, the queue unless `--kind` names `queue`,
     and the busy list's window order; a consumer reads `eon session --json`
     for them. Under `--session`, `--target` or `--state` the stream is a
     change feed for the objects it admits, and a consumer reads

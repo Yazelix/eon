@@ -2623,7 +2623,7 @@ fn column_panes(tab: &SnapshotTab) -> impl Iterator<Item = (usize, bool, &Snapsh
 }
 
 /// The CLI's name for an attention state.
-fn attention_name(state: AttentionState) -> &'static str {
+pub(crate) fn attention_name(state: AttentionState) -> &'static str {
     match state {
         AttentionState::NeedsInput => "needs-input",
         AttentionState::Error => "error",
@@ -2666,7 +2666,7 @@ fn sidebar_name(sidebar: Sidebar) -> &'static str {
     }
 }
 
-fn human_attention(attention: Option<&Attention>) -> String {
+pub(crate) fn human_attention(attention: Option<&Attention>) -> String {
     let (state, app, name) = attention_fields(attention);
     format!(
         "attention={} app={} name={}",
@@ -2828,7 +2828,7 @@ fn terminal_json(target: &TerminalTarget, caller: Option<&TerminalTarget>) -> St
 }
 
 /// `pane` and `popup`, one of them null, as `caller` reports them.
-fn target_id_json(id: &TargetId) -> String {
+pub(crate) fn target_id_json(id: &TargetId) -> String {
     let (pane, popup) = match id {
         TargetId::Pane(id) => (Some(id.as_str()), None),
         TargetId::Popup(id) => (None, Some(id.as_str())),
@@ -2972,6 +2972,66 @@ pub(crate) fn json_busy(output: &mut String, busy: Option<&BusyTerminals>) {
     output.push_str(&format!("],\"omitted\":{}}}", busy.omitted));
 }
 
+pub(crate) fn json_pane(output: &mut String, pane: &SnapshotPane, column: usize, expanded: bool) {
+    output.push_str(&format!(
+        "{{\"id\":\"{}\",\"column\":{},\"expanded\":{},\"terminal\":\"{}\",\"endpoint\":{},\"live\":{},\"label\":\"{}\",\"pinned_name\":",
+        json_escape(&pane.id),
+        column,
+        expanded,
+        json_escape(&pane.session),
+        json_path(&pane.endpoint),
+        pane.live,
+        json_escape(&pane.label),
+    ));
+    json_option(output, pane.pinned_name.as_deref());
+    output.push_str(",\"attention\":");
+    json_attention(output, pane.attention.as_ref());
+    output.push('}');
+}
+
+pub(crate) fn json_popup(output: &mut String, popup: &SnapshotPopup, chosen: bool) {
+    output.push_str(&format!(
+        "{{\"id\":\"{}\",\"entry\":\"{}\",\"terminal\":\"{}\",\"endpoint\":{},\"chosen\":{},\"attention\":",
+        json_escape(&popup.id), json_escape(&popup.entry), json_escape(&popup.session),
+        json_path(&popup.endpoint), chosen
+    ));
+    json_attention(output, popup.attention.as_ref());
+    output.push('}');
+}
+
+pub(crate) fn json_tab(output: &mut String, tab: &SnapshotTab) {
+    output.push_str(&format!(
+        "{{\"id\":\"{}\",\"directory\":{},\"pending\":{},\"selected_pane\":",
+        json_escape(&tab.id),
+        json_path(&tab.directory),
+        tab.pending
+    ));
+    json_option(output, tab.selected_pane.as_deref());
+    output.push_str(",\"selected_popup\":");
+    json_option(output, tab.selected_popup.as_deref());
+    output.push_str(",\"attention_rollup\":");
+    json_option(output, tab.attention_rollup.map(attention_name));
+    output.push_str(",\"panes\":[");
+    for (index, (column, expanded, pane)) in column_panes(tab).enumerate() {
+        if index != 0 {
+            output.push(',');
+        }
+        json_pane(output, pane, column + 1, expanded);
+    }
+    output.push_str("],\"popups\":[");
+    for (index, popup) in tab.popups.iter().enumerate() {
+        if index != 0 {
+            output.push(',');
+        }
+        json_popup(
+            output,
+            popup,
+            tab.selected_popup.as_deref() == Some(&popup.id),
+        );
+    }
+    output.push_str("]}");
+}
+
 pub(crate) fn json(snapshot: &Snapshot) -> String {
     let mut output = format!(
         "{{\"active_tab\":\"{}\",\"geometry\":{{\"side_margin\":{},\"vertical_margin\":{}}},\"entries\":[",
@@ -3007,51 +3067,7 @@ pub(crate) fn json(snapshot: &Snapshot) -> String {
         if tab_index != 0 {
             output.push(',');
         }
-        output.push_str(&format!(
-            "{{\"id\":\"{}\",\"directory\":{},\"pending\":{},\"selected_pane\":",
-            json_escape(&tab.id),
-            json_path(&tab.directory),
-            tab.pending
-        ));
-        json_option(&mut output, tab.selected_pane.as_deref());
-        output.push_str(",\"selected_popup\":");
-        json_option(&mut output, tab.selected_popup.as_deref());
-        output.push_str(",\"attention_rollup\":");
-        json_option(&mut output, tab.attention_rollup.map(attention_name));
-        output.push_str(",\"panes\":[");
-        for (index, (column, expanded, pane)) in column_panes(tab).enumerate() {
-            if index != 0 {
-                output.push(',');
-            }
-            output.push_str(&format!(
-                "{{\"id\":\"{}\",\"column\":{},\"expanded\":{},\"terminal\":\"{}\",\"endpoint\":{},\"live\":{},\"label\":\"{}\",\"pinned_name\":",
-                json_escape(&pane.id),
-                column + 1,
-                expanded,
-                json_escape(&pane.session),
-                json_path(&pane.endpoint),
-                pane.live,
-                json_escape(&pane.label),
-            ));
-            json_option(&mut output, pane.pinned_name.as_deref());
-            output.push_str(",\"attention\":");
-            json_attention(&mut output, pane.attention.as_ref());
-            output.push('}');
-        }
-        output.push_str("],\"popups\":[");
-        for (index, popup) in tab.popups.iter().enumerate() {
-            if index != 0 {
-                output.push(',');
-            }
-            output.push_str(&format!(
-                "{{\"id\":\"{}\",\"entry\":\"{}\",\"terminal\":\"{}\",\"endpoint\":{},\"chosen\":{},\"attention\":",
-                json_escape(&popup.id), json_escape(&popup.entry), json_escape(&popup.session),
-                json_path(&popup.endpoint), tab.selected_popup.as_deref() == Some(&popup.id)
-            ));
-            json_attention(&mut output, popup.attention.as_ref());
-            output.push('}');
-        }
-        output.push_str("]}");
+        json_tab(&mut output, tab);
     }
     output.push_str(&format!(
         "],\"sidebar\":\"{}\",\"codex_quota\":",
@@ -3162,7 +3178,7 @@ fn json_window(
 }
 
 /// The full attention record, or `null` without attention.
-fn json_attention(output: &mut String, attention: Option<&Attention>) {
+pub(crate) fn json_attention(output: &mut String, attention: Option<&Attention>) {
     let (Some(state), app, name) = attention_fields(attention) else {
         output.push_str("null");
         return;
@@ -3266,6 +3282,25 @@ pub(crate) fn list_human(snapshot: &Snapshot) -> String {
         .collect()
 }
 
+/// One session object, shared by inspection and event output.
+pub(crate) fn json_workspace(
+    output: &mut String,
+    workspace: &eon_workspace_protocol::v37::WorkspaceInfo,
+    shown: bool,
+) {
+    output.push_str(&format!(
+        "{{\"id\":\"{}\",\"name\":",
+        json_escape(&workspace.id)
+    ));
+    json_option(output, workspace.name.as_deref());
+    output.push_str(&format!(
+        ",\"shown\":{},\"tabs\":{},\"attention\":",
+        shown, workspace.tab_count
+    ));
+    json_option(output, workspace.attention.map(attention_name));
+    output.push_str(&format!(",\"recency\":{}}}", workspace.recency));
+}
+
 /// `{"sessions":[{"id":...,"name":...,"shown":...,"tabs":...,"attention":...,"recency":...}]}`
 /// (`eon session ls --json`).
 pub(crate) fn list_json(snapshot: &Snapshot) -> String {
@@ -3274,18 +3309,11 @@ pub(crate) fn list_json(snapshot: &Snapshot) -> String {
         if index != 0 {
             output.push(',');
         }
-        output.push_str(&format!(
-            "{{\"id\":\"{}\",\"name\":",
-            json_escape(&workspace.id)
-        ));
-        json_option(&mut output, workspace.name.as_deref());
-        output.push_str(&format!(
-            ",\"shown\":{},\"tabs\":{},\"attention\":",
+        json_workspace(
+            &mut output,
+            workspace,
             workspace.id == snapshot.active_workspace,
-            workspace.tab_count
-        ));
-        json_option(&mut output, workspace.attention.map(attention_name));
-        output.push_str(&format!(",\"recency\":{}}}", workspace.recency));
+        );
     }
     output.push_str("]}\n");
     output
@@ -3444,7 +3472,7 @@ fn shortcut_text(shortcut: &eon_workspace_protocol::v37::Shortcut) -> String {
     parts.join("+")
 }
 
-fn json_option(output: &mut String, value: Option<&str>) {
+pub(crate) fn json_option(output: &mut String, value: Option<&str>) {
     match value {
         Some(value) => output.push_str(&format!("\"{}\"", json_escape(value))),
         None => output.push_str("null"),
