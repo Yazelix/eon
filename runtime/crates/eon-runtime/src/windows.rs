@@ -2,7 +2,7 @@ use super::{
     cli::{Inputs, calling_terminal},
     control::{Error, failure, report_failure, write_stdout},
     generation::{
-        Ask, DELEGATION_MARKER, GenerationRecord, WorkspaceTarget, attach_generation,
+        Ask, DELEGATION_MARKER, GenerationRecord, ROUTE_MARKER, WorkspaceTarget, attach_generation,
         caller_generation, current_generation, damaged_generations, delegated_elsewhere,
         delegated_generation, generation_directory, generation_running, private_directory_exists,
         resolve_workspace, running_generations, stop_generation, stop_generations,
@@ -19,7 +19,7 @@ use eon_workspace_protocol::v37::Failure;
 use std::{
     collections::hash_map::RandomState,
     env,
-    ffi::OsStr,
+    ffi::{OsStr, OsString},
     fs::{self, DirBuilder, OpenOptions},
     hash::BuildHasher,
     os::unix::{
@@ -442,6 +442,7 @@ fn window_command(root: &Path) -> Result<Command, String> {
     let mut command = Command::new(binary);
     command.env(WINDOW_RUNTIME, root);
     command.env_remove(DELEGATION_MARKER);
+    command.env_remove(ROUTE_MARKER);
     Ok(command)
 }
 
@@ -471,13 +472,19 @@ pub(super) fn durable_window_id(window: Option<&str>, generation: &str) -> Strin
     )
 }
 
-pub(super) fn quit(inputs: &Inputs, json: bool) -> Result<i32, Error> {
+/// `eon quit` as `arguments`, which another EONW's build runs when it owns
+/// the calling terminal (EON-C11, Routing).
+pub(super) fn quit(inputs: &Inputs, json: bool, arguments: &[OsString]) -> Result<i32, Error> {
     let caller = match calling_terminal() {
         Ok(caller) => caller,
         Err(error) => return Ok(report_failure(&error, json)?),
     };
     if let Some(caller) = caller {
-        let resolved = match resolve_workspace(inputs, WorkspaceTarget::default(), Some(&caller)) {
+        let target = WorkspaceTarget {
+            command: arguments.to_vec(),
+            ..WorkspaceTarget::default()
+        };
+        let resolved = match resolve_workspace(inputs, target, Some(&caller)) {
             Ok(resolved) => resolved,
             Err(error) => return Ok(report_failure(&error, json)?),
         };

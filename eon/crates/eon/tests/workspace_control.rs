@@ -11356,6 +11356,280 @@ fn quit_listing_names_the_stop_of_every_window() {
     fs::remove_dir_all(root).unwrap();
 }
 
+/// An `eon` run against a fake window of another EONW, as `caller` when set,
+/// with `routed` as `EON_ROUTED` when set and `input` on stdin.
+fn routed_eon(
+    runtime: &Path,
+    state: &Path,
+    arguments: &[&str],
+    caller: Option<&str>,
+    routed: Option<&str>,
+    input: &[u8],
+) -> Output {
+    let mut command = eon_command(Path::new(env!("CARGO_BIN_EXE_eon")));
+    command
+        .args(arguments)
+        .env("EON_RUNTIME_DIR", runtime)
+        .env("EON_CONFIG_HOME", runtime.with_file_name("config"))
+        .env("XDG_STATE_HOME", state)
+        .env_remove("EON_WINDOW_RUNTIME_DIR")
+        .env_remove("EON_TERMINAL")
+        .env_remove("EON_ROUTED")
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped());
+    if let Some(caller) = caller {
+        command.env("EON_TERMINAL", caller);
+    }
+    if let Some(routed) = routed {
+        command.env("EON_ROUTED", routed);
+    }
+    let mut child = command.spawn().unwrap();
+    child.stdin.take().unwrap().write_all(input).unwrap();
+    // A routing loop never ends on its own.
+    let deadline = Instant::now() + Duration::from_secs(60);
+    while child.try_wait().unwrap().is_none() {
+        if Instant::now() > deadline {
+            child.kill().unwrap();
+            panic!("eon {arguments:?} still runs after 60 s");
+        }
+        thread::sleep(Duration::from_millis(20));
+    }
+    child.wait_with_output().unwrap()
+}
+
+/// A fake recorded `eon` at `path` that appends its arguments, `EON_ROUTED`,
+/// `EON_TERMINAL` and stdin to `log`, writes to stdout and stderr, and exits 7.
+fn recording_eon(path: &Path, log: &Path) {
+    executable(
+        path,
+        format!(
+            "#!/bin/sh\n\
+             {{ printf '%s|%s|%s|' \"$*\" \"${{EON_ROUTED-unset}}\" \"${{EON_TERMINAL-unset}}\"; \
+             cat; echo; }} >> '{log}'\n\
+             echo routed\n\
+             echo routed-error >&2\n\
+             exit 7\n",
+            log = log.display(),
+        ),
+    );
+}
+
+/// Catches a session command that reports a window's other EONW instead of
+/// running the build that started it, that changes the command on the way,
+/// or that runs it when no build or a second hop would (EON-C11, Routing).
+#[test]
+fn session_commands_run_the_build_of_a_window_of_another_eonw() {
+    let root = temporary_directory();
+    let runtime = root.join("r");
+    let state = root.join("state");
+    let done = root.join("done");
+    let id = format!("g1-{:032x}", 21);
+    let server = other_eonw_supervisor(&runtime, &id, &done, VERSION + 1);
+    let log = root.join("log");
+    let newer_eon = root.join("newer-eon");
+    recording_eon(&newer_eon, &log);
+    symlink(
+        &newer_eon,
+        runtime.join("generations").join(&id).join("eon"),
+    )
+    .unwrap();
+    let eon = |arguments: &[&str], caller: Option<&str>, routed: Option<&str>, input: &[u8]| {
+        routed_eon(&runtime, &state, arguments, caller, routed, input)
+    };
+    let take_log = || {
+        let lines = fs::read_to_string(&log).unwrap_or_default();
+        let _ = fs::remove_file(&log);
+        lines
+    };
+    let caller = Some("terminal-3.r1");
+
+    // Its build runs the same arguments, environment and stdin, and its output
+    // and status are the command's.
+    for (arguments, input) in [
+        (
+            &["pane", "send", "p2", "--stdin", "--json"][..],
+            &b"hello"[..],
+        ),
+        (&["quit"][..], &b""[..]),
+    ] {
+        let output = eon(arguments, caller, None, input);
+        assert_eq!(output.status.code(), Some(7), "{output:?}");
+        assert_eq!(output.stdout, b"routed\n");
+        assert_eq!(output.stderr, b"routed-error\n");
+        assert_eq!(
+            take_log(),
+            format!(
+                "{}|{id}|terminal-3.r1|{}\n",
+                arguments.join(" "),
+                String::from_utf8_lossy(input)
+            )
+        );
+    }
+    // So does an explicit target, from outside Eon.
+    let window = &id[3..11];
+    let shown = eon(&["session", "--window", window, "--json"], None, None, b"");
+    assert_eq!(shown.status.code(), Some(7), "{shown:?}");
+    assert_eq!(
+        take_log(),
+        format!("session --window {window} --json|{id}|unset|\n")
+    );
+    // A routed `eon` never routes: whatever the marker says, the refusal
+    // names it, and nothing runs.
+    let refused_as_routed = |output: &Output, marker: &str| {
+        assert_eq!(output.status.code(), Some(4), "{output:?}");
+        let failure: serde_json::Value = serde_json::from_str(stdout(output)).unwrap();
+        assert_eq!(failure["error"]["code"], "supervisor-unavailable");
+        let detail = failure["error"]["detail"].as_str().unwrap();
+        assert!(detail.contains("EONW"), "{detail}");
+        assert!(
+            detail.contains(&format!("EON_ROUTED is \"{marker}\"")),
+            "{detail}"
+        );
+    };
+    for (arguments, marker) in [
+        (&["session", "--json"][..], id.as_str()),
+        (&["quit", "--json"][..], "forged"),
+    ] {
+        refused_as_routed(&eon(arguments, caller, Some(marker), b""), marker);
+    }
+    assert_eq!(take_log(), "");
+
+    // Commands that are not session commands never route.
+    let versions = eon(&["versions"], caller, None, b"");
+    assert!(versions.status.success(), "{versions:?}");
+    assert!(stdout(&versions).starts_with("eon "), "{versions:?}");
+    let listed = eon(&["window", "ls", "--json"], caller, None, b"");
+    assert!(listed.status.success(), "{listed:?}");
+    assert_eq!(take_log(), "");
+
+    // A record that leads back to an `eon` that would route again makes one
+    // hop, then fails, within the bound.
+    let record = runtime.join("generations").join(&id).join("eon");
+    fs::remove_file(&record).unwrap();
+    symlink(env!("CARGO_BIN_EXE_eon"), &record).unwrap();
+    refused_as_routed(&eon(&["session", "--json"], caller, None, b""), &id);
+    fs::remove_file(&record).unwrap();
+    symlink(&newer_eon, &record).unwrap();
+
+    // Without the build it recorded, the refusal stays and names it.
+    fs::remove_file(&newer_eon).unwrap();
+    let gone = eon(&["session", "--json"], caller, None, b"");
+    assert_eq!(gone.status.code(), Some(4), "{gone:?}");
+    let failure: serde_json::Value = serde_json::from_str(stdout(&gone)).unwrap();
+    let detail = failure["error"]["detail"].as_str().unwrap();
+    assert!(
+        detail.contains(&format!("{}, no longer exists", newer_eon.display())),
+        "{detail}"
+    );
+    assert!(detail.contains("the terminal's own `eon`"), "{detail}");
+
+    // Stop is the Reserved Stop, never routed, even with its build present.
+    recording_eon(&newer_eon, &log);
+    let stopped = eon(&["window", "stop", window, "--json"], None, None, b"");
+    assert!(stopped.status.success(), "{stopped:?}");
+    assert_eq!(take_log(), "");
+    end_older_supervisors(
+        &done,
+        &[runtime.join("generations").join(&id).join("eon.sock")],
+        vec![server],
+    );
+    fs::remove_dir_all(root).unwrap();
+}
+
+/// Catches a stale `EON_TERMINAL` reported as another window's EONW, or routed
+/// to a build whose window never ran it, instead of named (EON-C10).
+#[test]
+fn a_stale_eon_terminal_names_its_terminal_and_window() {
+    let root = temporary_directory();
+    let runtime = root.join("r");
+    let state = root.join("state");
+    let done = root.join("done");
+    let id = format!("g1-{:032x}", 22);
+    let ended = format!("g1-{:032x}", 23);
+    let compatible = format!("g1-{:032x}", 24);
+    let server = other_eonw_supervisor(&runtime, &id, &done, VERSION + 1);
+    let stops = Arc::new(Mutex::new(Vec::new()));
+    let compatible_server = owning_supervisor(&runtime, &compatible, None, &stops);
+    let log = root.join("log");
+    let newer_eon = root.join("newer-eon");
+    recording_eon(&newer_eon, &log);
+    symlink(
+        &newer_eon,
+        runtime.join("generations").join(&id).join("eon"),
+    )
+    .unwrap();
+    let logs = state.join("eon").join("logs").join("orbit");
+    fs::create_dir_all(&logs).unwrap();
+    fs::write(logs.join(format!("{ended}-terminal-3-r1.log")), "").unwrap();
+    fs::write(logs.join(format!("{id}-terminal-4-r2.log")), "").unwrap();
+    fs::write(logs.join(format!("{compatible}-terminal-3-r5.log")), "").unwrap();
+    let eon = |arguments: &[&str], caller: &str| {
+        routed_eon(&runtime, &state, arguments, Some(caller), None, b"")
+    };
+    let stale = |output: &Output, place: &str| {
+        assert_eq!(output.status.code(), Some(3), "{output:?}");
+        let failure: serde_json::Value = serde_json::from_str(stdout(output)).unwrap();
+        assert_eq!(failure["error"]["code"], "unknown-caller");
+        let detail = failure["error"]["detail"].as_str().unwrap();
+        assert!(
+            detail.starts_with(&format!("EON_TERMINAL names terminal terminal-3{place}; ")),
+            "{detail}"
+        );
+        assert!(
+            detail.contains("Run `eon` from a live Eon terminal's own shell"),
+            "{detail}"
+        );
+    };
+
+    // Its log places the terminal in an ended window: no version error, no route.
+    let ended_window = format!(" of Eon window {}, which has ended", &ended[3..]);
+    stale(&eon(&["session", "--json"], "terminal-3.r1"), &ended_window);
+    // The stops of every window say the same of the caller.
+    let all = eon(&["quit", "--all", "--json"], "terminal-3.r1");
+    assert_eq!(all.status.code(), Some(3), "{all:?}");
+    assert!(stdout(&all).contains(&ended_window), "{}", stdout(&all));
+    assert!(!log.exists());
+    // Its log places it in a live window that no longer runs it.
+    stale(
+        &eon(&["session", "--json"], "terminal-3.r5"),
+        &format!(
+            " of Eon window {}, which no longer runs it",
+            &compatible[3..]
+        ),
+    );
+    // Its log places it in the window of another EONW: that build runs it.
+    let routed = eon(&["session", "--json"], "terminal-4.r2");
+    assert_eq!(routed.status.code(), Some(7), "{routed:?}");
+    assert_eq!(
+        fs::read_to_string(&log).unwrap(),
+        format!("session --json|{id}|terminal-4.r2|\n")
+    );
+
+    end_older_supervisors(
+        &done,
+        &[runtime.join("generations").join(&id).join("eon.sock")],
+        vec![server],
+    );
+    let stopped = routed_eon(
+        &runtime,
+        &state,
+        &["window", "stop", &compatible[3..11], "--json"],
+        None,
+        None,
+        b"",
+    );
+    assert!(stopped.status.success(), "{stopped:?}");
+    compatible_server.join().unwrap();
+    assert_eq!(*stops.lock().unwrap(), [compatible]);
+    // No window runs, and no log names it.
+    stale(
+        &eon(&["session", "--json"], "terminal-3.r9"),
+        ", which no running Eon window here runs",
+    );
+    fs::remove_dir_all(root).unwrap();
+}
+
 #[test]
 fn window_attach_runs_the_build_that_started_its_generation() {
     let root = temporary_directory();

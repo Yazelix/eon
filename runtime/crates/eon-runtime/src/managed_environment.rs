@@ -1450,10 +1450,10 @@ fn remove_agent_environment(
             }
         }
     }
-    for name in AGENT_SESSION_VARIABLES
-        .iter()
-        .chain(&[super::generation::DELEGATION_MARKER])
-    {
+    for name in AGENT_SESSION_VARIABLES.iter().chain(&[
+        super::generation::DELEGATION_MARKER,
+        super::generation::ROUTE_MARKER,
+    ]) {
         command.env_remove(name);
     }
     command
@@ -1598,9 +1598,11 @@ pub(crate) fn command(
     };
     let mut command = Command::new(program);
     // Nothing started inside the terminal inherits the one-shot marker, or
-    // the delegation marker, which names one delegated attach (EON-C11).
+    // the delegation and routing markers, which name one delegated attach or
+    // routed command (EON-C11).
     command.env_remove(CONFIG_WARNED_VARIABLE);
     command.env_remove(super::generation::DELEGATION_MARKER);
+    command.env_remove(super::generation::ROUTE_MARKER);
     match tool {
         Tool::Nu => {
             command.arg("--experimental-options=native-clip");
@@ -3757,11 +3759,13 @@ label = "Browse"
             Tool::LazyGit,
         ] {
             let command = managed_command(tool, &programs, config, &[], &inputs.defaults).unwrap();
-            assert_eq!(
-                command_environment(&command, "EON_ATTACH_DELEGATED"),
-                Some(None),
-                "{tool:?} passes on the delegation marker"
-            );
+            for marker in ["EON_ATTACH_DELEGATED", "EON_ROUTED"] {
+                assert_eq!(
+                    command_environment(&command, marker),
+                    Some(None),
+                    "{tool:?} passes on {marker}"
+                );
+            }
         }
     }
 
@@ -3798,18 +3802,18 @@ label = "Browse"
     fn children_never_inherit_a_delegation_marker() {
         // The marker names one delegated attach (EON-C11); a terminal that
         // inherited it would carry it into every `eon` run there.
-        let mut command = Command::new("/managed/orbit");
-        command.env(
-            "EON_ATTACH_DELEGATED",
-            "g1-00000000000000000000000000000001",
-        );
-        remove_agent_session(&mut command);
-        assert!(
-            command
-                .get_envs()
-                .any(|(variable, value)| variable == "EON_ATTACH_DELEGATED" && value.is_none()),
-            "the marker reaches the child"
-        );
+        // So would the routing marker, which names one routed command.
+        for marker in ["EON_ATTACH_DELEGATED", "EON_ROUTED"] {
+            let mut command = Command::new("/managed/orbit");
+            command.env(marker, "g1-00000000000000000000000000000001");
+            remove_agent_session(&mut command);
+            assert!(
+                command
+                    .get_envs()
+                    .any(|(variable, value)| variable == marker && value.is_none()),
+                "{marker} reaches the child"
+            );
+        }
     }
 
     #[test]

@@ -653,7 +653,10 @@ terminal (`unavailable`, exit 1).
 The active tab and desktop focus stay where they are. Other session commands
 use the caller's session and retain their existing per-tab rules. A malformed
 caller changes nothing and exits 3, with no fallback. An ended or stale caller
-also exits 3 when discovery completes; if no owner can be found because a
+also exits 3 when discovery completes (`unknown-caller`), and the message names
+its terminal and, while that terminal's log remains, the window it ran in and
+whether that window has ended. A shell that a resumed agent or a restored
+snapshot brings back can carry such a value. If no owner can be found because a
 supervisor cannot be inspected, it stops nothing and exits 4
 (`supervisor-unavailable`). Run `env -u EON_TERMINAL eon ...` to act on the
 shown session without caller
@@ -688,10 +691,14 @@ open the newer build from the launcher or from a shell outside Eon. A session
 command from another compatible build still finds the caller's supervisor in
 the inherited namespace. Discovery validates private directories and endpoints,
 has a bounded candidate count and timeout, and refuses ambiguous or incomplete
-resolution. An unavailable or incompatible supervisor exits 4 and names the
-window, pointing to the terminal's own `eon`; it never launches, presents or
-restarts a supervisor. Unknown explicit targets exit 3, malformed flags or IDs
-exit 2, and ambiguous window selection exits 1.
+resolution. When the selected window runs a build with another EONW version,
+`eon` runs the command, with the same arguments and input, as the `eon` of the
+build that started that window, so an `eon` from a newer profile still reaches
+an older window from inside it. When that build is no longer installed, or the
+supervisor is unavailable, it exits 4 and names the window, pointing to the
+terminal's own `eon`; it never launches, presents or restarts a supervisor.
+Unknown explicit targets exit 3, malformed flags or IDs exit 2, and ambiguous
+window selection exits 1.
 
 ### Reading a terminal
 
@@ -759,7 +766,9 @@ terminal content. Any process running as you can read terminals this way:
 `eon pane send TARGET -- TEXT` pastes TEXT into a pane or popup, named as for
 `eon pane read`, in any session of the window, as if you had pasted it there:
 bracketed when the program enabled bracketed paste. `--stdin` reads TEXT from
-standard input instead. `--enter` then presses Enter, after
+standard input instead, once it has found the target window, so a failure to
+find it is reported before standard input is read. `--enter` then presses
+Enter, after
 [`[agents] send_enter_delay_ms`](CONFIGURATION.md#configuration-behavior)
 (300 ms by default) so the program takes the whole paste first; `--enter`
 without TEXT, or with empty TEXT, presses Enter alone. A line break in TEXT

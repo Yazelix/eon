@@ -172,5 +172,7 @@ windows the person asked about.
 | 5 | `pane send` refused with `person-typing`; nothing was sent |
 | 130 | Interrupted with Ctrl+C |
 
-Read `error.code` for the specific failure. A stale or ended caller exits 3;
-do not remove `EON_TERMINAL` to bypass that failure.
+Read `error.code` for the specific failure. A stale or ended caller exits 3
+with `unknown-caller` and names its terminal and window; a resumed session can
+keep an ended terminal's `EON_TERMINAL`. Do not remove `EON_TERMINAL` to bypass
+that failure: run `eon` from your live terminal's shell instead.

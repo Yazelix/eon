@@ -1172,6 +1172,10 @@ names its socket. CLI JSON names a session `session` and a terminal
   names its terminal `terminal` instead of `session`.
   Amended on 2026-11-07 (approved by eon-overseer under Lucca's standing rule)
   by `eon-30skm` (S3): its prose says session for the product concept.
+  Amended on 2026-11-07 (approved by eon-overseer under Lucca's standing rule)
+  by `eon-rcxu5`: a stale caller's `unknown-caller` names its terminal and
+  window, and a selected supervisor of another EONW runs its recorded build
+  (EON-C11, Routing).
 - **Consumer:** One local CLI or approved composition controlling a live Eon
   supervisor.
 - **Trigger:** The client submits one versioned session or supervisor-lifecycle
@@ -1440,10 +1444,18 @@ names its socket. CLI JSON names a session `session` and a terminal
   prevent control of the caller's compatible supervisor. Caller resolution uses
   the complete opaque terminal identity and never falls back to another
   session. A malformed caller exits 3; a stale caller exits 3 when discovery
-  completes without validating it. When no owner can be found because discovery
-  cannot inspect a supervisor, it exits 4 (`supervisor-unavailable`). Failed or
-  ambiguous resolution changes nothing. An unavailable or incompatible selected
-  supervisor fails explicitly without starting, presenting or restarting it. In
+  completes without validating it. Its `unknown-caller` detail names the
+  terminal, and, while that terminal's Orbit log remains, the window it ran in
+  and whether that window has ended or no longer runs it, and says to run
+  `eon` from a live Eon terminal's own shell, since a shell outside Eon carries
+  neither `EON_TERMINAL` nor `EON_TAB`; a log that places the terminal in one
+  window takes precedence over another window's failure. When no owner can be found
+  because discovery cannot inspect a supervisor, it exits 4
+  (`supervisor-unavailable`). Failed or ambiguous resolution changes nothing.
+  A selected supervisor of another EONW version runs the command as the build
+  that started it (EON-C11, Routing). Otherwise an unavailable or incompatible
+  selected supervisor fails explicitly without starting, presenting or
+  restarting it. In
   a tab without panes, a popup caller's `pane move` refuses, and so does its
   `pane create` without `--no-focus` when dismissing that popup would end the
   tab's last terminal; both change nothing and exit 1. While a popup covers the
@@ -1892,6 +1904,9 @@ names its socket. CLI JSON names a session `session` and a terminal
   EONW revision changes, so a window of another EONW version is stopped
   without its build; Delegation serves attach only, proven by its amendment
   proof below.
+  Amended on 2026-11-07 (approved by eon-overseer under Lucca's standing rule)
+  by `eon-rcxu5`: a session command or `eon quit` whose window speaks another
+  EONW runs as that window's recorded build (Routing).
 - **Consumer:** Eon and eonbase users launching or targeting a product generation.
 - **Trigger:** Launch current generation, inspect an older live generation,
   present a compatible existing surface, stop one window, stop a selected set of
@@ -1930,7 +1945,24 @@ names its socket. CLI JSON names a session `session` and a terminal
   - A generation records the `eon` executable of the build that started it, an
     opaque launch input, so a later build can run it; `eon window
     attach` runs it, as Delegation describes, when this build cannot present
-    that window.
+    that window, and a session command runs it as Routing describes.
+  - **Routing.** When a session command (EON-C10) or `eon quit` selects a
+    generation whose supervisor speaks another EONW version, `eon` executes
+    that generation's recorded `eon` in its own place, with the same
+    arguments, environment, standard input and output, and with
+    `EON_ROUTED` set to the generation; that build's result and exit status
+    are the command's. Selection is EON-C10's: `--window` selects as it
+    does, and a calling terminal with no validating supervisor selects the
+    live generations of its namespace that this `eon` cannot inspect,
+    narrowed to the generation the terminal's Orbit log names while that log
+    remains, when exactly one remains. One command makes at most one hop: an
+    `eon` run with `EON_ROUTED` set, to any value, never routes. Eon removes
+    the variable from the environment of every supervisor, terminal and
+    Venus it starts. Without a recorded `eon`, when it no longer exists, or
+    when `EON_ROUTED` is set, the command fails as before
+    (`supervisor-unavailable`, exit 4); the detail names the recorded `eon`
+    that is gone, or the marker and its value. Window, launch and local
+    information commands, attach and Stop are never routed.
   - **Reserved Stop.** Every Stop, of any window and from any build
     (`eon`, `eonbase` and Venus's Quit), is one request whose bytes no EONW
     revision changes. Every supervisor answers it before it checks the EONW

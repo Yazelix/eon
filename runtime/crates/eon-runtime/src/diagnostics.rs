@@ -205,6 +205,20 @@ pub(super) fn orbit_log_path(
     directory.join(format!("{component_generation}-{session_id}-{run_id}.log"))
 }
 
+/// The generation whose Orbit log names `caller`, an `EON_TERMINAL` value, as
+/// `orbit_log_path` named it: the generation that ran that terminal, while
+/// its log remains.
+pub(super) fn orbit_run_generation(caller: &str) -> Option<String> {
+    let (session, run) = caller.split_once('.')?;
+    let suffix = format!("-{session}-{run}.log");
+    let logs = state_directory()?.join("logs").join("orbit");
+    fs::read_dir(logs).ok()?.flatten().find_map(|entry| {
+        let name = entry.file_name().into_string().ok()?;
+        let generation = name.strip_suffix(&suffix)?;
+        valid_generation(generation).then(|| generation.to_owned())
+    })
+}
+
 /// The suffix a failure line carries to name an Orbit log that exists.
 pub(super) fn orbit_log_suffix(path: Option<&Path>) -> String {
     path.filter(|path| path.exists())

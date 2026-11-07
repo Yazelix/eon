@@ -5,6 +5,7 @@ use super::control::{
     probe_generation_runtime_until, remove_socket_if_identity, report_failure,
     send_action_from_until, send_stop_on, socket_identity, socket_identity_from, write_stdout,
 };
+use super::sessions::terminal_session;
 use super::supervisor::{
     base_runtime_directory, effective_uid, present_at, probe_supervisor, runtime_directory,
     supervisor_lock_path, try_lock_supervisor_lifecycle, validate_private_directory,
@@ -132,6 +133,40 @@ pub(super) fn delegated_elsewhere(shown: &str) -> Error {
     ))
 }
 
+/// Set on a routed session command to the generation it was routed to, and
+/// removed from everything Eon starts (EON-C11, Routing).
+pub(super) const ROUTE_MARKER: &str = "EON_ROUTED";
+
+/// Runs `command` as the build that started generation `generation` of
+/// namespace `root`, through its recorded `eon`, in place of this `eon`
+/// (EON-C11, Routing). It returns only when it does not run it: with nothing
+/// to add when no `eon` is recorded, else with why. With the marker set, to
+/// any value, it never runs it, so one command makes at most one hop.
+fn route(root: &Path, generation: &str, command: &[OsString]) -> Option<String> {
+    if command.is_empty() {
+        return None;
+    }
+    let eon = recorded_launcher(&generation_directory(root, generation))?;
+    if let Some(routed) = env::var_os(ROUTE_MARKER) {
+        return Some(format!(
+            "{ROUTE_MARKER} is {:?}, so this `eon` was itself routed and does not run {}",
+            routed.to_string_lossy(),
+            eon.display()
+        ));
+    }
+    if !eon.is_file() {
+        return Some(format!(
+            "the `eon` that started it, {}, no longer exists",
+            eon.display()
+        ));
+    }
+    let error = Command::new(&eon)
+        .args(command)
+        .env(ROUTE_MARKER, generation)
+        .exec();
+    Some(format!("cannot run {}: {error}", eon.display()))
+}
+
 /// Records this build's `eon`, from its session bin, in the workspace
 /// generation directory `runtime`.
 pub(super) fn record_launcher(inputs: &Inputs, runtime: &Path) -> Result<(), String> {
@@ -173,6 +208,9 @@ const MAX_GENERATIONS: usize = 256;
 pub(super) struct WorkspaceTarget {
     /// An EON-C23 window ID or prefix, as typed.
     pub(super) window: Option<String>,
+    /// The arguments the build of a generation that speaks another EONW runs
+    /// in this `eon`'s place, else empty: never routed (EON-C11, Routing).
+    pub(super) command: Vec<OsString>,
 }
 
 pub(super) struct ResolvedWorkspace {
@@ -226,24 +264,33 @@ pub(super) fn resolve_workspace(
             ),
         )
     };
+    // The selected generation's failure; one of another EONW first runs the
+    // command as the build that started it.
+    let refused = |generation: &str, (kind, detail): (EndpointFailureKind, String)| {
+        let routed = (kind == EndpointFailureKind::Incompatible)
+            .then(|| route(&root, generation, &target.command))
+            .flatten();
+        unavailable(
+            generation,
+            match routed {
+                Some(why) => format!("{detail}; {why}"),
+                None => detail,
+            },
+        )
+    };
     let deadline = Instant::now() + CONTROL_TIMEOUT;
     let probe = |id: &str| {
         let path = generation_directory(&root, id);
         validate_private_directory(&path)
-            .map_err(|detail| (EndpointFailureKind::Corrupt, unavailable(id, detail)))?;
+            .map_err(|detail| (EndpointFailureKind::Corrupt, detail))?;
         let socket = path.join("eon.sock");
-        let runtime = probe_generation_runtime_until(&socket, deadline)
-            .map_err(|error| (error.kind, unavailable(id, error.detail)));
-        match runtime {
+        match probe_generation_runtime_until(&socket, deadline) {
             Ok(runtime) if runtime.generation == id => Ok(()),
             Ok(runtime) => Err((
                 EndpointFailureKind::Corrupt,
-                unavailable(
-                    id,
-                    format!("supervisor reports generation {}", runtime.generation),
-                ),
+                format!("supervisor reports generation {}", runtime.generation),
             )),
-            Err(error) => Err(error),
+            Err(error) => Err((error.kind, error.detail)),
         }
     };
     // A plain outside-Eon command keeps its current-generation default and existing failures.
@@ -259,7 +306,7 @@ pub(super) fn resolve_workspace(
                 },
             ));
         }
-        probe(&current).map_err(|(_, error)| error)?;
+        probe(&current).map_err(|error| unavailable(&current, error.1))?;
         return Ok(selected(current.clone()));
     }
 
@@ -275,7 +322,7 @@ pub(super) fn resolve_workspace(
                 format!("Eon window {shown} was not found"),
             ));
         }
-        probe(&id).map_err(|(_, error)| error)?;
+        probe(&id).map_err(|error| refused(&id, error))?;
         id
     } else {
         let candidates = generation_candidates(&root)
@@ -296,7 +343,7 @@ pub(super) fn resolve_workspace(
             let verified = match probe(id) {
                 Ok(_) => true,
                 Err((EndpointFailureKind::Dead, _)) => continue,
-                Err((_, error)) => {
+                Err(error) => {
                     failures.push((id.to_owned(), error));
                     false
                 }
@@ -315,7 +362,7 @@ pub(super) fn resolve_workspace(
                     }
                     Ok(true) => owner = Some(id.to_owned()),
                     Ok(false) => {}
-                    Err(error) => failures.push((id.to_owned(), unavailable(id, error.detail))),
+                    Err(error) => failures.push((id.to_owned(), (error.kind, error.detail))),
                 }
             }
         }
@@ -323,7 +370,8 @@ pub(super) fn resolve_workspace(
             match preferred_window_generation(&current, &live) {
                 Some(id) => {
                     if let Some(index) = failures.iter().position(|(failed, _)| failed == id) {
-                        return Err(failures.swap_remove(index).1);
+                        let (id, error) = failures.swap_remove(index);
+                        return Err(refused(&id, error));
                     }
                     id.to_owned()
                 }
@@ -351,11 +399,27 @@ pub(super) fn resolve_workspace(
                 ));
             }
             // A validated complete identity is authoritative; another generation's failure is not its owner.
-            return owner.map(selected).ok_or_else(|| {
-                failures
-                    .into_iter()
-                    .next()
-                    .map_or_else(unknown_caller, |(_, error)| error)
+            if let Some(owner) = owner {
+                return Ok(selected(owner));
+            }
+            // The caller's Orbit log, when it remains, names the one
+            // generation that can own it.
+            let caller = caller.unwrap_or_default();
+            let origin = super::diagnostics::orbit_run_generation(caller);
+            failures.retain(|(id, _)| origin.as_ref().is_none_or(|origin| origin == id));
+            return Err(match failures.len() {
+                0 => failure(
+                    "unknown-caller",
+                    stale_caller(caller, origin.map(|id| (label(&id), live.contains(&id)))),
+                ),
+                1 => {
+                    let (id, error) = failures.swap_remove(0);
+                    refused(&id, error)
+                }
+                _ => {
+                    let (id, (_, detail)) = failures.swap_remove(0);
+                    unavailable(&id, detail)
+                }
             });
         }
     };
@@ -367,6 +431,23 @@ pub(super) fn resolve_workspace(
         return Err(unknown_caller());
     }
     Ok(resolved)
+}
+
+/// What an `unknown-caller` failure says of a caller, an `EON_TERMINAL`
+/// value, that no running window runs: its terminal and, when its Orbit log
+/// names it, the window it ran in and whether that window still runs.
+fn stale_caller(caller: &str, origin: Option<(String, bool)>) -> String {
+    let terminal = terminal_text(terminal_session(caller).unwrap_or(caller));
+    let place = match origin {
+        Some((window, false)) => format!(" of Eon window {window}, which has ended"),
+        Some((window, true)) => format!(" of Eon window {window}, which no longer runs it"),
+        None => ", which no running Eon window here runs".into(),
+    };
+    format!(
+        "EON_TERMINAL names terminal {terminal}{place}; a resumed or restored shell can keep an \
+         old value. Run `eon` from a live Eon terminal's own shell; a shell outside Eon carries \
+         neither EON_TERMINAL nor EON_TAB"
+    )
 }
 
 /// The generation in namespace `root` whose supervisor validates `caller`.
@@ -388,13 +469,14 @@ pub(super) fn caller_generation(
     };
     let deadline = Instant::now() + CONTROL_TIMEOUT;
     let mut owners = Vec::new();
+    let mut live = Vec::new();
     let mut failures = Vec::new();
     for (id, path) in generation_candidates(root)? {
         let Some(id) = id.to_str().filter(|id| valid_generation(id)) else {
             continue;
         };
         if let Err(detail) = validate_private_directory(&path) {
-            failures.push(format!("Eon window {}: {detail}", label(id)));
+            failures.push((id.to_owned(), format!("Eon window {}: {detail}", label(id))));
             continue;
         }
         let socket = path.join("eon.sock");
@@ -411,15 +493,25 @@ pub(super) fn caller_generation(
         match validated {
             Ok(true) => owners.push(id.to_owned()),
             Ok(false) => {}
-            Err(error) if matches!(error.kind, EndpointFailureKind::Dead) => {}
-            Err(error) => failures.push(format!("Eon window {}: {}", label(id), error.detail)),
+            Err(error) if matches!(error.kind, EndpointFailureKind::Dead) => continue,
+            Err(error) => failures.push((
+                id.to_owned(),
+                format!("Eon window {}: {}", label(id), error.detail),
+            )),
         }
+        live.push(id.to_owned());
     }
     match owners.as_slice() {
         [owner] => Ok(owner.clone()),
-        [] => Err(failures.into_iter().next().unwrap_or_else(|| {
-            "the calling terminal is not live in this Eon runtime namespace".into()
-        })),
+        [] => {
+            // As `resolve_workspace`: the caller's Orbit log narrows its owner.
+            let origin = super::diagnostics::orbit_run_generation(caller);
+            failures.retain(|(id, _)| origin.as_ref().is_none_or(|origin| origin == id));
+            Err(failures.into_iter().next().map_or_else(
+                || stale_caller(caller, origin.map(|id| (label(&id), live.contains(&id)))),
+                |(_, failure)| failure,
+            ))
+        }
         _ => {
             let mut windows: Vec<String> = owners.iter().map(|id| label(id)).collect();
             windows.dedup();

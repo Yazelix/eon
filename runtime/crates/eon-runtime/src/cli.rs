@@ -622,7 +622,7 @@ fn execute(inputs: &Inputs, arguments: Vec<OsString>) -> Result<i32, Error> {
         return if all {
             windows::stop_windows(inputs, windows::Bulk::Quit, json)
         } else {
-            windows::quit(inputs, json)
+            windows::quit(inputs, json, &arguments)
         };
     }
     let result = match arguments.as_slice() {
@@ -1515,6 +1515,21 @@ fn window_json(window: Option<&str>) -> String {
 /// counts as none.
 fn send_terminal(inputs: &Inputs, send: PaneSend, target: WorkspaceTarget) -> Result<i32, Error> {
     let json = send.json;
+    let action = |input| Action::SendTerminal {
+        target: send.target.clone(),
+        input,
+        force: send.force,
+    };
+    let resolve = || {
+        let caller = calling_terminal()?;
+        validate_action(caller.clone(), action(TerminalInput::Enter))
+            .map_err(|error| failure("malformed-action", error.detail))?;
+        let resolved = resolve_workspace(inputs, target.clone(), caller.as_deref())?;
+        Ok::<_, Failure>((caller, resolved))
+    };
+    // Standard input belongs to the build that a routed send runs as, so the
+    // target is known before it is read (EON-C11, Routing).
+    let mut resolved_first = None;
     let text = match send.text {
         SendText::None if stdin_holds_data() => {
             let detail = "standard input holds text, so nothing was sent; add --stdin to send \
@@ -1525,6 +1540,10 @@ fn send_terminal(inputs: &Inputs, send: PaneSend, target: WorkspaceTarget) -> Re
         SendText::None => Vec::new(),
         SendText::Operand(text) => text.into_vec(),
         SendText::Stdin => {
+            match resolve() {
+                Ok(resolved) => resolved_first = Some(resolved),
+                Err(error) => return Ok(report_failure(&error, json)?),
+            }
             let mut text = Vec::new();
             std::io::stdin()
                 .lock()
@@ -1555,22 +1574,7 @@ fn send_terminal(inputs: &Inputs, send: PaneSend, target: WorkspaceTarget) -> Re
             }
         }
     };
-    let caller = match calling_terminal() {
-        Ok(caller) => caller,
-        Err(error) => return Ok(report_failure(&error, json)?),
-    };
-    let action = |input| Action::SendTerminal {
-        target: send.target.clone(),
-        input,
-        force: send.force,
-    };
-    if let Err(error) = validate_action(caller.clone(), action(TerminalInput::Enter)) {
-        return Ok(report_failure(
-            &failure("malformed-action", error.detail),
-            json,
-        )?);
-    }
-    let resolved = match resolve_workspace(inputs, target, caller.as_deref()) {
+    let (caller, resolved) = match resolved_first.map_or_else(resolve, Ok) {
         Ok(resolved) => resolved,
         Err(error) => return Ok(report_failure(&error, json)?),
     };
@@ -1925,7 +1929,10 @@ pub(super) fn calling_terminal() -> Result<Option<String>, Failure> {
 fn parse_workspace_target_arguments(
     arguments: &[OsString],
 ) -> Result<(Vec<OsString>, WorkspaceTarget), Error> {
-    let mut target = WorkspaceTarget::default();
+    let mut target = WorkspaceTarget {
+        command: arguments.to_vec(),
+        ..WorkspaceTarget::default()
+    };
     let mut values = Vec::new();
     let mut arguments = arguments.iter();
     while let Some(argument) = arguments.next() {

@@ -5,6 +5,14 @@ installation, and proven contract changes.
 
 ## Unreleased
 
+- An `eon` session command or `eon quit` that reaches a window of another
+  EONW version now runs as that window's own `eon`, with the same arguments,
+  input and output, instead of failing with a version error, while that
+  build is still installed (`eon-rcxu5`, EON-C11 Routing). An `EON_TERMINAL`
+  that names an ended terminal, as a resumed agent's restored shell can keep,
+  now fails with `unknown-caller` (exit 3) naming the terminal and the window
+  it ran in, and says to run `eon` from a live Eon terminal's shell, instead
+  of reporting another window's version.
 - The keys popup that opens over a hints bar keycap is shorter
   (`eon-e3a1z.4`): its keys sit in two sections side by side, Actions and
   Popups, each with a short label such as "New tab", "Zoom pane" or "Detach"
