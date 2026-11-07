@@ -2038,9 +2038,12 @@ struct PairWindow {
 
 impl PairWindow {
     fn new() -> Self {
-        let root = fs::canonicalize(temporary_directory()).unwrap();
+        let directory = temporary_directory();
+        let root = fs::canonicalize(&directory).unwrap();
         let window = Self {
-            runtime: root.join("runtime"),
+            // macOS resolves /tmp to /private/tmp, which would push the terminal sockets past
+            // their 103 bytes; the runtime keeps the short spelling the suites' TMPDIR gives.
+            runtime: directory.join("runtime"),
             config: root.join("config"),
             launch: root.join("launch"),
             home: root.join("home"),
@@ -3422,13 +3425,14 @@ fn a_stalled_subscriber_never_delays_requests_another_subscriber_or_stop() {
     let venus = root.join("venus");
     managed_orbit_executable(&orbit);
     executable(&venus, "#!/bin/sh\ncat >/dev/null\n");
-    // Two directories named by about 4000 bytes each, so every directory
-    // event is large and a reader that stops reading fills its connection.
+    // Two directories named by nearly PATH_MAX bytes each (about 4000 on Linux, 1000 on
+    // macOS), so every directory event is large and a reader that stops reading fills its
+    // connection.
     let directories = ["a", "b"].map(|name| {
         let directory = root.join(name);
         fs::create_dir(&directory).unwrap();
         let mut bytes = directory.as_os_str().as_bytes().to_vec();
-        while bytes.len() + 2 <= 4000 {
+        while bytes.len() + 2 <= libc::PATH_MAX as usize - 96 {
             bytes.extend_from_slice(b"/.");
         }
         bytes
