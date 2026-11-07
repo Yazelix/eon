@@ -188,3 +188,10 @@ Read the first snapshot, apply events, and replace state on an overflow gap.
 Use `--after STREAM:SEQ` to resume; if unavailable, the stream starts fresh.
 Sequence gaps from filtering are normal. Handle end and connection loss;
 never treat lost connection as successful completion. `pane wait` is planned.
+
+Attention JSON carries `previous` and the full `attention` record. A question
+has `attention.kind` set to `question`. Event JSON has no structured options
+field; options appear only as `attention.message` text (for example, `Red · Blue`).
+Read the full menu with `eon pane read` under the configured terminal-access policy.
+Filtered sequence skips are not overflow; a gap explicitly supplies fresh state.
+For complete state under session/target/state filters, read `eon session --json`.

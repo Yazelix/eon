@@ -1089,7 +1089,9 @@ resume retained events; a successful resume has null state, otherwise a fresh
 snapshot. Sequence numbers advance before filtering, so skips are normal.
 A `gap` with reason `overflow` replaces state with its `snapshot`. Handle it
 before subsequent events. The retained log holds at most 1024 events / 8 MiB;
-pending events are bounded by 1 MiB. A subscriber stalled for 30 seconds closes.
+pending events are bounded by 1 MiB. A supervisor serves at most 32
+subscribers. A subscriber stalled for 30 seconds closes; progress is measured
+in write units of up to 4 KiB.
 
 Human refusals go to stderr; JSON refusals go to stdout.
 Without `--json`, output is one human line per message; attention shows only
@@ -1098,5 +1100,13 @@ title and message text. End reasons `ended` and `targets-gone` exit 0;
 `too-slow` exits 1 only when its complete end arrives, otherwise connection loss
 exits 4. Refusals exit 1 for `subscriber-limit` or `ambiguous-session`, 3 for
 missing/stale targets or callers; invalid arguments exit 2, unreachable or
-incompatible supervisors or other EONW failures exit 4; interrupt exits 130. Closed stdout exits 0.
+incompatible supervisors or other EONW failures exit 4; interrupt exits 130.
+Closed stdout exits 0.
 `eon pane wait` is planned under `eon-ciwn.9`.
+
+Use the stream as a change feed when filtering by session, target or state;
+read `eon session --json` for complete current state. A tab-filtered stream
+keeps its named tabs current but does not rebuild session-wide selection or
+window order. Add `--kind queue` to receive the whole queue on each change.
+See [EON-C39](CONTRACTS.md#eon-c39--session-events-from-the-cli) for the
+snapshot and event field sets and the exact reconstruction guarantees.

@@ -1130,7 +1130,7 @@ names its socket. CLI JSON names a session `session` and a terminal
 ## EON-C10 — Typed workspace control
 
 - **Status:** Proven. Amended on 2026-11-03 (approved by Lucca, relayed by
-  eon-overseer) by `eon-ciwn.1`: EON-C39's planned event subscription is the
+  eon-overseer) by `eon-ciwn.1`: EON-C39's event subscription is the
   one connection that carries more than one response. Amended on 2026-11-03
   (approved by Lucca, relayed by eon-overseer) by
   `eon-quick-search-parity-23y9.3`: the Files quick-search keys, and
@@ -3374,7 +3374,7 @@ names its socket. CLI JSON names a session `session` and a terminal
   Amended on 2026-10-29 (approved by Lucca, relayed by eon-overseer) by
   `eon-ngwf.2`: `FocusAttention` across workspaces.
   Amended on 2026-11-03 (approved by Lucca, relayed by eon-overseer) by
-  `eon-ciwn.1`: EON-C39 plans a stream of its changes.
+  `eon-ciwn.1`: EON-C39 exposes a stream of its changes.
   Amended on 2026-11-06 (approved by Lucca, relayed by eon-overseer) by
   `eon-2kvr`: Seen needs native window focus.
   Amended on 2026-11-07 (approved by eon-overseer under Lucca's standing rule)
@@ -3670,7 +3670,7 @@ names its socket. CLI JSON names a session `session` and a terminal
   - **Orbit** owns the records, their neutral facts and the terminal title.
   - **Venus** owns presentation and hiding for width (VEN-C30).
 - **Consumes:** ORB-C15, ORB-C13 generation 7, EON-C8 topology, and EON-C10
-  (EONW v37, request and response). EON-C39 plans a stream of its changes.
+  (EONW v37, request and response). EON-C39 exposes a stream of its changes.
 - **Boundary:**
   - no hooks and no edits to agent configuration;
   - no provider parsing; the Runtime passes `app` and `name` through unchanged, and Venus maps
@@ -4698,10 +4698,11 @@ names its socket. CLI JSON names a session `session` and a terminal
 
 ## EON-C39 — Session events from the CLI
 
-- **Status:** Planned (`eon-ciwn.1`, approved by Lucca 2026-11-03, relayed by
-  eon-overseer). `eon-ciwn.5` builds the Runtime event projection,
-  `eon-ciwn.6` the EONW v30 codec, `eon-ciwn.7` the supervisor
-  subscriptions, `eon-ciwn.8` `eon events` and `eon-ciwn.9` `eon pane wait`.
+- **Status:** Candidate (`eon-ciwn.8`; contract approved in `eon-ciwn.1` by
+  Lucca 2026-11-03, relayed by eon-overseer). `eon-ciwn.5` implemented the
+  Runtime event projection, `eon-ciwn.6` the EONW v30 codec, `eon-ciwn.7`
+  the supervisor subscriptions and `eon-ciwn.8` `eon events`.
+  `eon pane wait` remains planned under `eon-ciwn.9`.
   Amended on 2026-11-03 (approved by Lucca, relayed by eon-overseer) by
   `eon-ciwn.6`: a snapshot's tabs cross as `TABS` messages, and tab and pane
   events carry the order of tabs and columns. Amended on 2026-11-03
@@ -4936,7 +4937,8 @@ names its socket. CLI JSON names a session `session` and a terminal
   filters, subscriber bounds and CLI projection. Its canonical EONW package
   owns the v37 `Subscribe` action and the `SUBSCRIBED`, `TABS`, `EVENT`,
   `GAP` and `END` messages.
-- **Consumes:** EON-C10 (EONW v30 from `eon-ciwn.6`, targeting, exit codes),
+- **Consumes:** EON-C10 (current EONW v37; subscriptions introduced in v30
+  by `eon-ciwn.6`, targeting, exit codes),
   EON-C31 (attention records, the queue and its CLI visibility), EON-C11
   (busy terminals, generations), EON-C23 (window and supervisor start time)
   and EON-C33 (sessions).
@@ -4958,7 +4960,22 @@ names its socket. CLI JSON names a session `session` and a terminal
     input crosses;
   - action discovery (`eon-cli-action-discovery-ogzi`), whose later `wait`
     consumes this subscription.
-- **Proof:** None yet.
-- **Open proof:** `eon-ciwn.8` proves `eon events` on the installed product
-  with a real Claude Code question in a filtered tab; `eon-ciwn.9` proves
-  `eon pane wait` with a real agent pane.
+- **Proof:** `eon-ciwn.8` source checks on tree
+  `1f65e1be9459f147b60ec9fc45e165eae877b167`, x86_64 Linux: fmt and
+  all-target clippy for Eon Runtime and Eon passed; isolated `eon-test` passed
+  116 CLI integration tests and 297 Runtime tests (one pre-existing ignored).
+  On 2026-11-07, built tree `014bbc6af53a525551fb9f4968d90d318bfb5af1`
+  with `nix build .#default` into an out-link and ran from that store path:
+  `/nix/store/ikaimansr6f9bbzh1zpcv05lc3a14i94-eon-0.1.21`, EONW v37,
+  on x86_64 Linux under private headless Sway 1.12, a fresh HOME and an
+  isolated Eon root. Real Claude Code 2.1.303 on Haiku asked a question in
+  tab `t2`; `eon events --json --tab t2 --kind attention --state needs-input`
+  emitted an `attention` event with `kind: question` in its attention object
+  in 127 ms (line receipt minus `attention.changed_at`). The private terminal
+  displayed the same question and choices. The embedded skill matched its
+  source. Claude's exact PID and all isolated processes were stopped;
+  the live profile and user's windows were untouched. This installed proof
+  covers Linux; Darwin subscription/slow-reader behavior is not claimed here.
+- **Open proof:** `eon-ciwn.9` implements and proves `eon pane wait` with a
+  real agent pane. Installed Darwin subscription/slow-reader proof remains
+  open; this contract is Candidate.
