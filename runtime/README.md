@@ -159,8 +159,9 @@ cargo clippy --locked -p eon-runtime -p eon-workspace-protocol --all-targets -- 
 defines.
 Tests use independent supplied inputs. Eon's actual executable integration
 tests stay with Eon in `eon/crates/eon/tests`.
-The composed product is proved on x86_64 Linux native Wayland; Apple Silicon
-macOS remains unproved for Eon.
+The composed product is proved on x86_64 Linux native Wayland. On Apple Silicon
+macOS, Eon is a preview; the [README](../README.md#status-and-limits) lists its
+known issues.
 
 ## License
 

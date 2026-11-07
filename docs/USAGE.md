@@ -3,12 +3,14 @@
 ## Supported environment
 
 Eon is in alpha and installs only through Nix. The supported product
-target is **x86_64 Linux on native Wayland**.
+target is **x86_64 Linux on native Wayland**. From v0.2.0, Apple Silicon Macs
+with macOS 14 or later run Eon as a preview; the
+[README](../README.md#status-and-limits) lists its known issues.
 
 Before installing, you need:
 
 - Git and Nix with flakes enabled; and
-- a native Wayland session.
+- on Linux, a native Wayland session.
 
 Venus draws with `wgpu` on Vulkan: a hardware adapter uses the GPU, and Mesa
 lavapipe can render in software.

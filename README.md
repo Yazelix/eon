@@ -38,7 +38,8 @@ where you left it.
 ## Get started
 
 You need **x86_64 Linux on native Wayland**, Git, and Nix with flakes enabled.
-Install the latest release, 0.1.16:
+From v0.2.0, an Apple Silicon Mac with macOS 14 or later also works, as a
+[preview](#status-and-limits). Install the latest release, 0.1.16:
 
 ```sh
 nix profile add --refresh github:Yazelix/eon/main
@@ -99,8 +100,9 @@ await re-proof. Other compositors, non-systemd hosts and proprietary NVIDIA
 drivers are unproved. Restarting the machine ends live terminals.
 
 **Mac (preview):** From v0.2.0, Eon runs on Apple Silicon Macs as a preview,
-installed with the same Nix command. It needs macOS 14 or later and was
-checked on macOS 26 and 27. The preview makes no stability promise and is not
+installed with the same Nix command; until v0.2.0 is out, install
+`github:Yazelix/eon/edge`. It needs macOS 14 or later and was checked on
+macOS 15, 26 and 27. The preview makes no stability promise and is not
 full support. Full Eon runs natively on Apple Silicon Mac minis, including at
 Retina scale 2. Known issues:
 

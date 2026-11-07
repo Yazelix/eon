@@ -48,9 +48,8 @@ shows it for that window; **Alt+/** opens the complete Shortcuts viewer.
 
 [Running Venus](docs/LAUNCH.md) covers fonts, window options, attachment, and
 supervised startup. On Apple Silicon macOS, Venus renders, takes input, and
-reattaches to native Orbit in this repository, though Han ideographs render
-blank with stock macOS fonts (cause not diagnosed). macOS remains unsupported
-as a product target.
+reattaches to native Orbit as part of Eon's macOS preview; the
+[README](../README.md#status-and-limits) lists its known issues.
 
 ## Read more
 
