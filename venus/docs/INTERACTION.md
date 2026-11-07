@@ -53,12 +53,12 @@ to select that column's expanded pane. The fixed controls in the Eon Bar are
 `+` for a tab, `?` for Shortcuts, and `×` to close the exact active tab. Only
 the empty region between tabs and controls drags an undecorated window.
 While the snapshot lists two or more workspaces, or its one workspace has a
-name, an outlined label leads the tabs with the shown workspace's name or `wN`
+name, an outlined label leads the tabs with the shown workspace's name or `sN`
 and, with several, its `N/M` position. A click, or Enter or Space when it has
-focus, invokes Eon's `workspaces` popup entry as that entry's key does; without
+focus, invokes Eon's `sessions` popup entry as that entry's key does; without
 that entry the label is inert text. A final close shows the close prompt
 whatever the workspace count; while other workspaces remain, it says it closes
-the workspace, by name or `wN`, and its footer reads `Enter Close`.
+the workspace, by name or `sN`, and its footer reads `Enter Close`.
 
 | Keys | Action |
 |---|---|

@@ -39,7 +39,7 @@ enabled = true
 style = "random"
 duration_seconds = 3
 
-[workspace]
+[session]
 warning_close_last_tab = true
 animate_working_badge = true
 number_keys = true
@@ -81,7 +81,7 @@ background_blur = true # Request compositor background blur.
 background_opacity = 0.8 # Opacity of the terminal's default background.
 # border_width: unset. Use Venus's neutral outline width when omitted.
 # columns: unset. Let the window choose initial columns when omitted.
-# cursor_trail_color: unset. Omission retains the workspace's random cursor colour.
+# cursor_trail_color: unset. Omission retains the session's random cursor colour.
 cursor_trail_duration = 1.5 # Cursor tail duration multiplier; 0 turns the trail off.
 # focus_border_width: unset. Use Venus's focus outline width when omitted.
 # focus_color: unset. Use Venus's focus colour when omitted.
@@ -106,9 +106,9 @@ duration_seconds = 3 # Startup animation duration in seconds.
 enabled = true # Enable this feature or popup.
 style = "random" # Startup animation style.
 
-[workspace]
+[session]
 animate_working_badge = true # Animate the working badge; false keeps it still.
-number_keys = true # Alt+Shift+1..9 and Alt+Shift+0 show workspaces 1..10; false leaves the keys to the terminal.
+number_keys = true # Alt+Shift+1..9 and Alt+Shift+0 show sessions 1..10; false leaves the keys to the terminal.
 warning_close_last_tab = true # Ask before stopping the final tab's terminals.
 
 [sidebar]
@@ -165,12 +165,12 @@ enabled = true # Enable this feature or popup.
 keybinding = "Alt+Shift+E" # Popup shortcut using physical keys.
 label = "Scrollback" # Popup display name.
 
-[popups.workspaces]
-command = ["eon-workspaces"] # Direct argv, or auto for Agent's command selection.
+[popups.sessions]
+command = ["eon-sessions"] # Direct argv, or auto for Agent's command selection.
 enabled = true # Enable this feature or popup.
 keep_alive = false # Keep this popup running when hidden.
 keybinding = "Alt+Shift+S" # Popup shortcut using physical keys.
-label = "Workspaces" # Popup display name.
+label = "Sessions" # Popup display name.
 ```
 <!-- defaults:end -->
 
@@ -187,6 +187,11 @@ with one warning that names the replacement; Eon never rewrites
 is ignored with a warning. `[bar] show_version`, deprecated in v0.1.2, reads as
 `[bar] widgets`: `false` gives the built-in widget list without `version`, and
 `true` gives the built-in list. Any other value is a configuration error.
+
+A table that a later release renamed has no effect: Eon ignores it, whatever
+it holds, with one warning that names the new table, and never fails to start
+over it. v0.1.20 renamed `[workspace]` to `[session]` and
+`[popups.workspaces]` to `[popups.sessions]`; move their keys by hand.
 
 `[bar] widgets` chooses which Eon Bar widgets show and their order, left to
 right between the tabs and the Shortcuts button, except `clock` and `version`,

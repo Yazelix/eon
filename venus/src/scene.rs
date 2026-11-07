@@ -3,7 +3,7 @@ use crate::{
     model::{active_popup, focused_terminal, presented_panes},
     render::{CellMetrics, FALLBACK_CAP_HEIGHT_EM},
 };
-use eon_workspace_protocol::v35::{
+use eon_workspace_protocol::v36::{
     ALT, Attention, AttentionKind, AttentionState, BusyTerminals, ClaudeQuota, ClaudeQuotaState,
     CodexQuota, CodexQuotaState, PopupEntry, QuotaWindow, SHIFT, Sidebar, Snapshot, Tab, TargetId,
 };
@@ -588,7 +588,7 @@ pub(crate) struct WorkspaceNameLabel {
     pub(crate) badge: Option<TabBadge>,
 }
 
-/// The shown workspace's name, or its `wN` when unnamed, with its 1-based position in window
+/// The shown workspace's name, or its `sN` when unnamed, with its 1-based position in window
 /// order and the window's workspace count.
 #[must_use]
 pub fn shown_workspace(snapshot: &Snapshot) -> Option<(&str, usize, usize)> {
@@ -1243,7 +1243,7 @@ pub enum DialogKind {
     Shortcuts,
     AttentionInbox,
     /// The final-close prompt: how many terminals the close stops, the detach chord unless a
-    /// popup takes it, and the shown workspace's name or `wN` while other workspaces remain.
+    /// popup takes it, and the shown workspace's name or `sN` while other workspaces remain.
     CloseLastTab {
         terminals: usize,
         detach: Option<String>,
@@ -1282,7 +1282,7 @@ impl DialogKind {
                 "This {} and stops {terminals} terminal{}.",
                 workspace.as_ref().map_or_else(
                     || "quits the window".into(),
-                    |workspace| format!("closes workspace {workspace}")
+                    |workspace| format!("closes session {workspace}")
                 ),
                 if *terminals == 1 { "" } else { "s" }
             )

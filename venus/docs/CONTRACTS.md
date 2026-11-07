@@ -5,7 +5,7 @@ remaining limitations. Beads and Git retain execution history; `CHANGELOG.md`
 retains accepted user-visible chronology.
 
 `VEN-C16` owns platform scope. Venus consumes ORBF v3 / ORBS v14 through the
-in-tree `orbit-protocol` crate and canonical EONW v35 through the in-tree
+in-tree `orbit-protocol` crate and canonical EONW v36 through the in-tree
 `eon-workspace-protocol` crate. A protocol version named in a contract below
 records when that behavior entered the wire; the current consumer is the
 in-tree version. VEN-C31 entered with ORBF v3 in ORBS v14.
@@ -575,6 +575,9 @@ re-proved when that platform or feature is next touched.
   first focusing its tab. Amended on 2026-11-06 under Lucca's standing
   approval rule, relayed by eon-overseer, by `eon-7cf0y.15`: Command+Q on
   macOS acts as a close request.
+  Amended on 2026-11-07 (approved by eon-overseer under Lucca's standing rule)
+  by `eon-30skm` (S1): `[session] number_keys`, session IDs `sN`; the final
+  close says it closes the session.
 - **Consumer:** One Venus surface controlled by an Eon workspace.
 - **Trigger:** Outside visible `VEN-C18` popup presentation, Eon supplies
   durable topology, a workspace action changes tab, pane, focus, order,
@@ -717,7 +720,7 @@ re-proved when that platform or feature is next touched.
     position 10. Venus sends that workspace's stable ID through
     `SwitchWorkspace`. A missing position, or the shown workspace's own, is
     consumed without an action or terminal input. With
-    `[workspace] number_keys = false`, passed at launch, the keys reach the
+    `[session] number_keys = false`, passed at launch, the keys reach the
     terminal. A configured popup on one of them takes it (VEN-C20).
   - Physical Ctrl+Tab and Ctrl+Shift+Tab, with terminal or chrome focus, focus
     the tab after or before the active one in the accepted snapshot's order,
@@ -747,8 +750,8 @@ re-proved when that platform or feature is next touched.
     words it from the current snapshot whenever it draws it, so an open prompt
     re-words when the workspace count changes. While the snapshot lists other
     workspaces (EON-C33), the close removes only the shown workspace: the
-    subtitle reads "This closes workspace NAME and stops N terminals.", with
-    its name or `wN`, the footer "Enter Close · Esc Cancel", and the AccessKit
+    subtitle reads "This closes session NAME and stops N terminals.", with
+    its name or `sN`, the footer "Enter Close · Esc Cancel", and the AccessKit
     description "Press Enter to close it" where it otherwise reads "Press
     Enter to quit". Runtime decides whether the sent close ends the window or
     removes the workspace. When the argument is false, the close is sent at
@@ -1498,6 +1501,8 @@ re-proved when that platform or feature is next touched.
   by `eon-e3a1z.3`: the clock is plain text in the version label's colour. Amended on
   2026-11-06 (eon-overseer's decision, under Lucca's "your decision") by `eon-e3a1z.3`:
   the clock's inset mirrors the version's.
+  Amended on 2026-11-07 (approved by eon-overseer under Lucca's standing rule)
+  by `eon-30skm` (S1): session IDs `sN` and the `sessions` popup entry.
 - **Consumer:** One person using a Venus surface controlled by a full Eon
   workspace.
 - **Trigger:** The person points at, focuses, or activates the workspace header;
@@ -1558,13 +1563,13 @@ re-proved when that platform or feature is next touched.
 - **Workspace label (EON-C33):** While the snapshot lists two or more
   workspaces, or its one workspace has a name, a label sits at the bar's left
   inset on the tabs' centre line, and the tab region starts one tab gap after
-  it. It reads the shown workspace's name, or its `wN` when unnamed, then
+  it. It reads the shown workspace's name, or its `sN` when unnamed, then
   ` N/M` when M ≥ 2, where N is its 1-based position in window order and M
   the count. The name is fitted to a tab's widest text, and ` N/M` stays
   whole. It draws like the widgets, an outline with no fill and primary text,
   so it does not read as a tab. A left press and release on it while the
   presentation is current, or Enter or Space after Tab focuses it, invokes the
-  snapshot's `workspaces` popup entry as that entry's key does. Its tooltip is
+  snapshot's `sessions` popup entry as that entry's key does. Its tooltip is
   that entry's label and any chord, such as `Workspaces — Alt+Shift+S`; it takes
   the header controls' hover, pressed and focus states and is the first header
   control in Tab order. Without that entry it is inert text with no hover,

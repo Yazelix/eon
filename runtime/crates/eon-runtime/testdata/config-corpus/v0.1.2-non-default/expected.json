@@ -86,14 +86,15 @@
       "pane_frames": false,
       "rows": 40
     },
-    "workspace": {
+    "session": {
       "animate_working_badge": true,
       "number_keys": true,
-      "warning_close_last_tab": false
+      "warning_close_last_tab": true
     }
   },
   "warnings": [
     "eon: ignoring unknown setting popup in config.toml",
+    "eon: ignoring [workspace] in config.toml: renamed to [session] in v0.1.20",
     "eon: ignoring popups.files.command in config.toml: Files is Eon's packaged Yazi; move a custom Yazi to its own popup, such as [popups.yazi] command = [\"eon-yazi\"]",
     "eon: ignoring popups.files.keep_alive in config.toml: Files is Eon's packaged Yazi; move a custom Yazi to its own popup, such as [popups.yazi] command = [\"eon-yazi\"]"
   ]

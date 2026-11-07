@@ -2,7 +2,7 @@ use super::*;
 
 #[test]
 fn agent_sidebar_pushes_columns_hides_for_width_and_shows_its_empty_state() {
-    use eon_workspace_protocol::v35::{
+    use eon_workspace_protocol::v36::{
         AttentionState, Column, Popup, PopupEntry, PopupGeometry, PopupKey, Shortcut,
     };
 
@@ -10,16 +10,16 @@ fn agent_sidebar_pushes_columns_hides_for_width_and_shows_its_empty_state() {
         label: id.into(),
         pinned_name: None,
         id: id.into(),
-        session: format!("session-{id}"),
+        session: format!("terminal-{id}"),
         endpoint: format!("/run/{id}.sock").into_bytes(),
         live: true,
         attention: None,
     };
     let mut snapshot = Snapshot {
-        workspace: "w1".into(),
-        active_workspace: "w1".into(),
-        workspaces: vec![eon_workspace_protocol::v35::WorkspaceInfo {
-            id: "w1".into(),
+        workspace: "s1".into(),
+        active_workspace: "s1".into(),
+        workspaces: vec![eon_workspace_protocol::v36::WorkspaceInfo {
+            id: "s1".into(),
             name: None,
             tab_count: 1,
             attention: None,
@@ -142,7 +142,7 @@ fn agent_sidebar_pushes_columns_hides_for_width_and_shows_its_empty_state() {
 
     // Any attention replaces the empty state.
     snapshot.sidebar = Sidebar::Open;
-    snapshot.tabs[0].popups[0].attention = Some(eon_workspace_protocol::v35::Attention {
+    snapshot.tabs[0].popups[0].attention = Some(eon_workspace_protocol::v36::Attention {
         state: AttentionState::Unavailable,
         record: None,
     });
@@ -152,7 +152,7 @@ fn agent_sidebar_pushes_columns_hides_for_width_and_shows_its_empty_state() {
 
 #[test]
 fn agent_sidebar_rows_show_attention_in_tab_order_and_reveal_the_focused_row() {
-    use eon_workspace_protocol::v35::{
+    use eon_workspace_protocol::v36::{
         Attention, AttentionRecord, Column, Popup, PopupEntry, PopupGeometry, PopupKey, Shortcut,
     };
 
@@ -172,7 +172,7 @@ fn agent_sidebar_rows_show_attention_in_tab_order_and_reveal_the_focused_row() {
         label: id.into(),
         pinned_name: None,
         id: id.into(),
-        session: format!("session-{id}"),
+        session: format!("terminal-{id}"),
         endpoint: format!("/run/{id}.sock").into_bytes(),
         live: true,
         attention,
@@ -221,10 +221,10 @@ fn agent_sidebar_rows_show_attention_in_tab_order_and_reveal_the_focused_row() {
         }),
     };
     let snapshot = Snapshot {
-        workspace: "w1".into(),
-        active_workspace: "w1".into(),
-        workspaces: vec![eon_workspace_protocol::v35::WorkspaceInfo {
-            id: "w1".into(),
+        workspace: "s1".into(),
+        active_workspace: "s1".into(),
+        workspaces: vec![eon_workspace_protocol::v36::WorkspaceInfo {
+            id: "s1".into(),
             name: None,
             tab_count: 3,
             attention: None,

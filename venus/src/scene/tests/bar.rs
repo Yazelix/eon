@@ -835,13 +835,13 @@ fn footer_centres_full_name_keycaps_and_keeps_the_version_clear() {
 
 #[test]
 fn eon_bar_keeps_tabs_controls_and_drag_hits_disjoint_under_pressure() {
-    use eon_workspace_protocol::v35::{Pane, PopupGeometry, Tab};
+    use eon_workspace_protocol::v36::{Pane, PopupGeometry, Tab};
 
     let snapshot = Snapshot {
-        workspace: "w1".into(),
-        active_workspace: "w1".into(),
-        workspaces: vec![eon_workspace_protocol::v35::WorkspaceInfo {
-            id: "w1".into(),
+        workspace: "s1".into(),
+        active_workspace: "s1".into(),
+        workspaces: vec![eon_workspace_protocol::v36::WorkspaceInfo {
+            id: "s1".into(),
             name: None,
             tab_count: 1,
             attention: None,
@@ -860,7 +860,7 @@ fn eon_bar_keeps_tabs_controls_and_drag_hits_disjoint_under_pressure() {
                 pending: false,
                 selected_pane: Some(format!("p{index}")),
                 selected_popup: None,
-                columns: vec![eon_workspace_protocol::v35::Column {
+                columns: vec![eon_workspace_protocol::v36::Column {
                     panes: vec![Pane {
                         label: format!("p{index}"),
                         pinned_name: None,
@@ -882,7 +882,7 @@ fn eon_bar_keeps_tabs_controls_and_drag_hits_disjoint_under_pressure() {
         claude_quota_failure: None,
         running: None,
         busy: None,
-        sidebar: eon_workspace_protocol::v35::Sidebar::Open,
+        sidebar: eon_workspace_protocol::v36::Sidebar::Open,
         attention_queue: Vec::new(),
     };
     let metrics = CellMetrics::for_scale(1.0);
@@ -1060,7 +1060,7 @@ fn eon_bar_keeps_tabs_controls_and_drag_hits_disjoint_under_pressure() {
 
 #[test]
 fn attention_badges_mark_tab_corners_without_moving_tabs() {
-    use eon_workspace_protocol::v35::{
+    use eon_workspace_protocol::v36::{
         Attention, AttentionRecord, AttentionState as State, Column, Pane, PopupGeometry,
     };
 
@@ -1093,10 +1093,10 @@ fn attention_badges_mark_tab_corners_without_moving_tabs() {
         &[Some((State::Working, true))],
     ];
     let mut snapshot = Snapshot {
-        workspace: "w1".into(),
-        active_workspace: "w1".into(),
-        workspaces: vec![eon_workspace_protocol::v35::WorkspaceInfo {
-            id: "w1".into(),
+        workspace: "s1".into(),
+        active_workspace: "s1".into(),
+        workspaces: vec![eon_workspace_protocol::v36::WorkspaceInfo {
+            id: "s1".into(),
             name: None,
             tab_count: 1,
             attention: None,
@@ -1143,7 +1143,7 @@ fn attention_badges_mark_tab_corners_without_moving_tabs() {
         claude_quota_failure: None,
         running: None,
         busy: None,
-        sidebar: eon_workspace_protocol::v35::Sidebar::Closed,
+        sidebar: eon_workspace_protocol::v36::Sidebar::Closed,
         attention_queue: Vec::new(),
     };
     let metrics = CellMetrics::for_scale(1.0);
@@ -1217,7 +1217,7 @@ fn attention_badges_mark_tab_corners_without_moving_tabs() {
     );
     // While the sidebar shows, the tabs carry no badge or state; hidden for width, they do.
     let mut open = snapshot.clone();
-    open.sidebar = eon_workspace_protocol::v35::Sidebar::Open;
+    open.sidebar = eon_workspace_protocol::v36::Sidebar::Open;
     let beside = project(&open, 1600, 0.0);
     assert!(beside.sidebar().is_some());
     assert!(beside.tabs.iter().all(|tab| tab.badge.is_none()));
@@ -1314,7 +1314,7 @@ fn tab_directory_labels_use_current_position_and_bounded_path_context() {
 #[test]
 fn cpu_and_ram_chips_colour_under_load_and_say_so() {
     use crate::{CpuReadings, CpuTimes, Load, LoadLevels, RamUse};
-    use eon_workspace_protocol::v35::{Pane, PopupGeometry, Tab};
+    use eon_workspace_protocol::v36::{Pane, PopupGeometry, Tab};
     use std::time::{Duration, Instant};
 
     let levels = LoadLevels::default();
@@ -1514,10 +1514,10 @@ fn cpu_and_ram_chips_colour_under_load_and_say_so() {
     // The scene carries each reading's load to its chip, and the words to hover and accessibility.
     let pressed = ram(91, levels);
     let snapshot = Snapshot {
-        workspace: "w1".into(),
-        active_workspace: "w1".into(),
-        workspaces: vec![eon_workspace_protocol::v35::WorkspaceInfo {
-            id: "w1".into(),
+        workspace: "s1".into(),
+        active_workspace: "s1".into(),
+        workspaces: vec![eon_workspace_protocol::v36::WorkspaceInfo {
+            id: "s1".into(),
             name: None,
             tab_count: 1,
             attention: None,
@@ -1535,7 +1535,7 @@ fn cpu_and_ram_chips_colour_under_load_and_say_so() {
             pending: false,
             selected_pane: Some("p1".into()),
             selected_popup: None,
-            columns: vec![eon_workspace_protocol::v35::Column {
+            columns: vec![eon_workspace_protocol::v36::Column {
                 panes: vec![Pane {
                     label: "p1".into(),
                     pinned_name: None,
@@ -1556,7 +1556,7 @@ fn cpu_and_ram_chips_colour_under_load_and_say_so() {
         claude_quota_failure: None,
         running: None,
         busy: None,
-        sidebar: eon_workspace_protocol::v35::Sidebar::Open,
+        sidebar: eon_workspace_protocol::v36::Sidebar::Open,
         attention_queue: Vec::new(),
     };
     let scene = WorkspaceScene::from_snapshot_with_bar(
@@ -1628,7 +1628,7 @@ fn a_failed_cpu_reading_restarts_the_average_window() {
 #[test]
 fn disk_chip_shows_filesystem_use_and_colours_only_when_filling_up() {
     use crate::{BarItem, DiskUse, Load, LoadLevels};
-    use eon_workspace_protocol::v35::{Pane, PopupGeometry, Tab};
+    use eon_workspace_protocol::v36::{Pane, PopupGeometry, Tab};
 
     let levels = LoadLevels::default();
     // A 1000 GiB filesystem with no root reserve, `percent` used.
@@ -1679,10 +1679,10 @@ fn disk_chip_shows_filesystem_use_and_colours_only_when_filling_up() {
     assert_eq!(disk(70, configured).load, Load::Critical);
 
     let snapshot = Snapshot {
-        workspace: "w1".into(),
-        active_workspace: "w1".into(),
-        workspaces: vec![eon_workspace_protocol::v35::WorkspaceInfo {
-            id: "w1".into(),
+        workspace: "s1".into(),
+        active_workspace: "s1".into(),
+        workspaces: vec![eon_workspace_protocol::v36::WorkspaceInfo {
+            id: "s1".into(),
             name: None,
             tab_count: 1,
             attention: None,
@@ -1700,7 +1700,7 @@ fn disk_chip_shows_filesystem_use_and_colours_only_when_filling_up() {
             pending: false,
             selected_pane: Some("p1".into()),
             selected_popup: None,
-            columns: vec![eon_workspace_protocol::v35::Column {
+            columns: vec![eon_workspace_protocol::v36::Column {
                 panes: vec![Pane {
                     label: "p1".into(),
                     pinned_name: None,
@@ -1721,7 +1721,7 @@ fn disk_chip_shows_filesystem_use_and_colours_only_when_filling_up() {
         claude_quota_failure: None,
         running: None,
         busy: None,
-        sidebar: eon_workspace_protocol::v35::Sidebar::Open,
+        sidebar: eon_workspace_protocol::v36::Sidebar::Open,
         attention_queue: Vec::new(),
     };
     let metrics = CellMetrics::for_scale(1.0);
@@ -1773,14 +1773,14 @@ fn disk_chip_shows_filesystem_use_and_colours_only_when_filling_up() {
 
 #[test]
 fn eon_icon_leads_the_bar_and_yields_first() {
-    use eon_workspace_protocol::v35::{Pane, PopupGeometry, Tab};
+    use eon_workspace_protocol::v36::{Pane, PopupGeometry, Tab};
     let tab = |id: String| Tab {
         id: id.clone(),
         directory: b"/tmp".to_vec(),
         pending: false,
         selected_pane: Some(id.clone()),
         selected_popup: None,
-        columns: vec![eon_workspace_protocol::v35::Column {
+        columns: vec![eon_workspace_protocol::v36::Column {
             panes: vec![Pane {
                 label: id.clone(),
                 pinned_name: None,
@@ -1803,11 +1803,11 @@ fn eon_icon_leads_the_bar_and_yields_first() {
         let metrics = CellMetrics::for_scale(scale);
         for (workspaces, tab_count) in [(1, 1), (2, 1), (1, 12), (2, 12)] {
             let snapshot = Snapshot {
-                workspace: "w1".into(),
-                active_workspace: "w1".into(),
+                workspace: "s1".into(),
+                active_workspace: "s1".into(),
                 workspaces: (1..=workspaces)
-                    .map(|n| eon_workspace_protocol::v35::WorkspaceInfo {
-                        id: format!("w{n}"),
+                    .map(|n| eon_workspace_protocol::v36::WorkspaceInfo {
+                        id: format!("s{n}"),
                         name: None,
                         tab_count,
                         attention: None,
@@ -1827,7 +1827,7 @@ fn eon_icon_leads_the_bar_and_yields_first() {
                 claude_quota_failure: None,
                 running: None,
                 busy: None,
-                sidebar: eon_workspace_protocol::v35::Sidebar::Open,
+                sidebar: eon_workspace_protocol::v36::Sidebar::Open,
                 attention_queue: Vec::new(),
             };
             for (version, ram) in [
@@ -1952,12 +1952,12 @@ fn eon_icon_leads_the_bar_and_yields_first() {
 
 #[test]
 fn live_items_never_show_or_hide_the_icon_or_move_the_tabs() {
-    use eon_workspace_protocol::v35::{
+    use eon_workspace_protocol::v36::{
         ClaudeQuota, ClaudeQuotaState, CodexQuota, Pane, PopupGeometry, Tab,
     };
     let snapshot = Snapshot {
-        workspace: "w1".into(),
-        active_workspace: "w1".into(),
+        workspace: "s1".into(),
+        active_workspace: "s1".into(),
         workspaces: Vec::new(),
         active_tab: "t1".into(),
         geometry: PopupGeometry {
@@ -1971,7 +1971,7 @@ fn live_items_never_show_or_hide_the_icon_or_move_the_tabs() {
             pending: false,
             selected_pane: Some("p1".into()),
             selected_popup: None,
-            columns: vec![eon_workspace_protocol::v35::Column {
+            columns: vec![eon_workspace_protocol::v36::Column {
                 panes: vec![Pane {
                     label: "p1".into(),
                     pinned_name: None,
@@ -1992,7 +1992,7 @@ fn live_items_never_show_or_hide_the_icon_or_move_the_tabs() {
         claude_quota_failure: None,
         running: None,
         busy: None,
-        sidebar: eon_workspace_protocol::v35::Sidebar::Open,
+        sidebar: eon_workspace_protocol::v36::Sidebar::Open,
         attention_queue: Vec::new(),
     };
     let levels = crate::LoadLevels::default();
@@ -2159,12 +2159,12 @@ fn live_items_never_show_or_hide_the_icon_or_move_the_tabs() {
 
 #[test]
 fn quota_facts_and_windows_appearing_may_hide_the_icon_once() {
-    use eon_workspace_protocol::v35::{
+    use eon_workspace_protocol::v36::{
         ClaudeQuota, ClaudeQuotaState, CodexQuota, Pane, PopupGeometry, Tab,
     };
     let snapshot = Snapshot {
-        workspace: "w1".into(),
-        active_workspace: "w1".into(),
+        workspace: "s1".into(),
+        active_workspace: "s1".into(),
         workspaces: Vec::new(),
         active_tab: "t1".into(),
         geometry: PopupGeometry {
@@ -2178,7 +2178,7 @@ fn quota_facts_and_windows_appearing_may_hide_the_icon_once() {
             pending: false,
             selected_pane: Some("p1".into()),
             selected_popup: None,
-            columns: vec![eon_workspace_protocol::v35::Column {
+            columns: vec![eon_workspace_protocol::v36::Column {
                 panes: vec![Pane {
                     label: "p1".into(),
                     pinned_name: None,
@@ -2199,7 +2199,7 @@ fn quota_facts_and_windows_appearing_may_hide_the_icon_once() {
         claude_quota_failure: None,
         running: None,
         busy: None,
-        sidebar: eon_workspace_protocol::v35::Sidebar::Open,
+        sidebar: eon_workspace_protocol::v36::Sidebar::Open,
         attention_queue: Vec::new(),
     };
     let observed_at = 1_000_000;
@@ -2302,7 +2302,7 @@ fn quota_facts_and_windows_appearing_may_hide_the_icon_once() {
 
 #[test]
 fn a_full_bar_with_room_shows_the_icon() {
-    use eon_workspace_protocol::v35::{
+    use eon_workspace_protocol::v36::{
         ClaudeQuota, ClaudeQuotaState, CodexQuota, Pane, PopupGeometry, Tab, WorkspaceInfo,
     };
     // Lucca's maximized 1861-pixel bar of 2026-11-04, which left about 340 pixels empty but
@@ -2314,7 +2314,7 @@ fn a_full_bar_with_room_shows_the_icon() {
         pending: false,
         selected_pane: Some(format!("p{index}")),
         selected_popup: None,
-        columns: vec![eon_workspace_protocol::v35::Column {
+        columns: vec![eon_workspace_protocol::v36::Column {
             panes: vec![Pane {
                 label: format!("p{index}"),
                 pinned_name: None,
@@ -2383,9 +2383,9 @@ fn a_full_bar_with_room_shows_the_icon() {
         ],
     ] {
         let snapshot = Snapshot {
-            workspace: "w1".into(),
-            active_workspace: "w1".into(),
-            workspaces: vec![workspace("w1", "main", 0), workspace("w2", "evo", 1)],
+            workspace: "s1".into(),
+            active_workspace: "s1".into(),
+            workspaces: vec![workspace("s1", "main", 0), workspace("s2", "evo", 1)],
             active_tab: "t1".into(),
             geometry: PopupGeometry {
                 side_margin: 8.0,
@@ -2399,7 +2399,7 @@ fn a_full_bar_with_room_shows_the_icon() {
             claude_quota_failure: None,
             running: None,
             busy: None,
-            sidebar: eon_workspace_protocol::v35::Sidebar::Open,
+            sidebar: eon_workspace_protocol::v36::Sidebar::Open,
             attention_queue: Vec::new(),
         };
         let scene = WorkspaceScene::from_snapshot_with_bar(
@@ -2429,10 +2429,10 @@ fn a_full_bar_with_room_shows_the_icon() {
 
 /// One tab with one pane.
 pub(crate) fn one_pane_snapshot() -> Snapshot {
-    use eon_workspace_protocol::v35::{Pane, PopupGeometry, Tab};
+    use eon_workspace_protocol::v36::{Pane, PopupGeometry, Tab};
     Snapshot {
-        workspace: "w1".into(),
-        active_workspace: "w1".into(),
+        workspace: "s1".into(),
+        active_workspace: "s1".into(),
         workspaces: Vec::new(),
         active_tab: "t1".into(),
         geometry: PopupGeometry {
@@ -2446,7 +2446,7 @@ pub(crate) fn one_pane_snapshot() -> Snapshot {
             pending: false,
             selected_pane: Some("p1".into()),
             selected_popup: None,
-            columns: vec![eon_workspace_protocol::v35::Column {
+            columns: vec![eon_workspace_protocol::v36::Column {
                 panes: vec![Pane {
                     label: "p1".into(),
                     pinned_name: None,
@@ -2467,7 +2467,7 @@ pub(crate) fn one_pane_snapshot() -> Snapshot {
         claude_quota_failure: None,
         running: None,
         busy: None,
-        sidebar: eon_workspace_protocol::v35::Sidebar::Open,
+        sidebar: eon_workspace_protocol::v36::Sidebar::Open,
         attention_queue: Vec::new(),
     }
 }
@@ -2686,7 +2686,7 @@ fn hint_keycap_hover_hits_its_group() {
 
 #[test]
 fn quota_windows_keep_their_room_until_the_next_read() {
-    use eon_workspace_protocol::v35::{ClaudeQuota, ClaudeQuotaState, CodexQuota};
+    use eon_workspace_protocol::v36::{ClaudeQuota, ClaudeQuotaState, CodexQuota};
     let window = |minutes: u32, scope: Option<&str>| QuotaWindow {
         duration_minutes: minutes,
         remaining_percent: 50,
@@ -2733,10 +2733,10 @@ fn quota_windows_keep_their_room_until_the_next_read() {
 
 #[test]
 fn reserved_chips_take_the_widest_text() {
-    use eon_workspace_protocol::v35::{CodexQuota, Pane, PopupGeometry, Tab};
+    use eon_workspace_protocol::v36::{CodexQuota, Pane, PopupGeometry, Tab};
     let snapshot = Snapshot {
-        workspace: "w1".into(),
-        active_workspace: "w1".into(),
+        workspace: "s1".into(),
+        active_workspace: "s1".into(),
         workspaces: Vec::new(),
         active_tab: "t1".into(),
         geometry: PopupGeometry {
@@ -2750,7 +2750,7 @@ fn reserved_chips_take_the_widest_text() {
             pending: false,
             selected_pane: Some("p1".into()),
             selected_popup: None,
-            columns: vec![eon_workspace_protocol::v35::Column {
+            columns: vec![eon_workspace_protocol::v36::Column {
                 panes: vec![Pane {
                     label: "p1".into(),
                     pinned_name: None,
@@ -2771,7 +2771,7 @@ fn reserved_chips_take_the_widest_text() {
         claude_quota_failure: None,
         running: None,
         busy: None,
-        sidebar: eon_workspace_protocol::v35::Sidebar::Open,
+        sidebar: eon_workspace_protocol::v36::Sidebar::Open,
         attention_queue: Vec::new(),
     };
     let observed_at = 1_000_000;
@@ -2866,12 +2866,12 @@ fn reserved_chips_take_the_widest_text() {
 
 #[test]
 fn quota_window_widgets_filter_order_and_reserve_only_selected_windows() {
-    use eon_workspace_protocol::v35::{
+    use eon_workspace_protocol::v36::{
         ClaudeQuota, ClaudeQuotaState, CodexQuota, Pane, PopupGeometry, Tab,
     };
     let mut snapshot = Snapshot {
-        workspace: "w1".into(),
-        active_workspace: "w1".into(),
+        workspace: "s1".into(),
+        active_workspace: "s1".into(),
         workspaces: Vec::new(),
         active_tab: "t1".into(),
         geometry: PopupGeometry {
@@ -2885,7 +2885,7 @@ fn quota_window_widgets_filter_order_and_reserve_only_selected_windows() {
             pending: false,
             selected_pane: Some("p1".into()),
             selected_popup: None,
-            columns: vec![eon_workspace_protocol::v35::Column {
+            columns: vec![eon_workspace_protocol::v36::Column {
                 panes: vec![Pane {
                     label: "p1".into(),
                     pinned_name: None,
@@ -2906,7 +2906,7 @@ fn quota_window_widgets_filter_order_and_reserve_only_selected_windows() {
         claude_quota_failure: None,
         running: None,
         busy: None,
-        sidebar: eon_workspace_protocol::v35::Sidebar::Open,
+        sidebar: eon_workspace_protocol::v36::Sidebar::Open,
         attention_queue: Vec::new(),
     };
     let window = |duration_minutes, scope: Option<&str>| QuotaWindow {

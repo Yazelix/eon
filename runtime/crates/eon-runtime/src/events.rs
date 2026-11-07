@@ -4,7 +4,7 @@
 //! publishes and serves subscribers; nothing here touches a connection.
 
 use super::{supervisor::request_id, workspace::resolve_selector};
-use eon_workspace_protocol::v35::{
+use eon_workspace_protocol::v36::{
     self as eonw, AttentionState as State, Failure, Snapshot, TargetId, TerminalTarget,
 };
 use std::{
@@ -1146,7 +1146,7 @@ impl Events {
 #[cfg(test)]
 pub(super) mod tests {
     use super::*;
-    use eon_workspace_protocol::v35::{
+    use eon_workspace_protocol::v36::{
         AttentionRecord, BusyTerminal, Column, PopupGeometry, QueueEntry, Sidebar, WorkspaceInfo,
     };
     use std::collections::BTreeMap;
@@ -1258,14 +1258,14 @@ pub(super) mod tests {
             .collect()
     }
 
-    /// w1 "main" (shown): t1 with p1 and p2 stacked and the agent popup u1,
-    /// and t2 with p3; w2 "side": t3 with p4. Terminal sN runs each.
+    /// s1 "main" (shown): t1 with p1 and p2 stacked and the agent popup u1,
+    /// and t2 with p3; s2 "side": t3 with p4. Terminal sN runs each.
     pub(crate) fn base() -> Projection {
         let snapshots = window(
-            "w1",
+            "s1",
             vec![
                 (
-                    "w1",
+                    "s1",
                     Some("main"),
                     vec![
                         tab(
@@ -1277,7 +1277,7 @@ pub(super) mod tests {
                     ],
                 ),
                 (
-                    "w2",
+                    "s2",
                     Some("side"),
                     vec![tab("t3", vec![vec![pane("p4", "s5")]], Vec::new())],
                 ),
@@ -1610,27 +1610,27 @@ pub(super) mod tests {
         );
     }
 
-    /// From base: w3 "new" opens with t4 and p5 and is shown; w1 is renamed;
+    /// From base: s3 "new" opens with t4 and p5 and is shown; s1 is renamed;
     /// t2 closes with p3; p2 is renamed and selected, so it expands; p1
     /// needs input and joins the queue.
     fn busy_turn() -> (Projection, Projection) {
         let before = base();
         let mut after = before.clone();
-        workspace_mut(&mut after, "w1").item.shown = false;
-        workspace_mut(&mut after, "w1").item.name = Some("renamed".into());
-        workspace_mut(&mut after, "w1")
+        workspace_mut(&mut after, "s1").item.shown = false;
+        workspace_mut(&mut after, "s1").item.name = Some("renamed".into());
+        workspace_mut(&mut after, "s1")
             .tabs
             .retain(|tab| tab.id != "t2");
-        workspace_mut(&mut after, "w1").item.tabs = 1;
+        workspace_mut(&mut after, "s1").item.tabs = 1;
         let t1 = tab_mut(&mut after, "t1");
         t1.selected_pane = Some("p2".into());
         t1.columns[0].expanded = "p2".into();
         pane_mut(&mut after, "p2").label = "build".into();
         pane_mut(&mut after, "p1").attention = Some(attention(State::NeedsInput, false));
-        after.queue = vec![queue_item("w1", "t1", "p1", State::NeedsInput)];
+        after.queue = vec![queue_item("s1", "t1", "p1", State::NeedsInput)];
         after.workspaces.push(WorkspaceState {
             item: WorkspaceItem {
-                id: "w3".into(),
+                id: "s3".into(),
                 name: Some("new".into()),
                 shown: true,
                 tabs: 1,
@@ -1646,14 +1646,14 @@ pub(super) mod tests {
     #[test]
     fn the_projection_takes_each_workspace_its_active_tab_queue_and_busy() {
         let mut snapshots = window(
-            "w2",
+            "s2",
             vec![
                 (
-                    "w1",
+                    "s1",
                     None,
                     vec![tab("t1", vec![vec![pane("p1", "s1")]], Vec::new())],
                 ),
-                ("w2", Some("side"), {
+                ("s2", Some("side"), {
                     let mut tabs = vec![
                         tab("t2", vec![vec![pane("p2", "s2")]], Vec::new()),
                         tab("t3", vec![vec![pane("p3", "s3")]], Vec::new()),
@@ -1663,14 +1663,14 @@ pub(super) mod tests {
                 }),
             ],
             vec![QueueEntry {
-                workspace: "w2".into(),
+                workspace: "s2".into(),
                 tab: "t3".into(),
                 target: "p3".into(),
                 attention: attention(State::Error, false),
             }],
         );
         snapshots[1].active_tab = "t3".into();
-        let busy = vec![busy_terminal("w2", "t3", "p3", "s3")];
+        let busy = vec![busy_terminal("s2", "t3", "p3", "s3")];
         let projection = Projection::new(&snapshots, busy.clone());
 
         let items: Vec<_> = projection.workspaces.iter().map(|w| &w.item).collect();
@@ -1678,7 +1678,7 @@ pub(super) mod tests {
             items,
             [
                 &WorkspaceItem {
-                    id: "w1".into(),
+                    id: "s1".into(),
                     name: None,
                     shown: false,
                     tabs: 1,
@@ -1687,7 +1687,7 @@ pub(super) mod tests {
                     active_tab: "t1".into(),
                 },
                 &WorkspaceItem {
-                    id: "w2".into(),
+                    id: "s2".into(),
                     name: Some("side".into()),
                     shown: true,
                     tabs: 2,
@@ -1700,7 +1700,7 @@ pub(super) mod tests {
         assert_eq!(projection.workspaces[1].tabs, snapshots[1].tabs);
         assert_eq!(
             projection.queue,
-            [queue_item("w2", "t3", "p3", State::Error)]
+            [queue_item("s2", "t3", "p3", State::Error)]
         );
         assert_eq!(projection.busy, busy);
     }
@@ -1711,11 +1711,11 @@ pub(super) mod tests {
         assert_eq!(
             described(&before.diff(&after)),
             [
-                "workspace-renamed w1",
+                "workspace-renamed s1",
                 "pane-moved p1",
                 "pane-moved p2",
                 "pane-renamed p2",
-                "workspace-created w3",
+                "workspace-created s3",
                 "tab-created t4",
                 "pane-created p5",
                 "attention s1",
@@ -1724,7 +1724,7 @@ pub(super) mod tests {
                 "pane-selected p2",
                 "pane-selected p5",
                 "tab-activated t4",
-                "workspace-shown w3",
+                "workspace-shown s3",
                 "queue",
             ]
         );
@@ -1738,7 +1738,7 @@ pub(super) mod tests {
         };
         assert_eq!(
             (selected.workspace.as_str(), selected.tab.as_str()),
-            ("w1", "t1")
+            ("s1", "t1")
         );
         assert_eq!((selected.column, selected.expanded), (1, true));
         assert_eq!(selected.pane.label, "build");
@@ -1750,7 +1750,7 @@ pub(super) mod tests {
         let Event::Tab(TabChange::Closed, closed) = &events[9] else {
             panic!("{:?}", events[9]);
         };
-        assert_eq!(closed.workspace, "w1");
+        assert_eq!(closed.workspace, "s1");
         assert_eq!(closed.tab.columns[0].panes[0].id, "p3");
         // Creations, moves and closes carry the order after them.
         assert_eq!(closed.tabs, Some(vec!["t1".to_owned()]));
@@ -1785,7 +1785,7 @@ pub(super) mod tests {
             events[0],
             Event::Attention {
                 target: TerminalTarget {
-                    workspace: "w1".into(),
+                    workspace: "s1".into(),
                     tab: "t1".into(),
                     id: TargetId::Pane("p1".into()),
                     terminal: "s1".into(),
@@ -1816,7 +1816,7 @@ pub(super) mod tests {
     fn busy_reports_a_terminal_becoming_busy_renamed_or_idle_with_its_name() {
         let before = base();
         let mut busy = before.clone();
-        busy.busy = vec![busy_terminal("w1", "t1", "p1", "s1")];
+        busy.busy = vec![busy_terminal("s1", "t1", "p1", "s1")];
         let events = before.diff(&busy);
         assert_eq!(
             events,
@@ -1853,12 +1853,12 @@ pub(super) mod tests {
     fn closes_cascade_and_vanished_terminals_drop_attention_and_busy() {
         let mut before = base();
         pane_mut(&mut before, "p4").attention = Some(attention(State::NeedsInput, false));
-        before.busy = vec![busy_terminal("w2", "t3", "p4", "s5")];
-        before.queue = vec![queue_item("w2", "t3", "p4", State::NeedsInput)];
+        before.busy = vec![busy_terminal("s2", "t3", "p4", "s5")];
+        before.queue = vec![queue_item("s2", "t3", "p4", State::NeedsInput)];
         let mut after = before.clone();
         after
             .workspaces
-            .retain(|workspace| workspace.item.id != "w2");
+            .retain(|workspace| workspace.item.id != "s2");
         after.busy.clear();
         after.queue.clear();
         // p3's terminal ends; its pane stays until closed.
@@ -1874,7 +1874,7 @@ pub(super) mod tests {
                 "busy s5",
                 "pane-closed p4",
                 "tab-closed t3",
-                "workspace-closed w2",
+                "workspace-closed s2",
                 "popup-shown u1",
                 "queue",
             ]
@@ -1912,7 +1912,7 @@ pub(super) mod tests {
         u1.attention = Some(attention(State::Working, false));
         before.busy = vec![BusyTerminal {
             target: TerminalTarget {
-                workspace: "w1".into(),
+                workspace: "s1".into(),
                 tab: "t1".into(),
                 id: TargetId::Popup("u1".into()),
                 terminal: "s3".into(),
@@ -1928,7 +1928,7 @@ pub(super) mod tests {
             expanded: "p6".into(),
             panes: vec![p6],
         });
-        parked.busy = vec![busy_terminal("w1", "t1", "p6", "s3")];
+        parked.busy = vec![busy_terminal("s1", "t1", "p6", "s3")];
         let events = before.diff(&parked);
         assert_eq!(
             described(&events),
@@ -2005,7 +2005,7 @@ pub(super) mod tests {
         // the busy turn shows. A directory change also reports the end of a
         // pending tab.
         let mut reordered = before.clone();
-        workspace_mut(&mut reordered, "w1").tabs.reverse();
+        workspace_mut(&mut reordered, "s1").tabs.reverse();
         tab_mut(&mut reordered, "t2").directory = b"/work".to_vec();
         let events = before.diff(&reordered);
         assert_eq!(
@@ -2027,8 +2027,8 @@ pub(super) mod tests {
 
         // A tab that changes workspace moves into the other's order.
         let mut crossed = before.clone();
-        let t2 = workspace_mut(&mut crossed, "w1").tabs.remove(1);
-        workspace_mut(&mut crossed, "w2").tabs.insert(0, t2);
+        let t2 = workspace_mut(&mut crossed, "s1").tabs.remove(1);
+        workspace_mut(&mut crossed, "s2").tabs.insert(0, t2);
         let events = before.diff(&crossed);
         assert_eq!(described(&events), ["tab-moved t2"]);
         let Event::Tab(_, moved) = &events[0] else {
@@ -2036,7 +2036,7 @@ pub(super) mod tests {
         };
         assert_eq!(
             (moved.workspace.as_str(), moved.tabs.clone()),
-            ("w2", Some(vec!["t2".to_owned(), "t3".to_owned()]))
+            ("s2", Some(vec!["t2".to_owned(), "t3".to_owned()]))
         );
         assert_replays(&unfiltered(&before), &before, &crossed);
     }
@@ -2045,31 +2045,31 @@ pub(super) mod tests {
     fn showing_and_activating_existing_workspaces_and_tabs() {
         let before = base();
         let mut switched = before.clone();
-        workspace_mut(&mut switched, "w1").item.shown = false;
-        workspace_mut(&mut switched, "w2").item.shown = true;
-        workspace_mut(&mut switched, "w1").item.active_tab = "t2".into();
+        workspace_mut(&mut switched, "s1").item.shown = false;
+        workspace_mut(&mut switched, "s2").item.shown = true;
+        workspace_mut(&mut switched, "s1").item.active_tab = "t2".into();
         let events = before.diff(&switched);
         assert_eq!(
             described(&events),
-            ["tab-activated t2", "workspace-shown w2"]
+            ["tab-activated t2", "workspace-shown s2"]
         );
         assert!(matches!(
             &events[1],
-            Event::Workspace(WorkspaceChange::Shown { hidden: Some(hidden) }, _) if hidden == "w1"
+            Event::Workspace(WorkspaceChange::Shown { hidden: Some(hidden) }, _) if hidden == "s1"
         ));
         assert_replays(&unfiltered(&before), &before, &switched);
-        // A stream of w1 alone, a change feed for w1, learns that w1 is
+        // A stream of s1 alone, a change feed for s1, learns that s1 is
         // hidden.
-        let w1 = resolve(
+        let s1 = resolve(
             FilterSpec {
-                workspaces: vec!["w1".into()],
+                workspaces: vec!["s1".into()],
                 ..FilterSpec::default()
             },
             &before,
         );
         assert_eq!(
-            admitted(&w1, &events),
-            ["tab-activated t2", "workspace-shown w2"]
+            admitted(&s1, &events),
+            ["tab-activated t2", "workspace-shown s2"]
         );
     }
 
@@ -2223,13 +2223,13 @@ pub(super) mod tests {
                 "pane-selected p5"
             ]
         );
-        // p5 is in w3, which did not exist when subscribing. Showing w3 hid
-        // w1, and the queue is about w1, where p1 entered it.
-        let w1 = spec(|s| s.workspaces = vec!["main".into(), "w2".into()]);
+        // p5 is in s3, which did not exist when subscribing. Showing s3 hid
+        // s1, and the queue is about s1, where p1 entered it.
+        let s1 = spec(|s| s.workspaces = vec!["main".into(), "s2".into()]);
         assert_eq!(
-            admitted(&w1, &events),
+            admitted(&s1, &events),
             [
-                "workspace-renamed w1",
+                "workspace-renamed s1",
                 "pane-moved p1",
                 "pane-moved p2",
                 "pane-renamed p2",
@@ -2237,17 +2237,17 @@ pub(super) mod tests {
                 "pane-closed p3",
                 "tab-closed t2",
                 "pane-selected p2",
-                "workspace-shown w3",
+                "workspace-shown s3",
                 "queue",
             ]
         );
         let queue = spec(|s| {
-            s.workspaces = vec!["w1".into()];
+            s.workspaces = vec!["s1".into()];
             s.kinds = vec![Kind::Queue];
         });
         assert_eq!(admitted(&queue, &events), ["queue"]);
         let other_queue = spec(|s| {
-            s.workspaces = vec!["w2".into()];
+            s.workspaces = vec!["s2".into()];
             s.kinds = vec![Kind::Queue];
         });
         assert!(admitted(&other_queue, &events).is_empty());
@@ -2270,10 +2270,10 @@ pub(super) mod tests {
         assert_eq!(
             admitted(&t1_workspaces, &events),
             [
-                "workspace-renamed w1",
-                "workspace-created w3",
+                "workspace-renamed s1",
+                "workspace-created s3",
                 "attention s1",
-                "workspace-shown w3",
+                "workspace-shown s3",
                 "queue"
             ]
         );
@@ -2301,7 +2301,7 @@ pub(super) mod tests {
     #[test]
     fn subscribing_resolves_workspaces_once_and_targets_by_terminal() {
         let mut projection = base();
-        workspace_mut(&mut projection, "w2").item.name = Some("w1".into());
+        workspace_mut(&mut projection, "s2").item.name = Some("s1".into());
         let resolved = |projection: &Projection, selector: &str| {
             Filter::resolve(
                 &FilterSpec {
@@ -2313,18 +2313,18 @@ pub(super) mod tests {
             )
             .map(|filter| filter.workspaces)
         };
-        // An exact wN first, then an exact name.
-        assert_eq!(resolved(&projection, "w1"), Ok(vec!["w1".to_owned()]));
-        assert_eq!(resolved(&projection, "main"), Ok(vec!["w1".to_owned()]));
+        // An exact sN first, then an exact name.
+        assert_eq!(resolved(&projection, "s1"), Ok(vec!["s1".to_owned()]));
+        assert_eq!(resolved(&projection, "main"), Ok(vec!["s1".to_owned()]));
         assert_eq!(
-            resolved(&projection, "w9").unwrap_err().code,
-            "unknown-workspace"
+            resolved(&projection, "s9").unwrap_err().code,
+            "unknown-session"
         );
-        workspace_mut(&mut projection, "w1").item.name = Some("twin".into());
-        workspace_mut(&mut projection, "w2").item.name = Some("twin".into());
+        workspace_mut(&mut projection, "s1").item.name = Some("twin".into());
+        workspace_mut(&mut projection, "s2").item.name = Some("twin".into());
         assert_eq!(
             resolved(&projection, "twin").unwrap_err().code,
-            "ambiguous-workspace"
+            "ambiguous-session"
         );
         let missing =
             |spec: FilterSpec| Filter::resolve(&spec, None, &projection).unwrap_err().code;
@@ -2353,11 +2353,11 @@ pub(super) mod tests {
             &before,
         );
         let mut renamed = before.clone();
-        workspace_mut(&mut renamed, "w1").item.name = Some("main2".into());
-        workspace_mut(&mut renamed, "w2").item.name = Some("main".into());
+        workspace_mut(&mut renamed, "s1").item.name = Some("main2".into());
+        workspace_mut(&mut renamed, "s2").item.name = Some("main".into());
         assert_eq!(
             admitted(&main, &before.diff(&renamed)),
-            ["workspace-renamed w1"]
+            ["workspace-renamed s1"]
         );
 
         // The agent popup u1 parked as pane p6 stays admitted as that pane.
@@ -2381,7 +2381,7 @@ pub(super) mod tests {
         assert_eq!(
             agent.snapshot(&parked).tabs,
             [WorkspaceTabs {
-                workspace: "w1".into(),
+                workspace: "s1".into(),
                 tabs: vec![parked.workspaces[0].tabs[0].clone()],
             }]
         );
@@ -2405,9 +2405,9 @@ pub(super) mod tests {
         let mut closed = before.clone();
         closed
             .workspaces
-            .retain(|workspace| workspace.item.id != "w2");
+            .retain(|workspace| workspace.item.id != "s2");
         assert!(!named.gone(&closed));
-        workspace_mut(&mut closed, "w1")
+        workspace_mut(&mut closed, "s1")
             .tabs
             .retain(|tab| tab.id != "t1");
         assert!(named.gone(&closed));
@@ -2422,7 +2422,7 @@ pub(super) mod tests {
         let mut dismissed = before.clone();
         tab_mut(&mut dismissed, "t1").popups.clear();
         assert!(!popup.gone(&dismissed));
-        workspace_mut(&mut dismissed, "w1")
+        workspace_mut(&mut dismissed, "s1")
             .tabs
             .retain(|tab| tab.id != "t2");
         assert!(popup.gone(&dismissed));
@@ -2440,15 +2440,15 @@ pub(super) mod tests {
     #[test]
     fn snapshots_name_workspaces_and_tabs_and_admitted_busy_without_the_caller() {
         let mut projection = base();
-        projection.queue = vec![queue_item("w2", "t3", "p4", State::Finished)];
+        projection.queue = vec![queue_item("s2", "t3", "p4", State::Finished)];
         projection.busy = vec![
-            busy_terminal("w1", "t1", "p1", "s1"),
-            busy_terminal("w1", "t1", "p2", "s2"),
-            busy_terminal("w2", "t3", "p4", "s5"),
+            busy_terminal("s1", "t1", "p1", "s1"),
+            busy_terminal("s1", "t1", "p2", "s2"),
+            busy_terminal("s2", "t3", "p4", "s5"),
         ];
         let filter = Filter::resolve(
             &FilterSpec {
-                workspaces: vec!["w1".into()],
+                workspaces: vec!["s1".into()],
                 ..FilterSpec::default()
             },
             Some("s1"),
@@ -2461,7 +2461,7 @@ pub(super) mod tests {
         assert_eq!(
             snapshot.tabs,
             [WorkspaceTabs {
-                workspace: "w1".into(),
+                workspace: "s1".into(),
                 tabs: projection.workspaces[0].tabs.clone(),
             }]
         );
@@ -2473,11 +2473,11 @@ pub(super) mod tests {
                 .iter()
                 .map(|group| (group.workspace.as_str(), group.tabs.len()))
                 .collect::<Vec<_>>(),
-            [("w1", 2), ("w2", 1)]
+            [("s1", 2), ("s2", 1)]
         );
         // The window's queue; the admitted busy terminals.
         assert_eq!(snapshot.attention_queue, projection.queue);
-        assert_eq!(snapshot.busy, [busy_terminal("w1", "t1", "p2", "s2")]);
+        assert_eq!(snapshot.busy, [busy_terminal("s1", "t1", "p2", "s2")]);
 
         // Busy events never report the caller.
         let mut idle = projection.clone();
@@ -2492,7 +2492,7 @@ pub(super) mod tests {
 
         // EONW's 32-terminal bound does not apply.
         projection.busy = (0..34)
-            .map(|index| busy_terminal("w1", "t1", "p1", &format!("s{index}")))
+            .map(|index| busy_terminal("s1", "t1", "p1", &format!("s{index}")))
             .collect();
         assert_eq!(filter.snapshot(&projection).busy.len(), 33);
     }
@@ -2528,7 +2528,7 @@ pub(super) mod tests {
 
         fn new_pane(&mut self) -> eonw::Pane {
             let id = self.id("p");
-            let session = self.id("s");
+            let session = self.id("terminal-");
             pane(&id, &session)
         }
 
@@ -2650,7 +2650,7 @@ pub(super) mod tests {
                 }
                 12 => {
                     let id = self.id("u");
-                    let session = self.id("s");
+                    let session = self.id("terminal-");
                     let show = self.random.chance(50);
                     let tab = &mut projection.workspaces[w].tabs[t];
                     tab.popups.push(popup(&id, "agent", &session));
@@ -2738,7 +2738,7 @@ pub(super) mod tests {
                 }
                 19 => {
                     let pane = self.new_pane();
-                    let id = self.id("w");
+                    let id = self.id("s");
                     let tab_id = self.id("t");
                     projection.workspaces.push(WorkspaceState {
                         item: WorkspaceItem {
@@ -2884,7 +2884,7 @@ pub(super) mod tests {
         projection.queue = queue;
     }
 
-    /// What the v35 codec checks of a pane or popup event: but for a close,
+    /// What the v36 codec checks of a pane or popup event: but for a close,
     /// its `column` and `expanded` and its `chosen` agree with the order it
     /// carries, and only a close may carry the empty order of a gone tab.
     fn assert_placed(event: &Event) {
@@ -3109,35 +3109,35 @@ pub(super) mod tests {
             )
         };
 
-        // Switching w1 to t2.
+        // Switching s1 to t2.
         let mut switched = before.clone();
-        workspace_mut(&mut switched, "w1").item.active_tab = "t2".into();
+        workspace_mut(&mut switched, "s1").item.active_tab = "t2".into();
         assert_eq!(
             turn(&before, &switched),
             (Vec::new(), "t1".into(), "t2".into())
         );
 
-        // Moving the active t2 to w2, so w1 activates t4.
+        // Moving the active t2 to s2, so s1 activates t4.
         let mut grown = switched.clone();
-        workspace_mut(&mut grown, "w1").tabs.push(tab(
+        workspace_mut(&mut grown, "s1").tabs.push(tab(
             "t4",
             vec![vec![pane("p5", "s6")]],
             Vec::new(),
         ));
         assert_eq!(turn(&switched, &grown).0, Vec::<String>::new());
         let mut moved = grown.clone();
-        let t2 = workspace_mut(&mut moved, "w1").tabs.remove(1);
-        workspace_mut(&mut moved, "w2").tabs.insert(0, t2);
-        workspace_mut(&mut moved, "w1").item.active_tab = "t4".into();
+        let t2 = workspace_mut(&mut moved, "s1").tabs.remove(1);
+        workspace_mut(&mut moved, "s2").tabs.insert(0, t2);
+        workspace_mut(&mut moved, "s1").item.active_tab = "t4".into();
         assert_eq!(turn(&grown, &moved), (Vec::new(), "t1".into(), "t4".into()));
 
         // Closing the active t4 while t5 opens and is activated.
         let mut closed = moved.clone();
-        let w1 = workspace_mut(&mut closed, "w1");
-        w1.tabs.retain(|tab| tab.id != "t4");
-        w1.tabs
+        let s1 = workspace_mut(&mut closed, "s1");
+        s1.tabs.retain(|tab| tab.id != "t4");
+        s1.tabs
             .push(tab("t5", vec![vec![pane("p6", "s7")]], Vec::new()));
-        w1.item.active_tab = "t5".into();
+        s1.item.active_tab = "t5".into();
         assert_eq!(
             turn(&moved, &closed),
             (Vec::new(), "t1".into(), "t5".into())
@@ -3145,7 +3145,7 @@ pub(super) mod tests {
 
         // Activating t1 itself passes, and the stream knows it again.
         let mut back = closed.clone();
-        workspace_mut(&mut back, "w1").item.active_tab = "t1".into();
+        workspace_mut(&mut back, "s1").item.active_tab = "t1".into();
         assert_eq!(
             turn(&closed, &back),
             (vec!["tab-activated t1".into()], "t1".into(), "t1".into())
@@ -3215,7 +3215,7 @@ pub(super) mod tests {
             ),
             (
                 FilterSpec {
-                    workspaces: vec!["w1".into()],
+                    workspaces: vec!["s1".into()],
                     ..FilterSpec::default()
                 },
                 None,

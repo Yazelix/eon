@@ -1135,7 +1135,7 @@ mod tests {
     use crate::{
         Color, DrawCell, DrawRow, DrawStyle, EonBar, SceneGraphics, ShortcutGroup, ShortcutRow,
     };
-    use eon_workspace_protocol::v35::{
+    use eon_workspace_protocol::v36::{
         ClaudeQuota, ClaudeQuotaState, CodexQuota, CodexQuotaState, CodexQuotaWindow, Pane, Popup,
         PopupEntry, PopupGeometry, PopupKey, Shortcut, Snapshot as WorkspaceSnapshot, Tab,
     };
@@ -1149,14 +1149,14 @@ mod tests {
             id: id.into(),
             directory: format!("/tmp/{id}").into_bytes(),
             selected_pane: Some(selected_pane.into()),
-            columns: vec![eon_workspace_protocol::v35::Column {
+            columns: vec![eon_workspace_protocol::v36::Column {
                 panes: panes
                     .iter()
                     .map(|id| Pane {
                         label: format!("{id}  unavailable"),
                         pinned_name: None,
                         id: (*id).into(),
-                        session: format!("session-{id}"),
+                        session: format!("terminal-{id}"),
                         endpoint: format!("/run/eon/{id}.sock").into_bytes(),
                         live: true,
                         attention: None,
@@ -1171,10 +1171,10 @@ mod tests {
     fn workspace_scene(active_tab: &str, tabs: Vec<Tab>) -> WorkspaceScene {
         WorkspaceScene::from_snapshot(
             &WorkspaceSnapshot {
-                workspace: "w1".into(),
-                active_workspace: "w1".into(),
-                workspaces: vec![eon_workspace_protocol::v35::WorkspaceInfo {
-                    id: "w1".into(),
+                workspace: "s1".into(),
+                active_workspace: "s1".into(),
+                workspaces: vec![eon_workspace_protocol::v36::WorkspaceInfo {
+                    id: "s1".into(),
                     name: None,
                     tab_count: tabs.len(),
                     attention: None,
@@ -1182,7 +1182,7 @@ mod tests {
                 }],
                 active_tab: active_tab.into(),
                 tabs,
-                geometry: eon_workspace_protocol::v35::PopupGeometry {
+                geometry: eon_workspace_protocol::v36::PopupGeometry {
                     side_margin: 8.0,
                     vertical_margin: 4.0,
                 },
@@ -1193,7 +1193,7 @@ mod tests {
                 claude_quota_failure: None,
                 running: None,
                 busy: None,
-                sidebar: eon_workspace_protocol::v35::Sidebar::Open,
+                sidebar: eon_workspace_protocol::v36::Sidebar::Open,
                 attention_queue: Vec::new(),
             },
             PhysicalSize::new(800, 600),
@@ -1259,10 +1259,10 @@ mod tests {
                 for tab_count in [1, 10] {
                     for providers in 0..4 {
                         let snapshot = WorkspaceSnapshot {
-                            workspace: "w1".into(),
-                            active_workspace: "w1".into(),
-                            workspaces: vec![eon_workspace_protocol::v35::WorkspaceInfo {
-                                id: "w1".into(),
+                            workspace: "s1".into(),
+                            active_workspace: "s1".into(),
+                            workspaces: vec![eon_workspace_protocol::v36::WorkspaceInfo {
+                                id: "s1".into(),
                                 name: None,
                                 tab_count,
                                 attention: None,
@@ -1297,7 +1297,7 @@ mod tests {
                                     scope: None,
                                 }],
                             }),
-                            sidebar: eon_workspace_protocol::v35::Sidebar::Open,
+                            sidebar: eon_workspace_protocol::v36::Sidebar::Open,
                             attention_queue: Vec::new(),
                             codex_quota_failure: None,
                             claude_quota_failure: None,
@@ -1450,10 +1450,10 @@ mod tests {
         ] {
             let workspace = WorkspaceScene::from_snapshot_with_bar(
                 &WorkspaceSnapshot {
-                    workspace: "w1".into(),
-                    active_workspace: "w1".into(),
-                    workspaces: vec![eon_workspace_protocol::v35::WorkspaceInfo {
-                        id: "w1".into(),
+                    workspace: "s1".into(),
+                    active_workspace: "s1".into(),
+                    workspaces: vec![eon_workspace_protocol::v36::WorkspaceInfo {
+                        id: "s1".into(),
                         name: None,
                         tab_count: 1,
                         attention: None,
@@ -1472,7 +1472,7 @@ mod tests {
                     claude_quota_failure: None,
                     running: None,
                     busy: None,
-                    sidebar: eon_workspace_protocol::v35::Sidebar::Open,
+                    sidebar: eon_workspace_protocol::v36::Sidebar::Open,
                     attention_queue: Vec::new(),
                 },
                 EonBar {
@@ -1523,10 +1523,10 @@ mod tests {
                             }]
                         };
                         let snapshot = WorkspaceSnapshot {
-                            workspace: "w1".into(),
-                            active_workspace: "w1".into(),
-                            workspaces: vec![eon_workspace_protocol::v35::WorkspaceInfo {
-                                id: "w1".into(),
+                            workspace: "s1".into(),
+                            active_workspace: "s1".into(),
+                            workspaces: vec![eon_workspace_protocol::v36::WorkspaceInfo {
+                                id: "s1".into(),
                                 name: None,
                                 tab_count,
                                 attention: None,
@@ -1551,7 +1551,7 @@ mod tests {
                                 observed_at: 1,
                                 windows: window(),
                             }),
-                            sidebar: eon_workspace_protocol::v35::Sidebar::Open,
+                            sidebar: eon_workspace_protocol::v36::Sidebar::Open,
                             attention_queue: Vec::new(),
                             codex_quota_failure: None,
                             claude_quota_failure: None,
@@ -1694,10 +1694,10 @@ mod tests {
         );
         let metrics = CellMetrics::for_scale(1.25);
         let snapshot = WorkspaceSnapshot {
-            workspace: "w1".into(),
-            active_workspace: "w1".into(),
-            workspaces: vec![eon_workspace_protocol::v35::WorkspaceInfo {
-                id: "w1".into(),
+            workspace: "s1".into(),
+            active_workspace: "s1".into(),
+            workspaces: vec![eon_workspace_protocol::v36::WorkspaceInfo {
+                id: "s1".into(),
                 name: None,
                 tab_count: 1,
                 attention: None,
@@ -1725,7 +1725,7 @@ mod tests {
             claude_quota_failure: None,
             running: None,
             busy: None,
-            sidebar: eon_workspace_protocol::v35::Sidebar::Open,
+            sidebar: eon_workspace_protocol::v36::Sidebar::Open,
             attention_queue: Vec::new(),
         };
         let project = |logical_width: u32, version, cpu, ram, disk, clock| {
@@ -1894,10 +1894,10 @@ mod tests {
             }]
         };
         let snapshot = WorkspaceSnapshot {
-            workspace: "w1".into(),
-            active_workspace: "w1".into(),
-            workspaces: vec![eon_workspace_protocol::v35::WorkspaceInfo {
-                id: "w1".into(),
+            workspace: "s1".into(),
+            active_workspace: "s1".into(),
+            workspaces: vec![eon_workspace_protocol::v36::WorkspaceInfo {
+                id: "s1".into(),
                 name: None,
                 tab_count: 1,
                 attention: None,
@@ -1920,7 +1920,7 @@ mod tests {
                 observed_at: 1,
                 windows: windows(),
             }),
-            sidebar: eon_workspace_protocol::v35::Sidebar::Open,
+            sidebar: eon_workspace_protocol::v36::Sidebar::Open,
             attention_queue: Vec::new(),
             codex_quota_failure: None,
             claude_quota_failure: None,
@@ -2133,10 +2133,10 @@ mod tests {
 
         for (name, codex_quota, expected) in cases {
             let workspace_snapshot = WorkspaceSnapshot {
-                workspace: "w1".into(),
-                active_workspace: "w1".into(),
-                workspaces: vec![eon_workspace_protocol::v35::WorkspaceInfo {
-                    id: "w1".into(),
+                workspace: "s1".into(),
+                active_workspace: "s1".into(),
+                workspaces: vec![eon_workspace_protocol::v36::WorkspaceInfo {
+                    id: "s1".into(),
                     name: None,
                     tab_count: 1,
                     attention: None,
@@ -2155,7 +2155,7 @@ mod tests {
                 claude_quota_failure: None,
                 running: None,
                 busy: None,
-                sidebar: eon_workspace_protocol::v35::Sidebar::Open,
+                sidebar: eon_workspace_protocol::v36::Sidebar::Open,
                 attention_queue: Vec::new(),
             };
             let metrics = CellMetrics::for_scale(1.0);
@@ -2329,7 +2329,7 @@ mod tests {
 
     #[test]
     fn two_provider_chips_share_layout_without_losing_identity_or_freshness() {
-        use eon_workspace_protocol::v35::{ClaudeQuota, ClaudeQuotaState};
+        use eon_workspace_protocol::v36::{ClaudeQuota, ClaudeQuotaState};
         let five_hour = CodexQuotaWindow {
             duration_minutes: 300,
             remaining_percent: 98,
@@ -2377,10 +2377,10 @@ mod tests {
                     for scale in [1.0, 1.25, 2.0] {
                         let metrics = CellMetrics::for_scale(scale);
                         let snapshot = WorkspaceSnapshot {
-                            workspace: "w1".into(),
-                            active_workspace: "w1".into(),
-                            workspaces: vec![eon_workspace_protocol::v35::WorkspaceInfo {
-                                id: "w1".into(),
+                            workspace: "s1".into(),
+                            active_workspace: "s1".into(),
+                            workspaces: vec![eon_workspace_protocol::v36::WorkspaceInfo {
+                                id: "s1".into(),
                                 name: None,
                                 tab_count: 1,
                                 attention: None,
@@ -2416,7 +2416,7 @@ mod tests {
                                 observed_at: 1000,
                                 windows: windows.clone(),
                             }),
-                            sidebar: eon_workspace_protocol::v35::Sidebar::Closed,
+                            sidebar: eon_workspace_protocol::v36::Sidebar::Closed,
                             attention_queue: Vec::new(),
                             codex_quota_failure: None,
                             claude_quota_failure: None,
@@ -2675,13 +2675,13 @@ mod tests {
     #[test]
     fn attention_inbox_names_filters_rows_and_highlight() {
         use crate::AttentionFilter;
-        use eon_workspace_protocol::v35::{
+        use eon_workspace_protocol::v36::{
             Attention, AttentionRecord, AttentionState, QueueEntry, Sidebar, WorkspaceInfo,
         };
         let size = PhysicalSize::new(1400, 700);
         let mut workspace = WorkspaceSnapshot {
-            workspace: "w1".into(),
-            active_workspace: "w1".into(),
+            workspace: "s1".into(),
+            active_workspace: "s1".into(),
             active_tab: "t3".into(),
             tabs: vec![
                 workspace_tab("t3", &["p3"], "p3"),
@@ -2689,14 +2689,14 @@ mod tests {
             ],
             workspaces: vec![
                 WorkspaceInfo {
-                    id: "w1".into(),
+                    id: "s1".into(),
                     name: None,
                     tab_count: 2,
                     attention: None,
                     recency: 1,
                 },
                 WorkspaceInfo {
-                    id: "w2".into(),
+                    id: "s2".into(),
                     name: Some("Review".into()),
                     tab_count: 1,
                     attention: None,
@@ -2716,7 +2716,7 @@ mod tests {
             busy: None,
             sidebar: Sidebar::Open,
             attention_queue: vec![QueueEntry {
-                workspace: "w2".into(),
+                workspace: "s2".into(),
                 tab: "t2".into(),
                 target: "p2".into(),
                 attention: Attention {
@@ -2740,7 +2740,7 @@ mod tests {
             ("t3", "p3", AttentionState::Finished),
         ] {
             let mut entry = workspace.attention_queue[0].clone();
-            entry.workspace = "w1".into();
+            entry.workspace = "s1".into();
             entry.tab = tab.into();
             entry.target = target.into();
             entry.attention.state = state;
@@ -3018,7 +3018,7 @@ mod tests {
             DialogKind::CloseLastTab {
                 terminals: 1,
                 detach: None,
-                workspace: Some("w2".into()),
+                workspace: Some("s2".into()),
             },
             vec![ShortcutGroup::new("", vec![ShortcutRow::new("Pane", "p1")])],
             size,
@@ -3028,7 +3028,7 @@ mod tests {
         assert_eq!(
             node(&snapshot.tree(), DIALOG).description(),
             Some(
-                "This closes workspace w2 and stops 1 terminal. Press Enter to close it \
+                "This closes session s2 and stops 1 terminal. Press Enter to close it \
                  or Escape to cancel."
             )
         );
@@ -3384,10 +3384,10 @@ mod tests {
     fn workspace_accessibility_uses_visible_intersections() {
         let columns = 4;
         let workspace_snapshot = WorkspaceSnapshot {
-            workspace: "w1".into(),
-            active_workspace: "w1".into(),
-            workspaces: vec![eon_workspace_protocol::v35::WorkspaceInfo {
-                id: "w1".into(),
+            workspace: "s1".into(),
+            active_workspace: "s1".into(),
+            workspaces: vec![eon_workspace_protocol::v36::WorkspaceInfo {
+                id: "s1".into(),
                 name: None,
                 tab_count: 1,
                 attention: None,
@@ -3403,7 +3403,7 @@ mod tests {
                 workspace_tab("t2", &["pane-7"], "pane-7"),
                 workspace_tab("t3", &["pane-8"], "pane-8"),
             ],
-            geometry: eon_workspace_protocol::v35::PopupGeometry {
+            geometry: eon_workspace_protocol::v36::PopupGeometry {
                 side_margin: 8.0,
                 vertical_margin: 4.0,
             },
@@ -3414,7 +3414,7 @@ mod tests {
             claude_quota_failure: None,
             running: None,
             busy: None,
-            sidebar: eon_workspace_protocol::v35::Sidebar::Open,
+            sidebar: eon_workspace_protocol::v36::Sidebar::Open,
             attention_queue: Vec::new(),
         };
         for scale in [1.0, 1.25, 1.5, 2.0] {
@@ -3525,13 +3525,13 @@ mod tests {
 
     #[test]
     fn agent_sidebar_region_follows_the_header_and_names_its_empty_state() {
-        use eon_workspace_protocol::v35::{AttentionState, Sidebar};
+        use eon_workspace_protocol::v36::{AttentionState, Sidebar};
 
         let mut workspace = WorkspaceSnapshot {
-            workspace: "w1".into(),
-            active_workspace: "w1".into(),
-            workspaces: vec![eon_workspace_protocol::v35::WorkspaceInfo {
-                id: "w1".into(),
+            workspace: "s1".into(),
+            active_workspace: "s1".into(),
+            workspaces: vec![eon_workspace_protocol::v36::WorkspaceInfo {
+                id: "s1".into(),
                 name: None,
                 tab_count: 1,
                 attention: None,
@@ -3587,9 +3587,9 @@ mod tests {
         // Attention replaces the empty state with each tab's heading and its rows, which are
         // named buttons that take focus and jump.
         workspace.tabs[0].columns[0].panes[0].attention =
-            Some(eon_workspace_protocol::v35::Attention {
+            Some(eon_workspace_protocol::v36::Attention {
                 state: AttentionState::NeedsInput,
-                record: Some(eon_workspace_protocol::v35::AttentionRecord {
+                record: Some(eon_workspace_protocol::v36::AttentionRecord {
                     kind: None,
                     progress: None,
                     app: "claude-code".into(),
@@ -3679,10 +3679,10 @@ mod tests {
         let size = PhysicalSize::new(800, 600);
         let metrics = CellMetrics::for_scale(1.0);
         let workspace = WorkspaceSnapshot {
-            workspace: "w1".into(),
-            active_workspace: "w1".into(),
-            workspaces: vec![eon_workspace_protocol::v35::WorkspaceInfo {
-                id: "w1".into(),
+            workspace: "s1".into(),
+            active_workspace: "s1".into(),
+            workspaces: vec![eon_workspace_protocol::v36::WorkspaceInfo {
+                id: "s1".into(),
                 name: None,
                 tab_count: 1,
                 attention: None,
@@ -3701,7 +3701,7 @@ mod tests {
             claude_quota_failure: None,
             running: None,
             busy: None,
-            sidebar: eon_workspace_protocol::v35::Sidebar::Open,
+            sidebar: eon_workspace_protocol::v36::Sidebar::Open,
             attention_queue: Vec::new(),
         };
         let hint = |modifiers: &str, names: &str, key: &str, action: &str| crate::ShortcutHint {
@@ -3866,10 +3866,10 @@ mod tests {
         // A configured popup on Alt+Shift+T takes New tab's key, so its name drops the chord.
         let taken = WorkspaceScene::from_snapshot(
             &WorkspaceSnapshot {
-                workspace: "w1".into(),
-                active_workspace: "w1".into(),
-                workspaces: vec![eon_workspace_protocol::v35::WorkspaceInfo {
-                    id: "w1".into(),
+                workspace: "s1".into(),
+                active_workspace: "s1".into(),
+                workspaces: vec![eon_workspace_protocol::v36::WorkspaceInfo {
+                    id: "s1".into(),
                     name: None,
                     tab_count: 1,
                     attention: None,
@@ -3885,8 +3885,8 @@ mod tests {
                     id: "files".into(),
                     label: "Files".into(),
                     shortcut: PopupKey::Bound(Shortcut {
-                        modifiers: eon_workspace_protocol::v35::ALT
-                            | eon_workspace_protocol::v35::SHIFT,
+                        modifiers: eon_workspace_protocol::v36::ALT
+                            | eon_workspace_protocol::v36::SHIFT,
                         key: "KeyT".into(),
                     }),
                 }],
@@ -3896,7 +3896,7 @@ mod tests {
                 claude_quota_failure: None,
                 running: None,
                 busy: None,
-                sidebar: eon_workspace_protocol::v35::Sidebar::Open,
+                sidebar: eon_workspace_protocol::v36::Sidebar::Open,
                 attention_queue: Vec::new(),
             },
             PhysicalSize::new(800, 600),
@@ -3927,12 +3927,12 @@ mod tests {
             .collect::<Vec<_>>();
         let snapshot = |names: &[Option<&str>], shown: &str| WorkspaceSnapshot {
             workspace: shown.into(),
-            active_workspace: "w1".into(),
+            active_workspace: "s1".into(),
             workspaces: names
                 .iter()
                 .enumerate()
-                .map(|(index, name)| eon_workspace_protocol::v35::WorkspaceInfo {
-                    id: format!("w{}", index + 1),
+                .map(|(index, name)| eon_workspace_protocol::v36::WorkspaceInfo {
+                    id: format!("s{}", index + 1),
                     name: name.map(Into::into),
                     tab_count: 1,
                     attention: None,
@@ -3952,7 +3952,7 @@ mod tests {
             claude_quota_failure: None,
             running: None,
             busy: None,
-            sidebar: eon_workspace_protocol::v35::Sidebar::Open,
+            sidebar: eon_workspace_protocol::v36::Sidebar::Open,
             attention_queue: Vec::new(),
         };
         let picker = "Workspaces — Alt+Shift+S";
@@ -3987,9 +3987,9 @@ mod tests {
         let control = WorkspaceHeaderControl::Workspaces;
 
         // One unnamed workspace leaves the bar as it is without the label.
-        let plain = project(&snapshot(&[None], "w1"), 1200, Some(picker), 0.0);
+        let plain = project(&snapshot(&[None], "s1"), 1200, Some(picker), 0.0);
         assert!(plain.workspace_label.is_none() && !plain.has_control(control));
-        assert_eq!(plain, project(&snapshot(&[None], "w1"), 1200, None, 0.0));
+        assert_eq!(plain, project(&snapshot(&[None], "s1"), 1200, None, 0.0));
         assert_eq!(plain.tab_viewport.left, 0.0);
         let mut accessible = Snapshot::new(PhysicalSize::new(1200, 600));
         accessible.set_workspace(Some(&plain));
@@ -3998,7 +3998,7 @@ mod tests {
         assert!(tree.nodes.iter().all(|(id, _)| *id != WORKSPACE_LABEL));
 
         // Two workspaces: the shown one's name and position lead the tabs and open the picker.
-        let two = snapshot(&[None, Some("notes")], "w2");
+        let two = snapshot(&[None, Some("notes")], "s2");
         let scene = project(&two, 1200, Some(picker), 0.0);
         let label = scene.workspace_label.as_ref().unwrap();
         assert_eq!(label.label, "notes 2/2");
@@ -4033,18 +4033,18 @@ mod tests {
         // Another workspace that needs input badges the label's corner, with the sidebar open,
         // and moves neither the label nor the tabs; the shown one's own attention badges nothing.
         let mut own = two.clone();
-        own.workspaces[1].attention = Some(eon_workspace_protocol::v35::AttentionState::NeedsInput);
+        own.workspaces[1].attention = Some(eon_workspace_protocol::v36::AttentionState::NeedsInput);
         assert_eq!(project(&own, 1200, Some(picker), 0.0), scene);
         let mut waiting = two.clone();
         waiting.workspaces[0].attention =
-            Some(eon_workspace_protocol::v35::AttentionState::NeedsInput);
+            Some(eon_workspace_protocol::v36::AttentionState::NeedsInput);
         let badged = project(&waiting, 1200, Some(picker), 0.0);
         assert!(badged.sidebar().is_some());
         let badged_label = badged.workspace_label.as_ref().unwrap();
         let badge = badged_label.badge.unwrap();
         assert_eq!(
             badge.state,
-            eon_workspace_protocol::v35::AttentionState::NeedsInput
+            eon_workspace_protocol::v36::AttentionState::NeedsInput
         );
         assert!(badge.rect.right() > badged_label.rect.right() - badge.rect.width);
         assert_eq!(badged_label.rect, label.rect);
@@ -4058,7 +4058,7 @@ mod tests {
         // A long name is clipped to a tab's widest text, and the position stays whole.
         let long = "x".repeat(200);
         let clipped = project(
-            &snapshot(&[Some(&long), None], "w1"),
+            &snapshot(&[Some(&long), None], "s1"),
             1200,
             Some(picker),
             0.0,
@@ -4073,7 +4073,7 @@ mod tests {
         assert_eq!(label.accessible_label, format!("Workspace {long}, 1 of 2"));
 
         // One named workspace shows its name alone.
-        let named = project(&snapshot(&[Some("notes")], "w1"), 1200, Some(picker), 0.0);
+        let named = project(&snapshot(&[Some("notes")], "s1"), 1200, Some(picker), 0.0);
         let label = named.workspace_label.as_ref().unwrap();
         assert_eq!(
             (label.label.as_str(), label.accessible_label.as_str()),
@@ -4134,10 +4134,10 @@ mod tests {
     fn workspace_accessibility_order_matches_tabs_then_one_expanded_pane() {
         let workspace = WorkspaceScene::from_snapshot_with_bar(
             &WorkspaceSnapshot {
-                workspace: "w1".into(),
-                active_workspace: "w1".into(),
-                workspaces: vec![eon_workspace_protocol::v35::WorkspaceInfo {
-                    id: "w1".into(),
+                workspace: "s1".into(),
+                active_workspace: "s1".into(),
+                workspaces: vec![eon_workspace_protocol::v36::WorkspaceInfo {
+                    id: "s1".into(),
                     name: None,
                     tab_count: 1,
                     attention: None,
@@ -4152,13 +4152,13 @@ mod tests {
                         id: "t1".into(),
                         directory: b"/tmp/eon".to_vec(),
                         selected_pane: Some("p2".into()),
-                        columns: vec![eon_workspace_protocol::v35::Column {
+                        columns: vec![eon_workspace_protocol::v36::Column {
                             panes: vec![
                                 Pane {
                                     label: "p1  offline".into(),
                                     pinned_name: None,
                                     id: "p1".into(),
-                                    session: "session-1".into(),
+                                    session: "terminal-1".into(),
                                     endpoint: b"/run/eon/one.sock".to_vec(),
                                     live: false,
                                     attention: None,
@@ -4167,7 +4167,7 @@ mod tests {
                                     label: "p2  Review · ../repo".into(),
                                     pinned_name: None,
                                     id: "p2".into(),
-                                    session: "session-2".into(),
+                                    session: "terminal-2".into(),
                                     endpoint: b"/run/eon/two.sock".to_vec(),
                                     live: true,
                                     attention: None,
@@ -4184,17 +4184,17 @@ mod tests {
                         id: "t2".into(),
                         directory: b"/tmp/nova".to_vec(),
                         selected_pane: Some("p3".into()),
-                        columns: vec![eon_workspace_protocol::v35::Column {
+                        columns: vec![eon_workspace_protocol::v36::Column {
                             panes: vec![Pane {
                                 label: "p3".into(),
                                 pinned_name: None,
                                 id: "p3".into(),
-                                session: "session-3".into(),
+                                session: "terminal-3".into(),
                                 endpoint: b"/run/eon/three.sock".to_vec(),
                                 live: false,
-                                attention: Some(eon_workspace_protocol::v35::Attention {
-                                    state: eon_workspace_protocol::v35::AttentionState::Finished,
-                                    record: Some(eon_workspace_protocol::v35::AttentionRecord {
+                                attention: Some(eon_workspace_protocol::v36::Attention {
+                                    state: eon_workspace_protocol::v36::AttentionState::Finished,
+                                    record: Some(eon_workspace_protocol::v36::AttentionRecord {
                                         kind: None,
                                         progress: None,
                                         app: "claude-code".into(),
@@ -4210,11 +4210,11 @@ mod tests {
                             expanded: "p3".into(),
                         }],
                         attention_rollup: Some(
-                            eon_workspace_protocol::v35::AttentionState::Finished,
+                            eon_workspace_protocol::v36::AttentionState::Finished,
                         ),
                     },
                 ],
-                geometry: eon_workspace_protocol::v35::PopupGeometry {
+                geometry: eon_workspace_protocol::v36::PopupGeometry {
                     side_margin: 8.0,
                     vertical_margin: 4.0,
                 },
@@ -4225,7 +4225,7 @@ mod tests {
                 claude_quota_failure: None,
                 running: None,
                 busy: None,
-                sidebar: eon_workspace_protocol::v35::Sidebar::Open,
+                sidebar: eon_workspace_protocol::v36::Sidebar::Open,
                 attention_queue: Vec::new(),
             },
             EonBar::default(),
@@ -4289,10 +4289,10 @@ mod tests {
     fn zoomed_tab_names_the_zoom_and_lists_only_its_pane() {
         let tab = workspace_tab("t1", &["p1", "p2", "p3"], "p2");
         let state = WorkspaceSnapshot {
-            workspace: "w1".into(),
-            active_workspace: "w1".into(),
-            workspaces: vec![eon_workspace_protocol::v35::WorkspaceInfo {
-                id: "w1".into(),
+            workspace: "s1".into(),
+            active_workspace: "s1".into(),
+            workspaces: vec![eon_workspace_protocol::v36::WorkspaceInfo {
+                id: "s1".into(),
                 name: None,
                 tab_count: 1,
                 attention: None,
@@ -4300,7 +4300,7 @@ mod tests {
             }],
             active_tab: "t1".into(),
             tabs: vec![tab],
-            geometry: eon_workspace_protocol::v35::PopupGeometry {
+            geometry: eon_workspace_protocol::v36::PopupGeometry {
                 side_margin: 8.0,
                 vertical_margin: 4.0,
             },
@@ -4311,7 +4311,7 @@ mod tests {
             claude_quota_failure: None,
             running: None,
             busy: None,
-            sidebar: eon_workspace_protocol::v35::Sidebar::Open,
+            sidebar: eon_workspace_protocol::v36::Sidebar::Open,
             attention_queue: Vec::new(),
         };
         let project = |zoom| {
@@ -4358,10 +4358,10 @@ mod tests {
     fn popup_and_empty_body_expose_only_visible_accessibility_targets() {
         let size = PhysicalSize::new(800, 600);
         let mut state = WorkspaceSnapshot {
-            workspace: "w1".into(),
-            active_workspace: "w1".into(),
-            workspaces: vec![eon_workspace_protocol::v35::WorkspaceInfo {
-                id: "w1".into(),
+            workspace: "s1".into(),
+            active_workspace: "s1".into(),
+            workspaces: vec![eon_workspace_protocol::v36::WorkspaceInfo {
+                id: "s1".into(),
                 name: None,
                 tab_count: 1,
                 attention: None,
@@ -4376,7 +4376,7 @@ mod tests {
                 id: "files".into(),
                 label: "Files".into(),
                 shortcut: PopupKey::Bound(Shortcut {
-                    modifiers: eon_workspace_protocol::v35::ALT,
+                    modifiers: eon_workspace_protocol::v36::ALT,
                     key: "KeyY".into(),
                 }),
             }],
@@ -4402,7 +4402,7 @@ mod tests {
             claude_quota_failure: None,
             running: None,
             busy: None,
-            sidebar: eon_workspace_protocol::v35::Sidebar::Open,
+            sidebar: eon_workspace_protocol::v36::Sidebar::Open,
             attention_queue: Vec::new(),
         };
         let workspace = WorkspaceScene::from_snapshot(

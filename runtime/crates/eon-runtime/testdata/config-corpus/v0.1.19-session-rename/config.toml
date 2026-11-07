@@ -1,0 +1,19 @@
+# v0.1.19's [workspace] and [popups.workspaces] tables, which v0.1.20 renamed
+# to [session] and [popups.sessions]: the old tables warn once each, naming the
+# replacement, and have no effect, even with values that were never valid;
+# [session] keys apply.
+
+[workspace]
+warning_close_last_tab = false
+animate_working_badge = false
+number_keys = "no"
+
+[session]
+number_keys = false
+
+[popups.workspaces]
+command = ["eon-workspaces"]
+enabled = "false"
+keep_alive = true
+keybinding = "Alt+Shift+W"
+label = "Workspaces"

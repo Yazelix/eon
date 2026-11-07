@@ -6,7 +6,7 @@ Both crates build and test without the Eon crates.
 | Package | Owns | Version |
 |---|---|---|
 | `eon-runtime` | Invocation, terminal lifecycle, workspace state, configuration parsing and generation identity | `0.1.0` |
-| `eon-workspace-protocol` | EONW v35 types and bounded codec | `0.1.0` |
+| `eon-workspace-protocol` | EONW v36 types and bounded codec | `0.1.0` |
 
 ## Consumer boundary
 
@@ -77,9 +77,14 @@ Successful missing quota clears prior facts.
 Eon's [EON-C27](../docs/CONTRACTS.md#eon-c27--codexbar-quota-collection)
 owns product policy and installed acceptance.
 
-EONW v35 changes no message; its version tells a later build that this
-build's `eon` takes `window stop ID` and `window attach ID` (EON-C11,
-Delegation). v34 adds `EditTerminalHistory` and its `Editing` reply for
+EONW v36 changes no message layout: session IDs become `sN` (were `wN`),
+terminal IDs `terminal-N` (were `session-N`), the session error codes
+`unknown-session`, `ambiguous-session`, `session-limit`,
+`session-close-failed` and `session-unavailable`, an unknown terminal
+`unknown-terminal` and one that fails to start `terminal-start`, and the
+picker's popup entry `sessions`. v35 changes no message; its version tells a
+later build that this build's `eon` takes `window stop ID` and
+`window attach ID` (EON-C11, Delegation). v34 adds `EditTerminalHistory` and its `Editing` reply for
 EON-C35's `eon pane history --edit`, which opens the history in a Scrollback
 popup (EON-C10). v33 adds `ReadTerminalHistory` and its `History` reply for
 `eon pane history`; that reply alone may exceed the 2 MiB message bound, up to
@@ -123,7 +128,7 @@ its calling terminal; v12 adds a request that
 moves the selected pane into the neighbouring column; v11 adds a request that
 closes one pane by its stable identity; v10 arranges each tab's panes into up
 to four columns; v9 permits genuinely absent provider resets, including stale
-observations. Only v35 remains: the CLI
+observations. Only v36 remains: the CLI
 inspects and stops supervisors that use it, lists any other as incompatible,
 and presentation remains bound to the original exact executable.
 
@@ -132,8 +137,8 @@ and presentation remains bound to the original exact executable.
 Runtime and codec have separate package manifests and version owners. Runtime
 depends on the in-tree Orbit protocol crate.
 
-EONW's complete package is its Cargo manifest, `src/lib.rs`, `src/v35.rs`
-and its `src/v35/subscription.rs` module. It has no external dependencies,
+EONW's complete package is its Cargo manifest, `src/lib.rs`, `src/v36.rs`
+and its `src/v36/subscription.rs` module. It has no external dependencies,
 feature declarations, build script or workspace-inherited settings.
 
 Runtime evolution has one owner here; Eon owns product composition and

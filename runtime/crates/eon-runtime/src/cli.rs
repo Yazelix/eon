@@ -21,7 +21,7 @@ use super::{
         terminal_sent_json, terminal_text_json,
     },
 };
-use eon_workspace_protocol::v35::{
+use eon_workspace_protocol::v36::{
     Action, AttentionState, Direction, Failure, MAX_HISTORY_TEXT_BYTES, MAX_PASTE_BYTES, Pane,
     PopupTarget, Response, Side, Snapshot, Tab, TerminalHistory, TerminalInput, VERSION,
     WorkspaceAction, WorkspaceInfo, valid_caller, validate_paste,
@@ -67,7 +67,7 @@ impl Inputs {
 
 /// The executable name of the Workspaces picker, whose own popup key confirms its highlighted
 /// row (EON-C33).
-pub(crate) const WORKSPACE_PICKER: &str = "eon-workspaces";
+pub(crate) const WORKSPACE_PICKER: &str = "eon-sessions";
 
 pub fn run(inputs: Inputs) -> (&'static str, Result<i32, Error>) {
     let mut arguments = env::args_os();
@@ -178,7 +178,7 @@ fn command_runner(inputs: &Inputs) -> i32 {
 /// Runs the Workspaces popup and keeps any failure on screen until Enter.
 fn workspace_picker(inputs: &Inputs) -> i32 {
     let status = pick_and_run_workspace(inputs).unwrap_or_else(|error| {
-        eprintln!("eon-workspaces: {error}");
+        eprintln!("eon-sessions: {error}");
         1
     });
     if status != 0 {
@@ -295,16 +295,16 @@ fn pick_and_run_workspace(inputs: &Inputs) -> Result<i32, String> {
         let Some(arguments) = workspace_pick_arguments(&output) else {
             return Ok(0);
         };
-        // Runtime would read a departed row's wN as another workspace's name, so a row switches
-        // or closes only while its wN is still live; the check and the action are not atomic.
+        // Runtime would read a departed row's sN as another workspace's name, so a row switches
+        // or closes only while its sN is still live; the check and the action are not atomic.
         if arguments[1] != "new"
             && !caller_snapshot(inputs)?
                 .workspaces
                 .iter()
                 .any(|workspace| workspace.id == arguments[2])
         {
-            let detail = format!("workspace {} is not live", arguments[2]);
-            return report_failure(&failure("unknown-workspace", detail), false);
+            let detail = format!("session {} is not live", arguments[2]);
+            return report_failure(&failure("unknown-session", detail), false);
         }
         let status = run_as_caller(
             inputs,
@@ -1022,7 +1022,7 @@ Workspace flag: --window ID, before any --.
 Explicit targets still validate EON_TERMINAL; independent windows use
 attach's rule.
 Results name generation, window (null for default), and workspace.
-WS is a workspace ID (w1, w2, ...) or its exact name.
+WS is a workspace ID (s1, s2, ...) or its exact name.
 workspace new --name NAME names the new workspace; created gives its ID.
 With --no-focus, workspace new keeps the shown workspace, and either
 pane create keeps the selected pane and any popup.
@@ -1219,10 +1219,10 @@ fn control(
             }
         }
     }
-    // Closing a workspace asks as Stop does, about the wN that WS resolves to
+    // Closing a workspace asks as Stop does, about the sN that WS resolves to
     // by Runtime's rule; a WS that resolves to none or several fails unasked.
-    // After a yes it checks again that the wN is live before closing it, since
-    // Runtime would read a departed wN as another workspace's name; the check
+    // After a yes it checks again that the sN is live before closing it, since
+    // Runtime would read a departed sN as another workspace's name; the check
     // and the close are not atomic. EONW lists only
     // the caller's or shown workspace's terminals, so the prompt names none.
     if let Action::Workspace(WorkspaceAction::CloseWorkspace { workspace }) = &mut action
@@ -1263,7 +1263,7 @@ fn control(
             Ok(snapshot) if snapshot.workspaces.iter().any(|item| item.id == *id) => {}
             Ok(_) => {
                 return report_failure(
-                    &failure("unknown-workspace", format!("workspace {id} is not live")),
+                    &failure("unknown-session", format!("session {id} is not live")),
                     json,
                 );
             }
@@ -1304,7 +1304,7 @@ fn control(
                 String::new()
             };
             // The reply projects the caller's workspace, where a tab or pane
-            // creation acts. wN, tN and pN identities rise window-wide and are
+            // creation acts. sN, tN and pN identities rise window-wide and are
             // never reused, and the supervisor builds the reply in the same
             // request step that creates one, so the highest is the new one.
             let terminal = |tab: &Tab, pane: Option<&Pane>| {
@@ -1320,7 +1320,7 @@ fn control(
             // The JSON value, and the human line only a new workspace prints.
             // A pending tab has no pane until its directory is picked.
             let (created, created_line) = match creation {
-                Some(Creation::Workspace) => newest(&snapshot.workspaces, 'w', |item| &item.id)
+                Some(Creation::Workspace) => newest(&snapshot.workspaces, 's', |item| &item.id)
                     .map(|item| {
                         (
                             format!("\"{}\"", json_escape(&item.id)),
@@ -1471,7 +1471,7 @@ enum Creation {
 }
 
 /// The item with the highest `prefix`N identity, which is the newest: Runtime
-/// allocates wN, tN and pN rising window-wide and never reuses one.
+/// allocates sN, tN and pN rising window-wide and never reuses one.
 fn newest<T>(
     items: impl IntoIterator<Item = T>,
     prefix: char,
@@ -1694,7 +1694,7 @@ fn close_question(
     let Some(target_label) = close_target_label(action) else {
         return Ok(None);
     };
-    let tab_terminals = |tab: &eon_workspace_protocol::v35::Tab| -> Vec<(String, String)> {
+    let tab_terminals = |tab: &eon_workspace_protocol::v36::Tab| -> Vec<(String, String)> {
         tab.panes()
             .map(|pane| (pane.session.clone(), pane.label.clone()))
             .chain(tab.popups.iter().map(|popup| {
@@ -1818,7 +1818,7 @@ fn final_close_prompt(
 ) -> (String, String) {
     let ends = workspace.map_or_else(
         || "quits the window".into(),
-        |name| format!("closes workspace {}", name.escape_debug()),
+        |name| format!("closes session {}", name.escape_debug()),
     );
     let busy = busy.map_or_else(String::new, |busy| format!("; {busy}"));
     let question = format!(
@@ -2129,7 +2129,7 @@ fn parse_pane_rename_arguments(arguments: &[OsString]) -> Result<(Action, bool),
         _ => return Err(Error::usage(EON_USAGE)),
     };
     if let Some(name) = name {
-        eon_workspace_protocol::v35::validate_pane_name(name)
+        eon_workspace_protocol::v36::validate_pane_name(name)
             .map_err(|error| Error::usage(error.to_string()))?;
     }
     Ok((
@@ -2141,7 +2141,7 @@ fn parse_pane_rename_arguments(arguments: &[OsString]) -> Result<(Action, bool),
     ))
 }
 
-/// `workspace new|switch|rename|close`. WS is a `wN` or a name, which the
+/// `workspace new|switch|rename|close`. WS is a `sN` or a name, which the
 /// runtime resolves; after `--`, operands may start with `-`. Names are
 /// trimmed, as pane names are, and an empty rename clears the name.
 fn parse_workspace_arguments(arguments: &[OsString]) -> Result<Option<(Action, bool)>, Error> {
@@ -2431,7 +2431,7 @@ mod tests {
         assert_eq!(
             final_close_prompt(&terminals, Some("my \"notes\""), None),
             (
-                "Close the last tab? This closes workspace my \\\"notes\\\" and stops 2 \
+                "Close the last tab? This closes session my \\\"notes\\\" and stops 2 \
                  terminals [p1, agent]. [y/N] "
                     .to_owned(),
                 "cancelled; workspace my \\\"notes\\\" stays open\n".to_owned()
@@ -2587,7 +2587,7 @@ mod tests {
                 .into_iter()
                 .flat_map(|argument| match argument {
                     "PANE" => vec!["p1"],
-                    "WORKSPACE" | "WS" => vec!["w2"],
+                    "WORKSPACE" | "WS" => vec!["s2"],
                     "NAME" => vec!["--", "--json"],
                     _ => vec![argument],
                 })
@@ -2618,36 +2618,36 @@ mod tests {
                 attention,
                 recency,
             };
-        // Shown w1, then w3, then w2: the previous one leads, needs input only marks.
+        // Shown s1, then s3, then s2: the previous one leads, needs input only marks.
         assert_eq!(
             workspace_rows(
                 &[
-                    workspace("w1", Some("work"), 2, 2, Some(AttentionState::NeedsInput)),
-                    workspace("w2", None, 1, 0, Some(AttentionState::NeedsInput)),
-                    workspace("w3", Some("notes"), 3, 1, Some(AttentionState::Finished)),
+                    workspace("s1", Some("work"), 2, 2, Some(AttentionState::NeedsInput)),
+                    workspace("s2", None, 1, 0, Some(AttentionState::NeedsInput)),
+                    workspace("s3", Some("notes"), 3, 1, Some(AttentionState::Finished)),
                 ],
-                "w2",
+                "s2",
             ),
-            "w3\tnotes\t3 tabs\nw1\twork\t2 tabs · needs input\n\
-             w2\tw2\t1 tab · needs input · shown\n"
+            "s3\tnotes\t3 tabs\ns1\twork\t2 tabs · needs input\n\
+             s2\ts2\t1 tab · needs input · shown\n"
         );
         // fzf prints the query, the --expect key (empty for Enter), then the row.
         assert_eq!(
-            workspace_pick_arguments("wo\n\nw1\twork\t2 tabs\n"),
-            Some(vec!["workspace", "switch", "w1"])
+            workspace_pick_arguments("wo\n\ns1\twork\t2 tabs\n"),
+            Some(vec!["workspace", "switch", "s1"])
         );
         assert_eq!(
-            workspace_pick_arguments("\n\nw2\tw2\t1 tab · shown\n"),
-            Some(vec!["workspace", "switch", "w2"])
+            workspace_pick_arguments("\n\ns2\ts2\t1 tab · shown\n"),
+            Some(vec!["workspace", "switch", "s2"])
         );
         assert_eq!(
-            workspace_pick_arguments("wo\nctrl-x\nw1\twork\t2 tabs\n"),
-            Some(vec!["workspace", "close", "w1"])
+            workspace_pick_arguments("wo\nctrl-x\ns1\twork\t2 tabs\n"),
+            Some(vec!["workspace", "close", "s1"])
         );
         // fzf exits 1 on Ctrl+X without a row, so it never prints this.
         assert_eq!(workspace_pick_arguments("zz\nctrl-x\n"), None);
         // Closing another workspace always lists again, and the next listing reports any
-        // failure; closing the picker's own w1 lists again only while w1 is still live (it was
+        // failure; closing the picker's own s1 lists again only while s1 is still live (it was
         // declined); a failure or any other command ends the picker.
         let live = |ids: &[&str]| {
             Some(
@@ -2657,26 +2657,26 @@ mod tests {
             )
         };
         let close = |id| ["workspace", "close", id];
-        assert_eq!(workspace_pick_end(&close("w1"), 0, "w1", || None), Some(0));
+        assert_eq!(workspace_pick_end(&close("s1"), 0, "s1", || None), Some(0));
         assert_eq!(
-            workspace_pick_end(&close("w1"), 0, "w1", || live(&["w2"])),
+            workspace_pick_end(&close("s1"), 0, "s1", || live(&["s2"])),
             Some(0)
         );
         assert_eq!(
-            workspace_pick_end(&close("w1"), 0, "w1", || live(&["w1"])),
+            workspace_pick_end(&close("s1"), 0, "s1", || live(&["s1"])),
             None
         );
         assert_eq!(
-            workspace_pick_end(&close("w2"), 0, "w1", || live(&["w1"])),
+            workspace_pick_end(&close("s2"), 0, "s1", || live(&["s1"])),
             None
         );
-        assert_eq!(workspace_pick_end(&close("w2"), 0, "w1", || None), None);
+        assert_eq!(workspace_pick_end(&close("s2"), 0, "s1", || None), None);
         assert_eq!(
-            workspace_pick_end(&close("w2"), 1, "w1", || live(&["w1"])),
+            workspace_pick_end(&close("s2"), 1, "s1", || live(&["s1"])),
             Some(1)
         );
         assert_eq!(
-            workspace_pick_end(&["workspace", "switch", "w2"], 0, "w1", || live(&["w1"])),
+            workspace_pick_end(&["workspace", "switch", "s2"], 0, "s1", || live(&["s1"])),
             Some(0)
         );
         assert_eq!(
@@ -2859,7 +2859,7 @@ mod tests {
             vec!["--json", "--json", "--directory", "/"],
             vec!["--no-focus", "--no-focus", "--directory", "/"],
             vec!["--unknown"],
-            vec!["--workspace", "w1", "--directory", "/"],
+            vec!["--workspace", "s1", "--directory", "/"],
         ] {
             let mut command = vec!["tab", "create"];
             command.extend(args);
@@ -3109,7 +3109,7 @@ mod tests {
 
     #[test]
     fn close_question_is_target_scoped_and_conservative() {
-        use eon_workspace_protocol::v35::{
+        use eon_workspace_protocol::v36::{
             BusyTerminal, BusyTerminals, Column, Pane, Popup, PopupEntry, PopupGeometry, PopupKey,
             Sidebar, Tab, TargetId, TerminalTarget,
         };
@@ -3124,7 +3124,7 @@ mod tests {
         };
         let busy_item = |tab: &str, id: TargetId, session: &str, name: &str| BusyTerminal {
             target: TerminalTarget {
-                workspace: "w1".into(),
+                workspace: "s1".into(),
                 tab: tab.into(),
                 id,
                 terminal: session.into(),
@@ -3132,10 +3132,10 @@ mod tests {
             name: name.into(),
         };
         let base_snapshot = || Snapshot {
-            workspace: "w1".into(),
-            active_workspace: "w1".into(),
+            workspace: "s1".into(),
+            active_workspace: "s1".into(),
             workspaces: vec![WorkspaceInfo {
-                id: "w1".into(),
+                id: "s1".into(),
                 name: None,
                 tab_count: 2,
                 attention: None,
@@ -3357,15 +3357,15 @@ mod tests {
 
     #[test]
     fn close_question_combines_busy_and_final_warnings_once() {
-        use eon_workspace_protocol::v35::{
+        use eon_workspace_protocol::v36::{
             BusyTerminal, BusyTerminals, Column, Pane, Popup, PopupEntry, PopupGeometry, PopupKey,
             Sidebar, Tab, TargetId, TerminalTarget,
         };
         let mut snap = Snapshot {
-            workspace: "w1".into(),
-            active_workspace: "w1".into(),
+            workspace: "s1".into(),
+            active_workspace: "s1".into(),
             workspaces: vec![WorkspaceInfo {
-                id: "w1".into(),
+                id: "s1".into(),
                 name: None,
                 tab_count: 1,
                 attention: None,
@@ -3441,7 +3441,7 @@ mod tests {
         snap.busy = Some(BusyTerminals {
             terminals: vec![BusyTerminal {
                 target: TerminalTarget {
-                    workspace: "w1".into(),
+                    workspace: "s1".into(),
                     tab: "t1".into(),
                     id: TargetId::Pane("p1".into()),
                     terminal: "s1".into(),
@@ -3489,7 +3489,7 @@ mod tests {
         snap.busy = Some(BusyTerminals {
             terminals: vec![BusyTerminal {
                 target: TerminalTarget {
-                    workspace: "w1".into(),
+                    workspace: "s1".into(),
                     tab: "t1".into(),
                     id: TargetId::Popup("u1".into()),
                     terminal: "s2".into(),
@@ -3500,14 +3500,14 @@ mod tests {
         });
         snap.workspaces = vec![
             WorkspaceInfo {
-                id: "w1".into(),
+                id: "s1".into(),
                 name: Some("my \"notes\"".into()),
                 tab_count: 1,
                 attention: None,
                 recency: 0,
             },
             WorkspaceInfo {
-                id: "w2".into(),
+                id: "s2".into(),
                 name: None,
                 tab_count: 1,
                 attention: None,
@@ -3515,7 +3515,7 @@ mod tests {
             },
         ];
         let workspace_final = Ok(Some((
-            "Close the last tab? This closes workspace my \\\"notes\\\" and stops 2 terminals \
+            "Close the last tab? This closes session my \\\"notes\\\" and stops 2 terminals \
              [p1, agent]; 1 still running: Agent. [y/N] "
                 .into(),
             "cancelled; workspace my \\\"notes\\\" stays open\n".into(),
@@ -3533,10 +3533,10 @@ mod tests {
         assert_eq!(
             close_question(&snap, &close_t1, true, true),
             Ok(Some((
-                "Close the last tab? This closes workspace w1 and stops 2 terminals \
+                "Close the last tab? This closes session s1 and stops 2 terminals \
                  [p1, agent]; 1 still running: Agent. [y/N] "
                     .into(),
-                "cancelled; workspace w1 stays open\n".into(),
+                "cancelled; workspace s1 stays open\n".into(),
             )))
         );
     }
@@ -3688,19 +3688,19 @@ mod tests {
             })
         );
         assert_eq!(
-            parse(&["workspace", "rename", "w2", "  "]).map_err(|_| ()),
+            parse(&["workspace", "rename", "s2", "  "]).map_err(|_| ()),
             workspace(WorkspaceAction::RenameWorkspace {
-                workspace: Some("w2".into()),
+                workspace: Some("s2".into()),
                 name: String::new(),
             })
         );
         for args in [
             &["workspace", "new", "extra"][..],
             &["workspace", "new", "--name"],
-            &["workspace", "switch", "w2", "--no-focus"],
+            &["workspace", "switch", "s2", "--no-focus"],
             &["workspace", "switch"],
-            &["workspace", "close", "w2", "w3"],
-            &["workspace", "close", "--force", "w2"],
+            &["workspace", "close", "s2", "s3"],
+            &["workspace", "close", "--force", "s2"],
             &["workspace", "rename"],
             &["workspaces", "--no-focus"],
         ] {

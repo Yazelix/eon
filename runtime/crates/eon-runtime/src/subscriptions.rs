@@ -1,11 +1,11 @@
 //! EON-C39 event subscriptions: each subscriber's connection, its bounded
-//! nonblocking writer and the EONW v35 messages it reads.
+//! nonblocking writer and the EONW v36 messages it reads.
 
 use super::events::{
     ColumnOrder, Event, Events, Filter, FilterSpec, Kind, PaneChange, PopupChange, Projection,
     QueueItem, SnapshotState, TabChange, WorkspaceChange, WorkspaceItem,
 };
-use eon_workspace_protocol::v35::{
+use eon_workspace_protocol::v36::{
     self as eonw, Change, End, EventKind, Failure, Gap, GapReason, Resume, Subscribed,
     SubscriptionMessage, Tabs, WindowSnapshot, WorkspaceEntry, WorkspaceInfo,
     encode_subscription_message,
@@ -554,7 +554,7 @@ fn filter_spec(filter: &eonw::Filter) -> FilterSpec {
     }
 }
 
-/// A subscription snapshot as EONW v35 carries it: the head's snapshot and
+/// A subscription snapshot as EONW v36 carries it: the head's snapshot and
 /// one `TABS` message per workspace with admitted tabs.
 fn window_snapshot(state: &SnapshotState) -> (WindowSnapshot, Vec<Tabs>) {
     let tabs: Vec<_> = state
@@ -603,7 +603,7 @@ fn column_order(column: &ColumnOrder) -> eonw::ColumnOrder {
     }
 }
 
-/// An event as EONW v35 carries it; the filter-only `hidden` and queue
+/// An event as EONW v36 carries it; the filter-only `hidden` and queue
 /// `previous` stay behind.
 fn event_message(seq: u64, event: &Event) -> SubscriptionMessage {
     let change = match event {
@@ -679,7 +679,7 @@ fn event_message(seq: u64, event: &Event) -> SubscriptionMessage {
 pub(crate) mod tests {
     use super::*;
     use crate::events::tests::{attention, base, pane_mut, tab_mut};
-    use eon_workspace_protocol::v35::{
+    use eon_workspace_protocol::v36::{
         AttentionState as State, HEADER_BYTES, declared_message_len, decode_subscription_message,
     };
     use std::cell::Cell;
@@ -879,7 +879,7 @@ pub(crate) mod tests {
                 .iter()
                 .map(|entry| (entry.workspace.id.as_str(), entry.active_tab.as_str()))
                 .collect::<Vec<_>>(),
-            [("w1", "t1"), ("w2", "t3")]
+            [("s1", "t1"), ("s2", "t3")]
         );
         assert_eq!(snapshot.tab_messages, 2);
         let tabs: Vec<_> = (0..2)
@@ -892,7 +892,7 @@ pub(crate) mod tests {
             tabs.iter()
                 .map(|tabs| (tabs.workspace.as_str(), tabs.tabs.len()))
                 .collect::<Vec<_>>(),
-            [("w1", 2), ("w2", 1)]
+            [("s1", 2), ("s2", 1)]
         );
 
         subscribers.turn(changed(&before), now);
@@ -1914,7 +1914,7 @@ pub(crate) mod tests {
         let now = Instant::now();
         let window = large_tabs();
         let mut flipped = window.clone();
-        crate::events::tests::activate(&mut flipped, "w1", "t2");
+        crate::events::tests::activate(&mut flipped, "s1", "t2");
         let mut subscribers = Subscribers::new(GENERATION);
         let only_queue = eonw::Filter {
             kinds: vec![EventKind::Queue],

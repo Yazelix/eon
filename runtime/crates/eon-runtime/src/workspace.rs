@@ -1,6 +1,6 @@
 use super::cli::WORKSPACE_PICKER;
 use super::managed_environment::{PopupCatalog, PopupCommand, PopupDefinition};
-use eon_workspace_protocol::v35::{
+use eon_workspace_protocol::v36::{
     Action, Attention, AttentionKind, AttentionState, BusyTerminals, ClaudeQuotaState,
     CodexQuotaState, Column as SnapshotColumn, Direction, Editing, FILES_ENTRY, Failure,
     InvokeIntent, MAX_COLUMNS, MAX_DIRECTORY_BYTES, MAX_SESSIONS, MAX_TABS, PROJECT_ENTRY,
@@ -126,7 +126,7 @@ pub(crate) struct IdAllocator {
     next_pane: usize,
     next_session: usize,
     next_popup: usize,
-    /// session-1, whose endpoint is orbit.sock, waits for the window's first
+    /// terminal-1, whose endpoint is orbit.sock, waits for the window's first
     /// pane after the first pending tab's pair took the next terminal.
     first_reserved: bool,
 }
@@ -155,11 +155,11 @@ impl IdAllocator {
     fn pane_session(&self) -> Session {
         let number = self.pane_number();
         Session {
-            id: format!("session-{number}"),
+            id: format!("terminal-{number}"),
             endpoint: self.runtime.join(if number == 1 {
                 "orbit.sock".into()
             } else {
-                format!("session-{number}.sock")
+                format!("terminal-{number}.sock")
             }),
         }
     }
@@ -172,14 +172,14 @@ impl IdAllocator {
         }
     }
 
-    /// A popup never takes session-1: it stays the first pane's, which
+    /// A popup never takes terminal-1: it stays the first pane's, which
     /// `eon run -- COMMAND` starts in (EON-C18).
     fn popup_session(&mut self) -> Session {
         if self.next_session == 1 {
             self.next_session = 2;
             self.first_reserved = true;
         }
-        let id = format!("session-{}", self.next_session);
+        let id = format!("terminal-{}", self.next_session);
         let endpoint = self.runtime.join(format!("{id}.sock"));
         Session { id, endpoint }
     }
@@ -227,10 +227,10 @@ impl WorkspaceSet {
         operate: impl FnMut(SessionOperation) -> Result<(), String>,
     ) -> Result<(), String> {
         if self.workspaces.len() == 32 || self.ids.next_workspace == usize::MAX {
-            return Err("a window holds at most 32 workspaces".into());
+            return Err("a window holds at most 32 sessions".into());
         }
         if self.ids.next_tab == usize::MAX {
-            return Err("workspace exhausted tab identities".into());
+            return Err("session exhausted tab identities".into());
         }
         let allowance = MAX_SESSIONS
             - self
@@ -263,7 +263,7 @@ impl WorkspaceSet {
     ) -> Result<Self, String> {
         let next_session = sessions
             .last()
-            .ok_or("cannot recover an empty workspace")?
+            .ok_or("cannot recover an empty session")?
             .0
             .checked_add(1)
             .ok_or("recovered terminal identity leaves no next terminal identity")?;
@@ -304,7 +304,7 @@ impl WorkspaceSet {
                 .iter()
                 .position(|workspace| workspace.id == id)
                 .ok_or_else(|| {
-                    action_error("unknown-workspace", format!("workspace {id} is not live"))
+                    action_error("unknown-session", format!("session {id} is not live"))
                 })?,
             None => self.shown,
         };
@@ -313,7 +313,7 @@ impl WorkspaceSet {
         snapshot.workspaces = self
             .workspaces
             .iter()
-            .map(|workspace| eon_workspace_protocol::v35::WorkspaceInfo {
+            .map(|workspace| eon_workspace_protocol::v36::WorkspaceInfo {
                 id: workspace.id.clone(),
                 name: workspace.name.clone(),
                 tab_count: workspace.tabs.len(),
@@ -459,13 +459,13 @@ impl WorkspaceSet {
         });
         name.chars()
             .map(|character| {
-                if eon_workspace_protocol::v35::pane_label_character(character) {
+                if eon_workspace_protocol::v36::pane_label_character(character) {
                     character
                 } else {
                     '\u{fffd}'
                 }
             })
-            .take(eon_workspace_protocol::v35::MAX_WINDOW_NAME_CHARS)
+            .take(eon_workspace_protocol::v36::MAX_WINDOW_NAME_CHARS)
             .collect()
     }
 
@@ -476,7 +476,7 @@ impl WorkspaceSet {
     }
 
     fn resolve_workspace(&self, target: &str) -> Result<usize, Failure> {
-        eon_workspace_protocol::v35::validate_workspace_name(target)
+        eon_workspace_protocol::v36::validate_workspace_name(target)
             .map_err(|error| action_error("malformed-action", error.to_string()))?;
         resolve_selector(
             self.workspaces
@@ -549,7 +549,7 @@ impl WorkspaceSet {
                 .ok_or_else(|| {
                     action_error(
                         "unknown-caller",
-                        "the calling terminal is not part of this workspace",
+                        "the calling terminal is not part of this session",
                     )
                 }),
         }
@@ -607,7 +607,7 @@ impl WorkspaceSet {
                     .map(str::trim)
                     .filter(|name| !name.is_empty());
                 if let Some(name) = name {
-                    eon_workspace_protocol::v35::validate_pane_name(name)
+                    eon_workspace_protocol::v36::validate_pane_name(name)
                         .map_err(|error| action_error("malformed-action", error.to_string()))?;
                 }
                 let target = self.workspaces[index]
@@ -623,13 +623,13 @@ impl WorkspaceSet {
             }
             Action::Workspace(WorkspaceAction::NewWorkspace { name, focus }) => {
                 if let Some(name) = &name {
-                    eon_workspace_protocol::v35::validate_workspace_name(name)
+                    eon_workspace_protocol::v36::validate_workspace_name(name)
                         .map_err(|error| action_error("malformed-action", error.to_string()))?;
                 }
-                if self.workspaces.len() >= eon_workspace_protocol::v35::MAX_WORKSPACES {
+                if self.workspaces.len() >= eon_workspace_protocol::v36::MAX_WORKSPACES {
                     return Err(action_error(
-                        "workspace-limit",
-                        "a window holds at most 32 workspaces",
+                        "session-limit",
+                        "a window holds at most 32 sessions",
                     ));
                 }
                 let shown = &self.workspaces[self.shown];
@@ -642,7 +642,7 @@ impl WorkspaceSet {
                 let directory = validated_directory(home.as_os_str().as_bytes().to_vec())?;
                 let catalog = shown.catalog.clone();
                 self.insert_pending(directory, Some(home), catalog, prepare, operate)
-                    .map_err(|detail| action_error("session-start", detail))?;
+                    .map_err(|detail| action_error("terminal-start", detail))?;
                 let mut workspace = self.workspaces.pop().expect("new workspace was inserted");
                 workspace.name = name;
                 let added = self.shown + 1;
@@ -659,7 +659,7 @@ impl WorkspaceSet {
             }
             Action::Workspace(WorkspaceAction::RenameWorkspace { workspace, name }) => {
                 if !name.is_empty() {
-                    eon_workspace_protocol::v35::validate_workspace_name(&name)
+                    eon_workspace_protocol::v36::validate_workspace_name(&name)
                         .map_err(|error| action_error("malformed-action", error.to_string()))?;
                 }
                 let target = workspace
@@ -708,8 +708,8 @@ impl WorkspaceSet {
             .position(|item| item.id == workspace)
             .ok_or_else(|| {
                 action_error(
-                    "unknown-workspace",
-                    format!("workspace {workspace} is not live"),
+                    "unknown-session",
+                    format!("session {workspace} is not live"),
                 )
             })?;
         self.workspaces[index].focus_attention(tab, target)?;
@@ -756,8 +756,8 @@ impl WorkspaceSet {
             .position(|workspace| workspace.sessions().any(|session| session.id == id))
             .ok_or_else(|| {
                 action_error(
-                    "unknown-session",
-                    format!("terminal {id} is not in the workspace"),
+                    "unknown-terminal",
+                    format!("terminal {id} is not in the session"),
                 )
             })?;
         let allowance = self.allowance(index);
@@ -873,7 +873,7 @@ impl WorkspaceSet {
         if target.workspace != workspace.id || target.tab != tab.id {
             return Err(action_error(
                 "not-active",
-                format!("{id} is not in the shown workspace's active tab"),
+                format!("{id} is not in the shown session's active tab"),
             ));
         }
         if tab.pending {
@@ -960,7 +960,7 @@ impl Workspace {
         mut operate: impl FnMut(SessionOperation) -> Result<(), String>,
     ) -> Result<Self, String> {
         let mut workspace = Self {
-            id: format!("w{}", ids.next_workspace),
+            id: format!("s{}", ids.next_workspace),
             name: None,
             catalog,
             home,
@@ -1010,7 +1010,7 @@ impl Workspace {
             })
             .collect::<Vec<_>>();
         Self {
-            id: format!("w{}", ids.next_workspace),
+            id: format!("s{}", ids.next_workspace),
             name: None,
             catalog,
             home,
@@ -1032,7 +1032,7 @@ impl Workspace {
         Snapshot {
             workspace: self.id.clone(),
             active_workspace: self.id.clone(),
-            workspaces: vec![eon_workspace_protocol::v35::WorkspaceInfo {
+            workspaces: vec![eon_workspace_protocol::v36::WorkspaceInfo {
                 id: self.id.clone(),
                 name: self.name.clone(),
                 tab_count: self.tabs.len(),
@@ -1257,7 +1257,7 @@ impl Workspace {
                 let active =
                     self.dismiss_for_pane_action(ids, allowance, self.active, &mut operate)?;
                 self.start_column(ids, allowance, active, &mut operate)
-                    .map_err(|detail| action_error("session-start", detail))?;
+                    .map_err(|detail| action_error("terminal-start", detail))?;
             }
             Action::MovePaneSideways(side) => self.move_pane_sideways(target, side)?,
             Action::Edit { file } => {
@@ -1397,7 +1397,7 @@ impl Workspace {
             .filter(|_| !focus)
             .map(|column| (column, tab.columns[column].expanded));
         self.start_pane_in(ids, allowance, target, &directory, false, command, operate)
-            .map_err(|detail| action_error("session-start", detail))?;
+            .map_err(|detail| action_error("terminal-start", detail))?;
         if let Some((column, expanded)) = kept {
             self.tabs[target].columns[column].expanded = expanded;
         }
@@ -1414,7 +1414,7 @@ impl Workspace {
         if self.tabs.len() >= MAX_TABS || ids.next_tab == usize::MAX {
             return Err(action_error(
                 "capacity",
-                format!("workspace is limited to {MAX_TABS} tabs"),
+                format!("session is limited to {MAX_TABS} tabs"),
             ));
         }
         let id = format!("t{}", ids.next_tab);
@@ -1469,7 +1469,7 @@ impl Workspace {
         if self.tabs.len() >= MAX_TABS || ids.next_tab == usize::MAX {
             return Err(action_error(
                 "capacity",
-                format!("workspace is limited to {MAX_TABS} tabs"),
+                format!("session is limited to {MAX_TABS} tabs"),
             ));
         }
         let command = if argv.is_empty() {
@@ -1498,7 +1498,7 @@ impl Workspace {
             self.start_pane_in(ids, allowance, index, &directory, false, command, operate)
         {
             self.tabs.pop();
-            return Err(action_error("session-start", detail));
+            return Err(action_error("terminal-start", detail));
         }
         ids.next_tab += 1;
         if focus {
@@ -1676,13 +1676,13 @@ impl Workspace {
         if !replacing && self.session_count() >= allowance {
             return Err(action_error(
                 "capacity",
-                format!("workspace is limited to {MAX_SESSIONS} terminals"),
+                format!("session is limited to {MAX_SESSIONS} terminals"),
             ));
         }
         if ids.next_popup == usize::MAX || ids.next_session == usize::MAX {
             return Err(action_error(
                 "capacity",
-                "workspace exhausted terminal identities",
+                "session exhausted terminal identities",
             ));
         }
         Ok(Popup {
@@ -1809,8 +1809,8 @@ impl Workspace {
             })
             .ok_or_else(|| {
                 action_error(
-                    "unknown-session",
-                    format!("terminal {session_id} is not in the workspace"),
+                    "unknown-terminal",
+                    format!("terminal {session_id} is not in the session"),
                 )
             })?;
         let tab = &mut self.tabs[tab_index];
@@ -2020,7 +2020,7 @@ impl Workspace {
     ) -> Result<(), String> {
         self.check_session_capacity(allowance)?;
         if ids.next_pane == usize::MAX || ids.next_session == usize::MAX {
-            return Err("workspace exhausted pane or terminal identities".into());
+            return Err("session exhausted pane or terminal identities".into());
         }
         let pane = Pane {
             pinned_name: None,
@@ -2071,7 +2071,7 @@ impl Workspace {
                 && self.stop_popup(tab_index, 0, operate).is_ok()
             {}
             self.remove_empty_tab(tab_index);
-            return Err(action_error("session-start", detail));
+            return Err(action_error("terminal-start", detail));
         }
         self.settle_pair(tab_index, operate);
         Ok(())
@@ -2414,7 +2414,7 @@ impl Workspace {
         // A pick on a pending tab commits it: one first pane at the directory,
         // and the pair hides (EON-C18).
         self.start_pane_at(ids, allowance, tab_index, &directory, operate)
-            .map_err(|detail| action_error("session-start", detail))?;
+            .map_err(|detail| action_error("terminal-start", detail))?;
         let tab = &mut self.tabs[tab_index];
         tab.directory = directory;
         tab.pending = false;
@@ -2442,7 +2442,7 @@ impl Workspace {
         if parked.is_some() && ids.next_pane == usize::MAX {
             return Err(action_error(
                 "capacity",
-                "workspace exhausted pane identities",
+                "session exhausted pane identities",
             ));
         }
         let tab = &mut self.tabs[tab_index];
@@ -2540,7 +2540,7 @@ impl Workspace {
         }
         Err(action_error(
             "unknown-caller",
-            "the calling terminal is not part of this workspace",
+            "the calling terminal is not part of this session",
         ))
     }
 
@@ -2591,7 +2591,7 @@ impl Workspace {
 
     fn check_session_capacity(&self, allowance: usize) -> Result<(), String> {
         if self.session_count() >= allowance {
-            Err(format!("workspace is limited to {MAX_SESSIONS} terminals"))
+            Err(format!("session is limited to {MAX_SESSIONS} terminals"))
         } else {
             Ok(())
         }
@@ -3126,8 +3126,8 @@ pub(crate) fn json(snapshot: &Snapshot) -> String {
     output
 }
 
-fn window_state(state: eon_workspace_protocol::v35::WindowState) -> &'static str {
-    use eon_workspace_protocol::v35::WindowState;
+fn window_state(state: eon_workspace_protocol::v36::WindowState) -> &'static str {
+    use eon_workspace_protocol::v36::WindowState;
     match state {
         WindowState::Live => "live",
         WindowState::Incompatible => "incompatible",
@@ -3137,7 +3137,7 @@ fn window_state(state: eon_workspace_protocol::v35::WindowState) -> &'static str
 
 fn json_window(
     output: &mut String,
-    entry: &eon_workspace_protocol::v35::WindowEntry,
+    entry: &eon_workspace_protocol::v36::WindowEntry,
     include_state: bool,
 ) {
     output.push_str("{\"window\":");
@@ -3379,8 +3379,8 @@ fn index_after_removal(selected: usize, removed: usize, remaining: usize) -> usi
     }
 }
 
-/// Resolve a workspace selector over `(wN, name)` pairs in order (EON-C33):
-/// an exact `wN`, else the one workspace with that exact name. The CLI's
+/// Resolve a workspace selector over `(sN, name)` pairs in order (EON-C33):
+/// an exact `sN`, else the one workspace with that exact name. The CLI's
 /// close prompt applies it to a snapshot's summaries.
 pub(crate) fn resolve_selector<'a>(
     workspaces: impl Iterator<Item = (&'a str, Option<&'a str>)>,
@@ -3398,13 +3398,13 @@ pub(crate) fn resolve_selector<'a>(
     match matches.as_slice() {
         [(index, _)] => Ok(*index),
         [] => Err(action_error(
-            "unknown-workspace",
-            format!("workspace {target} is not live"),
+            "unknown-session",
+            format!("session {target} is not live"),
         )),
         _ => Err(action_error(
-            "ambiguous-workspace",
+            "ambiguous-session",
             format!(
-                "workspace {target} matches {}",
+                "session {target} matches {}",
                 matches
                     .iter()
                     .map(|(_, (id, _))| *id)
@@ -3422,13 +3422,13 @@ fn action_error(code: &'static str, detail: impl Into<String>) -> Failure {
     }
 }
 
-fn shortcut_text(shortcut: &eon_workspace_protocol::v35::Shortcut) -> String {
+fn shortcut_text(shortcut: &eon_workspace_protocol::v36::Shortcut) -> String {
     let mut parts = Vec::new();
     for (bit, name) in [
-        (eon_workspace_protocol::v35::CTRL, "Ctrl"),
-        (eon_workspace_protocol::v35::ALT, "Alt"),
-        (eon_workspace_protocol::v35::SHIFT, "Shift"),
-        (eon_workspace_protocol::v35::SUPER, "Super"),
+        (eon_workspace_protocol::v36::CTRL, "Ctrl"),
+        (eon_workspace_protocol::v36::ALT, "Alt"),
+        (eon_workspace_protocol::v36::SHIFT, "Shift"),
+        (eon_workspace_protocol::v36::SUPER, "Super"),
     ] {
         if shortcut.modifiers & bit != 0 {
             parts.push(name.to_string());
@@ -3488,7 +3488,7 @@ pub(crate) fn json_escape(value: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use eon_workspace_protocol::v35::{ALT, PopupGeometry, QuotaFailureReason, Shortcut};
+    use eon_workspace_protocol::v36::{ALT, PopupGeometry, QuotaFailureReason, Shortcut};
 
     fn two_workspace_set(
         mut operate: impl FnMut(SessionOperation) -> Result<(), String>,
@@ -3683,7 +3683,7 @@ mod tests {
     fn workspace_requests_keep_order_projection_names_and_bounds() {
         let mut set = two_workspace_set(|_| Ok(()));
         let caller = set.workspaces[0].sessions().next().unwrap().id.clone();
-        let original = set.snapshot_in(Some("w1")).unwrap().tabs;
+        let original = set.snapshot_in(Some("s1")).unwrap().tabs;
         let mut apply = |id: &str, action| {
             set.dispatch(
                 id,
@@ -3723,14 +3723,14 @@ mod tests {
         )
         .unwrap();
         let shown = set.snapshot();
-        assert_eq!(shown.workspace, "w3");
+        assert_eq!(shown.workspace, "s3");
         assert_eq!(
             shown
                 .workspaces
                 .iter()
                 .map(|item| item.id.as_str())
                 .collect::<Vec<_>>(),
-            ["w1", "w3", "w4", "w2"]
+            ["s1", "s3", "s4", "s2"]
         );
         assert!(shown.tabs[0].pending);
         assert_eq!(shown.tabs[0].popups[0].entry, FILES_ENTRY);
@@ -3742,11 +3742,11 @@ mod tests {
                 caller_view.workspace.as_str(),
                 caller_view.active_workspace.as_str()
             ),
-            ("w1", "w3")
+            ("s1", "s3")
         );
         assert_eq!(caller_view.tabs, original);
-        eon_workspace_protocol::v35::encode_response(
-            &eon_workspace_protocol::v35::Response::Snapshot(caller_view),
+        eon_workspace_protocol::v36::encode_response(
+            &eon_workspace_protocol::v36::Response::Snapshot(caller_view),
         )
         .unwrap();
 
@@ -3762,14 +3762,14 @@ mod tests {
                 |_| panic!("a switch starts nothing"),
             )
             .unwrap_err();
-        assert_eq!(error.code, "ambiguous-workspace");
-        assert!(error.detail.contains("w3") && error.detail.contains("w4"));
+        assert_eq!(error.code, "ambiguous-session");
+        assert!(error.detail.contains("s3") && error.detail.contains("s4"));
         assert_eq!(set, before);
         set.dispatch(
             "same",
             None,
             Action::Workspace(WorkspaceAction::SwitchWorkspace {
-                workspace: "w3".into(),
+                workspace: "s3".into(),
             }),
             prepared,
             |_| panic!("a switch starts nothing"),
@@ -3781,26 +3781,26 @@ mod tests {
             Some(&caller),
             Action::Workspace(WorkspaceAction::RenameWorkspace {
                 workspace: None,
-                name: "w3".into(),
+                name: "s3".into(),
             }),
             prepared,
             |_| Ok(()),
         )
         .unwrap();
         assert_eq!(
-            set.resolve_workspace("w3").unwrap(),
+            set.resolve_workspace("s3").unwrap(),
             1,
             "an ID wins over another workspace's name"
         );
-        set.workspaces[0].name = Some("w99".into());
+        set.workspaces[0].name = Some("s99".into());
         assert_eq!(
-            set.resolve_workspace("w99").unwrap(),
+            set.resolve_workspace("s99").unwrap(),
             0,
             "an absent ID falls through to an exact name"
         );
-        set.workspaces[0].name = Some("w01".into());
+        set.workspaces[0].name = Some("s01".into());
         assert_eq!(
-            set.resolve_workspace("w01").unwrap(),
+            set.resolve_workspace("s01").unwrap(),
             0,
             "a noncanonical ID spelling can be a name"
         );
@@ -3816,10 +3816,10 @@ mod tests {
         )
         .unwrap();
         assert_eq!(set.workspaces[0].name, None);
-        for target in ["missing", "w999"] {
+        for target in ["missing", "s999"] {
             assert_eq!(
                 set.resolve_workspace(target).unwrap_err().code,
-                "unknown-workspace"
+                "unknown-session"
             );
         }
         assert_eq!(
@@ -3837,7 +3837,7 @@ mod tests {
             .code,
             "malformed-action"
         );
-        while set.workspaces.len() < eon_workspace_protocol::v35::MAX_WORKSPACES {
+        while set.workspaces.len() < eon_workspace_protocol::v36::MAX_WORKSPACES {
             set.dispatch(
                 &format!("new-{}", set.workspaces.len()),
                 None,
@@ -3864,7 +3864,7 @@ mod tests {
             )
             .unwrap_err()
             .code,
-            "workspace-limit"
+            "session-limit"
         );
         assert_eq!(set, before);
     }
@@ -3893,12 +3893,12 @@ mod tests {
         )
         .unwrap();
         let snapshot = set.snapshot();
-        eon_workspace_protocol::v35::encode_response(
-            &eon_workspace_protocol::v35::Response::Snapshot(snapshot.clone()),
+        eon_workspace_protocol::v36::encode_response(
+            &eon_workspace_protocol::v36::Response::Snapshot(snapshot.clone()),
         )
         .unwrap();
         assert_eq!(snapshot.workspaces.len(), 1);
-        assert_eq!(snapshot.workspace, "w2");
+        assert_eq!(snapshot.workspace, "s2");
 
         let mut last_exit = set.clone();
         let last_terminal = last_exit.workspaces[0]
@@ -3942,7 +3942,7 @@ mod tests {
         )
         .unwrap();
         let pending = set.snapshot();
-        assert_eq!(pending.workspace, "w3");
+        assert_eq!(pending.workspace, "s3");
         let popup = &pending.tabs[0].popups[0];
         let fail_start = |operation| match operation {
             SessionOperation::Start { .. } => Err("start failed".into()),
@@ -3963,14 +3963,14 @@ mod tests {
             )
         }
         .unwrap_err();
-        assert_eq!(error.code, "session-start");
+        assert_eq!(error.code, "terminal-start");
         assert_eq!(error.detail, "start failed");
         let snapshot = set.snapshot();
-        eon_workspace_protocol::v35::encode_response(
-            &eon_workspace_protocol::v35::Response::Snapshot(snapshot.clone()),
+        eon_workspace_protocol::v36::encode_response(
+            &eon_workspace_protocol::v36::Response::Snapshot(snapshot.clone()),
         )
         .unwrap();
-        assert_eq!(snapshot.workspace, "w1");
+        assert_eq!(snapshot.workspace, "s1");
         assert_eq!(snapshot.workspaces.len(), 2);
     }
 
@@ -3981,8 +3981,8 @@ mod tests {
             "name",
             None,
             Action::Workspace(WorkspaceAction::RenameWorkspace {
-                workspace: Some("w1".into()),
-                name: "w2".into(),
+                workspace: Some("s1".into()),
+                name: "s2".into(),
             }),
             prepared,
             |_| Ok(()),
@@ -3992,19 +3992,19 @@ mod tests {
             "live-id",
             None,
             Action::Workspace(WorkspaceAction::SwitchWorkspace {
-                workspace: "w2".into(),
+                workspace: "s2".into(),
             }),
             prepared,
             |_| panic!("switching starts nothing"),
         )
         .unwrap();
-        assert_eq!(set.snapshot().workspace, "w2");
+        assert_eq!(set.snapshot().workspace, "s2");
         set.dispatch(
             "absent-id-name",
             None,
             Action::Workspace(WorkspaceAction::RenameWorkspace {
-                workspace: Some("w1".into()),
-                name: "w99".into(),
+                workspace: Some("s1".into()),
+                name: "s99".into(),
             }),
             prepared,
             |_| Ok(()),
@@ -4014,19 +4014,19 @@ mod tests {
             "switch-name",
             None,
             Action::Workspace(WorkspaceAction::SwitchWorkspace {
-                workspace: "w99".into(),
+                workspace: "s99".into(),
             }),
             prepared,
             |_| panic!("switching starts nothing"),
         )
         .unwrap();
-        assert_eq!(set.snapshot().workspace, "w1");
+        assert_eq!(set.snapshot().workspace, "s1");
         set.dispatch(
             "rename-name",
             None,
             Action::Workspace(WorkspaceAction::RenameWorkspace {
-                workspace: Some("w99".into()),
-                name: "w100".into(),
+                workspace: Some("s99".into()),
+                name: "s100".into(),
             }),
             prepared,
             |_| Ok(()),
@@ -4037,7 +4037,7 @@ mod tests {
             .map(|session| session.id.clone())
             .collect::<Vec<_>>();
         assert_eq!(
-            set.prepare_close_workspace("close-name", None, "w100")
+            set.prepare_close_workspace("close-name", None, "s100")
                 .unwrap(),
             expected
         );
@@ -4062,9 +4062,9 @@ mod tests {
         // A workspace never shown ranks last.
         assert_eq!(
             ranks(&set),
-            [("w1".into(), 0), ("w3".into(), 2), ("w2".into(), 1)]
+            [("s1".into(), 0), ("s3".into(), 2), ("s2".into(), 1)]
         );
-        for (request, workspace) in [("third", "w3"), ("second", "w2")] {
+        for (request, workspace) in [("third", "s3"), ("second", "s2")] {
             let switch = Action::Workspace(WorkspaceAction::SwitchWorkspace {
                 workspace: workspace.into(),
             });
@@ -4073,14 +4073,14 @@ mod tests {
         }
         assert_eq!(
             ranks(&set),
-            [("w1".into(), 2), ("w3".into(), 1), ("w2".into(), 0)]
+            [("s1".into(), 2), ("s3".into(), 1), ("s2".into(), 0)]
         );
     }
 
     #[test]
     fn attention_focus_crosses_workspaces_atomically_and_keeps_local_callers_local() {
         let mut set = two_workspace_set(|_| Ok(()));
-        let hidden = set.snapshot_in(Some("w2")).unwrap();
+        let hidden = set.snapshot_in(Some("s2")).unwrap();
         let tab = hidden.tabs[0].id.clone();
         let pane = hidden.tabs[0].panes().next().unwrap().id.clone();
         let focus = Action::FocusAttention {
@@ -4109,7 +4109,7 @@ mod tests {
             .unwrap();
         assert_eq!(
             set.snapshot().workspace,
-            "w1",
+            "s1",
             "a hidden caller stays hidden"
         );
         let shown = set.snapshot();
@@ -4124,10 +4124,10 @@ mod tests {
             |_| Ok(()),
         )
         .unwrap();
-        assert_eq!(set.snapshot().workspace, "w1");
+        assert_eq!(set.snapshot().workspace, "s1");
         set.dispatch("row", None, focus.clone(), prepared, |_| Ok(()))
             .unwrap();
-        assert_eq!(set.snapshot().workspace, "w2");
+        assert_eq!(set.snapshot().workspace, "s2");
         assert_eq!(
             set.dispatch("row", None, focus, prepared, |_| Ok(()))
                 .unwrap_err()
@@ -4135,18 +4135,18 @@ mod tests {
             "duplicate-request"
         );
 
-        set.jump("jump", None, "w2", &tab, &pane).unwrap();
-        assert_eq!(set.snapshot().workspace, "w2");
-        assert_eq!(set.recent_workspaces, ["w2", "w1"]);
+        set.jump("jump", None, "s2", &tab, &pane).unwrap();
+        assert_eq!(set.snapshot().workspace, "s2");
+        assert_eq!(set.recent_workspaces, ["s2", "s1"]);
         assert_eq!(
-            set.jump("jump", None, "w2", &tab, &pane).unwrap_err().code,
+            set.jump("jump", None, "s2", &tab, &pane).unwrap_err().code,
             "duplicate-request"
         );
-        let stale = set.jump("stale", None, "w1", &tab, &pane).unwrap_err();
+        let stale = set.jump("stale", None, "s1", &tab, &pane).unwrap_err();
         assert_eq!(stale.code, "stale-target");
         assert_eq!(
             set.snapshot().workspace,
-            "w2",
+            "s2",
             "a failed jump shows nothing"
         );
     }
@@ -4154,7 +4154,7 @@ mod tests {
     #[test]
     fn terminal_targets_name_panes_and_popups_in_any_workspace_and_change_nothing() {
         let mut set = two_workspace_set(|_| Ok(()));
-        let hidden = set.snapshot_in(Some("w2")).unwrap();
+        let hidden = set.snapshot_in(Some("s2")).unwrap();
         let tab = hidden.tabs[0].id.clone();
         let pane = hidden.tabs[0].panes().next().unwrap().clone();
         set.dispatch(
@@ -4165,10 +4165,10 @@ mod tests {
             |_| Ok(()),
         )
         .unwrap();
-        assert_eq!(set.snapshot().workspace, "w1");
-        let popup = set.snapshot_in(Some("w2")).unwrap().tabs[0].popups[0].clone();
+        assert_eq!(set.snapshot().workspace, "s1");
+        let popup = set.snapshot_in(Some("s2")).unwrap().tabs[0].popups[0].clone();
         let target = |id, terminal: &str| TerminalTarget {
-            workspace: "w2".into(),
+            workspace: "s2".into(),
             tab: tab.clone(),
             id,
             terminal: terminal.into(),
@@ -4186,7 +4186,7 @@ mod tests {
             set.session_target(&popup.session),
             Some(target(TargetId::Popup(popup.id.clone()), &popup.session))
         );
-        assert_eq!(set.session_target("session-99"), None);
+        assert_eq!(set.session_target("terminal-99"), None);
         assert_eq!(
             set.terminal_target("missing", false, "p99")
                 .unwrap_err()
@@ -4200,7 +4200,7 @@ mod tests {
             );
         }
         assert_eq!(set.snapshots(), before);
-        assert_eq!(set.snapshot().workspace, "w1");
+        assert_eq!(set.snapshot().workspace, "s1");
     }
 
     #[test]
@@ -4210,7 +4210,7 @@ mod tests {
             "show-second",
             None,
             Action::Workspace(WorkspaceAction::SwitchWorkspace {
-                workspace: "w2".into(),
+                workspace: "s2".into(),
             }),
             prepared,
             |_| Ok(()),
@@ -4227,34 +4227,34 @@ mod tests {
             |_| Ok(()),
         )
         .unwrap();
-        let survivor = set.snapshot_in(Some("w1")).unwrap().tabs;
-        let closing = set.prepare_close_workspace("close", None, "w3").unwrap();
+        let survivor = set.snapshot_in(Some("s1")).unwrap().tabs;
+        let closing = set.prepare_close_workspace("close", None, "s3").unwrap();
         assert_eq!(closing.len(), 1, "a fresh workspace has only its pair");
         assert_eq!(
-            set.prepare_close_workspace("close", None, "w3")
+            set.prepare_close_workspace("close", None, "s3")
                 .unwrap_err()
                 .code,
             "duplicate-request"
         );
         // Before a confirmed stop, the workspace remains intact.
-        assert_eq!(set.snapshot().workspace, "w3");
+        assert_eq!(set.snapshot().workspace, "s3");
         set.session_ended(&closing[0], SessionEnd::Closed, |_| {
             panic!("closing never starts a terminal")
         })
         .unwrap();
-        assert_eq!(set.snapshot().workspace, "w2");
+        assert_eq!(set.snapshot().workspace, "s2");
         assert_eq!(set.snapshot().workspaces.len(), 2);
-        assert_eq!(set.snapshot_in(Some("w1")).unwrap().tabs, survivor);
+        assert_eq!(set.snapshot_in(Some("s1")).unwrap().tabs, survivor);
         let background = set
-            .prepare_close_workspace("background", None, "w1")
+            .prepare_close_workspace("background", None, "s1")
             .unwrap();
         for id in background {
             set.session_ended(&id, SessionEnd::Closed, |_| Ok(()))
                 .unwrap();
         }
-        assert_eq!(set.snapshot().workspace, "w2");
+        assert_eq!(set.snapshot().workspace, "s2");
         assert_eq!(set.snapshot().workspaces.len(), 1);
-        let last = set.prepare_close_workspace("last", None, "w2").unwrap();
+        let last = set.prepare_close_workspace("last", None, "s2").unwrap();
         for id in last {
             set.session_ended(&id, SessionEnd::Closed, |_| Ok(()))
                 .unwrap();
@@ -4273,12 +4273,12 @@ mod tests {
             Ok(())
         };
         let mut set = two_workspace_set(&mut record);
-        assert_eq!(set.workspaces[0].id, "w1");
-        assert_eq!(set.workspaces[1].id, "w2");
+        assert_eq!(set.workspaces[0].id, "s1");
+        assert_eq!(set.workspaces[1].id, "s2");
         let initial = set.snapshot();
         assert_eq!(initial.active_tab, "t1");
         assert_eq!(initial.tabs[0].columns[0].panes[0].id, "p1");
-        assert_eq!(initial.tabs[0].columns[0].panes[0].session, "session-1");
+        assert_eq!(initial.tabs[0].columns[0].panes[0].session, "terminal-1");
         for index in 0..2 {
             set.shown = index;
             let tab = set.snapshot().active_tab;
@@ -4458,16 +4458,16 @@ mod tests {
             }
             let stale = action_error(
                 "unknown-caller",
-                "the calling terminal is not part of this workspace",
+                "the calling terminal is not part of this session",
             );
             assert_eq!(
-                set.prepare_close_tab("refused-caller", Some("session-99"), &foreign.id),
+                set.prepare_close_tab("refused-caller", Some("terminal-99"), &foreign.id),
                 Err(stale.clone())
             );
             assert_eq!(
                 set.prepare_close_pane(
                     "refused-caller",
-                    Some("session-99"),
+                    Some("terminal-99"),
                     &foreign.columns[0].panes[0].id
                 ),
                 Err(stale)
@@ -4606,13 +4606,13 @@ mod tests {
             focus: false,
         });
         let switch = Action::Workspace(WorkspaceAction::SwitchWorkspace {
-            workspace: "w2".into(),
+            workspace: "s2".into(),
         });
         set.dispatch("create", None, create.clone(), prepared, |_| Ok(()))
             .unwrap();
         set.dispatch("switch", None, switch.clone(), prepared, |_| Ok(()))
             .unwrap();
-        set.prepare_close_workspace("close", None, "w3").unwrap();
+        set.prepare_close_workspace("close", None, "s3").unwrap();
         for number in 0..MAX_RECENT_REQUESTS * 2 {
             set.dispatch(
                 &format!("inspect-{number}"),
@@ -4637,7 +4637,7 @@ mod tests {
             );
         }
         assert_eq!(
-            set.prepare_close_workspace("close", None, "w3")
+            set.prepare_close_workspace("close", None, "s3")
                 .unwrap_err()
                 .code,
             "duplicate-request"
@@ -4647,7 +4647,7 @@ mod tests {
         for number in 0..MAX_RECENT_REQUESTS {
             if number == MAX_RECENT_REQUESTS - 1 {
                 assert_eq!(
-                    set.prepare_close_workspace("close", None, "w3")
+                    set.prepare_close_workspace("close", None, "s3")
                         .unwrap_err()
                         .code,
                     "duplicate-request",
@@ -4668,7 +4668,7 @@ mod tests {
             assert!(set.recent_inspections.len() <= MAX_RECENT_REQUESTS);
             assert!(set.recent_mutations.len() <= MAX_RECENT_REQUESTS);
         }
-        set.prepare_close_workspace("close", None, "w3")
+        set.prepare_close_workspace("close", None, "s3")
             .expect("256 later accepted mutations forget the close ID");
         set.dispatch("switch", None, switch, prepared, |_| Ok(()))
             .unwrap();
@@ -4740,19 +4740,19 @@ mod tests {
         snapshot.tabs[0].popups.push(super::SnapshotPopup {
             id: "u9".into(),
             entry: "project".into(),
-            session: "session-9".into(),
-            endpoint: b"/runtime/session-9.sock".to_vec(),
+            session: "terminal-9".into(),
+            endpoint: b"/runtime/terminal-9.sock".to_vec(),
             attention: None,
         });
         assert_eq!(
-            super::caller_output(&snapshot, Some("session-9"), true),
-            "\"caller\":{\"terminal\":\"session-9\",\"tab\":\"t1\",\"pane\":null,\"popup\":\"u9\"},"
+            super::caller_output(&snapshot, Some("terminal-9"), true),
+            "\"caller\":{\"terminal\":\"terminal-9\",\"tab\":\"t1\",\"pane\":null,\"popup\":\"u9\"},"
         );
         assert_eq!(
-            super::caller_output(&snapshot, Some("session-9"), false),
-            "caller terminal=session-9 tab=t1 pane=none popup=u9\n"
+            super::caller_output(&snapshot, Some("terminal-9"), false),
+            "caller terminal=terminal-9 tab=t1 pane=none popup=u9\n"
         );
-        for session in [None, Some("session-999")] {
+        for session in [None, Some("terminal-999")] {
             assert_eq!(
                 super::caller_output(&snapshot, session, true),
                 "\"caller\":null,"
@@ -4765,17 +4765,17 @@ mod tests {
     fn terminal_sent_json_reports_what_was_sent_and_an_enter_failure() {
         let sent = Sent {
             target: TerminalTarget {
-                workspace: "w2".into(),
+                workspace: "s2".into(),
                 tab: "t3".into(),
                 id: TargetId::Pane("p4".into()),
-                terminal: "session-5".into(),
+                terminal: "terminal-5".into(),
             },
             caller: None,
             bracketed: false,
             enter_delay_ms: 300,
         };
-        let target = "\"workspace\":\"w2\",\"tab\":\"t3\",\"pane\":\"p4\",\"popup\":null,\
-                      \"terminal\":\"session-5\",\"caller\":null";
+        let target = "\"workspace\":\"s2\",\"tab\":\"t3\",\"pane\":\"p4\",\"popup\":null,\
+                      \"terminal\":\"terminal-5\",\"caller\":null";
         assert_eq!(
             super::terminal_sent_json(&sent, 0, true, None),
             format!("{{{target},\"bytes\":0,\"bracketed\":null,\"enter\":true}}\n")
@@ -4799,11 +4799,11 @@ mod tests {
             workspace: workspace.into(),
             tab: "t2".into(),
             id,
-            terminal: "session-4".into(),
+            terminal: "terminal-4".into(),
         };
         let read = TerminalText {
-            target: target("w2", TargetId::Popup("u3".into())),
-            caller: Some(target("w1", TargetId::Pane("p1".into()))),
+            target: target("s2", TargetId::Popup("u3".into())),
+            caller: Some(target("s1", TargetId::Pane("p1".into()))),
             revision: 7,
             screen: Screen::Alternate,
             rows: 2,
@@ -4815,8 +4815,8 @@ mod tests {
         };
         assert_eq!(
             super::terminal_text_json(&read),
-            "{\"workspace\":\"w2\",\"tab\":\"t2\",\"pane\":null,\"popup\":\"u3\",\
-             \"terminal\":\"session-4\",\"caller\":{\"terminal\":\"session-4\",\"tab\":\"t2\",\
+            "{\"workspace\":\"s2\",\"tab\":\"t2\",\"pane\":null,\"popup\":\"u3\",\
+             \"terminal\":\"terminal-4\",\"caller\":{\"terminal\":\"terminal-4\",\"tab\":\"t2\",\
              \"pane\":\"p1\",\"popup\":null},\"revision\":7,\"screen\":\"alternate\",\"rows\":2,\
              \"columns\":10,\"title\":\"vim \\\"a\\\"\",\"directory\":[47,116,109,112,47,255],\
              \"text\":\"one\\ntwo\",\"omitted_rows\":1,\"lossy\":true}\n"
@@ -4836,8 +4836,8 @@ mod tests {
         };
         assert_eq!(
             super::terminal_history_json(&history),
-            "{\"workspace\":\"w2\",\"tab\":\"t2\",\"pane\":null,\"popup\":\"u3\",\
-             \"terminal\":\"session-4\",\"caller\":{\"terminal\":\"session-4\",\"tab\":\"t2\",\
+            "{\"workspace\":\"s2\",\"tab\":\"t2\",\"pane\":null,\"popup\":\"u3\",\
+             \"terminal\":\"terminal-4\",\"caller\":{\"terminal\":\"terminal-4\",\"tab\":\"t2\",\
              \"pane\":\"p1\",\"popup\":null},\"revision\":7,\"screen\":\"primary\",\"rows\":2,\
              \"columns\":10,\"title\":\"vim \\\"a\\\"\",\"directory\":[47,116,109,112,47,255],\
              \"text\":\"one\\ntwo\",\"omitted_lines\":2,\"cut_bytes\":3,\"lossy\":true}\n"
@@ -4845,13 +4845,13 @@ mod tests {
         let editing = Editing {
             target: history.target,
             caller: None,
-            popup: target("w2", TargetId::Popup("u5".into())),
+            popup: target("s2", TargetId::Popup("u5".into())),
         };
         assert_eq!(
             super::terminal_editing_json(&editing),
-            "{\"workspace\":\"w2\",\"tab\":\"t2\",\"pane\":null,\"popup\":\"u3\",\
-             \"terminal\":\"session-4\",\"caller\":null,\
-             \"scrollback\":{\"popup\":\"u5\",\"terminal\":\"session-4\"}}\n"
+            "{\"workspace\":\"s2\",\"tab\":\"t2\",\"pane\":null,\"popup\":\"u3\",\
+             \"terminal\":\"terminal-4\",\"caller\":null,\
+             \"scrollback\":{\"popup\":\"u5\",\"terminal\":\"terminal-4\"}}\n"
         );
     }
 
@@ -4871,7 +4871,7 @@ mod tests {
             vec![(
                 1,
                 Session {
-                    id: "session-1".into(),
+                    id: "terminal-1".into(),
                     endpoint: "/runtime/orbit.sock".into(),
                 },
             )],
@@ -4894,7 +4894,7 @@ mod tests {
 
     #[test]
     fn cli_json_carries_running_windows() {
-        use eon_workspace_protocol::v35::{RunningWindows, WindowEntry, WindowState};
+        use eon_workspace_protocol::v36::{RunningWindows, WindowEntry, WindowState};
         let set = WorkspaceSet::with_recovered_sessions(
             "/runtime".into(),
             "/".into(),
@@ -4902,7 +4902,7 @@ mod tests {
             vec![(
                 1,
                 Session {
-                    id: "session-1".into(),
+                    id: "terminal-1".into(),
                     endpoint: "/runtime/orbit.sock".into(),
                 },
             )],
@@ -4963,7 +4963,7 @@ mod tests {
 
     #[test]
     fn cli_json_carries_busy_terminals() {
-        use eon_workspace_protocol::v35::{BusyTerminal, BusyTerminals};
+        use eon_workspace_protocol::v36::{BusyTerminal, BusyTerminals};
         let set = WorkspaceSet::with_recovered_sessions(
             "/runtime".into(),
             "/".into(),
@@ -4971,7 +4971,7 @@ mod tests {
             vec![(
                 1,
                 Session {
-                    id: "session-1".into(),
+                    id: "terminal-1".into(),
                     endpoint: "/runtime/orbit.sock".into(),
                 },
             )],
@@ -4984,10 +4984,10 @@ mod tests {
         };
         assert!(value(&snapshot).is_null());
         let target = |id| TerminalTarget {
-            workspace: "w1".into(),
+            workspace: "s1".into(),
             tab: "t1".into(),
             id,
-            terminal: "session-2".into(),
+            terminal: "terminal-2".into(),
         };
         snapshot.busy = Some(BusyTerminals {
             terminals: vec![
@@ -5006,25 +5006,25 @@ mod tests {
             value(&snapshot),
             serde_json::json!({
                 "terminals": [
-                    {"workspace": "w1", "tab": "t1", "pane": "p2", "popup": null,
-                     "terminal": "session-2", "name": "p2  \"vim\""},
-                    {"workspace": "w1", "tab": "t1", "pane": null, "popup": "u1",
-                     "terminal": "session-2", "name": "Agent"},
+                    {"workspace": "s1", "tab": "t1", "pane": "p2", "popup": null,
+                     "terminal": "terminal-2", "name": "p2  \"vim\""},
+                    {"workspace": "s1", "tab": "t1", "pane": null, "popup": "u1",
+                     "terminal": "terminal-2", "name": "Agent"},
                 ],
                 "omitted": 3,
             })
         );
         assert_eq!(
             human_busy(snapshot.busy.as_ref()),
-            "busy workspace=w1 tab=t1 pane=p2 terminal=session-2 name=p2  \\\"vim\\\"\n\
-             busy workspace=w1 tab=t1 popup=u1 terminal=session-2 name=Agent\n\
+            "busy workspace=s1 tab=t1 pane=p2 terminal=terminal-2 name=p2  \\\"vim\\\"\n\
+             busy workspace=s1 tab=t1 popup=u1 terminal=terminal-2 name=Agent\n\
              busy omitted=3\n"
         );
     }
 
     #[test]
     fn cli_json_carries_the_full_attention_record_and_quotas_but_human_output_does_not() {
-        use eon_workspace_protocol::v35::{
+        use eon_workspace_protocol::v36::{
             AttentionKind, AttentionRecord, ClaudeQuota, ClaudeQuotaState, CodexQuota,
             CodexQuotaState, QuotaWindow,
         };
@@ -5038,8 +5038,8 @@ mod tests {
                     (
                         number,
                         Session {
-                            id: format!("session-{number}"),
-                            endpoint: format!("/runtime/session-{number}.sock").into(),
+                            id: format!("terminal-{number}"),
+                            endpoint: format!("/runtime/terminal-{number}.sock").into(),
                         },
                     )
                 })
@@ -5079,8 +5079,8 @@ mod tests {
         snapshot.tabs[0].popups.push(SnapshotPopup {
             id: "popup-1".into(),
             entry: "agent".into(),
-            session: "session-4".into(),
-            endpoint: b"/runtime/session-4.sock".to_vec(),
+            session: "terminal-4".into(),
+            endpoint: b"/runtime/terminal-4.sock".to_vec(),
             attention: Some(Attention {
                 state: AttentionState::Unavailable,
                 record: None,
@@ -5129,8 +5129,8 @@ mod tests {
             reason: QuotaFailureReason::InvalidWindow,
         });
         snapshot.attention_queue = vec![
-            eon_workspace_protocol::v35::QueueEntry {
-                workspace: "w1".into(),
+            eon_workspace_protocol::v36::QueueEntry {
+                workspace: "s1".into(),
                 tab: "t1".into(),
                 target: "p1".into(),
                 attention: snapshot.tabs[0].columns[0].panes[0]
@@ -5138,8 +5138,8 @@ mod tests {
                     .clone()
                     .unwrap(),
             },
-            eon_workspace_protocol::v35::QueueEntry {
-                workspace: "w2".into(),
+            eon_workspace_protocol::v36::QueueEntry {
+                workspace: "s2".into(),
                 tab: "t\"2".into(),
                 target: "p\\2".into(),
                 attention: Attention {
@@ -5172,7 +5172,7 @@ mod tests {
             r#"],"sidebar":"closed","codex_quota":{"state":"stale","observed_at":1720000000000,"windows":[{"duration_minutes":300,"remaining_percent":80,"resets_at":1720000300000,"scope":null},{"duration_minutes":10080,"remaining_percent":60,"resets_at":null,"scope":null}]}"#,
             r#","claude_quota":{"state":"fresh","observed_at":1720000001000,"windows":[{"duration_minutes":300,"remaining_percent":25,"resets_at":1720000600000,"scope":null},{"duration_minutes":10080,"remaining_percent":40,"resets_at":null,"scope":"Fable \"x\""}]}"#,
             r#","codex_quota_failure":null,"claude_quota_failure":{"at":1720000002000,"reason":"invalid_window"}"#,
-            r#","attention_queue":[{"workspace":"w1","tab":"t1","target":"p1","attention":{"state":"needs-input","app":"codex","name":"eon \"9a\"","kind":"permission","progress":40,"title":"secret \"title\"","message":"secret \"message\"\\path","changed_at":1720000000123,"stale":true,"others":3}},{"workspace":"w2","tab":"t\"2","target":"p\\2","attention":{"state":"finished","app":null,"name":null,"kind":null,"progress":null,"title":null,"message":null,"changed_at":1720000000456,"stale":false,"others":0}}],"running":null,"busy":null}"#,
+            r#","attention_queue":[{"workspace":"s1","tab":"t1","target":"p1","attention":{"state":"needs-input","app":"codex","name":"eon \"9a\"","kind":"permission","progress":40,"title":"secret \"title\"","message":"secret \"message\"\\path","changed_at":1720000000123,"stale":true,"others":3}},{"workspace":"s2","tab":"t\"2","target":"p\\2","attention":{"state":"finished","app":null,"name":null,"kind":null,"progress":null,"title":null,"message":null,"changed_at":1720000000456,"stale":false,"others":0}}],"running":null,"busy":null}"#,
             "\n"
         )));
         assert!(
@@ -5359,7 +5359,7 @@ mod tests {
             vec![(
                 1,
                 Session {
-                    id: "session-1".into(),
+                    id: "terminal-1".into(),
                     endpoint: root.join("orbit.sock"),
                 },
             )],
@@ -5409,8 +5409,8 @@ mod tests {
         let after = workspace.snapshot();
         assert_eq!(after.tabs.len(), 1);
         assert_eq!(after.tabs[0].columns.len(), MAX_COLUMNS);
-        eon_workspace_protocol::v35::encode_response(
-            &eon_workspace_protocol::v35::Response::Snapshot(after),
+        eon_workspace_protocol::v36::encode_response(
+            &eon_workspace_protocol::v36::Response::Snapshot(after),
         )
         .unwrap();
         fs::remove_dir_all(root).unwrap();
@@ -5427,7 +5427,7 @@ mod tests {
             vec![(
                 1,
                 Session {
-                    id: "session-1".into(),
+                    id: "terminal-1".into(),
                     endpoint: root.join("orbit.sock"),
                 },
             )],
@@ -5526,7 +5526,7 @@ mod tests {
             vec![(
                 1,
                 Session {
-                    id: "session-1".into(),
+                    id: "terminal-1".into(),
                     endpoint: "/runtime/orbit.sock".into(),
                 },
             )],
@@ -5550,7 +5550,7 @@ mod tests {
         );
 
         // From the unselected p1, the pane joins the column collapsed.
-        let snapshot = request("p3", Some("session-1"), command(false));
+        let snapshot = request("p3", Some("terminal-1"), command(false));
         let tab = &snapshot.tabs[0];
         let panes = tab.panes().map(|pane| pane.id.as_str()).collect::<Vec<_>>();
         assert_eq!(panes, ["p1", "p2", "p3"]);
@@ -5601,7 +5601,7 @@ mod tests {
             vec![(
                 1,
                 Session {
-                    id: "session-1".into(),
+                    id: "terminal-1".into(),
                     endpoint: root.join("orbit.sock"),
                 },
             )],
@@ -5676,7 +5676,7 @@ mod tests {
                 |_| Err("start failed".into()),
             )
             .unwrap_err();
-        assert_eq!(error.code, "session-start");
+        assert_eq!(error.code, "terminal-start");
         assert_eq!(workspace, before);
 
         let mut full = workspace.clone();
@@ -5793,7 +5793,7 @@ mod tests {
             vec![(
                 1,
                 Session {
-                    id: "session-1".into(),
+                    id: "terminal-1".into(),
                     endpoint: "/runtime/orbit.sock".into(),
                 },
             )],
@@ -5875,7 +5875,7 @@ mod tests {
             vec![(
                 1,
                 Session {
-                    id: "session-1".into(),
+                    id: "terminal-1".into(),
                     endpoint: root.join("orbit.sock"),
                 },
             )],
@@ -6008,10 +6008,10 @@ mod tests {
         )
         .unwrap();
         workspace
-            .session_ended("session-5", SessionEnd::Exited, ok)
+            .session_ended("terminal-5", SessionEnd::Exited, ok)
             .unwrap();
         assert_eq!(shape(&workspace).1, "p2");
-        for session in ["session-4", "session-2", "session-3"] {
+        for session in ["terminal-4", "terminal-2", "terminal-3"] {
             workspace
                 .session_ended(session, SessionEnd::Exited, ok)
                 .unwrap();
@@ -6033,7 +6033,7 @@ mod tests {
             vec![(
                 1,
                 Session {
-                    id: "session-1".into(),
+                    id: "terminal-1".into(),
                     endpoint: "/runtime/orbit.sock".into(),
                 },
             )],
@@ -6065,7 +6065,7 @@ mod tests {
             "c2",
             Action::Workspace(WorkspaceAction::CreatePane { focus: true }),
         );
-        assert_eq!(close(&mut workspace, "x2", "p3").unwrap(), "session-3");
+        assert_eq!(close(&mut workspace, "x2", "p3").unwrap(), "terminal-3");
         assert_eq!(
             refused(&mut workspace, "x2", "p2").code,
             "duplicate-request"
@@ -6107,7 +6107,7 @@ mod tests {
             "close the popup before closing the tab's last pane"
         );
         assert_eq!(workspace.snapshot(), before);
-        for (id, caller) in [("x5b", agent.as_str()), ("x5c", "session-1")] {
+        for (id, caller) in [("x5b", agent.as_str()), ("x5c", "terminal-1")] {
             request(
                 &mut workspace,
                 id,
@@ -6198,7 +6198,7 @@ mod tests {
         assert_eq!(workspace.snapshot().tabs[0].selected_popup, None);
         assert_eq!(
             workspace.prepare_close_pane("x8", None, "p1").unwrap(),
-            ["session-1".to_owned(), popup.session]
+            ["terminal-1".to_owned(), popup.session]
         );
     }
 
@@ -6211,7 +6211,7 @@ mod tests {
             vec![(
                 1,
                 Session {
-                    id: "session-1".into(),
+                    id: "terminal-1".into(),
                     endpoint: "/runtime/orbit.sock".into(),
                 },
             )],
@@ -6254,7 +6254,7 @@ mod tests {
         request(
             &mut workspace,
             "c1",
-            Some("session-1"),
+            Some("terminal-1"),
             Action::Workspace(WorkspaceAction::CreatePane { focus: true }),
         )
         .unwrap();
@@ -6269,7 +6269,7 @@ mod tests {
         workspace
             .dispatch(
                 "c-fails",
-                Some("session-1"),
+                Some("terminal-1"),
                 Action::Workspace(WorkspaceAction::CreatePane { focus: true }),
                 prepared,
                 |_| Err("start failed".into()),
@@ -6281,7 +6281,7 @@ mod tests {
         request(
             &mut workspace,
             "m1",
-            Some("session-1"),
+            Some("terminal-1"),
             Action::Workspace(WorkspaceAction::Move(Direction::Right)),
         )
         .unwrap();
@@ -6298,7 +6298,7 @@ mod tests {
 
         // Closing resolves the pane by its ID, here in the caller's background tab.
         let [session] = &workspace
-            .prepare_close_pane("x1", Some("session-1"), &created[1])
+            .prepare_close_pane("x1", Some("terminal-1"), &created[1])
             .unwrap()[..]
         else {
             panic!("a non-final pane close stops only its pane");
@@ -6329,7 +6329,7 @@ mod tests {
         request(
             &mut workspace,
             "m2",
-            Some("session-1"),
+            Some("terminal-1"),
             Action::Workspace(WorkspaceAction::Move(Direction::Up)),
         )
         .unwrap();
@@ -6365,7 +6365,7 @@ mod tests {
         let failure = request(
             &mut workspace,
             "c3",
-            Some("session-99"),
+            Some("terminal-99"),
             Action::Workspace(WorkspaceAction::CreatePane { focus: true }),
         )
         .unwrap_err();
@@ -6382,7 +6382,7 @@ mod tests {
             vec![(
                 1,
                 Session {
-                    id: "session-1".into(),
+                    id: "terminal-1".into(),
                     endpoint: "/runtime/orbit.sock".into(),
                 },
             )],
@@ -6470,7 +6470,7 @@ mod tests {
             (vec!["[p1]".into(), "p2 [p3]".into()], "p1".into())
         );
         let tab = &workspace.snapshot().tabs[0];
-        assert_eq!(tab.columns[0].panes[0].session, "session-1");
+        assert_eq!(tab.columns[0].panes[0].session, "terminal-1");
 
         // A stacked pane cannot open a fifth column; the move stops quietly.
         request(&mut workspace, "c1", Action::CreateColumn).unwrap();
@@ -6531,7 +6531,7 @@ mod tests {
             vec![(
                 1,
                 Session {
-                    id: "session-1".into(),
+                    id: "terminal-1".into(),
                     endpoint: "/runtime/orbit.sock".into(),
                 },
             )],
@@ -6565,7 +6565,7 @@ mod tests {
                     )
                     .unwrap();
                 if !with_panes {
-                    for session in ["session-1", "session-2"] {
+                    for session in ["terminal-1", "terminal-2"] {
                         covered
                             .session_ended(session, SessionEnd::Exited, |_| Ok(()))
                             .unwrap();
@@ -6604,7 +6604,7 @@ mod tests {
             vec![(
                 1,
                 Session {
-                    id: "session-1".into(),
+                    id: "terminal-1".into(),
                     endpoint: root.join("orbit.sock"),
                 },
             )],
@@ -6710,7 +6710,7 @@ mod tests {
             vec![(
                 1,
                 Session {
-                    id: "session-1".into(),
+                    id: "terminal-1".into(),
                     endpoint: root.join("orbit.sock"),
                 },
             )],
@@ -6898,7 +6898,7 @@ mod tests {
             vec![(
                 1,
                 Session {
-                    id: "session-1".into(),
+                    id: "terminal-1".into(),
                     endpoint: "/runtime/orbit.sock".into(),
                 },
             )],
@@ -6963,7 +6963,7 @@ mod tests {
         assert_eq!(snapshot.tabs[0].selected_popup.as_ref(), Some(&agent.id));
         assert!(matches!(
             operations.last(),
-            Some(SessionOperation::Stop(id)) if id == "session-3"
+            Some(SessionOperation::Stop(id)) if id == "terminal-3"
         ));
 
         workspace.workspaces[0].tabs.push(Tab {
@@ -6975,8 +6975,8 @@ mod tests {
                     pinned_name: None,
                     id: "p99".into(),
                     session: Session {
-                        id: "session-99".into(),
-                        endpoint: "/runtime/session-99.sock".into(),
+                        id: "terminal-99".into(),
+                        endpoint: "/runtime/terminal-99.sock".into(),
                     },
                 }],
                 expanded: 0,
@@ -6999,7 +6999,7 @@ mod tests {
             .session_ended(&agent.session, SessionEnd::Exited, |_| Ok(()))
             .unwrap();
         workspace
-            .session_ended("session-1", SessionEnd::Exited, |_| Ok(()))
+            .session_ended("terminal-1", SessionEnd::Exited, |_| Ok(()))
             .unwrap();
         assert_eq!(workspace.snapshot().tabs[0].popups[0].entry, "commands");
 
@@ -7055,9 +7055,9 @@ mod tests {
 
         // The picker switches away and exits; switching back shows Agent.
         let session = picker(&mut set, "switch");
-        request(&mut set, "away", switch("w2"));
+        request(&mut set, "away", switch("s2"));
         ended(&mut set, &session);
-        let tab = request(&mut set, "back", switch("w1"));
+        let tab = request(&mut set, "back", switch("s1"));
         assert_eq!(tab.selected_popup.as_ref(), Some(&agent));
 
         // Esc exits the picker in place.
@@ -7143,13 +7143,13 @@ mod tests {
             },
         )
         .unwrap();
-        // The pair takes session-2: session-1 waits for the first pane.
+        // The pair takes terminal-2: terminal-1 waits for the first pane.
         assert_eq!(
             launches,
             [SessionOperation::Start {
                 session: Session {
-                    id: "session-2".into(),
-                    endpoint: root.join("session-2.sock"),
+                    id: "terminal-2".into(),
+                    endpoint: root.join("terminal-2.sock"),
                 },
                 directory: root.clone(),
                 command: LaunchCommand::Files {
@@ -7192,7 +7192,7 @@ mod tests {
                 })
                 .unwrap_err()
                 .code,
-            "session-start"
+            "terminal-start"
         );
         assert_eq!(workspace.snapshot(), pending);
         let mut operations = Vec::new();
@@ -7207,14 +7207,14 @@ mod tests {
             [
                 SessionOperation::Start {
                     session: Session {
-                        id: "session-1".into(),
+                        id: "terminal-1".into(),
                         endpoint: root.join("orbit.sock"),
                     },
                     directory: selected.clone(),
                     command: LaunchCommand::Pane,
                     tab: None,
                 },
-                SessionOperation::SettlePair("session-2".into()),
+                SessionOperation::SettlePair("terminal-2".into()),
             ]
         );
         let tab = &workspace.snapshot().tabs[0];
@@ -7277,7 +7277,7 @@ mod tests {
             }
             let start = SessionOperation::Start {
                 session: Session {
-                    id: "session-1".into(),
+                    id: "terminal-1".into(),
                     endpoint: "/runtime/orbit.sock".into(),
                 },
                 directory: "/start".into(),
@@ -7318,7 +7318,7 @@ mod tests {
         for (id, action) in [
             ("t2", WorkspaceAction::CreateTab),
             (
-                "w2",
+                "s2",
                 WorkspaceAction::NewWorkspace {
                     name: None,
                     focus: false,
@@ -7348,7 +7348,7 @@ mod tests {
             })
             .collect::<Vec<_>>();
         assert_eq!(starts, 3);
-        assert_eq!(settled, ["session-2", "session-3", "session-4"]);
+        assert_eq!(settled, ["terminal-2", "terminal-3", "terminal-4"]);
         assert!(
             !operations
                 .iter()
@@ -7458,7 +7458,7 @@ mod tests {
             vec![(
                 1,
                 Session {
-                    id: "session-1".into(),
+                    id: "terminal-1".into(),
                     endpoint: "/runtime/orbit.sock".into(),
                 },
             )],
@@ -7511,7 +7511,7 @@ mod tests {
             vec![(
                 1,
                 Session {
-                    id: "session-1".into(),
+                    id: "terminal-1".into(),
                     endpoint: root.join("orbit.sock"),
                 },
             )],
@@ -7574,7 +7574,7 @@ mod tests {
             vec![(
                 1,
                 Session {
-                    id: "session-1".into(),
+                    id: "terminal-1".into(),
                     endpoint: root.join("orbit.sock"),
                 },
             )],
@@ -7666,7 +7666,7 @@ mod tests {
             vec![(
                 1,
                 Session {
-                    id: "session-1".into(),
+                    id: "terminal-1".into(),
                     endpoint: root.join("orbit.sock"),
                 },
             )],
@@ -7690,7 +7690,7 @@ mod tests {
         let failure = workspace
             .dispatch(
                 "missing",
-                Some("session-1"),
+                Some("terminal-1"),
                 command(),
                 |_, _| Err("no claude".into()),
                 |_| Err("nothing starts".into()),
@@ -7701,10 +7701,16 @@ mod tests {
 
         let mut started = Vec::new();
         workspace
-            .dispatch("run", Some("session-1"), command(), prepared, |operation| {
-                started.push(operation);
-                Ok(())
-            })
+            .dispatch(
+                "run",
+                Some("terminal-1"),
+                command(),
+                prepared,
+                |operation| {
+                    started.push(operation);
+                    Ok(())
+                },
+            )
             .unwrap();
         let [
             SessionOperation::Start {
@@ -7739,7 +7745,7 @@ mod tests {
             vec![(
                 1,
                 Session {
-                    id: "session-1".into(),
+                    id: "terminal-1".into(),
                     endpoint: root.join("orbit.sock"),
                 },
             )],
@@ -7766,7 +7772,7 @@ mod tests {
             )
             .unwrap();
         workspace
-            .session_ended("session-1", SessionEnd::Exited, |_| Ok(()))
+            .session_ended("terminal-1", SessionEnd::Exited, |_| Ok(()))
             .unwrap();
         assert!(workspace.snapshot().tabs[0].columns.is_empty());
         workspace
@@ -7844,10 +7850,10 @@ mod tests {
         let error = workspace
             .session_ended(&pair, SessionEnd::Exited, |_| Err("start failed".into()))
             .unwrap_err();
-        assert_eq!(error.code, "session-start");
+        assert_eq!(error.code, "terminal-start");
         assert_eq!(workspace.snapshot(), initial);
-        eon_workspace_protocol::v35::encode_response(
-            &eon_workspace_protocol::v35::Response::Snapshot(workspace.snapshot()),
+        eon_workspace_protocol::v36::encode_response(
+            &eon_workspace_protocol::v36::Response::Snapshot(workspace.snapshot()),
         )
         .unwrap();
 
@@ -7910,8 +7916,8 @@ mod tests {
             assert!(json(&state).contains(
                 r#"{"id":"agent","label":"Agent","keybinding":"Alt+A","overridden_by":null,"default_keybinding":null}"#
             ));
-            eon_workspace_protocol::v35::encode_response(
-                &eon_workspace_protocol::v35::Response::Snapshot(state),
+            eon_workspace_protocol::v36::encode_response(
+                &eon_workspace_protocol::v36::Response::Snapshot(state),
             )
             .unwrap();
         }
@@ -8084,7 +8090,7 @@ mod tests {
                 vec![(
                     1,
                     Session {
-                        id: "session-1".into(),
+                        id: "terminal-1".into(),
                         endpoint: "/runtime/orbit.sock".into(),
                     },
                 )],
@@ -8098,14 +8104,14 @@ mod tests {
             apply(
                 &mut set,
                 "t1-p2",
-                Some("session-1"),
+                Some("terminal-1"),
                 Action::Workspace(WorkspaceAction::CreatePane { focus: false }),
             );
-            apply(&mut set, "t1-git", Some("session-1"), invoke("t1", "git"));
+            apply(&mut set, "t1-git", Some("terminal-1"), invoke("t1", "git"));
             apply(
                 &mut set,
                 "t2",
-                Some("session-1"),
+                Some("terminal-1"),
                 Action::LaunchTab {
                     directory: b"/".to_vec(),
                     argv: Vec::new(),
@@ -8117,7 +8123,7 @@ mod tests {
             apply(
                 &mut set,
                 "t3",
-                Some("session-1"),
+                Some("terminal-1"),
                 Action::LaunchTab {
                     directory: b"/".to_vec(),
                     argv: Vec::new(),
@@ -8241,14 +8247,14 @@ mod tests {
                 vec![(
                     1,
                     Session {
-                        id: "session-1".into(),
+                        id: "terminal-1".into(),
                         endpoint: "/runtime/orbit.sock".into(),
                     },
                 )],
                 catalog(),
             )
             .unwrap();
-            let caller = "session-1".to_string();
+            let caller = "terminal-1".to_string();
             let apply = |set: &mut WorkspaceSet, id: &str, action_caller: Option<&str>, action| {
                 set.dispatch(id, action_caller, action, prepared, |_| Ok(()))
                     .unwrap();
@@ -8312,7 +8318,7 @@ mod tests {
             set.session_ended(&pair, SessionEnd::Exited, |_| Ok(()))
                 .unwrap();
             set.shown = 0;
-            set.recent_workspaces = VecDeque::from(["w1".into(), "w2".into()]);
+            set.recent_workspaces = VecDeque::from(["s1".into(), "s2".into()]);
             (set, caller)
         };
 
@@ -8320,8 +8326,8 @@ mod tests {
             let (mut set, caller) = setup();
             let before = set.snapshot();
             let recency_before = set.recent_workspaces.clone();
-            assert_eq!(before.workspace, "w1");
-            assert_eq!(before.active_workspace, "w1");
+            assert_eq!(before.workspace, "s1");
+            assert_eq!(before.active_workspace, "s1");
             assert_eq!(before.active_tab, "t2");
             let t3 = before.tabs.iter().find(|tab| tab.id == "t3").unwrap();
             assert_eq!(t3.columns.len(), 2);
@@ -8347,8 +8353,8 @@ mod tests {
             })
             .unwrap();
             let after = set.snapshot();
-            assert_eq!(after.workspace, "w1");
-            assert_eq!(after.active_workspace, "w1");
+            assert_eq!(after.workspace, "s1");
+            assert_eq!(after.active_workspace, "s1");
             assert_eq!(set.recent_workspaces, recency_before);
             assert_eq!(after.active_tab, "t2");
             assert_eq!(after.tabs[0], before.tabs[0]);
@@ -8374,7 +8380,7 @@ mod tests {
             vec![(
                 1,
                 Session {
-                    id: "session-1".into(),
+                    id: "terminal-1".into(),
                     endpoint: "/runtime/orbit.sock".into(),
                 },
             )],
@@ -8389,7 +8395,7 @@ mod tests {
             apply(
                 set,
                 id,
-                Some("session-1"),
+                Some("terminal-1"),
                 Action::Workspace(WorkspaceAction::CreatePane { focus: false }),
             );
             set.snapshot().tabs[0].panes().last().unwrap().clone()
@@ -8478,9 +8484,9 @@ mod tests {
         assert_eq!(set.snapshot().tabs[1], before.tabs[1]);
         assert_eq!(
             set.prepare_close_pane("t1-last", None, "p1").unwrap(),
-            ["session-1".to_owned()]
+            ["terminal-1".to_owned()]
         );
-        set.session_ended("session-1", SessionEnd::Closed, |_| Ok(()))
+        set.session_ended("terminal-1", SessionEnd::Closed, |_| Ok(()))
             .unwrap();
         let snapshot = set.snapshot();
         assert_eq!(snapshot.active_tab, "t2");
@@ -8519,11 +8525,11 @@ mod tests {
     #[test]
     fn hidden_callers_close_only_their_workspace_without_showing_it() {
         let mut set = two_workspace_set(|_| Ok(()));
-        let w1_caller = set.workspaces[0].tabs[0].columns[0].panes[0]
+        let s1_caller = set.workspaces[0].tabs[0].columns[0].panes[0]
             .session
             .id
             .clone();
-        let w2_caller = set.workspaces[1].tabs[0].columns[0].panes[0]
+        let s2_caller = set.workspaces[1].tabs[0].columns[0].panes[0]
             .session
             .id
             .clone();
@@ -8531,69 +8537,69 @@ mod tests {
             set.dispatch(id, caller, action, prepared, |_| Ok(()))
                 .unwrap();
         };
-        // Give w2 a second tab (background) and a second pane on its first tab.
+        // Give s2 a second tab (background) and a second pane on its first tab.
         apply(
             &mut set,
-            "w2-p2",
-            Some(&w2_caller),
+            "s2-p2",
+            Some(&s2_caller),
             Action::Workspace(WorkspaceAction::CreatePane { focus: false }),
         );
         apply(
             &mut set,
-            "w2-bg-tab",
-            Some(&w2_caller),
+            "s2-bg-tab",
+            Some(&s2_caller),
             Action::LaunchTab {
                 directory: b"/".to_vec(),
                 argv: Vec::new(),
                 focus: false,
             },
         );
-        // w2 keeps a hidden Agent; the shown w1 shows its own Agent.
-        let w2_tab0 = set.workspaces[1].tabs[0].id.clone();
+        // s2 keeps a hidden Agent; the shown s1 shows its own Agent.
+        let s2_tab0 = set.workspaces[1].tabs[0].id.clone();
         apply(
             &mut set,
-            "w2-agent",
-            Some(&w2_caller),
-            invoke(&w2_tab0, "agent"),
+            "s2-agent",
+            Some(&s2_caller),
+            invoke(&s2_tab0, "agent"),
         );
-        let w2_agent = set.workspaces[1].tabs[0].popups[0].clone();
+        let s2_agent = set.workspaces[1].tabs[0].popups[0].clone();
         apply(
             &mut set,
-            "w2-agent-hide",
-            Some(&w2_caller),
+            "s2-agent-hide",
+            Some(&s2_caller),
             Action::InvokePopup {
-                tab: w2_tab0.clone(),
+                tab: s2_tab0.clone(),
                 entry: "agent".into(),
-                expected_instance: Some(w2_agent.id.clone()),
+                expected_instance: Some(s2_agent.id.clone()),
                 intent: InvokeIntent::Toggle,
             },
         );
         set.shown = 0;
-        let w1_tab0 = set.workspaces[0].tabs[0].id.clone();
-        apply(&mut set, "w1-agent", None, invoke(&w1_tab0, "agent"));
+        let s1_tab0 = set.workspaces[0].tabs[0].id.clone();
+        apply(&mut set, "s1-agent", None, invoke(&s1_tab0, "agent"));
         assert!(set.snapshot().tabs[0].selected_popup.is_some());
         let shown_before = set.workspaces[0].clone();
         let recency_before = set.recent_workspaces.clone();
-        let w1_tab = set.workspaces[0].tabs[0].id.clone();
-        let w1_pane = set.workspaces[0].tabs[0].columns[0].panes[0].id.clone();
-        let w2_bg_tab = set.workspaces[1].tabs[1].id.clone();
-        let w2_second_pane = set.workspaces[1].tabs[0].columns[0].panes[1].id.clone();
-        let w2_second_pane_session = set.workspaces[1].tabs[0].columns[0].panes[1]
+        let s1_tab = set.workspaces[0].tabs[0].id.clone();
+        let s1_pane = set.workspaces[0].tabs[0].columns[0].panes[0].id.clone();
+        let s2_bg_tab = set.workspaces[1].tabs[1].id.clone();
+        let s2_second_pane = set.workspaces[1].tabs[0].columns[0].panes[1].id.clone();
+        let s2_second_pane_session = set.workspaces[1].tabs[0].columns[0].panes[1]
             .session
             .id
             .clone();
 
-        // A caller in w1 (or None) attempting to close a tab or pane in w2 fails with unknown-tab / unknown-pane.
+        // A caller in s1 (or None) attempting to close a tab or pane in s2 fails with unknown-tab / unknown-pane.
         let before = set.clone();
-        for caller in [Some(w1_caller.as_str()), None] {
+        for caller in [Some(s1_caller.as_str()), None] {
             assert_eq!(
-                set.prepare_close_tab("w1-to-w2-tab", caller, &w2_bg_tab)
+                set.prepare_close_tab("s1-to-s2-tab", caller, &s2_bg_tab)
                     .unwrap_err()
                     .code,
                 "unknown-tab"
             );
             assert_eq!(
-                set.prepare_close_pane("w1-to-w2-pane", caller, &w2_second_pane)
+                set.prepare_close_pane("s1-to-s2-pane", caller, &s2_second_pane)
                     .unwrap_err()
                     .code,
                 "unknown-pane"
@@ -8601,60 +8607,60 @@ mod tests {
             assert_eq!(set, before);
         }
 
-        // A caller in w2 attempting to close a tab or pane in w1 fails with unknown-tab / unknown-pane.
+        // A caller in s2 attempting to close a tab or pane in s1 fails with unknown-tab / unknown-pane.
         assert_eq!(
-            set.prepare_close_tab("w2-to-w1-tab", Some(&w2_caller), &w1_tab)
+            set.prepare_close_tab("s2-to-s1-tab", Some(&s2_caller), &s1_tab)
                 .unwrap_err()
                 .code,
             "unknown-tab"
         );
         assert_eq!(
-            set.prepare_close_pane("w2-to-w1-pane", Some(&w2_caller), &w1_pane)
+            set.prepare_close_pane("s2-to-s1-pane", Some(&s2_caller), &s1_pane)
                 .unwrap_err()
                 .code,
             "unknown-pane"
         );
         assert_eq!(set, before);
 
-        // A caller in w2 closes a pane and a background tab in w2 without showing w2 or changing w1 or recency.
+        // A caller in s2 closes a pane and a background tab in s2 without showing s2 or changing s1 or recency.
         let pane_sessions = set
-            .prepare_close_pane("w2-close-pane", Some(&w2_caller), &w2_second_pane)
+            .prepare_close_pane("s2-close-pane", Some(&s2_caller), &s2_second_pane)
             .unwrap();
-        assert_eq!(pane_sessions, vec![w2_second_pane_session.clone()]);
-        set.session_ended(&w2_second_pane_session, SessionEnd::Closed, |_| Ok(()))
+        assert_eq!(pane_sessions, vec![s2_second_pane_session.clone()]);
+        set.session_ended(&s2_second_pane_session, SessionEnd::Closed, |_| Ok(()))
             .unwrap();
         assert_eq!(set.shown, 0);
-        assert_eq!(set.snapshot().active_workspace, "w1");
-        assert_eq!(set.snapshot().active_tab, w1_tab);
+        assert_eq!(set.snapshot().active_workspace, "s1");
+        assert_eq!(set.snapshot().active_tab, s1_tab);
         assert_eq!(set.recent_workspaces, recency_before);
         assert_eq!(set.workspaces[1].tabs[0].panes().count(), 1);
 
         let tab_sessions = set
-            .prepare_close_tab("w2-close-tab", Some(&w2_caller), &w2_bg_tab)
+            .prepare_close_tab("s2-close-tab", Some(&s2_caller), &s2_bg_tab)
             .unwrap();
         assert_eq!(tab_sessions.len(), 1);
         set.session_ended(&tab_sessions[0], SessionEnd::Closed, |_| Ok(()))
             .unwrap();
         assert_eq!(set.shown, 0);
-        assert_eq!(set.snapshot().active_workspace, "w1");
-        assert_eq!(set.snapshot().active_tab, w1_tab);
+        assert_eq!(set.snapshot().active_workspace, "s1");
+        assert_eq!(set.snapshot().active_tab, s1_tab);
         assert_eq!(set.recent_workspaces, recency_before);
         assert_eq!(set.workspaces[1].tabs.len(), 1);
         assert_eq!(set.workspaces[0], shown_before);
 
-        // Its own caller closes the hidden w2's final tab, by the tab or by its
-        // last pane, stopping its hidden popup too; only w2 goes, and the shown
-        // w1 stays shown and unchanged.
-        let w2_pane = set.workspaces[1].tabs[0].columns[0].panes[0].id.clone();
-        let final_sessions = vec![w2_caller.clone(), w2_agent.session.id.clone()];
+        // Its own caller closes the hidden s2's final tab, by the tab or by its
+        // last pane, stopping its hidden popup too; only s2 goes, and the shown
+        // s1 stays shown and unchanged.
+        let s2_pane = set.workspaces[1].tabs[0].columns[0].panes[0].id.clone();
+        let final_sessions = vec![s2_caller.clone(), s2_agent.session.id.clone()];
         let unchanged = set.clone();
         assert_eq!(
-            set.prepare_close_tab("w2-final-tab", Some(&w2_caller), &w2_tab0)
+            set.prepare_close_tab("s2-final-tab", Some(&s2_caller), &s2_tab0)
                 .unwrap(),
             final_sessions
         );
         assert_eq!(
-            set.prepare_close_pane("w2-final-pane", Some(&w2_caller), &w2_pane)
+            set.prepare_close_pane("s2-final-pane", Some(&s2_caller), &s2_pane)
                 .unwrap(),
             final_sessions
         );
@@ -8666,6 +8672,6 @@ mod tests {
         assert_eq!(set.workspaces.len(), 1);
         assert_eq!(set.shown, 0);
         assert_eq!(set.workspaces[0], shown_before);
-        assert_eq!(set.snapshot().active_workspace, "w1");
+        assert_eq!(set.snapshot().active_workspace, "s1");
     }
 }

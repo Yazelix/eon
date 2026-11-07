@@ -6,11 +6,11 @@ description: Use the eon CLI when running inside Eon (EON_TERMINAL is set) or wh
 # Work in Eon
 
 Treat `EON_TERMINAL` as opaque. When it is set, find yourself with
-`eon workspace --json`: `caller` gives your `terminal` (`session-N`), `tab`
+`eon workspace --json`: `caller` gives your `terminal` (`terminal-N`), `tab`
 (`tN`), and either `pane` (`pN`) with `popup` null, or `popup` with `pane` null.
 Without a calling terminal, `caller` is null.
 
-Act by ID: workspaces use `wN`, tabs `tN`, panes `pN`, and terminals `session-N`.
+Act by ID: workspaces use `sN`, tabs `tN`, panes `pN`, and terminals `terminal-N`.
 Use `--json` on every workspace command. From an Eon terminal, pane creation
 and moves, tab moves and `eon edit` act on your own tab and column; a popup acts
 for its tab's selected pane. `eon tab close tN` and `eon pane close pN` target

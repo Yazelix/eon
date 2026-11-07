@@ -89,7 +89,7 @@
       "padding_color": "extend",
       "pane_frames": true
     },
-    "workspace": {
+    "session": {
       "animate_working_badge": true,
       "number_keys": true,
       "warning_close_last_tab": true

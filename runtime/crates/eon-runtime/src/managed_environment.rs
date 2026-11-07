@@ -17,7 +17,7 @@ use std::{
     time::{Duration, Instant},
 };
 
-use eon_workspace_protocol::v35::{
+use eon_workspace_protocol::v36::{
     ALT, CTRL, MAX_ENTER_DELAY_MS, MAX_ENTRIES, MAX_ENTRY_ID_BYTES, MAX_LABEL_BYTES, PopupGeometry,
     PopupKey, SHIFT, SUPER, Shortcut,
 };
@@ -35,7 +35,7 @@ struct EonConfig {
     terminal: TerminalSettings,
     bar: BarSettings,
     anima: AnimationSettings,
-    workspace: WorkspaceSettings,
+    session: SessionSettings,
     sidebar: SidebarSettings,
     agents: AgentSettings,
     editor: EditorSettings,
@@ -46,6 +46,9 @@ struct EonConfig {
     /// replacement was also set and so won.
     #[serde(skip)]
     deprecated: Vec<(&'static Alias, bool)>,
+    /// The renamed tables found and ignored through `TOMBSTONES`.
+    #[serde(skip)]
+    tombstoned: Vec<&'static Tombstone>,
 }
 
 impl EonConfig {
@@ -57,7 +60,7 @@ impl EonConfig {
             ("terminal.", &self.terminal.unknown),
             ("bar.", &self.bar.unknown),
             ("anima.", &self.anima.unknown),
-            ("workspace.", &self.workspace.unknown),
+            ("session.", &self.session.unknown),
             ("sidebar.", &self.sidebar.unknown),
             ("agents.", &self.agents.unknown),
             ("editor.", &self.editor.unknown),
@@ -86,7 +89,7 @@ pub struct Defaults {
     pub warning_close_last_tab: bool,
     /// Whether the working badge animates on a hardware graphics adapter.
     pub animate_working_badge: bool,
-    /// Whether Alt+Shift+1..9 and Alt+Shift+0 show workspaces 1..10 (EON-C33).
+    /// Whether Alt+Shift+1..9 and Alt+Shift+0 show sessions 1..10 (EON-C33).
     pub number_keys: bool,
     /// Whether full Eon offers the agent sidebar (EON-C31).
     pub sidebar_enabled: bool,
@@ -301,7 +304,7 @@ struct AnimationSettings {
 
 #[derive(Debug, Default, Deserialize)]
 #[serde(default)]
-struct WorkspaceSettings {
+struct SessionSettings {
     warning_close_last_tab: Option<bool>,
     animate_working_badge: Option<bool>,
     number_keys: Option<bool>,
@@ -555,7 +558,7 @@ pub(crate) fn print_defaults(defaults: &Defaults, json: bool) -> Result<String, 
         "terminal": terminal,
         "shell": defaults.shell,
         "anima": defaults.anima,
-        "workspace": {
+        "session": {
             "warning_close_last_tab": defaults.warning_close_last_tab,
             "animate_working_badge": defaults.animate_working_badge,
             "number_keys": defaults.number_keys,
@@ -581,14 +584,7 @@ pub(crate) fn print_defaults(defaults: &Defaults, json: bool) -> Result<String, 
     let mut output =
         String::from("# Built-in defaults. Unset and Eon-owned settings remain omitted.\n");
     for section in [
-        "bar",
-        "terminal",
-        "shell",
-        "anima",
-        "workspace",
-        "sidebar",
-        "agents",
-        "editor",
+        "bar", "terminal", "shell", "anima", "session", "sidebar", "agents", "editor",
     ] {
         defaults_table(&mut output, section, &config[section])?;
     }
@@ -630,7 +626,7 @@ fn defaults_table(
             "focus_color" => "Use Venus's focus colour when omitted.",
             "border_width" => "Use Venus's neutral outline width when omitted.",
             "focus_border_width" => "Use Venus's focus outline width when omitted.",
-            "cursor_trail_color" => "Omission retains the workspace's random cursor colour.",
+            "cursor_trail_color" => "Omission retains the session's random cursor colour.",
             "cursor_trail_duration" => "Cursor tail duration multiplier; 0 turns the trail off.",
             "font_family" => "Let Venus choose the font family when omitted.",
             "font_fallbacks" => "Ordered fallback font families.",
@@ -656,7 +652,7 @@ fn defaults_table(
             "warning_close_last_tab" => "Ask before stopping the final tab's terminals.",
             "animate_working_badge" => "Animate the working badge; false keeps it still.",
             "number_keys" => {
-                "Alt+Shift+1..9 and Alt+Shift+0 show workspaces 1..10; false leaves the keys to the terminal."
+                "Alt+Shift+1..9 and Alt+Shift+0 show sessions 1..10; false leaves the keys to the terminal."
             }
             "send_enter_delay_ms" => "Wait between `eon pane send` text and its --enter.",
             "send_typing_quiet_ms" => {
@@ -804,7 +800,7 @@ pub(crate) fn warning_close_last_tab(
     log: Option<&DiagnosticLog>,
 ) -> Result<bool, String> {
     Ok(read_config(root, defaults, log)?
-        .workspace
+        .session
         .warning_close_last_tab
         .unwrap_or(defaults.warning_close_last_tab))
 }
@@ -815,7 +811,7 @@ pub(crate) fn animate_working_badge(
     log: Option<&DiagnosticLog>,
 ) -> Result<bool, String> {
     Ok(read_config(root, defaults, log)?
-        .workspace
+        .session
         .animate_working_badge
         .unwrap_or(defaults.animate_working_badge))
 }
@@ -826,7 +822,7 @@ pub(crate) fn number_keys(
     log: Option<&DiagnosticLog>,
 ) -> Result<bool, String> {
     Ok(read_config(root, defaults, log)?
-        .workspace
+        .session
         .number_keys
         .unwrap_or(defaults.number_keys))
 }
@@ -1747,6 +1743,44 @@ const ALIASES: &[Alias] = &[
     Alias { old: "bar.show_version", new: "bar.widgets", deprecated_in: "v0.1.2", translate: show_version },
 ];
 
+/// A configuration table a release renamed. The old table has no effect and
+/// warns once, naming its replacement, rather than being read as an alias
+/// (docs/AGENT-RULES.md#configurability). An entry goes with its corpus
+/// fixture under the same migration floor rule as `Alias`.
+#[derive(Debug)]
+struct Tombstone {
+    old: &'static str,
+    new: &'static str,
+    /// The release that stopped reading `old`.
+    renamed_in: &'static str,
+}
+
+#[rustfmt::skip]
+const TOMBSTONES: &[Tombstone] = &[
+    Tombstone { old: "workspace", new: "session", renamed_in: "v0.1.20" },
+    Tombstone { old: "popups.workspaces", new: "popups.sessions", renamed_in: "v0.1.20" },
+];
+
+/// Removes each tombstoned table from `table` and returns those it found.
+fn remove_tombstoned(table: &mut toml::Table) -> Vec<&'static Tombstone> {
+    TOMBSTONES
+        .iter()
+        .filter(|tombstone| {
+            let (path, name) = tombstone
+                .old
+                .rsplit_once('.')
+                .unwrap_or(("", tombstone.old));
+            let mut parent = Some(&mut *table);
+            for part in path.split('.').filter(|part| !part.is_empty()) {
+                parent = parent
+                    .and_then(|table| table.get_mut(part))
+                    .and_then(|value| value.as_table_mut());
+            }
+            parent.is_some_and(|table| table.remove(name).is_some())
+        })
+        .collect()
+}
+
 /// `show_version = false` hid the version badge, which `[bar] widgets` now lists.
 fn show_version(value: &toml::Value, defaults: &Defaults) -> Result<Option<toml::Value>, String> {
     let shown = value
@@ -1807,7 +1841,7 @@ fn translate_deprecated<'a>(
     Ok(applied)
 }
 
-/// Parses the configuration and warns once per unknown or deprecated key:
+/// Parses the configuration and warns once per unknown, deprecated or renamed key:
 /// through `log`, which remembers what it has noted, else on stderr.
 fn read_config(
     root: &Path,
@@ -1825,7 +1859,7 @@ fn read_config(
     Ok(config)
 }
 
-/// One warning per unknown or deprecated key of the configuration read from `path`,
+/// One warning per unknown, deprecated or renamed key of the configuration read from `path`,
 /// and per popup it configures on a focus key.
 fn config_warnings(config: &EonConfig, path: &Path, defaults: &Defaults) -> Vec<String> {
     let path = path.to_string_lossy();
@@ -1848,6 +1882,12 @@ fn config_warnings(config: &EonConfig, path: &Path, defaults: &Defaults) -> Vec<
                 alias.old, alias.deprecated_in, alias.new
             )
         }
+    });
+    let tombstoned = config.tombstoned.iter().map(|tombstone| {
+        format!(
+            "eon: ignoring [{}] in {path}: renamed to [{}] in {}",
+            tombstone.old, tombstone.new, tombstone.renamed_in
+        )
     });
     let widgets = config
         .bar
@@ -1887,13 +1927,14 @@ fn config_warnings(config: &EonConfig, path: &Path, defaults: &Defaults) -> Vec<
     unknown
         .chain(widgets)
         .chain(deprecated)
+        .chain(tombstoned)
         .chain(files)
         .chain(focus)
         .collect()
 }
 
-/// Parses the configuration, reading deprecated keys as their replacements,
-/// without warning about unknown or deprecated keys.
+/// Parses the configuration, reading deprecated keys as their replacements
+/// and dropping tombstoned tables, without warning about any of them.
 fn parse_config(root: &Path, defaults: &Defaults) -> Result<EonConfig, String> {
     let path = root.join(CONFIG_FILE);
     let source = match fs::read_to_string(&path) {
@@ -1906,21 +1947,28 @@ fn parse_config(root: &Path, defaults: &Defaults) -> Result<EonConfig, String> {
         }
     };
     let invalid = |error: String| format!("invalid Eon configuration {}: {error}", path.display());
-    // Parsing the text keeps each error's line and column; a deprecated key
-    // lands among the unknown keys until the translation below replaces it.
-    let mut config: EonConfig =
-        toml::from_str(&source).map_err(|error: toml::de::Error| invalid(error.to_string()))?;
     let mut table: toml::Table =
         toml::from_str(&source).map_err(|error: toml::de::Error| invalid(error.to_string()))?;
+    // A tombstoned table goes before any typed read, so nothing in it can fail.
+    let tombstoned = remove_tombstoned(&mut table);
+    // Parsing the text keeps each error's line and column; a deprecated key
+    // lands among the unknown keys until the translation below replaces it.
+    let parsed: Option<EonConfig> = if tombstoned.is_empty() {
+        Some(toml::from_str(&source).map_err(|error: toml::de::Error| invalid(error.to_string()))?)
+    } else {
+        None
+    };
     let deprecated = translate_deprecated(&mut table, ALIASES, defaults).map_err(invalid)?;
-    if !deprecated.is_empty() {
-        // The text parsed, so only a translated value can fail here, and its
-        // error has no line or column.
-        config = table
+    let mut config = match parsed {
+        Some(config) if deprecated.is_empty() => config,
+        // A dropped or translated key leaves the table to read, whose errors
+        // have no line or column.
+        _ => table
             .try_into()
-            .map_err(|error: toml::de::Error| invalid(error.to_string()))?;
-    }
+            .map_err(|error: toml::de::Error| invalid(error.to_string()))?,
+    };
     config.deprecated = deprecated;
+    config.tombstoned = tombstoned;
     Ok(config)
 }
 
@@ -2259,7 +2307,7 @@ new_field = true
 [anima]
 enabled = false
 new_field = true
-[workspace]
+[session]
 warning_close_last_tab = false
 animate_working_badge = false
 number_keys = false
@@ -2292,9 +2340,9 @@ nested = { value = true }
             Some(["cpu".to_owned()].as_slice())
         );
         assert_eq!(config.anima.enabled, Some(false));
-        assert_eq!(config.workspace.warning_close_last_tab, Some(false));
-        assert_eq!(config.workspace.animate_working_badge, Some(false));
-        assert_eq!(config.workspace.number_keys, Some(false));
+        assert_eq!(config.session.warning_close_last_tab, Some(false));
+        assert_eq!(config.session.animate_working_badge, Some(false));
+        assert_eq!(config.session.number_keys, Some(false));
         assert_eq!(config.sidebar.enabled, Some(false));
         assert_eq!(
             config.popups["agent"].label.as_deref(),
@@ -2307,10 +2355,10 @@ nested = { value = true }
             "new_top_level",
             "popup",
             "popups.agent.new_field",
+            "session.new_field",
             "shell.new_field",
             "sidebar.new_field",
             "terminal.future_border_width",
-            "workspace.new_field",
         ];
         assert_eq!(config.unknown_keys(), expected);
         let log_path = fs::read_dir(root.join("logs"))
@@ -2699,13 +2747,13 @@ nested = { value = true }
         assert!(warning_close_last_tab(&root, &inputs.defaults, None).unwrap());
         fs::write(
             root.join("config.toml"),
-            "[workspace]\nwarning_close_last_tab = false\n",
+            "[session]\nwarning_close_last_tab = false\n",
         )
         .unwrap();
         assert!(!warning_close_last_tab(&root, &inputs.defaults, None).unwrap());
         fs::write(
             root.join("config.toml"),
-            "[workspace]\nwarning_close_last_tab = 'no'\n",
+            "[session]\nwarning_close_last_tab = 'no'\n",
         )
         .unwrap();
         assert!(
@@ -2727,13 +2775,13 @@ nested = { value = true }
         assert!(animate_working_badge(&root, &inputs.defaults, None).unwrap());
         fs::write(
             root.join("config.toml"),
-            "[workspace]\nanimate_working_badge = false\n",
+            "[session]\nanimate_working_badge = false\n",
         )
         .unwrap();
         assert!(!animate_working_badge(&root, &inputs.defaults, None).unwrap());
         fs::write(
             root.join("config.toml"),
-            "[workspace]\nanimate_working_badge = 'no'\n",
+            "[session]\nanimate_working_badge = 'no'\n",
         )
         .unwrap();
         assert!(

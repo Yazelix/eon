@@ -7,7 +7,7 @@ use super::{
     supervisor::{effective_uid, supervisor_lock_path},
     windows::valid_window_id,
 };
-use eon_workspace_protocol::v35::{
+use eon_workspace_protocol::v36::{
     MAX_RUNNING_WINDOWS, RunningWindows, Snapshot, WindowEntry, WindowState,
 };
 use std::{
@@ -500,7 +500,7 @@ mod tests {
             vec![(
                 1,
                 crate::workspace::Session {
-                    id: "session-1".into(),
+                    id: "terminal-1".into(),
                     endpoint: "/runtime/orbit.sock".into(),
                 },
             )],
@@ -584,16 +584,16 @@ mod tests {
         let peers = [(root.clone(), generation.to_owned())];
         let held = Fingerprint::read(&base, &peers).unwrap();
         assert_eq!(held, Fingerprint::read(&base, &peers).unwrap());
-        fs::write(directory.join("session-1.sock"), b"one").unwrap();
+        fs::write(directory.join("terminal-1.sock"), b"one").unwrap();
         fs::File::open(&directory)
             .unwrap()
             .set_modified(SystemTime::UNIX_EPOCH + Duration::from_secs(1))
             .unwrap();
         let churn = Fingerprint::read(&base, &peers).unwrap();
         assert_ne!(held, churn);
-        fs::write(directory.join("session-1.sock"), b"two").unwrap();
+        fs::write(directory.join("terminal-1.sock"), b"two").unwrap();
         assert_eq!(churn, Fingerprint::read(&base, &peers).unwrap());
-        fs::remove_file(directory.join("session-1.sock")).unwrap();
+        fs::remove_file(directory.join("terminal-1.sock")).unwrap();
         fs::File::open(&directory)
             .unwrap()
             .set_modified(SystemTime::UNIX_EPOCH + Duration::from_secs(2))

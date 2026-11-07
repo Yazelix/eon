@@ -1,4 +1,4 @@
-use eon_workspace_protocol::v35::{
+use eon_workspace_protocol::v36::{
     Action as ProtocolAction, Availability, Change, Direction, End, Failure as ProtocolFailure,
     Filter, HEADER_BYTES, InvokeIntent, LifecycleResponse, MAX_SESSIONS, Popup, PopupTarget,
     Request, Response, Runtime, Screen, Sent, Snapshot, Stopped, SubscriptionMessage, Tab,
@@ -630,7 +630,7 @@ fn delegated_window_stop_reaches_only_the_marked_generation() {
     assert_eq!(
         stopped,
         serde_json::json!([{"window": "abcd3000", "results": [
-            {"stopped": {"generation": current, "sessions": ["session-1"]}}
+            {"stopped": {"generation": current, "sessions": ["terminal-1"]}}
         ]}])
     );
     servers.pop().unwrap().join().unwrap();
@@ -1273,7 +1273,7 @@ fn managed_orbit_helper() {
             delay.to_str().unwrap().parse().unwrap(),
         ));
     }
-    if session_id == "session-2"
+    if session_id == "terminal-2"
         && let Some(delay) = std::env::var_os("EON_TEST_DELAY_SESSION_2_MS")
     {
         thread::sleep(Duration::from_millis(
@@ -1320,7 +1320,7 @@ fn managed_orbit_helper() {
             .unwrap();
         writeln!(log, "{}|{marker}", identity.session_id).unwrap();
     }
-    let ready_delay = if identity.session_id == "session-2" {
+    let ready_delay = if identity.session_id == "terminal-2" {
         std::env::var("EON_TEST_PAIR_READY_DELAY_MS").ok()
     } else if snapshot.is_some() {
         std::env::var_os("EON_TEST_EDITOR_READY_DELAY")
@@ -2251,29 +2251,29 @@ fn pending_tabs_host_the_files_pair_on_quick_search() {
     let mut supervisor = window.spawn(&[]);
     let generation = window.generation();
     let control = window.control();
-    let first = window.pair_launch("session-2");
+    let first = window.pair_launch("terminal-2");
     let snapshot = window.inspect("pending");
     let (tab, pair) = pending_pair(&snapshot).unwrap();
     assert_eq!(
         (tab.id.as_str(), pair.id.as_str(), pair.session.as_str()),
-        ("t1", "u1", "session-2")
+        ("t1", "u1", "terminal-2")
     );
     assert_eq!(tab.selected_popup.as_deref(), Some("u1"));
     assert_eq!(tab.popups.len(), 1);
     assert!(tab.columns.is_empty() && tab.selected_pane.is_none());
     assert_eq!(
         pair.endpoint,
-        generation.join("session-2.sock").as_os_str().as_bytes()
+        generation.join("terminal-2.sock").as_os_str().as_bytes()
     );
-    // session-1 and orbit.sock wait for the window's first pane.
+    // terminal-1 and orbit.sock wait for the window's first pane.
     assert!(!generation.join("orbit.sock").exists());
-    assert!(artifact_path(&generation.join("session-2.sock"), ".pending").exists());
+    assert!(artifact_path(&generation.join("terminal-2.sock"), ".pending").exists());
     assert_eq!(first.tab, "t1");
     assert_eq!(first.directory, window.launch);
     let id = first.client_id();
     assert!((1 << 62..1 << 63).contains(&id), "{id}");
     // fzf listens beside the pair's endpoint, in the window's own runtime.
-    let socket = generation.join("session-2.quick.sock");
+    let socket = generation.join("terminal-2.quick.sock");
     assert_eq!(
         first.arguments,
         [
@@ -2322,7 +2322,7 @@ fn pending_tabs_host_the_files_pair_on_quick_search() {
 
     // Later tabs and workspaces start their own pairs at home, without the notice.
     assert!(window.eon(&["tab", "create"]).status.success());
-    let second = window.pair_launch("session-3");
+    let second = window.pair_launch("terminal-3");
     assert_eq!(
         (second.tab.as_str(), second.directory.as_path()),
         ("t2", window.home.as_path())
@@ -2334,7 +2334,7 @@ fn pending_tabs_host_the_files_pair_on_quick_search() {
         [
             "--eon-quick",
             "--eon-pair-socket",
-            generation.join("session-3.quick.sock").to_str().unwrap(),
+            generation.join("terminal-3.quick.sock").to_str().unwrap(),
             "--client-id",
             &second_id.to_string(),
         ]
@@ -2346,13 +2346,13 @@ fn pending_tabs_host_the_files_pair_on_quick_search() {
         snapshot.tabs[1].popups[0].endpoint
     );
     assert!(window.eon(&["workspace", "new"]).status.success());
-    let third = window.pair_launch("session-4");
+    let third = window.pair_launch("terminal-4");
     assert_eq!(third.tab, "t3");
     assert_eq!(third.arguments[0], "--eon-quick");
 
     // Pending pairs are popups, not durable terminals: lifecycle inspection
     // and Stop count none of them, and Stop still stops each (EON-C18).
-    let pairs = ["session-2", "session-3", "session-4"]
+    let pairs = ["terminal-2", "terminal-3", "terminal-4"]
         .map(|session| live_identity(&generation.join(format!("{session}.sock"))));
     let inventory = window.eon(&["window", "ls", "--json"]);
     assert!(inventory.status.success(), "{}", stdout(&inventory));
@@ -2388,7 +2388,7 @@ fn a_pick_commits_a_pending_tab_with_one_pane_and_keeps_its_pair() {
     );
     let mut supervisor = window.spawn(&[child.to_str().unwrap()]);
     let generation = window.generation();
-    window.pair_launch("session-2");
+    window.pair_launch("terminal-2");
 
     let picked = window.eon(&["tab", "directory", "t1", "--", selected.to_str().unwrap()]);
     assert!(picked.status.success(), "{picked:?}");
@@ -2401,7 +2401,7 @@ fn a_pick_commits_a_pending_tab_with_one_pane_and_keeps_its_pair() {
     assert_eq!(panes.len(), 1);
     assert_eq!(
         (panes[0].id.as_str(), panes[0].session.as_str()),
-        ("p1", "session-1")
+        ("p1", "terminal-1")
     );
     assert_eq!(
         panes[0].endpoint,
@@ -2410,24 +2410,24 @@ fn a_pick_commits_a_pending_tab_with_one_pane_and_keeps_its_pair() {
     assert_eq!(tab.popups.len(), 1);
     assert_eq!(
         (tab.popups[0].entry.as_str(), tab.popups[0].session.as_str()),
-        ("files", "session-2")
+        ("files", "terminal-2")
     );
     assert!(
-        generation.join("session-2.sock").exists(),
+        generation.join("terminal-2.sock").exists(),
         "the pair stays as Files"
     );
-    assert!(!artifact_path(&generation.join("session-2.sock"), ".pending").exists());
+    assert!(!artifact_path(&generation.join("terminal-2.sock"), ".pending").exists());
     // Committed, the pair counts as its window's Files popup terminal.
     let inventory = stdout(&window.eon(&["window", "ls", "--json"])).to_owned();
     let listed: serde_json::Value = serde_json::from_str(&inventory).unwrap();
     let terminals = listed["windows"][0]["terminals"].as_array().unwrap();
-    for session in ["session-1", "session-2"] {
+    for session in ["terminal-1", "terminal-2"] {
         assert!(terminals.contains(&session.into()), "{inventory}");
     }
     // t1's first pane runs `eon run -- CHILD`.
     assert_eq!(
         wait_for_lines(&child_log, 1),
-        [format!("session-1|{}", selected.display())]
+        [format!("terminal-1|{}", selected.display())]
     );
     assert!(log_lines(&window.panes_log).is_empty());
     let first_visit = vec![format!("add -- {}", selected.display())];
@@ -2443,7 +2443,7 @@ fn a_pick_commits_a_pending_tab_with_one_pane_and_keeps_its_pair() {
         serde_json::json!({"tab": "t2", "pane": null}),
         "{pending}"
     );
-    window.pair_launch("session-3");
+    window.pair_launch("terminal-3");
     thread::scope(|scope| {
         let picks = [&left, &right].map(|directory| {
             let window = &window;
@@ -2464,14 +2464,14 @@ fn a_pick_commits_a_pending_tab_with_one_pane_and_keeps_its_pair() {
     assert!(
         [&left, &right]
             .iter()
-            .any(|directory| panes[0] == format!("session-4|{}", directory.display())),
+            .any(|directory| panes[0] == format!("terminal-4|{}", directory.display())),
         "{panes:?}"
     );
     assert_eq!(wait_for_lines(&window.zoxide_log, 3).len(), 3);
 
     // A refused pick changes nothing and adds no visit.
     assert!(window.eon(&["tab", "create"]).status.success());
-    window.pair_launch("session-5");
+    window.pair_launch("terminal-5");
     let refused = window.eon(&[
         "tab",
         "directory",
@@ -2484,17 +2484,17 @@ fn a_pick_commits_a_pending_tab_with_one_pane_and_keeps_its_pair() {
     let (tab, pair) = pending_pair(&snapshot).unwrap();
     assert_eq!(
         (tab.id.as_str(), pair.session.as_str()),
-        ("t3", "session-5")
+        ("t3", "terminal-5")
     );
     assert_eq!(tab.selected_popup.as_deref(), Some(pair.id.as_str()));
     thread::sleep(Duration::from_millis(300));
     assert_eq!(window.visits().len(), 3);
     // Stop reports the committed tabs' terminals but not t3's pending pair.
     let stopped = window.stop_generation(&mut supervisor);
-    for session in ["session-1", "session-2", "session-3", "session-4"] {
+    for session in ["terminal-1", "terminal-2", "terminal-3", "terminal-4"] {
         assert!(stopped.contains(&format!("\"{session}\"")), "{stopped}");
     }
-    assert!(!stopped.contains("\"session-5\""), "{stopped}");
+    assert!(!stopped.contains("\"terminal-5\""), "{stopped}");
 }
 
 #[test]
@@ -2521,7 +2521,7 @@ fn edit_from_files_runs_the_configured_editor_in_its_tab_and_hides_files() {
     };
     configure(&format!(r#"["{}", "--wait"]"#, editor.display()));
     let mut supervisor = window.spawn(&[]);
-    window.pair_launch("session-2");
+    window.pair_launch("terminal-2");
     let picked = window.eon(&[
         "tab",
         "directory",
@@ -2536,7 +2536,7 @@ fn edit_from_files_runs_the_configured_editor_in_its_tab_and_hides_files() {
         window.invoke_popup("y-show", "files", Some("u1")),
         Response::Snapshot(snapshot) if snapshot.tabs[0].selected_popup.as_deref() == Some("u1")
     ));
-    let files = live_identity(&window.generation().join("session-2.sock")).process_id;
+    let files = live_identity(&window.generation().join("terminal-2.sock")).process_id;
     let caller = process::environ(files)
         .split(|byte| *byte == 0)
         .find_map(|entry| entry.strip_prefix(b"EON_TERMINAL="))
@@ -2610,7 +2610,7 @@ fn closing_a_pending_pair_dismisses_it_and_starts_the_first_pane() {
     let mut supervisor = window.spawn(&[]);
     let generation = window.generation();
     let control = window.control();
-    window.pair_launch("session-2");
+    window.pair_launch("terminal-2");
 
     // The pair's Esc runs `eon popup hide`.
     let hidden = window.eon(&["popup", "hide", "u1"]);
@@ -2623,20 +2623,20 @@ fn closing_a_pending_pair_dismisses_it_and_starts_the_first_pane() {
         tab.panes()
             .map(|pane| pane.session.as_str())
             .collect::<Vec<_>>(),
-        ["session-1"]
+        ["terminal-1"]
     );
-    assert_eq!(tab.popups[0].session, "session-2");
-    assert!(generation.join("session-2.sock").exists());
-    assert!(!artifact_path(&generation.join("session-2.sock"), ".pending").exists());
+    assert_eq!(tab.popups[0].session, "terminal-2");
+    assert!(generation.join("terminal-2.sock").exists());
+    assert!(!artifact_path(&generation.join("terminal-2.sock"), ".pending").exists());
     assert_eq!(
         wait_for_lines(&window.panes_log, 1),
-        [format!("session-1|{}", window.launch.display())]
+        [format!("terminal-1|{}", window.launch.display())]
     );
 
     // A pending pair that exits is dismissed too.
     assert!(window.eon(&["tab", "create"]).status.success());
-    window.pair_launch("session-3");
-    fs::write(window.root.join("files-exit.session-3"), "").unwrap();
+    window.pair_launch("terminal-3");
+    fs::write(window.root.join("files-exit.terminal-3"), "").unwrap();
     let exited = wait_for_snapshot(&control, "pair-exit", |snapshot| {
         snapshot.tabs.len() == 2 && !snapshot.tabs[1].pending
     });
@@ -2644,22 +2644,22 @@ fn closing_a_pending_pair_dismisses_it_and_starts_the_first_pane() {
     assert_eq!(exited.tabs[1].panes().count(), 1);
     assert!(
         wait_for_lines(&window.panes_log, 2)
-            .contains(&format!("session-4|{}", window.home.display()))
+            .contains(&format!("terminal-4|{}", window.home.display()))
     );
 
     // Closing a pending tab stops its pair and starts no pane.
     assert!(window.eon(&["tab", "create"]).status.success());
-    window.pair_launch("session-5");
+    window.pair_launch("terminal-5");
     assert!(matches!(
         workspace_action(&control, "close-pending", Action::CloseTab { tab: "t3".into() }),
         Response::Snapshot(snapshot) if snapshot.tabs.len() == 2 && snapshot.active_tab == "t2"
     ));
-    wait_for_process_removal_of(&generation.join("session-5.sock"));
+    wait_for_process_removal_of(&generation.join("terminal-5.sock"));
     assert_eq!(log_lines(&window.panes_log).len(), 2);
 
     // Presentation detachment dismisses a pending pair without stopping it.
     assert!(window.eon(&["tab", "create"]).status.success());
-    window.pair_launch("session-6");
+    window.pair_launch("terminal-6");
     wait_for(&window.venus_pid);
     let venus: i32 = fs::read_to_string(&window.venus_pid)
         .unwrap()
@@ -2670,14 +2670,14 @@ fn closing_a_pending_pair_dismisses_it_and_starts_the_first_pane() {
     let detached = wait_for_snapshot(&control, "detached", |snapshot| {
         snapshot.tabs.len() == 3 && !snapshot.tabs[2].pending
     });
-    assert_eq!(detached.tabs[2].popups[0].session, "session-6");
+    assert_eq!(detached.tabs[2].popups[0].session, "terminal-6");
     assert_eq!(detached.tabs[2].panes().count(), 1);
-    assert!(generation.join("session-6.sock").exists());
+    assert!(generation.join("terminal-6.sock").exists());
     assert!(supervisor.child.try_wait().unwrap().is_none());
     assert!(window.visits().is_empty(), "closing adds no Zoxide history");
 
     // A tab whose pair cannot stop stays, and a later close finishes it.
-    fs::write(&window.fail_stop_once, "session-2").unwrap();
+    fs::write(&window.fail_stop_once, "terminal-2").unwrap();
     assert!(window.eon(&["focus", "t1"]).status.success());
     assert!(matches!(
         workspace_action(&control, "close-t1-partial", Action::CloseTab { tab: "t1".into() }),
@@ -2693,7 +2693,7 @@ fn closing_a_pending_pair_dismisses_it_and_starts_the_first_pane() {
 
     // A dismissal whose directory vanished stops the pair and drops its tab.
     assert!(window.eon(&["tab", "create"]).status.success());
-    window.pair_launch("session-8");
+    window.pair_launch("terminal-8");
     fs::remove_dir(&window.home).unwrap();
     let hidden = window.eon(&["popup", "hide", "u5"]);
     assert!(!hidden.status.success(), "{hidden:?}");
@@ -2701,7 +2701,7 @@ fn closing_a_pending_pair_dismisses_it_and_starts_the_first_pane() {
         snapshot.tabs.len() == 2 && pending_pair(snapshot).is_none()
     });
     assert!(failed.tabs.iter().all(|tab| tab.id != "t5"));
-    wait_for_process_removal_of(&generation.join("session-8.sock"));
+    wait_for_process_removal_of(&generation.join("terminal-8.sock"));
     assert!(supervisor.child.try_wait().unwrap().is_none());
     window.stop_generation(&mut supervisor);
 }
@@ -2800,9 +2800,9 @@ impl Drop for QuickSearch {
 fn hotkeys_switch_the_pair_screens_or_hide_it() {
     let window = PairWindow::new();
     let mut supervisor = window.spawn(&[]);
-    let launch = window.pair_launch("session-2");
+    let launch = window.pair_launch("terminal-2");
     let id = launch.client_id();
-    let socket = window.generation().join("session-2.quick.sock");
+    let socket = window.generation().join("terminal-2.quick.sock");
     let emit = format!("emit-to {id} plugin quick-search");
     assert!(
         window
@@ -2872,8 +2872,8 @@ fn hotkeys_switch_the_pair_screens_or_hide_it() {
     // new tab starts on quick search, which counts as shown while its fzf is
     // still starting: Alt+Shift+Y waits for it and switches to Files.
     assert!(window.eon(&["tab", "create"]).status.success());
-    let pending = window.pair_launch("session-3");
-    let pending_socket = window.generation().join("session-3.quick.sock");
+    let pending = window.pair_launch("terminal-3");
+    let pending_socket = window.generation().join("terminal-3.quick.sock");
     let still_pending = |snapshot: &Response| match snapshot {
         Response::Snapshot(snapshot) => {
             snapshot.tabs[1].pending && snapshot.tabs[1].selected_popup.as_deref() == Some("u2")
@@ -2926,9 +2926,9 @@ fn hotkeys_switch_the_pair_screens_or_hide_it() {
 fn hiding_a_starting_quick_search_lets_the_next_key_ask_again() {
     let window = PairWindow::new();
     let mut supervisor = window.spawn(&[]);
-    let launch = window.pair_launch("session-2");
+    let launch = window.pair_launch("terminal-2");
     let emit = format!("emit-to {} plugin quick-search", launch.client_id());
-    let socket = window.generation().join("session-2.quick.sock");
+    let socket = window.generation().join("terminal-2.quick.sock");
     assert!(
         window
             .eon(&[
@@ -2975,7 +2975,7 @@ fn hiding_a_starting_quick_search_lets_the_next_key_ask_again() {
 #[test]
 fn alt_shift_y_during_the_startup_anima_waits_for_quick_search() {
     let (window, mut supervisor) = anima_window();
-    let socket = window.generation().join("session-2.quick.sock");
+    let socket = window.generation().join("terminal-2.quick.sock");
 
     // The 3 s Anima is still playing.
     thread::sleep(Duration::from_millis(2300));
@@ -2999,7 +2999,7 @@ fn alt_shift_y_during_the_startup_anima_waits_for_quick_search() {
 #[test]
 fn alt_z_during_the_startup_anima_keeps_the_pending_tab_on_quick_search() {
     let (window, mut supervisor) = anima_window();
-    let socket = window.generation().join("session-2.quick.sock");
+    let socket = window.generation().join("terminal-2.quick.sock");
     for (id, wait) in [("anima-z-early", 300), ("anima-z-late", 2000)] {
         thread::sleep(Duration::from_millis(wait));
         assert!(
@@ -3032,7 +3032,7 @@ fn anima_window() -> (PairWindow, TestProcess) {
         "#!/bin/sh\nprintf '%s' \"$$\" > \"$EON_TEST_VENUS_PID\"\nprintf ready-v1\ncat >/dev/null\n",
     );
     let supervisor = window.spawn(&[]);
-    let launch = window.pair_launch("session-2");
+    let launch = window.pair_launch("terminal-2");
     assert!(
         launch.arguments.starts_with(&["--eon-anima".into()]),
         "{:?}",
@@ -3059,7 +3059,7 @@ fn recovery_stops_a_pending_pair_and_keeps_a_committed_files() {
         let generation = window.generation();
         // The supervisor holds the pair's lease once it answers.
         assert!(pending_pair(&window.inspect("started")).is_some());
-        let pair = live_identity(&generation.join("session-2.sock"));
+        let pair = live_identity(&generation.join("terminal-2.sock"));
         if committed {
             assert!(
                 window
@@ -3087,18 +3087,18 @@ fn recovery_stops_a_pending_pair_and_keeps_a_committed_files() {
             .collect::<Vec<_>>();
         if committed {
             // A committed tab's Files recovers as today's Files does, as a pane.
-            assert_eq!(sessions, ["session-1", "session-2"]);
+            assert_eq!(sessions, ["terminal-1", "terminal-2"]);
             assert!(process::exists(pair.process_id));
         } else {
             // A still-pending pair is stopped and the launch directory's pane starts.
-            assert_eq!(sessions, ["session-1"]);
+            assert_eq!(sessions, ["terminal-1"]);
             wait_for_process_removal(pair.process_id, "the pending pair was adopted");
             assert!(
                 wait_for_lines(&window.panes_log, 1)
-                    .contains(&format!("session-1|{}", window.launch.display()))
+                    .contains(&format!("terminal-1|{}", window.launch.display()))
             );
         }
-        assert!(!artifact_path(&generation.join("session-2.sock"), ".pending").exists());
+        assert!(!artifact_path(&generation.join("terminal-2.sock"), ".pending").exists());
         window.stop_generation(&mut replacement);
     }
 }
@@ -3118,8 +3118,8 @@ fn a_pending_pair_left_by_a_failed_rollback_is_stopped_by_recovery() {
         thread::sleep(Duration::from_millis(10));
     }
     wait_for_connection(&window.control());
-    let pair = live_identity(&generation.join("session-2.sock"));
-    let marker = artifact_path(&generation.join("session-2.sock"), ".pending");
+    let pair = live_identity(&generation.join("terminal-2.sock"));
+    let marker = artifact_path(&generation.join("terminal-2.sock"), ".pending");
     let marked = marker.exists();
 
     window.crash(&mut first);
@@ -3132,7 +3132,7 @@ fn a_pending_pair_left_by_a_failed_rollback_is_stopped_by_recovery() {
             .panes()
             .map(|pane| pane.session.as_str())
             .collect::<Vec<_>>(),
-        ["session-1"],
+        ["terminal-1"],
         "recovery adopted the failed pair as a pane"
     );
     wait_for_process_removal(pair.process_id, "recovery left the failed pair running");
@@ -3253,16 +3253,16 @@ fn stop_accounts_for_late_ready_pair_and_retains_partial_cleanup_owner() {
         );
         thread::sleep(Duration::from_millis(10));
     }
-    let pair = live_identity(&generation.join("session-2.sock"));
+    let pair = live_identity(&generation.join("terminal-2.sock"));
     let first = live_identity(&generation.join("orbit.sock"));
     assert!(
         invoke(binary, &runtime, &config, &["pane", "create", "--json"])
             .status
             .success()
     );
-    // The late pair keeps session-2, so the next terminal never reuses it.
-    let second = live_identity(&generation.join("session-3.sock"));
-    fs::write(&fail, "session-3").unwrap();
+    // The late pair keeps terminal-2, so the next terminal never reuses it.
+    let second = live_identity(&generation.join("terminal-3.sock"));
+    fs::write(&fail, "terminal-3").unwrap();
     let stop = ["window", "stop", "default", "--json"];
     let failed = invoke(binary, &runtime, &config, &stop);
     assert_eq!(failed.status.code(), Some(1), "{}", stdout(&failed));
@@ -3282,7 +3282,7 @@ fn stop_accounts_for_late_ready_pair_and_retains_partial_cleanup_owner() {
     let listed: serde_json::Value = serde_json::from_str(stdout(&inventory)).unwrap();
     assert_eq!(
         listed["windows"][0]["terminals"],
-        serde_json::json!(["session-3"]),
+        serde_json::json!(["terminal-3"]),
         "{listed}"
     );
     assert!(matches!(
@@ -3364,7 +3364,7 @@ fn stop_result_covers_queued_operation_and_managed_cleanup() {
         stop: supervisor.stop.clone(),
     };
     let deadline = Instant::now() + Duration::from_secs(5);
-    while !generation.join("session-2.sock.record").exists() {
+    while !generation.join("terminal-2.sock.record").exists() {
         assert!(Instant::now() < deadline, "queued pane did not start");
         thread::sleep(Duration::from_millis(10));
     }
@@ -3382,7 +3382,7 @@ fn stop_result_covers_queued_operation_and_managed_cleanup() {
         "{}",
         String::from_utf8_lossy(&result.stderr)
     );
-    assert!(stdout(&result).contains("session-1, session-2"));
+    assert!(stdout(&result).contains("terminal-1, terminal-2"));
     wait_for_successful_exit(&mut supervisor.child);
     assert!(!generation.exists());
     fs::remove_dir_all(root).unwrap();
@@ -3830,7 +3830,7 @@ fn failure_kinds_exit_with_distinct_statuses_with_and_without_json() {
             .args(arguments)
             .env("EON_RUNTIME_DIR", root.join("runtime"))
             .env("EON_CONFIG_HOME", root.join("config"))
-            .env("EON_TERMINAL", "session-1.other-build")
+            .env("EON_TERMINAL", "terminal-1.other-build")
             .output()
             .unwrap();
         assert_eq!(output.status.code(), Some(status), "{arguments:?}");
@@ -4434,7 +4434,7 @@ cat >/dev/null
 
     let workspace = invoke(&eon, &runtime, &config, &["workspace", "--json"]);
     assert_eq!(workspace.status.code(), Some(1));
-    assert!(stdout(&workspace).contains("\"code\":\"workspace-unavailable\""));
+    assert!(stdout(&workspace).contains("\"code\":\"session-unavailable\""));
     let wrong_mode = invoke(&binary, &runtime, &config, &[]);
     assert!(!wrong_mode.status.success());
     assert!(String::from_utf8_lossy(&wrong_mode.stderr).contains("usage: eonbase"));
@@ -4737,7 +4737,7 @@ fn workspace_requests_project_callers_and_close_only_the_target_workspace() {
         "second-pane",
         Action::CreatePane { focus: true },
     ));
-    let second = caller(&generation.join("session-2.sock"));
+    let second = caller(&generation.join("terminal-2.sock"));
     let created = snapshot(protocol_action_from(
         &control,
         "new",
@@ -4752,12 +4752,12 @@ fn workspace_requests_project_callers_and_close_only_the_target_workspace() {
             created.workspace.as_str(),
             created.active_workspace.as_str()
         ),
-        ("w1", "w2")
+        ("s1", "s2")
     );
     assert_eq!(stable_tabs(&created.tabs), stable_tabs(&original.tabs));
     assert_eq!(created.workspaces.len(), 2);
     let shown = snapshot(workspace_action(&control, "shown", Action::Inspect));
-    assert_eq!(shown.workspace, "w2");
+    assert_eq!(shown.workspace, "s2");
     let foreign_tab = protocol_action_from(
         &control,
         "foreign-tab",
@@ -4785,14 +4785,14 @@ fn workspace_requests_project_callers_and_close_only_the_target_workspace() {
             workspace: "original".into(),
         },
     ));
-    assert_eq!(switched.workspace, "w1");
+    assert_eq!(switched.workspace, "s1");
     assert_eq!(
         stable_tabs(
             &snapshot(workspace_action(
                 &control,
                 "same",
                 Action::SwitchWorkspace {
-                    workspace: "w1".into()
+                    workspace: "s1".into()
                 }
             ))
             .tabs
@@ -4803,7 +4803,7 @@ fn workspace_requests_project_callers_and_close_only_the_target_workspace() {
         &control,
         "back",
         Action::SwitchWorkspace {
-            workspace: "w2".into(),
+            workspace: "s2".into(),
         },
     ));
     let inspected = snapshot(protocol_action_from(
@@ -4812,13 +4812,13 @@ fn workspace_requests_project_callers_and_close_only_the_target_workspace() {
         Some(&first),
         ProtocolAction::Workspace(Action::Inspect),
     ));
-    assert_eq!(inspected.workspace, "w1");
+    assert_eq!(inspected.workspace, "s1");
     assert_eq!(stable_tabs(&inspected.tabs), stable_tabs(&original.tabs));
 
     // The first confirmed stop is pruned; the failing terminal and workspace remain.
-    fs::write(&fail, "session-2").unwrap();
+    fs::write(&fail, "terminal-2").unwrap();
     assert!(
-        matches!(workspace_action(&control, "close-fails", Action::CloseWorkspace { workspace: "w1".into() }), Response::Failure(error) if error.code == "workspace-close-failed" && error.detail.contains("injected stop failure"))
+        matches!(workspace_action(&control, "close-fails", Action::CloseWorkspace { workspace: "s1".into() }), Response::Failure(error) if error.code == "session-close-failed" && error.detail.contains("injected stop failure"))
     );
     let remaining = snapshot(protocol_action_from(
         &control,
@@ -4826,7 +4826,7 @@ fn workspace_requests_project_callers_and_close_only_the_target_workspace() {
         Some(&second),
         ProtocolAction::Workspace(Action::Inspect),
     ));
-    assert_eq!(remaining.workspace, "w1");
+    assert_eq!(remaining.workspace, "s1");
     assert_eq!(
         remaining.tabs[0]
             .panes()
@@ -4834,20 +4834,20 @@ fn workspace_requests_project_callers_and_close_only_the_target_workspace() {
             .collect::<Vec<_>>(),
         ["p2"]
     );
-    assert_eq!(remaining.active_workspace, "w2");
+    assert_eq!(remaining.active_workspace, "s2");
     assert!(
-        matches!(workspace_action(&control, "close-fails", Action::CloseWorkspace { workspace: "w1".into() }), Response::Failure(error) if error.code == "duplicate-request")
+        matches!(workspace_action(&control, "close-fails", Action::CloseWorkspace { workspace: "s1".into() }), Response::Failure(error) if error.code == "duplicate-request")
     );
     let closed = snapshot(protocol_action_from(
         &control,
         "retry-close",
         Some(&second),
         ProtocolAction::Workspace(Action::CloseWorkspace {
-            workspace: "w1".into(),
+            workspace: "s1".into(),
         }),
     ));
     assert_eq!(
-        closed.workspace, "w2",
+        closed.workspace, "s2",
         "a removed caller workspace falls back to the shown survivor"
     );
     assert_eq!(
@@ -4865,7 +4865,7 @@ fn workspace_requests_project_callers_and_close_only_the_target_workspace() {
             &control,
             "last",
             Action::CloseWorkspace {
-                workspace: "w2".into()
+                workspace: "s2".into()
             }
         ),
         Response::Ended(_)
@@ -4941,29 +4941,29 @@ fn workspace_cli_lists_creates_switches_renames_and_closes() {
     let entry = |id: &str, name: Option<&str>, shown: bool| {
         (id.to_owned(), name.map(str::to_owned), shown, 1)
     };
-    assert_eq!(list(), [entry("w1", None, true)]);
+    assert_eq!(list(), [entry("s1", None, true)]);
 
-    // A creation names its wN in `created`, whether or not it is shown.
+    // A creation names its sN in `created`, whether or not it is shown.
     let created = read(&["workspace", "new", "--name", " alpha ", "--json"]);
-    assert_eq!(created["created"], "w2");
+    assert_eq!(created["created"], "s2");
     assert_eq!(
         list(),
-        [entry("w1", None, false), entry("w2", Some("alpha"), true)]
+        [entry("s1", None, false), entry("s2", Some("alpha"), true)]
     );
     let background = read(&["workspace", "new", "--no-focus", "--json"]);
     assert_eq!(
         (&background["workspace"], &background["created"]),
-        (&"w2".into(), &"w3".into())
+        (&"s2".into(), &"s3".into())
     );
     let three = [
-        entry("w1", None, false),
-        entry("w2", Some("alpha"), true),
-        entry("w3", None, false),
+        entry("s1", None, false),
+        entry("s2", Some("alpha"), true),
+        entry("s3", None, false),
     ];
     assert_eq!(list(), three);
 
     // A name that matches two workspaces changes nothing.
-    read(&["workspace", "rename", "w3", "alpha", "--json"]);
+    read(&["workspace", "rename", "s3", "alpha", "--json"]);
     let ambiguous = invoke(
         &binary,
         &runtime,
@@ -4972,27 +4972,27 @@ fn workspace_cli_lists_creates_switches_renames_and_closes() {
     );
     assert_eq!(ambiguous.status.code(), Some(1));
     let error: serde_json::Value = serde_json::from_slice(&ambiguous.stdout).unwrap();
-    assert_eq!(error["error"]["code"], "ambiguous-workspace");
+    assert_eq!(error["error"]["code"], "ambiguous-session");
     assert!(
         error["error"]["detail"]
             .as_str()
             .unwrap()
-            .contains("w2, w3")
+            .contains("s2, s3")
     );
     let unasked = invoke(&binary, &runtime, &config, &["workspace", "close", "alpha"]);
     assert_eq!(unasked.status.code(), Some(1));
     assert!(!String::from_utf8_lossy(&unasked.stderr).contains("Close workspace"));
     let renamed = [
-        entry("w1", None, false),
-        entry("w2", Some("alpha"), true),
-        entry("w3", Some("alpha"), false),
+        entry("s1", None, false),
+        entry("s2", Some("alpha"), true),
+        entry("s3", Some("alpha"), false),
     ];
     assert_eq!(list(), renamed);
 
     // Switch by ID, then by name; the caller's own workspace is renamed through EON_TERMINAL.
     assert_eq!(
-        read(&["workspace", "switch", "w3", "--json"])["workspace"],
-        "w3"
+        read(&["workspace", "switch", "s3", "--json"])["workspace"],
+        "s3"
     );
     let environment = process::environ(live_identity(&generation.join("orbit.sock")).process_id);
     let first = environment
@@ -5015,17 +5015,17 @@ fn workspace_cli_lists_creates_switches_renames_and_closes() {
     assert_eq!(
         list(),
         [
-            entry("w1", Some("main"), false),
-            entry("w2", Some("alpha"), false),
-            entry("w3", Some("alpha"), true),
+            entry("s1", Some("main"), false),
+            entry("s2", Some("alpha"), false),
+            entry("s3", Some("alpha"), true),
         ]
     );
     read(&["workspace", "switch", "main", "--json"]);
-    read(&["workspace", "rename", "w3", "", "--json"]);
+    read(&["workspace", "rename", "s3", "", "--json"]);
     let shown_main = [
-        entry("w1", Some("main"), true),
-        entry("w2", Some("alpha"), false),
-        entry("w3", None, false),
+        entry("s1", Some("main"), true),
+        entry("s2", Some("alpha"), false),
+        entry("s3", None, false),
     ];
     assert_eq!(list(), shown_main);
 
@@ -5034,14 +5034,14 @@ fn workspace_cli_lists_creates_switches_renames_and_closes() {
     assert_eq!(cancelled.status.code(), Some(1));
     assert!(
         String::from_utf8_lossy(&cancelled.stderr)
-            .contains("Close workspace w2 (alpha)? This stops every terminal in it.")
+            .contains("Close workspace s2 (alpha)? This stops every terminal in it.")
     );
     assert_eq!(stdout(&cancelled), "");
     assert!(String::from_utf8_lossy(&cancelled.stderr).contains(
-        "error not-confirmed: workspace w2 stays open; no yes was read and stdin is not a terminal"
+        "error not-confirmed: workspace s2 stays open; no yes was read and stdin is not a terminal"
     ));
     assert_eq!(list(), shown_main);
-    let unknown = invoke(&binary, &runtime, &config, &["workspace", "close", "w9"]);
+    let unknown = invoke(&binary, &runtime, &config, &["workspace", "close", "s9"]);
     assert_eq!(unknown.status.code(), Some(3));
     assert!(!String::from_utf8_lossy(&unknown.stderr).contains("Close workspace"));
     assert_eq!(list(), shown_main);
@@ -5067,22 +5067,22 @@ fn workspace_cli_lists_creates_switches_renames_and_closes() {
     assert!(confirmed.wait_with_output().unwrap().status.success());
     assert_eq!(
         list(),
-        [entry("w1", Some("main"), true), entry("w3", None, false)]
+        [entry("s1", Some("main"), true), entry("s3", None, false)]
     );
     let human = invoke(&binary, &runtime, &config, &["workspaces"]);
     assert!(stdout(&human).ends_with(
-        "workspace w1\nw1 shown=true tabs=1 attention=none recency=0 name=\"main\"\n\
-         w3 shown=false tabs=1 attention=none recency=1 name=none\n"
+        "workspace s1\ns1 shown=true tabs=1 attention=none recency=0 name=\"main\"\n\
+         s3 shown=false tabs=1 attention=none recency=1 name=none\n"
     ));
     assert!(supervisor.child.try_wait().unwrap().is_none());
 
     // The last workspace's close quits the window.
-    read(&["workspace", "close", "w3", "--json"]);
-    let last = invoke(&binary, &runtime, &config, &["workspace", "close", "w1"]);
+    read(&["workspace", "close", "s3", "--json"]);
+    let last = invoke(&binary, &runtime, &config, &["workspace", "close", "s1"]);
     assert!(String::from_utf8_lossy(&last.stderr).contains(
-        "Close workspace w1 (main)? This quits the window and stops every terminal in it."
+        "Close workspace s1 (main)? This quits the window and stops every terminal in it."
     ));
-    assert_eq!(list(), [entry("w1", Some("main"), true)]);
+    assert_eq!(list(), [entry("s1", Some("main"), true)]);
     assert!(read(&["workspace", "close", "main", "--json"])["ended"].is_object());
     wait_for_successful_exit(&mut supervisor.child);
     fs::remove_dir_all(root).unwrap();
@@ -5140,7 +5140,7 @@ fn workspace_picker_switches_creates_closes_and_cancels() {
     };
     let entry =
         |id: &str, name: Option<&str>, shown: bool| (id.to_owned(), name.map(str::to_owned), shown);
-    // Each workspace's first terminal: w1 is the initial one, then one per `workspace new`.
+    // Each workspace's first terminal: s1 is the initial one, then one per `workspace new`.
     let caller = |endpoint: &str| {
         let environment = process::environ(live_identity(&generation.join(endpoint)).process_id);
         environment
@@ -5151,17 +5151,17 @@ fn workspace_picker_switches_creates_closes_and_cancels() {
     };
     read(&["workspace", "new", "--name", "alpha", "--json"]);
     read(&["workspace", "new", "--no-focus", "--json"]);
-    read(&["workspace", "switch", "w1", "--json"]);
+    read(&["workspace", "switch", "s1", "--json"]);
     let three = [
-        entry("w1", None, true),
-        entry("w2", Some("alpha"), false),
-        entry("w3", None, false),
+        entry("s1", None, true),
+        entry("s2", Some("alpha"), false),
+        entry("s3", None, false),
     ];
     assert_eq!(list(), three);
     let (first, second, third) = (
         caller("orbit.sock"),
-        caller("session-2.sock"),
-        caller("session-3.sock"),
+        caller("terminal-2.sock"),
+        caller("terminal-3.sock"),
     );
 
     // A scripted fzf records the rows it is given and answers in turn: a row, a query that
@@ -5178,7 +5178,7 @@ fn workspace_picker_switches_creates_closes_and_cancels() {
 n=$(($(cat '{count}') + 1)); echo "$n" > '{count}'
 cat > '{rows}'$n
 case $n in
-  1) printf 'w3\n\nw3\tw3\t1 tab\n';;
+  1) printf 's3\n\ns3\ts3\t1 tab\n';;
   2) printf 'fresh\n';;
   *) exit 130;;
 esac
@@ -5241,34 +5241,34 @@ esac
     let rows = |run: u32| fs::read_to_string(format!("{}{run}", recorded.display())).unwrap();
 
     // Every workspace, most recently shown first, the shown one last and marked; a row shows it.
-    popup("eon-workspaces", &first, b"");
+    popup("eon-sessions", &first, b"");
     assert_eq!(
         rows(1),
-        "w2\talpha\t1 tab\nw3\tw3\t1 tab\nw1\tw1\t1 tab · shown\n"
+        "s2\talpha\t1 tab\ns3\ts3\t1 tab\ns1\ts1\t1 tab · shown\n"
     );
     assert_eq!(
         list(),
         [
-            entry("w1", None, false),
-            entry("w2", Some("alpha"), false),
-            entry("w3", None, true),
+            entry("s1", None, false),
+            entry("s2", Some("alpha"), false),
+            entry("s3", None, true),
         ]
     );
     // A query that matches no row creates a workspace of that name and shows it.
-    popup("eon-workspaces", &third, b"");
+    popup("eon-sessions", &third, b"");
     assert_eq!(
         rows(2),
-        "w1\tw1\t1 tab\nw2\talpha\t1 tab\nw3\tw3\t1 tab · shown\n"
+        "s1\ts1\t1 tab\ns2\talpha\t1 tab\ns3\ts3\t1 tab · shown\n"
     );
     let four = [
-        entry("w1", None, false),
-        entry("w2", Some("alpha"), false),
-        entry("w3", None, false),
-        entry("w4", Some("fresh"), true),
+        entry("s1", None, false),
+        entry("s2", Some("alpha"), false),
+        entry("s3", None, false),
+        entry("s4", Some("fresh"), true),
     ];
     assert_eq!(list(), four);
     // Escape changes nothing.
-    popup("eon-workspaces", &third, b"");
+    popup("eon-sessions", &third, b"");
     assert_eq!(list(), four);
 
     // Commands renames the caller's workspace, even a hidden one, closes the popup's own
@@ -5283,7 +5283,7 @@ esac
             format!(
                 r#"#!/bin/sh
 case "$*" in
-  *--print-query*) cat > /dev/null; printf '\n\nw1\tRenamed\t1 tab\n';;
+  *--print-query*) cat > /dev/null; printf '\n\ns1\tRenamed\t1 tab\n';;
   *--bind=enter:print-query*) printf 'Renamed\0';;
   *) while IFS="$(printf '\t')" read -r index rest; do
        case "$rest" in '{menu}'*) printf '%s\tchosen\n' "$index";; esac
@@ -5297,39 +5297,39 @@ esac
     assert_eq!(
         list(),
         [
-            entry("w1", Some("Renamed"), true),
-            entry("w3", None, false),
-            entry("w4", Some("fresh"), false),
+            entry("s1", Some("Renamed"), true),
+            entry("s3", None, false),
+            entry("s4", Some("fresh"), false),
         ]
     );
 
     // A row whose workspace closes while the picker is open switches nothing, even when another
-    // workspace now carries that wN as its name.
+    // workspace now carries that sN as its name.
     executable(
         &tools.join("fzf"),
         format!(
             r#"#!/bin/sh
 cat > /dev/null
-'{eon}' workspace close w3 --json > /dev/null
-'{eon}' workspace rename w4 w3 --json > /dev/null
-printf '\n\nw3\tw3\t1 tab\n'
+'{eon}' workspace close s3 --json > /dev/null
+'{eon}' workspace rename s4 s3 --json > /dev/null
+printf '\n\ns3\ts3\t1 tab\n'
 "#,
             eon = binary.display(),
         ),
     );
-    let output = popup_status("eon-workspaces", &first, b"\n", false);
+    let output = popup_status("eon-sessions", &first, b"\n", false);
     assert_eq!(output.status.code(), Some(3));
     let stale = [
-        entry("w1", Some("Renamed"), true),
-        entry("w4", Some("w3"), false),
+        entry("s1", Some("Renamed"), true),
+        entry("s4", Some("s3"), false),
     ];
     assert_eq!(list(), stale);
     // Ctrl+X on that stale row closes nothing and asks nothing.
     executable(
         &tools.join("fzf"),
-        "#!/bin/sh\ncat > /dev/null\nprintf '\\nctrl-x\\nw3\\tw3\\t1 tab\\n'\n",
+        "#!/bin/sh\ncat > /dev/null\nprintf '\\nctrl-x\\ns3\\ts3\\t1 tab\\n'\n",
     );
-    let output = popup_status("eon-workspaces", &first, b"yes\n\n", false);
+    let output = popup_status("eon-sessions", &first, b"yes\n\n", false);
     assert_eq!(output.status.code(), Some(3));
     assert!(!String::from_utf8_lossy(&output.stderr).contains("Close workspace"));
     assert_eq!(list(), stale);
@@ -5339,9 +5339,9 @@ printf '\n\nw3\tw3\t1 tab\n'
     // Enter; a terminal's "no" lists again, as the pseudoterminal steps below show.
     read(&["workspace", "new", "--no-focus", "--json"]);
     read(&["workspace", "new", "--no-focus", "--json"]);
-    read(&["workspace", "switch", "w6", "--json"]);
-    read(&["workspace", "switch", "w5", "--json"]);
-    read(&["workspace", "switch", "w1", "--json"]);
+    read(&["workspace", "switch", "s6", "--json"]);
+    read(&["workspace", "switch", "s5", "--json"]);
+    read(&["workspace", "switch", "s1", "--json"]);
     fs::write(&count, "0").unwrap();
     executable(
         &tools.join("fzf"),
@@ -5351,10 +5351,10 @@ case "$*" in *--expect=ctrl-x*) ;; *) exit 2;; esac
 n=$(($(cat '{count}') + 1)); echo "$n" > '{count}'
 cat > '{rows}'$n
 case $n in
-  1) printf '\nctrl-x\nw4\tw3\t1 tab\n';;
-  2) printf 'w5\nctrl-x\nw5\tw5\t1 tab\n';;
-  3|5) printf '\nctrl-x\nw1\tRenamed\t1 tab · shown\n';;
-  6) printf '\nctrl-x\nw5\tw5\t1 tab · shown\n';;
+  1) printf '\nctrl-x\ns4\ts3\t1 tab\n';;
+  2) printf 's5\nctrl-x\ns5\ts5\t1 tab\n';;
+  3|5) printf '\nctrl-x\ns1\tRenamed\t1 tab · shown\n';;
+  6) printf '\nctrl-x\ns5\ts5\t1 tab · shown\n';;
   *) exit 130;;
 esac
 "#,
@@ -5362,17 +5362,17 @@ esac
             rows = recorded.display(),
         ),
     );
-    let output = popup_status("eon-workspaces", &first, b"yes\nno\n", false);
+    let output = popup_status("eon-sessions", &first, b"yes\nno\n", false);
     assert_eq!(output.status.code(), Some(1));
-    assert!(String::from_utf8_lossy(&output.stderr).contains("error not-confirmed: workspace w5"));
+    assert!(String::from_utf8_lossy(&output.stderr).contains("error not-confirmed: workspace s5"));
     assert_eq!(
         rows(2),
-        "w5\tw5\t1 tab\nw6\tw6\t1 tab\nw1\tRenamed\t1 tab · shown\n"
+        "s5\ts5\t1 tab\ns6\ts6\t1 tab\ns1\tRenamed\t1 tab · shown\n"
     );
     let kept = [
-        entry("w1", Some("Renamed"), true),
-        entry("w6", None, false),
-        entry("w5", None, false),
+        entry("s1", Some("Renamed"), true),
+        entry("s6", None, false),
+        entry("s5", None, false),
     ];
     assert_eq!(list(), kept);
     let fzf_runs = || {
@@ -5383,25 +5383,25 @@ esac
             .unwrap()
     };
     // A terminal's "no" to closing the picker's own workspace keeps it and lists again.
-    let output = popup_status("eon-workspaces", &first, b"no\n", true);
+    let output = popup_status("eon-sessions", &first, b"no\n", true);
     assert!(output.status.success());
-    assert!(String::from_utf8_lossy(&output.stdout).contains("workspace w1 stays open"));
+    assert!(String::from_utf8_lossy(&output.stdout).contains("workspace s1 stays open"));
     assert_eq!(fzf_runs(), 4);
     assert_eq!(list(), kept);
     // Ctrl+X on the picker's own workspace closes it, ends the picker and shows the most
     // recently shown remaining workspace.
-    let last = caller("session-5.sock");
-    popup("eon-workspaces", &first, b"yes\n");
+    let last = caller("terminal-5.sock");
+    popup("eon-sessions", &first, b"yes\n");
     assert_eq!(fzf_runs(), 5);
-    assert_eq!(list(), [entry("w6", None, false), entry("w5", None, true)]);
+    assert_eq!(list(), [entry("s6", None, false), entry("s5", None, true)]);
     // Declining the last workspace's close keeps the window and lists again.
-    read(&["workspace", "close", "w6", "--json"]);
-    let output = popup_status("eon-workspaces", &last, b"no\n", true);
+    read(&["workspace", "close", "s6", "--json"]);
+    let output = popup_status("eon-sessions", &last, b"no\n", true);
     assert!(output.status.success());
-    assert!(String::from_utf8_lossy(&output.stdout).contains("workspace w5 stays open"));
+    assert!(String::from_utf8_lossy(&output.stdout).contains("workspace s5 stays open"));
     assert_eq!(fzf_runs(), 7);
-    assert_eq!(list(), [entry("w5", None, true)]);
-    assert!(read(&["workspace", "close", "w5", "--json"])["ended"].is_object());
+    assert_eq!(list(), [entry("s5", None, true)]);
+    assert!(read(&["workspace", "close", "s5", "--json"])["ended"].is_object());
     wait_for_successful_exit(&mut supervisor.child);
     fs::remove_dir_all(root).unwrap();
 }
@@ -5436,7 +5436,7 @@ fn workspace_target_failures_are_explicit_and_bounded() {
     // An older EONW cannot validate the opaque caller; never guess another owner.
     let done = root.join("done");
     let server = older_supervisor(&runtime, id, &done);
-    for caller in [None, Some("session-1.unknown")] {
+    for caller in [None, Some("terminal-1.unknown")] {
         let mut command = eon_command(binary);
         if let Some(caller) = caller {
             command.env("EON_TERMINAL", caller);
@@ -5472,7 +5472,7 @@ fn workspace_target_failures_are_explicit_and_bounded() {
     let output = eon_command(binary)
         .args(["workspace", "--json"])
         .env("EON_RUNTIME_DIR", &runtime)
-        .env("EON_TERMINAL", "session-1.unknown")
+        .env("EON_TERMINAL", "terminal-1.unknown")
         .output()
         .unwrap();
     assert_eq!(output.status.code(), Some(4), "{}", stdout(&output));
@@ -5573,7 +5573,7 @@ fn workspace_control_follows_the_exact_caller_across_generations() {
             .unwrap()
     };
     assert!(
-        matches!(workspace_action(&previous_control, "hide-caller", Action::NewWorkspace { name: Some("shown".into()), focus: true }), Response::Snapshot(snapshot) if snapshot.workspace == "w2")
+        matches!(workspace_action(&previous_control, "hide-caller", Action::NewWorkspace { name: Some("shown".into()), focus: true }), Response::Snapshot(snapshot) if snapshot.workspace == "s2")
     );
     let inspected = from(&["workspace", "--json"]);
     assert!(inspected.status.success(), "{}", stdout(&inspected));
@@ -5591,7 +5591,7 @@ fn workspace_control_follows_the_exact_caller_across_generations() {
     let previous_id = previous_runtime.file_name().unwrap().to_str().unwrap();
     assert_eq!(described["generation"], previous_id);
     assert_eq!(described["window"], serde_json::Value::Null);
-    assert_eq!(described["workspace"], "w1");
+    assert_eq!(described["workspace"], "s1");
     let older = generation_listener(&runtime, "g1-00000000000000000000000000000002");
     let older = thread::spawn(move || {
         let (mut stream, _) = older.accept().unwrap();
@@ -5621,11 +5621,11 @@ fn workspace_control_follows_the_exact_caller_across_generations() {
         assert!(outside.status.success(), "{}", stdout(&outside));
         let result: serde_json::Value = serde_json::from_slice(&outside.stdout).unwrap();
         assert_eq!(result["generation"], previous_id);
-        assert_eq!(result["workspace"], "w2");
+        assert_eq!(result["workspace"], "s2");
         let inside = from(&arguments);
         assert!(inside.status.success(), "{}", stdout(&inside));
         let result: serde_json::Value = serde_json::from_slice(&inside.stdout).unwrap();
-        assert_eq!(result["workspace"], "w1");
+        assert_eq!(result["workspace"], "s1");
     }
     let wrong = from(&[
         "pane",
@@ -5639,11 +5639,11 @@ fn workspace_control_follows_the_exact_caller_across_generations() {
     let human = from(&["workspace"]);
     assert!(human.status.success());
     assert!(stdout(&human).starts_with(&format!(
-        "generation {previous_id}\nwindow default\nworkspace w1\n"
+        "generation {previous_id}\nwindow default\nworkspace s1\n"
     )));
     for token in [
         String::from_utf8(caller.to_vec()).unwrap() + "0",
-        "session-1".into(),
+        "terminal-1".into(),
         "not a terminal".into(),
         "".into(),
     ] {
@@ -5677,7 +5677,7 @@ fn workspace_control_follows_the_exact_caller_across_generations() {
     else {
         panic!("cannot inspect shown workspace");
     };
-    assert_eq!(shown.workspace, "w2");
+    assert_eq!(shown.workspace, "s2");
     assert_eq!(shown.tabs[0].panes().count(), 1);
     // Caller discovery also works when this build's supervisor has ended.
     fs::write(&current.stop, "").unwrap();
@@ -5821,7 +5821,7 @@ fn commands_from_a_terminal_target_its_column_and_stale_callers_change_nothing()
             .unwrap()
     };
     let expected_caller = serde_json::json!({
-        "terminal": "session-1", "tab": "t1", "pane": "p1", "popup": null
+        "terminal": "terminal-1", "tab": "t1", "pane": "p1", "popup": null
     });
     for arguments in [
         vec!["workspace", "--json"],
@@ -5836,7 +5836,7 @@ fn commands_from_a_terminal_target_its_column_and_stale_callers_change_nothing()
     assert!(human.status.success(), "{}", stdout(&human));
     assert!(
         stdout(&human)
-            .contains("workspace w1\ncaller terminal=session-1 tab=t1 pane=p1 popup=none\n")
+            .contains("workspace s1\ncaller terminal=terminal-1 tab=t1 pane=p1 popup=none\n")
     );
     for json in [false, true] {
         let output = eon_command(&binary)
@@ -6194,7 +6194,7 @@ fn delayed_second_cli_receives_committed_workspace_and_controls_three_sessions()
     assert_eq!(stdout(&human).matches("  pane ").count(), 3);
     // Each pane names its terminal, and so does each busy line.
     assert_eq!(stdout(&human).matches("\nbusy ").count(), 3);
-    assert_eq!(stdout(&human).matches(" terminal=session-").count(), 6);
+    assert_eq!(stdout(&human).matches(" terminal=terminal-").count(), 6);
 
     let mut incompatible = encode_request(&Request {
         id: "incompatible-1".into(),
@@ -6222,7 +6222,7 @@ fn delayed_second_cli_receives_committed_workspace_and_controls_three_sessions()
     assert!(snapshot.contains("\"id\":\"p3\""));
     assert_eq!(snapshot.matches("\"session\":").count(), 3);
 
-    for endpoint in ["orbit.sock", "session-2.sock", "session-3.sock"] {
+    for endpoint in ["orbit.sock", "terminal-2.sock", "terminal-3.sock"] {
         let endpoint = generation.join(endpoint);
         wait_for(&endpoint);
         let pid = live_identity(&endpoint).process_id as i32;
@@ -6246,7 +6246,7 @@ fn delayed_second_cli_receives_committed_workspace_and_controls_three_sessions()
     assert!(stdout(&moved).contains("{\"id\":\"p3\",\"column\":2,\"expanded\":true,"));
 
     // Closing a pane stops exactly its terminal and prunes it like an exit.
-    let second = live_identity(&generation.join("session-2.sock")).process_id;
+    let second = live_identity(&generation.join("terminal-2.sock")).process_id;
     let closed = invoke(
         &binary,
         &runtime,
@@ -6578,15 +6578,15 @@ fn tab_directory_retargets_future_sessions_without_crossing_tabs() {
     let before = invoke(&binary, &runtime, &config, &["workspace", "--json"]);
     let failed = invoke(&binary, &runtime, &config, &["pane", "create", "--json"]);
     assert_eq!(failed.status.code(), Some(1));
-    assert!(stdout(&failed).contains("\"code\":\"session-start\""));
+    assert!(stdout(&failed).contains("\"code\":\"terminal-start\""));
     let after = invoke(&binary, &runtime, &config, &["workspace", "--json"]);
     assert_eq!(
         stable_workspace_json(&before),
         stable_workspace_json(&after)
     );
-    // Pairs took session-2 and session-3, panes session-1 and 4 to 6.
-    assert!(!generation.join("session-7.sock").exists());
-    assert!(!artifact_path(&generation.join("session-7.sock"), ".record").exists());
+    // Pairs took terminal-2 and terminal-3, panes terminal-1 and 4 to 6.
+    assert!(!generation.join("terminal-7.sock").exists());
+    assert!(!artifact_path(&generation.join("terminal-7.sock"), ".record").exists());
 
     let deadline = Instant::now() + Duration::from_secs(5);
     while fs::read_to_string(&orbit_log)
@@ -6608,11 +6608,11 @@ fn tab_directory_retargets_future_sessions_without_crossing_tabs() {
     }
     let orbit_directories = fs::read_to_string(&orbit_log).unwrap();
     for expected in [
-        format!("session-1 {}", first_directory.display()),
-        format!("session-2 {}", first_directory.display()),
-        format!("session-4 {}", first_directory.display()),
-        format!("session-5 {}", second_directory.display()),
-        format!("session-6 {}", first_directory.display()),
+        format!("terminal-1 {}", first_directory.display()),
+        format!("terminal-2 {}", first_directory.display()),
+        format!("terminal-4 {}", first_directory.display()),
+        format!("terminal-5 {}", second_directory.display()),
+        format!("terminal-6 {}", first_directory.display()),
     ] {
         assert!(orbit_directories.lines().any(|line| line == expected));
     }
@@ -6796,7 +6796,7 @@ fn session_exit_prunes_the_workspace_and_the_last_exit_closes_eon() {
             String::from_utf8_lossy(&pane.stderr)
         );
 
-        let peer = live_identity(&generation.join("session-2.sock"));
+        let peer = live_identity(&generation.join("terminal-2.sock"));
         if unclean {
             let identity = live_identity(&generation.join("orbit.sock"));
             // SAFETY: this exact still-owned Orbit process belongs to the test.
@@ -6820,7 +6820,7 @@ fn session_exit_prunes_the_workspace_and_the_last_exit_closes_eon() {
             thread::sleep(Duration::from_millis(10));
         }
         assert!(supervisor.child.try_wait().unwrap().is_none());
-        assert_eq!(live_identity(&generation.join("session-2.sock")), peer);
+        assert_eq!(live_identity(&generation.join("terminal-2.sock")), peer);
         assert!(!artifact_path(&generation.join("orbit.sock"), ".record").exists());
         let pid: i32 = fs::read_to_string(&venus_pid).unwrap().parse().unwrap();
         // SAFETY: signal 0 performs existence/permission checking without sending a signal.
@@ -6872,7 +6872,7 @@ fn closing_the_final_tab_ends_the_window_and_its_terminals() {
     wait_for(&venus_pid);
     let pane = invoke(&binary, &runtime, &config, &["pane", "create", "--json"]);
     assert!(pane.status.success(), "{}", stdout(&pane));
-    let terminals = ["orbit.sock", "session-2.sock"]
+    let terminals = ["orbit.sock", "terminal-2.sock"]
         .map(|endpoint| live_identity(&generation.join(endpoint)).process_id);
 
     let closed = invoke(
@@ -6981,12 +6981,12 @@ fn a_workspace_final_close_shows_the_recent_one_and_attach_keeps_it() {
     // launch, and each new terminal before the reply that shows it.
     assert_named(
         &attach_log,
-        &["session-1".into()],
+        &["terminal-1".into()],
         first_venus,
         Duration::from_secs(5),
     );
     let mut later = Vec::new();
-    for id in ["w2", "w3"] {
+    for id in ["s2", "s3"] {
         let created = snapshot(workspace_action(
             &control,
             &format!("new-{id}"),
@@ -7001,28 +7001,28 @@ fn a_workspace_final_close_shows_the_recent_one_and_attach_keeps_it() {
         assert_named(&attach_log, &sessions, first_venus, Duration::ZERO);
         later.extend(sessions);
     }
-    // Shown w1, w2, w3, then w1 again: closing w1 shows w3, the most recent, rather than
-    // its following sibling or the first remaining workspace, both w2.
+    // Shown s1, s2, s3, then s1 again: closing s1 shows s3, the most recent, rather than
+    // its following sibling or the first remaining workspace, both s2.
     let first = snapshot(workspace_action(
         &control,
         "back",
         Action::SwitchWorkspace {
-            workspace: "w1".into(),
+            workspace: "s1".into(),
         },
     ));
     assert_eq!(first.tabs.len(), 1);
     let closed = snapshot(workspace_action(
         &control,
-        "close-w1",
+        "close-s1",
         Action::CloseTab {
             tab: first.active_tab.clone(),
         },
     ));
     assert_eq!(
         (closed.workspace.as_str(), closed.active_workspace.as_str()),
-        ("w3", "w3")
+        ("s3", "s3")
     );
-    assert_eq!(ids(&closed), ["w2", "w3"]);
+    assert_eq!(ids(&closed), ["s2", "s3"]);
     assert!(supervisor.child.try_wait().unwrap().is_none());
     assert!(process::exists(first_venus));
 
@@ -7057,25 +7057,25 @@ fn a_workspace_final_close_shows_the_recent_one_and_attach_keeps_it() {
             presented.workspace.as_str(),
             presented.active_workspace.as_str()
         ),
-        ("w3", "w3")
+        ("s3", "s3")
     );
-    assert_eq!(ids(&presented), ["w2", "w3"]);
+    assert_eq!(ids(&presented), ["s2", "s3"]);
 
     // Only the last workspace's final close ends the window.
     let emptied = snapshot(workspace_action(
         &control,
-        "close-w3",
+        "close-s3",
         Action::CloseTab {
             tab: presented.active_tab.clone(),
         },
     ));
-    assert_eq!(ids(&emptied), ["w2"]);
-    assert_eq!(emptied.active_workspace, "w2");
+    assert_eq!(ids(&emptied), ["s2"]);
+    assert_eq!(emptied.active_workspace, "s2");
     assert!(supervisor.child.try_wait().unwrap().is_none());
     assert!(matches!(
         workspace_action(
             &control,
-            "close-w2",
+            "close-s2",
             Action::CloseTab {
                 tab: emptied.active_tab.clone(),
             },
@@ -7402,14 +7402,14 @@ fn replacement_eon_adopts_exact_runs_and_projects_numeric_workspace() {
     assert!(pane.status.success(), "{}", stdout(&pane));
     let initial = [
         live_identity(&generation.join("orbit.sock")),
-        live_identity(&generation.join("session-2.sock")),
+        live_identity(&generation.join("terminal-2.sock")),
     ];
     let first_venus_log = fs::read_to_string(&venus_log).unwrap();
     let first_venus: u32 = first_venus_log.split('|').next().unwrap().parse().unwrap();
     assert!(first_venus_log.contains("|--no-decorations "));
     assert_named(
         &attach_log,
-        &["session-1".into(), "session-2".into()],
+        &["terminal-1".into(), "terminal-2".into()],
         first_venus,
         Duration::ZERO,
     );
@@ -7498,7 +7498,7 @@ fn replacement_eon_adopts_exact_runs_and_projects_numeric_workspace() {
     };
     assert_named(
         &attach_log,
-        &["session-1".into(), "session-2".into()],
+        &["terminal-1".into(), "terminal-2".into()],
         replacement_venus,
         Duration::from_secs(5),
     );
@@ -7514,7 +7514,7 @@ fn replacement_eon_adopts_exact_runs_and_projects_numeric_workspace() {
     assert_eq!(
         [
             live_identity(&generation.join("orbit.sock")),
-            live_identity(&generation.join("session-2.sock")),
+            live_identity(&generation.join("terminal-2.sock")),
         ],
         initial
     );
@@ -7523,11 +7523,11 @@ fn replacement_eon_adopts_exact_runs_and_projects_numeric_workspace() {
     let created = invoke(&binary, &runtime, &config, &["pane", "create", "--json"]);
     assert!(created.status.success(), "{}", stdout(&created));
     assert!(stdout(&created).contains("\"id\":\"p3\""));
-    assert!(stdout(&created).contains("\"session\":\"session-3\""));
+    assert!(stdout(&created).contains("\"session\":\"terminal-3\""));
     assert_eq!(fs::read_to_string(&orbit_log).unwrap().lines().count(), 3);
     assert_named(
         &attach_log,
-        &["session-3".into()],
+        &["terminal-3".into()],
         replacement_venus,
         Duration::ZERO,
     );
@@ -7539,7 +7539,9 @@ fn replacement_eon_adopts_exact_runs_and_projects_numeric_workspace() {
         &["window", "stop", "default", "--json"],
     );
     assert!(stopped.status.success(), "{}", stdout(&stopped));
-    assert!(stdout(&stopped).contains("\"sessions\":[\"session-1\",\"session-2\",\"session-3\"]"));
+    assert!(
+        stdout(&stopped).contains("\"sessions\":[\"terminal-1\",\"terminal-2\",\"terminal-3\"]")
+    );
     wait_for_successful_exit(&mut replacement.child);
     assert!(!generation.exists());
     fs::remove_dir_all(root).unwrap();
@@ -7590,7 +7592,7 @@ fn rejected_ready_identity_stops_the_spawned_session_through_management() {
         ),
         (
             "EON_TEST_ORBIT_SESSION_ID",
-            "session-2",
+            "terminal-2",
             "uses unexpected presentation endpoint",
         ),
     ] {
@@ -7933,7 +7935,7 @@ fn concurrent_launches_converge_and_generation_stop_is_owner_routed() {
     assert_eq!(window["state"], "live", "{listed}");
     assert_eq!(
         window["terminals"],
-        serde_json::json!(["session-1"]),
+        serde_json::json!(["terminal-1"]),
         "{listed}"
     );
     assert_eq!(window["stop"]["available"], true, "{listed}");
@@ -7952,7 +7954,7 @@ fn concurrent_launches_converge_and_generation_stop_is_owner_routed() {
         String::from_utf8_lossy(&stopped.stderr)
     );
     assert!(stdout(&stopped).contains(&format!(
-        "\"generation\":\"{generation_id}\",\"sessions\":[\"session-1\"]"
+        "\"generation\":\"{generation_id}\",\"sessions\":[\"terminal-1\"]"
     )));
     if first_is_supervisor {
         wait_for_successful_exit(&mut first.child);
@@ -8081,7 +8083,7 @@ fn quit_from_a_terminal_stops_only_the_callers_window() {
     let first_generation = generation_runtime(&first_root);
     let second_generation = generation_runtime(&second_root);
     let caller = quit_caller(&second_root);
-    for caller in [b"bad caller".as_slice(), b"session-9999-0000000000000000"] {
+    for caller in [b"bad caller".as_slice(), b"terminal-9999-0000000000000000"] {
         let output = quit_command(&root)
             .env("EON_WINDOW_RUNTIME_DIR", &second_root)
             .env("EON_TERMINAL", OsStr::from_bytes(caller))
@@ -8842,7 +8844,7 @@ fn quit_without_a_busy_terminal_stops_without_asking() {
         .output()
         .unwrap();
     assert_eq!(output.status.code(), Some(0), "{output:?}");
-    assert_eq!(stdout(&output), "stopped window default: session-1\n");
+    assert_eq!(stdout(&output), "stopped window default: terminal-1\n");
     assert!(!String::from_utf8_lossy(&output.stderr).contains("[y/N]"));
     wait_for_successful_exit(&mut default.child);
     wait_for_generation_removal(&generation);
@@ -8944,7 +8946,7 @@ fn stop_keeps_its_always_ask_question() {
     assert_eq!(declined.status.code(), Some(1), "{declined:?}");
     let prompt = String::from_utf8_lossy(&declined.stderr);
     assert!(
-        prompt.starts_with("Stop window default and 1 live terminal [session-1]? [y/N] "),
+        prompt.starts_with("Stop window default and 1 live terminal [terminal-1]? [y/N] "),
         "{prompt}"
     );
     assert!(
@@ -9137,7 +9139,7 @@ fn running_windows_name_each_other_and_refresh_on_start_and_end() {
         }
         let response = read_request(&mut stream);
         assert!(matches!(
-            eon_workspace_protocol::v35::decode_lifecycle_response(&response).unwrap(),
+            eon_workspace_protocol::v36::decode_lifecycle_response(&response).unwrap(),
             LifecycleResponse::Runtime(_)
         ));
     }
@@ -9746,7 +9748,7 @@ fn window_ls_lists_the_default_and_an_independent_window_and_one_stop_form_stops
             .as_array()
             .unwrap()
             .iter()
-            .all(|terminal| terminal.as_str().unwrap().starts_with("session-")),
+            .all(|terminal| terminal.as_str().unwrap().starts_with("terminal-")),
         "{window}"
     );
     let window = &windows[1];
@@ -9956,7 +9958,7 @@ fn window_id_prefixes_select_one_window_and_refuse_ambiguous_unknown_or_short_on
     assert_eq!(stopped[0]["window"], "abcd3000", "{stopped}");
     assert_eq!(
         stopped[0]["results"],
-        serde_json::json!([{"stopped": {"generation": c, "sessions": ["session-1"]}}])
+        serde_json::json!([{"stopped": {"generation": c, "sessions": ["terminal-1"]}}])
     );
     assert_eq!(listed(), Vec::<serde_json::Value>::new());
 
@@ -10102,7 +10104,7 @@ fn window_stop_previous_and_all_reach_every_window_and_never_a_damaged_entry() {
         for id in ["abcd1", "abcd3"] {
             assert!(
                 prompts.contains(&format!(
-                    "Stop window {id} and 1 live terminal [session-1]? [y/N] "
+                    "Stop window {id} and 1 live terminal [terminal-1]? [y/N] "
                 )),
                 "{prompts}"
             );
@@ -10317,7 +10319,7 @@ fn bulk_stops_report_each_uninspectable_namespace_and_never_reach_it() {
         );
     }
     assert!(
-        prompts.contains("Stop window abcd3 and 1 live terminal [session-1]? [y/N] "),
+        prompts.contains("Stop window abcd3 and 1 live terminal [terminal-1]? [y/N] "),
         "{prompts}"
     );
     for reached in reached {
@@ -10537,7 +10539,7 @@ fn people_read_window_ids_as_the_listing_shows_them() {
     assert_eq!(declined.status.code(), Some(1), "{declined:?}");
     assert!(
         String::from_utf8_lossy(&declined.stderr)
-            .starts_with("Stop window abcd1 and 1 live terminal [session-1]? [y/N] "),
+            .starts_with("Stop window abcd1 and 1 live terminal [terminal-1]? [y/N] "),
         "{declined:?}"
     );
     // So is the window `eon quit` ends from one of its terminals.
@@ -10549,7 +10551,7 @@ fn people_read_window_ids_as_the_listing_shows_them() {
         b"y\n",
     );
     assert_eq!(quit.status.code(), Some(0), "{quit:?}");
-    assert_eq!(stdout(&quit), "stopped window abcd1: session-1\n");
+    assert_eq!(stdout(&quit), "stopped window abcd1: terminal-1\n");
     assert_eq!(*stops.lock().unwrap(), [first]);
     drop(servers);
     fs::remove_dir_all(root).unwrap();
@@ -10668,7 +10670,7 @@ fn owning_supervisor(
                     stops.lock().unwrap().push(generation.clone());
                     let stopped = encode_lifecycle_response(&LifecycleResponse::Stopped(Stopped {
                         generation,
-                        sessions: vec!["session-1".into()],
+                        sessions: vec!["terminal-1".into()],
                     }));
                     stream.write_all(&stopped.unwrap()).unwrap();
                     return;
@@ -10726,7 +10728,7 @@ fn previous_runtime(id: &str) -> Runtime {
         eon_version: "0.1.0".into(),
         workspace_protocol: VERSION,
         component_report: "previous components".into(),
-        sessions: vec!["session-1".into()],
+        sessions: vec!["terminal-1".into()],
         attach: Availability {
             available: true,
             reason: "previous presentation".into(),
@@ -10761,7 +10763,7 @@ fn previous_supervisor(runtime: &Path, id: &str) -> thread::JoinHandle<()> {
                     (
                         LifecycleResponse::Stopped(Stopped {
                             generation,
-                            sessions: vec!["session-1".into()],
+                            sessions: vec!["terminal-1".into()],
                         }),
                         true,
                     )
@@ -11019,7 +11021,7 @@ fn older_eonw_generations_stop_through_their_recorded_eon() {
              garbage) echo 'not a result' ;;\n\
              error) printf '{{\"error\":{{\"code\":\"supervisor-unavailable\",\"detail\":\"older supervisor ended\"}}}}\\n'; exit 4 ;;\n\
              killed) printf '{{\"stopped\":{{\"generation\":\"%s\",\"sessions\":[]}}}}\\n' \"$2\"; kill -KILL $$ ;;\n\
-             *) printf '{{\"stopped\":{{\"generation\":\"%s\",\"sessions\":[\"session-1\"]}}}}\\n' \"$2\" ;;\n\
+             *) printf '{{\"stopped\":{{\"generation\":\"%s\",\"sessions\":[\"terminal-1\"]}}}}\\n' \"$2\" ;;\n\
              esac\n",
             log = log.display(),
             mode = mode.display(),
@@ -11083,7 +11085,7 @@ fn older_eonw_generations_stop_through_their_recorded_eon() {
     assert_eq!(
         serde_json::from_slice::<serde_json::Value>(&stopped.stdout).unwrap(),
         serde_json::json!([{"window": hex, "results": [
-            {"stopped": {"generation": default, "sessions": ["session-1"]}}
+            {"stopped": {"generation": default, "sessions": ["terminal-1"]}}
         ]}])
     );
     assert_eq!(
@@ -11106,7 +11108,7 @@ fn older_eonw_generations_stop_through_their_recorded_eon() {
     assert_eq!(take_log(), "");
     let human = eon(&["window", "stop", "00000"], b"y\n");
     assert_eq!(human.status.code(), Some(0), "{human:?}");
-    assert_eq!(stdout(&human), "stopped window 00000: session-1\n");
+    assert_eq!(stdout(&human), "stopped window 00000: terminal-1\n");
     take_log();
 
     // Quit stops every older window, each through a Stop in its own namespace,
@@ -11118,10 +11120,10 @@ fn older_eonw_generations_stop_through_their_recorded_eon() {
         quit,
         serde_json::json!([
             {"window": &default[3..], "results": [
-                {"stopped": {"generation": default, "sessions": ["session-1"]}}
+                {"stopped": {"generation": default, "sessions": ["terminal-1"]}}
             ]},
             {"window": "0000abcd", "results": [
-                {"stopped": {"generation": windowed, "sessions": ["session-1"]}}
+                {"stopped": {"generation": windowed, "sessions": ["terminal-1"]}}
             ]},
         ])
     );
@@ -11349,7 +11351,7 @@ fn newer_eonw_windows_stop_and_attach_through_their_window_forms() {
              other) window=elsewhere ;;\n\
              *) window=\"$3\" ;;\n\
              esac\n\
-             printf '[{{\"window\":\"%s\",\"results\":[{{\"stopped\":{{\"generation\":\"%s\",\"sessions\":[\"session-1\"]}}}}]}}]\\n' \"$window\" \"$EON_STOP_DELEGATED\"\n",
+             printf '[{{\"window\":\"%s\",\"results\":[{{\"stopped\":{{\"generation\":\"%s\",\"sessions\":[\"terminal-1\"]}}}}]}}]\\n' \"$window\" \"$EON_STOP_DELEGATED\"\n",
             log = log.display(),
             mode = mode.display(),
         ),
@@ -11409,7 +11411,7 @@ fn newer_eonw_windows_stop_and_attach_through_their_window_forms() {
         assert_eq!(
             serde_json::from_slice::<serde_json::Value>(&stopped.stdout).unwrap(),
             serde_json::json!([{"window": id, "results": [
-                {"stopped": {"generation": generation, "sessions": ["session-1"]}}
+                {"stopped": {"generation": generation, "sessions": ["terminal-1"]}}
             ]}])
         );
         assert_eq!(
@@ -11989,7 +11991,7 @@ fn terminal_access_workspace(root: &Path, agents: &str) -> (TestProcess, PathBuf
     // The fake Orbits never run it.
     let bin = root.join("bin");
     fs::create_dir(&bin).unwrap();
-    for popup in ["eon-commands", "eon-workspaces"] {
+    for popup in ["eon-commands", "eon-sessions"] {
         executable(&bin.join(popup), "#!/bin/sh\nexit 0\n");
     }
     let mut command = eon_command(&PathBuf::from(env!("CARGO_BIN_EXE_eon")));
@@ -12040,22 +12042,22 @@ fn the_shown_workspace_pickers_key_presses_enter_in_it_instead_of_hiding_it() {
         other => panic!("{id}: {other:?}"),
     };
     let inputs = || fs::read_to_string(root.join("input.log")).unwrap_or_default();
-    let opened = invoke("open", "workspaces", None, InvokeIntent::Toggle);
+    let opened = invoke("open", "sessions", None, InvokeIntent::Toggle);
     let picker = opened.tabs[0]
         .popups
         .iter()
-        .find(|popup| popup.entry == "workspaces")
+        .find(|popup| popup.entry == "sessions")
         .unwrap()
         .clone();
     assert_eq!(opened.tabs[0].selected_popup.as_ref(), Some(&picker.id));
     // Focusing the shown picker presses nothing; its key keeps it shown and presses Enter in it,
     // which confirms the highlighted row (EON-C33).
-    let focused = invoke("focus", "workspaces", Some(&picker.id), InvokeIntent::Focus);
+    let focused = invoke("focus", "sessions", Some(&picker.id), InvokeIntent::Focus);
     assert_eq!(stable_tabs(&focused.tabs), stable_tabs(&opened.tabs));
     assert_eq!(inputs(), "");
     let confirmed = invoke(
         "confirm",
-        "workspaces",
+        "sessions",
         Some(&picker.id),
         InvokeIntent::Toggle,
     );
@@ -12074,7 +12076,7 @@ fn the_shown_workspace_pickers_key_presses_enter_in_it_instead_of_hiding_it() {
     };
     let relaunched = invoke(
         "relaunch",
-        "workspaces",
+        "sessions",
         Some(&picker.id),
         InvokeIntent::Toggle,
     );
@@ -12108,7 +12110,7 @@ fn terminal_reads_and_sends_reach_a_hidden_workspace_and_change_nothing() {
     let hidden = snapshot(workspace_action(&control, "inspect", Action::Inspect));
     let tab = hidden.tabs[0].id.clone();
     let pane = hidden.tabs[0].columns[0].panes[0].clone();
-    assert_eq!(pane.session, "session-1");
+    assert_eq!(pane.session, "terminal-1");
     snapshot(workspace_action(
         &control,
         "new",
@@ -12118,9 +12120,9 @@ fn terminal_reads_and_sends_reach_a_hidden_workspace_and_change_nothing() {
         },
     ));
     let before = snapshot(workspace_action(&control, "before", Action::Inspect));
-    assert_eq!(before.workspace, "w2");
+    assert_eq!(before.workspace, "s2");
     let target = TerminalTarget {
-        workspace: "w1".into(),
+        workspace: "s1".into(),
         tab,
         id: TargetId::Pane(pane.id.clone()),
         terminal: pane.session.clone(),
@@ -12132,10 +12134,10 @@ fn terminal_reads_and_sends_reach_a_hidden_workspace_and_change_nothing() {
         screen: Screen::Primary,
         rows: 24,
         columns: 80,
-        title: "session-1".into(),
+        title: "terminal-1".into(),
         directory: b"/fake".to_vec(),
         omitted_rows: 0,
-        text: "screen of session-1".into(),
+        text: "screen of terminal-1".into(),
     };
     let read_action = || ProtocolAction::ReadTerminal {
         target: pane.id.clone(),
@@ -12173,11 +12175,11 @@ fn terminal_reads_and_sends_reach_a_hidden_workspace_and_change_nothing() {
             screen: Screen::Alternate,
             rows: 24,
             columns: 80,
-            title: "session-1".into(),
+            title: "terminal-1".into(),
             directory: b"/fake".to_vec(),
             omitted_lines: 0,
             cut_bytes: 0,
-            text: "history of session-1\nscreen of session-1".into(),
+            text: "history of terminal-1\nscreen of terminal-1".into(),
         })
     );
     let send = |id: &str, input| {
@@ -12206,7 +12208,7 @@ fn terminal_reads_and_sends_reach_a_hidden_workspace_and_change_nothing() {
     assert_eq!(send("enter", TerminalInput::Enter), sent(false));
     assert_eq!(
         fs::read_to_string(root.join("input.log")).unwrap(),
-        "session-1 Paste(\"echo hi\")\nsession-1 Enter\n"
+        "terminal-1 Paste(\"echo hi\")\nterminal-1 Enter\n"
     );
     assert_eq!(
         failure(send("enter", TerminalInput::Enter)),
@@ -12259,7 +12261,7 @@ while [ ! -e "$EON_TEST_EDITOR_RELEASE" ] && [ ! -e "$EON_TEST_STOP" ]; do sleep
         )
         .unwrap();
     let supervisor = window.spawn_scrollback();
-    window.pair_launch("session-2");
+    window.pair_launch("terminal-2");
     let home = window.home.to_str().unwrap();
     assert!(
         window
@@ -12360,12 +12362,12 @@ fn scrollback_opens_a_private_snapshot_and_removes_it_when_its_popup_ends() {
     );
     assert_eq!(
         fs::read_to_string(&file).unwrap(),
-        "This pane is in a full-screen app; Eon shows only its screen. Quit the app to see the history.\nhistory of session-1\nscreen of session-1\n"
+        "This pane is in a full-screen app; Eon shows only its screen. Quit the app to see the history.\nhistory of terminal-1\nscreen of terminal-1\n"
     );
     let history = window.eon(&["pane", "history", "p1"]);
     assert_eq!(
         stdout(&history),
-        "history of session-1\nscreen of session-1\n"
+        "history of terminal-1\nscreen of terminal-1\n"
     );
     // The editor's exit ends the popup, shows the pane and removes the snapshot.
     fs::write(&release, "").unwrap();
@@ -12650,11 +12652,11 @@ fn pane_history_edit_opens_its_target_in_scrollback_in_the_active_tab_only() {
         serde_json::json!({
             "generation": value["generation"],
             "window": null,
-            "workspace": "w1",
+            "workspace": "s1",
             "tab": "t1",
             "pane": "p1",
             "popup": null,
-            "terminal": "session-1",
+            "terminal": "terminal-1",
             "caller": null,
             "scrollback": {"popup": popup.id, "terminal": popup.session},
         })
@@ -12699,7 +12701,7 @@ fn pane_history_edit_opens_its_target_in_scrollback_in_the_active_tab_only() {
         .clone();
     window.pair_launch(&pair);
     let before = window.inspect("hidden-workspace");
-    assert_eq!(before.workspace, "w2");
+    assert_eq!(before.workspace, "s2");
     let json = window.eon(&["pane", "history", "p1", "--edit", "--json"]);
     assert_eq!(edit_error(&json), (Some(1), "not-active".to_owned()));
     let after = window.inspect("hidden-workspace-after");
@@ -12982,26 +12984,26 @@ fn pane_read_prints_the_text_or_json_and_exits_by_failure() {
     let before = stable_workspace_json(&run(&["workspace", "--json"]));
     let human = run(&["pane", "read", "p1"]);
     assert_eq!(human.status.code(), Some(0));
-    assert_eq!(stdout(&human), "screen of session-1\n");
+    assert_eq!(stdout(&human), "screen of terminal-1\n");
     assert!(human.stderr.is_empty());
     let id = generation.file_name().unwrap().to_str().unwrap();
     let expected = |caller| {
         serde_json::json!({
             "generation": id,
             "window": null,
-            "workspace": "w1",
+            "workspace": "s1",
             "tab": "t1",
             "pane": "p1",
             "popup": null,
-            "terminal": "session-1",
+            "terminal": "terminal-1",
             "caller": caller,
             "revision": 1,
             "screen": "primary",
             "rows": 24,
             "columns": 80,
-            "title": "session-1",
+            "title": "terminal-1",
             "directory": "/fake",
-            "text": "screen of session-1",
+            "text": "screen of terminal-1",
             "omitted_rows": 0,
             "lossy": true,
         })
@@ -13028,7 +13030,7 @@ fn pane_read_prints_the_text_or_json_and_exits_by_failure() {
     assert_eq!(
         serde_json::from_str::<serde_json::Value>(stdout(&from_caller)).unwrap(),
         expected(serde_json::json!({
-            "terminal": "session-1",
+            "terminal": "terminal-1",
             "tab": "t1",
             "pane": "p1",
             "popup": null,
@@ -13125,7 +13127,7 @@ fn pane_history_prints_the_text_or_json_and_names_what_the_bound_left_out() {
     assert_eq!(human.status.code(), Some(0));
     assert_eq!(
         stdout(&human),
-        "history of session-1\nscreen of session-1\n"
+        "history of terminal-1\nscreen of terminal-1\n"
     );
     assert!(human.stderr.is_empty());
     let id = generation.file_name().unwrap().to_str().unwrap();
@@ -13137,19 +13139,19 @@ fn pane_history_prints_the_text_or_json_and_names_what_the_bound_left_out() {
         serde_json::json!({
             "generation": id,
             "window": null,
-            "workspace": "w1",
+            "workspace": "s1",
             "tab": "t1",
             "pane": "p1",
             "popup": null,
-            "terminal": "session-1",
+            "terminal": "terminal-1",
             "caller": null,
             "revision": 2,
             "screen": "alternate",
             "rows": 24,
             "columns": 80,
-            "title": "session-1",
+            "title": "terminal-1",
             "directory": "/fake",
-            "text": "history of session-1\nscreen of session-1",
+            "text": "history of terminal-1\nscreen of terminal-1",
             "omitted_lines": 0,
             "cut_bytes": 0,
             "lossy": true,
@@ -13315,11 +13317,11 @@ fn pane_send_pastes_then_waits_for_enter_and_exits_by_failure() {
         serde_json::json!({
             "generation": id,
             "window": null,
-            "workspace": "w1",
+            "workspace": "s1",
             "tab": "t1",
             "pane": "p1",
             "popup": null,
-            "terminal": "session-1",
+            "terminal": "terminal-1",
             "caller": null,
             "bytes": bytes,
             "bracketed": bracketed,
@@ -13366,8 +13368,8 @@ fn pane_send_pastes_then_waits_for_enter_and_exits_by_failure() {
     assert_eq!(json(&piped), reply(10, true.into(), false));
     assert_eq!(
         sent(),
-        "session-1 Paste(\"echo hi\")\nsession-1 Paste(\"ls\")\nsession-1 Enter\n\
-         session-1 Enter\nsession-1 Enter\nsession-1 Paste(\"from stdin\")\n"
+        "terminal-1 Paste(\"echo hi\")\nterminal-1 Paste(\"ls\")\nterminal-1 Enter\n\
+         terminal-1 Enter\nterminal-1 Enter\nterminal-1 Paste(\"from stdin\")\n"
     );
     // Without --stdin or TEXT, input waiting in a pipe, socket or file fails
     // rather than vanish, also when it arrives just after Eon starts. An input
@@ -13471,7 +13473,7 @@ fn pane_send_pastes_then_waits_for_enter_and_exits_by_failure() {
             );
         }
     }
-    let log = log + &"session-1 Enter\n".repeat(late_enters);
+    let log = log + &"terminal-1 Enter\n".repeat(late_enters);
     assert_eq!(sent(), log);
     let mut read = fs::File::open(&file).unwrap();
     read.read_to_end(&mut Vec::new()).unwrap();
@@ -13496,7 +13498,7 @@ fn pane_send_pastes_then_waits_for_enter_and_exits_by_failure() {
         assert_eq!(output.status.code(), Some(0), "{case}");
         assert_eq!(json(output), reply(0, serde_json::Value::Null, true));
     }
-    assert_eq!(sent(), log + &"session-1 Enter\n".repeat(4));
+    assert_eq!(sent(), log + &"terminal-1 Enter\n".repeat(4));
 
     // Refusals before the supervisor, and the supervisor's, send nothing.
     let log = sent();
@@ -13638,7 +13640,7 @@ fn pane_send_pastes_then_waits_for_enter_and_exits_by_failure() {
     }
     assert_eq!(
         sent(),
-        format!("{log}{}", "session-1 Paste(\"partial\")\n".repeat(2))
+        format!("{log}{}", "terminal-1 Paste(\"partial\")\n".repeat(2))
     );
     let log = sent();
     // A paste that lands before a failed Enter stays, and the reply says so.
@@ -13660,7 +13662,7 @@ fn pane_send_pastes_then_waits_for_enter_and_exits_by_failure() {
     );
     assert_eq!(
         sent(),
-        format!("{log}session-1 Paste(\"x\")\nsession-1 Paste(\"y\")\n")
+        format!("{log}terminal-1 Paste(\"x\")\nterminal-1 Paste(\"y\")\n")
     );
     fs::remove_file(root.join("orbit-reply")).unwrap();
     // A help flag after `--` is TEXT, not a request for help.
@@ -13668,7 +13670,7 @@ fn pane_send_pastes_then_waits_for_enter_and_exits_by_failure() {
     let help_text = run(&["pane", "send", "p1", "--json", "--", "--help"]);
     assert_eq!(help_text.status.code(), Some(0));
     assert_eq!(json(&help_text), reply(6, true.into(), false));
-    assert_eq!(sent(), format!("{log}session-1 Paste(\"--help\")\n"));
+    assert_eq!(sent(), format!("{log}terminal-1 Paste(\"--help\")\n"));
     // Sending changed nothing a person sees but the program.
     assert_eq!(
         stable_workspace_json(&run(&["workspace", "--json"])),
@@ -14371,7 +14373,7 @@ fn cli_busy_background_close_confirms_refuses_and_cancels_without_focus() {
         fs::write(
             root.join("config/config.toml"),
             format!(
-                "[terminal]\nfont_fallbacks = []\n[anima]\nenabled = false\n[workspace]\nwarning_close_last_tab = {warning}\n"
+                "[terminal]\nfont_fallbacks = []\n[anima]\nenabled = false\n[session]\nwarning_close_last_tab = {warning}\n"
             ),
         )
         .unwrap();
@@ -14437,7 +14439,7 @@ fn cli_busy_background_close_confirms_refuses_and_cancels_without_focus() {
         let closed = match mode {
             "terminal" if warning => {
                 let question = format!(
-                    "Close the last tab? This closes workspace {workspace} and stops 1 terminal [{label}]. [y/N] "
+                    "Close the last tab? This closes session {workspace} and stops 1 terminal [{label}]. [y/N] "
                 );
                 let cancelled = at_terminal(&mut close(&[]), Some(b"n\n"), || ());
                 assert_eq!(cancelled.status.code(), Some(0), "{cancelled:?}");
@@ -14623,7 +14625,7 @@ fn cli_close_preserves_workspace_scope_and_final_close_results() {
         (shown, count)
     };
 
-    // The hidden w2 gets a second pane and a second tab; w1 stays shown.
+    // The hidden s2 gets a second pane and a second tab; s1 stays shown.
     parsed(&run_from(
         Some(&w1_caller),
         &[
@@ -14635,7 +14637,7 @@ fn cli_close_preserves_workspace_scope_and_final_close_results() {
             "--json",
         ],
     ));
-    let w2_caller = quit_terminal_caller(&generation.join("session-2.sock"));
+    let w2_caller = quit_terminal_caller(&generation.join("terminal-2.sock"));
     parsed(&run_from(
         Some(&w2_caller),
         &["pane", "create", "--no-focus", "--json"],
@@ -14651,8 +14653,8 @@ fn cli_close_preserves_workspace_scope_and_final_close_results() {
             "--json",
         ],
     ));
-    assert_eq!(w2_snap["workspace"], "w2");
-    assert_eq!(shown_workspace(), ("w1".to_owned(), 2));
+    assert_eq!(w2_snap["workspace"], "s2");
+    assert_eq!(shown_workspace(), ("s1".to_owned(), 2));
     let w2_t2 = w2_snap["tabs"][1]["id"].as_str().unwrap().to_owned();
     let w2_p1 = w2_snap["tabs"][0]["panes"][0]["id"]
         .as_str()
@@ -14663,21 +14665,21 @@ fn cli_close_preserves_workspace_scope_and_final_close_results() {
         .unwrap()
         .to_owned();
     wait_for_busy_panes(&root, None, &[]);
-    // The shown w1 without the workspace list, whose tab counts change.
-    let shown_w1 = || {
+    // The shown s1 without the workspace list, whose tab counts change.
+    let shown_s1 = || {
         let mut value = presented(&run_from(None, &["workspace", "--json"]));
         value.as_object_mut().unwrap().remove("workspaces");
         value
     };
-    let w1 = shown_w1();
+    let s1 = shown_s1();
     let w1_endpoints = terminal_endpoints(&parsed(&run_from(None, &["workspace", "--json"])));
     let w2_endpoints = terminal_endpoints(&w2_snap);
     let w1_terminals = live_terminals(&w1_endpoints);
     let w2_terminals = live_terminals(&w2_endpoints);
     let w1_w2 = [w1_terminals.clone(), w2_terminals].concat();
 
-    // Neither w1's caller nor a caller-less command reaches w2's IDs, nor
-    // w2's caller w1's: each exits 3 and changes nothing.
+    // Neither s1's caller nor a caller-less command reaches s2's IDs, nor
+    // s2's caller s1's: each exits 3 and changes nothing.
     let refused = |caller: Option<&[u8]>, kind: &str, target: &str, code: &str| {
         let foreign = run_from(caller, &[kind, "close", target, "--yes", "--json"]);
         assert_eq!(foreign.status.code(), Some(3), "{foreign:?}");
@@ -14694,50 +14696,50 @@ fn cli_close_preserves_workspace_scope_and_final_close_results() {
     }
     refused(Some(&w2_caller), "tab", "t1", "unknown-tab");
     refused(Some(&w2_caller), "pane", "p1", "unknown-pane");
-    assert_eq!(shown_w1(), w1);
+    assert_eq!(shown_s1(), s1);
     assert_only_ended(&w1_w2, &[]);
 
-    // w2's caller closes its pane and its background tab without showing w2;
-    // the replies project w2.
+    // s2's caller closes its pane and its background tab without showing s2;
+    // the replies project s2.
     for (kind, target) in [("pane", &w2_p2), ("tab", &w2_t2)] {
         let closed = parsed(&run_from(
             Some(&w2_caller),
             &[kind, "close", target, "--yes", "--json"],
         ));
-        assert_eq!(closed["workspace"], "w2");
-        assert_eq!(shown_workspace(), ("w1".to_owned(), 2));
-        assert_eq!(shown_w1(), w1);
+        assert_eq!(closed["workspace"], "s2");
+        assert_eq!(shown_workspace(), ("s1".to_owned(), 2));
+        assert_eq!(shown_s1(), s1);
     }
     let w2_left = parsed(&run_from(Some(&w2_caller), &["workspace", "--json"]));
     assert_eq!(w2_left["tabs"].as_array().unwrap().len(), 1);
     assert_eq!(w2_left["tabs"][0]["panes"].as_array().unwrap().len(), 1);
     assert_only_ended(&w1_w2, &w2_endpoints[1..]);
 
-    // Closing the hidden w2's final tab's last pane removes only w2; the
-    // reply projects the shown w1, which is unchanged.
+    // Closing the hidden s2's final tab's last pane removes only s2; the
+    // reply projects the shown s1, which is unchanged.
     let removed = parsed(&run_from(
         Some(&w2_caller),
         &["pane", "close", &w2_p1, "--yes", "--json"],
     ));
-    assert_eq!(removed["workspace"], "w1");
-    assert_eq!(shown_workspace(), ("w1".to_owned(), 1));
-    assert_eq!(shown_w1(), w1);
+    assert_eq!(removed["workspace"], "s1");
+    assert_eq!(shown_workspace(), ("s1".to_owned(), 1));
+    assert_eq!(shown_s1(), s1);
     assert_only_ended(&w1_w2, &w2_endpoints);
 
-    // So does closing a shown w3's final tab by its ID; w1 is shown again.
+    // So does closing a shown s3's final tab by its ID; s1 is shown again.
     parsed(&run_from(None, &["workspace", "new", "--json"]));
-    let w3 = parsed(&run_from(None, &["workspace", "--json"]));
-    assert_eq!(w3["workspace"], "w3");
-    let w3_tab = w3["tabs"][0]["id"].as_str().unwrap().to_owned();
-    let w3_endpoints = terminal_endpoints(&w3);
-    let w1_w3 = [w1_terminals.clone(), live_terminals(&w3_endpoints)].concat();
+    let s3 = parsed(&run_from(None, &["workspace", "--json"]));
+    assert_eq!(s3["workspace"], "s3");
+    let s3_tab = s3["tabs"][0]["id"].as_str().unwrap().to_owned();
+    let s3_endpoints = terminal_endpoints(&s3);
+    let w1_w3 = [w1_terminals.clone(), live_terminals(&s3_endpoints)].concat();
     let removed = parsed(&run_from(
         None,
-        &["tab", "close", &w3_tab, "--yes", "--json"],
+        &["tab", "close", &s3_tab, "--yes", "--json"],
     ));
-    assert_eq!(removed["workspace"], "w1");
-    assert_eq!(shown_workspace(), ("w1".to_owned(), 1));
-    assert_only_ended(&w1_w3, &w3_endpoints);
+    assert_eq!(removed["workspace"], "s1");
+    assert_eq!(shown_workspace(), ("s1".to_owned(), 1));
+    assert_only_ended(&w1_w3, &s3_endpoints);
 
     // The last workspace's last pane ends the window with the existing Ended
     // result, and with it the supervisor and its terminals.
@@ -14802,7 +14804,7 @@ fn a_confirmed_close_inspects_first_and_a_failed_inspection_closes_nothing() {
                         eon_version: "0.1.0".into(),
                         workspace_protocol: VERSION,
                         component_report: "test components".into(),
-                        sessions: vec!["session-1".into()],
+                        sessions: vec!["terminal-1".into()],
                         attach: Availability {
                             available: true,
                             reason: "test presentation".into(),

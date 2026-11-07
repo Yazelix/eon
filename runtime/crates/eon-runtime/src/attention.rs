@@ -4,7 +4,7 @@
 //! meaning.
 
 use super::sessions::{self, ProgramStatusRead, RunningSession};
-use eon_workspace_protocol::v35::{
+use eon_workspace_protocol::v36::{
     self as eonw, Action, AttentionKind, AttentionRecord, AttentionState as State, Sidebar,
     Snapshot,
 };
@@ -767,7 +767,7 @@ impl Attention {
 mod tests {
     use super::*;
     use ProgramState::{Blocked, Done, Error, Idle, Working};
-    use eon_workspace_protocol::v35::{Column, Pane, Popup, PopupGeometry, Tab};
+    use eon_workspace_protocol::v36::{Column, Pane, Popup, PopupGeometry, Tab};
     use std::{fs, slice, thread};
 
     /// A record created at its change `changed`.
@@ -846,10 +846,10 @@ mod tests {
 
     fn snapshot(active: &str, tabs: Vec<Tab>) -> Snapshot {
         Snapshot {
-            workspace: "w1".into(),
-            active_workspace: "w1".into(),
-            workspaces: vec![eon_workspace_protocol::v35::WorkspaceInfo {
-                id: "w1".into(),
+            workspace: "s1".into(),
+            active_workspace: "s1".into(),
+            workspaces: vec![eon_workspace_protocol::v36::WorkspaceInfo {
+                id: "s1".into(),
                 name: None,
                 tab_count: tabs.len(),
                 attention: None,
@@ -1575,8 +1575,8 @@ mod tests {
     fn the_snapshot_carries_the_queue_in_its_total_order_across_workspaces() {
         let mut window = [
             in_workspace(
-                "w1",
-                "w1",
+                "s1",
+                "s1",
                 "t1",
                 vec![
                     tab(
@@ -1589,8 +1589,8 @@ mod tests {
                 ],
             ),
             in_workspace(
-                "w2",
-                "w1",
+                "s2",
+                "s1",
                 "t3",
                 vec![tab("t3", &["needs", "other"], &[("agent", "hidden")], None)],
             ),
@@ -1644,13 +1644,13 @@ mod tests {
         }
         attention.see("seen");
         let expected = [
-            ("w2", "t3", "pane-needs", State::NeedsInput),
-            ("w2", "t3", "popup-hidden", State::NeedsInput),
-            ("w1", "t2", "pane-error", State::Error),
-            ("w1", "t1", "pane-finished", State::Finished),
-            ("w1", "t2", "pane-equal-a", State::Finished),
-            ("w1", "t2", "pane-equal-b", State::Finished),
-            ("w2", "t3", "pane-finished", State::Finished),
+            ("s2", "t3", "pane-needs", State::NeedsInput),
+            ("s2", "t3", "popup-hidden", State::NeedsInput),
+            ("s1", "t2", "pane-error", State::Error),
+            ("s1", "t1", "pane-finished", State::Finished),
+            ("s1", "t2", "pane-equal-a", State::Finished),
+            ("s1", "t2", "pane-equal-b", State::Finished),
+            ("s2", "t3", "pane-finished", State::Finished),
         ];
         let mut projected = window[0].clone();
         attention.present(&mut projected, &window, true, now);
@@ -1704,7 +1704,7 @@ mod tests {
             }
         }
         let mut absent = projected.clone();
-        absent.workspace = "w9".into();
+        absent.workspace = "s9".into();
         attention.present(&mut absent, &window, true, now);
         assert_eq!(absent.attention_queue, projected.attention_queue);
 
@@ -1748,7 +1748,7 @@ mod tests {
             managed_environment::{PopupCatalog, PopupCommand, PopupDefinition},
             workspace::{Session, WorkspaceSet},
         };
-        use eon_workspace_protocol::v35::{PopupKey, WorkspaceAction};
+        use eon_workspace_protocol::v36::{PopupKey, WorkspaceAction};
         let mut window = WorkspaceSet::with_recovered_sessions(
             "/runtime".into(),
             "/".into(),
@@ -1758,7 +1758,7 @@ mod tests {
                     (
                         n,
                         Session {
-                            id: format!("session-{n}"),
+                            id: format!("terminal-{n}"),
                             endpoint: format!("/runtime/{n}.sock").into(),
                         },
                     )
@@ -1799,8 +1799,8 @@ mod tests {
         attention.observe(focus, true);
         let now = Instant::now();
         for (session, state) in [
-            ("session-2", Blocked),
-            ("session-3", Blocked),
+            ("terminal-2", Blocked),
+            ("terminal-3", Blocked),
             (&hidden.session, Done),
         ] {
             attention.apply(
@@ -1813,7 +1813,7 @@ mod tests {
         }
         assert_eq!(
             step(&mut attention, &targets, true).unwrap().session,
-            "session-2"
+            "terminal-2"
         );
         // A hidden caller can focus the already-focused shown terminal too.
         let shown = before[0].tabs[0].panes().next().unwrap();
@@ -1928,11 +1928,11 @@ mod tests {
             hidden.selected_pane = Some(format!("pane-{focus}"));
             hidden.columns[0].expanded = format!("pane-{focus}");
             [
-                in_workspace("w1", shown, "t1", vec![tab("t1", &["s1"], &[], None)]),
-                in_workspace("w2", shown, "t2", vec![hidden]),
+                in_workspace("s1", shown, "t1", vec![tab("t1", &["s1"], &[], None)]),
+                in_workspace("s2", shown, "t2", vec![hidden]),
             ]
         };
-        let before = window("w1", "s2");
+        let before = window("s1", "s2");
         let (targets, focus) = targets(&before);
         assert_eq!(
             focus.as_deref(),
@@ -1955,8 +1955,8 @@ mod tests {
         // A reply to a caller in the hidden workspace sees nothing there, and each workspace
         // carries its own rollup.
         let mut reply = before[1].clone();
-        reply.workspaces = ["w1", "w2"]
-            .map(|id| eon_workspace_protocol::v35::WorkspaceInfo {
+        reply.workspaces = ["s1", "s2"]
+            .map(|id| eon_workspace_protocol::v36::WorkspaceInfo {
                 id: id.into(),
                 ..reply.workspaces[0].clone()
             })
@@ -1974,10 +1974,10 @@ mod tests {
         let rollups: Vec<_> = reply.workspaces.iter().map(|info| info.attention).collect();
         assert_eq!(rollups, [None, Some(State::Finished)]);
 
-        // The queue reaches the hidden terminal; its jump shows w2 and sees
+        // The queue reaches the hidden terminal; its jump shows s2 and sees
         // only the exact terminal it focuses.
         let (workspace, action, key) = attention.jump(&before, true).unwrap();
-        assert_eq!(workspace, "w2");
+        assert_eq!(workspace, "s2");
         assert_eq!(
             action,
             Action::FocusAttention {
@@ -1985,20 +1985,20 @@ mod tests {
                 target: "pane-s2".into(),
             }
         );
-        attention.handled(&action, Some(key), &window("w2", "s2"), true, false);
+        attention.handled(&action, Some(key), &window("s2", "s2"), true, false);
         assert_eq!(state(&attention, &targets, "s2", now), Some(State::Idle));
         assert_eq!(
             state(&attention, &targets, "s3", now),
             Some(State::Finished)
         );
 
-        // Showing w1 again and then w2 with s3 focused sees s3.
+        // Showing s1 again and then s2 with s3 focused sees s3.
         attention.observe(Some("s1".into()), true);
         assert_eq!(
             state(&attention, &targets, "s3", now),
             Some(State::Finished)
         );
-        let after = window("w2", "s3");
+        let after = window("s2", "s3");
         let mut shown = after[1].clone();
         attention.present(&mut shown, &after, true, now);
         assert_eq!(state(&attention, &targets, "s3", now), Some(State::Idle));
@@ -2090,7 +2090,7 @@ mod tests {
             ],
         );
         let (workspace, action, key) = attention.jump(slice::from_ref(&jumped), true).unwrap();
-        assert_eq!(workspace, "w1");
+        assert_eq!(workspace, "s1");
         assert_eq!(
             action,
             Action::FocusAttention {
@@ -2204,12 +2204,12 @@ mod tests {
     #[test]
     fn a_subscriber_reads_attention_in_the_turn_that_applies_it() {
         use crate::{events::Projection, subscriptions::Subscribers};
-        use eon_workspace_protocol::v35::{
+        use eon_workspace_protocol::v36::{
             Change, EventKind, Filter, HEADER_BYTES, SubscriptionMessage, declared_message_len,
             decode_subscription_message,
         };
         use std::{io::Read, os::unix::net::UnixStream};
-        let mut workspaces = [snapshot("t1", vec![tab("t1", &["session-1"], &[], None)])];
+        let mut workspaces = [snapshot("t1", vec![tab("t1", &["terminal-1"], &[], None)])];
         // The wire carries each terminal's endpoint.
         workspaces[0].tabs[0].columns[0].panes[0].endpoint = b"/runtime/1.sock".to_vec();
         let (targets, focus) = targets(&workspaces);
@@ -2269,7 +2269,7 @@ mod tests {
         // The poller applies a finish; the same turn publishes it.
         attention.apply(
             &targets,
-            "session-1",
+            "terminal-1",
             "run-1",
             status(1, vec![record("a", Done, Some(Working), 1)]),
             Instant::now(),
@@ -2308,16 +2308,16 @@ mod tests {
                 )
             })
             .collect();
-        sessions[1].id = "session-2".into();
+        sessions[1].id = "terminal-2".into();
         let (targets, _) = targets(&[snapshot(
             "t",
-            vec![tab("t", &["session-1", "session-2"], &[], None)],
+            vec![tab("t", &["terminal-1", "terminal-2"], &[], None)],
         )]);
         let mut attention = Attention::new(true);
         let current =
             |attention: &Attention, session| state(attention, &targets, session, Instant::now());
         poll_until(&mut attention, &targets, &mut sessions, |attention| {
-            ["session-1", "session-2"].map(|session| current(attention, session))
+            ["terminal-1", "terminal-2"].map(|session| current(attention, session))
                 == [Some(State::Working); 2]
         });
 
@@ -2332,7 +2332,7 @@ mod tests {
             let replied = attention
                 .terminals
                 .iter()
-                .find(|terminal| terminal.session == "session-1")
+                .find(|terminal| terminal.session == "terminal-1")
                 .unwrap()
                 .replied;
             if replies.last() != Some(&replied) {
@@ -2357,7 +2357,7 @@ mod tests {
         assert_eq!(silent_shown.state, State::Working);
         assert!(!attention.shown(&targets[0], now).unwrap().stale);
         poll_until(&mut attention, &targets, &mut sessions, |attention| {
-            current(attention, "session-1") == Some(State::Finished)
+            current(attention, "terminal-1") == Some(State::Finished)
         });
         let shown = attention.shown(&targets[0], Instant::now()).unwrap();
         assert_eq!(shown.record.unwrap().app, "claude-code");
@@ -2365,16 +2365,16 @@ mod tests {
         // A replaced run drops its attention until its own reply.
         attention.apply(
             &targets,
-            "session-1",
+            "terminal-1",
             "other-run",
             status(u64::MAX, vec![record("a", Done, None, 1)]),
             Instant::now(),
         );
-        assert_eq!(current(&attention, "session-1"), Some(State::Finished));
+        assert_eq!(current(&attention, "terminal-1"), Some(State::Finished));
         attention.retain(&targets, &sessions);
-        assert_eq!(current(&attention, "session-1"), None);
+        assert_eq!(current(&attention, "terminal-1"), None);
         poll_until(&mut attention, &targets, &mut sessions, |attention| {
-            current(attention, "session-1") == Some(State::Finished)
+            current(attention, "terminal-1") == Some(State::Finished)
         });
 
         // Ended runs and removed targets drop theirs.
@@ -2382,10 +2382,10 @@ mod tests {
         assert_eq!(unsafe { libc::kill(silent, libc::SIGCONT) }, 0);
         crate::sessions::stop_managed_sessions(&mut sessions[..1], Duration::from_secs(5)).unwrap();
         attention.retain(&targets, &sessions);
-        assert_eq!(current(&attention, "session-1"), None);
-        assert_eq!(current(&attention, "session-2"), Some(State::Working));
+        assert_eq!(current(&attention, "terminal-1"), None);
+        assert_eq!(current(&attention, "terminal-2"), Some(State::Working));
         attention.retain(&[], &sessions);
-        assert_eq!(current(&attention, "session-2"), None);
+        assert_eq!(current(&attention, "terminal-2"), None);
         crate::sessions::stop_managed_sessions(&mut sessions[1..], Duration::from_secs(5)).unwrap();
         for root in roots {
             fs::remove_dir_all(root).unwrap();
@@ -2394,7 +2394,7 @@ mod tests {
 
     #[test]
     fn busy_needs_the_default_shell_a_child_foreground_and_a_fresh_reply() {
-        use eon_workspace_protocol::v35::{PopupEntry, PopupKey, TargetId};
+        use eon_workspace_protocol::v36::{PopupEntry, PopupKey, TargetId};
         let root = crate::supervisor::temporary_directory();
         let mut sessions: Vec<_> = (1..=12)
             .map(|number| {
@@ -2403,8 +2403,8 @@ mod tests {
                     number,
                     orbit_protocol::management::TerminationReason::ExplicitStop,
                 );
-                // session-4 and the popups run an explicit command;
-                // session-12 has not replied.
+                // terminal-4 and the popups run an explicit command;
+                // terminal-12 has not replied.
                 session.default_shell = ![4, 6, 7, 8, 9].contains(&number);
                 session
             })
@@ -2414,17 +2414,17 @@ mod tests {
             vec![tab(
                 "t1",
                 &[
-                    "session-1",
-                    "session-2",
-                    "session-3",
-                    "session-4",
-                    "session-5",
+                    "terminal-1",
+                    "terminal-2",
+                    "terminal-3",
+                    "terminal-4",
+                    "terminal-5",
                 ],
                 &[
-                    ("agent", "session-6"),
-                    ("files", "session-7"),
-                    ("git", "session-8"),
-                    ("commands", "session-9"),
+                    ("agent", "terminal-6"),
+                    ("files", "terminal-7"),
+                    ("git", "terminal-8"),
+                    ("commands", "terminal-9"),
                 ],
                 None,
             )],
@@ -2438,27 +2438,27 @@ mod tests {
             "t2",
             vec![tab(
                 "t2",
-                &["session-10", "session-11", "session-12"],
+                &["terminal-10", "terminal-11", "terminal-12"],
                 &[],
                 None,
             )],
         );
-        hidden.workspace = "w2".into();
+        hidden.workspace = "s2".into();
         let workspaces = [shown, hidden];
         let (targets, _) = targets(&workspaces);
         let start = Instant::now();
         let mut attention = Attention::new(true);
         for (session, foreground, at) in [
-            ("session-1", Foreground::Child, start),
-            ("session-2", Foreground::Other, start),
-            ("session-3", Foreground::Unknown, start),
-            ("session-4", Foreground::Child, start),
-            ("session-5", Foreground::Child, start - STALE_AFTER),
-            ("session-6", Foreground::Child, start),
-            ("session-9", Foreground::Child, start),
-            ("session-10", Foreground::Child, start),
+            ("terminal-1", Foreground::Child, start),
+            ("terminal-2", Foreground::Other, start),
+            ("terminal-3", Foreground::Unknown, start),
+            ("terminal-4", Foreground::Child, start),
+            ("terminal-5", Foreground::Child, start - STALE_AFTER),
+            ("terminal-6", Foreground::Child, start),
+            ("terminal-9", Foreground::Child, start),
+            ("terminal-10", Foreground::Child, start),
             // A reply of a replaced run says nothing about the current one.
-            ("session-11", Foreground::Child, start),
+            ("terminal-11", Foreground::Child, start),
         ] {
             let run = sessions
                 .iter()
@@ -2466,7 +2466,11 @@ mod tests {
                 .unwrap()
                 .run_id()
                 .to_owned();
-            let run = if session == "session-11" { "old" } else { &run };
+            let run = if session == "terminal-11" {
+                "old"
+            } else {
+                &run
+            };
             attention.apply(
                 &targets,
                 session,
@@ -2488,54 +2492,56 @@ mod tests {
         assert_eq!(
             names(&busy),
             [
-                "pane-session-2",
-                "pane-session-3",
-                "pane-session-4",
-                "pane-session-5",
+                "pane-terminal-2",
+                "pane-terminal-3",
+                "pane-terminal-4",
+                "pane-terminal-5",
                 "Agent",
                 "commands",
-                "pane-session-11",
-                "pane-session-12",
+                "pane-terminal-11",
+                "pane-terminal-12",
             ]
         );
         assert_eq!(busy.omitted, 0);
         assert_eq!(
             busy.terminals[4].target,
             eonw::TerminalTarget {
-                workspace: "w1".into(),
+                workspace: "s1".into(),
                 tab: "t1".into(),
-                id: TargetId::Popup("popup-session-6".into()),
-                terminal: "session-6".into(),
+                id: TargetId::Popup("popup-terminal-6".into()),
+                terminal: "terminal-6".into(),
             }
         );
         assert_eq!(
             busy.terminals[6].target,
             eonw::TerminalTarget {
-                workspace: "w2".into(),
+                workspace: "s2".into(),
                 tab: "t2".into(),
-                id: TargetId::Pane("pane-session-11".into()),
-                terminal: "session-11".into(),
+                id: TargetId::Pane("pane-terminal-11".into()),
+                terminal: "terminal-11".into(),
             }
         );
 
         // The caller's own terminal is left out, and an idle shell goes stale.
         let later = start + STALE_AFTER;
-        let busy = attention.busy(&workspaces, &sessions, Some("session-2"), later);
-        assert_eq!(names(&busy)[..2], ["pane-session-1", "pane-session-3"]);
+        let busy = attention.busy(&workspaces, &sessions, Some("terminal-2"), later);
+        assert_eq!(names(&busy)[..2], ["pane-terminal-1", "pane-terminal-3"]);
 
         // A terminal that ended, though not yet reaped, is not live, so it is
         // not busy.
         crate::sessions::tests::finish(
             sessions
                 .iter_mut()
-                .find(|session| session.id == "session-3")
+                .find(|session| session.id == "terminal-3")
                 .unwrap(),
         );
         let busy = attention.busy(&workspaces, &sessions, None, start);
-        assert_eq!(names(&busy)[..2], ["pane-session-2", "pane-session-4"]);
+        assert_eq!(names(&busy)[..2], ["pane-terminal-2", "pane-terminal-4"]);
 
         // Past 32, busy terminals are counted, not named.
-        let many: Vec<String> = (1..=34).map(|number| format!("session-{number}")).collect();
+        let many: Vec<String> = (1..=34)
+            .map(|number| format!("terminal-{number}"))
+            .collect();
         let many: Vec<&str> = many.iter().map(String::as_str).collect();
         let crowded = [snapshot("t1", vec![tab("t1", &many, &[], None)])];
         let sessions: Vec<_> = (13..=34)
@@ -2553,7 +2559,7 @@ mod tests {
         let attention = Attention::new(true);
         let busy = attention.busy(&crowded, &sessions, None, start);
         assert_eq!(busy.terminals.len(), eonw::MAX_BUSY_TERMINALS);
-        assert_eq!(busy.terminals[0].name, "pane-session-1");
+        assert_eq!(busy.terminals[0].name, "pane-terminal-1");
         assert_eq!(busy.omitted, 1);
         // Events see every busy terminal (EON-C39).
         let every = attention.busy_terminals(&crowded, &sessions, start);
@@ -2574,13 +2580,13 @@ mod tests {
         )];
         // An explicit command is never the default shell.
         assert!(!sessions[0].default_shell);
-        let (targets, _) = targets(&[snapshot("t", vec![tab("t", &["session-1"], &[], None)])]);
+        let (targets, _) = targets(&[snapshot("t", vec![tab("t", &["terminal-1"], &[], None)])]);
         let mut attention = Attention::new(true);
         let foreground = |attention: &Attention| {
             attention
                 .terminals
                 .iter()
-                .find(|terminal| terminal.session == "session-1")
+                .find(|terminal| terminal.session == "terminal-1")
                 .map(|terminal| terminal.foreground)
         };
         poll_until(&mut attention, &targets, &mut sessions, |attention| {

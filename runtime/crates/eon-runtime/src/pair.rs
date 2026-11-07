@@ -5,7 +5,7 @@
 //! search, and a `become(exit 11)` POST to fzf leaves it for Files.
 
 use super::diagnostics::DiagnosticLog;
-use eon_workspace_protocol::v35::{InvokeIntent, PROJECT_ENTRY};
+use eon_workspace_protocol::v36::{InvokeIntent, PROJECT_ENTRY};
 use std::{
     collections::HashMap,
     ffi::{OsStr, OsString},
@@ -54,8 +54,8 @@ pub(crate) fn client_id(endpoint: &Path) -> u64 {
 /// that endpoint, in the window's own runtime directory, and never longer than
 /// its `.management` socket, whose length the window's runtime root is bounded
 /// by. fzf takes a `--listen` address as a Unix socket only when it ends in
-/// `.sock` (else it reads a port and exits), so `session-N.sock` pairs with
-/// `session-N.quick.sock`.
+/// `.sock` (else it reads a port and exits), so `terminal-N.sock` pairs with
+/// `terminal-N.quick.sock`.
 pub(crate) fn socket(endpoint: &Path) -> PathBuf {
     let bytes = endpoint.as_os_str().as_bytes();
     let mut path = OsString::from(OsStr::from_bytes(
@@ -282,17 +282,17 @@ mod tests {
     /// terminal endpoint, record or marker for a pair socket.
     #[test]
     fn a_pair_socket_ends_in_sock_and_maps_back_to_its_terminal_only() {
-        let endpoint = Path::new("/run/eon/w/0000000a/generations/g1/session-2.sock");
+        let endpoint = Path::new("/run/eon/w/0000000a/generations/g1/terminal-2.sock");
         let pair = socket(endpoint);
         assert!(pair.as_os_str().as_bytes().ends_with(b".sock"));
-        assert_eq!(pair.file_name().unwrap(), "session-2.quick.sock");
+        assert_eq!(pair.file_name().unwrap(), "terminal-2.quick.sock");
         assert_eq!(socket_endpoint(&pair).as_deref(), Some(endpoint));
         for other in [
-            "session-2.sock",
+            "terminal-2.sock",
             "orbit.sock",
-            "session-2.sock.pending",
-            "session-2.sock.record",
-            "session-2.sock.management",
+            "terminal-2.sock.pending",
+            "terminal-2.sock.record",
+            "terminal-2.sock.management",
         ] {
             assert_eq!(socket_endpoint(&endpoint.with_file_name(other)), None);
         }
@@ -300,19 +300,19 @@ mod tests {
 
     #[test]
     fn client_ids_are_stable_distinct_and_outside_timestamps() {
-        let endpoint = Path::new("/run/eon/w/0000000a/generations/g1/session-2.sock");
+        let endpoint = Path::new("/run/eon/w/0000000a/generations/g1/terminal-2.sock");
         let id = client_id(endpoint);
         assert_eq!(id, client_id(endpoint));
         assert_ne!(
             id,
             client_id(Path::new(
-                "/run/eon/w/0000000a/generations/g1/session-3.sock"
+                "/run/eon/w/0000000a/generations/g1/terminal-3.sock"
             ))
         );
         assert_ne!(
             id,
             client_id(Path::new(
-                "/run/eon/w/0000000a/generations/g2/session-2.sock"
+                "/run/eon/w/0000000a/generations/g2/terminal-2.sock"
             ))
         );
         for id in [id, client_id(Path::new("")), client_id(Path::new("/s"))] {
@@ -327,14 +327,14 @@ mod tests {
     fn pairs_of_two_windows_sharing_a_runtime_base_do_not_collide() {
         let base = Path::new("/run/user/1000/eon");
         let generation = crate::generation::generation_directory;
-        let first = generation(&base.join("w/0000000a"), "g1").join("session-2.sock");
-        let second = generation(&base.join("w/0000000b"), "g1").join("session-2.sock");
+        let first = generation(&base.join("w/0000000a"), "g1").join("terminal-2.sock");
+        let second = generation(&base.join("w/0000000b"), "g1").join("terminal-2.sock");
         assert_ne!(client_id(&first), client_id(&second));
         assert_ne!(socket(&first), socket(&second));
         for endpoint in [&first, &second] {
             assert_eq!(socket(endpoint).parent(), endpoint.parent());
         }
-        assert_eq!(socket(&first).file_name().unwrap(), "session-2.quick.sock");
+        assert_eq!(socket(&first).file_name().unwrap(), "terminal-2.quick.sock");
     }
 
     /// A window is admitted only if its `.management` sockets fit (new_window),
@@ -346,7 +346,7 @@ mod tests {
         let generation = format!("g1-{}", "f".repeat(32));
         let management = |root: &Path| {
             crate::generation::generation_directory(root, &generation)
-                .join("session-9999.sock.management")
+                .join("terminal-9999.sock.management")
         };
         let mut root = PathBuf::from("/tmp/eon-501/w/");
         while socket_path_fits(&management(&root.join("x"))) {
@@ -354,7 +354,7 @@ mod tests {
         }
         assert!(socket_path_fits(&management(&root)));
         let endpoint =
-            crate::generation::generation_directory(&root, &generation).join("session-9999.sock");
+            crate::generation::generation_directory(&root, &generation).join("terminal-9999.sock");
         let pair = socket(&endpoint);
         assert!(
             socket_path_fits(&pair),
@@ -371,7 +371,7 @@ mod tests {
     fn a_starting_quick_search_counts_as_shown_and_waits_for_a_switch_to_files() {
         let root = std::env::temp_dir().join(format!("eon-pair-start-{}", std::process::id()));
         std::fs::create_dir_all(&root).unwrap();
-        let path = root.join("session-2.quick.sock");
+        let path = root.join("terminal-2.quick.sock");
         let _ = std::fs::remove_file(&path);
         assert!(!quick_search_shown(&path));
         quick_search_requested(&path, Duration::ZERO);
@@ -416,7 +416,7 @@ mod tests {
     fn hiding_the_pair_or_its_fzf_listening_ends_the_startup_grace() {
         let root = std::env::temp_dir().join(format!("eon-pair-settle-{}", std::process::id()));
         std::fs::create_dir_all(&root).unwrap();
-        let path = root.join("session-2.quick.sock");
+        let path = root.join("terminal-2.quick.sock");
         let _ = std::fs::remove_file(&path);
         quick_search_requested(&path, Duration::ZERO);
         settle_starting(&path, true);

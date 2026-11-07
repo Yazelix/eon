@@ -8,7 +8,7 @@ use super::{
         validate_private_directory,
     },
 };
-use eon_workspace_protocol::v35::{
+use eon_workspace_protocol::v36::{
     Failure, MAX_HISTORY_TEXT_BYTES, MAX_PASTE_BYTES, MAX_SESSIONS, MAX_TERMINAL_METADATA_BYTES,
     MAX_TERMINAL_TEXT_BYTES,
 };
@@ -37,7 +37,7 @@ use std::{
 };
 
 fn session_number(value: &str) -> Option<usize> {
-    let number = value.strip_prefix("session-")?;
+    let number = value.strip_prefix("terminal-")?;
     if number.starts_with('0') || !number.bytes().all(|byte| byte.is_ascii_digit()) {
         return None;
     }
@@ -342,7 +342,7 @@ fn validate_management_identity(
         .ok_or_else(|| "terminal presentation endpoint has no parent".to_string())?;
     let expected_presentation = match number {
         1 => presentation == runtime.join("orbit.sock"),
-        number => presentation == runtime.join(format!("session-{number}.sock")),
+        number => presentation == runtime.join(format!("terminal-{number}.sock")),
     };
     if !expected_presentation {
         return Err(format!(
@@ -852,7 +852,9 @@ pub(super) fn acquire_generation_sessions(
             identity,
         };
         if !numbers.insert(number) {
-            return Err(format!("duplicate live terminal identity session-{number}"));
+            return Err(format!(
+                "duplicate live terminal identity terminal-{number}"
+            ));
         }
         candidates.push(candidate);
     }
@@ -2323,7 +2325,7 @@ pub(crate) mod tests {
             object: super::object_identity(&fs::symlink_metadata(path).unwrap()),
         };
         let identity = LiveIdentity {
-            session_id: "session-1".into(),
+            session_id: "terminal-1".into(),
             run_id: "lost-owner".into(),
             component_generation: "component-1".into(),
             record_generation: management::RECORD_GENERATION,
@@ -2454,7 +2456,7 @@ pub(crate) mod tests {
             },
         };
         let identity = LiveIdentity {
-            session_id: "session-1".into(),
+            session_id: "terminal-1".into(),
             run_id: "liveness".into(),
             component_generation: "component-1".into(),
             record_generation: management::RECORD_GENERATION,
@@ -2500,10 +2502,10 @@ pub(crate) mod tests {
                 .unwrap()
                 .expect("live child has no process")
                 .start;
-            let endpoint = root.join("session-2.sock");
-            let record = root.join("session-2.sock.record");
+            let endpoint = root.join("terminal-2.sock");
+            let record = root.join("terminal-2.sock.record");
             let identity = LiveIdentity {
-                session_id: "session-2".into(),
+                session_id: "terminal-2".into(),
                 run_id: format!("run-{pid}"),
                 component_generation: "component-1".into(),
                 record_generation: management::RECORD_GENERATION,
@@ -2520,7 +2522,7 @@ pub(crate) mod tests {
                 },
                 management: EndpointIdentity {
                     path: root
-                        .join("session-2.sock.management")
+                        .join("terminal-2.sock.management")
                         .as_os_str()
                         .as_bytes()
                         .to_vec(),
@@ -2603,7 +2605,7 @@ pub(crate) mod tests {
     fn rollback_after_child_exit_keeps_the_terminal_number_creatable() {
         let root = temporary_directory();
         fs::set_permissions(&root, fs::Permissions::from_mode(0o700)).unwrap();
-        let record = root.join("session-5.sock.record");
+        let record = root.join("terminal-5.sock.record");
         for tombstone in [true, false] {
             let claim = super::ReadyClaim::create(&record).unwrap();
             let mut orbit = Command::new("true").spawn().unwrap();
@@ -2616,10 +2618,10 @@ pub(crate) mod tests {
                 let object = super::object_identity(&fs::symlink_metadata(&path).unwrap());
                 (path, object)
             };
-            let (presentation, presentation_object) = endpoint("session-5.sock");
-            let (management_path, management_object) = endpoint("session-5.sock.management");
+            let (presentation, presentation_object) = endpoint("terminal-5.sock");
+            let (management_path, management_object) = endpoint("terminal-5.sock.management");
             let identity = LiveIdentity {
-                session_id: "session-5".into(),
+                session_id: "terminal-5".into(),
                 run_id: format!("run-{pid}"),
                 component_generation: "component-1".into(),
                 record_generation: management::RECORD_GENERATION,
@@ -2690,9 +2692,9 @@ pub(crate) mod tests {
         number: usize,
         reason: TerminationReason,
     ) -> (RunningSession, UnixStream, Tombstone) {
-        let endpoint = root.join(format!("session-{number}.sock"));
+        let endpoint = root.join(format!("terminal-{number}.sock"));
         let identity = LiveIdentity {
-            session_id: format!("session-{number}"),
+            session_id: format!("terminal-{number}"),
             run_id: format!("run-{number}"),
             component_generation: "component-1".into(),
             record_generation: management::RECORD_GENERATION,
@@ -2724,7 +2726,7 @@ pub(crate) mod tests {
             reason,
             outcome: ProcessOutcome::ExitCode(0),
         };
-        let record = root.join(format!("session-{number}.record"));
+        let record = root.join(format!("terminal-{number}.record"));
         fs::OpenOptions::new()
             .write(true)
             .create_new(true)
@@ -2843,7 +2845,7 @@ pub(crate) mod tests {
             &inputs,
             root,
             &root.join("orbit.sock"),
-            "session-1",
+            "terminal-1",
             "component-1",
             root,
             &["sh".into(), "-c".into(), script.into()],
@@ -2870,7 +2872,7 @@ pub(crate) mod tests {
             &inputs,
             &root,
             &root.join("orbit.sock"),
-            "session-1",
+            "terminal-1",
             "component-1",
             &root,
             &["sh".into(), "-c".into(), "exec sleep 30".into()],
@@ -2997,7 +2999,7 @@ pub(crate) mod tests {
         assert_eq!(
             stop_managed_sessions(std::slice::from_mut(&mut session), Duration::from_secs(5))
                 .unwrap(),
-            ["session-1"]
+            ["terminal-1"]
         );
         fs::remove_dir_all(root).unwrap();
     }
@@ -3090,7 +3092,7 @@ pub(crate) mod tests {
         let (mut session, peer, tombstone) =
             tombstoned_session(&root, 1, TerminationReason::NaturalExit);
         let code =
-            |result: Result<bool, eon_workspace_protocol::v35::Failure>| result.unwrap_err().code;
+            |result: Result<bool, eon_workspace_protocol::v36::Failure>| result.unwrap_err().code;
         let paste = || LeaseInput::Paste("hi".into());
 
         let orbit = answer(
@@ -3336,7 +3338,7 @@ pub(crate) mod tests {
         assert_eq!(
             stop_managed_sessions(std::slice::from_mut(&mut session), Duration::from_secs(5))
                 .unwrap(),
-            ["session-1"]
+            ["terminal-1"]
         );
         assert_eq!(
             super::read_visible(&mut session, &log).unwrap_err().code,
@@ -3416,7 +3418,7 @@ pub(crate) mod tests {
 
         assert_eq!(
             stop_managed_sessions(sessions, Duration::from_secs(5)).unwrap(),
-            ["session-1"]
+            ["terminal-1"]
         );
         other.kill().unwrap();
         other.wait().unwrap();
@@ -3446,7 +3448,7 @@ pub(crate) mod tests {
         assert_eq!(unsafe { libc::kill(silent, libc::SIGCONT) }, 0);
         assert_eq!(
             stop_managed_sessions(&mut sessions[..1], Duration::from_secs(5)).unwrap(),
-            ["session-1"]
+            ["terminal-1"]
         );
         for root in roots {
             fs::remove_dir_all(root).unwrap();
@@ -3481,7 +3483,7 @@ pub(crate) mod tests {
         poll(&mut sessions[1]);
         assert_eq!(
             stop_managed_sessions(&mut sessions[1..], Duration::from_secs(5)).unwrap(),
-            ["session-1"]
+            ["terminal-1"]
         );
         for root in roots {
             fs::remove_dir_all(root).unwrap();
@@ -3540,7 +3542,7 @@ pub(crate) mod tests {
         assert_eq!(
             stop_managed_sessions(std::slice::from_mut(&mut session), Duration::from_secs(1))
                 .unwrap(),
-            ["session-1"]
+            ["terminal-1"]
         );
 
         // An unsolicited byte before EOF only delays the end.
@@ -3598,7 +3600,7 @@ pub(crate) mod tests {
         assert_eq!(
             stop_managed_sessions(std::slice::from_mut(&mut session), Duration::from_secs(5))
                 .unwrap(),
-            ["session-1"]
+            ["terminal-1"]
         );
         fs::remove_dir_all(root).unwrap();
     }
@@ -3606,18 +3608,18 @@ pub(crate) mod tests {
     #[test]
     fn terminal_session_inverts_the_terminal_identity() {
         for run_id in ["run", "run.with.dots", ""] {
-            let identity = super::terminal_identity("session-1", run_id);
-            assert_eq!(super::terminal_session(&identity), Some("session-1"));
+            let identity = super::terminal_identity("terminal-1", run_id);
+            assert_eq!(super::terminal_session(&identity), Some("terminal-1"));
         }
-        assert_eq!(super::terminal_session("session-1"), None);
+        assert_eq!(super::terminal_session("terminal-1"), None);
         assert_eq!(super::terminal_session(".run"), None);
         assert_eq!(super::terminal_session(""), None);
     }
 
     #[test]
     fn session_identity_is_positive_canonical_decimal() {
-        assert_eq!(session_number("session-1"), Some(1));
-        assert_eq!(session_number("session-256"), Some(256));
+        assert_eq!(session_number("terminal-1"), Some(1));
+        assert_eq!(session_number("terminal-256"), Some(256));
         // The retired directory pickers' identities are no longer terminals.
         for retired in ["directory-picker", "directory-picker-1"] {
             assert!(
@@ -3626,13 +3628,13 @@ pub(crate) mod tests {
             );
         }
         for invalid in [
-            "session-0",
-            "session-01",
-            "session-",
+            "terminal-0",
+            "terminal-01",
+            "terminal-",
             "session-a",
             "Session-1",
             "pane-1",
-            "session-184467440737095516160",
+            "terminal-184467440737095516160",
         ] {
             assert_eq!(session_number(invalid), None, "accepted {invalid}");
         }
@@ -3777,7 +3779,7 @@ pub(crate) mod tests {
             &inputs,
             config,
             socket,
-            "session-1",
+            "terminal-1",
             "run-1",
             "component-1",
             root.as_path(),
@@ -3792,7 +3794,7 @@ pub(crate) mod tests {
                 "serve",
                 "/runtime/orbit.sock",
                 "--management-v7",
-                "session-1",
+                "terminal-1",
                 "run-1",
                 "component-1",
                 "--ansi-palette-v1",
@@ -3809,7 +3811,7 @@ pub(crate) mod tests {
         );
         assert_eq!(
             command_environment(&default, "EON_TERMINAL"),
-            Some(Some(OsStr::new("session-1.run-1")))
+            Some(Some(OsStr::new("terminal-1.run-1")))
         );
         assert_eq!(command_environment(&default, "XDG_CONFIG_HOME"), None);
         assert_eq!(command_environment(&default, "EON_TAB"), Some(None));
@@ -3831,7 +3833,7 @@ pub(crate) mod tests {
                 &inputs,
                 config,
                 socket,
-                "session-3",
+                "terminal-3",
                 "run-3",
                 "component-3",
                 root.as_path(),
@@ -3864,7 +3866,7 @@ pub(crate) mod tests {
             &inputs,
             config,
             socket,
-            "session-2",
+            "terminal-2",
             "run-2",
             "component-2",
             root.as_path(),
@@ -3889,7 +3891,7 @@ pub(crate) mod tests {
                 "serve",
                 "/runtime/orbit.sock",
                 "--management-v7",
-                "session-2",
+                "terminal-2",
                 "run-2",
                 "component-2",
                 "--ansi-palette-v1",

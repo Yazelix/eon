@@ -65,7 +65,7 @@ const EVENT_KINDS: [EventKind; 7] = [
 /// distinct.
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct Filter {
-    /// `wN` ids or names, which the Runtime resolves once (EON-C33).
+    /// `sN` ids or names, which the Runtime resolves once (EON-C33).
     pub workspaces: Vec<String>,
     pub tabs: Vec<String>,
     /// Pane ids or popup instances, followed by their terminal.
@@ -1240,9 +1240,9 @@ mod tests {
 
     fn window_snapshot() -> WindowSnapshot {
         WindowSnapshot {
-            workspaces: vec![entry("w1", 0)],
+            workspaces: vec![entry("s1", 0)],
             attention_queue: vec![QueueItem {
-                workspace: "w1".into(),
+                workspace: "s1".into(),
                 tab: "t1".into(),
                 target: "p1".into(),
                 state: AttentionState::NeedsInput,
@@ -1282,14 +1282,14 @@ mod tests {
             subscribed(Some(window_snapshot())),
             SubscriptionMessage::Subscribed(Subscribed {
                 window: Some("0123abcd".into()),
-                caller: Some(target("w1", "t1", TargetId::Pane("p1".into()))),
+                caller: Some(target("s1", "t1", TargetId::Pane("p1".into()))),
                 ..match subscribed(None) {
                     SubscriptionMessage::Subscribed(subscribed) => subscribed,
                     _ => unreachable!(),
                 }
             }),
             SubscriptionMessage::Tabs(Tabs {
-                workspace: "w1".into(),
+                workspace: "s1".into(),
                 tabs: vec![tab("t1", &["p1", "p2"]), tab("t2", &["p3"])],
             }),
             SubscriptionMessage::Gap(Gap {
@@ -1315,7 +1315,7 @@ mod tests {
         ] {
             samples.push(event(Change::Workspace {
                 change,
-                workspace: entry("w2", 1),
+                workspace: entry("s2", 1),
             }));
         }
         for change in [
@@ -1327,7 +1327,7 @@ mod tests {
         ] {
             samples.push(event(Change::Tab {
                 change,
-                workspace: "w1".into(),
+                workspace: "s1".into(),
                 tab: tab("t2", &["p3"]),
                 tabs: change.carries_order().then(|| match change {
                     TabChange::Closed => vec!["t1".into()],
@@ -1346,7 +1346,7 @@ mod tests {
             let closed = change == PaneChange::Closed;
             samples.push(event(Change::Pane {
                 change,
-                workspace: "w1".into(),
+                workspace: "s1".into(),
                 tab: "t1".into(),
                 pane: pane("p2"),
                 column: 2,
@@ -1375,7 +1375,7 @@ mod tests {
         ] {
             samples.push(event(Change::Popup {
                 change,
-                workspace: "w1".into(),
+                workspace: "s1".into(),
                 tab: "t1".into(),
                 popup: popup("u1", "agent"),
                 chosen: change != PopupChange::Hidden,
@@ -1383,24 +1383,24 @@ mod tests {
         }
         samples.extend([
             event(Change::Attention {
-                target: target("w1", "t1", TargetId::Pane("p1".into())),
+                target: target("s1", "t1", TargetId::Pane("p1".into())),
                 previous: None,
                 attention: Some(attention(AttentionState::NeedsInput)),
             }),
             event(Change::Attention {
-                target: target("w1", "t1", TargetId::Popup("u1".into())),
+                target: target("s1", "t1", TargetId::Popup("u1".into())),
                 previous: Some(AttentionState::Working),
                 attention: None,
             }),
             event(Change::Queue(window_snapshot().attention_queue)),
             event(Change::Queue(vec![])),
             event(Change::Busy {
-                target: target("w1", "t1", TargetId::Pane("p1".into())),
+                target: target("s1", "t1", TargetId::Pane("p1".into())),
                 busy: true,
                 name: Some("p1  cargo build".into()),
             }),
             event(Change::Busy {
-                target: target("w1", "t1", TargetId::Popup("u1".into())),
+                target: target("s1", "t1", TargetId::Popup("u1".into())),
                 busy: false,
                 name: None,
             }),
@@ -1411,7 +1411,7 @@ mod tests {
     #[test]
     fn subscribe_requests_round_trip_and_reject_forged_filters() {
         let filter = Filter {
-            workspaces: vec!["w2".into(), "notes 🦀".into()],
+            workspaces: vec!["s2".into(), "notes 🦀".into()],
             tabs: vec!["t1".into()],
             targets: vec!["p1".into(), "u1".into()],
             kinds: vec![EventKind::Attention, EventKind::Busy],
@@ -1448,7 +1448,7 @@ mod tests {
                 ..Filter::default()
             },
             Filter {
-                workspaces: vec!["w1".into(), "w1".into()],
+                workspaces: vec!["s1".into(), "s1".into()],
                 ..Filter::default()
             },
             Filter {
@@ -1592,7 +1592,7 @@ mod tests {
         let tab_event = |change: TabChange, tabs: Option<Vec<String>>| {
             event(Change::Tab {
                 change,
-                workspace: "w1".into(),
+                workspace: "s1".into(),
                 tab: tab("t2", &["p3"]),
                 tabs,
             })
@@ -1600,7 +1600,7 @@ mod tests {
         let placed = |change: PaneChange, column: usize, expanded: bool, columns| {
             event(Change::Pane {
                 change,
-                workspace: "w1".into(),
+                workspace: "s1".into(),
                 tab: "t1".into(),
                 pane: pane("p2"),
                 column,
@@ -1611,7 +1611,7 @@ mod tests {
         let pane_event = |change, columns| placed(change, 1, false, columns);
         let busy_event = |busy, name: Option<&str>| {
             event(Change::Busy {
-                target: target("w1", "t1", TargetId::Pane("p1".into())),
+                target: target("s1", "t1", TargetId::Pane("p1".into())),
                 busy,
                 name: name.map(str::to_owned),
             })
@@ -1626,24 +1626,24 @@ mod tests {
         rollup.attention_rollup = Some(AttentionState::Idle);
         let invalid = [
             gap(&|s| s.attention_queue[0].state = AttentionState::Working),
-            gap(&|s| s.attention_queue[0].workspace = "w01".into()),
-            gap(&|s| s.workspaces.push(entry("w1", 1))),
-            gap(&|s| s.workspaces.push(entry("w2", 0))),
+            gap(&|s| s.attention_queue[0].workspace = "s01".into()),
+            gap(&|s| s.workspaces.push(entry("s1", 1))),
+            gap(&|s| s.workspaces.push(entry("s2", 0))),
             gap(&|s| s.workspaces[0].workspace.recency = MAX_WORKSPACES as u8),
             gap(&|s| s.workspaces[0].workspace.tab_count = 0),
             gap(&|s| s.workspaces[0].active_tab = "t 1".into()),
             gap(&|s| s.tab_messages = MAX_WORKSPACES + 1),
             gap(&|s| {
                 s.workspaces = (1..=MAX_WORKSPACES + 1)
-                    .map(|n| entry(&format!("w{n}"), (n - 1) as u8))
+                    .map(|n| entry(&format!("s{n}"), (n - 1) as u8))
                     .collect()
             }),
             SubscriptionMessage::Tabs(Tabs {
-                workspace: "w1".into(),
+                workspace: "s1".into(),
                 tabs: vec![tab("t1", &["p1"]), duplicate_surface],
             }),
             SubscriptionMessage::Tabs(Tabs {
-                workspace: "w1".into(),
+                workspace: "s1".into(),
                 tabs: vec![rollup],
             }),
             SubscriptionMessage::Tabs(Tabs {
@@ -1670,12 +1670,12 @@ mod tests {
                 vec![column(&["p2"], "p2"), column(&[], "p3")],
             ),
             event(Change::Attention {
-                target: target("w1", "t1", TargetId::Pane("p 1".into())),
+                target: target("s1", "t1", TargetId::Pane("p 1".into())),
                 previous: None,
                 attention: None,
             }),
             event(Change::Attention {
-                target: target("w1", "t1", TargetId::Pane("p1".into())),
+                target: target("s1", "t1", TargetId::Pane("p1".into())),
                 previous: None,
                 attention: Some(Attention {
                     state: AttentionState::Working,
@@ -1688,14 +1688,14 @@ mod tests {
             }])),
             event(Change::Popup {
                 change: PopupChange::Shown,
-                workspace: "w1".into(),
+                workspace: "s1".into(),
                 tab: "t1".into(),
                 popup: popup("u1", ""),
                 chosen: false,
             }),
             event(Change::Pane {
                 change: PaneChange::Renamed,
-                workspace: "w1".into(),
+                workspace: "s1".into(),
                 tab: "t1".into(),
                 pane: Pane {
                     label: "p2 x".into(),
@@ -1729,7 +1729,7 @@ mod tests {
             gap(&|s| {
                 s.busy = Some(vec![
                     BusyTerminal {
-                        target: target("w1", "t1", TargetId::Pane("p1".into())),
+                        target: target("s1", "t1", TargetId::Pane("p1".into())),
                         name: "p1".into(),
                     };
                     2
@@ -1780,7 +1780,7 @@ mod tests {
                 }
             }),
             SubscriptionMessage::Tabs(Tabs {
-                workspace: "w1".into(),
+                workspace: "s1".into(),
                 tabs: vec![],
             }),
             SubscriptionMessage::End(End::Ended {
@@ -1805,7 +1805,7 @@ mod tests {
         forged[8] += 1;
         assert!(decode_subscription_message(&forged).is_err());
         let busy = encode_subscription_message(&event(Change::Busy {
-            target: target("w1", "t1", TargetId::Pane("p1".into())),
+            target: target("s1", "t1", TargetId::Pane("p1".into())),
             busy: false,
             name: None,
         }))
@@ -1825,7 +1825,7 @@ mod tests {
     fn subscription_messages_keep_their_wire_bytes() {
         let request = subscribe(
             Filter {
-                workspaces: vec!["w2".into()],
+                workspaces: vec!["s2".into()],
                 tabs: vec!["t1".into()],
                 targets: vec!["p1".into()],
                 kinds: vec![EventKind::Attention],
@@ -1838,22 +1838,22 @@ mod tests {
         );
         assert_eq!(
             hex(&encode_request(&request).unwrap()),
-            "454f4e57230001002d00000002007231002801000200773201000200743101000200703101000401000101040067312e370500000000000000"
+            "454f4e57240001002d00000002007231002801000200733201000200743101000200703101000401000101040067312e370500000000000000"
         );
         let attention_event = event(Change::Attention {
-            target: target("w1", "t1", TargetId::Pane("p1".into())),
+            target: target("s1", "t1", TargetId::Pane("p1".into())),
             previous: Some(AttentionState::Working),
             attention: Some(attention(AttentionState::NeedsInput)),
         });
         let tab_event = event(Change::Tab {
             change: TabChange::Moved,
-            workspace: "w1".into(),
+            workspace: "s1".into(),
             tab: tab("t2", &["p3"]),
             tabs: Some(vec!["t2".into(), "t1".into()]),
         });
         let pane_event = event(Change::Pane {
             change: PaneChange::Moved,
-            workspace: "w1".into(),
+            workspace: "s1".into(),
             tab: "t1".into(),
             pane: pane("p2"),
             column: 1,
@@ -1865,51 +1865,51 @@ mod tests {
         });
         let popup_event = event(Change::Popup {
             change: PopupChange::Shown,
-            workspace: "w1".into(),
+            workspace: "s1".into(),
             tab: "t1".into(),
             popup: popup("u1", "agent"),
             chosen: true,
         });
         let busy_event = event(Change::Busy {
-            target: target("w1", "t1", TargetId::Pane("p1".into())),
+            target: target("s1", "t1", TargetId::Pane("p1".into())),
             busy: true,
             name: Some("p1  vim".into()),
         });
         for (message, expected) in [
             (
                 subscribed(None),
-                "454f4e572300880021000000100067312e31373030303030303030303030290000000000000002006731000000",
+                "454f4e572400880021000000100067312e31373030303030303030303030290000000000000002006731000000",
             ),
             (
                 subscribed(Some(window_snapshot())),
-                "454f4e572300880042000000100067312e31373030303030303030303030290000000000000002006731000001010002007731000100000002007431010002007731020074310200703101000100",
+                "454f4e572400880042000000100067312e31373030303030303030303030290000000000000002006731000001010002007331000100000002007431010002007331020074310200703101000100",
             ),
             (
                 SubscriptionMessage::Tabs(Tabs {
-                    workspace: "w1".into(),
+                    workspace: "s1".into(),
                     tabs: vec![tab("t1", &["p1"])],
                 }),
-                "454f4e5723008900340000000200773101000100010000000200743101002f00010200703100010002007031030073703103002f703101020070310000000000",
+                "454f4e5724008900340000000200733101000100010000000200743101002f00010200703100010002007031030073703103002f703101020070310000000000",
             ),
             (
                 attention_event,
-                "454f4e5723008a00400000002a00000000000000040200773102007431000200703102007331040102ff0600636c6175646500000900436f6e74696e75653f00000700000000000000000000",
+                "454f4e5724008a00400000002a00000000000000040200733102007431000200703102007331040102ff0600636c6175646500000900436f6e74696e75653f00000700000000000000000000",
             ),
             (
                 tab_event,
-                "454f4e5723008a00460000002a000000000000000101020077310100010000000200743201002f00010200703300010002007033030073703303002f70330102007033000000000002000200743202007431",
+                "454f4e5724008a00460000002a000000000000000101020073310100010000000200743201002f00010200703300010002007033030073703303002f70330102007033000000000002000200743202007431",
             ),
             (
                 pane_event,
-                "454f4e5723008a00370000002a000000000000000201020077310200743102007032030073703203002f70320102007032000001010100020002007031020070320100",
+                "454f4e5724008a00370000002a000000000000000201020073310200743102007032030073703203002f70320102007032000001010100020002007031020070320100",
             ),
             (
                 popup_event,
-                "454f4e5723008a00290000002a00000000000000030102007731020074310200753105006167656e74030073753103002f75310001",
+                "454f4e5724008a00290000002a00000000000000030102007331020074310200753105006167656e74030073753103002f75310001",
             ),
             (
                 busy_event,
-                "454f4e5723008a00250000002a00000000000000060200773102007431000200703102007331010107007031202076696d",
+                "454f4e5724008a00250000002a00000000000000060200733102007431000200703102007331010107007031202076696d",
             ),
             (
                 SubscriptionMessage::Gap(Gap {
@@ -1917,21 +1917,21 @@ mod tests {
                     reason: GapReason::Overflow,
                     snapshot: window_snapshot(),
                 }),
-                "454f4e5723008b002a0000005a0000000000000000010002007731000100000002007431010002007731020074310200703101000100",
+                "454f4e5724008b002a0000005a0000000000000000010002007331000100000002007431010002007331020074310200703101000100",
             ),
             (
                 SubscriptionMessage::End(End::Ended {
                     generation: "g1".into(),
                 }),
-                "454f4e5723008c00050000000002006731",
+                "454f4e5724008c00050000000002006731",
             ),
             (
                 SubscriptionMessage::End(End::TargetsGone),
-                "454f4e5723008c000100000001",
+                "454f4e5724008c000100000001",
             ),
             (
                 SubscriptionMessage::End(End::TooSlow),
-                "454f4e5723008c000100000002",
+                "454f4e5724008c000100000002",
             ),
         ] {
             assert_eq!(
@@ -2072,7 +2072,7 @@ mod tests {
             assert!(bytes.len() <= bound, "{} > {bound}", bytes.len());
             assert_eq!(&decode_subscription_message(&bytes).unwrap(), message);
         };
-        let long_workspace = "w".to_string() + &u64::MAX.to_string();
+        let long_workspace = "s".to_string() + &u64::MAX.to_string();
 
         // One workspace's most tabs, each with the most columns, holding the
         // window's every terminal.
@@ -2104,7 +2104,7 @@ mod tests {
                         id: if n == MAX_WORKSPACES {
                             long_workspace.clone()
                         } else {
-                            format!("w{n}")
+                            format!("s{n}")
                         },
                         name: Some("🦀".repeat(MAX_WORKSPACE_NAME_CHARS)),
                         tab_count: MAX_TABS,
@@ -2201,19 +2201,19 @@ mod tests {
             tab
         };
         let fits = SubscriptionMessage::Tabs(Tabs {
-            workspace: "w1".into(),
+            workspace: "s1".into(),
             tabs: vec![with_popups(MAX_ENTRIES)],
         });
         let bytes = encode_subscription_message(&fits).unwrap();
         assert_eq!(decode_subscription_message(&bytes).unwrap(), fits);
         for over in [
             SubscriptionMessage::Tabs(Tabs {
-                workspace: "w1".into(),
+                workspace: "s1".into(),
                 tabs: vec![with_popups(MAX_ENTRIES + 1)],
             }),
             event(Change::Tab {
                 change: TabChange::Directory,
-                workspace: "w1".into(),
+                workspace: "s1".into(),
                 tab: with_popups(MAX_ENTRIES + 1),
                 tabs: None,
             }),

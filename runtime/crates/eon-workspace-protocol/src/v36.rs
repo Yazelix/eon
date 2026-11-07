@@ -1,4 +1,4 @@
-//! Eon-owned values and bounded EONW v35 codec for local workspace clients.
+//! Eon-owned values and bounded EONW v36 codec for local workspace clients.
 //!
 //! Every message is a 12-byte header (`EONW`, little-endian version, kind,
 //! zero flags, little-endian payload length) followed by its payload.
@@ -17,7 +17,7 @@ pub use subscription::{
     decode_subscription_message, encode_subscription_message,
 };
 
-pub const VERSION: u16 = 35;
+pub const VERSION: u16 = 36;
 pub const HEADER_BYTES: usize = 12;
 const MAGIC: &[u8; 4] = b"EONW";
 const MAX_MESSAGE_BYTES: usize = 2 * 1024 * 1024;
@@ -2365,9 +2365,9 @@ fn queued(state: AttentionState) -> bool {
     )
 }
 
-/// A workspace id is `w` and a positive number without leading zeros.
+/// A session id is `s` and a positive number without leading zeros.
 fn validate_workspace_id(id: &str) -> Result<()> {
-    let number = id.strip_prefix('w').unwrap_or("");
+    let number = id.strip_prefix('s').unwrap_or("");
     if number.starts_with('0')
         || !number.bytes().all(|byte| byte.is_ascii_digit())
         || number
@@ -3670,16 +3670,16 @@ mod tests {
                 name: name.clone(),
             },
             WorkspaceAction::RenameWorkspace {
-                workspace: Some("w1".into()),
+                workspace: Some("s1".into()),
                 name: String::new(),
             },
             WorkspaceAction::CloseWorkspace {
-                workspace: "w1".into(),
+                workspace: "s1".into(),
             },
         ] {
             let request = Request {
                 id: "workspaces".into(),
-                caller: Some("session-1".into()),
+                caller: Some("terminal-1".into()),
                 action: Action::Workspace(action),
             };
             let bytes = encode_request(&request).unwrap();
@@ -3709,15 +3709,15 @@ mod tests {
         let mut state = snapshot();
         state.workspaces = (1..=MAX_WORKSPACES)
             .map(|index| WorkspaceInfo {
-                id: format!("w{index}"),
+                id: format!("s{index}"),
                 name: Some(name.clone()),
                 tab_count: 4,
                 attention: (index % 3 == 0).then_some(AttentionState::Working),
                 recency: (index - 1) as u8,
             })
             .collect();
-        state.workspace = "w2".into();
-        state.active_workspace = "w1".into();
+        state.workspace = "s2".into();
+        state.active_workspace = "s1".into();
         state.workspaces[1].attention = Some(AttentionState::NeedsInput);
         let response = Response::Snapshot(state.clone());
         let bytes = encode_response(&response).unwrap();
@@ -3727,20 +3727,20 @@ mod tests {
             |s| {
                 s.workspaces.push(s.workspaces[0].clone());
             },
-            |s| s.workspaces[0].id = "w0".into(),
-            |s| s.workspaces[0].id = "w01".into(),
+            |s| s.workspaces[0].id = "s0".into(),
+            |s| s.workspaces[0].id = "s01".into(),
             |s| s.workspaces[0].name = Some("a".repeat(65)),
             |s| s.workspaces[0].name = Some("a\n".into()),
             |s| s.workspaces[0].name = Some(String::new()),
             |s| s.workspaces[0].tab_count = 0,
             |s| s.workspaces[0].tab_count = MAX_TABS + 1,
             |s| s.workspaces[1].tab_count = 3,
-            |s| s.active_workspace = "w100".into(),
-            |s| s.workspace = "w100".into(),
+            |s| s.active_workspace = "s100".into(),
+            |s| s.workspace = "s100".into(),
             // A rank twice, a rank past M-1, and a shown workspace not ranked 0.
             |s| s.workspaces[2].recency = 1,
             |s| s.workspaces[31].recency = 32,
-            |s| s.active_workspace = "w3".into(),
+            |s| s.active_workspace = "s3".into(),
             // The projected workspace's rollup is its tabs' most urgent one.
             |s| s.workspaces[1].attention = Some(AttentionState::Error),
             |s| s.workspaces[1].attention = None,
@@ -3818,10 +3818,10 @@ mod tests {
             record: None,
         });
         Snapshot {
-            workspace: "w1".into(),
-            active_workspace: "w1".into(),
+            workspace: "s1".into(),
+            active_workspace: "s1".into(),
             workspaces: vec![WorkspaceInfo {
-                id: "w1".into(),
+                id: "s1".into(),
                 name: None,
                 tab_count: 4,
                 attention: Some(AttentionState::NeedsInput),
@@ -4253,7 +4253,7 @@ mod tests {
 
     fn terminal_target(id: TargetId, terminal: &str) -> TerminalTarget {
         TerminalTarget {
-            workspace: "w1".into(),
+            workspace: "s1".into(),
             tab: "t1".into(),
             id,
             terminal: terminal.into(),
@@ -4265,13 +4265,13 @@ mod tests {
         let longest = |id: char| id.to_string().repeat(MAX_ID_BYTES);
         let history = |text: String| TerminalHistory {
             target: TerminalTarget {
-                workspace: longest('w'),
+                workspace: longest('s'),
                 tab: longest('t'),
                 id: TargetId::Popup(longest('u')),
                 terminal: longest('s'),
             },
             caller: Some(TerminalTarget {
-                workspace: longest('w'),
+                workspace: longest('s'),
                 tab: longest('t'),
                 id: TargetId::Pane(longest('p')),
                 terminal: longest('s'),
@@ -4322,7 +4322,7 @@ mod tests {
         );
 
         let mut short = history("a".into());
-        short.target = terminal_target(TargetId::Pane("p1".into()), "session-1");
+        short.target = terminal_target(TargetId::Pane("p1".into()), "terminal-1");
         short.caller = None;
         let forge = |history: &TerminalHistory| {
             let mut payload = Encoder::default();
@@ -4469,8 +4469,8 @@ mod tests {
     #[test]
     fn terminal_text_is_bounded_plain_text_on_both_sides() {
         let text = |text: String| TerminalText {
-            target: terminal_target(TargetId::Popup("u1".into()), "session-2"),
-            caller: Some(terminal_target(TargetId::Pane("p1".into()), "session-1")),
+            target: terminal_target(TargetId::Popup("u1".into()), "terminal-2"),
+            caller: Some(terminal_target(TargetId::Pane("p1".into()), "terminal-1")),
             revision: u64::MAX,
             screen: Screen::Primary,
             rows: u16::MAX,
@@ -4529,7 +4529,7 @@ mod tests {
 
         let sent = |enter_delay_ms| {
             Response::Sent(Sent {
-                target: terminal_target(TargetId::Pane("p1".into()), "session-1"),
+                target: terminal_target(TargetId::Pane("p1".into()), "terminal-1"),
                 caller: None,
                 bracketed: false,
                 enter_delay_ms,
@@ -4549,9 +4549,9 @@ mod tests {
         // An editing reply's popup is a popup, on either side.
         let editing = |popup| {
             Response::Editing(Editing {
-                target: terminal_target(TargetId::Pane("p1".into()), "session-1"),
+                target: terminal_target(TargetId::Pane("p1".into()), "terminal-1"),
                 caller: None,
-                popup: terminal_target(popup, "session-2"),
+                popup: terminal_target(popup, "terminal-2"),
             })
         };
         assert_eq!(
@@ -4559,8 +4559,8 @@ mod tests {
             Err("editing popup")
         );
         let mut forged = encode_response(&editing(TargetId::Popup("u1".into()))).unwrap();
-        // The popup's tag follows its workspace and tab, 16 bytes from the end.
-        let tag = forged.len() - 16;
+        // The popup's tag follows its workspace and tab, 17 bytes from the end.
+        let tag = forged.len() - 17;
         assert_eq!(forged[tag], 1);
         forged[tag] = 0;
         assert_eq!(
@@ -4654,14 +4654,14 @@ mod tests {
         for (action, expected) in [
             (
                 Action::Workspace(WorkspaceAction::CloseTab { tab: "t1".into() }),
-                "454f4e57230001000a00000002007231001202007431",
+                "454f4e57240001000a00000002007231001202007431",
             ),
             (
                 Action::Workspace(WorkspaceAction::SetTabDirectory {
                     tab: "t1".into(),
                     directory: b"/tmp".to_vec(),
                 }),
-                "454f4e57230001001000000002007231000c0200743104002f746d70",
+                "454f4e57240001001000000002007231000c0200743104002f746d70",
             ),
             (
                 Action::InvokePopup {
@@ -4670,29 +4670,29 @@ mod tests {
                     expected_instance: Some("u1".into()),
                     intent: InvokeIntent::Focus,
                 },
-                "454f4e572300010015000000020072310013020074310300676974010200753101",
+                "454f4e572400010015000000020072310013020074310300676974010200753101",
             ),
-            (Action::CreateColumn, "454f4e572300010006000000020072310016"),
+            (Action::CreateColumn, "454f4e572400010006000000020072310016"),
             (
                 Action::ClosePane { pane: "p2".into() },
-                "454f4e57230001000a00000002007231001702007032",
+                "454f4e57240001000a00000002007231001702007032",
             ),
             (
                 Action::MovePaneSideways(Side::Right),
-                "454f4e572300010006000000020072310019",
+                "454f4e572400010006000000020072310019",
             ),
             (
                 Action::Edit {
                     file: b"/tmp/a".to_vec(),
                 },
-                "454f4e57230001000e00000002007231001a06002f746d702f61",
+                "454f4e57240001000e00000002007231001a06002f746d702f61",
             ),
             (
                 Action::CreateCommandPane {
                     argv: vec![b"hx".to_vec(), b"a".to_vec()],
                     focus: false,
                 },
-                "454f4e57230001001000000002007231001b00020002006878010061",
+                "454f4e57240001001000000002007231001b00020002006878010061",
             ),
             (
                 Action::LaunchTab {
@@ -4700,7 +4700,7 @@ mod tests {
                     argv: vec![],
                     focus: true,
                 },
-                "454f4e57230001000f00000002007231002504002f746d70000001",
+                "454f4e57240001000f00000002007231002504002f746d70000001",
             ),
             (
                 Action::LaunchTab {
@@ -4708,44 +4708,44 @@ mod tests {
                     argv: vec![b"hx".to_vec(), b"a".to_vec()],
                     focus: false,
                 },
-                "454f4e57230001001600000002007231002504002f746d7002000200687801006100",
+                "454f4e57240001001600000002007231002504002f746d7002000200687801006100",
             ),
             (
                 Action::ToggleSidebar,
-                "454f4e57230001000600000002007231001c",
+                "454f4e57240001000600000002007231001c",
             ),
             (
                 Action::FocusAttention {
                     tab: "t1".into(),
                     target: "p2".into(),
                 },
-                "454f4e57230001000e00000002007231001d0200743102007032",
+                "454f4e57240001000e00000002007231001d0200743102007032",
             ),
             (
                 Action::NextAttention,
-                "454f4e57230001000600000002007231001e",
+                "454f4e57240001000600000002007231001e",
             ),
             (
                 Action::PreviousAttention,
-                "454f4e57230001000600000002007231001f",
+                "454f4e57240001000600000002007231001f",
             ),
             (
                 Action::ReadTerminal {
                     target: "p2".into(),
                 },
-                "454f4e57230001000a00000002007231002602007032",
+                "454f4e57240001000a00000002007231002602007032",
             ),
             (
                 Action::ReadTerminalHistory {
                     target: "p2".into(),
                 },
-                "454f4e57230001000a00000002007231002902007032",
+                "454f4e57240001000a00000002007231002902007032",
             ),
             (
                 Action::EditTerminalHistory {
                     target: "p2".into(),
                 },
-                "454f4e57230001000a00000002007231002a02007032",
+                "454f4e57240001000a00000002007231002a02007032",
             ),
             (
                 Action::SendTerminal {
@@ -4754,7 +4754,7 @@ mod tests {
                     input: TerminalInput::Paste("hi".into()),
                 },
                 // v27's u32-length paste.
-                "454f4e572300010012000000020072310027020070320000020000006869",
+                "454f4e572400010012000000020072310027020070320000020000006869",
             ),
             (
                 Action::SendTerminal {
@@ -4762,7 +4762,7 @@ mod tests {
                     force: true,
                     input: TerminalInput::Enter,
                 },
-                "454f4e57230001000c000000020072310027020075310101",
+                "454f4e57240001000c000000020072310027020075310101",
             ),
         ] {
             let request = Request {
@@ -4776,13 +4776,13 @@ mod tests {
         }
         let request = Request {
             id: "r1".into(),
-            caller: Some("session-2.9-1".into()),
+            caller: Some("terminal-2.9-1".into()),
             action: Action::Workspace(WorkspaceAction::CreatePane { focus: true }),
         };
         let bytes = encode_request(&request).unwrap();
         assert_eq!(
             hex(&bytes),
-            "454f4e57230001001600000002007231010d0073657373696f6e2d322e392d310201",
+            "454f4e57240001001700000002007231010e007465726d696e616c2d322e392d310201",
         );
         assert_eq!(decode_request(&bytes).unwrap(), request);
         for caller in ["", "session 2"] {
@@ -4794,10 +4794,10 @@ mod tests {
         }
 
         let snapshot = Response::Snapshot(Snapshot {
-            workspace: "w1".into(),
-            active_workspace: "w1".into(),
+            workspace: "s1".into(),
+            active_workspace: "s1".into(),
             workspaces: vec![WorkspaceInfo {
-                id: "w1".into(),
+                id: "s1".into(),
                 name: None,
                 tab_count: 1,
                 attention: Some(AttentionState::NeedsInput),
@@ -4897,7 +4897,7 @@ mod tests {
             (
                 snapshot,
                 concat!(
-                    "454f4e57230081001c0100000100020002000100010000000200743100000041",
+                    "454f4e57240081001c0100000100020002000100010000000200743100000041",
                     "00008040010003006769740300476974000404004b6579470100020074310400",
                     "2f746d700001020070330102007531030002007031030073703103002f703101",
                     "02007031000002007032030073703203002f7032010200703200000200703303",
@@ -4905,19 +4905,19 @@ mod tests {
                     "6101007401006d01000000000000000002000100020075310300676974030073",
                     "753103002f753100010100640000000000000001002c0100002a01f401000000",
                     "0000000001015a00000000000000020060270000070000602700003c00010500",
-                    "4661626c6500015f00000000000000010102007731020077310100",
-                    // w1's tab count, then v22's needs-input rollup and shown rank 0.
-                    "02007731000100",
+                    "4661626c6500015f00000000000000010102007331020073310100",
+                    // s1's tab count, then v22's needs-input rollup and shown rank 0.
+                    "02007331000100",
                     "0100",
                     // v27's empty attention queue, v28's absent running summary,
                     // then v29's absent busy list.
                     "00000000",
                 ),
             ),
-            (failure, "454f4e57230082000a00000004006275737902006e6f"),
+            (failure, "454f4e57240082000a00000004006275737902006e6f"),
             (
                 Response::Text(TerminalText {
-                    target: terminal_target(TargetId::Pane("p2".into()), "session-2"),
+                    target: terminal_target(TargetId::Pane("p2".into()), "terminal-2"),
                     caller: None,
                     revision: 7,
                     screen: Screen::Alternate,
@@ -4929,9 +4929,9 @@ mod tests {
                     text: "a\nb".into(),
                 }),
                 concat!(
-                    "454f4e572300860037000000",
+                    "454f4e572400860038000000",
                     // Workspace, tab, pane p2 and its terminal; no caller.
-                    "02007731020074310002007032090073657373696f6e2d3200",
+                    "020073310200743100020070320a007465726d696e616c2d3200",
                     // Revision, alternate screen, 24x80, title, directory,
                     // omitted rows, then the u32-length text.
                     "0700000000000000011800500001007401002f0000000003000000610a62",
@@ -4939,7 +4939,7 @@ mod tests {
             ),
             (
                 Response::History(TerminalHistory {
-                    target: terminal_target(TargetId::Pane("p2".into()), "session-2"),
+                    target: terminal_target(TargetId::Pane("p2".into()), "terminal-2"),
                     caller: None,
                     revision: 7,
                     screen: Screen::Primary,
@@ -4952,8 +4952,8 @@ mod tests {
                     text: "a\nb".into(),
                 }),
                 concat!(
-                    "454f4e5723008d003b000000",
-                    "02007731020074310002007032090073657373696f6e2d3200",
+                    "454f4e5724008d003c000000",
+                    "020073310200743100020070320a007465726d696e616c2d3200",
                     // Revision, primary screen, 24x80, title, directory,
                     // omitted lines, cut bytes, then the u32-length text.
                     "0700000000000000001800500001007401002f",
@@ -4962,37 +4962,37 @@ mod tests {
             ),
             (
                 Response::Sent(Sent {
-                    target: terminal_target(TargetId::Pane("p2".into()), "session-2"),
-                    caller: Some(terminal_target(TargetId::Popup("u1".into()), "session-3")),
+                    target: terminal_target(TargetId::Pane("p2".into()), "terminal-2"),
+                    caller: Some(terminal_target(TargetId::Popup("u1".into()), "terminal-3")),
                     bracketed: true,
                     enter_delay_ms: 300,
                 }),
                 concat!(
-                    "454f4e572300870034000000",
-                    "02007731020074310002007032090073657373696f6e2d32",
-                    "0102007731020074310102007531090073657373696f6e2d33",
+                    "454f4e572400870036000000",
+                    "020073310200743100020070320a007465726d696e616c2d32",
+                    "01020073310200743101020075310a007465726d696e616c2d33",
                     "012c01",
                 ),
             ),
             (
                 Response::Editing(Editing {
-                    target: terminal_target(TargetId::Pane("p2".into()), "session-2"),
+                    target: terminal_target(TargetId::Pane("p2".into()), "terminal-2"),
                     caller: None,
-                    popup: terminal_target(TargetId::Popup("u1".into()), "session-3"),
+                    popup: terminal_target(TargetId::Popup("u1".into()), "terminal-3"),
                 }),
                 concat!(
-                    "454f4e5723008e0031000000",
+                    "454f4e5724008e0033000000",
                     // Pane p2 and its terminal, no caller, then popup u1 and
                     // its terminal.
-                    "02007731020074310002007032090073657373696f6e2d3200",
-                    "02007731020074310102007531090073657373696f6e2d33",
+                    "020073310200743100020070320a007465726d696e616c2d3200",
+                    "020073310200743101020075310a007465726d696e616c2d33",
                 ),
             ),
             (
                 Response::Ended(Ended {
                     generation: "g1".into(),
                 }),
-                "454f4e57230085000400000002006731",
+                "454f4e57240085000400000002006731",
             ),
         ] {
             let bytes = encode_response(&response).unwrap();
@@ -5021,7 +5021,7 @@ mod tests {
                     busy: None,
                 }),
                 concat!(
-                    "454f4e572300830030000000020067310500302e392e30230002006f6b010002",
+                    "454f4e572400830030000000020067310500302e392e30240002006f6b010002",
                     "007331010500726561647900040062757379",
                     // v28: absent name, supervisor start in Unix milliseconds.
                     "000000000000000000",
@@ -5034,7 +5034,7 @@ mod tests {
                     generation: "g1".into(),
                     sessions: vec![],
                 }),
-                "454f4e572300840006000000020067310000",
+                "454f4e572400840006000000020067310000",
             ),
         ] {
             let bytes = encode_lifecycle_response(&response).unwrap();
@@ -5059,10 +5059,10 @@ mod tests {
             }),
         };
         Snapshot {
-            workspace: "w1".into(),
-            active_workspace: "w1".into(),
+            workspace: "s1".into(),
+            active_workspace: "s1".into(),
             workspaces: vec![WorkspaceInfo {
-                id: "w1".into(),
+                id: "s1".into(),
                 name: None,
                 tab_count: 1,
                 attention: Some(AttentionState::NeedsInput),
@@ -5096,7 +5096,7 @@ mod tests {
             claude_quota_failure: None,
             sidebar: Sidebar::Off,
             attention_queue: vec![QueueEntry {
-                workspace: "w1".into(),
+                workspace: "s1".into(),
                 tab: "t".into(),
                 target: "p".into(),
                 attention,
@@ -5113,12 +5113,12 @@ mod tests {
         assert_eq!(
             hex(&bytes),
             concat!(
-                "454f4e57230081008a00000001000100010000000100740000000000000000",
+                "454f4e57240081008a00000001000100010000000100740000000000000000",
                 "0000010001007401002f00010100700001000100700200737002002f700101007000",
                 "010128000000000000000001000000000000000000000000010000000002",
-                "02007731020077310100020077310001000100",
+                "02007331020073310100020073310001000100",
                 // u16 count, workspace, tab, target, then needs-input permission at 40%.
-                "0100020077310100740100700101280000000000000000010000000000000000000000",
+                "0100020073310100740100700101280000000000000000010000000000000000000000",
                 // v29's absent busy list.
                 "00",
             ),
@@ -5153,10 +5153,10 @@ mod tests {
         assert_eq!(
             hex(&bytes),
             concat!(
-                "454f4e5723008100bb0000000100010001000000010074000000000000000000",
+                "454f4e5724008100bb0000000100010001000000010074000000000000000000",
                 "00010001007401002f00010100700001000100700200737002002f7001010070",
                 "0001012800000000000000000100000000000000000000000001000000000202",
-                "0077310200773101000200773100010001000100020077310100740100700101",
+                "0073310200733101000200733100010001000100020073310100740100700101",
                 "2800000000000000000100000000000000000000010108003132333461626364",
                 "0200673101040068657265012a00000000000000010300000101000002006732",
                 "000000010700",
@@ -5186,8 +5186,8 @@ mod tests {
             // Present, two terminals: workspace, tab, pane or popup, terminal,
             // name; then none omitted.
             "010200",
-            "020077310200743100020070320200733207007032202076696d",
-            "020077310200743101020075310200733305004167656e74",
+            "020073310200743100020070320200733207007032202076696d",
+            "020073310200743101020075310200733305004167656e74",
             "0000",
         );
         let mut snapshot = attention_queue_snapshot();
@@ -5225,7 +5225,7 @@ mod tests {
         assert_eq!(
             hex(&bytes),
             concat!(
-                "454f4e572300830063000000020067310500302e392e30230002006f6b0000",
+                "454f4e572400830063000000020067310500302e392e30240002006f6b0000",
                 "01050072656164790105007265616479",
                 "000000000000000000",
             )
@@ -5693,7 +5693,7 @@ mod tests {
     fn attention_queue_round_trips_and_rejects_invalid_entries_on_both_sides() {
         let mut state = snapshot();
         state.workspaces.push(WorkspaceInfo {
-            id: "w2".into(),
+            id: "s2".into(),
             name: None,
             tab_count: 1,
             attention: None,
@@ -5707,7 +5707,7 @@ mod tests {
         .into_iter()
         .enumerate()
         .map(|(index, class)| QueueEntry {
-            workspace: if index == 0 { "w2" } else { "w1" }.into(),
+            workspace: if index == 0 { "s2" } else { "s1" }.into(),
             tab: "t1".into(),
             target: "p2".into(),
             attention: attention(class).unwrap(),
@@ -5728,7 +5728,7 @@ mod tests {
                 }
             },
             |entry| entry.attention.record = None,
-            |entry| entry.workspace = "w3".into(),
+            |entry| entry.workspace = "s3".into(),
             |entry| entry.workspace.clear(),
             |entry| entry.tab = "bad id".into(),
             |entry| entry.target.clear(),
@@ -5753,7 +5753,7 @@ mod tests {
         // A queue entry is mandatory attention, so its absent wire tag is invalid.
         let mut empty = snapshot();
         empty.attention_queue.push(QueueEntry {
-            workspace: "w1".into(),
+            workspace: "s1".into(),
             tab: "t1".into(),
             target: "p2".into(),
             attention: Attention {
@@ -6311,7 +6311,7 @@ mod tests {
         state.active_tab = state.tabs[0].id.clone();
         state.workspaces = (1..=MAX_WORKSPACES)
             .map(|index| WorkspaceInfo {
-                id: format!("w{index}"),
+                id: format!("s{index}"),
                 name: Some("🦀".repeat(MAX_WORKSPACE_NAME_CHARS)),
                 tab_count: MAX_TABS,
                 attention: Some(AttentionState::NeedsInput),
@@ -6319,7 +6319,7 @@ mod tests {
             })
             .collect();
         // The largest valid workspace id is shorter than MAX_ID_BYTES.
-        state.workspaces[MAX_WORKSPACES - 1].id = format!("w{}", u64::MAX);
+        state.workspaces[MAX_WORKSPACES - 1].id = format!("s{}", u64::MAX);
         state.attention_queue = (0..MAX_SESSIONS)
             .map(|index| QueueEntry {
                 workspace: state.workspaces[MAX_WORKSPACES - 1].id.clone(),

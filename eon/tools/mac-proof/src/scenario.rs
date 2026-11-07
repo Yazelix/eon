@@ -2650,10 +2650,10 @@ mod tests {
         let listing = parse_processes(
             "  501    10     1 /nix/store/x-eon/bin/.eon-wrapped run -- /bin/sh /t/root/driver.sh\n\
              501    11    10 /nix/store/x-venus/bin/.yazelix-venus-wrapped --admission 3\n\
-             501    12     1 /nix/store/x-orbit/bin/yazelix-orbit serve /tmp/es-9/generations/g1/session-1.sock\n\
+             501    12     1 /nix/store/x-orbit/bin/yazelix-orbit serve /tmp/es-9/generations/g1/terminal-1.sock\n\
              501    13    12 /bin/sleep 3600\n\
              501    14     1 /usr/bin/ssh other\n\
-             501    16     1 /nix/store/x-orbit/bin/yazelix-orbit serve /tmp/es-90/generations/g1/session-1.sock\n\
+             501    16     1 /nix/store/x-orbit/bin/yazelix-orbit serve /tmp/es-90/generations/g1/terminal-1.sock\n\
              0      15    12 /usr/sbin/root-owned /tmp/es-9\n\
              garbage\n",
             "501",
@@ -2673,11 +2673,11 @@ mod tests {
             "active_tab": "t2",
             "tabs": [
                 {"id": "t1", "selected_pane": "p1", "selected_popup": null, "popups": [],
-                 "panes": [{"id": "p1", "session": "session-1"}]},
+                 "panes": [{"id": "p1", "session": "terminal-1"}]},
                 {"id": "t2", "selected_pane": "p3", "selected_popup": "u1",
                  "popups": [{"id": "u1", "entry": "files", "endpoint": "/tmp/es-9/u1.sock"}],
-                 "panes": [{"id": "p2", "session": "session-2"},
-                           {"id": "p3", "session": "session-3", "endpoint": "/tmp/es-9/p3.sock"}]}
+                 "panes": [{"id": "p2", "session": "terminal-2"},
+                           {"id": "p3", "session": "terminal-3", "endpoint": "/tmp/es-9/p3.sock"}]}
             ]
         });
         let found = panes(&workspace);
@@ -2687,7 +2687,7 @@ mod tests {
             Pane {
                 id: "p3".to_owned(),
                 tab: "t2".to_owned(),
-                session: "session-3".to_owned(),
+                session: "terminal-3".to_owned(),
                 endpoint: "/tmp/es-9/p3.sock".to_owned(),
             }
         );

@@ -2,7 +2,7 @@ use eon_runtime::{
     BarLoad, Defaults, Inputs, ManagedPrograms, PaddingColor, PopupCatalog, PopupCommand,
     PopupDefinition, ShellConfig, StartupAnimation, TerminalAccess, TerminalConfig,
 };
-use eon_workspace_protocol::v35::{ALT, PopupGeometry, PopupKey, SHIFT, Shortcut};
+use eon_workspace_protocol::v36::{ALT, PopupGeometry, PopupKey, SHIFT, Shortcut};
 
 pub(crate) fn inputs() -> Inputs {
     const MANIFEST: &str = include_str!("../../../../components/eon-v5.json");
@@ -130,11 +130,11 @@ pub(crate) fn inputs() -> Inputs {
                         false,
                     ),
                     (
-                        "workspaces",
-                        "Workspaces",
+                        "sessions",
+                        "Sessions",
                         "KeyS",
                         ALT | SHIFT,
-                        PopupCommand::Argv(vec!["eon-workspaces".into()]),
+                        PopupCommand::Argv(vec!["eon-sessions".into()]),
                         false,
                     ),
                     // Scrollback's command is built for each press (EON-C10).

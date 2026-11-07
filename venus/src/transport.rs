@@ -1,4 +1,4 @@
-use eon_workspace_protocol::v35::{
+use eon_workspace_protocol::v36::{
     self as workspace, Action as WorkspaceAction, Request as WorkspaceRequest,
     Response as WorkspaceResponse,
 };
@@ -75,7 +75,7 @@ pub enum WorkspaceEvent {
     },
 }
 
-/// Bounded semantic-action handle for EONW v35.
+/// Bounded semantic-action handle for EONW v36.
 pub struct WorkspaceTransport {
     actions: mpsc::SyncSender<WorkerItem>,
     events: Arc<WorkspaceEventQueue>,
@@ -1318,7 +1318,7 @@ fn protocol_loss(error: session::Error) -> TransportEvent {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use eon_workspace_protocol::v35::{
+    use eon_workspace_protocol::v36::{
         InvokeIntent, Pane, Popup, PopupEntry, PopupKey, Shortcut, Snapshot, Tab,
     };
     use orbit_protocol::{
@@ -2240,7 +2240,7 @@ mod tests {
                 seq: 1,
                 change: workspace::Change::Tab {
                     change: workspace::TabChange::Activated,
-                    workspace: "w1".into(),
+                    workspace: "s1".into(),
                     tab: second_workspace_tab(),
                     tabs: None,
                 },
@@ -2883,7 +2883,7 @@ mod tests {
             seq,
             change: workspace::Change::Popup {
                 change,
-                workspace: "w1".into(),
+                workspace: "s1".into(),
                 tab: "t1".into(),
                 popup,
                 chosen: change == workspace::PopupChange::Shown,
@@ -2929,10 +2929,10 @@ mod tests {
 
     fn workspace_snapshot() -> Snapshot {
         Snapshot {
-            workspace: "w1".into(),
-            active_workspace: "w1".into(),
-            workspaces: vec![eon_workspace_protocol::v35::WorkspaceInfo {
-                id: "w1".into(),
+            workspace: "s1".into(),
+            active_workspace: "s1".into(),
+            workspaces: vec![eon_workspace_protocol::v36::WorkspaceInfo {
+                id: "s1".into(),
                 name: None,
                 tab_count: 1,
                 attention: None,
@@ -2952,12 +2952,12 @@ mod tests {
                 id: "t1".into(),
                 directory: b"/tmp/eon".to_vec(),
                 selected_pane: Some("pane-1".into()),
-                columns: vec![eon_workspace_protocol::v35::Column {
+                columns: vec![eon_workspace_protocol::v36::Column {
                     panes: vec![Pane {
                         label: "pane-1".into(),
                         pinned_name: None,
                         id: "pane-1".into(),
-                        session: "session-1".into(),
+                        session: "terminal-1".into(),
                         endpoint: b"/run/eon/orbit.sock".to_vec(),
                         live: true,
                         attention: None,
@@ -2966,7 +2966,7 @@ mod tests {
                 }],
                 attention_rollup: None,
             }],
-            geometry: eon_workspace_protocol::v35::PopupGeometry {
+            geometry: eon_workspace_protocol::v36::PopupGeometry {
                 side_margin: 8.0,
                 vertical_margin: 4.0,
             },
@@ -2984,7 +2984,7 @@ mod tests {
             claude_quota_failure: None,
             running: None,
             busy: None,
-            sidebar: eon_workspace_protocol::v35::Sidebar::Open,
+            sidebar: eon_workspace_protocol::v36::Sidebar::Open,
             attention_queue: Vec::new(),
         }
     }
@@ -2997,13 +2997,13 @@ mod tests {
             id: "t2".into(),
             directory: b"/tmp/nova".to_vec(),
             selected_pane: Some("pane-2".into()),
-            columns: vec![eon_workspace_protocol::v35::Column {
+            columns: vec![eon_workspace_protocol::v36::Column {
                 panes: vec![Pane {
                     label: "pane-2".into(),
                     pinned_name: None,
                     id: "pane-2".into(),
-                    session: "session-2".into(),
-                    endpoint: b"/run/eon/session-2.sock".to_vec(),
+                    session: "terminal-2".into(),
+                    endpoint: b"/run/eon/terminal-2.sock".to_vec(),
                     live: true,
                     attention: None,
                 }],

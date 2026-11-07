@@ -4,7 +4,7 @@
 //! in the test too.
 
 use super::*;
-use eon_workspace_protocol::v35::{Filter, InvokeIntent, TerminalInput};
+use eon_workspace_protocol::v36::{Filter, InvokeIntent, TerminalInput};
 
 enum CliPath {
     /// These arguments parse to exactly this action.
@@ -177,18 +177,18 @@ fn every_eonw_action_has_a_cli_path_or_a_named_exception() {
             focus: false,
         },
         WorkspaceAction::SwitchWorkspace {
-            workspace: text("-w2"),
+            workspace: text("-s2"),
         },
         WorkspaceAction::RenameWorkspace {
             workspace: None,
             name: text("--json"),
         },
         WorkspaceAction::RenameWorkspace {
-            workspace: Some(text("w2")),
+            workspace: Some(text("s2")),
             name: String::new(),
         },
         WorkspaceAction::CloseWorkspace {
-            workspace: text("-w2"),
+            workspace: text("-s2"),
         },
         WorkspaceAction::CreatePane { focus: true },
         WorkspaceAction::CreatePane { focus: false },

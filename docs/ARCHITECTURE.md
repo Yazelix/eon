@@ -45,11 +45,12 @@ ends the terminal.
 Under planned [EON-C33](CONTRACTS.md#eon-c33--several-workspaces-in-one-window),
 an Eon **window** holds one or more workspaces and shows one at a time;
 switching the shown workspace keeps every terminal running. A workspace may
-have a name, but its `wN` identity identifies it.
+have a name, but its `sN` identity identifies it.
 
-Product text uses these terms without requiring subsystem names. Technical
-`session-N` identities and JSON `session` / `sessions` fields refer to terminals.
-Their spellings, socket paths and protocol names remain unchanged.
+Product text uses these terms without requiring subsystem names. Each terminal
+has a `terminal-N` identity, which also names its Orbit socket
+(`terminal-N.sock`); JSON `session` / `sessions` fields refer to terminals.
+Protocol names remain unchanged.
 
 Documentation names the subsystems **Orbit**, **Venus** and **Eon Runtime**
 when ownership matters; engineering documentation may say **Eon orchestrator**,
@@ -101,7 +102,7 @@ shims require an explicit user decision, a removal condition, and a bead.
 EONW is the one versioned workspace boundary for independently released Eon
 clients. Its dependency-free owner crate defines semantic actions, complete
 snapshots, supervisor lifecycle results, structured failures, and bounded
-framing. EONW v35 carries Eon-owned raw tab launch directories, each tab's
+framing. EONW v36 carries Eon-owned raw tab launch directories, each tab's
 zero to four pane columns, each pane's semantic label and optional pin, the popup catalog,
 tab-scoped popup terminals, explicit retarget actions, which commit a pending tab, and
 an optional pending tab's absent pane selection without interpreting Orbit
@@ -117,7 +118,7 @@ after detachment with the supervisor's original native-decoration choice. Venus
 alone translates that signal into a native presentation request.
 A side-effect-free presentation-capability inspection leaves existing runtime
 reports unchanged. In eonbase mode the same private EONW endpoint retains
-lifecycle authority but returns `workspace-unavailable` to topology actions,
+lifecycle authority but returns `session-unavailable` to topology actions,
 while Venus receives only Orbit's endpoint. EONW carries opaque Orbit endpoint
 bytes but no terminal content, except a program's own bounded status report
 text and its terminal's title (EON-C31), and, since v26, the visible text,
@@ -129,7 +130,7 @@ and `active_workspace` names the one shown in the window. A request carrying a
 validated caller projects that terminal's workspace; a request without a caller
 projects the shown workspace. The four workspace requests operate on Runtime's
 workspace set. The `eon workspaces` and `eon workspace new|switch|rename|close`
-CLI is their front end, and the Workspaces picker (`eon-workspaces`,
+CLI is their front end, and the Workspaces picker (`eon-sessions`,
 Alt+Shift+S) and the Commands workspace entries run that CLI as the popup's
 caller.
 `RenamePane` targets an explicit pane in that addressed workspace.
@@ -140,11 +141,16 @@ The pin is separate from terminal title and attention, follows the pane object,
 and is absent after supervisor recovery. Venus consumes the label without a
 second metadata observer or naming policy.
 
-EONW v35 is the current Eon source boundary. It changes no message: its version
+EONW v36 is the current Eon source boundary. It changes no message layout:
+session IDs become `sN` (were `wN`), terminal IDs `terminal-N` (were
+`session-N`), the session error codes `unknown-session`, `ambiguous-session`,
+`session-limit`, `session-close-failed` and `session-unavailable`, an unknown
+terminal `unknown-terminal` and one that fails to start `terminal-start`, and
+the picker's popup entry `sessions`. v35 changes no message: its version
 tells a later build that this build's `eon` takes `window stop ID` and
 `window attach ID` in place of `stop GENERATION` and `attach GENERATION`
-(EON-C11, Delegation). v34 adds `EditTerminalHistory` and
-its `Editing` reply for EON-C35's `eon pane history --edit`. v33 adds
+(EON-C11, Delegation). v34 adds `EditTerminalHistory` and its `Editing`
+reply for EON-C35's `eon pane history --edit`. v33 adds
 `ReadTerminalHistory` and its `History` reply for EON-C35, the one message
 allowed past 2 MiB. v32
 carries the `SendTerminal` `force` flag for EON-C36. v31 gives a pending tab the tab's
@@ -202,7 +208,7 @@ lifecycle stay out of EONW and Venus. v7 also permits distinct pending Project
 pickers in separate tabs. Eon provides no version negotiation layer. Existing
 live supervisors retain their generation until explicitly stopped; the updated
 executable starts a separate generation. Composed activation requires an exact
-v35 Venus consumer.
+v36 Venus consumer.
 
 The optional Claude observation adds only bounded presentation facts. Under
 EON-C27, pinned CodexBar collects it; Runtime owns bounded subprocesses,
@@ -365,7 +371,7 @@ them. Invalid graph or package inputs fail at their required boundary.
 |---|---|
 | Eon | Product contracts/version/default values, actual executable and exit/error mapping, canonical component graph and `eon-manifest`, assets, component selection, Nix translation and distribution |
 | `eon-runtime` | The `attention`, `cli`, `quota`, `control`, `generation`, `managed_environment`, `running`, `sessions`, `supervisor`, `windows` and `workspace` mechanisms, private state/invariants and one strict config parser |
-| `eon-workspace-protocol` in `runtime/crates/` | Canonical EONW package/API/codec v35 (package `0.1.0`, Rust `1.95`, Apache-2.0) |
+| `eon-workspace-protocol` in `runtime/crates/` | Canonical EONW package/API/codec v36 (package `0.1.0`, Rust `1.95`, Apache-2.0) |
 | Orbit and Venus | Their terminal and native-client authority |
 
 Eon calls one concrete library entry point. Runtime handles invocation selection,
@@ -465,7 +471,7 @@ the user activates an implementation bead and its prerequisite proofs exist. The
 active Eon slice launches one accepted Venus and Orbit pair, supplies the
 accepted managed environment, preserves Eon component and native shell
 configuration boundaries, reports component identity through one Nix-managed
-path, and exposes its live workspace through EONW v35. Venus consumes a new EONW
+path, and exposes its live workspace through EONW v36. Venus consumes a new EONW
 version only after Eon Runtime's producer proof; the graph's interface versions
 change only after Venus's consumer proof exists. Later slices earn their scope
 through dogfooding. Direct distribution has its own activation gate.

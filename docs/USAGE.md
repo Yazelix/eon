@@ -184,7 +184,7 @@ one, and clicking another column's terminal selects it.
 | Alt+G / Alt+Shift+G | Jump to the next or previous agent needing attention |
 | F6 | Move keyboard focus: terminal, agent sidebar, tabs, panes |
 | Alt+1 … Alt+9, Alt+0 | Select tab positions 1 … 10 |
-| Alt+Shift+1 … Alt+Shift+9, Alt+Shift+0 | Show workspaces 1 … 10, in `eon workspaces` order (`[workspace] number_keys`) |
+| Alt+Shift+1 … Alt+Shift+9, Alt+Shift+0 | Show workspaces 1 … 10, in `eon workspaces` order (`[session] number_keys`) |
 | Ctrl+Tab / Ctrl+Shift+Tab | Select the next or previous tab, wrapping around |
 | Alt+H / Alt+L | Select the column to the left or right, continuing into the previous or next tab |
 | Alt+K / Alt+J | Select the previous or next pane in the column |
@@ -219,7 +219,7 @@ A zoomed tab shows a zoom-in magnifier after its name, or ` · zoom` if the
 bundled Symbols Nerd Font face is unavailable. Its accessible name says `, zoomed`.
 While the window holds two or more workspaces, or its one workspace has a name,
 an outlined label before the tabs names the shown workspace, or gives its ID
-such as `w2`, followed, when there are several, by its position and the
+such as `s2`, followed, when there are several, by its position and the
 count, as in `notes 2/3`.
 Clicking it, or Enter after Tab focuses it, opens the Workspaces picker as
 Alt+Shift+S does, and its tooltip names that key. With the Workspaces popup
@@ -425,7 +425,7 @@ the panes' rows in pane order. A row shows:
 
 - the state: ◆ needs input, ✕ error, ✓ finished, stepping braille dots while
   working (still without GPU rendering or with
-  `[workspace] animate_working_badge = false`), three still dots in a row while
+  `[session] animate_working_badge = false`), three still dots in a row while
   the agent waits on background work (it reported done or idle while processes
   it started still run), or ○ idle; the dots take the window's focus colour
   (`[terminal] focus_color`);
@@ -567,10 +567,10 @@ notice and the log line after Eon Desktop exits print, since after an upgrade
 window from its own build or a newer one.
 
 A window holds one or more workspaces and shows one at a time; hidden
-workspaces keep their terminals running. WS is a workspace ID (`w1`, `w2`, ...),
+workspaces keep their terminals running. WS is a workspace ID (`s1`, `s2`, ...),
 never reused by the window's supervisor, or a workspace's exact name. Names are
 labels and need not be unique: a name that matches several workspaces changes
-nothing and exits 1 (`ambiguous-workspace`), naming their IDs.
+nothing and exits 1 (`ambiguous-session`), naming their IDs.
 
 Workspace commands inside Eon target the supervisor and workspace that own the
 exact `EON_TERMINAL` caller, even when the invoked CLI is from another compatible
@@ -590,7 +590,7 @@ selects its current generation if live, otherwise its sole live generation, as
 its validation. Remove
 `EON_TERMINAL` explicitly to act without caller context.
 Eon calls Orbit-backed instances terminals in human output.
-JSON retains the technical `session` / `sessions` fields and `session-N` IDs;
+JSON retains the technical `session` / `sessions` fields and `terminal-N` IDs;
 these refer to terminals.
 `eon workspace --json` prints each tab `directory` and terminal `endpoint` as a
 string when the path is valid UTF-8, and otherwise as an array of the path's
@@ -1013,7 +1013,7 @@ composition.
   plus those of running supervisors, and stops a log at 1 MiB. Orbit's own
   diagnostics go to `$XDG_STATE_HOME/eon/logs/orbit`
   (`~/.local/state/eon/logs/orbit` by default), named
-  `GENERATION-SESSION-RUN.log`; Eon keeps the newest 100 plus those of running
+  `GENERATION-TERMINAL-RUN.log`; Eon keeps the newest 100 plus those of running
   Orbit hosts.
 - **A command works in Yazelix Nova but not in Eon:** Eon's managed Nushell
   and Bash load your own shell configuration (`~/.config/nushell` and

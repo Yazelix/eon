@@ -1,5 +1,5 @@
 use crate::scene::{DrawRow, Scene, ScenePreview, bar_workspace, hidden_needs_input};
-use eon_workspace_protocol::v35::{
+use eon_workspace_protocol::v36::{
     AttentionState, Pane, Popup, Response as WorkspaceResponse, Snapshot, Tab,
 };
 use orbit_protocol::FrameReducer;
@@ -1042,7 +1042,7 @@ fn bounded(mut detail: String) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use eon_workspace_protocol::v35::{
+    use eon_workspace_protocol::v36::{
         self as workspace, CodexQuota, CodexQuotaState, Failure, Pane, PopupEntry, PopupKey,
         Shortcut, Tab,
     };
@@ -1050,10 +1050,10 @@ mod tests {
     #[test]
     fn pane_label_updates_keep_notices_and_attachment_identity() {
         let mut snapshot = Snapshot {
-            workspace: "w1".into(),
-            active_workspace: "w1".into(),
+            workspace: "s1".into(),
+            active_workspace: "s1".into(),
             workspaces: vec![workspace::WorkspaceInfo {
-                id: "w1".into(),
+                id: "s1".into(),
                 name: None,
                 tab_count: 1,
                 attention: None,
@@ -1072,7 +1072,7 @@ mod tests {
                         id: "p1".into(),
                         label: "p1  shell".into(),
                         pinned_name: None,
-                        session: "session-1".into(),
+                        session: "terminal-1".into(),
                         endpoint: b"/tmp/p1.sock".to_vec(),
                         live: true,
                         attention: None,
@@ -1179,10 +1179,10 @@ mod tests {
     /// A workspace of two tabs whose snapshot carries both quotas.
     fn quota_snapshot() -> Snapshot {
         Snapshot {
-            workspace: "w1".into(),
-            active_workspace: "w1".into(),
-            workspaces: vec![eon_workspace_protocol::v35::WorkspaceInfo {
-                id: "w1".into(),
+            workspace: "s1".into(),
+            active_workspace: "s1".into(),
+            workspaces: vec![eon_workspace_protocol::v36::WorkspaceInfo {
+                id: "s1".into(),
                 name: None,
                 tab_count: 2,
                 attention: None,
@@ -1197,12 +1197,12 @@ mod tests {
                     id: "t1".into(),
                     directory: b"/tmp/eon".to_vec(),
                     selected_pane: Some("pane-1".into()),
-                    columns: vec![eon_workspace_protocol::v35::Column {
+                    columns: vec![eon_workspace_protocol::v36::Column {
                         panes: vec![Pane {
                             label: "pane-1".into(),
                             pinned_name: None,
                             id: "pane-1".into(),
-                            session: "session-1".into(),
+                            session: "terminal-1".into(),
                             endpoint: b"/run/eon/orbit.sock".to_vec(),
                             live: true,
                             attention: None,
@@ -1218,12 +1218,12 @@ mod tests {
                     id: "t2".into(),
                     directory: b"/tmp/nova".to_vec(),
                     selected_pane: Some("pane-2".into()),
-                    columns: vec![eon_workspace_protocol::v35::Column {
+                    columns: vec![eon_workspace_protocol::v36::Column {
                         panes: vec![Pane {
                             label: "pane-2".into(),
                             pinned_name: None,
                             id: "pane-2".into(),
-                            session: "session-2".into(),
+                            session: "terminal-2".into(),
                             endpoint: b"/run/eon/nova.sock".to_vec(),
                             live: true,
                             attention: None,
@@ -1233,7 +1233,7 @@ mod tests {
                     attention_rollup: None,
                 },
             ],
-            geometry: eon_workspace_protocol::v35::PopupGeometry {
+            geometry: eon_workspace_protocol::v36::PopupGeometry {
                 side_margin: 8.0,
                 vertical_margin: 4.0,
             },
@@ -1436,7 +1436,7 @@ mod tests {
         let mut summaries = snapshot.clone();
         summaries.workspaces[0].name = Some("renamed".into());
         summaries.workspaces.push(workspace::WorkspaceInfo {
-            id: "w2".into(),
+            id: "s2".into(),
             name: None,
             tab_count: 3,
             attention: None,
@@ -1564,7 +1564,7 @@ mod tests {
             );
         }
         working.workspaces.push(workspace::WorkspaceInfo {
-            id: "w2".into(),
+            id: "s2".into(),
             name: None,
             tab_count: 1,
             attention: None,
@@ -1573,7 +1573,7 @@ mod tests {
         let mut hidden = working.clone();
         hidden.workspaces[1].attention = Some(workspace::AttentionState::NeedsInput);
         hidden.attention_queue = waiting.attention_queue.clone();
-        hidden.attention_queue[0].workspace = "w2".into();
+        hidden.attention_queue[0].workspace = "s2".into();
         assert!(
             attention_only_change(&working, &hidden),
             "a hidden queue entry moves no geometry"
@@ -1686,17 +1686,17 @@ mod tests {
             popups: vec![Popup {
                 id: format!("u{number}"),
                 entry: "files".into(),
-                session: format!("session-{number}"),
-                endpoint: format!("/run/eon/session-{number}.sock").into_bytes(),
+                session: format!("terminal-{number}"),
+                endpoint: format!("/run/eon/terminal-{number}.sock").into_bytes(),
                 attention: None,
             }],
             attention_rollup: None,
         };
         let mut snapshot = Snapshot {
-            workspace: "w1".into(),
-            active_workspace: "w1".into(),
-            workspaces: vec![eon_workspace_protocol::v35::WorkspaceInfo {
-                id: "w1".into(),
+            workspace: "s1".into(),
+            active_workspace: "s1".into(),
+            workspaces: vec![eon_workspace_protocol::v36::WorkspaceInfo {
+                id: "s1".into(),
                 name: None,
                 tab_count: 2,
                 attention: None,
@@ -1732,7 +1732,7 @@ mod tests {
             claude_quota_failure: None,
             running: None,
             busy: None,
-            sidebar: eon_workspace_protocol::v35::Sidebar::Open,
+            sidebar: eon_workspace_protocol::v36::Sidebar::Open,
             attention_queue: Vec::new(),
         };
         let wire =
@@ -1741,14 +1741,14 @@ mod tests {
         model.apply(workspace::decode_response(&wire).unwrap());
         assert_eq!(
             model.active_attachment(),
-            Some((&b"/run/eon/session-2.sock"[..], true))
+            Some((&b"/run/eon/terminal-2.sock"[..], true))
         );
 
         snapshot.active_tab = "t1".into();
         model.apply(WorkspaceResponse::Snapshot(snapshot.clone()));
         assert_eq!(
             model.active_attachment(),
-            Some((&b"/run/eon/session-1.sock"[..], true))
+            Some((&b"/run/eon/terminal-1.sock"[..], true))
         );
 
         snapshot.tabs.remove(0);
@@ -1757,7 +1757,7 @@ mod tests {
         model.apply(WorkspaceResponse::Snapshot(snapshot));
         assert_eq!(
             model.active_attachment(),
-            Some((&b"/run/eon/session-2.sock"[..], true))
+            Some((&b"/run/eon/terminal-2.sock"[..], true))
         );
     }
 
@@ -1767,7 +1767,7 @@ mod tests {
             label: id.into(),
             pinned_name: None,
             id: id.into(),
-            session: format!("session-{id}"),
+            session: format!("terminal-{id}"),
             endpoint: format!("/run/eon/{id}.sock").into_bytes(),
             live,
             attention: None,
@@ -1777,10 +1777,10 @@ mod tests {
             expanded: expanded.into(),
         };
         let mut snapshot = Snapshot {
-            workspace: "w1".into(),
-            active_workspace: "w1".into(),
-            workspaces: vec![eon_workspace_protocol::v35::WorkspaceInfo {
-                id: "w1".into(),
+            workspace: "s1".into(),
+            active_workspace: "s1".into(),
+            workspaces: vec![eon_workspace_protocol::v36::WorkspaceInfo {
+                id: "s1".into(),
                 name: None,
                 tab_count: 1,
                 attention: None,
@@ -1812,7 +1812,7 @@ mod tests {
             claude_quota_failure: None,
             running: None,
             busy: None,
-            sidebar: eon_workspace_protocol::v35::Sidebar::Open,
+            sidebar: eon_workspace_protocol::v36::Sidebar::Open,
             attention_queue: Vec::new(),
         };
         let mut model = WorkspaceModel::default();

@@ -94,7 +94,7 @@
       "pane_frames": true,
       "rows": 30
     },
-    "workspace": {
+    "session": {
       "animate_working_badge": true,
       "number_keys": true,
       "warning_close_last_tab": true

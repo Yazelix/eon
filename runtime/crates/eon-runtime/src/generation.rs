@@ -15,7 +15,7 @@ use super::windows::{
     runtime_window,
 };
 use super::workspace::{json_escape, terminal_text};
-use eon_workspace_protocol::v35::{
+use eon_workspace_protocol::v36::{
     Action, Availability, BusyTerminals, Failure, LifecycleResponse, MAX_RUNNING_WINDOWS, Response,
     Stopped, WindowEntry, WindowState, WorkspaceAction,
 };
@@ -2027,7 +2027,7 @@ mod tests {
                 "11111111111111111111111111111111",
             ),
         ] {
-            let error = super::caller_generation(&base, current, "session-1.x").unwrap_err();
+            let error = super::caller_generation(&base, current, "terminal-1.x").unwrap_err();
             assert!(
                 error.starts_with(&format!("Eon window {window}: ")),
                 "{error}"
@@ -2038,7 +2038,7 @@ mod tests {
 
     #[test]
     fn read_only_discovery_excludes_terminal_only_supervisors() {
-        use eon_workspace_protocol::v35::{
+        use eon_workspace_protocol::v36::{
             Availability, HEADER_BYTES, LifecycleResponse, Runtime, declared_message_len,
             encode_lifecycle_response,
         };
@@ -2070,9 +2070,9 @@ mod tests {
                 name: None,
                 started_at: 123,
                 eon_version: "fixture".into(),
-                workspace_protocol: eon_workspace_protocol::v35::VERSION,
+                workspace_protocol: eon_workspace_protocol::v36::VERSION,
                 component_report: "fixture".into(),
-                sessions: vec!["session-1".into()],
+                sessions: vec!["terminal-1".into()],
                 attach: available.clone(),
                 stop: available,
                 busy: None,
@@ -2176,19 +2176,19 @@ mod tests {
 
     #[test]
     fn quit_asks_only_while_busy_in_window_language() {
-        use eon_workspace_protocol::v35::{BusyTerminal, TargetId, TerminalTarget};
+        use eon_workspace_protocol::v36::{BusyTerminal, TargetId, TerminalTarget};
         let mut record = super::dead_generation("g1", "current", "/runtime".into(), "ended");
-        let sessions = ["session-1".to_owned(), "session-2".to_owned()];
+        let sessions = ["terminal-1".to_owned(), "terminal-2".to_owned()];
         let busy = |names: &[&str], omitted| BusyTerminals {
             terminals: names
                 .iter()
                 .enumerate()
                 .map(|(index, name)| BusyTerminal {
                     target: TerminalTarget {
-                        workspace: "w1".into(),
+                        workspace: "s1".into(),
                         tab: "t1".into(),
                         id: TargetId::Pane(format!("p{index}")),
-                        terminal: format!("session-{index}"),
+                        terminal: format!("terminal-{index}"),
                     },
                     name: (*name).into(),
                 })
@@ -2218,7 +2218,7 @@ mod tests {
         assert_eq!(
             super::quit_question(&record, &sessions[..1], None, false, "0a1b"),
             Some((
-                "Quit window 0a1b? It stops 1 terminal; 1 still running: session-1. [y/N] ".into(),
+                "Quit window 0a1b? It stops 1 terminal; 1 still running: terminal-1. [y/N] ".into(),
                 "cancelled; window 0a1b keeps running\n".into(),
             ))
         );
@@ -2428,12 +2428,12 @@ mod tests {
         let exited = |code: i32| std::process::ExitStatus::from_raw(code << 8);
         let killed = std::process::ExitStatus::from_raw(libc::SIGKILL);
         for output in [
-            b"{\"stopped\":{\"generation\":\"g1\",\"sessions\":[\"session-1\"]}}\n".as_slice(),
-            b"{\"stopped\":{\"generation\":\"g1\",\"sessions\":[\"session-1\"],\"hint\":1}}",
+            b"{\"stopped\":{\"generation\":\"g1\",\"sessions\":[\"terminal-1\"]}}\n".as_slice(),
+            b"{\"stopped\":{\"generation\":\"g1\",\"sessions\":[\"terminal-1\"],\"hint\":1}}",
         ] {
             let stopped = super::delegated_result(output, exited(0), "g1", None);
             assert!(
-                matches!(&stopped, Some(Ok(stopped)) if stopped.sessions == ["session-1"]),
+                matches!(&stopped, Some(Ok(stopped)) if stopped.sessions == ["terminal-1"]),
                 "{stopped:?}"
             );
         }
@@ -2460,7 +2460,7 @@ mod tests {
             (b"[{\"stopped\":{\"generation\":\"g1\",\"sessions\":[]}}]", exited(0)),
             (b"{\"error\":{\"code\":\"\",\"detail\":\"d\"}}", exited(1)),
             (b"", exited(0)),
-            (b"stopped generation g1: session-1\n", exited(0)),
+            (b"stopped generation g1: terminal-1\n", exited(0)),
         ] {
             assert!(
                 super::delegated_result(output, status, "g1", None).is_none(),
@@ -2472,9 +2472,9 @@ mod tests {
         // selection failure alone.
         let window =
             |results: &str| format!("[{{\"window\":\"default\",\"results\":[{results}]}}]\n");
-        let one = window("{\"stopped\":{\"generation\":\"g1\",\"sessions\":[\"session-1\"]}}");
+        let one = window("{\"stopped\":{\"generation\":\"g1\",\"sessions\":[\"terminal-1\"]}}");
         assert!(
-            matches!(super::delegated_result(one.as_bytes(), exited(0), "g1", Some("default")), Some(Ok(stopped)) if stopped.sessions == ["session-1"])
+            matches!(super::delegated_result(one.as_bytes(), exited(0), "g1", Some("default")), Some(Ok(stopped)) if stopped.sessions == ["terminal-1"])
         );
         let refused = window("{\"error\":{\"code\":\"stop-unavailable\",\"detail\":\"d\"}}");
         assert!(

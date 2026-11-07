@@ -5,6 +5,21 @@ installation, and proven contract changes.
 
 ## Unreleased
 
+- Workspaces become sessions, starting with the values Eon hands out
+  (`eon-30skm`, slice 1; the commands and JSON keys follow). Session IDs are
+  `s1`, `s2`, ... instead of `w1`, `w2`, ..., and terminal IDs are
+  `terminal-1`, `terminal-2`, ... instead of `session-1`, `session-2`, ...,
+  so "session" has one meaning. Error codes follow: `unknown-session`,
+  `ambiguous-session`, `session-limit`, `session-close-failed` and
+  `session-unavailable` replace their `workspace` forms, and an unknown or
+  unstartable terminal reports `unknown-terminal` or `terminal-start`. The
+  `[workspace]` table is now `[session]` and the Workspaces popup is
+  `[popups.sessions]`, labelled Sessions and run as `eon-sessions`; an old
+  `[workspace]` or `[popups.workspaces]` table is ignored with one warning
+  naming its replacement, so move its keys by hand. EONW v36 carries the new
+  values (no message layout changes) and Eon is 0.1.20: restart running
+  windows, whose terminals keep the old IDs, to use this release's `eon` on
+  them.
 - On macOS, Command+Q in an Eon window quits the window as Option+Shift+Q
   does, asking first while a terminal runs something, instead of only closing
   Venus and leaving the terminals running; Shortcuts lists it beside

@@ -15,7 +15,7 @@ use super::{
     },
     workspace::{failure_json, json_escape, terminal_text},
 };
-use eon_workspace_protocol::v35::Failure;
+use eon_workspace_protocol::v36::Failure;
 use std::{
     collections::hash_map::RandomState,
     env,
@@ -586,7 +586,7 @@ pub(super) fn new_window(inputs: &Inputs) -> Result<i32, String> {
         let id = format!("{:08x}", RandomState::new().hash_one(request_id()) as u32);
         let root = parent.join(&id);
         if !socket_path_fits(
-            &generation_directory(&root, &generation).join("session-9999.sock.management"),
+            &generation_directory(&root, &generation).join("terminal-9999.sock.management"),
         ) {
             return Err(format!(
                 "Eon runtime root {} is too long for independent terminal sockets",

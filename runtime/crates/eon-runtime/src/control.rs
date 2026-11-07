@@ -7,7 +7,7 @@ use super::{
     },
     workspace,
 };
-use eon_workspace_protocol::v35::{
+use eon_workspace_protocol::v36::{
     Action, Error as ProtocolError, Failure, HEADER_BYTES, LifecycleResponse, MAX_DETAIL_BYTES,
     Request, Response, Runtime, VERSION, WorkspaceAction, declared_message_len,
     declared_response_len, decode_lifecycle_response, decode_request, decode_response,
@@ -451,7 +451,7 @@ pub(super) fn probe_launch_mode(socket: &Path) -> Result<LaunchMode, EndpointFai
     match send_action(socket, Action::Workspace(WorkspaceAction::Inspect))? {
         ControlResponse::Workspace(Response::Snapshot(_)) => Ok(LaunchMode::Workspace),
         ControlResponse::Workspace(Response::Failure(failure))
-            if failure.code == "workspace-unavailable" =>
+            if failure.code == "session-unavailable" =>
         {
             Ok(LaunchMode::Terminal)
         }
@@ -710,9 +710,9 @@ fn failure_status(code: &str) -> u8 {
     match code {
         "invalid-tab" | "malformed-action" | "invalid-text" | "input-too-large"
         | "unread-stdin" => USAGE,
-        "unknown-tab" | "unknown-pane" | "unknown-id" | "unknown-session" | "unknown-popup"
+        "unknown-tab" | "unknown-pane" | "unknown-id" | "unknown-terminal" | "unknown-popup"
         | "stale-popup" | "stale-target" | "unknown-generation" | "unknown-caller"
-        | "unknown-workspace" | "unknown-window" | "unknown-target" => MISSING,
+        | "unknown-session" | "unknown-window" | "unknown-target" => MISSING,
         "ambiguous-window-id" => MISSING,
         "missing-supervisor" | "supervisor-unavailable" => UNREACHABLE,
         "person-typing" => TYPING,
@@ -881,16 +881,16 @@ mod tests {
     #[test]
     fn a_slow_reader_holds_the_supervisor_no_longer_than_the_reply_deadline() {
         let history = |text: String| {
-            super::Response::History(eon_workspace_protocol::v35::TerminalHistory {
-                target: eon_workspace_protocol::v35::TerminalTarget {
-                    workspace: "w1".into(),
+            super::Response::History(eon_workspace_protocol::v36::TerminalHistory {
+                target: eon_workspace_protocol::v36::TerminalTarget {
+                    workspace: "s1".into(),
                     tab: "t1".into(),
-                    id: eon_workspace_protocol::v35::TargetId::Pane("p1".into()),
-                    terminal: "session-1".into(),
+                    id: eon_workspace_protocol::v36::TargetId::Pane("p1".into()),
+                    terminal: "terminal-1".into(),
                 },
                 caller: None,
                 revision: 1,
-                screen: eon_workspace_protocol::v35::Screen::Primary,
+                screen: eon_workspace_protocol::v36::Screen::Primary,
                 rows: 24,
                 columns: 80,
                 title: String::new(),
@@ -998,7 +998,7 @@ mod tests {
         let start = Instant::now();
         let error = super::send_action_from_until(
             &socket,
-            Some("session-1.run".into()),
+            Some("terminal-1.run".into()),
             super::Action::Workspace(super::WorkspaceAction::Inspect),
             start + Duration::from_millis(100),
         )
@@ -1013,9 +1013,9 @@ mod tests {
     #[test]
     fn workspace_refusals_use_the_existing_exit_status_classes() {
         for (code, expected) in [
-            ("unknown-workspace", 3),
-            ("ambiguous-workspace", 1),
-            ("workspace-limit", 1),
+            ("unknown-session", 3),
+            ("ambiguous-session", 1),
+            ("session-limit", 1),
             ("malformed-action", 2),
         ] {
             assert_eq!(

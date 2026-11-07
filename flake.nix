@@ -887,7 +887,7 @@
                 ln -s "../../../bin/eon" "$out/libexec/eon/bin/eon"
                 ln -s "../../../bin/eon" "$out/libexec/eon/bin/eon-files"
                 ln -s "../../../bin/eon" "$out/libexec/eon/bin/eon-commands"
-                ln -s "../../../bin/eon" "$out/libexec/eon/bin/eon-workspaces"
+                ln -s "../../../bin/eon" "$out/libexec/eon/bin/eon-sessions"
                 ln -s ${atuinPackage}/bin/atuin "$out/libexec/eon/bin/atuin"
                 ln -s ${carapacePackage}/bin/carapace "$out/libexec/eon/bin/carapace"
                 cp -r ${shellEnvironment} "$out/libexec/eon/shell"
@@ -1124,7 +1124,7 @@
               nativeBuildInputs = [ pkgs.lua5_4 ];
             } ''
               lua ${./nix/quick-search-guard.lua} \
-                ${filesPopupConfig}/plugins/quick-search.yazi/main.lua "$TMPDIR/session-2.quick.sock"
+                ${filesPopupConfig}/plugins/quick-search.yazi/main.lua "$TMPDIR/terminal-2.quick.sock"
               touch "$out"
             '';
           } // lib.optionalAttrs pkgs.stdenv.isLinux {

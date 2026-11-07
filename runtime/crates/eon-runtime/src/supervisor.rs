@@ -21,7 +21,7 @@ use super::{
     subscriptions::{Subscriber, Subscribers},
     workspace::{self, LaunchCommand, SessionEnd, SessionOperation, WorkspaceSet},
 };
-use eon_workspace_protocol::v35::{
+use eon_workspace_protocol::v36::{
     Action, Availability, BusyTerminals, Editing, Ended, FILES_ENTRY, Failure, InvokeIntent,
     LifecycleResponse, Request, Response, Runtime, Screen, Sent, Snapshot, Stopped, TargetId,
     TerminalHistory, TerminalInput, TerminalText, VERSION, WindowEntry, WindowState,
@@ -679,7 +679,7 @@ impl PresentationProcess {
                 };
                 if let Some(snapshot) = snapshot {
                     let bytes =
-                        eon_workspace_protocol::v35::encode_response(&Response::Snapshot(snapshot))
+                        eon_workspace_protocol::v36::encode_response(&Response::Snapshot(snapshot))
                             .map_err(|error| format!("cannot encode startup workspace: {error}"))?;
                     let mut remaining = bytes.as_slice();
                     while !remaining.is_empty() {
@@ -974,7 +974,7 @@ fn supervise(
     scrollback.sweep(sessions.iter().map(|session| session.id.as_str()), log);
     let control_listener = ControlListener::bind(&runtime.join("eon.sock"))?;
     let initial_endpoint = runtime.join("orbit.sock");
-    let initial_session_id = "session-1";
+    let initial_session_id = "terminal-1";
     let presentation_socket = if mode == LaunchMode::Workspace {
         runtime.join("eon.sock")
     } else {
@@ -1333,10 +1333,10 @@ impl SupervisorState {
         let workspaces = self
             .workspaces
             .as_ref()
-            .ok_or_else(|| failure("workspace-unavailable", "eonbase has no Eon workspace"))?;
+            .ok_or_else(|| failure("session-unavailable", "eonbase has no Eon session"))?;
         // An accepted action may remove its caller's workspace.
         let mut snapshot = workspaces.snapshot_in(workspace).or_else(|error| {
-            if error.code == "unknown-workspace" {
+            if error.code == "unknown-session" {
                 workspaces.snapshot_in(None)
             } else {
                 Err(error)
@@ -1519,7 +1519,7 @@ impl SupervisorState {
 
 fn report_session_end(result: Result<(), Failure>, log: &DiagnosticLog) -> Result<(), String> {
     match result {
-        Err(error) if error.code == "session-start" => {
+        Err(error) if error.code == "terminal-start" => {
             // A pending tab whose first pane fails must not tear down other tabs' terminals.
             log.note(&format!(
                 "Cannot start the tab's first pane: {}",
@@ -1609,7 +1609,7 @@ fn reap_finished_sessions(
                     });
                 report_session_end(result, &state.log)?;
             }
-            if session.id == "session-1" {
+            if session.id == "terminal-1" {
                 state.initial_status = Some(code);
             }
         } else {
@@ -1636,7 +1636,7 @@ fn close_workspace_tab(
         let workspace = state
             .workspaces
             .as_mut()
-            .ok_or_else(|| failure("workspace-unavailable", "eonbase has no Eon workspace"))?;
+            .ok_or_else(|| failure("session-unavailable", "eonbase has no Eon session"))?;
         let reply_workspace = workspace.caller_workspace_id(caller.as_deref())?;
         let sessions = workspace.prepare_close_tab(&request.id, caller.as_deref(), tab)?;
 
@@ -1680,7 +1680,7 @@ fn close_workspace_pane(
     let workspace = state
         .workspaces
         .as_mut()
-        .ok_or_else(|| failure("workspace-unavailable", "eonbase has no Eon workspace"))?;
+        .ok_or_else(|| failure("session-unavailable", "eonbase has no Eon session"))?;
     let reply_workspace = workspace.caller_workspace_id(caller.as_deref())?;
     let sessions = workspace.prepare_close_pane(&request.id, caller.as_deref(), pane)?;
     stop_closed_sessions(state, sessions, "pane-close-failed")?;
@@ -1703,20 +1703,20 @@ fn close_workspace(
     generation: &str,
 ) -> Result<Response, Failure> {
     reap_finished_sessions(state, inputs, config)
-        .map_err(|detail| failure("workspace-close-failed", detail))?;
+        .map_err(|detail| failure("session-close-failed", detail))?;
     let caller = caller_session(state, inputs, config, request)?;
     let workspace = state
         .workspaces
         .as_mut()
-        .ok_or_else(|| failure("workspace-unavailable", "eonbase has no Eon workspace"))?;
+        .ok_or_else(|| failure("session-unavailable", "eonbase has no Eon session"))?;
     let reply_workspace = workspace.caller_workspace_id(caller.as_deref())?;
     let sessions = workspace.prepare_close_workspace(&request.id, caller.as_deref(), target)?;
-    stop_closed_sessions(state, sessions, "workspace-close-failed")?;
+    stop_closed_sessions(state, sessions, "session-close-failed")?;
     closed_response(
         state,
         runtime,
         generation,
-        "workspace-close-failed",
+        "session-close-failed",
         reply_workspace.as_deref(),
     )
 }
@@ -1738,7 +1738,7 @@ fn stop_closed_sessions(
             .session_ended(&id, SessionEnd::Closed, |_| {
                 Err("a close cannot start a replacement terminal".into())
             })?;
-        if id == "session-1" && natural_status.is_some() {
+        if id == "terminal-1" && natural_status.is_some() {
             state.initial_status = natural_status;
         }
     }
@@ -1901,7 +1901,7 @@ fn caller_session(
         .ok_or_else(|| {
             failure(
                 "unknown-caller",
-                "the calling terminal is not live in this Eon workspace",
+                "the calling terminal is not live in this Eon session",
             )
         })
 }
@@ -2036,7 +2036,7 @@ fn apply_session_operation(
             pair_command(argv, quick, &session, pair_start)?
         }
         LaunchCommand::Tool(argv) => argv,
-        LaunchCommand::Pane if session.id == "session-1" => initial_child.clone(),
+        LaunchCommand::Pane if session.id == "terminal-1" => initial_child.clone(),
         LaunchCommand::Pane => Vec::new(),
     };
     if pending {
@@ -2072,7 +2072,7 @@ fn apply_session_operation(
     // Before the reply that shows Venus the terminal (EON-C11).
     name_presentation(std::slice::from_mut(&mut running), venus, true, log);
     sessions.push(running);
-    if session.id == "session-1" {
+    if session.id == "terminal-1" {
         initial_child.clear();
     }
     Ok(())
@@ -2387,7 +2387,7 @@ fn subscribe(
     let caller = caller_session(state, inputs, config, request)?;
     let projection = state
         .projection()
-        .ok_or_else(|| failure("workspace-unavailable", "eonbase has no Eon workspace"))?;
+        .ok_or_else(|| failure("session-unavailable", "eonbase has no Eon session"))?;
     let window = state.window.clone();
     state.subscribers.subscribe(
         projection,
@@ -2665,8 +2665,8 @@ fn dispatch_control_request(
             if state.workspaces.is_none() {
                 return (
                     ControlResponse::Workspace(Response::Failure(failure(
-                        "workspace-unavailable",
-                        "eonbase has no Eon workspace",
+                        "session-unavailable",
+                        "eonbase has no Eon session",
                     ))),
                     false,
                 );
@@ -2884,7 +2884,7 @@ fn dispatch_control_request(
                 && let Err(error) = sessions::send_input(session, LeaseInput::Enter, 0, log)
             {
                 log.record(&format!(
-                    "workspace picker {picker} did not take its key: {}",
+                    "session picker {picker} did not take its key: {}",
                     error.detail
                 ));
             }
@@ -2939,10 +2939,7 @@ fn edit_terminal_history(
     config: &Path,
 ) -> Result<Response, Failure> {
     if state.workspaces.is_none() {
-        return Err(failure(
-            "workspace-unavailable",
-            "eonbase has no Eon workspace",
-        ));
+        return Err(failure("session-unavailable", "eonbase has no Eon session"));
     }
     if state.agents.terminal_access == TerminalAccess::None {
         return Err(failure(
@@ -3149,10 +3146,7 @@ fn terminal_access(
     config: &Path,
 ) -> Result<Response, Failure> {
     if state.workspaces.is_none() {
-        return Err(failure(
-            "workspace-unavailable",
-            "eonbase has no Eon workspace",
-        ));
+        return Err(failure("session-unavailable", "eonbase has no Eon session"));
     }
     if state.agents.terminal_access == TerminalAccess::None {
         return Err(failure(
@@ -3372,17 +3366,17 @@ mod tests {
         mark_before_start(
             Some(&started),
             &mut marked,
-            start(&started.file, "session-3"),
+            start(&started.file, "terminal-3"),
             |_| {
                 assert_eq!(
                     fs::read_to_string(record(&started.file)).unwrap(),
-                    "session-3"
+                    "terminal-3"
                 );
                 Ok(())
             },
         )
         .unwrap();
-        assert_eq!(marked, Some(session("session-3")));
+        assert_eq!(marked, Some(session("terminal-3")));
         let directory = started.file.parent().unwrap().to_owned();
         settle_snapshot(&mut store, started, marked, true, &[], &log);
         assert!(directory.exists());
@@ -3396,7 +3390,7 @@ mod tests {
             mark_before_start(
                 Some(&refused),
                 &mut marked,
-                start(&refused.file, "session-4"),
+                start(&refused.file, "terminal-4"),
                 |_| panic!("the editor started without its record"),
             )
             .is_err()
@@ -3412,7 +3406,7 @@ mod tests {
         let uncertain = |_: &str, endpoint: Option<&Path>| {
             endpoint.is_some_and(sessions::launch_record_remains)
         };
-        for (id, unconfirmed) in [("session-5", false), ("session-6", true)] {
+        for (id, unconfirmed) in [("terminal-5", false), ("terminal-6", true)] {
             let failed = store.write("p1", &history(Screen::Primary, 0, 0)).unwrap();
             if unconfirmed {
                 fs::write(runtime.join(format!("{id}.sock.record")), "").unwrap();
@@ -3523,16 +3517,16 @@ mod tests {
         state
             .subscribers
             .attach(stream, *subscriber, Instant::now());
-        let mut message = vec![0; eon_workspace_protocol::v35::HEADER_BYTES];
+        let mut message = vec![0; eon_workspace_protocol::v36::HEADER_BYTES];
         peer.read_exact(&mut message).unwrap();
         message.resize(
-            eon_workspace_protocol::v35::declared_message_len(&message).unwrap(),
+            eon_workspace_protocol::v36::declared_message_len(&message).unwrap(),
             0,
         );
-        peer.read_exact(&mut message[eon_workspace_protocol::v35::HEADER_BYTES..])
+        peer.read_exact(&mut message[eon_workspace_protocol::v36::HEADER_BYTES..])
             .unwrap();
-        let eon_workspace_protocol::v35::SubscriptionMessage::Subscribed(subscribed) =
-            eon_workspace_protocol::v35::decode_subscription_message(&message).unwrap()
+        let eon_workspace_protocol::v36::SubscriptionMessage::Subscribed(subscribed) =
+            eon_workspace_protocol::v36::decode_subscription_message(&message).unwrap()
         else {
             panic!("no SUBSCRIBED");
         };
@@ -3548,13 +3542,13 @@ mod tests {
         assert_eq!(state.workspace_snapshot_in(None).unwrap(), before);
         assert!(state.venus.is_none());
 
-        let missing = eon_workspace_protocol::v35::Filter {
-            workspaces: vec!["w9".into()],
+        let missing = eon_workspace_protocol::v36::Filter {
+            workspaces: vec!["s9".into()],
             ..Default::default()
         };
         assert_eq!(
             refusal(subscribe(&mut state, None, missing)),
-            "unknown-workspace"
+            "unknown-session"
         );
         assert_eq!(
             refusal(subscribe(&mut state, Some("orbit-9"), Default::default())),
@@ -3596,7 +3590,7 @@ mod tests {
         state.workspaces = None;
         assert_eq!(
             refusal(subscribe(&mut state, None, Default::default())),
-            "workspace-unavailable"
+            "session-unavailable"
         );
         // Stop, quit and the final close end the stream.
         state.subscribers.end("component-1");
@@ -3659,7 +3653,7 @@ mod tests {
     /// A pending window with one unfiltered subscriber that has read its
     /// snapshot, and that subscriber's end of the connection.
     fn subscribed_window() -> (PathBuf, crate::cli::Inputs, SupervisorState, UnixStream) {
-        use eon_workspace_protocol::v35::SubscriptionMessage;
+        use eon_workspace_protocol::v36::SubscriptionMessage;
         let root = temporary_directory();
         let inputs = crate::fixtures::inputs();
         let workspace = WorkspaceSet::pending(
@@ -3730,9 +3724,9 @@ mod tests {
         mut peer: UnixStream,
     ) -> std::thread::JoinHandle<(
         super::Response,
-        Vec<eon_workspace_protocol::v35::SubscriptionMessage>,
+        Vec<eon_workspace_protocol::v36::SubscriptionMessage>,
     )> {
-        use eon_workspace_protocol::v35::{
+        use eon_workspace_protocol::v36::{
             HEADER_BYTES, declared_message_len, decode_response, encode_request,
         };
         use std::io::Write;
@@ -3778,9 +3772,9 @@ mod tests {
 
     /// The names of the `workspace-renamed` events in `messages`.
     fn renames(
-        messages: &[eon_workspace_protocol::v35::SubscriptionMessage],
+        messages: &[eon_workspace_protocol::v36::SubscriptionMessage],
     ) -> Vec<Option<String>> {
-        use eon_workspace_protocol::v35::{Change, SubscriptionMessage, WorkspaceChange};
+        use eon_workspace_protocol::v36::{Change, SubscriptionMessage, WorkspaceChange};
         messages
             .iter()
             .filter_map(|message| match message {
@@ -3799,8 +3793,8 @@ mod tests {
     /// Every whole subscription message already written to `peer`.
     fn subscription_messages(
         peer: &mut UnixStream,
-    ) -> Vec<eon_workspace_protocol::v35::SubscriptionMessage> {
-        use eon_workspace_protocol::v35::{declared_message_len, decode_subscription_message};
+    ) -> Vec<eon_workspace_protocol::v36::SubscriptionMessage> {
+        use eon_workspace_protocol::v36::{declared_message_len, decode_subscription_message};
         peer.set_nonblocking(true).unwrap();
         let mut bytes = Vec::new();
         let mut buffer = [0; 65536];
@@ -3828,7 +3822,7 @@ mod tests {
     #[cfg(target_os = "linux")]
     #[test]
     fn attention_reaches_subscribers_in_the_loop_turn_that_polls_it() {
-        use eon_workspace_protocol::v35::{AttentionState, Change, SubscriptionMessage};
+        use eon_workspace_protocol::v36::{AttentionState, Change, SubscriptionMessage};
         let root = temporary_directory();
         let inputs = crate::fixtures::inputs();
         let session = leased_orbit(
@@ -3877,8 +3871,8 @@ mod tests {
                 id: "subscribe-1".into(),
                 caller: None,
                 action: Action::Subscribe {
-                    filter: eon_workspace_protocol::v35::Filter {
-                        kinds: vec![eon_workspace_protocol::v35::EventKind::Attention],
+                    filter: eon_workspace_protocol::v36::Filter {
+                        kinds: vec![eon_workspace_protocol::v36::EventKind::Attention],
                         ..Default::default()
                     },
                     after: None,
@@ -4017,8 +4011,8 @@ mod tests {
     fn inspected(
         state: &mut SupervisorState,
     ) -> (
-        Option<eon_workspace_protocol::v35::Attention>,
-        Vec<eon_workspace_protocol::v35::QueueEntry>,
+        Option<eon_workspace_protocol::v36::Attention>,
+        Vec<eon_workspace_protocol::v36::QueueEntry>,
     ) {
         // Each request ID is accepted once.
         static INSPECTIONS: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
@@ -4037,10 +4031,10 @@ mod tests {
         );
         assert!(!ended);
         let snapshot = match response {
-            super::ControlResponse::Workspace(eon_workspace_protocol::v35::Response::Snapshot(
+            super::ControlResponse::Workspace(eon_workspace_protocol::v36::Response::Snapshot(
                 snapshot,
             )) => snapshot,
-            super::ControlResponse::Workspace(eon_workspace_protocol::v35::Response::Failure(
+            super::ControlResponse::Workspace(eon_workspace_protocol::v36::Response::Failure(
                 failure,
             )) => panic!("Inspect failed: {} {}", failure.code, failure.detail),
             _ => panic!("Inspect answers with a snapshot"),
@@ -4059,9 +4053,9 @@ mod tests {
     fn raise_finish(
         state: &mut SupervisorState,
         gate: &Path,
-    ) -> eon_workspace_protocol::v35::AttentionState {
-        use eon_workspace_protocol::v35::AttentionState;
-        let changed = |attention: &Option<eon_workspace_protocol::v35::Attention>| {
+    ) -> eon_workspace_protocol::v36::AttentionState {
+        use eon_workspace_protocol::v36::AttentionState;
+        let changed = |attention: &Option<eon_workspace_protocol::v36::Attention>| {
             attention
                 .as_ref()
                 .and_then(|attention| attention.record.as_ref())
@@ -4094,7 +4088,7 @@ mod tests {
     #[cfg(target_os = "linux")]
     #[test]
     fn selected_raise_waits_for_native_window_focus() {
-        use eon_workspace_protocol::v35::AttentionState::{Finished, Idle};
+        use eon_workspace_protocol::v36::AttentionState::{Finished, Idle};
         use std::io::Write;
         let root = temporary_directory();
         let (mut state, gate) = finishing_window(&root);
@@ -4215,7 +4209,7 @@ mod tests {
     #[cfg(target_os = "linux")]
     #[test]
     fn replacement_venus_does_not_inherit_focus() {
-        use eon_workspace_protocol::v35::AttentionState::{Finished, Idle};
+        use eon_workspace_protocol::v36::AttentionState::{Finished, Idle};
         use std::{io::Write, net::Shutdown};
         let root = temporary_directory();
         let (mut state, gate) = finishing_window(&root);
@@ -4372,7 +4366,7 @@ mod tests {
         .unwrap();
         // The pending tab's pair, which detachment dismisses and keeps.
         let mut pair = leased_orbit(&pair_root, "exec sleep 30");
-        pair.id = "session-2".into();
+        pair.id = "terminal-2".into();
         let log = DiagnosticLog::open_in(Ok(root.join("logs")), "g1-test", "workspace");
         let mut command = Command::new("/bin/sh");
         command.args(["-c", "exit 0"]);
@@ -4497,15 +4491,15 @@ mod tests {
             .iter()
             .map(|root| leased_orbit(root, "exec sleep 30"))
             .collect::<Vec<_>>();
-        sessions[1].id = "session-2".into();
-        sessions[2].id = "session-3".into();
+        sessions[1].id = "terminal-2".into();
+        sessions[2].id = "terminal-3".into();
         let log = DiagnosticLog::open_in(Ok(roots[0].join("logs")), "g1-test", "workspace");
         // A dead worker sends Orbit down its failure path, which removes its
         // Live record and publishes no result: the run reconciles as ended.
         let first_orbit_log = sessions[0].orbit_log.clone().unwrap();
         kill_worker(&sessions[0]);
         assert_eq!(
-            stop_owned_session(&mut sessions, "session-1", &log),
+            stop_owned_session(&mut sessions, "terminal-1", &log),
             Ok(Some(1))
         );
         assert_eq!(sessions.len(), 2);
@@ -4515,7 +4509,7 @@ mod tests {
             .collect::<String>();
         assert!(
             owner_loss.lines().any(|line| {
-                line.contains("terminal session-1 ended with status 1; Orbit exited without publishing a terminal result")
+                line.contains("terminal terminal-1 ended with status 1; Orbit exited without publishing a terminal result")
                     && line.ends_with(&format!("; Orbit log: {}", first_orbit_log.display()))
             }),
             "{owner_loss}"
@@ -4523,11 +4517,11 @@ mod tests {
 
         // A record that no longer validates leaves the stopped run
         // unreconcilable: the close fails and the terminal stays tracked.
-        // Only the tracked id is renamed, so its Orbit log still says session-1.
+        // Only the tracked id is renamed, so its Orbit log still says terminal-1.
         let second_orbit_log = sessions[0].orbit_log.clone().unwrap();
         let record = sessions::tests::record(&sessions[0]).to_path_buf();
         fs::set_permissions(&record, fs::Permissions::from_mode(0o644)).unwrap();
-        let error = stop_owned_session(&mut sessions, "session-2", &log).unwrap_err();
+        let error = stop_owned_session(&mut sessions, "terminal-2", &log).unwrap_err();
         assert!(
             error.ends_with(&format!("; Orbit log: {}", second_orbit_log.display())),
             "{error}"
@@ -4568,12 +4562,12 @@ mod tests {
             .map(|entry| fs::read_to_string(entry.unwrap().path()).unwrap())
             .collect::<String>();
         assert_eq!(
-            log.matches("terminal session-2 stays in its tab after a failed stop")
+            log.matches("terminal terminal-2 stays in its tab after a failed stop")
                 .count(),
             1
         );
         assert_eq!(
-            stop_owned_session(&mut state.sessions, "session-3", &state.log),
+            stop_owned_session(&mut state.sessions, "terminal-3", &state.log),
             Ok(None)
         );
         fs::set_permissions(&record, fs::Permissions::from_mode(0o600)).unwrap();
@@ -4593,22 +4587,22 @@ mod tests {
             .map(|root| leased_orbit(root, "trap '' HUP; exec sleep 30"))
             .collect::<Vec<_>>();
         for (number, session) in sessions.iter_mut().enumerate() {
-            session.id = format!("session-{}", number + 1);
+            session.id = format!("terminal-{}", number + 1);
         }
         let log = DiagnosticLog::open_in(Ok(roots[0].join("logs")), "g1-test", "workspace");
-        // A record that no longer validates leaves session-4 unreconcilable.
+        // A record that no longer validates leaves terminal-4 unreconcilable.
         let record = sessions::tests::record(&sessions[3]).to_path_buf();
         fs::set_permissions(&record, fs::Permissions::from_mode(0o644)).unwrap();
-        // The close leaves session-2 alone; session-10 does not exist.
+        // The close leaves terminal-2 alone; terminal-10 does not exist.
         let ids = [
-            "session-9",
-            "session-8",
-            "session-7",
-            "session-6",
-            "session-5",
+            "terminal-9",
+            "terminal-8",
+            "terminal-7",
+            "terminal-6",
+            "terminal-5",
         ]
         .into_iter()
-        .chain(["session-4", "session-10", "session-3", "session-1"])
+        .chain(["terminal-4", "terminal-10", "terminal-3", "terminal-1"])
         .map(String::from)
         .collect::<Vec<_>>();
 
@@ -4622,33 +4616,33 @@ mod tests {
         assert_eq!(
             ended,
             [
-                "session-9",
-                "session-8",
-                "session-7",
-                "session-6",
-                "session-5"
+                "terminal-9",
+                "terminal-8",
+                "terminal-7",
+                "terminal-6",
+                "terminal-5"
             ]
             .into_iter()
-            .chain(["session-3", "session-1"])
+            .chain(["terminal-3", "terminal-1"])
             .map(|id| (id.to_owned(), None))
             .collect::<Vec<_>>()
         );
         assert_eq!(errors.len(), 2, "{errors:?}");
         assert_eq!(
             errors[0],
-            "terminal session-10 is missing from the supervisor"
+            "terminal terminal-10 is missing from the supervisor"
         );
-        assert!(errors[1].starts_with("session-4: "), "{errors:?}");
+        assert!(errors[1].starts_with("terminal-4: "), "{errors:?}");
         // The terminals that stay keep their order.
         assert_eq!(
             sessions
                 .iter()
                 .map(|session| session.id.as_str())
                 .collect::<Vec<_>>(),
-            ["session-2", "session-4"]
+            ["terminal-2", "terminal-4"]
         );
         assert_eq!(
-            stop_owned_session(&mut sessions, "session-2", &log),
+            stop_owned_session(&mut sessions, "terminal-2", &log),
             Ok(None)
         );
         fs::set_permissions(&record, fs::Permissions::from_mode(0o600)).unwrap();
@@ -4665,14 +4659,14 @@ mod tests {
             .map(|root| leased_orbit(root, "exec sleep 30"))
             .collect::<Vec<_>>();
         for (number, session) in sessions.iter_mut().enumerate() {
-            session.id = format!("session-{}", number + 1);
+            session.id = format!("terminal-{}", number + 1);
         }
         let log = DiagnosticLog::open_in(Ok(roots[0].join("logs")), "g1-test", "workspace");
         // Two runs whose cleanup never completes: each could hold the close
         // for the whole bound by itself.
         sessions::tests::stall(&sessions[0]);
         sessions::tests::stall(&sessions[2]);
-        let ids = ["session-1", "session-2", "session-3"].map(String::from);
+        let ids = ["terminal-1", "terminal-2", "terminal-3"].map(String::from);
 
         let started = Instant::now();
         let (ended, errors) = stop_owned_sessions(&mut sessions, &ids, &log);
@@ -4681,16 +4675,16 @@ mod tests {
             elapsed < SESSION_START_TIMEOUT + Duration::from_millis(1500),
             "the close waited past its one shared bound: {elapsed:?}"
         );
-        assert_eq!(ended, [("session-2".to_owned(), None)]);
+        assert_eq!(ended, [("terminal-2".to_owned(), None)]);
         assert_eq!(errors.len(), 2, "{errors:?}");
-        assert!(errors[0].starts_with("session-1: "), "{errors:?}");
-        assert!(errors[1].starts_with("session-3: "), "{errors:?}");
+        assert!(errors[0].starts_with("terminal-1: "), "{errors:?}");
+        assert!(errors[1].starts_with("terminal-3: "), "{errors:?}");
         assert_eq!(
             sessions
                 .iter()
                 .map(|session| session.id.as_str())
                 .collect::<Vec<_>>(),
-            ["session-1", "session-3"]
+            ["terminal-1", "terminal-3"]
         );
         for session in &mut sessions {
             sessions::tests::end_stalled(session);
@@ -4719,8 +4713,8 @@ mod tests {
             leased_orbit(&roots[1], "exec sleep 30"),
             leased_orbit(&roots[2], "exec sleep 30"),
         ];
-        sessions[1].id = "session-2".into();
-        sessions[2].id = "session-3".into();
+        sessions[1].id = "terminal-2".into();
+        sessions[2].id = "terminal-3".into();
         // A closed lease whose run still holds its Live record leaves the end
         // pending: the first reap waits for it, later reaps must not.
         sessions::tests::close_lease(&sessions[2]);
@@ -4783,13 +4777,13 @@ mod tests {
         };
         assert_eq!(
             log()
-                .matches("terminal session-1 stays in its tab until its end reconciles")
+                .matches("terminal terminal-1 stays in its tab until its end reconciles")
                 .count(),
             1
         );
         assert_eq!(
             log()
-                .matches("terminal session-3 stays in its tab until its end reconciles")
+                .matches("terminal terminal-3 stays in its tab until its end reconciles")
                 .count(),
             1
         );
@@ -4815,9 +4809,9 @@ mod tests {
             );
             std::thread::sleep(std::time::Duration::from_millis(10));
         }
-        assert_eq!(state.sessions[0].id, "session-2");
+        assert_eq!(state.sessions[0].id, "terminal-2");
         assert_eq!(
-            stop_owned_session(&mut state.sessions, "session-2", &state.log),
+            stop_owned_session(&mut state.sessions, "terminal-2", &state.log),
             Ok(None)
         );
         for root in roots {
@@ -4836,7 +4830,7 @@ mod tests {
         let session = sessions::tests::leased_orbit_with_program(&root, "exec sleep 30", &launcher);
         let orbit = orbit_pid(&session);
         let orbit_logs = root.join("launch-logs/orbit");
-        let orbit_log = orbit_logs.join(format!("component-1-session-1-{}.log", session.run_id()));
+        let orbit_log = orbit_logs.join(format!("component-1-terminal-1-{}.log", session.run_id()));
         assert_eq!(session.orbit_log.as_ref(), Some(&orbit_log));
         // A supervisor that recovers the run rebuilds its log path. Orbit may
         // refuse the new lease as Busy until it sees the old one close. On
@@ -4948,7 +4942,7 @@ mod tests {
 
         let error = stop_generation_sessions(&mut state, &root, LaunchMode::Workspace).unwrap_err();
         assert!(
-            error.contains("session-1: terminal owner exited without completing Stop")
+            error.contains("terminal-1: terminal owner exited without completing Stop")
                 && error.ends_with(&format!("; Orbit log: {}", orbit_log.display())),
             "{error}"
         );
@@ -4963,7 +4957,7 @@ mod tests {
             supervisor_log
                 .lines()
                 .filter(|line| {
-                    line.contains("terminal session-1 ended with status 1; Orbit exited without publishing a terminal result")
+                    line.contains("terminal terminal-1 ended with status 1; Orbit exited without publishing a terminal result")
                         && line.ends_with(&format!("; Orbit log: {}", orbit_log.display()))
                 })
                 .count(),
@@ -5000,12 +4994,12 @@ mod tests {
     #[test]
     fn pair_commands_carry_quick_start_socket_and_client_id_only_for_packaged_files() {
         let session = crate::workspace::Session {
-            id: "session-2".into(),
-            endpoint: "/runtime/g1/session-2.sock".into(),
+            id: "terminal-2".into(),
+            endpoint: "/runtime/g1/terminal-2.sock".into(),
         };
         let id = crate::pair::client_id(&session.endpoint);
         let socket = crate::pair::socket(&session.endpoint);
-        assert_eq!(socket, Path::new("/runtime/g1/session-2.quick.sock"));
+        assert_eq!(socket, Path::new("/runtime/g1/terminal-2.quick.sock"));
         let animation = crate::managed_environment::StartupAnimation {
             enabled: true,
             style: "wave".into(),
@@ -5077,8 +5071,8 @@ mod tests {
     #[test]
     fn a_startup_pairs_quick_search_counts_as_starting_through_its_anima() {
         let session = |name: &str| crate::workspace::Session {
-            id: "session-2".into(),
-            endpoint: format!("/runtime/{name}/session-2.sock").into(),
+            id: "terminal-2".into(),
+            endpoint: format!("/runtime/{name}/terminal-2.sock").into(),
         };
         let animation = crate::managed_environment::StartupAnimation {
             enabled: true,
@@ -5132,7 +5126,7 @@ mod tests {
                 "component-1",
                 &mut owned,
                 &mut Vec::new(),
-                crate::workspace::SessionOperation::SettlePair("session-1".into()),
+                crate::workspace::SessionOperation::SettlePair("terminal-1".into()),
                 PairStart::Later,
                 None,
             )
@@ -5142,8 +5136,8 @@ mod tests {
             if pending {
                 sessions::mark_pending_pair(&endpoint).unwrap();
             }
-            let stale = sessions::pending_pair_marker(&root.join("session-9.sock"));
-            sessions::mark_pending_pair(&root.join("session-9.sock")).unwrap();
+            let stale = sessions::pending_pair_marker(&root.join("terminal-9.sock"));
+            sessions::mark_pending_pair(&root.join("terminal-9.sock")).unwrap();
             drop(session);
             let deadline = std::time::Instant::now() + std::time::Duration::from_secs(5);
             let (mut recovered, pair) = loop {
@@ -5175,9 +5169,9 @@ mod tests {
                 assert!(!endpoint.exists());
             } else {
                 assert_eq!(recovered.len(), 1);
-                assert_eq!(recovered[0].id, "session-1");
+                assert_eq!(recovered[0].id, "terminal-1");
                 assert_eq!(
-                    stop_owned_session(&mut recovered, "session-1", &log),
+                    stop_owned_session(&mut recovered, "terminal-1", &log),
                     Ok(None)
                 );
             }
@@ -5187,17 +5181,17 @@ mod tests {
 
     #[test]
     fn startup_snapshot_transfer_uses_the_admission_deadline() {
-        use eon_workspace_protocol::v35::{
+        use eon_workspace_protocol::v36::{
             Column, Pane, PopupGeometry, Response, Snapshot, Tab, encode_response,
         };
         use std::time::{Duration, Instant};
 
         let root = temporary_directory();
         let snapshot = Snapshot {
-            workspace: "w1".into(),
-            active_workspace: "w1".into(),
-            workspaces: vec![eon_workspace_protocol::v35::WorkspaceInfo {
-                id: "w1".into(),
+            workspace: "s1".into(),
+            active_workspace: "s1".into(),
+            workspaces: vec![eon_workspace_protocol::v36::WorkspaceInfo {
+                id: "s1".into(),
                 name: None,
                 tab_count: 64,
                 attention: None,
@@ -5221,7 +5215,7 @@ mod tests {
                             label: format!("p{number}"),
                             pinned_name: None,
                             id: format!("p{number}"),
-                            session: format!("session-{number}"),
+                            session: format!("terminal-{number}"),
                             endpoint: format!("/runtime/orbit-{number}.sock").into_bytes(),
                             live: true,
                             attention: None,
@@ -5238,7 +5232,7 @@ mod tests {
             claude_quota_failure: None,
             running: None,
             busy: None,
-            sidebar: eon_workspace_protocol::v35::Sidebar::Open,
+            sidebar: eon_workspace_protocol::v36::Sidebar::Open,
             attention_queue: Vec::new(),
         };
         let expected = encode_response(&Response::Snapshot(snapshot.clone())).unwrap();

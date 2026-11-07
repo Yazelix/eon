@@ -100,7 +100,7 @@
       "pane_frames": true,
       "rows": 30
     },
-    "workspace": {
+    "session": {
       "animate_working_badge": true,
       "number_keys": true,
       "warning_close_last_tab": true
@@ -108,6 +108,7 @@
   },
   "warnings": [
     "eon: ignoring unknown bar.widgets name \"codex_quota\" in config.toml",
-    "eon: ignoring unknown bar.widgets name \"claude_quota\" in config.toml"
+    "eon: ignoring unknown bar.widgets name \"claude_quota\" in config.toml",
+    "eon: ignoring [workspace] in config.toml: renamed to [session] in v0.1.20"
   ]
 }

@@ -51,8 +51,8 @@ fn a_refused_image_resyncs_once_until_its_placements_change_or_the_budget_gains_
 
 #[test]
 fn workspace_recovery_requires_the_same_selected_live_endpoint() {
-    let first = b"/run/eon/session-1.sock";
-    let second = b"/run/eon/session-2.sock";
+    let first = b"/run/eon/terminal-1.sock";
+    let second = b"/run/eon/terminal-2.sock";
 
     assert!(retry_is_allowed(false, None, None));
     assert!(retry_is_allowed(true, Some((first, true)), Some(first)));

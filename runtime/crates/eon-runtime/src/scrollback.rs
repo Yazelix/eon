@@ -416,7 +416,7 @@ pub(crate) mod tests {
             directory
         };
         let [adopted, ended, unowned, running] =
-            [Some("session-3"), Some("session-4"), None, None].map(&mut write);
+            [Some("terminal-3"), Some("terminal-4"), None, None].map(&mut write);
         let snapshots = runtime.join("snapshots");
         // A pid no process has stands for a supervisor that stopped running.
         let dead = |directory: &Path| {
@@ -431,15 +431,15 @@ pub(crate) mod tests {
         fs::create_dir(&junk).unwrap();
         assert_eq!(
             fs::read_to_string(adopted.join(OWNER)).unwrap(),
-            "session-3"
+            "terminal-3"
         );
 
         let mut store = Snapshots::new(&runtime);
-        store.sweep(["session-1", "session-3"], &log);
+        store.sweep(["terminal-1", "terminal-3"], &log);
         assert!(adopted.exists() && running.exists());
         assert!(!ended.exists() && !unowned.exists() && !junk.exists());
 
-        store.retain(|terminal, _| terminal == "session-3", &log);
+        store.retain(|terminal, _| terminal == "terminal-3", &log);
         assert!(adopted.exists());
         store.retain(|_, _| false, &log);
         assert!(!adopted.exists());
@@ -448,8 +448,8 @@ pub(crate) mod tests {
         fs::remove_dir_all(&running).unwrap();
         let mut last = Snapshots::new(&runtime);
         let snapshot = last.write("u2", &history(Screen::Primary, 0, 0)).unwrap();
-        snapshot.mark("session-9").unwrap();
-        last.own(snapshot, "session-9".into(), None);
+        snapshot.mark("terminal-9").unwrap();
+        last.own(snapshot, "terminal-9".into(), None);
         last.retain(|_, _| false, &log);
         assert!(!snapshots.exists());
         fs::remove_dir_all(runtime).unwrap();
@@ -469,7 +469,7 @@ pub(crate) mod tests {
         for directory in &directories {
             fs::set_permissions(directory, fs::Permissions::from_mode(0o500)).unwrap();
         }
-        store.own(ended, "session-2".into(), None);
+        store.own(ended, "terminal-2".into(), None);
         store.retain(|_, _| false, &log);
         assert!(store.discard(discarded).is_err());
         store.retain(|_, _| false, &log);
