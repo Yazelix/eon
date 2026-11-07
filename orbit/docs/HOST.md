@@ -18,12 +18,14 @@ build has no package ([src/main.rs](../src/main.rs)).
 The host starts the worker with two inherited pipes: the worker reads facts on
 its descriptor 3 (`/dev/fd/3`) and writes decisions on its descriptor 4
 (`/dev/fd/4`). It exits when the fact pipe closes, and on Linux it also dies
-with the host (`PR_SET_PDEATHSIG`). The host passes it `--threads 1`, since the policy
-is sequential. The host watches the decision pipe in every
-wait; if the worker dies or stalls, or the host receives SIGINT, SIGTERM or
-SIGHUP, the host hangs up the child's group and the terminal's foreground group,
-escalates to SIGKILL, reaps the child, and removes the socket pathname. Once a
-signal's stop reaps the child, it gives a live observer the finish bound to
+with the host (`PR_SET_PDEATHSIG`). The host passes it the Bend runtime options
+`+RTS --threads 1 -RTS`, since the policy is sequential, and leaves `BENDRTS`
+out of its environment, so no other runtime option reaches it. The host
+watches the decision pipe in every wait; if the worker dies or stalls, or the
+host receives SIGINT, SIGTERM or SIGHUP, the host hangs up the child's group
+and the terminal's foreground group, escalates to SIGKILL, reaps the child,
+and removes the socket pathname. Once a signal's stop reaps the child, it
+gives a live observer the finish bound to
 take Exited with the child's code, writes a managed run's explicit tombstone
 and exits 0; the interactive client closes without
 Exited. A signal that leaves the child unreaped exits 128 plus the signal, a
@@ -45,10 +47,12 @@ ready, such as a busy PTY, cannot starve the others.
 
 The exchange is synchronous. The host sends one fact as one line in one write
 under `PIPE_BUF`, carrying every fact the decision needs, then reads decision
-lines until `end`. It waits at most two seconds for them, a host constant: it
-takes what the worker has written first, and a worker whose answer still
-lacks `end` past that deadline has stalled; a termination signal ends the
-wait, as it ends every wait ([Fatal-exit boundary](BEHAVIOR.md#fatal-exit-boundary)). A decision that needs more facts makes the host send a
+lines until `end`. The worker reads the fact with `File.read_line`, which
+stops after its newline; `File.read` would wait for its whole buffer or the
+pipe's end. The host waits at most two seconds for the decisions, a host
+constant: it takes what the worker has written first, and a worker whose
+answer still lacks `end` past that deadline has stalled; a termination signal
+ends the wait, as it ends every wait ([Fatal-exit boundary](BEHAVIOR.md#fatal-exit-boundary)). A decision that needs more facts makes the host send a
 follow-up fact before it waits for the next event. Before the first fact, the
 worker writes the line `schema DIGEST`, which names the schema it was
 generated from ([The boundary](#the-boundary)), then answers with its bounds alone (decision

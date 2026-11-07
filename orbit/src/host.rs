@@ -33,7 +33,7 @@ use orbit_protocol::session::{
 };
 use std::{
     collections::VecDeque,
-    ffi::{OsString, c_int},
+    ffi::{OsStr, OsString, c_int},
     fs::File,
     io::{self, Read, Write},
     os::{
@@ -76,6 +76,10 @@ fn install_termination_handlers() -> io::Result<()> {
     // pipe.
     unsafe { platform::on_termination(note_termination) }
 }
+
+/// The worker's Bend runtime options, which Bend reads only between `+RTS`
+/// and `-RTS`: Bend's policy is sequential, so one runtime thread serves it.
+const WORKER_ARGUMENTS: [&str; 4] = ["+RTS", "--threads", "1", "-RTS"];
 
 const REAP_DEADLINE: Duration = Duration::from_secs(2);
 /// How long the host waits for the worker's whole answer to one fact, and for
@@ -218,12 +222,14 @@ struct Bend {
 }
 
 impl Bend {
-    fn spawn(worker: &Path, args: &[OsString]) -> io::Result<Self> {
+    fn spawn(worker: &Path, args: &[impl AsRef<OsStr>]) -> io::Result<Self> {
         let (fact_reader, facts) = platform::pipe(false)?;
         let (decisions, decision_writer) = platform::pipe(false)?;
         let (reader, writer) = (fact_reader.as_raw_fd(), decision_writer.as_raw_fd());
         let mut command = Command::new(worker);
-        command.args(args);
+        // Bend also reads runtime options from BENDRTS, so one in Orbit's
+        // environment could change the worker's threads or end it.
+        command.args(args).env_remove("BENDRTS");
         // SAFETY: Only async-signal-safe calls run between fork and exec.
         unsafe {
             command.pre_exec(move || platform::configure_worker(reader, writer));
@@ -1755,8 +1761,7 @@ pub fn run(worker: &Path, arguments: &[OsString]) -> io::Result<u32> {
     let run = run_name(&serve);
     TERMINATION_SIGNAL.store(0, Ordering::Relaxed);
     install_termination_handlers()?;
-    // Bend's policy is sequential, so one runtime thread serves it.
-    let mut bend = Bend::spawn(worker, &["--threads".into(), "1".into()])?;
+    let mut bend = Bend::spawn(worker, &WORKER_ARGUMENTS)?;
     WORKER.store(bend.decisions.as_raw_fd(), Ordering::Relaxed);
     let opened = bend.bounds().and_then(|bounds| Host::open(bounds, serve));
     let mut host = match opened {
@@ -1840,11 +1845,7 @@ pub fn run(worker: &Path, arguments: &[OsString]) -> io::Result<u32> {
 #[cfg(test)]
 pub(crate) fn built_worker_output_bound() -> usize {
     let _guard = crate::test_support::FORK_AND_SOCKET_TEST.lock().unwrap();
-    let mut bend = Bend::spawn(
-        Path::new(env!("ORBIT_BUILT_WORKER")),
-        &["--threads".into(), "1".into()],
-    )
-    .unwrap();
+    let mut bend = Bend::spawn(Path::new(env!("ORBIT_BUILT_WORKER")), &WORKER_ARGUMENTS).unwrap();
     let bounds = bend.bounds();
     bend.worker.kill().unwrap();
     bend.worker.wait().unwrap();
@@ -1854,7 +1855,9 @@ pub(crate) fn built_worker_output_bound() -> usize {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::boundary::{FirstMessage, Foreground, Selected, SelectionKind};
+    use crate::boundary::{
+        FirstMessage, Foreground, ManagementEvent, Selected, SelectionKind, TickState,
+    };
 
     /// The deadline judges only an incomplete answer: one the worker already
     /// wrote, or whose lines were already read, is accepted after it, as when
@@ -1863,9 +1866,7 @@ mod tests {
     #[test]
     fn the_decision_deadline_cuts_off_only_an_incomplete_answer() {
         let _guard = crate::test_support::FORK_AND_SOCKET_TEST.lock().unwrap();
-        let worker = |script: &str| {
-            Bend::spawn(Path::new("/bin/sh"), &["-c".into(), script.into()]).unwrap()
-        };
+        let worker = |script: &str| Bend::spawn(Path::new("/bin/sh"), &["-c", script]).unwrap();
         let mut written = worker("printf '9\\nend\\n' >&4");
         assert!(written.worker.wait().unwrap().success());
         let passed = Instant::now();
@@ -1887,6 +1888,139 @@ mod tests {
         );
         streaming.worker.kill().unwrap();
         streaming.worker.wait().unwrap();
+    }
+
+    /// The worker reads each fact with `File.read_line(input, 4096)`, so every
+    /// fact's line, with every flag set and each number at its widest, ends at
+    /// its only newline and fits in 4,095 bytes before it.
+    #[test]
+    fn every_fact_is_one_line_the_worker_reads_whole() {
+        let flags = Flags {
+            held: true,
+            routed: true,
+            room: true,
+            alternate: true,
+            frame_room: true,
+            above_live: true,
+            clipboard: true,
+            clipboard_overflow: true,
+            tracking: true,
+            shift: true,
+            unanchored: true,
+            result_frame_room: true,
+            outside: true,
+            host_room: true,
+            terminal_room: true,
+            pty_full: true,
+            metadata_changed: true,
+            metadata_fresh: true,
+        };
+        let facts = [
+            Fact::Started { pid: u32::MAX },
+            Fact::Output {
+                foreground: Foreground::Other,
+                marks: true,
+            },
+            Fact::PtyClosed,
+            Fact::Peer(FirstMessage::ObserveMetadata),
+            Fact::Applied(Effect::Closed),
+            Fact::Closed { full: true },
+            Fact::Pressured,
+            Fact::Reaped { status: u32::MAX },
+            Fact::NotReaped,
+            Fact::Finished,
+            Fact::RoleRepeated,
+            Fact::Refused { version: true },
+            Fact::ObserverGone(ObserverLoss::Closed),
+            Fact::Expired,
+            Fact::PreviewVertical {
+                revision: u64::MAX,
+                direction: Direction::Down,
+            },
+            Fact::Fault { pid: u32::MAX },
+            Fact::Wheel(WheelInput::Empty),
+            Fact::Selection {
+                kind: SelectionKind::Finish,
+                revision: u64::MAX,
+            },
+            Fact::Selected {
+                outcome: Selected::Ticked,
+                presented: true,
+            },
+            Fact::Tick {
+                state: TickState::NotTopRow,
+                x: u32::MAX,
+                y: u32::MAX,
+            },
+            Fact::Management(ManagementEvent::Allow),
+            Fact::ChildExited { drained: true },
+            Fact::Crowded,
+            Fact::ObserverMessage,
+            Fact::ScrollVertical {
+                revision: u64::MAX,
+                rows: u32::MAX,
+            },
+            Fact::ReturnToLive,
+            Fact::ExitedBeforeStop { status: u32::MAX },
+            Fact::ProgramStatus(Foreground::Other),
+            Fact::Resources {
+                delivered: true,
+                idle: true,
+                capped: true,
+                due: true,
+            },
+        ];
+        for fact in facts {
+            // A new fact fails to compile here until it joins the list above.
+            match fact {
+                Fact::Started { .. }
+                | Fact::Output { .. }
+                | Fact::PtyClosed
+                | Fact::Peer(_)
+                | Fact::Applied(_)
+                | Fact::Closed { .. }
+                | Fact::Pressured
+                | Fact::Reaped { .. }
+                | Fact::NotReaped
+                | Fact::Finished
+                | Fact::RoleRepeated
+                | Fact::Refused { .. }
+                | Fact::ObserverGone(_)
+                | Fact::Expired
+                | Fact::PreviewVertical { .. }
+                | Fact::Fault { .. }
+                | Fact::Wheel(_)
+                | Fact::Selection { .. }
+                | Fact::Selected { .. }
+                | Fact::Tick { .. }
+                | Fact::Management(_)
+                | Fact::ChildExited { .. }
+                | Fact::Crowded
+                | Fact::ObserverMessage
+                | Fact::ScrollVertical { .. }
+                | Fact::ReturnToLive
+                | Fact::ExitedBeforeStop { .. }
+                | Fact::ProgramStatus(_)
+                | Fact::Resources { .. } => {}
+            }
+            let line = fact.line(flags);
+            assert!(
+                line.ends_with('\n') && line.matches('\n').count() == 1 && line.len() <= 4095,
+                "{line:?}"
+            );
+        }
+    }
+
+    /// The worker's Bend runtime reads the host's arguments as its options,
+    /// not as program arguments the worker would ignore: the same arguments
+    /// asking for no threads are refused before the bounds.
+    #[test]
+    fn the_worker_runtime_takes_the_hosts_options() {
+        let _guard = crate::test_support::FORK_AND_SOCKET_TEST.lock().unwrap();
+        let none = WORKER_ARGUMENTS.map(|argument| if argument == "1" { "0" } else { argument });
+        let mut refused = Bend::spawn(Path::new(env!("ORBIT_BUILT_WORKER")), &none).unwrap();
+        assert!(refused.bounds().is_err());
+        assert_eq!(refused.worker.wait().unwrap().code(), Some(1));
     }
 
     /// The built worker leads each PTY turn's answer with the program status
@@ -1912,11 +2046,8 @@ mod tests {
             lifetimes[0]
         }
         let _guard = crate::test_support::FORK_AND_SOCKET_TEST.lock().unwrap();
-        let mut bend = Bend::spawn(
-            Path::new(env!("ORBIT_BUILT_WORKER")),
-            &["--threads".into(), "1".into()],
-        )
-        .unwrap();
+        let mut bend =
+            Bend::spawn(Path::new(env!("ORBIT_BUILT_WORKER")), &WORKER_ARGUMENTS).unwrap();
         bend.bounds().unwrap();
         bend.ask(Fact::Started { pid: 1 }, Flags::default())
             .unwrap();
@@ -1967,11 +2098,8 @@ mod tests {
     #[test]
     fn a_closed_pty_publishes_the_clear_of_a_presented_selection() {
         let _guard = crate::test_support::FORK_AND_SOCKET_TEST.lock().unwrap();
-        let mut bend = Bend::spawn(
-            Path::new(env!("ORBIT_BUILT_WORKER")),
-            &["--threads".into(), "1".into()],
-        )
-        .unwrap();
+        let mut bend =
+            Bend::spawn(Path::new(env!("ORBIT_BUILT_WORKER")), &WORKER_ARGUMENTS).unwrap();
         bend.bounds().unwrap();
         assert!(
             bend.ask(Fact::Started { pid: 1 }, Flags::default())

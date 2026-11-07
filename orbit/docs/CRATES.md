@@ -140,8 +140,8 @@ dependency gate, and Beads retain the full candidate evidence.
 
 ### Bend session-policy worker
 
-- **Selected shape:** Bend compiler `234cb9b950800f20b15feafcb4ce2f43e76e7fae` (release
-  2.0.37), run by bun 1.3.13, whose C output clang 21.1.8 compiles; bun and clang come from
+- **Selected shape:** Bend compiler `624dd9f4607cd29b0871a9b96d413bfb11e92f52` (release
+  2.0.40), run by bun 1.3.13, whose C output clang 21.1.8 compiles; bun and clang come from
   nixpkgs `567a49d1913ce81ac6e9582e3553dd90a955875f`
 - **Status:** Selected as build- and check-time tools for Orbit's worker; nothing from them
   runs at runtime except the compiled worker
@@ -158,7 +158,8 @@ dependency gate, and Beads retain the full candidate evidence.
   ships in `share/licenses/orbit/bend`. Upgrade the Bend pin only on purpose, with
   `PROOF.bend` and every real-PTY check rerun; bun and clang follow the nixpkgs pin. Exit:
   a rollback to `orbit-rust-final` removes all three.
-- **Evidence:** Language decision in `eon-awmq`; reference gate and import in `eon-awmq.3`
+- **Evidence:** Language decision in `eon-awmq`; reference gate and import in `eon-awmq.3`;
+  upgrade from 2.0.37 with its gate and A/B measurements in `eon-bend-2040-036p8`
 
 ### Repository governance metadata
 

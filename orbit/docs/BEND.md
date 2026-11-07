@@ -1,6 +1,6 @@
 # Writing Bend 2
 
-Practices for Bend 2 as pinned here (234cb9b9, release 2.0.37), from Bend's own
+Practices for Bend 2 as pinned here (624dd9f4, release 2.0.40), from Bend's own
 guides, its runtime paper and issue tracker, its author's posts, outside ports,
 and Orbit's own failures. Each rule names its source; "here" means Orbit,
 including its development in the bend-orbit repository, whose issues
@@ -169,7 +169,10 @@ it.
   as free lists lose address order ([#1007][i1007]). Use fresh processes or
   interleave runs rather than trusting a long in-process loop.
 - Build binaries as `bend` does (`bun bend2/main.ts x.bend -o x.c`, then
-  `clang -std=c11 -O3 x.c -lpthread -lm`), and pin `--threads`.
+  `clang -std=c11 -O3 x.c -lpthread -lm`), and pin the threads with
+  `+RTS --threads N -RTS`: since 2.0.38 a compiled program reads runtime
+  options only in that bracket (or from `BENDRTS`), and gives the rest to the
+  program as `IO.args` (changelog 2.0.38).
 
 ## Effects and the C boundary
 
@@ -178,6 +181,11 @@ Custom effects are a def whose body imports a `.c` and a `.js` file
 mechanism into a Rust host process: the Bend worker uses only Base's `File`
 effects on two inherited pipes (`/dev/fd/3` and `/dev/fd/4`), at about 15 us
 per round trip in a first measurement, plus Bend's own parsing ([HOST.md](HOST.md)).
+`File.read` waits until it has its `max` bytes or the file ends (changelog
+2.0.40), so it cannot take one message from a pipe whose writer waits for the
+answer. The worker reads each fact with `File.read_line`, which stops after
+the line's `\n` but makes one `read(2)` per byte: about 2 us more per round
+trip than one read, for an 8-byte fact (here).
 Rules for writing custom effects, learned before that move:
 
 - The C interface has no ABI promise: rebuild effects on every Bend update and
@@ -273,7 +281,7 @@ Rules for writing custom effects, learned before that move:
 
 ## Sources
 
-- Bend at 234cb9b9: [GUIDE.md][guide], [SHADERS.md][shaders],
+- Bend at 624dd9f4: [GUIDE.md][guide], [SHADERS.md][shaders],
   [EFFECTS.md][effects], [WONTFIX.txt][wontfix], [CHANGELOG.md][changelog],
   the BendRT paper (`bend2/docs/BendRT/main.typ`).
 - Issues: [#1559][i1559] (hot types), [#1007][i1007] (repeated work),
@@ -285,12 +293,12 @@ Rules for writing custom effects, learned before that move:
 - Here: [BEHAVIOR.md](BEHAVIOR.md), bend-orbit's `experiments/orbf`, and the
   lj8 beads.
 
-[guide]: https://github.com/bendlang/bend/blob/234cb9b950800f20b15feafcb4ce2f43e76e7fae/guide/GUIDE.md
-[shaders]: https://github.com/bendlang/bend/blob/234cb9b950800f20b15feafcb4ce2f43e76e7fae/guide/SHADERS.md
-[effects]: https://github.com/bendlang/bend/blob/234cb9b950800f20b15feafcb4ce2f43e76e7fae/guide/EFFECTS.md
-[wontfix]: https://github.com/bendlang/bend/blob/234cb9b950800f20b15feafcb4ce2f43e76e7fae/WONTFIX.txt
-[changelog]: https://github.com/bendlang/bend/blob/234cb9b950800f20b15feafcb4ce2f43e76e7fae/CHANGELOG.md
-[bendrt]: https://github.com/bendlang/bend/blob/234cb9b950800f20b15feafcb4ce2f43e76e7fae/bend2/docs/BendRT/main.typ
+[guide]: https://github.com/bendlang/bend/blob/624dd9f4607cd29b0871a9b96d413bfb11e92f52/guide/GUIDE.md
+[shaders]: https://github.com/bendlang/bend/blob/624dd9f4607cd29b0871a9b96d413bfb11e92f52/guide/SHADERS.md
+[effects]: https://github.com/bendlang/bend/blob/624dd9f4607cd29b0871a9b96d413bfb11e92f52/guide/EFFECTS.md
+[wontfix]: https://github.com/bendlang/bend/blob/624dd9f4607cd29b0871a9b96d413bfb11e92f52/WONTFIX.txt
+[changelog]: https://github.com/bendlang/bend/blob/624dd9f4607cd29b0871a9b96d413bfb11e92f52/CHANGELOG.md
+[bendrt]: https://github.com/bendlang/bend/blob/624dd9f4607cd29b0871a9b96d413bfb11e92f52/bend2/docs/BendRT/main.typ
 [i1559]: https://github.com/bendlang/bend/issues/1559
 [i1007]: https://github.com/bendlang/bend/issues/1007
 [i1573]: https://github.com/bendlang/bend/issues/1573

@@ -91,10 +91,12 @@ def got(
     +shared : String = text
     got_text(String.is_empty(shared), shared, input, output, state)
 
+# One fact per line: File.read would wait to fill its buffer or for the end
+# of the pipe, while the host waits for this fact's answer.
 @unsafe
 def serve(input: File, output: File, state: Session.State) -> IO(Unit):
   do IO<Unit>:
-    pair : File & Result<&1, &1, U32 & String, String> <- File.read(input, 4096)
+    pair : File & Result<&1, &1, U32 & String, String> <- File.read_line(input, 4096)
     got(pair, output, state)
 
 def started_serving(pair: File & Result<&1, &1, U32 & String, Unit>, input: File) ->

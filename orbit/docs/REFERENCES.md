@@ -268,7 +268,7 @@ prerequisite for the current single-session architecture.
 
 ## Session policy in Bend
 
-- [Bend at `234cb9b9`](https://github.com/bendlang/bend/tree/234cb9b950800f20b15feafcb4ce2f43e76e7fae),
+- [Bend at `624dd9f4`](https://github.com/bendlang/bend/tree/624dd9f4607cd29b0871a9b96d413bfb11e92f52),
   its guide, effects guide and WONTFIX list, for the language Orbit's worker
   and laws are written in; [BEND.md](BEND.md) keeps the practices drawn from
   them. Bend's native effects are C only, so Orbit uses its Base `File`

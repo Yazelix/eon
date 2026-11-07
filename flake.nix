@@ -36,7 +36,7 @@
     };
     # Orbit's build-time Bend compiler (orbit/build.rs).
     bend = {
-      url = "github:bendlang/bend/234cb9b950800f20b15feafcb4ce2f43e76e7fae";
+      url = "github:bendlang/bend/624dd9f4607cd29b0871a9b96d413bfb11e92f52";
       flake = false;
     };
     kinestra = {
@@ -289,7 +289,7 @@
           # the build sandbox lacks, so eon-test runs it.
           orbitPackage =
             assert ghostty.rev == "521cf2c5d30bd48028ca61546c64e7913764073d";
-            assert bend.rev == "234cb9b950800f20b15feafcb4ce2f43e76e7fae";
+            assert bend.rev == "624dd9f4607cd29b0871a9b96d413bfb11e92f52";
             pkgs.rustPlatform.buildRustPackage {
               pname = workspacePackages.orbit;
               inherit (orbitIdentity) version;
