@@ -93,6 +93,13 @@ Every route preserves Git and user state, validates trust boundaries, keeps
 exact pins exact, preserves live terminals, and retains the cheapest check for a
 known regression.
 
+Before review of a code, test or script candidate, the author runs
+`nix develop -c eon-test` over the whole workspace, not only changed crates;
+before pushing a landing, the overseer runs `nix build`, batching landings
+that come close together. This catches downstream failures such as the
+2026-11-07 Venus launch argument that broke the package build through another
+crate's pinned-argv test.
+
 Changes to Orbit or Venus crates also keep `cargo fmt --check` and
 `cargo clippy --locked --all-targets -- -D warnings` green for the changed
 crate.
@@ -106,56 +113,33 @@ crate.
   naming the source commit. Edit a contract index only when a contract, its
   checks, status, or gap changes. Existing indexed proofs stay valid as
   written.
-- **Review loop.** After each slice, run a fresh-eyes and simplification pass in
-  a fresh context. Fix blocking findings (bugs, wrong claims, lost information
-  or coverage, broken links or checks, scope breaches); style is optional. Stop
-  when a full pass on the final revision finds nothing blocking. Code fixes
-  restart the loop; text-only fixes restart it at most twice per slice. Record
-  one ledger line per slice in its bead: pass count and findings.
-- **Autonomous review.** Run the loop in read-only review subagents without
-  waiting for the user. Each reviewer reads the owning bead itself, not a
-  paraphrase, plus the diff, and reports blocking findings with `file:line`,
-  then optional nits, or says that nothing is blocking. Keep briefs neutral:
-  never mention earlier passes or passing checks. Exclude only gaps the bead
-  records as accepted with a reason, and let a reviewer flag one anyway if it
-  judges it more severe. The implementing agent fixes or records each finding
-  and asks the user only when a finding needs a scope, contract, or other
-  user-owned decision. Keep design decisions in the main session; delegate
-  reading-heavy review, search, and investigation.
-- **Codex on every code change.** Codex (`gpt-6.1-sol`, `xhigh`) reviews
-  every change to code, tests, or scripts (Nix, Cargo manifests and
-  lockfiles, Bend sources, and CI files included), whatever its size, and
-  every change to the text, status, or proof record of an `EON-C`, `ORB-C`,
-  or `VEN-C` contract. This replaces converge's own Codex round. Record each
-  candidate as a tree, untracked files included: `cp "$(git rev-parse
-  --git-path index)" <tmp> && GIT_INDEX_FILE=<tmp> git add -A &&
-  GIT_INDEX_FILE=<tmp> git write-tree`. The first round runs two read-only
-  reviews of `git diff <base> <candidate-tree>` in parallel, on one
-  review-only brief (report findings and new-surface items, do not edit;
-  read the bead with `br --no-db show <id>`): a fresh Claude reviewer, who
-  also runs the checks, and Codex. A check that leaves the working tree
-  different from the recorded tree is a finding. Nothing edits the tree
-  until both reports are in. If both are clean, the loop has converged on
-  that tree. Any later edit, nits included, goes through Claude rounds
-  (converge rounds for code, tests, or scripts; Review loop passes for a
-  docs-only contract change) until one comes clean. Then record the fixed
-  tree and run a narrow Codex re-check of `git diff <candidate-tree>
-  <fixed-tree>`; its brief names no earlier finding and is the one brief
-  allowed to point at an earlier pass. If its findings lead to any change,
-  return to Claude rounds until one is clean and re-check from the original
-  candidate. In this loop, text-only means wording that changes no meaning;
-  such fixes restart it at most twice per slice. A proof record written
-  after the final proof gets only the narrow Codex re-check.
-- **Running Codex.** Keep the brief, report, and log outside the repository,
+- **Review.** Code, test and script changes finish through the `converge`
+  skill (`AP-PROOF-001`). After the first round, each reviewer re-checks only
+  fixes to its own findings and the author's rebuttals; text-only fixes need
+  no re-check. A full re-review is required only when a fix changes behavior
+  beyond its finding or crosses a trust boundary. A docs-only slice gets one
+  Codex review. A planning-only slice gets one fresh read-only review.
+- **Codex coverage.** Codex (`gpt-6.1-sol`, `xhigh`) reviews every change to
+  code, tests or scripts (Nix, Cargo manifests and lockfiles, Bend sources,
+  and CI files included), including pure test moves and behavior-preserving
+  refactors, and every change to an `EON-C`, `ORB-C` or `VEN-C` contract's
+  text, status or proof record. This replaces converge's own Codex round.
+- **Checks.** The author runs the checks on the exact staged tree and records
+  the tree, commands, environment and results in the owning bead. Reviewers
+  do not build or run suites; they confirm the candidate tree is the one
+  recorded. Docs, metadata and planning follow-ups reuse suite proof under
+  `AP-PROOF-001`.
+- **Running Codex.** Keep the brief, report and log outside the repository,
   under `~/.cache/eon-agents/<session>/` (the scratchpad may be wiped), and
   run, in the background, `timeout 40m codex exec -m gpt-6.1-sol -c
   model_reasoning_effort=xhigh -s read-only -C <repo> -o <report> - <
   <brief> > <log> 2>&1`, so stdin is the brief and ends; check `<log>` for
-  progress within a few minutes. The read-only sandbox cannot reach the Nix
-  daemon, so Claude rounds and the final proof run the checks. For gate or
-  validator code, every Codex brief carries a scope line: corner cases that
-  no supported closure produces are nits unless they let a real defect
-  pass. The slice's ledger line counts the Codex passes and their findings.
+  progress within a few minutes. For gate or validator code, every Codex
+  brief carries a scope line: corner cases that no supported closure
+  produces are nits unless they let a real defect pass.
+
+Record one ledger line per slice in its bead: pass count and findings,
+including Codex's.
 
 ## Testing Discipline
 
