@@ -55,6 +55,24 @@ pub(crate) fn read_available(stream: &UnixStream, buffer: &mut [u8]) -> io::Resu
     }
 }
 
+/// Gives an `eon events` subscriber's connection Linux's default send buffer, 212992 bytes:
+/// macOS gives Unix streams 8 KiB, which would overflow a subscriber that reads every turn.
+/// Best effort; a refusal leaves the platform's buffer.
+#[cfg(target_os = "macos")]
+pub(crate) fn widen_send_buffer(stream: &UnixStream) {
+    let size: libc::c_int = 212_992;
+    // SAFETY: setsockopt reads one integer and changes only the owned socket.
+    unsafe {
+        libc::setsockopt(
+            stream.as_raw_fd(),
+            libc::SOL_SOCKET,
+            libc::SO_SNDBUF,
+            (&raw const size).cast(),
+            std::mem::size_of_val(&size) as libc::socklen_t,
+        );
+    }
+}
+
 /// What the kernel reports about a process that still has its pid.
 pub(crate) struct Process {
     /// The start identity, in the unit Orbit publishes as `process_start`.

@@ -187,6 +187,8 @@ impl Subscribers {
         if stream.set_nonblocking(true).is_err() {
             return;
         }
+        #[cfg(target_os = "macos")]
+        super::platform::widen_send_buffer(&stream);
         subscriber.stream = Some(stream);
         subscriber.moved = now;
         if subscriber.flush(now) == Flushed::Open {
@@ -697,14 +699,49 @@ pub(crate) mod tests {
         peer.shutdown(std::net::Shutdown::Both).unwrap();
     }
 
-    /// A subscriber's connection as the CLI reads it.
-    fn connection() -> (UnixStream, UnixStream) {
-        let (stream, peer) = UnixStream::pair().unwrap();
-        peer.set_read_timeout(Some(Duration::from_secs(2))).unwrap();
-        (stream, peer)
+    /// A subscriber's end as the CLI holds it. It keeps the start of a frame that a
+    /// non-blocking read cut short for the next read, since a write can end inside a frame
+    /// (on macOS often).
+    #[derive(Debug)]
+    struct Peer {
+        stream: UnixStream,
+        carry: Vec<u8>,
     }
 
-    fn read(peer: &mut UnixStream) -> SubscriptionMessage {
+    impl std::ops::Deref for Peer {
+        type Target = UnixStream;
+
+        fn deref(&self) -> &UnixStream {
+            &self.stream
+        }
+    }
+
+    impl Read for Peer {
+        fn read(&mut self, buffer: &mut [u8]) -> std::io::Result<usize> {
+            if self.carry.is_empty() {
+                return self.stream.read(buffer);
+            }
+            let count = buffer.len().min(self.carry.len());
+            buffer[..count].copy_from_slice(&self.carry[..count]);
+            self.carry.drain(..count);
+            Ok(count)
+        }
+    }
+
+    /// A subscriber's connection as the CLI reads it.
+    fn connection() -> (UnixStream, Peer) {
+        let (stream, peer) = UnixStream::pair().unwrap();
+        peer.set_read_timeout(Some(Duration::from_secs(2))).unwrap();
+        (
+            stream,
+            Peer {
+                stream: peer,
+                carry: Vec::new(),
+            },
+        )
+    }
+
+    fn read(peer: &mut Peer) -> SubscriptionMessage {
         let mut message = vec![0; HEADER_BYTES];
         peer.read_exact(&mut message).unwrap();
         message.resize(declared_message_len(&message).unwrap(), 0);
@@ -712,23 +749,26 @@ pub(crate) mod tests {
         decode_subscription_message(&message).unwrap()
     }
 
-    /// Every whole message already written, without waiting for more.
-    fn read_available(peer: &mut UnixStream) -> Vec<SubscriptionMessage> {
+    /// Every whole message already written, without waiting for more; the start of a frame
+    /// still being written waits in `peer` for the next read.
+    fn read_available(peer: &mut Peer) -> Vec<SubscriptionMessage> {
         let bytes = read_available_bytes(peer);
         let mut messages = Vec::new();
         let mut rest = &bytes[..];
         while rest.len() >= HEADER_BYTES {
             let length = declared_message_len(&rest[..HEADER_BYTES]).unwrap();
-            assert!(rest.len() >= length, "a partly read frame");
+            if rest.len() < length {
+                break;
+            }
             messages.push(decode_subscription_message(&rest[..length]).unwrap());
             rest = &rest[length..];
         }
-        assert!(rest.is_empty(), "a partly read header");
+        peer.carry = rest.to_vec();
         messages
     }
 
     /// Every byte already written, without waiting for more.
-    fn read_available_bytes(peer: &mut UnixStream) -> Vec<u8> {
+    fn read_available_bytes(peer: &mut Peer) -> Vec<u8> {
         let mut bytes = Vec::new();
         peer.set_nonblocking(true).unwrap();
         let mut buffer = [0; 65536];
@@ -750,7 +790,7 @@ pub(crate) mod tests {
         filter: eonw::Filter,
         after: Option<Resume>,
         now: Instant,
-    ) -> Result<UnixStream, Failure> {
+    ) -> Result<Peer, Failure> {
         let subscriber = subscribers.subscribe(
             projection.clone(),
             &filter,
@@ -974,7 +1014,7 @@ pub(crate) mod tests {
         assert_eq!(refused.code, "subscriber-limit");
         // A subscriber that hung up frees its place for the next at once.
         let mut peers: Vec<_> = peers;
-        hang_up(peers.pop().unwrap());
+        hang_up(peers.pop().unwrap().stream);
         peers.push(
             subscribe(
                 &mut subscribers,
@@ -985,7 +1025,7 @@ pub(crate) mod tests {
             )
             .unwrap(),
         );
-        peers.into_iter().for_each(hang_up);
+        peers.into_iter().for_each(|peer| hang_up(peer.stream));
         subscribers.turn(window.clone(), now);
         assert!(subscribers.is_empty());
         subscribe(
@@ -1251,7 +1291,7 @@ pub(crate) mod tests {
             now,
         )
         .unwrap();
-        hang_up(peer);
+        hang_up(peer.stream);
         subscribers.turn(window.clone(), now);
         assert!(subscribers.is_empty());
         subscribers.idle();
@@ -1368,7 +1408,7 @@ pub(crate) mod tests {
         t3.selected_pane = None;
         t3.attention_rollup = None;
         subscribers.turn(next, now);
-        let names = |peer: &mut UnixStream| {
+        let names = |peer: &mut Peer| {
             read_available(peer)
                 .iter()
                 .map(describe)
@@ -1559,7 +1599,7 @@ pub(crate) mod tests {
             window = rename(&window, turn);
             subscribers.turn(window.clone(), start);
         }
-        hang_up(hung_up);
+        hang_up(hung_up.stream);
         subscribers.maintain(start);
         assert_eq!(subscribers.subscribers.len(), 2);
         subscribers.maintain(start + Duration::from_secs(29));
@@ -1643,18 +1683,25 @@ pub(crate) mod tests {
         }
         assert!(subscribers.subscribers[0].gap_due);
         // 1 KiB a second, far below what makes the connection writable
-        // within 30 s.
+        // within 30 s, for 150 s and on until the gap arrives: how many bytes
+        // come before it depends on the platform's socket buffer.
         peer.set_nonblocking(true).unwrap();
         let mut bytes = Vec::new();
-        for second in 1..=150 {
+        let mut names = Vec::new();
+        for second in 1..=600 {
             let mut buffer = [0; 1024];
             if let Ok(read) = peer.read(&mut buffer) {
                 bytes.extend_from_slice(&buffer[..read]);
             }
             subscribers.turn(window.clone(), start + Duration::from_secs(second));
             assert_eq!(subscribers.subscribers.len(), 1, "ended at {second} s");
+            if second >= 150 {
+                names = decode_all(&bytes).iter().map(describe).collect();
+                if names.contains(&"gap".to_owned()) {
+                    break;
+                }
+            }
         }
-        let names: Vec<_> = decode_all(&bytes).iter().map(describe).collect();
         assert!(names.contains(&"gap".to_owned()));
         assert!(!names.iter().any(|name| name.starts_with("end")));
     }
