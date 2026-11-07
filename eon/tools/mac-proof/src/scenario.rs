@@ -99,7 +99,7 @@ const STEPS: &[Spec] = &[
         needs: GUI,
         requires: &["session"],
         proves: "`eon run` from the package, with a private HOME, configuration and runtime \
-                 root, answers `eon workspace --json` and shows a Venus window",
+                 root, answers `eon session --json` and shows a Venus window",
         window: true,
         timeout: Duration::from_secs(5 * 60),
         body: launch,
@@ -174,7 +174,7 @@ const STEPS: &[Spec] = &[
         needs: KEYS,
         requires: &["picker"],
         proves: "`eon pane create` from outside Eon and with a command from inside it, and \
-                 `eon tab create`, show in `eon workspace --json`",
+                 `eon tab create`, show in `eon session --json`",
         window: true,
         timeout: Duration::from_secs(2 * 60),
         body: create,
@@ -210,7 +210,7 @@ const STEPS: &[Spec] = &[
         name: "keys",
         needs: KEYS,
         requires: &["picker"],
-        proves: "Option+Shift+Y opens and hides the Files (Yazi) popup in `eon workspace \
+        proves: "Option+Shift+Y opens and hides the Files (Yazi) popup in `eon session \
                  --json`, and Command+V pastes `pbcopy` text, which replaces the Mac's clipboard, into a pane",
         window: true,
         timeout: Duration::from_secs(2 * 60),
@@ -869,9 +869,9 @@ impl Scenario {
         })
     }
 
-    /// `eon workspace --json`, which answers once the supervisor serves requests.
+    /// `eon session --json`, which answers once the supervisor serves requests.
     fn workspace(&self, log: &mut Log, deadline: Instant) -> Result<Value, Failure> {
-        self.act(&["workspace"], log, deadline)
+        self.act(&["session"], log, deadline)
     }
 
     /// Runs `eon ARGUMENTS --json` and returns its reply.
@@ -946,10 +946,10 @@ impl Scenario {
         log: &mut Log,
         deadline: Instant,
     ) -> Result<Value, Failure> {
-        log.line("mac-proof: waiting for eon workspace --json to answer");
+        log.line("mac-proof: waiting for eon session --json to answer");
         until(deadline, || {
             self.supervisor_alive()?;
-            let mut command = self.eon(&["workspace", "--json"]);
+            let mut command = self.eon(&["session", "--json"]);
             let (status, output) = execute(log, &mut command, deadline, true, true)?;
             Ok(status
                 .success()
@@ -1123,7 +1123,7 @@ impl Scenario {
         let workspace = self.workspace(log, deadline)?;
         Ok(panes(&workspace)
             .into_iter()
-            .map(|pane| pane.session)
+            .map(|pane| pane.terminal)
             .collect())
     }
 
@@ -1428,11 +1428,11 @@ fn ours(listing: &[Process], roots: &[u32], markers: &[String]) -> Vec<Process> 
 struct Pane {
     id: String,
     tab: String,
-    session: String,
+    terminal: String,
     endpoint: String,
 }
 
-/// Every pane of `eon workspace --json`, tab by tab.
+/// Every pane of `eon session --json`, tab by tab.
 fn panes(workspace: &Value) -> Vec<Pane> {
     let text = |value: &Value| value.as_str().unwrap_or_default().to_owned();
     workspace["tabs"]
@@ -1447,7 +1447,7 @@ fn panes(workspace: &Value) -> Vec<Pane> {
                 .map(move |pane| Pane {
                     id: text(&pane["id"]),
                     tab: text(&tab["id"]),
-                    session: text(&pane["session"]),
+                    terminal: text(&pane["terminal"]),
                     endpoint: text(&pane["endpoint"]),
                 })
         })
@@ -2673,11 +2673,11 @@ mod tests {
             "active_tab": "t2",
             "tabs": [
                 {"id": "t1", "selected_pane": "p1", "selected_popup": null, "popups": [],
-                 "panes": [{"id": "p1", "session": "terminal-1"}]},
+                 "panes": [{"id": "p1", "terminal": "terminal-1"}]},
                 {"id": "t2", "selected_pane": "p3", "selected_popup": "u1",
                  "popups": [{"id": "u1", "entry": "files", "endpoint": "/tmp/es-9/u1.sock"}],
-                 "panes": [{"id": "p2", "session": "terminal-2"},
-                           {"id": "p3", "session": "terminal-3", "endpoint": "/tmp/es-9/p3.sock"}]}
+                 "panes": [{"id": "p2", "terminal": "terminal-2"},
+                           {"id": "p3", "terminal": "terminal-3", "endpoint": "/tmp/es-9/p3.sock"}]}
             ]
         });
         let found = panes(&workspace);
@@ -2687,7 +2687,7 @@ mod tests {
             Pane {
                 id: "p3".to_owned(),
                 tab: "t2".to_owned(),
-                session: "terminal-3".to_owned(),
+                terminal: "terminal-3".to_owned(),
                 endpoint: "/tmp/es-9/p3.sock".to_owned(),
             }
         );

@@ -39,7 +39,7 @@ fn wait_for(
     let deadline = Instant::now() + Duration::from_secs(15);
     loop {
         let mut command = isolated(eon, home);
-        command.args(["workspace", "--json"]);
+        command.args(["session", "--json"]);
         let workspace = r.output(&mut command)?;
         if serde_json::from_str::<Value>(&workspace).is_ok_and(|state| ready(&state)) {
             return Ok(());

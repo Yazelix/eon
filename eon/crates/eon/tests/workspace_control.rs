@@ -219,6 +219,71 @@ fn config_defaults_ignore_user_configuration_and_have_documented_values() {
     fs::remove_dir_all(root).unwrap();
 }
 
+/// Fails when `text`, which a person or agent reads, says "workspace" outside
+/// the names Eon does not own: Eon calls them sessions.
+fn assert_names_no_workspace(text: &str, context: &str) {
+    const ALLOWED: &[&str] = &[
+        // Codex's sandbox setting.
+        "sandbox_workspace_write",
+        // `eon versions` names the source of in-tree components.
+        "report `workspace`, the Cargo workspace they are built in.",
+    ];
+    let text = ALLOWED
+        .iter()
+        .fold(text.to_owned(), |text, allowed| text.replace(allowed, ""));
+    if let Some(line) = text
+        .lines()
+        .find(|line| line.to_lowercase().contains("workspace"))
+    {
+        panic!("{context} says workspace: {line:?}");
+    }
+}
+
+#[test]
+fn help_skill_and_usage_name_sessions_and_old_commands_are_invalid() {
+    let binary = Path::new(env!("CARGO_BIN_EXE_eon"));
+    for arguments in [&["--help"][..], &["session", "--help"]] {
+        let output = eon_command(binary).args(arguments).output().unwrap();
+        assert!(output.status.success(), "{arguments:?}");
+        assert_names_no_workspace(stdout(&output), &format!("eon {arguments:?}"));
+    }
+    assert_names_no_workspace(include_str!("../../../skills/eon/SKILL.md"), "the skill");
+    assert_names_no_workspace(include_str!("../../../../docs/USAGE.md"), "USAGE.md");
+    // A removed command names its replacement and still fails.
+    for (arguments, hint) in [
+        (
+            &["workspace"][..],
+            Some("`eon workspace` is now `eon session`"),
+        ),
+        (
+            &["workspace", "--json"],
+            Some("`eon workspace` is now `eon session`"),
+        ),
+        (
+            &["workspaces", "--json"],
+            Some("`eon workspaces` is now `eon session ls`"),
+        ),
+        (
+            &["workspace", "new", "--json"],
+            Some("`eon workspace` is now `eon session`"),
+        ),
+        (&["session", "ls", "extra", "--json"], None),
+        // `--json` follows the command word, as for every command.
+        (&["--json", "session", "ls"], None),
+    ] {
+        let output = eon_command(binary).args(arguments).output().unwrap();
+        assert_eq!(output.status.code(), Some(2), "{arguments:?}");
+        assert!(output.stdout.is_empty(), "{arguments:?}");
+        let error = String::from_utf8_lossy(&output.stderr);
+        assert_eq!(
+            hint.is_some_and(|hint| error.contains(hint)),
+            hint.is_some(),
+            "{error}"
+        );
+        assert!(error.contains("eon --help"), "{error}");
+    }
+}
+
 #[test]
 fn help_is_readable_and_does_not_start_or_prepare_a_workspace() {
     let root = temporary_directory();
@@ -248,7 +313,7 @@ fn help_is_readable_and_does_not_start_or_prepare_a_workspace() {
         );
         assert!(output.stderr.is_empty());
         let help = stdout(&output);
-        assert!(help.contains("terminals") && !help.contains("Sessions"));
+        assert!(help.contains("terminals") && !help.to_lowercase().contains("workspace"));
         assert!(!help.contains('\u{1b}'), "piped help must be plain text");
         assert!(help.lines().count() > 20);
         assert!(help.lines().all(|line| line.chars().count() <= 80));
@@ -286,7 +351,7 @@ fn help_is_readable_and_does_not_start_or_prepare_a_workspace() {
         for note in [
             "Window IDs, as eon window ls shows them: default, another build's or an\n\
              independent window's ID, or any unique prefix of 4+ characters.\n",
-            "Workspace flag: --window ID, before any --.\n",
+            "Window flag: --window ID, before any --.\n",
         ] {
             assert!(help.contains(note), "missing {note:?}");
         }
@@ -425,8 +490,8 @@ fn removed_commands_are_invalid() {
         vec!["stop", "previous"],
         vec!["stop", "all", "--json"],
         vec!["stop", "--help"],
-        vec!["--generation", &generation, "workspace"],
-        vec!["workspace", "--generation", &generation, "--json"],
+        vec!["--generation", &generation, "session"],
+        vec!["session", "--generation", &generation, "--json"],
         vec!["config-path"],
         vec!["config-dir"],
     ] {
@@ -551,7 +616,7 @@ fn delegated_window_stop_reaches_only_the_marked_generation() {
     assert_eq!(listed(), all);
 
     // An ambiguous prefix sends nothing.
-    let ambiguous = run(&["workspace", "--window", "abcd", "--json"], None);
+    let ambiguous = run(&["session", "--window", "abcd", "--json"], None);
     assert_eq!(ambiguous.status.code(), Some(3), "{ambiguous:?}");
     let failure: serde_json::Value = serde_json::from_slice(&ambiguous.stdout).unwrap();
     assert_eq!(failure["error"]["code"], "ambiguous-window-id", "{failure}");
@@ -630,7 +695,7 @@ fn delegated_window_stop_reaches_only_the_marked_generation() {
     assert_eq!(
         stopped,
         serde_json::json!([{"window": "abcd3000", "results": [
-            {"stopped": {"generation": current, "sessions": ["terminal-1"]}}
+            {"stopped": {"generation": current, "terminals": ["terminal-1"]}}
         ]}])
     );
     servers.pop().unwrap().join().unwrap();
@@ -2394,7 +2459,7 @@ fn pending_tabs_host_the_files_pair_on_quick_search() {
         snapshot.tabs[0].popups[0].endpoint,
         snapshot.tabs[1].popups[0].endpoint
     );
-    assert!(window.eon(&["workspace", "new"]).status.success());
+    assert!(window.eon(&["session", "new"]).status.success());
     let third = window.pair_launch("terminal-4");
     assert_eq!(third.tab, "t3");
     assert_eq!(third.arguments[0], "--eon-quick");
@@ -2412,7 +2477,7 @@ fn pending_tabs_host_the_files_pair_on_quick_search() {
         "{listed}"
     );
     let stopped = window.stop_generation(&mut supervisor);
-    assert!(stopped.contains("\"sessions\":[]"), "{stopped}");
+    assert!(stopped.contains("\"terminals\":[]"), "{stopped}");
     for pair in pairs {
         wait_for_process_removal(pair.process_id, "Stop left a pending pair running");
     }
@@ -3850,7 +3915,7 @@ fn failure_kinds_exit_with_distinct_statuses_with_and_without_json() {
     for (arguments, status, code) in [
         (&["tab", "close"][..], 2, None),
         (&["window", "stop", "ffff"], 3, Some("unknown-window")),
-        (&["workspace"], 4, Some("missing-supervisor")),
+        (&["session"], 4, Some("missing-supervisor")),
     ] {
         let human = run(arguments);
         assert_eq!(human.status.code(), Some(status), "{arguments:?}");
@@ -3873,7 +3938,7 @@ fn failure_kinds_exit_with_distinct_statuses_with_and_without_json() {
     // No live owner for an opaque caller: all workspace commands refuse without fallback.
     for (arguments, status, code) in [
         (&["pane", "create", "--json"][..], 3, "unknown-caller"),
-        (&["workspace", "--json"], 3, "unknown-caller"),
+        (&["session", "--json"], 3, "unknown-caller"),
     ] {
         let output = eon_command(Path::new(env!("CARGO_BIN_EXE_eon")))
             .args(arguments)
@@ -3895,7 +3960,7 @@ fn failure_kinds_exit_with_distinct_statuses_with_and_without_json() {
     for directory in [generations.parent().unwrap(), &generations] {
         fs::set_permissions(directory, fs::Permissions::from_mode(0o700)).unwrap();
     }
-    let missing = run(&["workspace", "--json"]);
+    let missing = run(&["session", "--json"]);
     assert_eq!(missing.status.code(), Some(4));
     let missing: serde_json::Value = serde_json::from_str(stdout(&missing)).unwrap();
     assert_eq!(
@@ -3905,7 +3970,7 @@ fn failure_kinds_exit_with_distinct_statuses_with_and_without_json() {
     assert_eq!(fs::read_dir(&generations).unwrap().count(), 0);
     // An existing directory that is not private still refuses the call.
     fs::set_permissions(&generations, fs::Permissions::from_mode(0o755)).unwrap();
-    let unsafe_directory = run(&["workspace", "--json"]);
+    let unsafe_directory = run(&["session", "--json"]);
     assert_eq!(unsafe_directory.status.code(), Some(4));
     let detail: serde_json::Value = serde_json::from_str(stdout(&unsafe_directory)).unwrap();
     let detail = detail["error"]["detail"].as_str().unwrap();
@@ -3954,7 +4019,7 @@ fn invalid_focus_is_rejected_before_supervisor_connection() {
     let config = root.join("config");
     let binary = Path::new(env!("CARGO_BIN_EXE_eon"));
 
-    let missing = invoke(binary, &runtime, &config, &["workspace", "--json"]);
+    let missing = invoke(binary, &runtime, &config, &["session", "--json"]);
     assert_eq!(missing.status.code(), Some(4));
     let too_long = "x".repeat(129);
     let assert_invalid = |id| {
@@ -4481,7 +4546,7 @@ cat >/dev/null
         2
     );
 
-    let workspace = invoke(&eon, &runtime, &config, &["workspace", "--json"]);
+    let workspace = invoke(&eon, &runtime, &config, &["session", "--json"]);
     assert_eq!(workspace.status.code(), Some(1));
     assert!(stdout(&workspace).contains("\"code\":\"session-unavailable\""));
     let wrong_mode = invoke(&binary, &runtime, &config, &[]);
@@ -4623,7 +4688,7 @@ fn pane_rename_cli_sets_clears_and_reports_the_runtime_label() {
         );
         serde_json::from_slice::<serde_json::Value>(&output.stdout).unwrap()
     };
-    let before = read(&["workspace", "--json"]);
+    let before = read(&["session", "--json"]);
     let named = read(&["pane", "rename", "p1", "  Review pane labels  ", "--json"]);
     let pane = &named["tabs"][0]["panes"][0];
     assert_eq!(pane["pinned_name"], "Review pane labels");
@@ -4638,7 +4703,7 @@ fn pane_rename_cli_sets_clears_and_reports_the_runtime_label() {
         assert_eq!(before["tabs"][0][key], named["tabs"][0][key]);
     }
     assert_eq!(
-        read(&["workspace", "--json"])["tabs"][0]["panes"][0]["pinned_name"],
+        read(&["session", "--json"])["tabs"][0]["panes"][0]["pinned_name"],
         "Review pane labels"
     );
     assert_eq!(
@@ -4658,7 +4723,7 @@ fn pane_rename_cli_sets_clears_and_reports_the_runtime_label() {
     );
     assert!(literal.status.success());
     assert_eq!(
-        read(&["workspace", "--json"])["tabs"][0]["panes"][0]["pinned_name"],
+        read(&["session", "--json"])["tabs"][0]["panes"][0]["pinned_name"],
         "--clear"
     );
     let missing = invoke(
@@ -4677,7 +4742,7 @@ fn pane_rename_cli_sets_clears_and_reports_the_runtime_label() {
     );
     assert_eq!(malformed.status.code(), Some(2));
     assert_eq!(
-        read(&["workspace", "--json"])["tabs"][0]["panes"][0]["pinned_name"],
+        read(&["session", "--json"])["tabs"][0]["panes"][0]["pinned_name"],
         "--clear"
     );
     let tools = root.join("tools");
@@ -4730,7 +4795,7 @@ esac
             String::from_utf8_lossy(&output.stderr)
         );
         assert_eq!(
-            read(&["workspace", "--json"])["tabs"][0]["panes"][0]["pinned_name"],
+            read(&["session", "--json"])["tabs"][0]["panes"][0]["pinned_name"],
             expected.map_or(serde_json::Value::Null, |value| value.into())
         );
     }
@@ -4957,17 +5022,21 @@ fn workspace_cli_lists_creates_switches_renames_and_closes() {
             "{arguments:?}: {}",
             String::from_utf8_lossy(&output.stderr)
         );
+        assert_names_no_workspace(stdout(&output), &format!("{arguments:?}"));
         serde_json::from_slice::<serde_json::Value>(&output.stdout).unwrap()
     };
+    read(&["session", "--json"]);
+    // `--json` may come anywhere after `session`.
+    assert!(read(&["session", "--json", "ls"])["sessions"].is_array());
     // Each step's whole list: (id, name, shown, tabs).
     let list = || {
-        let listed = read(&["workspaces", "--json"]);
-        let workspaces = listed["workspaces"].as_array().unwrap();
+        let listed = read(&["session", "ls", "--json"]);
+        let workspaces = listed["sessions"].as_array().unwrap();
         // Outside Eon, the caller's workspace is the shown one.
         let shown = workspaces
             .iter()
             .find(|workspace| workspace["shown"] == true);
-        assert_eq!(shown.unwrap()["id"], listed["workspace"]);
+        assert_eq!(shown.unwrap()["id"], listed["session"]);
         assert_eq!(shown.unwrap()["recency"], 0);
         // Plain shells report no attention, which lists as null.
         assert!(
@@ -4993,15 +5062,15 @@ fn workspace_cli_lists_creates_switches_renames_and_closes() {
     assert_eq!(list(), [entry("s1", None, true)]);
 
     // A creation names its sN in `created`, whether or not it is shown.
-    let created = read(&["workspace", "new", "--name", " alpha ", "--json"]);
+    let created = read(&["session", "new", "--name", " alpha ", "--json"]);
     assert_eq!(created["created"], "s2");
     assert_eq!(
         list(),
         [entry("s1", None, false), entry("s2", Some("alpha"), true)]
     );
-    let background = read(&["workspace", "new", "--no-focus", "--json"]);
+    let background = read(&["session", "new", "--no-focus", "--json"]);
     assert_eq!(
-        (&background["workspace"], &background["created"]),
+        (&background["session"], &background["created"]),
         (&"s2".into(), &"s3".into())
     );
     let three = [
@@ -5012,14 +5081,15 @@ fn workspace_cli_lists_creates_switches_renames_and_closes() {
     assert_eq!(list(), three);
 
     // A name that matches two workspaces changes nothing.
-    read(&["workspace", "rename", "s3", "alpha", "--json"]);
+    read(&["session", "rename", "s3", "alpha", "--json"]);
     let ambiguous = invoke(
         &binary,
         &runtime,
         &config,
-        &["workspace", "switch", "alpha", "--json"],
+        &["session", "switch", "alpha", "--json"],
     );
     assert_eq!(ambiguous.status.code(), Some(1));
+    assert_names_no_workspace(stdout(&ambiguous), "an ambiguous switch");
     let error: serde_json::Value = serde_json::from_slice(&ambiguous.stdout).unwrap();
     assert_eq!(error["error"]["code"], "ambiguous-session");
     assert!(
@@ -5028,9 +5098,9 @@ fn workspace_cli_lists_creates_switches_renames_and_closes() {
             .unwrap()
             .contains("s2, s3")
     );
-    let unasked = invoke(&binary, &runtime, &config, &["workspace", "close", "alpha"]);
+    let unasked = invoke(&binary, &runtime, &config, &["session", "close", "alpha"]);
     assert_eq!(unasked.status.code(), Some(1));
-    assert!(!String::from_utf8_lossy(&unasked.stderr).contains("Close workspace"));
+    assert!(!String::from_utf8_lossy(&unasked.stderr).contains("Close session"));
     let renamed = [
         entry("s1", None, false),
         entry("s2", Some("alpha"), true),
@@ -5040,7 +5110,7 @@ fn workspace_cli_lists_creates_switches_renames_and_closes() {
 
     // Switch by ID, then by name; the caller's own workspace is renamed through EON_TERMINAL.
     assert_eq!(
-        read(&["workspace", "switch", "s3", "--json"])["workspace"],
+        read(&["session", "switch", "s3", "--json"])["session"],
         "s3"
     );
     let environment = process::environ(live_identity(&generation.join("orbit.sock")).process_id);
@@ -5050,7 +5120,7 @@ fn workspace_cli_lists_creates_switches_renames_and_closes() {
         .map(|token| String::from_utf8(token.to_vec()).unwrap())
         .unwrap();
     let inside = eon_command(&binary)
-        .args(["workspace", "rename", "main", "--json"])
+        .args(["session", "rename", "main", "--json"])
         .env("EON_RUNTIME_DIR", &runtime)
         .env("EON_CONFIG_HOME", &config)
         .env("EON_TERMINAL", &first)
@@ -5069,8 +5139,8 @@ fn workspace_cli_lists_creates_switches_renames_and_closes() {
             entry("s3", Some("alpha"), true),
         ]
     );
-    read(&["workspace", "switch", "main", "--json"]);
-    read(&["workspace", "rename", "s3", "", "--json"]);
+    read(&["session", "switch", "main", "--json"]);
+    read(&["session", "rename", "s3", "", "--json"]);
     let shown_main = [
         entry("s1", Some("main"), true),
         entry("s2", Some("alpha"), false),
@@ -5079,24 +5149,24 @@ fn workspace_cli_lists_creates_switches_renames_and_closes() {
     assert_eq!(list(), shown_main);
 
     // Without --json, close asks about the one workspace WS names; anything but yes keeps it.
-    let cancelled = invoke(&binary, &runtime, &config, &["workspace", "close", "alpha"]);
+    let cancelled = invoke(&binary, &runtime, &config, &["session", "close", "alpha"]);
     assert_eq!(cancelled.status.code(), Some(1));
     assert!(
         String::from_utf8_lossy(&cancelled.stderr)
-            .contains("Close workspace s2 (alpha)? This stops every terminal in it.")
+            .contains("Close session s2 (alpha)? This stops every terminal in it.")
     );
     assert_eq!(stdout(&cancelled), "");
     assert!(String::from_utf8_lossy(&cancelled.stderr).contains(
-        "error not-confirmed: workspace s2 stays open; no yes was read and stdin is not a terminal"
+        "error not-confirmed: session s2 stays open; no yes was read and stdin is not a terminal"
     ));
     assert_eq!(list(), shown_main);
-    let unknown = invoke(&binary, &runtime, &config, &["workspace", "close", "s9"]);
+    let unknown = invoke(&binary, &runtime, &config, &["session", "close", "s9"]);
     assert_eq!(unknown.status.code(), Some(3));
-    assert!(!String::from_utf8_lossy(&unknown.stderr).contains("Close workspace"));
+    assert!(!String::from_utf8_lossy(&unknown.stderr).contains("Close session"));
     assert_eq!(list(), shown_main);
     let mut confirmed = TestProcess {
         child: eon_command(&binary)
-            .args(["workspace", "close", "alpha"])
+            .args(["session", "close", "alpha"])
             .env("EON_RUNTIME_DIR", &runtime)
             .env("EON_CONFIG_HOME", &config)
             .stdin(Stdio::piped())
@@ -5118,21 +5188,21 @@ fn workspace_cli_lists_creates_switches_renames_and_closes() {
         list(),
         [entry("s1", Some("main"), true), entry("s3", None, false)]
     );
-    let human = invoke(&binary, &runtime, &config, &["workspaces"]);
+    let human = invoke(&binary, &runtime, &config, &["session", "ls"]);
     assert!(stdout(&human).ends_with(
-        "workspace s1\ns1 shown=true tabs=1 attention=none recency=0 name=\"main\"\n\
+        "session s1\ns1 shown=true tabs=1 attention=none recency=0 name=\"main\"\n\
          s3 shown=false tabs=1 attention=none recency=1 name=none\n"
     ));
     assert!(supervisor.child.try_wait().unwrap().is_none());
 
     // The last workspace's close quits the window.
-    read(&["workspace", "close", "s3", "--json"]);
-    let last = invoke(&binary, &runtime, &config, &["workspace", "close", "s1"]);
+    read(&["session", "close", "s3", "--json"]);
+    let last = invoke(&binary, &runtime, &config, &["session", "close", "s1"]);
     assert!(String::from_utf8_lossy(&last.stderr).contains(
-        "Close workspace s1 (main)? This quits the window and stops every terminal in it."
+        "Close session s1 (main)? This quits the window and stops every terminal in it."
     ));
     assert_eq!(list(), [entry("s1", Some("main"), true)]);
-    assert!(read(&["workspace", "close", "main", "--json"])["ended"].is_object());
+    assert!(read(&["session", "close", "main", "--json"])["ended"].is_object());
     wait_for_successful_exit(&mut supervisor.child);
     fs::remove_dir_all(root).unwrap();
 }
@@ -5174,7 +5244,7 @@ fn workspace_picker_switches_creates_closes_and_cancels() {
     };
     // Each step's whole list: (id, name, shown).
     let list = || {
-        read(&["workspaces", "--json"])["workspaces"]
+        read(&["session", "ls", "--json"])["sessions"]
             .as_array()
             .unwrap()
             .iter()
@@ -5198,9 +5268,9 @@ fn workspace_picker_switches_creates_closes_and_cancels() {
             .map(|token| String::from_utf8(token.to_vec()).unwrap())
             .unwrap()
     };
-    read(&["workspace", "new", "--name", "alpha", "--json"]);
-    read(&["workspace", "new", "--no-focus", "--json"]);
-    read(&["workspace", "switch", "s1", "--json"]);
+    read(&["session", "new", "--name", "alpha", "--json"]);
+    read(&["session", "new", "--no-focus", "--json"]);
+    read(&["session", "switch", "s1", "--json"]);
     let three = [
         entry("s1", None, true),
         entry("s2", Some("alpha"), false),
@@ -5323,9 +5393,9 @@ esac
     // Commands renames the caller's workspace, even a hidden one, closes the popup's own
     // workspace after a yes, and runs the same picker for Switch workspace.
     for (menu, terminal, input) in [
-        ("Rename workspace", &first, &b""[..]),
-        ("Close this workspace", &second, &b"yes\n"[..]),
-        ("Switch workspace", &third, &b""[..]),
+        ("Rename session", &first, &b""[..]),
+        ("Close this session", &second, &b"yes\n"[..]),
+        ("Switch session", &third, &b""[..]),
     ] {
         executable(
             &tools.join("fzf"),
@@ -5359,8 +5429,8 @@ esac
         format!(
             r#"#!/bin/sh
 cat > /dev/null
-'{eon}' workspace close s3 --json > /dev/null
-'{eon}' workspace rename s4 s3 --json > /dev/null
+'{eon}' session close s3 --json > /dev/null
+'{eon}' session rename s4 s3 --json > /dev/null
 printf '\n\ns3\ts3\t1 tab\n'
 "#,
             eon = binary.display(),
@@ -5380,17 +5450,17 @@ printf '\n\ns3\ts3\t1 tab\n'
     );
     let output = popup_status("eon-sessions", &first, b"yes\n\n", false);
     assert_eq!(output.status.code(), Some(3));
-    assert!(!String::from_utf8_lossy(&output.stderr).contains("Close workspace"));
+    assert!(!String::from_utf8_lossy(&output.stderr).contains("Close session"));
     assert_eq!(list(), stale);
 
     // Ctrl+X closes the highlighted row's workspace after a yes and lists the rest again. A "no"
     // through a pipe is the non-terminal refusal: not-confirmed, exit 1, then the wait for
     // Enter; a terminal's "no" lists again, as the pseudoterminal steps below show.
-    read(&["workspace", "new", "--no-focus", "--json"]);
-    read(&["workspace", "new", "--no-focus", "--json"]);
-    read(&["workspace", "switch", "s6", "--json"]);
-    read(&["workspace", "switch", "s5", "--json"]);
-    read(&["workspace", "switch", "s1", "--json"]);
+    read(&["session", "new", "--no-focus", "--json"]);
+    read(&["session", "new", "--no-focus", "--json"]);
+    read(&["session", "switch", "s6", "--json"]);
+    read(&["session", "switch", "s5", "--json"]);
+    read(&["session", "switch", "s1", "--json"]);
     fs::write(&count, "0").unwrap();
     executable(
         &tools.join("fzf"),
@@ -5413,7 +5483,7 @@ esac
     );
     let output = popup_status("eon-sessions", &first, b"yes\nno\n", false);
     assert_eq!(output.status.code(), Some(1));
-    assert!(String::from_utf8_lossy(&output.stderr).contains("error not-confirmed: workspace s5"));
+    assert!(String::from_utf8_lossy(&output.stderr).contains("error not-confirmed: session s5"));
     assert_eq!(
         rows(2),
         "s5\ts5\t1 tab\ns6\ts6\t1 tab\ns1\tRenamed\t1 tab · shown\n"
@@ -5434,7 +5504,7 @@ esac
     // A terminal's "no" to closing the picker's own workspace keeps it and lists again.
     let output = popup_status("eon-sessions", &first, b"no\n", true);
     assert!(output.status.success());
-    assert!(String::from_utf8_lossy(&output.stdout).contains("workspace s1 stays open"));
+    assert!(String::from_utf8_lossy(&output.stdout).contains("session s1 stays open"));
     assert_eq!(fzf_runs(), 4);
     assert_eq!(list(), kept);
     // Ctrl+X on the picker's own workspace closes it, ends the picker and shows the most
@@ -5444,13 +5514,13 @@ esac
     assert_eq!(fzf_runs(), 5);
     assert_eq!(list(), [entry("s6", None, false), entry("s5", None, true)]);
     // Declining the last workspace's close keeps the window and lists again.
-    read(&["workspace", "close", "s6", "--json"]);
+    read(&["session", "close", "s6", "--json"]);
     let output = popup_status("eon-sessions", &last, b"no\n", true);
     assert!(output.status.success());
-    assert!(String::from_utf8_lossy(&output.stdout).contains("workspace s5 stays open"));
+    assert!(String::from_utf8_lossy(&output.stdout).contains("session s5 stays open"));
     assert_eq!(fzf_runs(), 7);
     assert_eq!(list(), [entry("s5", None, true)]);
-    assert!(read(&["workspace", "close", "s5", "--json"])["ended"].is_object());
+    assert!(read(&["session", "close", "s5", "--json"])["ended"].is_object());
     wait_for_successful_exit(&mut supervisor.child);
     fs::remove_dir_all(root).unwrap();
 }
@@ -5463,14 +5533,14 @@ fn workspace_target_failures_are_explicit_and_bounded() {
     let runtime = root.join("runtime");
     let id = "g1-00000000000000000000000000000001";
     for (arguments, status) in [
-        (vec!["workspace", "--window", &id[3..], "--json"], 3),
-        (vec!["workspace", "--window", "0000abcd", "--json"], 3),
-        (vec!["workspace", "--window", "0000", "--json"], 3),
-        (vec!["workspace", "--generation", id, "--json"], 2),
-        (vec!["--generation", id, "workspace"], 2),
-        (vec!["workspace", "--window", "ABCDEFGH"], 2),
-        (vec!["workspace", "--window", "abc"], 2),
-        (vec!["workspace", "--window"], 2),
+        (vec!["session", "--window", &id[3..], "--json"], 3),
+        (vec!["session", "--window", "0000abcd", "--json"], 3),
+        (vec!["session", "--window", "0000", "--json"], 3),
+        (vec!["session", "--generation", id, "--json"], 2),
+        (vec!["--generation", id, "session"], 2),
+        (vec!["session", "--window", "ABCDEFGH"], 2),
+        (vec!["session", "--window", "abc"], 2),
+        (vec!["session", "--window"], 2),
         (vec!["versions", "--window", "0000abcd"], 2),
     ] {
         assert_eq!(
@@ -5491,7 +5561,7 @@ fn workspace_target_failures_are_explicit_and_bounded() {
             command.env("EON_TERMINAL", caller);
         }
         let output = command
-            .args(["workspace", "--window", &id[3..9], "--json"])
+            .args(["session", "--window", &id[3..9], "--json"])
             .env("EON_RUNTIME_DIR", &runtime)
             .output()
             .unwrap();
@@ -5519,7 +5589,7 @@ fn workspace_target_failures_are_explicit_and_bounded() {
     overfill_generation_directory(&runtime);
     fs::create_dir(runtime.join("generations").join(format!("g1-{:032x}", 256))).unwrap();
     let output = eon_command(binary)
-        .args(["workspace", "--json"])
+        .args(["session", "--json"])
         .env("EON_RUNTIME_DIR", &runtime)
         .env("EON_TERMINAL", "terminal-1.unknown")
         .output()
@@ -5624,7 +5694,7 @@ fn workspace_control_follows_the_exact_caller_across_generations() {
     assert!(
         matches!(workspace_action(&previous_control, "hide-caller", Action::NewWorkspace { name: Some("shown".into()), focus: true }), Response::Snapshot(snapshot) if snapshot.workspace == "s2")
     );
-    let inspected = from(&["workspace", "--json"]);
+    let inspected = from(&["session", "--json"]);
     assert!(inspected.status.success(), "{}", stdout(&inspected));
     let described: serde_json::Value = serde_json::from_slice(&inspected.stdout).unwrap();
     let created = from(&["pane", "create", "--no-focus", "--json"]);
@@ -5640,7 +5710,7 @@ fn workspace_control_follows_the_exact_caller_across_generations() {
     let previous_id = previous_runtime.file_name().unwrap().to_str().unwrap();
     assert_eq!(described["generation"], previous_id);
     assert_eq!(described["window"], serde_json::Value::Null);
-    assert_eq!(described["workspace"], "s1");
+    assert_eq!(described["session"], "s1");
     let older = generation_listener(&runtime, "g1-00000000000000000000000000000002");
     let older = thread::spawn(move || {
         let (mut stream, _) = older.accept().unwrap();
@@ -5653,7 +5723,7 @@ fn workspace_control_follows_the_exact_caller_across_generations() {
         response[4..6].copy_from_slice(&(VERSION - 1).to_le_bytes());
         let _ = stream.write_all(&response);
     });
-    let still_owned = from(&["workspace", "--json"]);
+    let still_owned = from(&["session", "--json"]);
     assert!(still_owned.status.success(), "{}", stdout(&still_owned));
     assert_eq!(
         serde_json::from_slice::<serde_json::Value>(&still_owned.stdout).unwrap()["generation"],
@@ -5663,18 +5733,18 @@ fn workspace_control_follows_the_exact_caller_across_generations() {
     // Another build's default-namespace window answers to its generation's
     // hex digits and their prefixes.
     for arguments in [
-        vec!["workspace", "--window", &previous_id[3..], "--json"],
-        vec!["--window", &previous_id[3..9], "workspace", "--json"],
+        vec!["session", "--window", &previous_id[3..], "--json"],
+        vec!["--window", &previous_id[3..9], "session", "--json"],
     ] {
         let outside = invoke(binary, &runtime, &config, &arguments);
         assert!(outside.status.success(), "{}", stdout(&outside));
         let result: serde_json::Value = serde_json::from_slice(&outside.stdout).unwrap();
         assert_eq!(result["generation"], previous_id);
-        assert_eq!(result["workspace"], "s2");
+        assert_eq!(result["session"], "s2");
         let inside = from(&arguments);
         assert!(inside.status.success(), "{}", stdout(&inside));
         let result: serde_json::Value = serde_json::from_slice(&inside.stdout).unwrap();
-        assert_eq!(result["workspace"], "s1");
+        assert_eq!(result["session"], "s1");
     }
     let wrong = from(&[
         "pane",
@@ -5685,10 +5755,10 @@ fn workspace_control_follows_the_exact_caller_across_generations() {
         "--json",
     ]);
     assert_eq!(wrong.status.code(), Some(3), "{}", stdout(&wrong));
-    let human = from(&["workspace"]);
+    let human = from(&["session"]);
     assert!(human.status.success());
     assert!(stdout(&human).starts_with(&format!(
-        "generation {previous_id}\nwindow default\nworkspace s1\n"
+        "generation {previous_id}\nwindow default\nsession s1\n"
     )));
     for token in [
         String::from_utf8(caller.to_vec()).unwrap() + "0",
@@ -5697,7 +5767,7 @@ fn workspace_control_follows_the_exact_caller_across_generations() {
         "".into(),
     ] {
         for arguments in [
-            vec!["workspace", "--json"],
+            vec!["session", "--json"],
             vec!["pane", "create", "--window", "default", "--json"],
         ] {
             let stale = eon_command(binary)
@@ -5731,7 +5801,7 @@ fn workspace_control_follows_the_exact_caller_across_generations() {
     // Caller discovery also works when this build's supervisor has ended.
     fs::write(&current.stop, "").unwrap();
     wait_for_successful_exit(&mut current.child);
-    assert!(from(&["workspace", "--json"]).status.success());
+    assert!(from(&["session", "--json"]).status.success());
     let window_id = "0000abcd";
     let window_root = runtime.join("w").join(window_id);
     fs::create_dir(runtime.join("w")).unwrap();
@@ -5743,7 +5813,7 @@ fn workspace_control_follows_the_exact_caller_across_generations() {
         binary,
         &runtime,
         &config,
-        &["workspace", "--window", window_id, "--json"],
+        &["session", "--window", window_id, "--json"],
     );
     assert!(outside.status.success(), "{}", stdout(&outside));
     let result: serde_json::Value = serde_json::from_slice(&outside.stdout).unwrap();
@@ -5752,7 +5822,7 @@ fn workspace_control_follows_the_exact_caller_across_generations() {
         "window-only selects its sole previous generation"
     );
     assert_eq!(result["window"], window_id);
-    let constrained = from(&["workspace", "--window", window_id, "--json"]);
+    let constrained = from(&["session", "--window", window_id, "--json"]);
     assert_eq!(constrained.status.code(), Some(3));
     let other_id = "g1-00000000000000000000000000000001";
     let other = previous_supervisor(&window_root, other_id);
@@ -5760,7 +5830,7 @@ fn workspace_control_follows_the_exact_caller_across_generations() {
         binary,
         &runtime,
         &config,
-        &["workspace", "--window", window_id, "--json"],
+        &["session", "--window", window_id, "--json"],
     );
     assert_eq!(ambiguous.status.code(), Some(1), "{}", stdout(&ambiguous));
     assert!(stdout(&ambiguous).contains("\"code\":\"ambiguous-window\""));
@@ -5773,7 +5843,7 @@ fn workspace_control_follows_the_exact_caller_across_generations() {
         &runtime,
         &config,
         &[
-            "workspace",
+            "session",
             "--window",
             window_id,
             "--generation",
@@ -5873,26 +5943,26 @@ fn commands_from_a_terminal_target_its_column_and_stale_callers_change_nothing()
         "terminal": "terminal-1", "tab": "t1", "pane": "p1", "popup": null
     });
     for arguments in [
-        vec!["workspace", "--json"],
-        vec!["workspace", "--window", "default", "--json"],
+        vec!["session", "--json"],
+        vec!["session", "--window", "default", "--json"],
     ] {
         let output = from(&caller, &arguments);
         assert!(output.status.success(), "{}", stdout(&output));
         let value: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
         assert_eq!(value["caller"], expected_caller);
     }
-    let human = from(&caller, &["workspace"]);
+    let human = from(&caller, &["session"]);
     assert!(human.status.success(), "{}", stdout(&human));
     assert!(
         stdout(&human)
-            .contains("workspace s1\ncaller terminal=terminal-1 tab=t1 pane=p1 popup=none\n")
+            .contains("session s1\ncaller terminal=terminal-1 tab=t1 pane=p1 popup=none\n")
     );
     for json in [false, true] {
         let output = eon_command(&binary)
             .args(if json {
-                vec!["workspace", "--json"]
+                vec!["session", "--json"]
             } else {
-                vec!["workspace"]
+                vec!["session"]
             })
             .env_remove("EON_TERMINAL")
             .env("EON_RUNTIME_DIR", &runtime)
@@ -5907,7 +5977,7 @@ fn commands_from_a_terminal_target_its_column_and_stale_callers_change_nothing()
             assert!(!stdout(&output).contains("\ncaller "));
         }
     }
-    let listed = from(&caller, &["workspaces", "--json"]);
+    let listed = from(&caller, &["session", "ls", "--json"]);
     assert!(listed.status.success(), "{}", stdout(&listed));
     let listed: serde_json::Value = serde_json::from_slice(&listed.stdout).unwrap();
     assert!(listed.get("caller").is_none());
@@ -6192,7 +6262,7 @@ fn delayed_second_cli_receives_committed_workspace_and_controls_three_sessions()
         fs::metadata(&control).unwrap().permissions().mode() & 0o777,
         0o600
     );
-    assert_eq!(stdout(&pane).matches("\"session\":").count(), 2);
+    assert_eq!(stdout(&pane).matches("\"expanded\":").count(), 2);
     assert!(
         invoke(&binary, &runtime, &config, &["pane", "create", "--json"])
             .status
@@ -6214,7 +6284,7 @@ fn delayed_second_cli_receives_committed_workspace_and_controls_three_sessions()
     assert!(wrapped.status.success());
     assert!(stdout(&wrapped).contains("\"selected_pane\":\"p3\""));
 
-    let before = invoke(&binary, &runtime, &config, &["workspace", "--json"]);
+    let before = invoke(&binary, &runtime, &config, &["session", "--json"]);
     assert!(before.status.success());
     let unchanged = invoke(&binary, &runtime, &config, &["focus", "left", "--json"]);
     assert!(unchanged.status.success());
@@ -6232,12 +6302,12 @@ fn delayed_second_cli_receives_committed_workspace_and_controls_three_sessions()
                 if failure.code == "no-attention" && failure.detail == "No agent needs attention"
         ));
     }
-    let after = invoke(&binary, &runtime, &config, &["workspace", "--json"]);
+    let after = invoke(&binary, &runtime, &config, &["session", "--json"]);
     assert_eq!(
         stable_workspace_json(&before),
         stable_workspace_json(&after)
     );
-    let human = invoke(&binary, &runtime, &config, &["workspace"]);
+    let human = invoke(&binary, &runtime, &config, &["session"]);
     assert!(human.status.success());
     assert!(stdout(&human).contains("active t1\n"));
     assert_eq!(stdout(&human).matches("  pane ").count(), 3);
@@ -6264,12 +6334,12 @@ fn delayed_second_cli_receives_committed_workspace_and_controls_three_sessions()
         Response::Failure(failure) if failure.code == "unsupported-version"
     ));
 
-    let snapshot = invoke(&binary, &runtime, &config, &["workspace", "--json"]);
+    let snapshot = invoke(&binary, &runtime, &config, &["session", "--json"]);
     assert!(snapshot.status.success());
     let snapshot = stdout(&snapshot);
     assert!(snapshot.contains("\"active_tab\":\"t1\""));
     assert!(snapshot.contains("\"id\":\"p3\""));
-    assert_eq!(snapshot.matches("\"session\":").count(), 3);
+    assert_eq!(snapshot.matches("\"expanded\":").count(), 3);
 
     for endpoint in ["orbit.sock", "terminal-2.sock", "terminal-3.sock"] {
         let endpoint = generation.join(endpoint);
@@ -6309,7 +6379,7 @@ fn delayed_second_cli_receives_committed_workspace_and_controls_three_sessions()
         String::from_utf8_lossy(&closed.stderr)
     );
     assert!(!stdout(&closed).contains("\"id\":\"p2\""));
-    assert_eq!(stdout(&closed).matches("\"session\":").count(), 2);
+    assert_eq!(stdout(&closed).matches("\"expanded\":").count(), 2);
     wait_for_process_removal(second, "a closed pane's terminal kept running");
     let close_third = || {
         protocol_action(
@@ -6380,7 +6450,7 @@ fn launch_directory_can_disappear_after_the_initial_session_starts() {
     let control = generation_runtime(&runtime).join("eon.sock");
     wait_for_connection(&control);
 
-    let snapshot = invoke(&binary, &runtime, &config, &["workspace", "--json"]);
+    let snapshot = invoke(&binary, &runtime, &config, &["session", "--json"]);
     assert!(snapshot.status.success());
     assert!(stdout(&snapshot).contains(&format!(
         "\"directory\":\"{}\"",
@@ -6451,7 +6521,7 @@ fn terminals_drop_the_launching_agents_tool_settings() {
     let generation = generation_runtime(&runtime);
     wait_for_connection(&generation.join("eon.sock"));
     assert!(
-        invoke(&binary, &runtime, &config, &["workspace", "--json"])
+        invoke(&binary, &runtime, &config, &["session", "--json"])
             .status
             .success()
     );
@@ -6624,11 +6694,11 @@ fn tab_directory_retargets_future_sessions_without_crossing_tabs() {
             .status
             .success()
     );
-    let before = invoke(&binary, &runtime, &config, &["workspace", "--json"]);
+    let before = invoke(&binary, &runtime, &config, &["session", "--json"]);
     let failed = invoke(&binary, &runtime, &config, &["pane", "create", "--json"]);
     assert_eq!(failed.status.code(), Some(1));
     assert!(stdout(&failed).contains("\"code\":\"terminal-start\""));
-    let after = invoke(&binary, &runtime, &config, &["workspace", "--json"]);
+    let after = invoke(&binary, &runtime, &config, &["session", "--json"]);
     assert_eq!(
         stable_workspace_json(&before),
         stable_workspace_json(&after)
@@ -6858,7 +6928,7 @@ fn session_exit_prunes_the_workspace_and_the_last_exit_closes_eon() {
         }
         let deadline = Instant::now() + Duration::from_secs(5);
         loop {
-            let snapshot = invoke(&binary, &runtime, &config, &["workspace", "--json"]);
+            let snapshot = invoke(&binary, &runtime, &config, &["session", "--json"]);
             if snapshot.status.success()
                 && !stdout(&snapshot).contains("\"id\":\"p1\"")
                 && stdout(&snapshot).contains("\"id\":\"p2\"")
@@ -7551,12 +7621,12 @@ fn replacement_eon_adopts_exact_runs_and_projects_numeric_workspace() {
         replacement_venus,
         Duration::from_secs(5),
     );
-    let recovered = invoke(&binary, &runtime, &config, &["workspace", "--json"]);
+    let recovered = invoke(&binary, &runtime, &config, &["session", "--json"]);
     assert!(recovered.status.success(), "{}", stdout(&recovered));
     let recovered = stdout(&recovered);
     assert!(recovered.contains("\"active_tab\":\"t1\""));
     assert!(recovered.contains("\"selected_pane\":\"p1\""));
-    assert_eq!(recovered.matches("\"session\":").count(), 2);
+    assert_eq!(recovered.matches("\"expanded\":").count(), 2);
     assert!(recovered.contains("\"id\":\"p1\""));
     assert!(recovered.contains("\"id\":\"p2\""));
     assert!(recovered.contains("\"popups\":[]"));
@@ -7572,7 +7642,7 @@ fn replacement_eon_adopts_exact_runs_and_projects_numeric_workspace() {
     let created = invoke(&binary, &runtime, &config, &["pane", "create", "--json"]);
     assert!(created.status.success(), "{}", stdout(&created));
     assert!(stdout(&created).contains("\"id\":\"p3\""));
-    assert!(stdout(&created).contains("\"session\":\"terminal-3\""));
+    assert!(stdout(&created).contains("\"terminal\":\"terminal-3\""));
     assert_eq!(fs::read_to_string(&orbit_log).unwrap().lines().count(), 3);
     assert_named(
         &attach_log,
@@ -7589,7 +7659,7 @@ fn replacement_eon_adopts_exact_runs_and_projects_numeric_workspace() {
     );
     assert!(stopped.status.success(), "{}", stdout(&stopped));
     assert!(
-        stdout(&stopped).contains("\"sessions\":[\"terminal-1\",\"terminal-2\",\"terminal-3\"]")
+        stdout(&stopped).contains("\"terminals\":[\"terminal-1\",\"terminal-2\",\"terminal-3\"]")
     );
     wait_for_successful_exit(&mut replacement.child);
     assert!(!generation.exists());
@@ -7884,7 +7954,7 @@ fn stop_confirmation_refuses_a_replacement_supervisor() {
     let replacement_pid = live_identity(&orbit_socket).process_id as i32;
     // SAFETY: signal 0 performs existence/permission checking without sending a signal.
     let replacement_child_live = unsafe { libc::kill(replacement_pid, 0) } == 0;
-    let workspace_live = invoke(&binary, &runtime, &config, &["workspace", "--json"])
+    let workspace_live = invoke(&binary, &runtime, &config, &["session", "--json"])
         .status
         .success();
     let stopped_second = invoke(
@@ -8003,7 +8073,7 @@ fn concurrent_launches_converge_and_generation_stop_is_owner_routed() {
         String::from_utf8_lossy(&stopped.stderr)
     );
     assert!(stdout(&stopped).contains(&format!(
-        "\"generation\":\"{generation_id}\",\"sessions\":[\"terminal-1\"]"
+        "\"generation\":\"{generation_id}\",\"terminals\":[\"terminal-1\"]"
     )));
     if first_is_supervisor {
         wait_for_successful_exit(&mut first.child);
@@ -8036,7 +8106,7 @@ fn wait_for_busy_panes(root: &Path, window: Option<&Path>, panes: &[&str]) {
         if let Some(window) = window {
             command.env("EON_WINDOW_RUNTIME_DIR", window);
         }
-        let output = command.args(["workspace", "--json"]).output().unwrap();
+        let output = command.args(["session", "--json"]).output().unwrap();
         assert!(output.status.success(), "{output:?}");
         let value: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
         let busy = &value["busy"];
@@ -9120,7 +9190,7 @@ fn running_windows_name_each_other_and_refresh_on_start_and_end() {
     wait_for_connection(&control);
     let query = |window: Option<&str>| {
         let mut c = command();
-        c.args(["workspace", "--json"]);
+        c.args(["session", "--json"]);
         if let Some(id) = window {
             c.args(["--window", id]);
         }
@@ -9447,9 +9517,9 @@ fn new_windows_keep_independent_supervisors_and_stop_by_window_id() {
             selected.env("EON_WINDOW_RUNTIME_DIR", runtime.join("w").join(&second));
         }
         let args = if inherited {
-            vec!["workspace", "--json"]
+            vec!["session", "--json"]
         } else {
-            vec!["workspace", "--window", &second, "--json"]
+            vec!["session", "--window", &second, "--json"]
         };
         let output = selected.args(args).output().unwrap();
         assert!(output.status.success(), "{}", stdout(&output));
@@ -9470,7 +9540,7 @@ fn new_windows_keep_independent_supervisors_and_stop_by_window_id() {
         &binary,
         &runtime,
         &config,
-        &["workspace", "--window", &second, "--json"],
+        &["session", "--window", &second, "--json"],
     );
     assert!(outside.status.success(), "{}", stdout(&outside));
     assert_eq!(
@@ -9527,7 +9597,7 @@ fn new_windows_keep_independent_supervisors_and_stop_by_window_id() {
         thread::sleep(Duration::from_millis(10));
     }
     assert!(
-        invoke(&binary, &runtime, &config, &["workspace", "--json"])
+        invoke(&binary, &runtime, &config, &["session", "--json"])
             .status
             .success()
     );
@@ -10007,7 +10077,7 @@ fn window_id_prefixes_select_one_window_and_refuse_ambiguous_unknown_or_short_on
     assert_eq!(stopped[0]["window"], "abcd3000", "{stopped}");
     assert_eq!(
         stopped[0]["results"],
-        serde_json::json!([{"stopped": {"generation": c, "sessions": ["terminal-1"]}}])
+        serde_json::json!([{"stopped": {"generation": c, "terminals": ["terminal-1"]}}])
     );
     assert_eq!(listed(), Vec::<serde_json::Value>::new());
 
@@ -10956,7 +11026,7 @@ fn generations_from_another_eonw_are_incompatible_and_not_stopped() {
     wait_for_connection(&control);
     let deadline = Instant::now() + Duration::from_secs(3);
     loop {
-        let output = invoke(&binary, &runtime, &config, &["workspace", "--json"]);
+        let output = invoke(&binary, &runtime, &config, &["session", "--json"]);
         let value: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
         if let Some(peer) = value["running"]["others"]
             .as_array()
@@ -11070,7 +11140,7 @@ fn older_eonw_generations_stop_through_their_recorded_eon() {
              garbage) echo 'not a result' ;;\n\
              error) printf '{{\"error\":{{\"code\":\"supervisor-unavailable\",\"detail\":\"older supervisor ended\"}}}}\\n'; exit 4 ;;\n\
              killed) printf '{{\"stopped\":{{\"generation\":\"%s\",\"sessions\":[]}}}}\\n' \"$2\"; kill -KILL $$ ;;\n\
-             *) printf '{{\"stopped\":{{\"generation\":\"%s\",\"sessions\":[\"terminal-1\"]}}}}\\n' \"$2\" ;;\n\
+             *) printf '{{\"stopped\":{{\"generation\":\"%s\",\"terminals\":[\"terminal-1\"]}}}}\\n' \"$2\" ;;\n\
              esac\n",
             log = log.display(),
             mode = mode.display(),
@@ -11134,7 +11204,7 @@ fn older_eonw_generations_stop_through_their_recorded_eon() {
     assert_eq!(
         serde_json::from_slice::<serde_json::Value>(&stopped.stdout).unwrap(),
         serde_json::json!([{"window": hex, "results": [
-            {"stopped": {"generation": default, "sessions": ["terminal-1"]}}
+            {"stopped": {"generation": default, "terminals": ["terminal-1"]}}
         ]}])
     );
     assert_eq!(
@@ -11169,10 +11239,10 @@ fn older_eonw_generations_stop_through_their_recorded_eon() {
         quit,
         serde_json::json!([
             {"window": &default[3..], "results": [
-                {"stopped": {"generation": default, "sessions": ["terminal-1"]}}
+                {"stopped": {"generation": default, "terminals": ["terminal-1"]}}
             ]},
             {"window": "0000abcd", "results": [
-                {"stopped": {"generation": windowed, "sessions": ["terminal-1"]}}
+                {"stopped": {"generation": windowed, "terminals": ["terminal-1"]}}
             ]},
         ])
     );
@@ -11400,7 +11470,7 @@ fn newer_eonw_windows_stop_and_attach_through_their_window_forms() {
              other) window=elsewhere ;;\n\
              *) window=\"$3\" ;;\n\
              esac\n\
-             printf '[{{\"window\":\"%s\",\"results\":[{{\"stopped\":{{\"generation\":\"%s\",\"sessions\":[\"terminal-1\"]}}}}]}}]\\n' \"$window\" \"$EON_STOP_DELEGATED\"\n",
+             printf '[{{\"window\":\"%s\",\"results\":[{{\"stopped\":{{\"generation\":\"%s\",\"terminals\":[\"terminal-1\"]}}}}]}}]\\n' \"$window\" \"$EON_STOP_DELEGATED\"\n",
             log = log.display(),
             mode = mode.display(),
         ),
@@ -11460,7 +11530,7 @@ fn newer_eonw_windows_stop_and_attach_through_their_window_forms() {
         assert_eq!(
             serde_json::from_slice::<serde_json::Value>(&stopped.stdout).unwrap(),
             serde_json::json!([{"window": id, "results": [
-                {"stopped": {"generation": generation, "sessions": ["terminal-1"]}}
+                {"stopped": {"generation": generation, "terminals": ["terminal-1"]}}
             ]}])
         );
         assert_eq!(
@@ -11834,7 +11904,7 @@ fn stop_without_terminal_requires_yes() {
     ));
     assert!(supervisor.child.try_wait().unwrap().is_none());
     assert!(
-        invoke(&binary, &runtime, &config, &["workspace", "--json"])
+        invoke(&binary, &runtime, &config, &["session", "--json"])
             .status
             .success()
     );
@@ -11952,7 +12022,7 @@ fn batch_stop_preserves_current_until_all_and_reports_unavailable_generations() 
     assert_eq!(stopped[2]["stopped"]["generation"], second_id);
     assert!(current.child.try_wait().unwrap().is_none());
     assert!(
-        invoke(&binary, &runtime, &config, &["workspace", "--json"])
+        invoke(&binary, &runtime, &config, &["session", "--json"])
             .status
             .success()
     );
@@ -12195,7 +12265,7 @@ fn terminal_reads_and_sends_reach_a_hidden_workspace_and_change_nothing() {
         protocol_action(&control, "read", read_action()),
         Response::Text(read.clone())
     );
-    // A calling terminal is projected as `eon workspace` names it.
+    // A calling terminal is projected as `eon session` names it.
     let environment = process::environ(live_identity(&generation.join("orbit.sock")).process_id);
     let caller = environment
         .split(|byte| *byte == 0)
@@ -12701,7 +12771,7 @@ fn pane_history_edit_opens_its_target_in_scrollback_in_the_active_tab_only() {
         serde_json::json!({
             "generation": value["generation"],
             "window": null,
-            "workspace": "s1",
+            "session": "s1",
             "tab": "t1",
             "pane": "p1",
             "popup": null,
@@ -12744,7 +12814,7 @@ fn pane_history_edit_opens_its_target_in_scrollback_in_the_active_tab_only() {
     assert_eq!(stable_tabs(&after.tabs), stable_tabs(&before.tabs));
 
     // And in a hidden workspace.
-    assert!(window.eon(&["workspace", "new"]).status.success());
+    assert!(window.eon(&["session", "new"]).status.success());
     let pair = window.inspect("workspace-two").tabs[0].popups[0]
         .session
         .clone();
@@ -13030,7 +13100,7 @@ fn pane_read_prints_the_text_or_json_and_exits_by_failure() {
         command
     };
     let run = |arguments: &[&str]| eon(&root).args(arguments).output().unwrap();
-    let before = stable_workspace_json(&run(&["workspace", "--json"]));
+    let before = stable_workspace_json(&run(&["session", "--json"]));
     let human = run(&["pane", "read", "p1"]);
     assert_eq!(human.status.code(), Some(0));
     assert_eq!(stdout(&human), "screen of terminal-1\n");
@@ -13040,7 +13110,7 @@ fn pane_read_prints_the_text_or_json_and_exits_by_failure() {
         serde_json::json!({
             "generation": id,
             "window": null,
-            "workspace": "s1",
+            "session": "s1",
             "tab": "t1",
             "pane": "p1",
             "popup": null,
@@ -13063,7 +13133,7 @@ fn pane_read_prints_the_text_or_json_and_exits_by_failure() {
         serde_json::from_str::<serde_json::Value>(stdout(&json)).unwrap(),
         expected(serde_json::Value::Null)
     );
-    // From an Eon terminal, `caller` names it as `eon workspace` does.
+    // From an Eon terminal, `caller` names it as `eon session` does.
     let environment = process::environ(live_identity(&generation.join("orbit.sock")).process_id);
     let caller = environment
         .split(|byte| *byte == 0)
@@ -13128,10 +13198,7 @@ fn pane_read_prints_the_text_or_json_and_exits_by_failure() {
     fs::remove_file(root.join("orbit-reply")).unwrap();
     assert_eq!(run(&["pane", "read", "p1"]).status.code(), Some(0));
     // Reading changed nothing a person sees.
-    assert_eq!(
-        stable_workspace_json(&run(&["workspace", "--json"])),
-        before
-    );
+    assert_eq!(stable_workspace_json(&run(&["session", "--json"])), before);
     fs::write(&supervisor.stop, "").unwrap();
     wait_for_successful_exit(&mut supervisor.child);
     let missing = run(&["pane", "read", "p1", "--json"]);
@@ -13171,7 +13238,7 @@ fn pane_history_prints_the_text_or_json_and_names_what_the_bound_left_out() {
     };
     let run = |arguments: &[&str]| eon(&root).args(arguments).output().unwrap();
     let json = |output: &Output| serde_json::from_str::<serde_json::Value>(stdout(output)).unwrap();
-    let before = stable_workspace_json(&run(&["workspace", "--json"]));
+    let before = stable_workspace_json(&run(&["session", "--json"]));
     let human = run(&["pane", "history", "p1"]);
     assert_eq!(human.status.code(), Some(0));
     assert_eq!(
@@ -13188,7 +13255,7 @@ fn pane_history_prints_the_text_or_json_and_names_what_the_bound_left_out() {
         serde_json::json!({
             "generation": id,
             "window": null,
-            "workspace": "s1",
+            "session": "s1",
             "tab": "t1",
             "pane": "p1",
             "popup": null,
@@ -13282,10 +13349,7 @@ fn pane_history_prints_the_text_or_json_and_names_what_the_bound_left_out() {
     }
     fs::remove_file(root.join("orbit-reply")).unwrap();
     // Reading changed nothing a person sees.
-    assert_eq!(
-        stable_workspace_json(&run(&["workspace", "--json"])),
-        before
-    );
+    assert_eq!(stable_workspace_json(&run(&["session", "--json"])), before);
     // A popup's history, named by its uN.
     let Response::Snapshot(opened) = protocol_action(
         &control,
@@ -13360,13 +13424,13 @@ fn pane_send_pastes_then_waits_for_enter_and_exits_by_failure() {
     let run = |arguments: &[&str]| eon(&root).args(arguments).output().unwrap();
     let sent = || fs::read_to_string(root.join("input.log")).unwrap_or_default();
     let json = |output: &Output| serde_json::from_str::<serde_json::Value>(stdout(output)).unwrap();
-    let before = stable_workspace_json(&run(&["workspace", "--json"]));
+    let before = stable_workspace_json(&run(&["session", "--json"]));
     let id = generation.file_name().unwrap().to_str().unwrap();
     let reply = |bytes: usize, bracketed: serde_json::Value, enter: bool| {
         serde_json::json!({
             "generation": id,
             "window": null,
-            "workspace": "s1",
+            "session": "s1",
             "tab": "t1",
             "pane": "p1",
             "popup": null,
@@ -13758,10 +13822,7 @@ fn pane_send_pastes_then_waits_for_enter_and_exits_by_failure() {
     assert_eq!(json(&help_text), reply(6, true.into(), false));
     assert_eq!(sent(), format!("{log}terminal-1 Paste(\"--help\")\n"));
     // Sending changed nothing a person sees but the program.
-    assert_eq!(
-        stable_workspace_json(&run(&["workspace", "--json"])),
-        before
-    );
+    assert_eq!(stable_workspace_json(&run(&["session", "--json"])), before);
     fs::write(&supervisor.stop, "").unwrap();
     wait_for_successful_exit(&mut supervisor.child);
     let gone = run(&["pane", "send", "p1", "--json", "--", "x"]);
@@ -13910,7 +13971,7 @@ fn wait_for_settled_workspace(root: &Path, panes: &[&str]) -> Output {
     let deadline = Instant::now() + Duration::from_secs(10);
     loop {
         let output = quit_command(root)
-            .args(["workspace", "--json"])
+            .args(["session", "--json"])
             .output()
             .unwrap();
         assert!(output.status.success(), "{output:?}");
@@ -14051,7 +14112,7 @@ fn presented(output: &Output) -> serde_json::Value {
 /// Asserts that `after` is `before` without the tab or pane `target`, with
 /// the same shown workspace, active tab and every other tab unchanged.
 fn assert_closed_only(before: &serde_json::Value, after: &serde_json::Value, target: &str) {
-    for field in ["workspace", "active_workspace", "active_tab", "entries"] {
+    for field in ["session", "active_workspace", "active_tab", "entries"] {
         assert_eq!(after[field], before[field], "{field}");
     }
     let tabs = |value: &serde_json::Value| value["tabs"].as_array().unwrap().clone();
@@ -14101,7 +14162,7 @@ fn cli_closes_background_ids_and_preserves_the_presented_workspace() {
         assert_eq!(output.status.code(), Some(0), "{output:?}");
         serde_json::from_slice(&output.stdout).unwrap()
     };
-    let inspect = || run(None, &["workspace", "--json"]);
+    let inspect = || run(None, &["session", "--json"]);
 
     // The caller is t1's Agent popup. The active t2 shows its own Agent
     // popup, and the background t3 and t4 each hold two panes.
@@ -14292,7 +14353,7 @@ fn cli_busy_background_close_confirms_refuses_and_cancels_without_focus() {
             .args(args);
         cmd
     };
-    let inspect = || run_caller(&["workspace", "--json"]).output().unwrap();
+    let inspect = || run_caller(&["session", "--json"]).output().unwrap();
     let not_confirmed = |kind: &str, target: &str| {
         format!(
             "{{\"error\":{{\"code\":\"not-confirmed\",\"detail\":\"close of {kind} {target} requires confirmation; rerun with --yes\"}}}}\n"
@@ -14508,13 +14569,13 @@ fn cli_busy_background_close_confirms_refuses_and_cancels_without_focus() {
     ] {
         configure(warning);
         let created = quit_command(&root)
-            .args(["workspace", "new", "--json"])
+            .args(["session", "new", "--json"])
             .output()
             .unwrap();
         assert!(created.status.success(), "{created:?}");
         let shown: serde_json::Value =
             serde_json::from_slice(&wait_for_settled_workspace(&root, &[]).stdout).unwrap();
-        let workspace = shown["workspace"].as_str().unwrap().to_owned();
+        let workspace = shown["session"].as_str().unwrap().to_owned();
         let tab = shown["tabs"][0]["id"].as_str().unwrap().to_owned();
         let label = shown["tabs"][0]["panes"][0]["label"].as_str().unwrap();
         let close = |extra: &[&str]| {
@@ -14531,7 +14592,7 @@ fn cli_busy_background_close_confirms_refuses_and_cancels_without_focus() {
                 assert_eq!(cancelled.status.code(), Some(0), "{cancelled:?}");
                 assert_eq!(
                     stdout(&cancelled),
-                    format!("cancelled; workspace {workspace} stays open\n")
+                    format!("cancelled; session {workspace} stays open\n")
                 );
                 assert_eq!(String::from_utf8_lossy(&cancelled.stderr), question);
                 let confirmed = at_terminal(&mut close(&[]), Some(b"y\n"), || ());
@@ -14552,7 +14613,7 @@ fn cli_busy_background_close_confirms_refuses_and_cancels_without_focus() {
             assert!(closed.stderr.is_empty(), "{warning} {mode}: {closed:?}");
         }
         let listed = quit_command(&root)
-            .args(["workspaces", "--json"])
+            .args(["session", "ls", "--json"])
             .output()
             .unwrap();
         assert!(
@@ -14664,7 +14725,7 @@ fn cli_idle_background_close_ignores_other_busy_tabs() {
         let closed = run(&caller, &args);
         assert_eq!(closed.status.code(), Some(0), "{closed:?}");
         assert!(closed.stderr.is_empty(), "{closed:?}");
-        let after = presented(&run(&caller, &["workspace", "--json"]));
+        let after = presented(&run(&caller, &["session", "--json"]));
         assert_closed_only(&before, &after, &target);
         assert_only_ended(&endpoints, &ended);
     }
@@ -14697,8 +14758,8 @@ fn cli_close_preserves_workspace_scope_and_final_close_results() {
         serde_json::from_slice(&output.stdout).unwrap()
     };
     let shown_workspace = || {
-        let val = parsed(&run_from(None, &["workspaces", "--json"]));
-        let shown = val["workspaces"]
+        let val = parsed(&run_from(None, &["session", "ls", "--json"]));
+        let shown = val["sessions"]
             .as_array()
             .unwrap()
             .iter()
@@ -14707,21 +14768,14 @@ fn cli_close_preserves_workspace_scope_and_final_close_results() {
             .as_str()
             .unwrap()
             .to_owned();
-        let count = val["workspaces"].as_array().unwrap().len();
+        let count = val["sessions"].as_array().unwrap().len();
         (shown, count)
     };
 
     // The hidden s2 gets a second pane and a second tab; s1 stays shown.
     parsed(&run_from(
         Some(&w1_caller),
-        &[
-            "workspace",
-            "new",
-            "--no-focus",
-            "--name",
-            "notes",
-            "--json",
-        ],
+        &["session", "new", "--no-focus", "--name", "notes", "--json"],
     ));
     let w2_caller = quit_terminal_caller(&generation.join("terminal-2.sock"));
     parsed(&run_from(
@@ -14739,7 +14793,7 @@ fn cli_close_preserves_workspace_scope_and_final_close_results() {
             "--json",
         ],
     ));
-    assert_eq!(w2_snap["workspace"], "s2");
+    assert_eq!(w2_snap["session"], "s2");
     assert_eq!(shown_workspace(), ("s1".to_owned(), 2));
     let w2_t2 = w2_snap["tabs"][1]["id"].as_str().unwrap().to_owned();
     let w2_p1 = w2_snap["tabs"][0]["panes"][0]["id"]
@@ -14751,14 +14805,14 @@ fn cli_close_preserves_workspace_scope_and_final_close_results() {
         .unwrap()
         .to_owned();
     wait_for_busy_panes(&root, None, &[]);
-    // The shown s1 without the workspace list, whose tab counts change.
+    // The shown s1 without the session list, whose tab counts change.
     let shown_s1 = || {
-        let mut value = presented(&run_from(None, &["workspace", "--json"]));
-        value.as_object_mut().unwrap().remove("workspaces");
+        let mut value = presented(&run_from(None, &["session", "--json"]));
+        value.as_object_mut().unwrap().remove("sessions");
         value
     };
     let s1 = shown_s1();
-    let w1_endpoints = terminal_endpoints(&parsed(&run_from(None, &["workspace", "--json"])));
+    let w1_endpoints = terminal_endpoints(&parsed(&run_from(None, &["session", "--json"])));
     let w2_endpoints = terminal_endpoints(&w2_snap);
     let w1_terminals = live_terminals(&w1_endpoints);
     let w2_terminals = live_terminals(&w2_endpoints);
@@ -14792,11 +14846,11 @@ fn cli_close_preserves_workspace_scope_and_final_close_results() {
             Some(&w2_caller),
             &[kind, "close", target, "--yes", "--json"],
         ));
-        assert_eq!(closed["workspace"], "s2");
+        assert_eq!(closed["session"], "s2");
         assert_eq!(shown_workspace(), ("s1".to_owned(), 2));
         assert_eq!(shown_s1(), s1);
     }
-    let w2_left = parsed(&run_from(Some(&w2_caller), &["workspace", "--json"]));
+    let w2_left = parsed(&run_from(Some(&w2_caller), &["session", "--json"]));
     assert_eq!(w2_left["tabs"].as_array().unwrap().len(), 1);
     assert_eq!(w2_left["tabs"][0]["panes"].as_array().unwrap().len(), 1);
     assert_only_ended(&w1_w2, &w2_endpoints[1..]);
@@ -14807,15 +14861,15 @@ fn cli_close_preserves_workspace_scope_and_final_close_results() {
         Some(&w2_caller),
         &["pane", "close", &w2_p1, "--yes", "--json"],
     ));
-    assert_eq!(removed["workspace"], "s1");
+    assert_eq!(removed["session"], "s1");
     assert_eq!(shown_workspace(), ("s1".to_owned(), 1));
     assert_eq!(shown_s1(), s1);
     assert_only_ended(&w1_w2, &w2_endpoints);
 
     // So does closing a shown s3's final tab by its ID; s1 is shown again.
-    parsed(&run_from(None, &["workspace", "new", "--json"]));
-    let s3 = parsed(&run_from(None, &["workspace", "--json"]));
-    assert_eq!(s3["workspace"], "s3");
+    parsed(&run_from(None, &["session", "new", "--json"]));
+    let s3 = parsed(&run_from(None, &["session", "--json"]));
+    assert_eq!(s3["session"], "s3");
     let s3_tab = s3["tabs"][0]["id"].as_str().unwrap().to_owned();
     let s3_endpoints = terminal_endpoints(&s3);
     let w1_w3 = [w1_terminals.clone(), live_terminals(&s3_endpoints)].concat();
@@ -14823,7 +14877,7 @@ fn cli_close_preserves_workspace_scope_and_final_close_results() {
         None,
         &["tab", "close", &s3_tab, "--yes", "--json"],
     ));
-    assert_eq!(removed["workspace"], "s1");
+    assert_eq!(removed["session"], "s1");
     assert_eq!(shown_workspace(), ("s1".to_owned(), 1));
     assert_only_ended(&w1_w3, &s3_endpoints);
 

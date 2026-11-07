@@ -1185,7 +1185,7 @@ fn generations_json(records: &[GenerationRecord]) -> String {
             output.push(',');
         }
         output.push_str(&format!(
-            "{{\"id\":\"{}\",\"kind\":\"{}\",\"state\":\"{}\",\"name\":{},\"started_at\":{},\"eon_version\":{},\"workspace_protocol\":{},\"component_report\":{},\"executable\":{},\"sessions\":[",
+            "{{\"id\":\"{}\",\"kind\":\"{}\",\"state\":\"{}\",\"name\":{},\"started_at\":{},\"eon_version\":{},\"workspace_protocol\":{},\"component_report\":{},\"executable\":{},\"terminals\":[",
             json_escape(&record.id),
             record.kind,
             record.state,
@@ -1769,7 +1769,9 @@ fn delegated_result(
     enum Delegated {
         Stopped {
             generation: String,
-            sessions: Vec<String>,
+            // Builds before v0.1.20 name the list `sessions`.
+            #[serde(alias = "sessions")]
+            terminals: Vec<String>,
         },
         Error {
             code: String,
@@ -1802,10 +1804,10 @@ fn delegated_result(
     match result {
         Delegated::Stopped {
             generation,
-            sessions,
+            terminals,
         } if generation == target && status.success() => Some(Ok(Stopped {
             generation,
-            sessions,
+            sessions: terminals,
         })),
         Delegated::Error { code, detail } if !code.is_empty() && status.code().is_some() => {
             Some(Err(failure(code, detail)))
@@ -1911,7 +1913,7 @@ pub(super) fn stop_generations(
 
 fn stopped_json(stopped: &Stopped) -> String {
     let mut output = format!(
-        "{{\"stopped\":{{\"generation\":\"{}\",\"sessions\":[",
+        "{{\"stopped\":{{\"generation\":\"{}\",\"terminals\":[",
         json_escape(&stopped.generation)
     );
     for (index, session) in stopped.sessions.iter().enumerate() {
@@ -2428,7 +2430,8 @@ mod tests {
         let exited = |code: i32| std::process::ExitStatus::from_raw(code << 8);
         let killed = std::process::ExitStatus::from_raw(libc::SIGKILL);
         for output in [
-            b"{\"stopped\":{\"generation\":\"g1\",\"sessions\":[\"terminal-1\"]}}\n".as_slice(),
+            b"{\"stopped\":{\"generation\":\"g1\",\"terminals\":[\"terminal-1\"]}}\n".as_slice(),
+            // A build before v0.1.20 prints `sessions`.
             b"{\"stopped\":{\"generation\":\"g1\",\"sessions\":[\"terminal-1\"],\"hint\":1}}",
         ] {
             let stopped = super::delegated_result(output, exited(0), "g1", None);
@@ -2447,17 +2450,17 @@ mod tests {
             matches!(&failed, Some(Err(failure)) if failure.code == "supervisor-unavailable" && failure.detail == "d"),
             "{failed:?}"
         );
-        let stopped = b"{\"stopped\":{\"generation\":\"g1\",\"sessions\":[]}}".as_slice();
+        let stopped = b"{\"stopped\":{\"generation\":\"g1\",\"terminals\":[]}}".as_slice();
         let error = b"{\"error\":{\"code\":\"stop-failed\",\"detail\":\"d\"}}".as_slice();
         for (output, status) in [
             (stopped, exited(1)),
             (stopped, killed),
             (error, killed),
-            (b"{\"stopped\":{\"generation\":\"g2\",\"sessions\":[]}}".as_slice(), exited(0)),
+            (b"{\"stopped\":{\"generation\":\"g2\",\"terminals\":[]}}".as_slice(), exited(0)),
             (b"{\"stopped\":{\"generation\":\"g1\"}}", exited(0)),
-            (b"{\"stopped\":{\"generation\":\"g1\",\"sessions\":[]},\"error\":{\"code\":\"c\",\"detail\":\"d\"}}", exited(0)),
-            (b"{\"stopped\":{\"generation\":\"g1\",\"sessions\":[]}}{\"stopped\":{\"generation\":\"g1\",\"sessions\":[]}}", exited(0)),
-            (b"[{\"stopped\":{\"generation\":\"g1\",\"sessions\":[]}}]", exited(0)),
+            (b"{\"stopped\":{\"generation\":\"g1\",\"terminals\":[]},\"error\":{\"code\":\"c\",\"detail\":\"d\"}}", exited(0)),
+            (b"{\"stopped\":{\"generation\":\"g1\",\"terminals\":[]}}{\"stopped\":{\"generation\":\"g1\",\"terminals\":[]}}", exited(0)),
+            (b"[{\"stopped\":{\"generation\":\"g1\",\"terminals\":[]}}]", exited(0)),
             (b"{\"error\":{\"code\":\"\",\"detail\":\"d\"}}", exited(1)),
             (b"", exited(0)),
             (b"stopped generation g1: terminal-1\n", exited(0)),
@@ -2472,7 +2475,7 @@ mod tests {
         // selection failure alone.
         let window =
             |results: &str| format!("[{{\"window\":\"default\",\"results\":[{results}]}}]\n");
-        let one = window("{\"stopped\":{\"generation\":\"g1\",\"sessions\":[\"terminal-1\"]}}");
+        let one = window("{\"stopped\":{\"generation\":\"g1\",\"terminals\":[\"terminal-1\"]}}");
         assert!(
             matches!(super::delegated_result(one.as_bytes(), exited(0), "g1", Some("default")), Some(Ok(stopped)) if stopped.sessions == ["terminal-1"])
         );
@@ -2484,7 +2487,7 @@ mod tests {
             super::delegated_result(error, exited(1), "g1", Some("default")),
             Some(Err(failure)) if failure.code == "stop-failed"
         ));
-        let stopped_one = "{\"stopped\":{\"generation\":\"g1\",\"sessions\":[]}}";
+        let stopped_one = "{\"stopped\":{\"generation\":\"g1\",\"terminals\":[]}}";
         for (output, status) in [
             (one.clone(), killed),
             (one.clone(), exited(1)),

@@ -19,7 +19,7 @@ enum CliPath {
     /// this action.
     Send(Vec<OsString>),
     /// These arguments parse to a `popup hide` of this action's popup; the
-    /// command reads its owning tab from the workspace.
+    /// command reads its owning tab from the session.
     Hide(Vec<OsString>),
 }
 
@@ -36,14 +36,14 @@ fn cli_path(action: &Action) -> CliPath {
     let bytes = |bytes: &Vec<u8>| OsString::from_vec(bytes.clone());
     Command(match action {
         Action::Workspace(action) => match action {
-            WorkspaceAction::Inspect => words(&["workspace"]),
+            WorkspaceAction::Inspect => words(&["session"]),
             WorkspaceAction::InspectRuntime | WorkspaceAction::InspectPresentation => {
                 return Lifecycle("window ls");
             }
             WorkspaceAction::Present { .. } => return Lifecycle("window attach"),
             WorkspaceAction::CreateTab => words(&["tab", "create"]),
             WorkspaceAction::NewWorkspace { name, focus } => [
-                words(&["workspace", "new"]),
+                words(&["session", "new"]),
                 flag(!focus, "--no-focus"),
                 name.iter()
                     .flat_map(|name| words(&["--name", name]))
@@ -51,16 +51,16 @@ fn cli_path(action: &Action) -> CliPath {
             ]
             .concat(),
             WorkspaceAction::SwitchWorkspace { workspace } => {
-                words(&["workspace", "switch", "--", workspace])
+                words(&["session", "switch", "--", workspace])
             }
             WorkspaceAction::RenameWorkspace { workspace, name } => [
-                words(&["workspace", "rename", "--"]),
+                words(&["session", "rename", "--"]),
                 workspace.iter().map(OsString::from).collect(),
                 words(&[name]),
             ]
             .concat(),
             WorkspaceAction::CloseWorkspace { workspace } => {
-                words(&["workspace", "close", "--", workspace])
+                words(&["session", "close", "--", workspace])
             }
             WorkspaceAction::CreatePane { focus } => {
                 [words(&["pane", "create"]), flag(!focus, "--no-focus")].concat()

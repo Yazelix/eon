@@ -49,8 +49,8 @@ have a name, but its `sN` identity identifies it.
 
 Product text uses these terms without requiring subsystem names. Each terminal
 has a `terminal-N` identity, which also names its Orbit socket
-(`terminal-N.sock`); JSON `session` / `sessions` fields refer to terminals.
-Protocol names remain unchanged.
+(`terminal-N.sock`). In CLI JSON, `session` names a session and `terminal` a
+terminal. Protocol names remain unchanged.
 
 Documentation names the subsystems **Orbit**, **Venus** and **Eon Runtime**
 when ownership matters; engineering documentation may say **Eon orchestrator**,
@@ -129,7 +129,7 @@ Since v20, `workspace` names the workspace described by `tabs` and `active_tab`,
 and `active_workspace` names the one shown in the window. A request carrying a
 validated caller projects that terminal's workspace; a request without a caller
 projects the shown workspace. The four workspace requests operate on Runtime's
-workspace set. The `eon workspaces` and `eon workspace new|switch|rename|close`
+workspace set. The `eon session ls` and `eon session new|switch|rename|close`
 CLI is their front end, and the Workspaces picker (`eon-sessions`,
 Alt+Shift+S) and the Commands workspace entries run that CLI as the popup's
 caller.

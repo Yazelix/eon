@@ -608,7 +608,7 @@ fn handle_client<D: Into<Dispatched>>(
     if let Ok(encoded) = encoded.or_else(|error| {
         encode_response(&Response::Failure(failure(
             "unrepresentable-state",
-            format!("cannot encode Eon workspace result: {error}"),
+            format!("cannot encode Eon session result: {error}"),
         )))
     }) {
         write_reply(&mut stream, &encoded, Instant::now() + REPLY_DEADLINE);
@@ -771,7 +771,7 @@ pub(super) fn failure(code: impl Into<String>, detail: impl Into<String>) -> Fai
     let mut detail = detail.into();
     detail.truncate(detail.floor_char_boundary(MAX_DETAIL_BYTES));
     if detail.is_empty() {
-        detail = "unspecified Eon workspace failure".into();
+        detail = "unspecified Eon session failure".into();
     }
     Failure {
         code: code.into(),

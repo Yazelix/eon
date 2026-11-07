@@ -134,6 +134,7 @@
               ./flake.lock
               ./components
               ./docs/CONFIGURATION.md
+              ./docs/USAGE.md
               ./eon/skills/eon/SKILL.md
               ./nix/shell-environment.nix
             ];
@@ -699,18 +700,18 @@
             -- name another tab, so act only while that tab still lists this terminal among its
             -- popups.
             local function popup(eon, tab)
-              local session = (os.getenv("EON_TERMINAL") or ""):match("^([^.]+)%.")
-              if not session then return false end
-              local output, failure = ran(Command(eon):arg({ "workspace", "--json" }):output())
+              local terminal = (os.getenv("EON_TERMINAL") or ""):match("^([^.]+)%.")
+              if not terminal then return false end
+              local output, failure = ran(Command(eon):arg({ "session", "--json" }):output())
               if not output then return nil, failure end
               local ok, snapshot = pcall(ya.json_decode, output.stdout)
               if not ok or type(snapshot) ~= "table" then
-                return nil, "eon workspace --json returned no readable workspace"
+                return nil, "eon session --json returned no readable session"
               end
               for _, item in ipairs(snapshot.tabs or {}) do
                 if item.id == tab then
                   for _, entry in ipairs(item.popups or {}) do
-                    if entry.session == session then return entry.id end
+                    if entry.terminal == terminal then return entry.id end
                   end
                 end
               end
@@ -726,7 +727,7 @@
                 return notify("This Yazi is not an Eon Files popup", "error")
               end
               local id, failure = popup(eon, tab)
-              if id == nil then return notify(failure ~= "" and failure or "eon workspace failed", "error") end
+              if id == nil then return notify(failure ~= "" and failure or "eon session failed", "error") end
               if not id then
                 if unlisted then return unlisted() end
                 return notify("This Yazi is no longer a popup of tab " .. tab, "error")

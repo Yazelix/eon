@@ -82,7 +82,7 @@ pub struct Resume {
     pub seq: u64,
 }
 
-/// A workspace as `eon workspaces --json` lists it, plus its active tab.
+/// A workspace as `eon session ls --json` lists it, plus its active tab.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct WorkspaceEntry {
     pub workspace: WorkspaceInfo,
@@ -105,7 +105,7 @@ pub struct WindowSnapshot {
     /// The window's whole queue in EON-C31 order.
     pub attention_queue: Vec<QueueItem>,
     /// The admitted busy terminals in window order, without the calling
-    /// terminal or `eon workspace`'s 32-terminal bound; None in eonbase.
+    /// terminal or `eon session`'s 32-terminal bound; None in eonbase.
     pub busy: Option<Vec<BusyTerminal>>,
     /// How many `TABS` messages follow: one per workspace with admitted tabs.
     pub tab_messages: usize,

@@ -99,10 +99,10 @@ enum RunnerOutput {
 
 /// The Commands popup's curated list. Each entry runs an existing `eon` command as the popup's
 /// caller, so the CLI keeps owning validation, targets and confirmations. `TAB` stands for the
-/// popup's own tab, `PANE` for its tab's selected pane and `WORKSPACE` for its own workspace.
+/// popup's own tab, `PANE` for its tab's selected pane and `THIS` for its own session.
 /// `NAME` is typed in a name box, where an empty name
-/// clears. `WS` is chosen in the Workspaces popup's picker, run inside Commands: a query that
-/// matches no workspace runs `workspace new --name QUERY` instead, and a cancel runs nothing.
+/// clears. `SESSION` is chosen in the Sessions popup's picker, run inside Commands: a query that
+/// matches no session runs `session new --name QUERY` instead, and a cancel runs nothing.
 /// Pane moves are absent because Eon refuses them while a popup is open.
 const RUNNER_COMMANDS: &[(&str, &[&str], RunnerOutput)] = {
     use RunnerOutput::{Close, Keep};
@@ -120,15 +120,11 @@ const RUNNER_COMMANDS: &[(&str, &[&str], RunnerOutput)] = {
         ("Quit this window", &["quit"], Close),
         ("Move tab left", &["tab", "move", "left"], Close),
         ("Move tab right", &["tab", "move", "right"], Close),
-        ("Switch workspace", &["workspace", "switch", "WS"], Close),
-        ("New workspace", &["workspace", "new"], Close),
-        ("Rename workspace", &["workspace", "rename", "NAME"], Close),
-        (
-            "Close this workspace",
-            &["workspace", "close", "WORKSPACE"],
-            Close,
-        ),
-        ("Show workspace", &["workspace"], Keep),
+        ("Switch session", &["session", "switch", "SESSION"], Close),
+        ("New session", &["session", "new"], Close),
+        ("Rename session", &["session", "rename", "NAME"], Close),
+        ("Close this session", &["session", "close", "THIS"], Close),
+        ("Show session", &["session"], Keep),
         ("List windows", &["window", "ls"], Keep),
         (
             "Stop old-version windows",
@@ -214,12 +210,12 @@ fn pick_and_run_command(inputs: &Inputs) -> Result<(i32, RunnerOutput), String> 
         .into_iter()
         .map(OsString::from)
         .collect();
-    if arguments.iter().any(|argument| argument == "WS") {
+    if arguments.iter().any(|argument| argument == "SESSION") {
         return Ok((pick_and_run_workspace(inputs)?, *kept));
     }
     if arguments
         .iter()
-        .any(|argument| argument == "PANE" || argument == "WORKSPACE")
+        .any(|argument| argument == "PANE" || argument == "THIS")
     {
         let snapshot = caller_snapshot(inputs)?;
         let pane = snapshot
@@ -230,7 +226,7 @@ fn pick_and_run_command(inputs: &Inputs) -> Result<(i32, RunnerOutput), String> 
         for argument in &mut arguments {
             if argument == "PANE" {
                 *argument = pane.ok_or("this tab has no pane to name")?.into();
-            } else if argument == "WORKSPACE" {
+            } else if argument == "THIS" {
                 *argument = snapshot.workspace.as_str().into();
             }
         }
@@ -239,7 +235,7 @@ fn pick_and_run_command(inputs: &Inputs) -> Result<(i32, RunnerOutput), String> 
         let subject = if arguments[0] == "pane" {
             "Pane"
         } else {
-            "Workspace"
+            "Session"
         };
         let output = packaged_fzf(
             &format!("{subject} name > "),
@@ -273,7 +269,7 @@ fn pick_and_run_workspace(inputs: &Inputs) -> Result<i32, String> {
         let snapshot = caller_snapshot(inputs)?;
         let Some(output) = run_picker(
             packaged_fzf(
-                "Workspace > ",
+                "Session > ",
                 "Enter Switch · Ctrl+X Close · No match: Enter Create · Esc/Ctrl+C Cancel",
             )
             .args([
@@ -286,7 +282,7 @@ fn pick_and_run_workspace(inputs: &Inputs) -> Result<i32, String> {
                 "--bind=enter:accept-or-print-query",
             ]),
             &workspace_rows(&snapshot.workspaces, &snapshot.active_workspace),
-            "workspace",
+            "session",
         )?
         else {
             return Ok(0);
@@ -379,7 +375,7 @@ fn workspace_pick_arguments(output: &str) -> Option<Vec<&str>> {
     let key = lines.next();
     match lines.next() {
         Some(row) => Some(vec![
-            "workspace",
+            "session",
             if key == Some("ctrl-x") {
                 "close"
             } else {
@@ -388,13 +384,13 @@ fn workspace_pick_arguments(output: &str) -> Option<Vec<&str>> {
             row.split('\t').next()?,
         ]),
         None if key.is_none() && !query.trim().is_empty() => {
-            Some(vec!["workspace", "new", "--name", query])
+            Some(vec!["session", "new", "--name", query])
         }
         None => None,
     }
 }
 
-/// The popup caller's own workspace, as `eon workspace` reports it.
+/// The popup caller's own session, as `eon session` reports it.
 fn caller_snapshot(inputs: &Inputs) -> Result<Snapshot, String> {
     let caller = calling_terminal().map_err(|error| error.detail)?;
     let resolved = resolve_workspace(inputs, WorkspaceTarget::default(), caller.as_deref())
@@ -616,6 +612,9 @@ fn bulk(which: &OsString) -> windows::Bulk {
 }
 
 fn execute(inputs: &Inputs, arguments: Vec<OsString>) -> Result<i32, Error> {
+    if let Some(error) = renamed_command(&arguments) {
+        return Err(error);
+    }
     if let Some(result) = command_help(inputs.version, &arguments) {
         return result;
     }
@@ -691,8 +690,14 @@ fn execute(inputs: &Inputs, arguments: Vec<OsString>) -> Result<i32, Error> {
                 return Ok(control(inputs, action, json, false, target, yes)?);
             }
             let (action, json) = parse_control_arguments(&arguments)?;
-            let list = arguments.first().is_some_and(|value| value == "workspaces");
-            control(inputs, action, json, list, target, false)
+            control(
+                inputs,
+                action,
+                json,
+                lists_sessions(&arguments),
+                target,
+                false,
+            )
         }
         [flag] if flag == "--skill" => {
             write_stdout(inputs.skill)?;
@@ -727,17 +732,33 @@ fn execute(inputs: &Inputs, arguments: Vec<OsString>) -> Result<i32, Error> {
     Ok(result?)
 }
 
+/// Whether control arguments that parsed as an inspection are `session ls`, with `--json`
+/// anywhere after `session`.
+fn lists_sessions(arguments: &[OsString]) -> bool {
+    arguments
+        .iter()
+        .filter(|argument| *argument != "--json")
+        .eq(["session", "ls"])
+}
+
+/// The usage failure for a removed workspace command, naming the session command that
+/// replaced it. It is a message, not an alias: the command still fails.
+fn renamed_command(arguments: &[OsString]) -> Option<Error> {
+    let new = match arguments.first()?.to_str()? {
+        "workspace" => "session",
+        "workspaces" => "session ls",
+        _ => return None,
+    };
+    let old = arguments[0].to_string_lossy();
+    Some(Error::usage(format!(
+        "invalid command or arguments\n`eon {old}` is now `eon {new}`\nRun `eon --help` for commands and examples."
+    )))
+}
+
 /// The first words `execute` hands to `parse_control_arguments`.
 fn control_command(command: &OsStr) -> bool {
     [
-        "workspace",
-        "workspaces",
-        "tab",
-        "pane",
-        "popup",
-        "edit",
-        "focus",
-        "--window",
+        "session", "tab", "pane", "popup", "edit", "focus", "--window",
     ]
     .iter()
     .any(|word| command == *word)
@@ -771,8 +792,8 @@ const HELP_SECTIONS: &[(&str, &[(&str, &str)])] = &[
     (
         "Start",
         &[
-            ("eon", "Open or present the workspace"),
-            ("run [-- COMMAND...]", "Start a fresh workspace"),
+            ("eon", "Open or present the window"),
+            ("run [-- COMMAND...]", "Start a fresh window"),
         ],
     ),
     (
@@ -792,21 +813,21 @@ const HELP_SECTIONS: &[(&str, &[(&str, &str)])] = &[
         ],
     ),
     (
-        "Workspaces",
+        "Sessions",
         &[
-            ("workspaces [--json]", "List this window's workspaces"),
-            ("workspace [--json]", "Inspect the workspace"),
+            ("session ls [--json]", "List this window's sessions"),
+            ("session [--json]", "Inspect the session"),
             (
-                "workspace new [--json] [--no-focus]",
-                "Add a workspace and show it",
+                "session new [--json] [--no-focus]",
+                "Add a session and show it",
             ),
-            ("workspace switch WS [--json]", "Show workspace WS"),
+            ("session switch SESSION [--json]", "Show session SESSION"),
             (
-                "workspace rename [WS] NAME [--json]",
-                "Name a workspace; empty clears",
+                "session rename [SESSION] NAME [--json]",
+                "Name a session; empty clears",
             ),
             (
-                "workspace close WS [--json]",
+                "session close SESSION [--json]",
                 "Stop its terminals and remove it",
             ),
         ],
@@ -825,7 +846,7 @@ const HELP_SECTIONS: &[(&str, &[(&str, &str)])] = &[
             ),
             (
                 "tab close TAB [--yes] [--json]",
-                "Close any tab of this workspace",
+                "Close any tab of this session",
             ),
             (
                 "tab directory TAB [--json] -- DIRECTORY",
@@ -843,7 +864,7 @@ const HELP_SECTIONS: &[(&str, &[(&str, &str)])] = &[
             ("edit [--json] -- FILE", "Open FILE in a new editor pane"),
             (
                 "pane close PANE [--yes] [--json]",
-                "Close any pane of this workspace",
+                "Close any pane of this session",
             ),
             (
                 "pane rename PANE NAME [--json]",
@@ -989,7 +1010,7 @@ fn command_help_text(words: &[OsString], color: bool) -> Option<String> {
         }
     }
     (!help.is_empty())
-        .then(|| help + "Run `eon --help` for workspace flags, notes and exit status.\n")
+        .then(|| help + "Run `eon --help` for the window flag, notes and exit status.\n")
 }
 
 fn help_text(version: &str, color: bool) -> String {
@@ -1007,34 +1028,34 @@ fn help_text(version: &str, color: bool) -> String {
         color,
     );
     format!(
-        "{heading}Eon{reset} {version}  ·  Terminal workspaces. Persistent terminals.
+        "{heading}Eon{reset} {version}  ·  Terminal sessions. Persistent terminals.
 
 {heading}Usage{reset}  {command}eon [COMMAND]{reset}
 {sections}
 {heading}Examples{reset}
 {examples}
 Alt+Shift+D detaches a window; closing it or eon quit ends it.
-Inside Eon, workspace commands use the calling terminal's supervisor/workspace.
+Inside Eon, session commands use the calling terminal's supervisor/session.
 Pane creation and moves, and tab moves, retain their calling-tab rules.
 Window IDs, as eon window ls shows them: default, another build's or an
 independent window's ID, or any unique prefix of 4+ characters.
-Workspace flag: --window ID, before any --.
+Window flag: --window ID, before any --.
 Explicit targets still validate EON_TERMINAL; independent windows use
 attach's rule.
-Results name generation, window (null for default), and workspace.
-WS is a workspace ID (s1, s2, ...) or its exact name.
-workspace new --name NAME names the new workspace; created gives its ID.
-With --no-focus, workspace new keeps the shown workspace, and either
+Results name generation, window (null for default), and session.
+SESSION is a session ID (s1, s2, ...) or its exact name.
+session new --name NAME names the new session; created gives its ID.
+With --no-focus, session new keeps the shown session, and either
 pane create keeps the selected pane and any popup.
-pane read, history and send reach hidden workspaces; [agents]
+pane read, history and send reach hidden sessions; [agents]
 terminal_access governs all three. pane send --enter waits
 [agents] send_enter_delay_ms first.
 pane history --edit opens the history in a Scrollback editor popup,
-only in the shown workspace's active tab.
+only in the shown session's active tab.
 pane send refuses while a person is typing; --force bypasses the typing check.
 Where shown, {command}--json{reset} prints JSON and never asks.
 Busy tab/pane closes require {command}--yes{reset} with {command}--json{reset}; {command}--yes{reset} confirms only that close.
-Tab/pane close IDs resolve in the caller's workspace, otherwise the shown one.
+Tab/pane close IDs resolve in the caller's session, otherwise the shown one.
 Without a terminal, a confirmation needs yes or exits 1 (not-confirmed).
 Exit status: 0 success, 1 failed, 2 invalid command, 3 target not found,
 4 Eon unreachable, 5 person typing (nothing sent), 130 interrupted.
@@ -1244,7 +1265,7 @@ fn control(
         let id = &target.id;
         if let Some(status) = confirm(
             &format!(
-                "Close workspace {id}{}? This {}stops every terminal in it. [y/N] ",
+                "Close session {id}{}? This {}stops every terminal in it. [y/N] ",
                 target
                     .name
                     .as_ref()
@@ -1255,7 +1276,7 @@ fn control(
                     ""
                 }
             ),
-            &format!("cancelled; workspace {id} stays open\n"),
+            &format!("cancelled; session {id} stays open\n"),
         )? {
             return Ok(status);
         }
@@ -1349,7 +1370,7 @@ fn control(
             };
             write_stdout(if json {
                 format!(
-                    "{{\"generation\":\"{}\",\"window\":{window},\"workspace\":\"{}\",{caller}{}{}",
+                    "{{\"generation\":\"{}\",\"window\":{window},\"session\":\"{}\",{caller}{}{}",
                     json_escape(generation),
                     json_escape(&snapshot.workspace),
                     created.map_or_else(String::new, |value| format!("\"created\":{value},")),
@@ -1361,7 +1382,7 @@ fn control(
                 )
             } else {
                 format!(
-                    "generation {generation}\nwindow {}\nworkspace {}\n{caller}{}{}",
+                    "generation {generation}\nwindow {}\nsession {}\n{caller}{}{}",
                     resolved.window.as_deref().unwrap_or("default"),
                     snapshot.workspace,
                     created_line.unwrap_or_default(),
@@ -1388,7 +1409,7 @@ fn control(
             Ok(0)
         }
         ControlResponse::Lifecycle(_) => {
-            Err("Eon supervisor returned a lifecycle result for a workspace action".into())
+            Err("Eon supervisor returned a lifecycle result for a session action".into())
         }
         ControlResponse::Workspace(Response::Text(read)) => {
             write_stdout(if json {
@@ -1430,7 +1451,7 @@ fn control(
         }
         // Only `eon pane send` asks for this, through `send_terminal`.
         ControlResponse::Workspace(Response::Sent(_)) => {
-            Err("Eon supervisor returned a terminal result for a workspace action".into())
+            Err("Eon supervisor returned a terminal result for a session action".into())
         }
     }
 }
@@ -1829,7 +1850,7 @@ fn final_close_prompt(
     );
     let cancelled = workspace.map_or_else(
         || "cancelled; the window stays open\n".into(),
-        |name| format!("cancelled; workspace {} stays open\n", name.escape_debug()),
+        |name| format!("cancelled; session {} stays open\n", name.escape_debug()),
     );
     (question, cancelled)
 }
@@ -1857,10 +1878,7 @@ fn hide_popup(
         .iter()
         .find(|tab| tab.popups.iter().any(|item| item.id == popup))
     else {
-        let detail = format!(
-            "popup {} is not live in this workspace",
-            popup.escape_debug()
-        );
+        let detail = format!("popup {} is not live in this session", popup.escape_debug());
         return report_failure(&failure("unknown-popup", detail), json);
     };
     let action = Action::DismissPopup(PopupTarget {
@@ -1870,7 +1888,7 @@ fn hide_popup(
     control(inputs, action, json, false, target, false)
 }
 
-/// The workspace `eon workspace` reports: the caller's, else the shown one.
+/// The session `eon session` reports: the caller's, else the shown one.
 fn inspect(socket: &Path, caller: Option<&str>, window: &str) -> Result<Snapshot, Failure> {
     match send_action_from(
         Ok(socket),
@@ -1881,7 +1899,7 @@ fn inspect(socket: &Path, caller: Option<&str>, window: &str) -> Result<Snapshot
         Ok(ControlResponse::Workspace(Response::Failure(failure))) => Err(failure),
         Ok(_) => Err(failure(
             "unrepresentable-state",
-            "Eon returned the wrong result for workspace inspection",
+            "Eon returned the wrong result for session inspection",
         )),
         Err(error) => Err(unreachable_supervisor(error, window)),
     }
@@ -2010,7 +2028,7 @@ fn parse_close_arguments(arguments: &[OsString]) -> Result<Option<(Action, bool,
     for argument in rest {
         let argument = argument
             .to_str()
-            .ok_or_else(|| Error::usage("Eon workspace actions require UTF-8 arguments"))?;
+            .ok_or_else(|| Error::usage("Eon actions require UTF-8 arguments"))?;
         match argument {
             "--json" if !json => json = true,
             "--yes" if !yes => yes = true,
@@ -2057,7 +2075,7 @@ fn parse_control_arguments(arguments: &[OsString]) -> Result<(Action, bool), Err
     for argument in arguments {
         let argument = argument
             .to_str()
-            .ok_or_else(|| Error::usage("Eon workspace actions require UTF-8 arguments"))?;
+            .ok_or_else(|| Error::usage("Eon actions require UTF-8 arguments"))?;
         if argument == "--json" {
             if json {
                 return Err(Error::usage(EON_USAGE));
@@ -2075,7 +2093,7 @@ fn parse_control_arguments(arguments: &[OsString]) -> Result<(Action, bool), Err
     let action = match values.as_slice() {
         ["pane", "create"] => Action::Workspace(WorkspaceAction::CreatePane { focus }),
         _ if !focus => return Err(Error::usage(EON_USAGE)),
-        ["workspace"] | ["workspaces"] => Action::Workspace(WorkspaceAction::Inspect),
+        ["session"] | ["session", "ls"] => Action::Workspace(WorkspaceAction::Inspect),
         ["tab", "create"] => Action::Workspace(WorkspaceAction::CreateTab),
         ["tab", "move", "left"] => Action::Workspace(WorkspaceAction::Move(Direction::Left)),
         ["tab", "move", "right"] => Action::Workspace(WorkspaceAction::Move(Direction::Right)),
@@ -2141,7 +2159,7 @@ fn parse_pane_rename_arguments(arguments: &[OsString]) -> Result<(Action, bool),
     ))
 }
 
-/// `workspace new|switch|rename|close`. WS is a `sN` or a name, which the
+/// `session new|switch|rename|close`. SESSION is a `sN` or a name, which the
 /// runtime resolves; after `--`, operands may start with `-`. Names are
 /// trimmed, as pane names are, and an empty rename clears the name.
 fn parse_workspace_arguments(arguments: &[OsString]) -> Result<Option<(Action, bool)>, Error> {
@@ -2149,7 +2167,7 @@ fn parse_workspace_arguments(arguments: &[OsString]) -> Result<Option<(Action, b
         return Ok(None);
     };
     let operation = match operation.to_str() {
-        Some(operation @ ("new" | "switch" | "rename" | "close")) if command == "workspace" => {
+        Some(operation @ ("new" | "switch" | "rename" | "close")) if command == "session" => {
             operation
         }
         _ => return Ok(None),
@@ -2160,7 +2178,7 @@ fn parse_workspace_arguments(arguments: &[OsString]) -> Result<Option<(Action, b
     while let Some(argument) = rest.next() {
         let value = argument
             .to_str()
-            .ok_or_else(|| Error::usage("Eon workspace names must be UTF-8"))?;
+            .ok_or_else(|| Error::usage("Eon session names must be UTF-8"))?;
         match value {
             "--" if !literal => literal = true,
             "--json" if !literal && !json => json = true,
@@ -2390,8 +2408,8 @@ mod tests {
             &["anima", "--help"],
             &["anima", "aquarium", "-h"],
             &["pane", "send", "p1", "--", "--help"],
-            &["workspace", "rename", "--", "-h"],
-            &["workspace", "switch", "--", "--help"],
+            &["session", "rename", "--", "-h"],
+            &["session", "switch", "--", "--help"],
             &["pane", "rename", "p1", "--", "--help"],
             &["pane", "p1", "--help"],
             &["-h,", "--help"],
@@ -2434,7 +2452,7 @@ mod tests {
                 "Close the last tab? This closes session my \\\"notes\\\" and stops 2 \
                  terminals [p1, agent]. [y/N] "
                     .to_owned(),
-                "cancelled; workspace my \\\"notes\\\" stays open\n".to_owned()
+                "cancelled; session my \\\"notes\\\" stays open\n".to_owned()
             )
         );
     }
@@ -2459,22 +2477,22 @@ mod tests {
         );
         // `--window` takes window IDs and prefixes of 4+ characters (EON-C23).
         for id in ["default", "defa", "abcd", &generation[3..]] {
-            let (_, target) = parse(&["workspace", "--window", id]).unwrap();
+            let (_, target) = parse(&["session", "--window", id]).unwrap();
             assert_eq!(target.window.as_deref(), Some(id));
         }
         for args in [
-            vec!["workspace", "--window"],
-            vec!["workspace", "--window", "bad/id"],
-            vec!["workspace", "--window", "abc"],
-            vec!["workspace", "--window", "ABCD"],
-            vec!["workspace", "--window", generation],
-            vec!["workspace", "--window", "0000abcd", "--window", "0000abcd"],
+            vec!["session", "--window"],
+            vec!["session", "--window", "bad/id"],
+            vec!["session", "--window", "abc"],
+            vec!["session", "--window", "ABCD"],
+            vec!["session", "--window", generation],
+            vec!["session", "--window", "0000abcd", "--window", "0000abcd"],
         ] {
             assert_eq!(parse(&args).err().unwrap().status, 2, "{args:?}");
         }
         // `--generation` is no target flag: it stays an operand, which no
         // workspace command takes.
-        let (args, target) = parse(&["workspace", "--generation", generation]).unwrap();
+        let (args, target) = parse(&["session", "--generation", generation]).unwrap();
         assert!(target.window.is_none());
         assert_eq!(
             parse_control_arguments(&args).err().unwrap().status,
@@ -2587,7 +2605,7 @@ mod tests {
                 .into_iter()
                 .flat_map(|argument| match argument {
                     "PANE" => vec!["p1"],
-                    "WORKSPACE" | "WS" => vec!["s2"],
+                    "THIS" | "SESSION" => vec!["s2"],
                     "NAME" => vec!["--", "--json"],
                     _ => vec![argument],
                 })
@@ -2598,7 +2616,7 @@ mod tests {
                     parse_quit_arguments(&arguments).unwrap(),
                     Some((false, false))
                 );
-            } else if ["workspace", "tab", "pane"].contains(&arguments[0].to_str().unwrap()) {
+            } else if ["session", "tab", "pane"].contains(&arguments[0].to_str().unwrap()) {
                 let close = matches!(parse_close_arguments(&arguments), Ok(Some(_)));
                 assert!(
                     close || parse_control_arguments(&arguments).is_ok(),
@@ -2634,15 +2652,15 @@ mod tests {
         // fzf prints the query, the --expect key (empty for Enter), then the row.
         assert_eq!(
             workspace_pick_arguments("wo\n\ns1\twork\t2 tabs\n"),
-            Some(vec!["workspace", "switch", "s1"])
+            Some(vec!["session", "switch", "s1"])
         );
         assert_eq!(
             workspace_pick_arguments("\n\ns2\ts2\t1 tab · shown\n"),
-            Some(vec!["workspace", "switch", "s2"])
+            Some(vec!["session", "switch", "s2"])
         );
         assert_eq!(
             workspace_pick_arguments("wo\nctrl-x\ns1\twork\t2 tabs\n"),
-            Some(vec!["workspace", "close", "s1"])
+            Some(vec!["session", "close", "s1"])
         );
         // fzf exits 1 on Ctrl+X without a row, so it never prints this.
         assert_eq!(workspace_pick_arguments("zz\nctrl-x\n"), None);
@@ -2656,7 +2674,7 @@ mod tests {
                     .collect::<Vec<_>>(),
             )
         };
-        let close = |id| ["workspace", "close", id];
+        let close = |id| ["session", "close", id];
         assert_eq!(workspace_pick_end(&close("s1"), 0, "s1", || None), Some(0));
         assert_eq!(
             workspace_pick_end(&close("s1"), 0, "s1", || live(&["s2"])),
@@ -2676,12 +2694,12 @@ mod tests {
             Some(1)
         );
         assert_eq!(
-            workspace_pick_end(&["workspace", "switch", "s2"], 0, "s1", || live(&["s1"])),
+            workspace_pick_end(&["session", "switch", "s2"], 0, "s1", || live(&["s1"])),
             Some(0)
         );
         assert_eq!(
             workspace_pick_arguments(" --fresh \n"),
-            Some(vec!["workspace", "new", "--name", " --fresh "])
+            Some(vec!["session", "new", "--name", " --fresh "])
         );
         assert_eq!(workspace_pick_arguments("  \n"), None);
         assert_eq!(workspace_pick_arguments(""), None);
@@ -2954,7 +2972,7 @@ mod tests {
             &["pane", "create", "--no-focus", "--no-focus"],
             &["pane", "create", "--json", "--json", "--", "sh"],
             &["pane", "create", "sh"],
-            &["workspace", "--no-focus"],
+            &["session", "--no-focus"],
         ] {
             assert!(parse(arguments).is_err(), "{arguments:?}");
         }
@@ -3081,7 +3099,7 @@ mod tests {
             &["tab", "create", "--yes"][..],
             &["tab", "move", "left", "--yes"],
             &["pane", "create", "--yes"],
-            &["workspace", "--yes"],
+            &["session", "--yes"],
         ] {
             let arguments = args.iter().map(OsString::from).collect::<Vec<_>>();
             assert_eq!(parse_close_arguments(&arguments).unwrap(), None, "{args:?}");
@@ -3518,7 +3536,7 @@ mod tests {
             "Close the last tab? This closes session my \\\"notes\\\" and stops 2 terminals \
              [p1, agent]; 1 still running: Agent. [y/N] "
                 .into(),
-            "cancelled; workspace my \\\"notes\\\" stays open\n".into(),
+            "cancelled; session my \\\"notes\\\" stays open\n".into(),
         )));
         assert_eq!(
             close_question(&snap, &close_t1, true, false),
@@ -3536,7 +3554,7 @@ mod tests {
                 "Close the last tab? This closes session s1 and stops 2 terminals \
                  [p1, agent]; 1 still running: Agent. [y/N] "
                     .into(),
-                "cancelled; workspace s1 stays open\n".into(),
+                "cancelled; session s1 stays open\n".into(),
             )))
         );
     }
@@ -3653,6 +3671,43 @@ mod tests {
     }
 
     #[test]
+    fn session_ls_lists_with_json_anywhere_after_session_and_workspace_commands_name_their_replacement()
+     {
+        let words = |args: &[&str]| args.iter().map(OsString::from).collect::<Vec<_>>();
+        for args in [
+            &["session", "ls"][..],
+            &["session", "ls", "--json"],
+            &["session", "--json", "ls"],
+        ] {
+            assert!(super::lists_sessions(&words(args)), "{args:?}");
+            assert!(matches!(
+                super::parse_control_arguments(&words(args)),
+                Ok((Action::Workspace(WorkspaceAction::Inspect), _))
+            ));
+        }
+        for args in [&["session"][..], &["session", "--json"], &["tab", "ls"]] {
+            assert!(!super::lists_sessions(&words(args)), "{args:?}");
+        }
+        for (args, hint) in [
+            (&["workspace"][..], "`eon workspace` is now `eon session`"),
+            (
+                &["workspace", "new", "--json"],
+                "`eon workspace` is now `eon session`",
+            ),
+            (
+                &["workspaces", "--json"],
+                "`eon workspaces` is now `eon session ls`",
+            ),
+        ] {
+            let error = super::renamed_command(&words(args)).expect("a removed command");
+            assert_eq!(error.status, 2);
+            assert!(error.message.contains(hint), "{}", error.message);
+            assert!(error.message.contains("eon --help"));
+        }
+        assert!(super::renamed_command(&words(&["session"])).is_none());
+    }
+
+    #[test]
     fn workspace_parsers_take_literal_names_and_refuse_stray_flags() {
         // The whole pipeline: target flags first, then the action.
         let parse = |args: &[&str]| {
@@ -3663,46 +3718,46 @@ mod tests {
         };
         let workspace = |action| Ok((Action::Workspace(action), false));
         assert_eq!(
-            parse(&["workspaces", "--json"]).unwrap(),
+            parse(&["session", "ls", "--json"]).unwrap(),
             (Action::Workspace(WorkspaceAction::Inspect), true)
         );
         assert_eq!(
-            parse(&["workspace", "new", "--no-focus", "--name", "-dash"]).map_err(|_| ()),
+            parse(&["session", "new", "--no-focus", "--name", "-dash"]).map_err(|_| ()),
             workspace(WorkspaceAction::NewWorkspace {
                 name: Some("-dash".into()),
                 focus: false,
             })
         );
         assert_eq!(
-            parse(&["workspace", "new", "--name", "--window"]).map_err(|_| ()),
+            parse(&["session", "new", "--name", "--window"]).map_err(|_| ()),
             workspace(WorkspaceAction::NewWorkspace {
                 name: Some("--window".into()),
                 focus: true,
             })
         );
         assert_eq!(
-            parse(&["workspace", "rename", "--", "--json"]).map_err(|_| ()),
+            parse(&["session", "rename", "--", "--json"]).map_err(|_| ()),
             workspace(WorkspaceAction::RenameWorkspace {
                 workspace: None,
                 name: "--json".into(),
             })
         );
         assert_eq!(
-            parse(&["workspace", "rename", "s2", "  "]).map_err(|_| ()),
+            parse(&["session", "rename", "s2", "  "]).map_err(|_| ()),
             workspace(WorkspaceAction::RenameWorkspace {
                 workspace: Some("s2".into()),
                 name: String::new(),
             })
         );
         for args in [
-            &["workspace", "new", "extra"][..],
-            &["workspace", "new", "--name"],
-            &["workspace", "switch", "s2", "--no-focus"],
-            &["workspace", "switch"],
-            &["workspace", "close", "s2", "s3"],
-            &["workspace", "close", "--force", "s2"],
-            &["workspace", "rename"],
-            &["workspaces", "--no-focus"],
+            &["session", "new", "extra"][..],
+            &["session", "new", "--name"],
+            &["session", "switch", "s2", "--no-focus"],
+            &["session", "switch"],
+            &["session", "close", "s2", "s3"],
+            &["session", "close", "--force", "s2"],
+            &["session", "rename"],
+            &["session", "ls", "--no-focus"],
         ] {
             assert_eq!(parse(args).unwrap_err().status, 2, "{args:?}");
         }

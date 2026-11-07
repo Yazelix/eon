@@ -368,7 +368,7 @@ GPU rendering (a software graphics adapter) the badge is always still. The
 window reads the setting when it starts.
 
 `number_keys = true` makes Alt+Shift+1 through Alt+Shift+9 show the window's
-first through ninth workspace, in `eon workspaces` order, and Alt+Shift+0 the
+first through ninth session, in `eon session ls` order, and Alt+Shift+0 the
 tenth. `false` leaves those keys to the program in the terminal, for example
 Emacs's M-% on Alt+Shift+5. A popup configured on one of them takes only that
 key either way; with `true`, Alt+/ lists that key as overridden. The window reads the setting when it starts.
@@ -434,7 +434,7 @@ widgets = ["codex_quota_5h", "codex_quota_7d", "claude_quota_5h", "claude_quota_
 ```
 
 Selection affects the bar, its hover and accessibility, and the logo's room
-reservation only. `eon workspace --json` still reports every window read for
+reservation only. `eon session --json` still reports every window read for
 each enabled provider, including hidden scoped windows.
 Only reported windows appear; an idle Claude window can lack a reset time.
 Hover and accessible labels report that absence. Narrow windows hide quota

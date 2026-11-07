@@ -5,6 +5,19 @@ installation, and proven contract changes.
 
 ## Unreleased
 
+- The workspace commands are now session commands (`eon-30skm`, slice 2):
+  `eon session` inspects, `eon session ls` lists, and
+  `eon session new|switch|rename|close SESSION` replace `eon workspace` and
+  `eon workspaces`, which now fail as invalid commands (exit 2) naming their
+  replacement. JSON follows:
+  the projected `workspace` is `session`, `eon session ls --json` lists
+  `sessions`, and each pane and popup names its terminal in `terminal`
+  instead of `session`; busy terminals, attention queue entries and the
+  target of `pane read`, `history` and `send` name their `session`, and a
+  Stop result and `eonbase generations --json` list `terminals` instead of
+  `sessions`. Human output, `eon --help`, the Commands
+  popup entries, the Sessions picker's prompt and the `eon` skill say
+  session.
 - Workspaces become sessions, starting with the values Eon hands out
   (`eon-30skm`, slice 1; the commands and JSON keys follow). Session IDs are
   `s1`, `s2`, ... instead of `w1`, `w2`, ..., and terminal IDs are

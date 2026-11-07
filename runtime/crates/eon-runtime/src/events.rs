@@ -30,7 +30,7 @@ pub(super) enum Kind {
     Busy,
 }
 
-/// A workspace as `eon workspaces --json` lists it, plus its active tab.
+/// A workspace as `eon session ls --json` lists it, plus its active tab.
 /// Its `tabs` count, `attention` and `recency` are derived: no event names
 /// them.
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -44,7 +44,7 @@ pub(super) struct WorkspaceItem {
     pub(super) active_tab: String,
 }
 
-/// A tab as `eon workspace --json` writes it, plus its workspace; tab
+/// A tab as `eon session --json` writes it, plus its workspace; tab
 /// creations, moves and closes also carry `tabs`, the workspace's tab IDs in
 /// order.
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -62,7 +62,7 @@ pub(super) struct ColumnOrder {
 }
 
 /// A pane with its workspace, tab, the column and expanded flag that
-/// `eon workspace --json` writes, and its tab's columns in order.
+/// `eon session --json` writes, and its tab's columns in order.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub(super) struct PaneItem {
     pub(super) workspace: String,
@@ -175,10 +175,10 @@ impl Event {
     pub(super) fn name(&self) -> &'static str {
         match self {
             Self::Workspace(change, _) => match change {
-                WorkspaceChange::Created => "workspace-created",
-                WorkspaceChange::Renamed => "workspace-renamed",
-                WorkspaceChange::Closed => "workspace-closed",
-                WorkspaceChange::Shown { .. } => "workspace-shown",
+                WorkspaceChange::Created => "session-created",
+                WorkspaceChange::Renamed => "session-renamed",
+                WorkspaceChange::Closed => "session-closed",
+                WorkspaceChange::Shown { .. } => "session-shown",
             },
             Self::Tab(change, _) => match change {
                 TabChange::Created => "tab-created",
@@ -1711,11 +1711,11 @@ pub(super) mod tests {
         assert_eq!(
             described(&before.diff(&after)),
             [
-                "workspace-renamed s1",
+                "session-renamed s1",
                 "pane-moved p1",
                 "pane-moved p2",
                 "pane-renamed p2",
-                "workspace-created s3",
+                "session-created s3",
                 "tab-created t4",
                 "pane-created p5",
                 "attention s1",
@@ -1724,7 +1724,7 @@ pub(super) mod tests {
                 "pane-selected p2",
                 "pane-selected p5",
                 "tab-activated t4",
-                "workspace-shown s3",
+                "session-shown s3",
                 "queue",
             ]
         );
@@ -1874,7 +1874,7 @@ pub(super) mod tests {
                 "busy s5",
                 "pane-closed p4",
                 "tab-closed t3",
-                "workspace-closed s2",
+                "session-closed s2",
                 "popup-shown u1",
                 "queue",
             ]
@@ -2049,10 +2049,7 @@ pub(super) mod tests {
         workspace_mut(&mut switched, "s2").item.shown = true;
         workspace_mut(&mut switched, "s1").item.active_tab = "t2".into();
         let events = before.diff(&switched);
-        assert_eq!(
-            described(&events),
-            ["tab-activated t2", "workspace-shown s2"]
-        );
+        assert_eq!(described(&events), ["tab-activated t2", "session-shown s2"]);
         assert!(matches!(
             &events[1],
             Event::Workspace(WorkspaceChange::Shown { hidden: Some(hidden) }, _) if hidden == "s1"
@@ -2069,7 +2066,7 @@ pub(super) mod tests {
         );
         assert_eq!(
             admitted(&s1, &events),
-            ["tab-activated t2", "workspace-shown s2"]
+            ["tab-activated t2", "session-shown s2"]
         );
     }
 
@@ -2229,7 +2226,7 @@ pub(super) mod tests {
         assert_eq!(
             admitted(&s1, &events),
             [
-                "workspace-renamed s1",
+                "session-renamed s1",
                 "pane-moved p1",
                 "pane-moved p2",
                 "pane-renamed p2",
@@ -2237,7 +2234,7 @@ pub(super) mod tests {
                 "pane-closed p3",
                 "tab-closed t2",
                 "pane-selected p2",
-                "workspace-shown s3",
+                "session-shown s3",
                 "queue",
             ]
         );
@@ -2270,10 +2267,10 @@ pub(super) mod tests {
         assert_eq!(
             admitted(&t1_workspaces, &events),
             [
-                "workspace-renamed s1",
-                "workspace-created s3",
+                "session-renamed s1",
+                "session-created s3",
                 "attention s1",
-                "workspace-shown s3",
+                "session-shown s3",
                 "queue"
             ]
         );
@@ -2357,7 +2354,7 @@ pub(super) mod tests {
         workspace_mut(&mut renamed, "s2").item.name = Some("main".into());
         assert_eq!(
             admitted(&main, &before.diff(&renamed)),
-            ["workspace-renamed s1"]
+            ["session-renamed s1"]
         );
 
         // The agent popup u1 parked as pane p6 stays admitted as that pane.
@@ -3074,7 +3071,7 @@ pub(super) mod tests {
     /// A `--tab t1 --kind workspace,tab` stream keeps the workspaces and t1
     /// current while another tab is activated, moved or closed, but not a
     /// workspace's `active_tab`: `tab-activated` for another tab does not
-    /// pass `--tab`, and the consumer reads `eon workspace --json` for it.
+    /// pass `--tab`, and the consumer reads `eon session --json` for it.
     #[test]
     fn a_tab_stream_keeps_its_tab_current_but_not_the_active_tab() {
         let before = base();

@@ -2805,8 +2805,8 @@ pub(crate) fn terminal_sent_json(
     )
 }
 
-/// A target's `workspace`, `tab`, `pane`, `popup` and `terminal`, then the
-/// calling terminal as `eon workspace` reports `caller`.
+/// A target's `session`, `tab`, `pane`, `popup` and `terminal`, then the
+/// calling terminal as `eon session` reports `caller`.
 fn terminal_json(target: &TerminalTarget, caller: Option<&TerminalTarget>) -> String {
     let caller = caller.map_or_else(
         || "null".into(),
@@ -2820,7 +2820,7 @@ fn terminal_json(target: &TerminalTarget, caller: Option<&TerminalTarget>) -> St
         },
     );
     format!(
-        "\"workspace\":\"{}\",\"tab\":\"{}\",{},\"terminal\":\"{}\",\"caller\":{caller}",
+        "\"session\":\"{}\",\"tab\":\"{}\",{},\"terminal\":\"{}\",\"caller\":{caller}",
         json_escape(&target.workspace),
         json_escape(&target.tab),
         target_id_json(&target.id),
@@ -2927,7 +2927,7 @@ pub(crate) fn human_busy(busy: Option<&BusyTerminals>) -> String {
             TargetId::Popup(id) => ("popup", id),
         };
         output.push_str(&format!(
-            "busy workspace={} tab={} {kind}={} terminal={} name={}\n",
+            "busy session={} tab={} {kind}={} terminal={} name={}\n",
             terminal.target.workspace,
             terminal.target.tab,
             id,
@@ -2957,7 +2957,7 @@ pub(crate) fn json_busy(output: &mut String, busy: Option<&BusyTerminals>) {
             TargetId::Popup(id) => (None, Some(id.as_str())),
         };
         output.push_str(&format!(
-            "{{\"workspace\":\"{}\",\"tab\":\"{}\",\"pane\":",
+            "{{\"session\":\"{}\",\"tab\":\"{}\",\"pane\":",
             json_escape(&terminal.target.workspace),
             json_escape(&terminal.target.tab),
         ));
@@ -3025,7 +3025,7 @@ pub(crate) fn json(snapshot: &Snapshot) -> String {
                 output.push(',');
             }
             output.push_str(&format!(
-                "{{\"id\":\"{}\",\"column\":{},\"expanded\":{},\"session\":\"{}\",\"endpoint\":{},\"live\":{},\"label\":\"{}\",\"pinned_name\":",
+                "{{\"id\":\"{}\",\"column\":{},\"expanded\":{},\"terminal\":\"{}\",\"endpoint\":{},\"live\":{},\"label\":\"{}\",\"pinned_name\":",
                 json_escape(&pane.id),
                 column + 1,
                 expanded,
@@ -3045,7 +3045,7 @@ pub(crate) fn json(snapshot: &Snapshot) -> String {
                 output.push(',');
             }
             output.push_str(&format!(
-                "{{\"id\":\"{}\",\"entry\":\"{}\",\"session\":\"{}\",\"endpoint\":{},\"chosen\":{},\"attention\":",
+                "{{\"id\":\"{}\",\"entry\":\"{}\",\"terminal\":\"{}\",\"endpoint\":{},\"chosen\":{},\"attention\":",
                 json_escape(&popup.id), json_escape(&popup.entry), json_escape(&popup.session),
                 json_path(&popup.endpoint), tab.selected_popup.as_deref() == Some(&popup.id)
             ));
@@ -3091,7 +3091,7 @@ pub(crate) fn json(snapshot: &Snapshot) -> String {
             output.push(',');
         }
         output.push_str(&format!(
-            "{{\"workspace\":\"{}\",\"tab\":\"{}\",\"target\":\"{}\",\"attention\":",
+            "{{\"session\":\"{}\",\"tab\":\"{}\",\"target\":\"{}\",\"attention\":",
             json_escape(&entry.workspace),
             json_escape(&entry.tab),
             json_escape(&entry.target),
@@ -3245,7 +3245,7 @@ fn json_quota_failure(output: &mut String, failure: Option<QuotaFailure>) {
     ));
 }
 
-/// The window's workspaces in order, one line each (`eon workspaces`).
+/// The window's sessions in order, one line each (`eon session ls`).
 pub(crate) fn list_human(snapshot: &Snapshot) -> String {
     snapshot
         .workspaces
@@ -3267,10 +3267,10 @@ pub(crate) fn list_human(snapshot: &Snapshot) -> String {
         .collect()
 }
 
-/// `{"workspaces":[{"id":...,"name":...,"shown":...,"tabs":...,"attention":...,"recency":...}]}`
-/// (`eon workspaces --json`).
+/// `{"sessions":[{"id":...,"name":...,"shown":...,"tabs":...,"attention":...,"recency":...}]}`
+/// (`eon session ls --json`).
 pub(crate) fn list_json(snapshot: &Snapshot) -> String {
-    let mut output = String::from("{\"workspaces\":[");
+    let mut output = String::from("{\"sessions\":[");
     for (index, workspace) in snapshot.workspaces.iter().enumerate() {
         if index != 0 {
             output.push(',');
@@ -4774,7 +4774,7 @@ mod tests {
             bracketed: false,
             enter_delay_ms: 300,
         };
-        let target = "\"workspace\":\"s2\",\"tab\":\"t3\",\"pane\":\"p4\",\"popup\":null,\
+        let target = "\"session\":\"s2\",\"tab\":\"t3\",\"pane\":\"p4\",\"popup\":null,\
                       \"terminal\":\"terminal-5\",\"caller\":null";
         assert_eq!(
             super::terminal_sent_json(&sent, 0, true, None),
@@ -4815,7 +4815,7 @@ mod tests {
         };
         assert_eq!(
             super::terminal_text_json(&read),
-            "{\"workspace\":\"s2\",\"tab\":\"t2\",\"pane\":null,\"popup\":\"u3\",\
+            "{\"session\":\"s2\",\"tab\":\"t2\",\"pane\":null,\"popup\":\"u3\",\
              \"terminal\":\"terminal-4\",\"caller\":{\"terminal\":\"terminal-4\",\"tab\":\"t2\",\
              \"pane\":\"p1\",\"popup\":null},\"revision\":7,\"screen\":\"alternate\",\"rows\":2,\
              \"columns\":10,\"title\":\"vim \\\"a\\\"\",\"directory\":[47,116,109,112,47,255],\
@@ -4836,7 +4836,7 @@ mod tests {
         };
         assert_eq!(
             super::terminal_history_json(&history),
-            "{\"workspace\":\"s2\",\"tab\":\"t2\",\"pane\":null,\"popup\":\"u3\",\
+            "{\"session\":\"s2\",\"tab\":\"t2\",\"pane\":null,\"popup\":\"u3\",\
              \"terminal\":\"terminal-4\",\"caller\":{\"terminal\":\"terminal-4\",\"tab\":\"t2\",\
              \"pane\":\"p1\",\"popup\":null},\"revision\":7,\"screen\":\"primary\",\"rows\":2,\
              \"columns\":10,\"title\":\"vim \\\"a\\\"\",\"directory\":[47,116,109,112,47,255],\
@@ -4849,7 +4849,7 @@ mod tests {
         };
         assert_eq!(
             super::terminal_editing_json(&editing),
-            "{\"workspace\":\"s2\",\"tab\":\"t2\",\"pane\":null,\"popup\":\"u3\",\
+            "{\"session\":\"s2\",\"tab\":\"t2\",\"pane\":null,\"popup\":\"u3\",\
              \"terminal\":\"terminal-4\",\"caller\":null,\
              \"scrollback\":{\"popup\":\"u5\",\"terminal\":\"terminal-4\"}}\n"
         );
@@ -5006,9 +5006,9 @@ mod tests {
             value(&snapshot),
             serde_json::json!({
                 "terminals": [
-                    {"workspace": "s1", "tab": "t1", "pane": "p2", "popup": null,
+                    {"session": "s1", "tab": "t1", "pane": "p2", "popup": null,
                      "terminal": "terminal-2", "name": "p2  \"vim\""},
-                    {"workspace": "s1", "tab": "t1", "pane": null, "popup": "u1",
+                    {"session": "s1", "tab": "t1", "pane": null, "popup": "u1",
                      "terminal": "terminal-2", "name": "Agent"},
                 ],
                 "omitted": 3,
@@ -5016,8 +5016,8 @@ mod tests {
         );
         assert_eq!(
             human_busy(snapshot.busy.as_ref()),
-            "busy workspace=s1 tab=t1 pane=p2 terminal=terminal-2 name=p2  \\\"vim\\\"\n\
-             busy workspace=s1 tab=t1 popup=u1 terminal=terminal-2 name=Agent\n\
+            "busy session=s1 tab=t1 pane=p2 terminal=terminal-2 name=p2  \\\"vim\\\"\n\
+             busy session=s1 tab=t1 popup=u1 terminal=terminal-2 name=Agent\n\
              busy omitted=3\n"
         );
     }
@@ -5172,7 +5172,7 @@ mod tests {
             r#"],"sidebar":"closed","codex_quota":{"state":"stale","observed_at":1720000000000,"windows":[{"duration_minutes":300,"remaining_percent":80,"resets_at":1720000300000,"scope":null},{"duration_minutes":10080,"remaining_percent":60,"resets_at":null,"scope":null}]}"#,
             r#","claude_quota":{"state":"fresh","observed_at":1720000001000,"windows":[{"duration_minutes":300,"remaining_percent":25,"resets_at":1720000600000,"scope":null},{"duration_minutes":10080,"remaining_percent":40,"resets_at":null,"scope":"Fable \"x\""}]}"#,
             r#","codex_quota_failure":null,"claude_quota_failure":{"at":1720000002000,"reason":"invalid_window"}"#,
-            r#","attention_queue":[{"workspace":"s1","tab":"t1","target":"p1","attention":{"state":"needs-input","app":"codex","name":"eon \"9a\"","kind":"permission","progress":40,"title":"secret \"title\"","message":"secret \"message\"\\path","changed_at":1720000000123,"stale":true,"others":3}},{"workspace":"s2","tab":"t\"2","target":"p\\2","attention":{"state":"finished","app":null,"name":null,"kind":null,"progress":null,"title":null,"message":null,"changed_at":1720000000456,"stale":false,"others":0}}],"running":null,"busy":null}"#,
+            r#","attention_queue":[{"session":"s1","tab":"t1","target":"p1","attention":{"state":"needs-input","app":"codex","name":"eon \"9a\"","kind":"permission","progress":40,"title":"secret \"title\"","message":"secret \"message\"\\path","changed_at":1720000000123,"stale":true,"others":3}},{"session":"s2","tab":"t\"2","target":"p\\2","attention":{"state":"finished","app":null,"name":null,"kind":null,"progress":null,"title":null,"message":null,"changed_at":1720000000456,"stale":false,"others":0}}],"running":null,"busy":null}"#,
             "\n"
         )));
         assert!(

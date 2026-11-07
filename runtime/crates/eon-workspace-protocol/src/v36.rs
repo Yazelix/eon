@@ -689,7 +689,7 @@ pub enum TargetId {
     Popup(String),
 }
 
-/// A pane or popup terminal of the window, named as `eon workspace` names it.
+/// A pane or popup terminal of the window, named as `eon session` names it.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct TerminalTarget {
     pub workspace: String,

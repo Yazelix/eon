@@ -42,27 +42,27 @@ Tags such as `github:Yazelix/eon/v0.1.16` name one exact release and never
 update. See [Update](#update).
 
 Run `eon` to start. `eon versions` shows the generation of the in-tree build and
-each exact external component revision; Orbit, Venus and Eon Runtime report
-`workspace`.
+each exact external component revision; Orbit, Venus and Eon Runtime
+report `workspace`, the Cargo workspace they are built in.
 
-Fresh workspaces first show a three-second random Anima animation after the
+Fresh sessions first show a three-second random Anima animation after the
 window is ready. Press any key other than the style-browsing keys to dismiss it;
 set `[anima].enabled = false` in `config.toml` to skip it. Quick search then
 opens over the first tab's Files. When other Eon windows still run, a new
 window's first quick search says how many in its header, names up to three,
 and says how to see and quit them; `eon window ls` lists them, and
-`eon workspace --json` carries them as `running.others`. Press Enter to use a
+`eon session --json` carries them as `running.others`. Press Enter to use a
 Zoxide history match, or Tab to move Files there and browse with Yazi, where
 Alt+Enter uses a folder (see
 [Eon Bar and tabs](#eon-bar-and-tabs) for every key). New tabs start in your
 home directory. Escape closes quick search and opens a terminal there, keeping
 the tab. Close the tab with Alt+Shift+W if you no longer want it. The initial
-workspace uses the directory where Eon was launched.
+session uses the directory where Eon was launched.
 
 A terminal starts after choosing a directory or closing quick search. Closing the last
 tab quits the window and stops its terminals; in a window with several
-workspaces, it closes only that workspace. By default Eon asks first, listing the
-terminals that stop, and the question names the workspace while others remain.
+sessions, it closes only that session. By default Eon asks first, listing the
+terminals that stop, and the question names the session while others remain.
 Closing the Eon window, with the desktop's close-window key, the window's
 close button or, on macOS, Command+Q, quits it as Alt+Shift+Q does (see
 [Stop terminals](#stop-terminals)). To leave its terminals and PTY commands
@@ -83,7 +83,7 @@ eon window attach
 ```
 
 Press **Alt+/** inside Eon to open the native Shortcuts dialog. It includes the
-fixed workspace bindings and every enabled popup binding. Escape, Alt+/ or a
+fixed bindings and every enabled popup binding. Escape, Alt+/ or a
 click outside it closes it.
 
 ### Update
@@ -167,9 +167,9 @@ before Eon recorded it need that build's `eon` by hand.
 The runtime extraction changes the component graph and selects a new generation.
 Reattach earlier work with its retained exact Eon or eonbase executable.
 
-## Workspace and quick search
+## Session and quick search
 
-A **workspace** is the whole collection of tabs and panes. A **tab** groups
+A **session** is the whole collection of tabs and panes. A **tab** groups
 panes around its launch directory and shows them in one to four side-by-side
 **columns**. Each column stacks its panes and expands one. A **pane** is a view
 of a persistent **terminal**, whose process, PTY and terminal state outlive the
@@ -184,7 +184,7 @@ one, and clicking another column's terminal selects it.
 | Alt+G / Alt+Shift+G | Jump to the next or previous agent needing attention |
 | F6 | Move keyboard focus: terminal, agent sidebar, tabs, panes |
 | Alt+1 … Alt+9, Alt+0 | Select tab positions 1 … 10 |
-| Alt+Shift+1 … Alt+Shift+9, Alt+Shift+0 | Show workspaces 1 … 10, in `eon workspaces` order (`[session] number_keys`) |
+| Alt+Shift+1 … Alt+Shift+9, Alt+Shift+0 | Show sessions 1 … 10, in `eon session ls` order (`[session] number_keys`) |
 | Ctrl+Tab / Ctrl+Shift+Tab | Select the next or previous tab, wrapping around |
 | Alt+H / Alt+L | Select the column to the left or right, continuing into the previous or next tab |
 | Alt+K / Alt+J | Select the previous or next pane in the column |
@@ -195,8 +195,8 @@ one, and clicking another column's terminal selects it.
 | Alt+M | Create a pane in the selected column |
 | Ctrl+Alt+M | Create a column right of the selected one, up to four per tab |
 | Alt+Shift+Z | Show the selected pane alone across the tab, or restore the columns; changing the selected pane, tab or layout also restores them |
-| Alt+W | Close the selected pane, stopping its terminal; the final tab's last pane quits the window, or closes the workspace while others remain |
-| Alt+Shift+W | Close the active tab; closing the final tab quits the window, or closes the workspace while others remain |
+| Alt+W | Close the selected pane, stopping its terminal; the final tab's last pane quits the window, or closes the session while others remain |
+| Alt+Shift+W | Close the active tab; closing the final tab quits the window, or closes the session while others remain |
 | Alt+Shift+N | Open an independent Eon window (also the desktop launcher's **New Eon Window** action) |
 | Alt+Shift+D | Detach: hide the window, keep terminals running |
 | Alt+Shift+Q | Quit this window, stopping its terminals; asks first while one runs something. On macOS, Command+Q does the same |
@@ -207,7 +207,7 @@ one, and clicking another column's terminal selects it.
 | Alt+Shift+A | Open or dismiss the tab's Anima popup |
 | Alt+Shift+M | Open or dismiss the tab's Commands popup |
 | Alt+Shift+E | Open the shown terminal's scrollback in the configured editor, or dismiss it |
-| Alt+Shift+S | Open the Workspaces picker; in the picker, Alt+Shift+S or Enter shows the highlighted workspace, Enter on an unmatched name creates one, Ctrl+X closes the highlighted one |
+| Alt+Shift+S | Open the Sessions picker; in the picker, Alt+Shift+S or Enter shows the highlighted session, Enter on an unmatched name creates one, Ctrl+X closes the highlighted one |
 
 ### Eon Bar and tabs
 
@@ -217,15 +217,15 @@ between the scrollable tabs and those controls moves the undecorated window;
 tabs, controls, pane headers, and terminal content remain ordinary targets.
 A zoomed tab shows a zoom-in magnifier after its name, or ` · zoom` if the
 bundled Symbols Nerd Font face is unavailable. Its accessible name says `, zoomed`.
-While the window holds two or more workspaces, or its one workspace has a name,
-an outlined label before the tabs names the shown workspace, or gives its ID
+While the window holds two or more sessions, or its one session has a name,
+an outlined label before the tabs names the shown session, or gives its ID
 such as `s2`, followed, when there are several, by its position and the
 count, as in `notes 2/3`.
-Clicking it, or Enter after Tab focuses it, opens the Workspaces picker as
-Alt+Shift+S does, and its tooltip names that key. With the Workspaces popup
-turned off the label is plain text. While another workspace has an agent that
+Clicking it, or Enter after Tab focuses it, opens the Sessions picker as
+Alt+Shift+S does, and its tooltip names that key. With the Sessions popup
+turned off the label is plain text. While another session has an agent that
 needs input, a ◆ badge sits on the label's corner, also while the sidebar is
-shown, and its accessible name adds `, another workspace needs input`. A long
+shown, and its accessible name adds `, another session needs input`. A long
 name is shortened while the position stays whole; quota chips hide before the
 label, and the label hides before the tabs would lose their room.
 Pinned CodexBar CLI supplies read-only Codex and Claude quota from their local
@@ -353,7 +353,7 @@ tab, with its conversation and old directory intact, and the next Alt+Shift+L
 starts a fresh agent in the new directory. Git restarts in the new directory
 the next time you open it. Anima is transient:
 closing its popup stops playback. Closing a transient popup such as Commands,
-Workspaces or Anima, including after a workspace switch, returns to the popup
+Sessions or Anima, including after a session switch, returns to the popup
 it covered, such as Agent, or to the pane when it covered none.
 
 Each tab has one Files popup, Yazi at the tab's directory, with two screens:
@@ -385,35 +385,35 @@ way, the same Yazi stays as the tab's Files.
 
 Commands lists Eon commands you can search and run: new tab, pane or
 window, close or move the tab, quit this window, switch, create, rename or
-close a workspace, show the workspace, windows, versions or config
+close a session, show the session, windows, versions or config
 path, stop old-version windows, and command help. Each line shows the `eon`
 command it runs. Enter runs it from the popup
 for that tab, with the command's own checks and confirmations. New pane
 closes the popup first, as Alt+M does, and the pane joins the tab's selected
 column. Other actions close the popup when they succeed, except a close from
-the workspace list, which lists again; listings, stopping old-version windows
+the session list, which lists again; listings, stopping old-version windows
 and failures stay until you press Enter. Esc closes it
 without running anything. Stop old-version windows stops every window that
 another build started, so in a window of an older build it also stops the
 windows of newer ones.
 
-Workspaces (Alt+Shift+S, or Commands > Switch workspace) lists this window's
-workspaces most recently shown first, each by name or ID with its tab count and
+Sessions (Alt+Shift+S, or Commands > Switch session) lists this window's
+sessions most recently shown first, each by name or ID with its tab count and
 ` · needs input` when one of its agents needs input, the shown one last and
-marked, so Alt+Shift+S then Enter returns to the previous workspace. In the
+marked, so Alt+Shift+S then Enter returns to the previous session. In the
 picker Alt+Shift+S works as Enter, so pressing it twice, like a double
-Alt+Tab, switches back and forth between two workspaces. Alt+Shift+1 through
-Alt+Shift+9 show a workspace by its position in the window's list, the one the
+Alt+Tab, switches back and forth between two sessions. Alt+Shift+1 through
+Alt+Shift+9 show a session by its position in the window's list, the one the
 Eon Bar label counts (`notes 2/3`), and Alt+Shift+0 the tenth. Type to filter by
-name. Enter shows the highlighted workspace, and Enter on a name that
-matches no workspace creates a workspace with that name and shows it. A name
-that is part of an existing one matches it, so create that workspace with
-Commands > New workspace and then rename it. Ctrl+X closes the highlighted
-workspace after asking, as Close this workspace does, and then lists the rest
-again; closing the picker's own workspace closes the picker too. Esc or Ctrl+C
+name. Enter shows the highlighted session, and Enter on a name that
+matches no session creates a session with that name and shows it. A name
+that is part of an existing one matches it, so create that session with
+Commands > New session and then rename it. Ctrl+X closes the highlighted
+session after asking, as Close this session does, and then lists the rest
+again; closing the picker's own session closes the picker too. Esc or Ctrl+C
 closes the picker without changing anything more. Rename
-workspace names the popup's workspace (an empty name clears it), and Close this
-workspace asks before it stops every terminal in it.
+session names the popup's session (an empty name clears it), and Close this
+session asks before it stops every terminal in it.
 
 ### Agent sidebar
 
@@ -453,10 +453,10 @@ remains, then to the tabs and panes. Up and Down move between rows, and Escape
 returns to the terminal. Rows that don't fit are cut off at the bottom, and
 keyboard focus scrolls them into view.
 
-Alt+G jumps to the next agent that needs attention, in any workspace of the
+Alt+G jumps to the next agent that needs attention, in any session of the
 window, whether the sidebar is shown, hidden or turned off; jumping to an agent
-in another workspace shows that workspace. A finish or error stays new while
-another app has focus, and while its workspace is not shown. It
+in another session shows that session. A finish or error stays new while
+another app has focus, and while its session is not shown. It
 stops being new when the window has focus with that agent's terminal selected;
 a finish also stops being new once that terminal reports work again.
 Agents that need input come first, then errors, then finished agents,
@@ -479,10 +479,10 @@ Left/Right cycle the filters; Up/Down highlight an agent. Enter, Space or a
 click jumps to that agent and closes the inbox. Escape or Alt+Q closes it
 without a jump. The wheel, PageUp/PageDown, Home and End scroll the list.
 
-Rows in the shown workspace name the tab and pane or popup. Rows in another
-workspace show its name, or its ID when unnamed; jumping to one shows that
-workspace. Opening the inbox does not mark any agent's attention as seen.
-Agents read the same queue as `attention_queue` in `eon workspace --json`.
+Rows in the shown session name the tab and pane or popup. Rows in another
+session show its name, or its ID when unnamed; jumping to one shows that
+session. Opening the inbox does not mark any agent's attention as seen.
+Agents read the same queue as `attention_queue` in `eon session --json`.
 A popup configured on Alt+Q takes the shortcut.
 
 ### Scrolling and selection
@@ -502,7 +502,7 @@ Ctrl+Shift+C copies the frozen selection even after output changes.
 ## CLI commands
 
 `eon -h` and `eon --help` show grouped commands,
-short descriptions, and examples without starting a workspace. After a command
+short descriptions, and examples without starting a session. After a command
 family or command, as in `eon pane --help` or `eon pane send -h`, they show
 only that family's or command's lines. Help uses color
 on terminals; redirected output is plain text. A nonempty `NO_COLOR` or
@@ -511,9 +511,9 @@ line points agents to `eon --skill`.
 
 | Command | Result |
 |---|---|
-| `eon` | Present the current workspace or start its first tab on quick search |
-| `eon anima [STYLE] [CHILD OPTIONS...]` | Run pinned Anima in the caller's terminal without starting a workspace; `--help` lists styles and options |
-| `eon run [-- COMMAND...]` | Start a fresh workspace on quick search, optionally for an exact first command |
+| `eon` | Present the current window or start its first tab on quick search |
+| `eon anima [STYLE] [CHILD OPTIONS...]` | Run pinned Anima in the caller's terminal without starting a session; `--help` lists styles and options |
+| `eon run [-- COMMAND...]` | Start a fresh window on quick search, optionally for an exact first command |
 | `eon window new` | Open an independent Eon window and print its window ID |
 | `eon window ls [--json]` | List every running window, the default window first: its ID (shortest unique prefix in text), name, Eon version, start time, live terminals and whether this `eon` controls it directly. Each window this `eon` cannot stop gets a line saying why. JSON adds the full `id`, `current`, `generation`, `state`, `busy`, `attach`, `stop` and `executable` |
 | `eon window attach [ID]` | Present a window after detach (no ID: `default`), through the Eon build that started it when needed |
@@ -522,35 +522,35 @@ line points agents to `eon --skill`.
 | `eon window stop all [--json]` | Attempt Stop in every running window, the default one included, the caller's window last |
 | `eon quit [--json]` | Quit the window of the calling terminal, stopping its terminals; it asks first only while another terminal of the window runs something other than its idle shell, and names those terminals (the Files and Git popups never count; the Agent popup does); outside Eon, quit the only running window, or list the running windows and stop nothing when several run |
 | `eon quit --all [--json]` | Attempt Stop in every running window, as `eon window stop all` does, asking for each window as `eon quit` does |
-| `eon workspaces [--json]` | List the window's workspaces in order, with each one's ID, name, whether it is shown, its tab count, its most urgent agent attention state, and its recency (0 for the shown one, then 1 for the one shown before it, and so on, the Workspaces picker's order) |
-| `eon workspace [--json]` | Inspect the live tab, pane, popup, and terminal mapping, with each terminal's agent attention state, app and name; JSON includes each terminal's full agent attention record and the Codex and Claude quota readings, and the calling terminal in `caller` (null without `EON_TERMINAL`; a `caller` line in human output only when present); JSON `running` holds this window and the other running Eon windows, each with its ID, generation, name, start time and live terminal count; JSON `busy` lists the window's busy terminals, each with its workspace, tab, pane or popup, terminal and name, and `omitted` counts those past 32, with one `busy` line per terminal in human output |
-| `eon workspace new [--name NAME] [--no-focus] [--json]` | Add a workspace after the shown one, with one tab on quick search, and show it; with `--no-focus` the shown workspace stays. The reply names the new workspace's ID in `created` (`created wN` in human output) |
-| `eon workspace switch WS [--json]` | Show workspace WS, with its tabs, panes and popups as it left them |
-| `eon workspace rename [WS] NAME [--json]` | Name workspace WS, or the caller's workspace; an empty NAME clears the name |
-| `eon workspace close WS [--json]` | Stop every terminal of WS and remove it, asking first without `--json`; closing the last workspace quits the window |
+| `eon session ls [--json]` | List the window's sessions in order, with each one's ID, name, whether it is shown, its tab count, its most urgent agent attention state, and its recency (0 for the shown one, then 1 for the one shown before it, and so on, the Sessions picker's order) |
+| `eon session [--json]` | Inspect the live tab, pane, popup, and terminal mapping, with each terminal's agent attention state, app and name; JSON includes each terminal's full agent attention record and the Codex and Claude quota readings, and the calling terminal in `caller` (null without `EON_TERMINAL`; a `caller` line in human output only when present); JSON `running` holds this window and the other running Eon windows, each with its ID, generation, name, start time and live terminal count; JSON `busy` lists the window's busy terminals, each with its session, tab, pane or popup, terminal and name, and `omitted` counts those past 32, with one `busy` line per terminal in human output |
+| `eon session new [--name NAME] [--no-focus] [--json]` | Add a session after the shown one, with one tab on quick search, and show it; with `--no-focus` the shown session stays. The reply names the new session's ID in `created` (`created sN` in human output) |
+| `eon session switch SESSION [--json]` | Show session SESSION, with its tabs, panes and popups as it left them |
+| `eon session rename [SESSION] NAME [--json]` | Name session SESSION, or the caller's session; an empty NAME clears the name |
+| `eon session close SESSION [--json]` | Stop every terminal of SESSION and remove it, asking first without `--json`; closing the last session quits the window |
 | `eon tab create [--json]` | Create a distinct pending tab on quick search, even while another tab waits for its directory. The JSON reply names the new tab in `created` as `{"tab": "tN", "pane": null}`: it has no pane until its directory is picked, and the pick's reply (`tab directory`, or `popup hide` of its quick search) does not name that pane |
 | `eon tab create [--json] [--no-focus] --directory DIRECTORY [-- COMMAND [ARGS...]]` | Create a tab at DIRECTORY without quick search, optionally running an exact command from a calling terminal; `--no-focus` preserves the active tab, selection and popup. The JSON reply names the new tab and its pane in `created`, as `{"tab": "tN", "pane": "pN"}` |
-| `eon tab close TAB [--yes] [--json]` | Close any tab of the addressed workspace without changing the active tab, selection or shown popup; busy closes ask first, as described after this table. The final tab quits the window, or closes the workspace while others remain, asking first from a terminal |
+| `eon tab close TAB [--yes] [--json]` | Close any tab of the addressed session without changing the active tab, selection or shown popup; busy closes ask first, as described after this table. The final tab quits the window, or closes the session while others remain, asking first from a terminal |
 | `eon tab directory TAB [--json] -- DIRECTORY` | Set a tab's directory for future terminals; on a pending tab, use DIRECTORY as quick search would: start its first terminal there and hide its Files |
 | `eon tab move left\|right [--json]` | Move the active tab, or the calling terminal's tab, one position |
 | `eon pane create [--json] [--no-focus]` | Create a pane in the active tab's selected column, or in the calling pane's column; with `--no-focus`, the tab's selected pane and any shown popup stay as they are. The JSON reply names the new pane and its tab in `created`, as `{"tab": "tN", "pane": "pN"}` |
 | `eon pane create [--json] [--no-focus] -- COMMAND...` | From an Eon terminal, run COMMAND exactly as given (no shell) in a new pane of the caller's column, at the tab's directory, with `--no-focus` and `created` as above; refused with exit 1 outside an Eon terminal |
 | `eon edit [--json] -- FILE` | Open FILE in the configured editor (`[editor] command`, Helix by default) in a new pane, placed as `pane create` places it, at the tab's directory; the JSON reply names the new pane in `created`, as `pane create` does |
-| `eon pane close PANE [--yes] [--json]` | Close any pane of the addressed workspace, stopping its terminal without changing the active tab, selection or shown popup; busy closes ask first, as described after this table. The final tab's last pane quits the window, or closes the workspace while others remain, asking first from a terminal |
+| `eon pane close PANE [--yes] [--json]` | Close any pane of the addressed session, stopping its terminal without changing the active tab, selection or shown popup; busy closes ask first, as described after this table. The final tab's last pane quits the window, or closes the session while others remain, asking first from a terminal |
 | `eon pane move up\|down [--json]` | Move the selected pane, or the calling pane, one position within its column |
 | `eon pane move left\|right [--json]` | Move the selected pane, or the calling pane, into the neighbouring column, as Ctrl+Alt+H/L does |
-| `eon pane read TARGET [--json]` | Print the visible text of pane or popup TARGET, in any workspace of the window, without changing anything; see [Reading a terminal](#reading-a-terminal) |
-| `eon pane history TARGET [--json]` | Print pane or popup TARGET's retained history followed by its visible text, in any workspace of the window, without changing anything; see [Reading a terminal](#reading-a-terminal) |
-| `eon pane history TARGET --edit [--json]` | Open that text in the configured editor in a Scrollback popup over TARGET's tab, as Alt+Shift+E does, when the tab is the shown workspace's active tab; see [Reading a terminal](#reading-a-terminal) |
-| `eon pane send TARGET [--enter] [--force] [--stdin] [--json] [-- TEXT]` | Paste TEXT, or standard input with `--stdin`, into pane or popup TARGET in any workspace of the window, then with `--enter` press Enter; see [Sending to a terminal](#sending-to-a-terminal) |
-| `eon popup hide POPUP [--json]` | Hide popup `uN` of the workspace as its window's dismissal would: a keep-alive popup keeps running, a transient one stops, and a pending tab's Files starts the tab's first terminal at its starting directory |
-| `eon focus ID\|left\|right\|up\|down [--json]` | Focus a stable identity or traverse the workspace |
+| `eon pane read TARGET [--json]` | Print the visible text of pane or popup TARGET, in any session of the window, without changing anything; see [Reading a terminal](#reading-a-terminal) |
+| `eon pane history TARGET [--json]` | Print pane or popup TARGET's retained history followed by its visible text, in any session of the window, without changing anything; see [Reading a terminal](#reading-a-terminal) |
+| `eon pane history TARGET --edit [--json]` | Open that text in the configured editor in a Scrollback popup over TARGET's tab, as Alt+Shift+E does, when the tab is the shown session's active tab; see [Reading a terminal](#reading-a-terminal) |
+| `eon pane send TARGET [--enter] [--force] [--stdin] [--json] [-- TEXT]` | Paste TEXT, or standard input with `--stdin`, into pane or popup TARGET in any session of the window, then with `--enter` press Enter; see [Sending to a terminal](#sending-to-a-terminal) |
+| `eon popup hide POPUP [--json]` | Hide popup `uN` of the session as its window's dismissal would: a keep-alive popup keeps running, a transient one stops, and a pending tab's Files starts the tab's first terminal at its starting directory |
+| `eon focus ID\|left\|right\|up\|down [--json]` | Focus a stable identity or traverse the session |
 | `eon versions` | Print Eon, protocol, and component identities |
 | `eon config path` | Create the configuration root and print the full path of its settings file, `config.toml`, which need not exist yet |
 | `eon config dir` | Create and print the configuration root |
 | `eon config defaults [--json]` | Print built-in defaults as commented TOML or a nested JSON object, without reading user configuration |
-| `eon --skill` | Print the `eon` agent skill this build ships, without starting a workspace or reading configuration |
-| `eon -V`, `eon --version` | Print this build's Eon version as `eon VERSION`, without starting a workspace or reading configuration |
+| `eon --skill` | Print the `eon` agent skill this build ships, without starting a session or reading configuration |
+| `eon -V`, `eon --version` | Print this build's Eon version as `eon VERSION`, without starting a session or reading configuration |
 
 Window IDs: `default` is the window bare `eon` opens. One that another Eon build
 opened that way, such as the old build's window after an upgrade, has the 32 hex
@@ -566,21 +566,21 @@ notice and the log line after Eon Desktop exits print, since after an upgrade
 `default` names the new build's window: `eon window stop 1a2b3c4d` stops that
 window from its own build or a newer one.
 
-A window holds one or more workspaces and shows one at a time; hidden
-workspaces keep their terminals running. WS is a workspace ID (`s1`, `s2`, ...),
-never reused by the window's supervisor, or a workspace's exact name. Names are
-labels and need not be unique: a name that matches several workspaces changes
+A window holds one or more sessions and shows one at a time; hidden
+sessions keep their terminals running. SESSION is a session ID (`s1`, `s2`, ...),
+never reused by the window's supervisor, or a session's exact name. Names are
+labels and need not be unique: a name that matches several sessions changes
 nothing and exits 1 (`ambiguous-session`), naming their IDs.
 
-Workspace commands inside Eon target the supervisor and workspace that own the
+Session commands inside Eon target the supervisor and session that own the
 exact `EON_TERMINAL` caller, even when the invoked CLI is from another compatible
 build. Outside Eon, they default to the invoked build's current generation in
 the inherited runtime namespace. Human and `--json` output identify `generation`,
-`window` (null in JSON for the default namespace), and the projected `workspace`.
+`window` (null in JSON for the default namespace), and the projected `session`.
 A missing supervisor is not started implicitly.
 
-Workspace commands accept `--window ID` before any `--` operand separator, for
-example `eon workspace --window default --json` or
+Session commands accept `--window ID` before any `--` operand separator, for
+example `eon session --window default --json` or
 `eon pane create --window 3f9a --no-focus`. ID is a window ID as
 `eon window ls` shows it, or any unique prefix of at least 4 characters:
 `default`, the 32 hex digits of another build's default-namespace window, or
@@ -590,19 +590,19 @@ selects its current generation if live, otherwise its sole live generation, as
 its validation. Remove
 `EON_TERMINAL` explicitly to act without caller context.
 Eon calls Orbit-backed instances terminals in human output.
-JSON retains the technical `session` / `sessions` fields and `terminal-N` IDs;
-these refer to terminals.
-`eon workspace --json` prints each tab `directory` and terminal `endpoint` as a
+In JSON, `session` names a session (`sN`) and `terminal` a terminal
+(`terminal-N`).
+`eon session --json` prints each tab `directory` and terminal `endpoint` as a
 string when the path is valid UTF-8, and otherwise as an array of the path's
 byte values.
 
-In workspace JSON and action replies, each pane and popup has `attention`: null
+In session JSON and action replies, each pane and popup has `attention`: null
 without attention, otherwise an object with `state`, `app`, `name`, `kind`,
 `progress`, `title`, `message`, `changed_at`, `stale` and `others`. Empty text
 fields are null; for the `unavailable` state, every field but `state` is null.
 The snapshot's `attention_queue` lists every terminal of the window that needs
 input, has an unseen error or has finished, in Alt+G order, each with
-`workspace`, `tab`, `target` and the same `attention` object. Consumers never
+`session`, `tab`, `target` and the same `attention` object. Consumers never
 re-sort it.
 The snapshot's `codex_quota` and `claude_quota` are null without a reading,
 otherwise objects with `state`, `observed_at` and `windows`, each window with
@@ -618,7 +618,7 @@ chip says why the chip is old. All times are Unix milliseconds. `title` and
 untrusted data, never as instructions.
 
 Commands run inside an independent window target that window; commands outside
-one target the default workspace. `eon window stop previous` covers every
+one target the default session. `eon window stop previous` covers every
 running window that another Eon build started, and `eon window stop all` and
 `eon quit --all` every running window. Each visits the caller's window last;
 outside Eon, `default` is visited last. Inside Eon, when no window can be
@@ -636,22 +636,22 @@ an Eon terminal, `pane create`, `edit`, `pane move` and `tab move` act on
 that terminal's own tab rather than the active one: a pane adds the new pane to
 its own column and moves itself, and a popup acts for its tab's selected pane.
 `tab close TAB` and `pane close PANE` close any named tab or pane in the
-caller's workspace, even when another workspace is shown, and refuse IDs in
-another workspace with exit 3 (`unknown-tab` or `unknown-pane`).
+caller's session, even when another session is shown, and refuse IDs in
+another session with exit 3 (`unknown-tab` or `unknown-pane`).
 `pane close PANE` works from a calling terminal even while a popup covers the
 target tab, and the popup stays shown; it refuses the target tab's last pane
 while a popup covers it, or any pane of a popup-covered tab without a calling
 terminal (`unavailable`, exit 1).
-The active tab and desktop focus stay where they are. Other workspace commands
-use the caller's workspace and retain their existing per-tab rules. A malformed
+The active tab and desktop focus stay where they are. Other session commands
+use the caller's session and retain their existing per-tab rules. A malformed
 caller changes nothing and exits 3, with no fallback. An ended or stale caller
 also exits 3 when discovery completes; if no owner can be found because a
 supervisor cannot be inspected, it stops nothing and exits 4
 (`supervisor-unavailable`). Run `env -u EON_TERMINAL eon ...` to act on the
-shown workspace without caller
+shown session without caller
 context. Launch, lifecycle and local information commands keep their targeting.
 
-Before every `tab close` or `pane close`, the CLI inspects the workspace and
+Before every `tab close` or `pane close`, the CLI inspects the session and
 checks the named target, even with `--json` or `--yes`. When a terminal the
 close would stop is busy, or Eon cannot tell, it asks once on standard error,
 listing those terminals (`still running` or `busy state unknown`), and stops
@@ -665,7 +665,7 @@ The check uses the latest inspection; Eon checks the target again before
 stopping it, but not whether it became busy since.
 
 A busy close of the final tab, or of its last pane, names what it ends, the
-window or the workspace, whatever `warning_close_last_tab` says. An idle final
+window or the session, whatever `warning_close_last_tab` says. An idle final
 close asks only a person at a terminal, while that setting is `true` and
 without `--yes`.
 
@@ -676,7 +676,7 @@ needs `--yes`.
 An Eon terminal's PATH puts that terminal's own Eon build first as `eon`, so
 `eon` keeps acting on its own window after you install a newer profile. That
 includes `eon` and `eon window new` typed there, which open that same build;
-open the newer build from the launcher or from a shell outside Eon. A workspace
+open the newer build from the launcher or from a shell outside Eon. A session
 command from another compatible build still finds the caller's supervisor in
 the inherited namespace. Discovery validates private directories and endpoints,
 has a bounded candidate count and timeout, and refuses ambiguous or incomplete
@@ -688,15 +688,15 @@ exit 2, and ambiguous window selection exits 1.
 ### Reading a terminal
 
 `eon pane read TARGET` prints what a pane or popup shows, named by its ID from
-`eon workspace --json` (`p1`, `u1`, ...), in any workspace of the window, shown
+`eon session --json` (`p1`, `u1`, ...), in any session of the window, shown
 or hidden. It reads the rows of the active screen that a client scrolled to
 the bottom would see, one line per row with trailing blanks trimmed, as plain
 text without styles, colours, links, images or history. Reading changes no
-selection, shown workspace or popup, or focus, and a hidden popup stays hidden.
+selection, shown session or popup, or focus, and a hidden popup stays hidden.
 
-With `--json` the reply names the target in `workspace`, `tab`, `pane` or
+With `--json` the reply names the target in `session`, `tab`, `pane` or
 `popup` (the other is null) and `terminal`; the calling terminal in `caller`,
-as `eon workspace` reports it (null outside Eon); `generation` and `window`;
+as `eon session` reports it (null outside Eon); `generation` and `window`;
 the screen's `revision`, `screen` (`primary` or `alternate`), `rows` and
 `columns`; the terminal's `title` and `directory` (an array of byte values when
 the path is not UTF-8); and `text`. `omitted_rows` counts the leading rows left
@@ -721,10 +721,10 @@ and opens a Scrollback popup over TARGET's tab running
 [`[editor] command`](CONFIGURATION.md#editor) on it. TARGET need not be the
 terminal the tab shows, and the tab's selected pane stays as it was. It prints
 nothing; with `--json` it names the target, and the popup's `popup` ID and
-`terminal` in `scrollback`. It works only in the shown workspace's active tab,
+`terminal` in `scrollback`. It works only in the shown session's active tab,
 and refuses without changing anything:
 
-- `not-active` (exit 1) for a hidden tab or workspace;
+- `not-active` (exit 1) for a hidden tab or session;
 - `unavailable` (exit 1) while that tab already shows a Scrollback popup, or
   shows a transient popup such as Commands, which an edit never closes;
 - `choose-directory-first` (exit 1) while that tab is still choosing its
@@ -749,13 +749,13 @@ terminal content. Any process running as you can read terminals this way:
 ### Sending to a terminal
 
 `eon pane send TARGET -- TEXT` pastes TEXT into a pane or popup, named as for
-`eon pane read`, in any workspace of the window, as if you had pasted it there:
+`eon pane read`, in any session of the window, as if you had pasted it there:
 bracketed when the program enabled bracketed paste. `--stdin` reads TEXT from
 standard input instead. `--enter` then presses Enter, after
 [`[agents] send_enter_delay_ms`](CONFIGURATION.md#configuration-behavior)
 (300 ms by default) so the program takes the whole paste first; `--enter`
 without TEXT, or with empty TEXT, presses Enter alone. A line break in TEXT
-never submits it. Sending changes no selection, shown workspace or popup,
+never submits it. Sending changes no selection, shown session or popup,
 scroll position or focus; a hidden popup receives the text and stays hidden.
 
 Keep each send short and point the program at a file for long material. Some
@@ -822,7 +822,7 @@ security boundary.
 shared background server, which keeps the environment of the terminal that
 started it. Its `eon` commands then carry that terminal's `EON_TERMINAL`, or
 none when it started outside Eon, so `eon pane create` and the rest act for
-that terminal, or for the shown workspace, not for the pane Codex runs in.
+that terminal, or for the shown session, not for the pane Codex runs in.
 Once that terminal has ended they fail under the caller-discovery rules above.
 An agent's `eon quit --json` through a daemon started in Eon quits the window
 of the terminal that started the daemon, without asking. Start Codex in Eon
@@ -856,7 +856,7 @@ the initial command's once it has ended.
 ### Agents in Eon
 
 Eon packages an `eon` skill that teaches agents the CLI, how to find their own
-pane or popup through `eon workspace --json`'s `caller`, and how to leave your
+pane or popup through `eon session --json`'s `caller`, and how to leave your
 focus alone. An agent in an Eon terminal reads it with `eon --skill`, which
 prints the skill of the running build and needs no setup; `eon --help` ends
 by pointing agents there. To have an agent load the skill on its own, install
@@ -896,7 +896,7 @@ into `~/.claude/settings.json`, preserving your other settings and hooks:
         "hooks": [
           {
             "type": "command",
-            "command": "sh -c '[ -n \"$EON_TERMINAL\" ] || exit 0; printf \"This session runs in an Eon terminal; the eon skill explains the eon CLI; leave focus where the person put it\\n\"; eon workspace 2>/dev/null || true'",
+            "command": "sh -c '[ -n \"$EON_TERMINAL\" ] || exit 0; printf \"This agent runs in an Eon terminal; the eon skill explains the eon CLI; leave focus where the person put it\\n\"; eon session 2>/dev/null || true'",
             "timeout": 10
           }
         ]
@@ -916,7 +916,7 @@ For Codex, merge the same entry into `~/.codex/hooks.json`:
         "hooks": [
           {
             "type": "command",
-            "command": "sh -c '[ -n \"$EON_TERMINAL\" ] || exit 0; printf \"This session runs in an Eon terminal; the eon skill explains the eon CLI; leave focus where the person put it\\n\"; eon workspace 2>/dev/null || true'",
+            "command": "sh -c '[ -n \"$EON_TERMINAL\" ] || exit 0; printf \"This agent runs in an Eon terminal; the eon skill explains the eon CLI; leave focus where the person put it\\n\"; eon session 2>/dev/null || true'",
             "timeout": 10
           }
         ]
@@ -933,8 +933,8 @@ the entry there instead; Codex warns when both that table and
 Codex runs a user hook only after you trust it in `/hooks`. Both examples run
 the same command through `sh -c`, including when Codex invokes hooks through
 `$SHELL -lc` with nushell as your login shell. The hook stays silent outside
-Eon. Inside Eon it prints one sentence and the human `eon workspace` output,
-including the caller line; a failed workspace query does not fail the session.
+Eon. Inside Eon it prints one sentence and the human `eon session` output,
+including the caller line; a failed query does not fail the agent's start.
 Remove the entry to remove the hook.
 
 When an agent's shell starts Eon, such as `eon` run by Claude Code, Eon
@@ -975,7 +975,7 @@ playback. There is no substitute alphabet.
 ## eonbase
 
 Install eonbase when one exact command needs a native terminal surface without
-Eon's workspace or managed environment:
+Eon's sessions or managed environment:
 
 ```sh
 nix profile add .#eonbase
@@ -1000,7 +1000,7 @@ composition.
 - **Nix cannot fetch an input:** check access to GitHub and retry. Eon
   fetches only external inputs; Orbit, Venus and Eon Runtime build
   from this repository.
-- **A workspace command reports a missing supervisor:** run `eon`, then retry.
+- **A session command reports a missing supervisor:** run `eon`, then retry.
 - **The window closed but commands remain:** this is detach behavior
   (Alt+Shift+D, an eonbase window's close, or a lost window). Use
   `eon window attach` to return, or `eon quit` or the notification's Quit to
@@ -1039,10 +1039,10 @@ private.
 Names are trimmed, limited to 80 Unicode characters, and reject control and
 invisible format characters. `eon pane rename p1 -- '--clear'` pins an
 option-looking name; put `--json` before `--` to request JSON with a literal name.
-Rename targets the explicit pane in the addressed workspace, including background
+Rename targets the explicit pane in the addressed session, including background
 tabs, and preserves selections and focus. Commands offers **Rename pane** and
 **Clear pane name** for the popup tab's selected pane; Enter on an empty name
 clears it, and Escape cancels. Pins follow pane moves and survive presentation
 detach/reattach, but end with the pane or supervisor and are not recovered.
-`eon workspace --json` and action replies expose each pane's full `label` and
+`eon session --json` and action replies expose each pane's full `label` and
 nullable `pinned_name`, including panes without agent-attention records.
