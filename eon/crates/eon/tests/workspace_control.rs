@@ -1197,6 +1197,55 @@ fn endpoint_identity(path: &Path) -> EndpointIdentity {
     }
 }
 
+/// Whether the process `pid` waits, as in a poll: Some(true) when its main
+/// thread sleeps on Linux, or no thread runs on macOS; None once it has ended.
+/// Linux shows a page-in as `D`, so a sleep there is a real wait. macOS also
+/// counts loader and page-in waits as not running, so there it is best effort.
+#[cfg(target_os = "linux")]
+fn process_waits(pid: u32) -> std::io::Result<Option<bool>> {
+    let stat = match fs::read_to_string(format!("/proc/{pid}/stat")) {
+        Ok(stat) => stat,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(None),
+        Err(error) => return Err(error),
+    };
+    let state = stat
+        .rsplit_once(')')
+        .and_then(|(_, rest)| rest.trim_start().chars().next())
+        .ok_or_else(|| std::io::Error::other(format!("unreadable /proc/{pid}/stat: {stat}")))?;
+    Ok(match state {
+        'Z' | 'X' => None,
+        state => Some(state == 'S'),
+    })
+}
+
+#[cfg(target_os = "macos")]
+fn process_waits(pid: u32) -> std::io::Result<Option<bool>> {
+    // SAFETY: proc_taskinfo holds only integers, so all zeros is a valid value.
+    let mut info: libc::proc_taskinfo = unsafe { std::mem::zeroed() };
+    let size = std::mem::size_of_val(&info) as libc::c_int;
+    // SAFETY: proc_pidinfo writes at most `size` bytes into the local info.
+    let read = unsafe {
+        libc::proc_pidinfo(
+            pid as libc::c_int,
+            libc::PROC_PIDTASKINFO,
+            0,
+            (&raw mut info).cast(),
+            size,
+        )
+    };
+    if read == size {
+        return Ok(Some(info.pti_numrunning == 0));
+    }
+    let error = std::io::Error::last_os_error();
+    // An ended process, a zombie included, has no task to describe.
+    if read <= 0 && error.raw_os_error() == Some(libc::ESRCH) {
+        return Ok(None);
+    }
+    Err(std::io::Error::other(format!(
+        "proc_pidinfo({pid}) gave {read} of {size} bytes: {error}"
+    )))
+}
+
 /// Writes `message` to a management client. A client that went away, as a
 /// supervisor killed mid-request does, shows on the next read, which releases
 /// its lease as a real Orbit does.
@@ -13376,11 +13425,16 @@ fn pane_send_pastes_then_waits_for_enter_and_exits_by_failure() {
     // with nothing in it yet, as agents' shells give commands, an ended one, or
     // one read to its end, still sends Enter alone.
     let log = sent();
-    // Whether the last delayed write landed past the CLI's 100 ms wait, counted
-    // from before the spawn, so before the wait began.
+    enum When {
+        Now,
+        InWait,
+    }
+    // Whether the last write in the wait proves nothing: Eon went unsampled for
+    // 100 ms, which could hide its whole 100 ms wait, or the write landed 100 ms
+    // or more after Eon was last seen running, before its wait began.
     let late = std::cell::Cell::new(false);
     let send_enter =
-        |json: bool, stdin: Stdio, mut writer: Option<Box<dyn Write>>, delay: Option<Duration>| {
+        |json: bool, stdin: Stdio, mut writer: Option<Box<dyn Write>>, when: Option<When>| {
             let spawned = Instant::now();
             let mut child = eon(&root)
                 .args(["pane", "send", "p1", "--enter"])
@@ -13390,15 +13444,47 @@ fn pane_send_pastes_then_waits_for_enter_and_exits_by_failure() {
                 .stderr(Stdio::piped())
                 .spawn()
                 .unwrap();
-            if let (Some(writer), Some(delay)) = (&mut writer, delay) {
-                thread::sleep(delay);
+            if let (Some(writer), Some(when)) = (&mut writer, when) {
+                // Before it connects, Eon waits only in its stdin wait, so the
+                // samples that first find it waiting find that wait. That holds
+                // on Linux, so there a CLI that skips its wait fails this case;
+                // on macOS, whose samples also see loader and page-in waits, it
+                // is best effort, helped by asking for two in a row.
+                let mut running = spawned;
+                let mut gap = Duration::ZERO;
+                if matches!(when, When::InWait) {
+                    let mut sampled = spawned;
+                    let mut waits = 0;
+                    while waits < 2 {
+                        assert!(
+                            spawned.elapsed() < Duration::from_secs(10),
+                            "Eon never waited"
+                        );
+                        // Taken before the sample, so Eon ran no earlier.
+                        let at = Instant::now();
+                        gap = gap.max(at - sampled);
+                        sampled = at;
+                        match process_waits(child.id()) {
+                            Ok(Some(false)) => {
+                                waits = 0;
+                                running = at;
+                            }
+                            Ok(Some(true)) => waits += 1,
+                            // Ended: the write below fails, which fails the case
+                            // unless it came late.
+                            Ok(None) => break,
+                            Err(error) => panic!("cannot sample Eon: {error}"),
+                        }
+                        thread::sleep(Duration::from_millis(1));
+                    }
+                }
                 let wrote = writer.write_all(b"lost text");
-                let after = spawned.elapsed();
-                late.set(after >= Duration::from_millis(100));
+                let after = running.elapsed();
+                late.set(gap.max(after) >= Duration::from_millis(100));
                 // Eon gone before the wait's bound did not wait.
                 assert!(
                     wrote.is_ok() || late.get(),
-                    "Eon ended within {after:?} of its start, inside the stdin wait: {wrote:?}"
+                    "Eon ended within {after:?} of running, inside the stdin wait: {wrote:?}"
                 );
             }
             wait_for_exit(&mut child);
@@ -13429,7 +13515,7 @@ fn pane_send_pastes_then_waits_for_enter_and_exits_by_failure() {
         drop(writer);
         let refused = [
             send_enter(json, written, None, None),
-            // Below the wait's bound, so only the wait sees these bytes. A
+            // Written once Eon waits, so only the wait sees these bytes. A
             // write a loaded machine delays past the bound proves nothing, so
             // that run, which may have sent Enter, goes again.
             {
@@ -13437,7 +13523,7 @@ fn pane_send_pastes_then_waits_for_enter_and_exits_by_failure() {
                 loop {
                     runs += 1;
                     let (stdin, writer) = pipe();
-                    let output = send_enter(json, stdin, writer, Some(Duration::from_millis(30)));
+                    let output = send_enter(json, stdin, writer, Some(When::InWait));
                     if !late.get() {
                         break output;
                     }
@@ -13451,7 +13537,7 @@ fn pane_send_pastes_then_waits_for_enter_and_exits_by_failure() {
             },
             {
                 let (stdin, writer) = socket();
-                send_enter(json, stdin, writer, Some(Duration::ZERO))
+                send_enter(json, stdin, writer, Some(When::Now))
             },
             send_enter(json, fs::File::open(&file).unwrap().into(), None, None),
         ];
