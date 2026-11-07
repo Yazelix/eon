@@ -5002,7 +5002,10 @@ names its socket. CLI JSON names a session `session` and a terminal
 
 - **Status:** Planned (`eon-update-button-f10d1.1`), approved on 2026-11-07
   by eon-overseer under Lucca's "auto-decide stuff unless critical"
-  direction. Unimplemented; no runtime proof.
+  direction. Check for Nix profile installs, discovery and the Nix
+  package's source receipt are implemented (`eon-update-button-f10d1.2`);
+  `--install`, `--prefix` and the configuration keys remain planned and
+  return `invalid-arguments` until their slices land.
 - **Consumer:** A person or local agent acting as that person, using full
   Eon's product CLI or its future Commands/menu action to inspect or update
   one installation. eonbase is outside this scope.
@@ -5265,7 +5268,18 @@ names its socket. CLI JSON names a session `session` and a terminal
   channel promotion/switching, repinning, rollback UI, background service or
   compatibility policy. It adds no support promise beyond the named platform
   and distribution proofs.
-- **Proof:** None; planned behavior, no runtime evidence.
+- **Proof:** Check only (`eon-update-button-f10d1.2`): the `eon` crate's
+  `update` fixture tests cover argument rejections, discovery through the
+  starting path's profile chain (one owning entry, declarative and Home
+  Manager launches, no owner, the profile's own output started directly,
+  conflicting owners, an Eon window's own build, no HOME), source policies,
+  receipt linkage, remote ordering and failures, backend failures and
+  timeouts, exits and JSON fields; the
+  `update_check_reports_a_profile_entry_as_one_json_object_without_changing_it`
+  test runs the binary, and a copy started through a fake default profile,
+  against stub `nix` and a stub pinned curl. The package build
+  writes and the candidate check reads the receipt. No Install, prefix or
+  native macOS proof.
 - **Open proof:** Cheapest falsifiers for the clauses above:
   - Product helper/Trigger: argument fixtures reject mixed/implicit package
     modes; isolated normal launch invokes neither Nix nor update networking.

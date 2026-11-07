@@ -5,6 +5,16 @@ installation, and proven contract changes.
 
 ## Unreleased
 
+- `eon update --check [--json]` reports which installation an `eon` came
+  from, its owner and source, the installed build, whether its `main` or
+  `edge` branch has a newer revision, and whether Eon may install it, without
+  changing anything. Tag pins, Home Manager, NixOS, nix-darwin and unmanaged
+  installs get their reason and manual next step; offline or rate-limited
+  checks fail rather than report a guess. `--profile ABS --entry NAME` names
+  one profile entry. The Nix package carries a source receipt tying the
+  build to its revision; builds without one never report an update as
+  available. Installing stays manual until `eon update --install`
+  (`eon-update-button-f10d1.2`, EON-C41).
 - Agents sidebar rows use a pane's pinned name ahead of the agent's own name,
   keeping the app icon. The attention inbox does the same for panes in the shown
   session (`eon-sidebar-pinned-name-asubh`).

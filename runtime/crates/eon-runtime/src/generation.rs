@@ -37,7 +37,8 @@ use std::{
     time::{Duration, Instant},
 };
 
-pub(super) fn current_generation(inputs: &Inputs) -> Result<String, String> {
+/// This build's exact identity, `g1-…`, which `eon versions` reports and generations carry.
+pub fn current_generation(inputs: &Inputs) -> Result<String, String> {
     inputs.component_report()?;
     Ok(generation_id(inputs.assembly))
 }

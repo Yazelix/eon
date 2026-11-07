@@ -924,6 +924,14 @@ const HELP_SECTIONS: &[(&str, &[(&str, &str)])] = &[
         &[
             ("anima [STYLE] [CHILD OPTIONS...]", "Play an animation here"),
             ("versions", "Show exact component versions"),
+            (
+                "update --check [--json]",
+                "Check this install for an update",
+            ),
+            (
+                "update --check --profile ABS --entry NAME",
+                "Check that profile entry",
+            ),
             ("config path", "Create the config root and print"),
             ("", "its config.toml path"),
             ("config dir", "Create and print the config root"),

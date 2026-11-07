@@ -125,13 +125,17 @@ const TARGETS: [(&str, &str, &str); 2] = [
     ("aarch64-darwin", "aarch64", "macos"),
 ];
 
-/// Reports the product and the components this build's target carries.
-pub fn version_report(input: &str) -> Result<String, Error> {
-    let target = TARGETS
+/// This build's graph target, such as `x86_64-linux`; none outside Eon's platforms.
+pub fn target() -> Option<&'static str> {
+    TARGETS
         .iter()
         .find(|(_, arch, os)| (*arch, *os) == (std::env::consts::ARCH, std::env::consts::OS))
-        .ok_or_else(|| Error("unsupported build target".into()))?
-        .0;
+        .map(|(name, ..)| *name)
+}
+
+/// Reports the product and the components this build's target carries.
+pub fn version_report(input: &str) -> Result<String, Error> {
+    let target = target().ok_or_else(|| Error("unsupported build target".into()))?;
     report(input, target)
 }
 

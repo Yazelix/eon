@@ -90,6 +90,37 @@ click outside it closes it.
 
 ### Update
 
+Check whether your install has an update:
+
+```sh
+eon update --check
+```
+
+It finds the installation the `eon` you ran came from, reads its source from
+Nix, asks GitHub where that source is now, and prints the owner, the source,
+the installed build, whether an update exists, and whether Eon may update
+that installation, with the command to run. Eon cannot install the update
+itself yet: `eon update --install` is not in this build, so run the printed
+command. The check changes nothing; `--json` prints the same facts as one
+object (EON-C41). It checks only when you run it.
+
+- A `main` or `edge` profile entry gets an answer from GitHub. A newer
+  revision on the same version is still an update. Without network, or under
+  GitHub's rate limit, the check fails (exit 1); it never reports a guess.
+- A tag or commit stays pinned and reports how to follow `main` instead.
+- Home Manager, NixOS and nix-darwin installs are updated through their own
+  configuration, which the check names.
+- The check knows the installation from the path that started `eon`, such as
+  `~/.nix-profile/bin/eon`. Inside an Eon terminal, `eon` is that window's
+  own build, and `nix run` or a local build belongs to no installation; there,
+  name it: `eon update --check --profile ~/.nix-profile --entry eon`, with
+  absolute paths.
+
+Only builds from this release on carry the source receipt that ties an
+installed build to its revision. An older build reports its provenance as
+unknown: it is never current and never shown an update as available until it
+is upgraded once.
+
 Update a `main` or `edge` install with:
 
 ```sh
@@ -554,6 +585,7 @@ line points agents to `eon --skill`.
 | `eon popup hide POPUP [--json]` | Hide popup `uN` of the session as its window's dismissal would: a keep-alive popup keeps running, a transient one stops, and a pending tab's Files starts the tab's first terminal at its starting directory |
 | `eon focus ID\|left\|right\|up\|down [--json]` | Focus a stable identity or traverse the session |
 | `eon versions` | Print Eon, protocol, and component identities |
+| `eon update --check [--json] [--profile ABS --entry NAME]` | Report this installation's owner, source and installed build, whether an update exists, and whether Eon may install it, without changing anything; see [Update](#update) |
 | `eon config path` | Create the configuration root and print the full path of its settings file, `config.toml`, which need not exist yet |
 | `eon config dir` | Create and print the configuration root |
 | `eon config defaults [--json]` | Print built-in defaults as commented TOML or a nested JSON object, without reading user configuration |
@@ -861,7 +893,9 @@ with `codex --no-daemon`.
 | 130 | Interrupted with Ctrl+C |
 
 The `code` in an `error` result, such as `unknown-tab`, names the failure more
-precisely. `eon quit --all` and `eon window stop previous|all` exit with the
+precisely. `eon update --check` exits 0 once it has checked, even when it
+reports that Eon may not install the update; 1 when GitHub could not answer;
+2 for invalid arguments; and 3 when the named profile or entry does not exist. `eon quit --all` and `eon window stop previous|all` exit with the
 largest status among their attempts. `eon window attach|stop ID` exits with
 the selected window's status, and `eon window attach ID` exits 4 once that
 window has ended. An `eon window attach` that runs the `eon` of another build

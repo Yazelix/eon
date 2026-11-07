@@ -782,6 +782,8 @@
               EON_VENUS = "${venusPackage}/bin/yazelix-venus";
               EON_CODEXBAR = "${codexbarPackage}/bin/CodexBarCLI";
               EON_ANIMA = "${animaPackage}/bin/anima";
+              # `eon update --check` asks GitHub through this curl, never PATH's.
+              EON_CURL = "${pkgs.curlMinimal}/bin/curl";
               EON_ICON = "${out}/share/eon/eon-icon-256.rgba";
               EON_NU = "${nushellPackage}/bin/nu";
               EON_BASH = "${bashPackage}/bin/bash";
@@ -944,6 +946,30 @@
                 platforms = [ system ];
               };
             };
+          # The installed product: eonPackage's files and the source receipt that
+          # `eon update --check` reads (EON-C41 Provenance). The receipt names this
+          # flake's revision, so it stays outside the Rust build: a commit that
+          # changes no source rebuilds only this.
+          eonProduct = pkgs.runCommand "eon-${eonCargo.package.version}" { inherit (eonPackage) meta; } ''
+            mkdir -p "$out/share"
+            for entry in ${eonPackage}/*; do
+              if [ "''${entry##*/}" != share ]; then
+                ln -s "$entry" "$out/"
+              fi
+            done
+            for entry in ${eonPackage}/share/*; do
+              ln -s "$entry" "$out/share/"
+            done
+            # `eon versions` opens with `eon VERSION BUILD`.
+            read -r _ _ build < <(${eonPackage}/bin/eon versions)
+            if [[ ! "$build" =~ ^g1-[0-9a-f]{32}$ ]]; then
+              echo "eon versions reported no build identity: $build" >&2
+              exit 1
+            fi
+            printf '{"schema_version":1,"repository":"https://github.com/Yazelix/eon","revision":%s,"build":"%s","platform":"%s","attribute":"%s"}\n' \
+              ${lib.escapeShellArg (builtins.toJSON (self.rev or null))} "$build" ${system} \
+              packages.${system}.default > "$out/share/eon-source-receipt.json"
+          '';
           eonbasePackage =
             assert manifest.composition.services == [ orbitIdentity.id ];
             assert manifest.composition.clients == [ venusIdentity.id ];
@@ -1114,7 +1140,7 @@
           # The installer, the manual bundle, the release files, the demo recorder
           # and the bundle checks are Linux's; Darwin has none of them.
           packages.${system} = {
-            default = eonPackage;
+            default = eonProduct;
             eonbase = eonbasePackage;
             bench = benchPackage;
             helix-grammar-sources = helix.packages.${system}.grammar-sources;
@@ -1160,6 +1186,7 @@
           };
           checks.${system} = {
             default = eonPackage;
+            source-receipt = eonProduct;
             macos-app = macosApp;
             helix-grammars = helix.checks.${system}.codeberg_grammars;
             eonbase-closure = eonbaseClosureCheck;

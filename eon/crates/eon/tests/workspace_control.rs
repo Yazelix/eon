@@ -3249,6 +3249,227 @@ fn a_pending_pair_left_by_a_failed_rollback_is_stopped_by_recovery() {
     window.stop_generation(&mut replacement);
 }
 
+#[test]
+fn update_check_reports_a_profile_entry_as_one_json_object_without_changing_it() {
+    let root = temporary_directory();
+    let binary = Path::new(env!("CARGO_BIN_EXE_eon"));
+    let platform = if cfg!(target_os = "macos") {
+        "aarch64-darwin"
+    } else {
+        "x86_64-linux"
+    };
+    let versions = Command::new(binary).arg("versions").output().unwrap();
+    let build = stdout(&versions)
+        .split_whitespace()
+        .nth(2)
+        .unwrap()
+        .to_owned();
+    let (old, new) = ("1".repeat(40), "2".repeat(40));
+    // A product package holding a copy of this eon, selected by a default profile.
+    let package = root.join("store/eon");
+    fs::create_dir_all(package.join("bin")).unwrap();
+    fs::create_dir_all(package.join("share")).unwrap();
+    fs::copy(binary, package.join("bin/eon")).unwrap();
+    let attribute = format!("packages.{platform}.default");
+    fs::write(
+        package.join("share/eon-source-receipt.json"),
+        serde_json::json!({
+            "schema_version": 1,
+            "repository": "https://github.com/Yazelix/eon",
+            "revision": old,
+            "build": build,
+            "platform": platform,
+            "attribute": attribute,
+        })
+        .to_string(),
+    )
+    .unwrap();
+    let environment = root.join("store/profile-env");
+    fs::create_dir_all(environment.join("bin")).unwrap();
+    fs::write(environment.join("manifest.json"), "{}").unwrap();
+    symlink(package.join("bin/eon"), environment.join("bin/eon")).unwrap();
+    fs::create_dir(root.join("profiles")).unwrap();
+    symlink(&environment, root.join("profiles/profile-1-link")).unwrap();
+    symlink("profile-1-link", root.join("profiles/profile")).unwrap();
+    let profile = root.join("profiles/profile");
+    fs::create_dir(root.join("home")).unwrap();
+    symlink(&profile, root.join("home/.nix-profile")).unwrap();
+    let listing = serde_json::json!({"version": 3, "elements": {"eon": {
+        "active": true, "priority": 5, "outputs": null, "attrPath": attribute,
+        "originalUrl": "github:Yazelix/eon/edge",
+        "url": format!("github:Yazelix/eon/{old}?narHash=sha256-x"),
+        "storePaths": [package],
+    }}});
+    fs::write(root.join("listing.json"), listing.to_string()).unwrap();
+    let stubs = root.join("stubs");
+    fs::create_dir(&stubs).unwrap();
+    let log = root.join("calls");
+    executable(
+        &stubs.join("nix"),
+        format!(
+            "#!/bin/sh\necho \"nix $*\" >> '{}'\ncat '{}'\n",
+            log.display(),
+            root.join("listing.json").display()
+        ),
+    );
+    let curl = root.join("pinned-curl");
+    executable(
+        &curl,
+        format!(
+            "#!/bin/sh\nfor url; do :; done\necho \"curl $*\" >> '{}'\ncase \"$url\" in\n\
+             */commits/edge) printf '{new}\\n200' ;;\n\
+             */compare/{old}...{new}*) printf '{{\"status\":\"ahead\"}}\\n200' ;;\n\
+             *) exit 7 ;;\nesac\n",
+            log.display()
+        ),
+    );
+    // PATH's curl is never asked.
+    executable(&stubs.join("curl"), "#!/bin/sh\nexit 99\n");
+    let path = std::iter::once(stubs.clone())
+        .chain(std::env::split_paths(&std::env::var_os("PATH").unwrap()))
+        .collect::<Vec<_>>();
+    let check = |program: &Path, arguments: &[&OsStr]| {
+        eon_command(program)
+            .arg("update")
+            .args(arguments)
+            .env("PATH", std::env::join_paths(&path).unwrap())
+            .env("HOME", root.join("home"))
+            .env("XDG_STATE_HOME", root.join("state"))
+            .env("USER", "eon-update-test-nobody")
+            .env("EON_CURL", &curl)
+            .stdin(Stdio::null())
+            .output()
+            .unwrap()
+    };
+    let report = |output: &Output| -> serde_json::Value {
+        serde_json::from_slice(&output.stdout).unwrap_or_else(|_| panic!("{output:?}"))
+    };
+    let explicit = [
+        "--check".as_ref(),
+        "--json".as_ref(),
+        "--profile".as_ref(),
+        profile.as_os_str(),
+        "--entry".as_ref(),
+        "eon".as_ref(),
+    ];
+
+    let output = check(binary, &explicit);
+    assert_eq!(output.status.code(), Some(0), "{output:?}");
+    let explicit_report = report(&output);
+    assert_eq!(explicit_report["install_kind"], "nix-profile");
+    assert_eq!(explicit_report["source"]["policy"], "edge");
+    assert_eq!(explicit_report["availability"]["state"], "available");
+    assert_eq!(
+        explicit_report["availability"]["candidate"]["revision"],
+        new
+    );
+    assert_eq!(explicit_report["capability"]["install"], true);
+    assert_eq!(explicit_report["selection"], serde_json::Value::Null);
+    let calls = fs::read_to_string(&log).unwrap();
+    assert!(calls.contains(&format!(
+        "nix profile list --json --profile {}",
+        profile.display()
+    )));
+    assert!(calls.contains("curl -q --silent --show-error --proto =https --max-redirs 0"));
+    let count = |calls: &str, program| {
+        calls
+            .lines()
+            .filter(|line| line.starts_with(program))
+            .count()
+    };
+    assert_eq!(
+        (count(&calls, "nix "), count(&calls, "curl ")),
+        (1, 2),
+        "{calls}"
+    );
+    // Check changed no selector.
+    assert_eq!(
+        fs::read_link(&profile).unwrap(),
+        Path::new("profile-1-link")
+    );
+
+    // Started through the default profile, the copy finds that entry itself.
+    let output = check(
+        &root.join("home/.nix-profile/bin/eon"),
+        &["--check".as_ref(), "--json".as_ref()],
+    );
+    assert_eq!(output.status.code(), Some(0), "{output:?}");
+    let discovered = report(&output);
+    assert_eq!(discovered["install_kind"], "nix-profile");
+    assert_eq!(
+        discovered["target"],
+        serde_json::json!({"profile": root.join("home/.nix-profile"), "entry": "eon"})
+    );
+    assert_eq!(discovered["installed"]["build"], build);
+    assert_eq!(discovered["invoked"]["revision"], old);
+    assert_eq!(discovered["availability"]["state"], "available");
+
+    // A personal symlink to the profile's launcher still runs through the profile.
+    fs::create_dir_all(root.join("home/.local/bin")).unwrap();
+    symlink(
+        root.join("home/.nix-profile/bin/eon"),
+        root.join("home/.local/bin/eon"),
+    )
+    .unwrap();
+    let output = check(
+        &root.join("home/.local/bin/eon"),
+        &["--check".as_ref(), "--json".as_ref()],
+    );
+    assert_eq!(output.status.code(), Some(0), "{output:?}");
+    assert_eq!(report(&output)["target"], discovered["target"]);
+
+    // The same output started directly, as `nix run` does, belongs to no installation.
+    let output = check(
+        &package.join("bin/eon"),
+        &["--check".as_ref(), "--json".as_ref()],
+    );
+    assert_eq!(output.status.code(), Some(0), "{output:?}");
+    assert_eq!(report(&output)["install_kind"], "unmanaged");
+
+    // Offline is a failed check, never an up-to-date one.
+    executable(
+        &curl,
+        "#!/bin/sh\necho 'Could not resolve host' >&2\nexit 6\n",
+    );
+    let output = check(binary, &explicit);
+    assert_eq!(output.status.code(), Some(1), "{output:?}");
+    let offline = report(&output);
+    assert_eq!(offline["error"]["code"], "remote-unavailable");
+    assert_eq!(offline["availability"]["state"], "unknown");
+    assert_eq!(offline["availability"]["reason"], "offline");
+    assert_eq!(offline["capability"]["install"], false);
+    // The backend's diagnostic reaches stderr in JSON mode too.
+    assert!(String::from_utf8_lossy(&output.stderr).contains("Could not resolve host"));
+    // Without its pinned curl the check says so.
+    let output = eon_command(binary)
+        .args(["update", "--check", "--json", "--profile"])
+        .arg(&profile)
+        .args(["--entry", "eon"])
+        .env("PATH", std::env::join_paths(&path).unwrap())
+        .env_remove("EON_CURL")
+        .stdin(Stdio::null())
+        .output()
+        .unwrap();
+    assert_eq!(output.status.code(), Some(1), "{output:?}");
+    assert_eq!(
+        report(&output)["availability"]["reason"],
+        "curl-unavailable"
+    );
+
+    let output = check(
+        binary,
+        &["--check".as_ref(), "--install".as_ref(), "--json".as_ref()],
+    );
+    assert_eq!(output.status.code(), Some(2), "{output:?}");
+    let invalid = report(&output);
+    assert_eq!(invalid["operation"], serde_json::Value::Null);
+    assert_eq!(invalid["error"]["code"], "invalid-arguments");
+    // Bare `eon update` is not a package mode.
+    let output = check(binary, &["--json".as_ref()]);
+    assert_eq!(output.status.code(), Some(2), "{output:?}");
+    assert!(output.stdout.is_empty());
+}
+
 fn eon_command(binary: &Path) -> Command {
     let codex_stub = CODEX_STUB.get_or_init(|| {
         let directory = std::env::temp_dir().join(format!("eon-codex-stub-{}", std::process::id()));
