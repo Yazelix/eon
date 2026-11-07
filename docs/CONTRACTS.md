@@ -1219,7 +1219,8 @@ names its socket. CLI JSON names a session `session` and a terminal
   - Harmless navigation no-ops return the unchanged Snapshot as success
     (EON-C31's empty attention queue is a rejection instead);
     request deduplication and picker/lifecycle restrictions still apply.
-  - `eon` and `eonbase` exit 0 on success, 1 when a command is refused or
+  - Install-update modes have EON-C41's separate results. Otherwise `eon`
+    and `eonbase` exit 0 on success, 1 when a command is refused or
     fails, 2 for invalid command lines and argument syntax (including
     `invalid-tab` and `malformed-action`), 3 when a named tab, pane, terminal,
     popup, generation or window is missing or stale or a window ID prefix
@@ -4996,3 +4997,298 @@ names its socket. CLI JSON names a session `session` and a terminal
 - **Open proof:** `eon-ciwn.9` implements and proves `eon pane wait` with a
   real agent pane. Installed Darwin subscription/slow-reader proof remains
   open; this contract is Candidate.
+
+## EON-C41 — Installation update ownership and provenance
+
+- **Status:** Planned (`eon-update-button-f10d1.1`), approved on 2026-11-07
+  by eon-overseer under Lucca's "auto-decide stuff unless critical"
+  direction. Unimplemented; no runtime proof.
+- **Consumer:** A person or local agent acting as that person, using full
+  Eon's product CLI or its future Commands/menu action to inspect or update
+  one installation. eonbase is outside this scope.
+- **Trigger:** Explicit product commands:
+  - `eon update --check [--json] [--profile /ABS/PROFILE --entry ENTRY]`;
+  - `eon update --check [--json] [--prefix /ABS/PREFIX]`;
+  - `eon update --install [--yes] [--json]` with the same selectors.
+
+  The modes are mutually exclusive. Profile and entry form one pair; prefix
+  excludes that pair. Relative paths, an incomplete pair, mixed targets,
+  `--yes` with Check, and window/session selectors are invalid arguments.
+  Package-only selectors (`--profile`, `--entry`, `--prefix`) require
+  `--check` or `--install`. Bare `eon update` and its options, including
+  shared `--json`/`--yes` validity, belong to live adoption in `eon-t3fyd`
+  and `eon-1bq8`; package modes neither fall back to it nor change its draft.
+- **Result:**
+  - **Product helper.** Eon product/distribution owns install discovery,
+    source policy, capability and results. Only this explicitly invoked
+    maintenance helper may query Nix profile metadata and ask Nix to evaluate
+    and upgrade a package. Check reads manager metadata and official remote
+    metadata without evaluating or realizing a prospective product. Normal
+    launch, rendering, session actions and Runtime background work invoke no
+    Nix evaluator or update check. Runtime resolves configuration; Venus
+    presents results and sends intent, parsing neither configuration nor
+    manager output. Orbit retains terminal authority.
+  - **One target.** An explicit CLI selector replaces the configured target
+    for that operation. With no CLI selector, use the complete configured
+    target, else discover only from the validated invoking installation's
+    external launcher/selector chain and, for Nix, its selected/default user
+    profile. Do not scan every profile or the store. Automatic discovery
+    requires exactly one matching owner and entry with no conflicting
+    declarative ownership evidence. Matching a store output, version or build
+    alone never establishes that owner or a channel. An old terminal's pinned
+    executable does not authorize choosing a similarly named newer install.
+    Discovery proceeds only when the invoked executable resolves through the
+    selected launcher or profile entry; otherwise refuse `install-ambiguous`.
+    An explicit selector can address a different supported installation, but
+    never overrides its ownership or source restrictions. Display the exact
+    profile and entry, or prefix, before consent.
+  - **Check.** Inspect without selecting a package, creating an installation,
+    changing configuration or changing live work. Report the owner and source,
+    invoked and installed builds, contextual running build when readable,
+    availability, and Install capability or its refusal and manual next step.
+    Unknown facts remain unknown. Offline, rate-limit and metadata errors
+    never mean current. A changed branch revision at the same product version
+    is different; call it newer only with source ordering evidence. A check
+    proves neither prospective build success nor live-adoption compatibility.
+  - **Imperative Nix main/edge.** For a validated writable user-profile entry
+    from `github:Yazelix/eon/main` or `github:Yazelix/eon/edge`, whose attribute
+    is the product package recorded in the receipt, Install asks Nix to
+    upgrade that exact named entry on its original ref and attribute.
+    A renamed entry or custom profile uses its actual manager identity.
+    Never use an all-packages or pattern selector, remove/add the entry,
+    change branch, or invoke a shell command string. Nix owns realization
+    and profile selection. Report the actual resulting locked revision and
+    build, even if the ref advanced after Check; Check does not pin Install
+    to its preview. A failed realization must not be reported as installed.
+    An eligible install already at its checked target is a successful no-op;
+    this never converts a pin or ownership refusal into consent to change it.
+    Other profile source refs, including forks, `git+https` and `path:`, or a
+    non-product attribute refuse `source-unverified`.
+  - **Pins and declarative managers.** A tag or commit remains pinned;
+    Install refuses `pinned-install`. Check may show official release
+    information, separately from eligibility to advance this pin. Home
+    Manager, nix-darwin, NixOS and other system-owned installs refuse
+    `externally-managed`, naming the known manager and manual input/activation
+    steps. Never edit its lock/configuration, run a privileged rebuild or
+    create a shadow profile install. Unknown ownership stays unknown; no
+    claim that Eon can identify every declarative manager from its output.
+  - **Unmanaged installs.** Local developer runs, direct store-path entries,
+    temporary `nix run`/`nix shell`, manual bundle extractions and unknown
+    installs have no automatic Install capability. Report `install-unmanaged`
+    or `install-ambiguous` with a manual route; do not pull a checkout,
+    overwrite an extraction or invent a persistent owner. Explicitly naming
+    an existing valid managed target does not adopt an unmanaged directory.
+  - **Installer-owned Linux.** Validate an existing prefix's ownership marker,
+    private directories, owned `bin/eon`, `current` selector and selected
+    `.eon-source` receipt as one chain. Missing/conflicting links or receipts
+    confer no ownership. Discover only published, numbered official
+    Yazelix/eon releases with the matching x86_64 Linux asset, excluding
+    drafts and prereleases. The same latest eligible release/archive is
+    `unchanged` (exit 0); only a lower candidate is `no-newer-release`.
+    An equal-version different artifact refuses `source-unverified`. Install
+    resolves an exact `https://github.com/Yazelix/eon/releases/download/vX.Y.Z/`
+    archive URL, never a latest-download URL, and invokes `eon-install` only
+    from the already installed, ownership-validated payload at its exact path,
+    passing that URL and prefix by direct argv, never an installer from the
+    fetched archive. If the installed payload lacks that helper, remain manual;
+    no PATH fallback or bootstrap download. After verification the candidate
+    payload's version must match `X.Y.Z` in the URL's `vX.Y.Z` before selection.
+    An independently provisioned allowed-signers file is required.
+    Release metadata discovers an asset; EON-C5's signed
+    checksums and archive hash authorize its bytes. Neither an asset-adjacent
+    downloaded key nor an attestation replaces that trust anchor. Keep the
+    existing installer's verification, preflight, locking, atomic selector
+    and retention ownership; do not implement another installer.
+  - **Apple Silicon macOS.** Apply the same Nix-profile or declarative rules
+    within EON-C7's preview scope. Profile selection updates its CLI and
+    Eon.app together. Report the validated profile launcher for fresh launches;
+    do not rewrite a store bundle, Dock alias or copied app. There is no direct
+    macOS, Intel, X11 or additional architecture claim here.
+  - **Consent and lifetime.** Install requires explicit consent for its
+    displayed target/source. Human mode at a terminal asks, accepting only
+    EON-C10's yes spellings; a decline/EOF cancels with no mutation. Without
+    a terminal, and in JSON mode, require `--yes` plus an explicit CLI or
+    configured target, print that target on stderr before mutation, and refuse
+    `install-ambiguous` for discovery alone. If both the CLI/configured target
+    and `--yes` are absent, return `install-ambiguous` (exit 4) before checking
+    confirmation for `not-confirmed` (exit 1). Never read noninteractive consent
+    from stdin. Serialize Eon's operations per resolved target. Snapshot its
+    identity, owner, entry/ref and selection before presenting or accepting
+    consent; UI Install carries that displayed snapshot. Re-read immediately
+    before mutation and refuse `target-changed` on any mismatch. Consent
+    waives no refusal. The manager owns its transaction/lock; no atomic
+    compare-and-swap against arbitrary external writers is promised.
+    Terminate only helper-owned children on cancellation, within a bounded
+    wait: `eon-update-button-f10d1.3` must set and document that deadline and
+    its default before implementation; `.7` consumes the same limit. Record
+    its fixed safety-budget reason or configuration key in that slice. Never
+    signal a shared Nix daemon, supervisor or Orbit host. After interruption
+    or failure inspect and report the actual selector, or unknown
+    if it cannot be read. Cancellation does not promise rollback. No automatic
+    retry, garbage collection, payload pruning or shell-profile edits.
+  - **Running work.** Check, refusal, failure and successful selection never
+    stop/re-exec a supervisor, replace Venus, move terminals, adopt a build,
+    change a session/tab/pane selection, show a popup or take desktop focus
+    for an agent caller. Success means installed for fresh launches through
+    the reported external launcher; it does not change the running badge or
+    promise that an old terminal's bare `eon window new` uses that selection.
+    Contextual running identity is optional read-only information, not a
+    prerequisite to installation or a window target. Live adoption keeps its
+    own exact Orbit/control/checkpoint gates, stale-origin guard and proof.
+- **Provenance:** Composition supplies one read-only source receipt with the
+  artifact to the product helper, with these JSON fields:
+  `{"schema_version":1,"repository":"https://github.com/Yazelix/eon",
+  "revision":null,"build":"<exact build identity>","platform":"x86_64-linux",
+  "attribute":"packages.x86_64-linux.default"}`.
+  `revision` is the full source commit only when tied to the built source;
+  local/dirty/unknown source uses null. `build` is the existing exact source
+  build identity reported by `eon versions`, never a mutable lifetime ID;
+  `platform` uses the canonical graph's platform spelling. The composition
+  records the full Nix product-package output in `attribute` (null when
+  inapplicable); it identifies the product, not another component graph.
+  It supplies this receipt outside the hashed source inputs, avoiding a
+  self-referential digest. Its physical delivery is proved by the consuming
+  package/bundle slice; this text prescribes no Runtime file lookup.
+  - Nix's current profile record supplies original/locked refs, attribute and
+    entry, separately from the receipt. Only a matching locked revision and
+    receipt tie this build to that source; absent/mismatched evidence cannot
+    produce current/newer or an automatic Install capability.
+  - The direct installer keeps its existing versioned `.eon-source` record
+    (`eon-install-v1`, archive SHA-256 and exact URL); validate it against the
+    selected payload and source receipt. It is descriptive installation data,
+    not independent proof of signature verification or ownership.
+  - Read current manager/selector state each time; no persisted ownership
+    registry, baked-in channel or store-path source identity. Unknown receipt
+    versions/malformed receipts refuse automatic installation without an
+    old-version decoder or migration.
+- **JSON and exits:** With `--json`, emit one final object to stdout;
+  progress and manager diagnostics are text on stderr. Human output reports
+  the same facts. The object has `schema_version: 1` and these fields:
+  - `operation`: `check` or `install` (null for an invalid mode);
+    `outcome`: `checked`, `installed`, `unchanged`, `cancelled`, `refused`
+    or `failed`;
+  - `install_kind`: `nix-profile`, `eon-install`, `externally-managed`,
+    `unmanaged` or `unknown`;
+    `target`: `{profile, entry}`, `{prefix}`, or null. Paths use EON-C10's
+    UTF-8 string/otherwise byte-array representation;
+    `launcher`: the validated external fresh-launch path, or null, using that
+    same path representation;
+  - `source`: null or the known source facts: `repository`, `policy`
+    (`main`, `edge`, `tag`, `commit`, `release`, `local` or `unknown`),
+    `original_ref`, `locked_ref`, `attribute`, `revision`, `archive_url`
+    and `archive_sha256`; unknown/inapplicable values are null;
+  - `invoked` and `installed`: build objects `{version, build, revision,
+    platform}` or null, with unknown fields null. `installed` is the
+    selection observed before this operation, independent of `invoked`;
+    `running`: `{window, build}` for the contextual running owner, with build
+    a build object, else null;
+  - `checked_at`: UTC RFC3339 time of this attempt, or null before a check;
+    `availability`: `{state, candidate, reason}`, where state is `current`,
+    `available`, `different` or `unknown`, candidate is null or
+    `{version, build, revision, archive_url}` with unknown fields null,
+    and reason is a machine code or null. `current` requires source/build
+    linkage, not equal version strings. `available` requires ordering
+    evidence; a different branch revision without it is `different`;
+  - `capability`: `{install, reason, next_step}`, with a boolean, refusal
+    code or null, and human guidance or null. A candidate being discoverable
+    never overrides a pin, manager, ownership or trust refusal;
+  - `selection`: null for Check, otherwise `{state, selected, source}`, where state
+    is `unchanged`, `changed` or `unknown` and selected is the actual
+    post-operation build object or null. Source uses the source object above
+    for that selection, including its actual locked ref or archive digest,
+    or null when unreadable. Unknown cannot yield `installed`;
+  - `error`: null or `{code, stage, message, next_step}`. Stage is
+    `resolve`, `check`, `confirm`, `fetch-build`, `verify`, `select` or
+    `inspect-result`; backend diagnostics remain available on stderr.
+
+  The result/exit mapping is identical with and without JSON:
+  - 0: `checked` after a completed Check, including pinned/externally-managed
+    or honest unknown-source results; `installed` after successful selection;
+    `unchanged` for an eligible install already at the checked target, including
+    the same latest eligible direct release/archive; `cancelled` for a human
+    decline/EOF before mutation. Successful/cancelled results have null error.
+  - 1: `failed`, with `error.code` `remote-unavailable` for network/remote
+    metadata failures, `verification-failed` for signature/hash or verified
+    payload/URL-version mismatch, `preflight-failed` for payload preflight,
+    or `selection-failed` for manager build/selection/read-back failures.
+    A failed remote check has availability unknown, never current.
+    `not-confirmed` also gives `failed`, stage `confirm`, exit 1 as in
+    EON-C10, when required `--yes` is absent.
+  - 2: `failed`, code `invalid-arguments`, stage `resolve`, no mutation.
+  - 3: `failed`, code `unknown-target`, stage `resolve`, for a missing explicit
+    installation/profile entry, no mutation.
+  - 4: `refused` Install, with non-null `error` whose code equals
+    `capability.reason`, using Important failures below. This is not EON-C10's
+    supervisor-unavailable status 4; callers distinguish by `operation`.
+  - 130: a handled interrupt is `failed`, code `interrupted`. Report final
+    selection when possible; abrupt termination cannot guarantee a final object.
+
+  Invalid configuration also gives exit 1 as specified below. No raw backend
+  exit replaces this mapping.
+- **Configuration:** Draft keys, all unset by default:
+  `updates.nix_profile` and `updates.nix_entry` select one profile/entry
+  pair; `updates.bundle_prefix` selects an existing managed prefix and
+  excludes that pair; `updates.allowed_signers` names an absolute,
+  independently trusted signer-file path. A half pair, conflicting targets
+  or relative path returns `outcome: failed`, a non-null error with code
+  `invalid-configuration`, stage `resolve`, exit 1 and no mutation. Unset target
+  means validated unambiguous discovery, never all profiles or a new prefix;
+  unset signers refuses direct Install. CLI selectors replace the entire
+  configured target, so a prefix CLI override does not retain a configured
+  profile. Add keys only with their consuming implementation and document
+  defaults in `docs/CONFIGURATION.md` and config-defaults output then.
+  Manual-only checking is fixed initially for network consent/support cost;
+  there is no single-value check setting. Periodic scheduling, its interval
+  and notices remain later scope. No channel override, custom shell command,
+  auto-install/restart, retention or confirmation-bypass configuration is
+  added: those values remain fixed by ownership, trust and live-work safety.
+- **Important failures:** Install refuses with a reason and manual next step:
+  `install-unmanaged`, `install-ambiguous`, `externally-managed`,
+  `pinned-install`, `source-unverified`, `provenance-invalid`,
+  `unsupported-platform`, `release-unavailable`, `no-newer-release`,
+  `installer-unavailable`, `trust-unconfigured`, `target-unwritable`,
+  `target-changed` or `operation-busy`. `no-newer-release` applies only to a
+  candidate lower than the installed release. Invalid or unverifiable
+  signature/hash, malformed remote metadata, build/preflight and selector
+  failures are failures, not permission to bypass verification. Preserve the
+  previous selection on backend failure before selection, subject to the
+  backend's proved transaction behavior; interrupted or externally changed
+  selection is reported as observed, never guessed or silently undone.
+- **Owner:** Eon product/distribution policy and helper. Nix owns profile
+  selection; `eon-install` owns direct selection/verification/retention.
+  Runtime and Venus consume resolved policy/results without taking either
+  manager's ownership.
+- **Consumes:** EON-C2/C6's one graph, C3's opaque distribution inputs,
+  C5's installer lifecycle, C7's platform scope, C10's CLI parity and path
+  representation, C11's live-work isolation and C37's release-policy limits.
+- **Boundary:** Installation selection only, not live adoption, publication,
+  channel promotion/switching, repinning, rollback UI, background service or
+  compatibility policy. It adds no support promise beyond the named platform
+  and distribution proofs.
+- **Proof:** None; planned behavior, no runtime evidence.
+- **Open proof:** Cheapest falsifiers for the clauses above:
+  - Product helper/Trigger: argument fixtures reject mixed/implicit package
+    modes; isolated normal launch invokes neither Nix nor update networking.
+  - Target/Provenance: identical-output owners, a pinned old executable, wrong
+    product attribute/ref, and invalid/unknown/dirty receipts cannot authorize
+    discovery or mutation; verify one relocated artifact's receipt identity.
+  - Check/JSON/exits: fixtures cover each outcome/code/status above, same-version
+    changed revision, offline/rate limit and nullable launcher; stdout is one
+    object and Check writes no selector.
+  - Nix/managers/platform: a disposable custom profile updates only its one
+    moving-ref entry; pin/declarative/unmanaged cases mutate nothing. A second
+    writer changes the entry between consent presentation and mutation: get
+    `target-changed` or the manager's refusal, with no CAS claim. Repeat the
+    profile/app-selector check natively before claiming Apple Silicon behavior.
+  - Installer: isolated signed A-to-B through A's exact installed helper selects
+    B; a candidate archive's helper must never run. URL/version mismatch,
+    missing helper/signer,
+    foreign prefix, wrong/draft asset, lower release, bad signature/hash and
+    interrupted staging never yield installed. Reuse unchanged C5 lower proof.
+  - Consent/cancellation/live work: noninteractive discovery alone returns
+    `install-ambiguous`, missing `--yes` returns `not-confirmed` (1), and a
+    stale UI snapshot changes nothing. Cancel within .3's documented deadline
+    and inspect selection; install B while isolated A's
+    processes/layout/version/focus and retained payload remain, then launch B.
+  - Configuration: parser/defaults fixtures cover unset/override/conflicting
+    targets, relative paths and missing trust, with matching docs/defaults.
