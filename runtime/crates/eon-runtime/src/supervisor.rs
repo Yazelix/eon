@@ -4847,8 +4847,7 @@ mod tests {
         assert_eq!(session.orbit_log.as_ref(), Some(&orbit_log));
         // A supervisor that recovers the run rebuilds its log path. Orbit may
         // refuse the new lease as Busy until it sees the old one close. On
-        // macOS, Orbit's close after Busy can come before the peer check,
-        // which then cannot read the peer's process id.
+        // macOS, Busy is also reported when Orbit closes before the peer check.
         drop(session);
         let deadline = std::time::Instant::now() + std::time::Duration::from_secs(5);
         let sessions = loop {
@@ -4861,9 +4860,7 @@ mod tests {
             ) {
                 Ok((sessions, _)) => break sessions,
                 Err(error)
-                    if (error.ends_with("is already managed")
-                        || error
-                            .ends_with("cannot validate terminal management peer credentials"))
+                    if error.ends_with("is already managed")
                         && std::time::Instant::now() < deadline =>
                 {
                     std::thread::sleep(std::time::Duration::from_millis(10));
@@ -5163,10 +5160,7 @@ mod tests {
                 ) {
                     Ok(result) => break result,
                     Err(error)
-                        if (error.ends_with("is already managed")
-                            || error.ends_with(
-                                "cannot validate terminal management peer credentials",
-                            ))
+                        if error.ends_with("is already managed")
                             && std::time::Instant::now() < deadline =>
                     {
                         std::thread::sleep(std::time::Duration::from_millis(10));

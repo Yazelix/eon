@@ -12,6 +12,9 @@ installation, and proven contract changes.
   queue and busy changes without polling (`eon-ciwn.8`, EON-C39). Repeatable
   filters, resume cursors and overflow snapshots support agent consumers;
   human output limits attention to state, app and name.
+- On macOS, a client competing for a terminal's management lease reports
+  that the run is already managed even when Orbit closes the refusal socket
+  before the client checks its peer credentials (`eon-mac-launch-kz4p.53`).
 - On macOS, `eon pane history` of a long history no longer risks failing as
   unavailable after 2 s: the supervisor read Orbit's answer in time that grew
   with the square of its size over macOS's 8 KiB socket pieces, and now reads

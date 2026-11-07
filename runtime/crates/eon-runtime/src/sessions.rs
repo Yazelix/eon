@@ -443,9 +443,10 @@ fn read_management_response(
         .map_err(|error| format!("invalid terminal management result: {error}"))
 }
 
-fn validate_management_peer(stream: &UnixStream, identity: &LiveIdentity) -> Result<(), String> {
-    let (process_id, uid) = platform::peer_identity(stream)
-        .ok_or("cannot validate terminal management peer credentials")?;
+fn validate_management_peer(
+    (process_id, uid): (libc::pid_t, libc::uid_t),
+    identity: &LiveIdentity,
+) -> Result<(), String> {
     if u32::try_from(process_id).ok() != Some(identity.process_id) || uid != identity.uid {
         return Err("terminal management peer differs from its Ready process identity".into());
     }
@@ -453,6 +454,55 @@ fn validate_management_peer(stream: &UnixStream, identity: &LiveIdentity) -> Res
         .ok_or("cannot validate terminal process identity: no such process")?;
     if process.start != identity.process_start {
         return Err("terminal process start differs from its Ready identity".into());
+    }
+    Ok(())
+}
+
+/// Validates and acquires one stream, after the record and endpoints were checked.
+fn acquire_management_lease(
+    stream: &mut UnixStream,
+    expected: &LiveIdentity,
+    record: ObjectIdentity,
+    deadline: Instant,
+) -> Result<(), String> {
+    let unavailable = "cannot validate terminal management peer credentials";
+    let sent = match platform::peer_identity(stream) {
+        Ok(peer) => {
+            validate_management_peer(peer, expected)?;
+            let timeout = operation_timeout(deadline, "terminal lease acquisition")?;
+            bound_io(stream, stream.set_write_timeout(Some(timeout)))
+                .map_err(|error| format!("cannot bound terminal lease acquisition: {error}"))?;
+            let request = management::encode_client_message(&ManagementClientMessage::Acquire {
+                expected: expected.clone(),
+                record,
+            })
+            .map_err(|error| format!("cannot encode terminal lease request: {error}"))?;
+            stream
+                .write_all(&request)
+                .map_err(|error| format!("cannot send terminal lease request: {error}"))
+        }
+        #[cfg(target_os = "macos")]
+        Err(error) if error.raw_os_error() == Some(libc::ENOTCONN) => Err(unavailable.into()),
+        Err(_) => return Err(unavailable.into()),
+    };
+    // Busy can precede peer validation or Acquire: Darwin loses LOCAL_PEERPID on close.
+    let reply = read_management_response(stream, deadline, "terminal lease acquisition");
+    if matches!(&reply, Ok(ManagementServerMessage::Busy)) {
+        return Err(format!(
+            "terminal run {} is already managed",
+            expected.run_id
+        ));
+    }
+    sent?;
+    match reply? {
+        ManagementServerMessage::Lease(identity) if &identity == expected => {}
+        ManagementServerMessage::Failure(failure) => {
+            return Err(format!(
+                "terminal rejected lease acquisition: {}",
+                failure.detail
+            ));
+        }
+        _ => return Err("terminal returned the wrong lease result".into()),
     }
     Ok(())
 }
@@ -486,34 +536,7 @@ fn acquire_management(
             management_path.display()
         )
     })?;
-    validate_management_peer(&stream, &candidate.identity)?;
-    let timeout = operation_timeout(deadline, "terminal lease acquisition")?;
-    bound_io(&stream, stream.set_write_timeout(Some(timeout)))
-        .map_err(|error| format!("cannot bound terminal lease acquisition: {error}"))?;
-    let request = management::encode_client_message(&ManagementClientMessage::Acquire {
-        expected: candidate.identity.clone(),
-        record: candidate.record,
-    })
-    .map_err(|error| format!("cannot encode terminal lease request: {error}"))?;
-    stream
-        .write_all(&request)
-        .map_err(|error| format!("cannot send terminal lease request: {error}"))?;
-    match read_management_response(&mut stream, deadline, "terminal lease acquisition")? {
-        ManagementServerMessage::Lease(identity) if identity == candidate.identity => {}
-        ManagementServerMessage::Busy => {
-            return Err(format!(
-                "terminal run {} is already managed",
-                candidate.identity.run_id
-            ));
-        }
-        ManagementServerMessage::Failure(failure) => {
-            return Err(format!(
-                "terminal rejected lease acquisition: {}",
-                failure.detail
-            ));
-        }
-        _ => return Err("terminal returned the wrong lease result".into()),
-    }
+    acquire_management_lease(&mut stream, &candidate.identity, candidate.record, deadline)?;
     bound_io(&stream, stream.set_read_timeout(None))
         .and_then(|()| bound_io(&stream, stream.set_write_timeout(None)))
         .and_then(|()| stream.set_nonblocking(true))
@@ -2307,6 +2330,165 @@ pub(crate) mod tests {
         thread,
         time::{Duration, Instant},
     };
+
+    #[test]
+    fn management_busy_survives_peer_close_before_acquisition() {
+        let root = temporary_directory();
+        let (session, peer, _) = tombstoned_session(&root, 1, TerminationReason::NaturalExit);
+        let mut identity = session.identity.clone();
+        identity.process_start = crate::platform::process(identity.process_id)
+            .unwrap()
+            .unwrap()
+            .start;
+        drop(peer);
+        let (mut stream, mut peer) = UnixStream::pair().unwrap();
+        peer.write_all(&management::encode_server_message(&ManagementServerMessage::Busy).unwrap())
+            .unwrap();
+        drop(peer);
+        assert_eq!(
+            super::acquire_management_lease(
+                &mut stream,
+                &identity,
+                session.record_object,
+                Instant::now() + Duration::from_secs(1),
+            ),
+            Err(format!(
+                "terminal run {} is already managed",
+                identity.run_id
+            )),
+        );
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn management_wrong_peer_refuses_without_reading_busy_or_waiting() {
+        let root = temporary_directory();
+        let (session, peer, _) = tombstoned_session(&root, 1, TerminationReason::NaturalExit);
+        let mut identity = session.identity.clone();
+        identity.process_start = crate::platform::process(identity.process_id)
+            .unwrap()
+            .unwrap()
+            .start;
+        drop(peer);
+        let busy = management::encode_server_message(&ManagementServerMessage::Busy).unwrap();
+        for mismatch in ["pid", "uid", "start"] {
+            for queued_busy in [true, false] {
+                let (mut stream, mut peer) = UnixStream::pair().unwrap();
+                let mut expected = identity.clone();
+                match mismatch {
+                    "pid" => expected.process_id = expected.process_id.wrapping_add(1),
+                    "uid" => expected.uid = expected.uid.wrapping_add(1),
+                    "start" => expected.process_start = expected.process_start.wrapping_add(1),
+                    _ => unreachable!(),
+                }
+                if queued_busy {
+                    peer.write_all(&busy).unwrap();
+                }
+                let error = super::acquire_management_lease(
+                    &mut stream,
+                    &expected,
+                    session.record_object,
+                    Instant::now() + Duration::from_secs(1),
+                )
+                .unwrap_err();
+                assert_eq!(
+                    error,
+                    if mismatch == "start" {
+                        "terminal process start differs from its Ready identity"
+                    } else {
+                        "terminal management peer differs from its Ready process identity"
+                    }
+                );
+                assert_eq!(stream.read_timeout().unwrap(), None);
+                let mut unread = [0; management::HEADER_BYTES];
+                if queued_busy {
+                    assert_eq!(
+                        crate::platform::read_available(&stream, &mut unread).unwrap(),
+                        busy.len()
+                    );
+                    assert_eq!(unread.as_slice(), busy.as_slice());
+                } else {
+                    assert_eq!(
+                        crate::platform::read_available(&stream, &mut unread)
+                            .unwrap_err()
+                            .kind(),
+                        io::ErrorKind::WouldBlock
+                    );
+                }
+            }
+        }
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn management_close_cannot_grant_an_unvalidated_or_unsent_lease() {
+        let root = temporary_directory();
+        let (session, peer, _) = tombstoned_session(&root, 1, TerminationReason::NaturalExit);
+        let mut identity = session.identity.clone();
+        identity.process_start = crate::platform::process(identity.process_id)
+            .unwrap()
+            .unwrap()
+            .start;
+        drop(peer);
+        let lease =
+            management::encode_server_message(&ManagementServerMessage::Lease(identity.clone()))
+                .unwrap();
+        for valid_peer in [true, false] {
+            for bytes in [
+                lease.as_slice(),
+                b"malformed reply",
+                &lease[..management::HEADER_BYTES],
+                b"",
+            ] {
+                let (mut stream, mut peer) = UnixStream::pair().unwrap();
+                let mut expected = identity.clone();
+                if !valid_peer {
+                    expected.uid = expected.uid.wrapping_add(1);
+                }
+                peer.write_all(bytes).unwrap();
+                drop(peer);
+                let error = super::acquire_management_lease(
+                    &mut stream,
+                    &expected,
+                    session.record_object,
+                    Instant::now() + Duration::from_secs(1),
+                )
+                .unwrap_err();
+                assert!(
+                    error.starts_with("cannot send terminal lease request:")
+                        || error == "cannot validate terminal management peer credentials"
+                        || error
+                            == "terminal management peer differs from its Ready process identity",
+                    "{error}",
+                );
+            }
+        }
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn managed_orbit_contenders_report_already_managed() {
+        let root = temporary_directory();
+        let mut winner = leased_orbit(&root, "exec sleep 30");
+        let expected = format!("terminal run {} is already managed", winner.run_id());
+        let errors: Vec<_> = (0..16)
+            .map(|_| {
+                super::recover_sessions(
+                    &root,
+                    crate::supervisor::LaunchMode::Workspace,
+                    "component-1",
+                    None,
+                    Instant::now() + Duration::from_secs(5),
+                )
+                .err()
+            })
+            .collect();
+        stop_managed_sessions(std::slice::from_mut(&mut winner), Duration::from_secs(5)).unwrap();
+        fs::remove_dir_all(root).unwrap();
+        for error in errors {
+            assert_eq!(error.as_deref(), Some(expected.as_str()));
+        }
+    }
 
     #[test]
     fn lost_owner_cleanup_requires_death_and_original_owned_objects() {

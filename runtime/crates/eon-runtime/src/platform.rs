@@ -65,7 +65,7 @@ pub(crate) struct Process {
 
 /// The pid and uid of the stream's peer.
 #[cfg(target_os = "linux")]
-pub(crate) fn peer_identity(stream: &UnixStream) -> Option<(libc::pid_t, libc::uid_t)> {
+pub(crate) fn peer_identity(stream: &UnixStream) -> io::Result<(libc::pid_t, libc::uid_t)> {
     let mut credentials: libc::ucred = unsafe { std::mem::zeroed() };
     let mut length = std::mem::size_of::<libc::ucred>() as libc::socklen_t;
     // SAFETY: credentials points to writable ucred storage of the declared length.
@@ -78,16 +78,21 @@ pub(crate) fn peer_identity(stream: &UnixStream) -> Option<(libc::pid_t, libc::u
             &raw mut length,
         )
     } == -1
-        || length as usize != std::mem::size_of::<libc::ucred>()
     {
-        return None;
+        return Err(io::Error::last_os_error());
     }
-    Some((credentials.pid, credentials.uid))
+    if length as usize != std::mem::size_of::<libc::ucred>() {
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidData,
+            "invalid peer credentials length",
+        ));
+    }
+    Ok((credentials.pid, credentials.uid))
 }
 
 /// The pid and uid of the stream's peer.
 #[cfg(target_os = "macos")]
-pub(crate) fn peer_identity(stream: &UnixStream) -> Option<(libc::pid_t, libc::uid_t)> {
+pub(crate) fn peer_identity(stream: &UnixStream) -> io::Result<(libc::pid_t, libc::uid_t)> {
     let mut pid: libc::pid_t = 0;
     let mut length = std::mem::size_of::<libc::pid_t>() as libc::socklen_t;
     // SAFETY: pid points to writable pid_t storage of the declared length.
@@ -100,16 +105,21 @@ pub(crate) fn peer_identity(stream: &UnixStream) -> Option<(libc::pid_t, libc::u
             &raw mut length,
         )
     } == -1
-        || length as usize != std::mem::size_of::<libc::pid_t>()
     {
-        return None;
+        return Err(io::Error::last_os_error());
+    }
+    if length as usize != std::mem::size_of::<libc::pid_t>() {
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidData,
+            "invalid peer process ID length",
+        ));
     }
     let (mut uid, mut gid) = (0, 0);
     // SAFETY: getpeereid fills both identities of the stream's peer.
     if unsafe { libc::getpeereid(stream.as_raw_fd(), &raw mut uid, &raw mut gid) } == -1 {
-        return None;
+        return Err(io::Error::last_os_error());
     }
-    Some((pid, uid))
+    Ok((pid, uid))
 }
 
 /// The process with `pid`, or `None` when no process has it.
