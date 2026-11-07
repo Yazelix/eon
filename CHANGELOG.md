@@ -5,6 +5,10 @@ installation, and proven contract changes.
 
 ## Unreleased
 
+- On macOS, `eon pane history` of a long history no longer risks failing as
+  unavailable after 2 s: the supervisor read Orbit's answer in time that grew
+  with the square of its size over macOS's 8 KiB socket pieces, and now reads
+  it in time that grows with its size (`eon-mac-launch-kz4p.56`).
 - An `eon` session command or `eon quit` that reaches a window of another
   EONW version now runs as that window's own `eon`, with the same arguments,
   input and output, instead of failing with a version error, while that

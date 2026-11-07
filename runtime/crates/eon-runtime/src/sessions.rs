@@ -1024,13 +1024,16 @@ fn advance_request(lease: &mut UnixStream, request: &mut LeaseRequest) -> ReplyP
         if start == length {
             return ReplyProgress::Complete;
         }
-        request.reply.resize(length, 0);
-        let read = lease.read(&mut request.reply[start..]);
-        request.reply.truncate(start + *read.as_ref().unwrap_or(&0));
-        match read {
-            Ok(0) => return ReplyProgress::Closed,
+        // Appends into spare capacity, so each byte is initialized once: a
+        // reply sized and zeroed per read costs quadratic time over a small
+        // socket buffer (8 KiB on macOS).
+        request.reply.reserve_exact(length - start);
+        match lease
+            .take((length - start) as u64)
+            .read_to_end(&mut request.reply)
+        {
+            Ok(_) if request.reply.len() < length => return ReplyProgress::Closed,
             Ok(_) => {}
-            Err(error) if error.kind() == std::io::ErrorKind::Interrupted => {}
             Err(error) if error.kind() == std::io::ErrorKind::WouldBlock => {
                 return ReplyProgress::WouldBlock;
             }

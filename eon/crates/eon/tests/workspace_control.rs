@@ -18,6 +18,7 @@ use std::{
     fs,
     io::{Read, Write},
     net::Shutdown,
+    os::fd::AsRawFd,
     os::unix::{
         ffi::OsStrExt,
         fs::{MetadataExt, OpenOptionsExt, PermissionsExt, symlink},
@@ -1631,6 +1632,23 @@ fn managed_orbit_helper() {
                                 // 2 s terminal deadline.
                                 if reply.trim() == "slow-history" {
                                     thread::sleep(Duration::from_millis(2500));
+                                }
+                                // A send buffer as small as macOS's 8 KiB, so the
+                                // supervisor reads `long-history` in as many pieces
+                                // here as there.
+                                if reply.trim() == "long-history" {
+                                    let size: libc::c_int = 8192;
+                                    // SAFETY: size is a live c_int of the length given.
+                                    let set = unsafe {
+                                        libc::setsockopt(
+                                            stream.as_raw_fd(),
+                                            libc::SOL_SOCKET,
+                                            libc::SO_SNDBUF,
+                                            (&raw const size).cast(),
+                                            size_of::<libc::c_int>() as libc::socklen_t,
+                                        )
+                                    };
+                                    assert_eq!(set, 0);
                                 }
                                 let (omitted_lines, cut_bytes, text) = match reply.trim() {
                                     "long-history" => (5, 0, "h\n".repeat(3 << 19) + "end"),
@@ -13272,27 +13290,23 @@ fn pane_history_prints_the_text_or_json_and_names_what_the_bound_left_out() {
         })
     );
     // An answer over EONW's general 2 MiB reaches the CLI whole; the notice
-    // goes to standard error, and only in human output. A debug build on macOS
-    // misses the 2 s answer bound for it while the supervisor waits in 1 ms
-    // sleeps (eon-mac-launch-kz4p.56).
-    if cfg!(not(all(target_os = "macos", debug_assertions))) {
-        fs::write(root.join("orbit-reply"), "long-history").unwrap();
-        let long = run(&["pane", "history", "p1"]);
-        assert_eq!(long.status.code(), Some(0));
-        assert!(long.stdout.len() > 2 * 1024 * 1024);
-        assert_eq!(long.stdout, ("h\n".repeat(3 << 19) + "end\n").into_bytes());
-        assert_eq!(
-            String::from_utf8_lossy(&long.stderr),
-            "eon: the history is over its 8 MiB bound; left out the 5 earliest lines\n"
-        );
-        let long = run(&["pane", "history", "p1", "--json"]);
-        assert_eq!(long.status.code(), Some(0));
-        assert!(long.stderr.is_empty());
-        assert_eq!(
-            (&json(&long)["omitted_lines"], &json(&long)["cut_bytes"]),
-            (&serde_json::json!(5), &serde_json::json!(0))
-        );
-    }
+    // goes to standard error, and only in human output.
+    fs::write(root.join("orbit-reply"), "long-history").unwrap();
+    let long = run(&["pane", "history", "p1"]);
+    assert_eq!(long.status.code(), Some(0));
+    assert!(long.stdout.len() > 2 * 1024 * 1024);
+    assert_eq!(long.stdout, ("h\n".repeat(3 << 19) + "end\n").into_bytes());
+    assert_eq!(
+        String::from_utf8_lossy(&long.stderr),
+        "eon: the history is over its 8 MiB bound; left out the 5 earliest lines\n"
+    );
+    let long = run(&["pane", "history", "p1", "--json"]);
+    assert_eq!(long.status.code(), Some(0));
+    assert!(long.stderr.is_empty());
+    assert_eq!(
+        (&json(&long)["omitted_lines"], &json(&long)["cut_bytes"]),
+        (&serde_json::json!(5), &serde_json::json!(0))
+    );
     fs::write(root.join("orbit-reply"), "cut-history").unwrap();
     let cut = run(&["pane", "history", "p1"]);
     assert_eq!((cut.status.code(), stdout(&cut)), (Some(0), "line\n"));
@@ -13848,7 +13862,7 @@ fn pane_send_pastes_then_waits_for_enter_and_exits_by_failure() {
 /// A pseudoterminal's controller and the device a child reads as stdin, both
 /// closed on exec.
 fn pseudo_terminal() -> (fs::File, std::os::fd::OwnedFd) {
-    use std::os::fd::{AsRawFd, FromRawFd, OwnedFd};
+    use std::os::fd::{FromRawFd, OwnedFd};
     let (mut leader, mut device) = (-1, -1);
     // SAFETY: openpty initializes both descriptors on success.
     let opened = unsafe {
