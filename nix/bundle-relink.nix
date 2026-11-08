@@ -16,7 +16,7 @@
 #
 # Each substitute ships a rebuild of a closure path under that path's name, for a
 # library the floor would otherwise reject.
-{ pkgs, eonPackage, wrappers, wrapperArgs, fallbacks }:
+{ pkgs, eonPackage, installer, wrappers, wrapperArgs, fallbacks }:
 let
   inherit (pkgs) lib;
   excluded = [ pkgs.glibc pkgs.mesa pkgs.wayland ];
@@ -59,9 +59,10 @@ let
     lib.attrValues (environment.set or { } // environment.setDefault or { })
     ++ lib.concatLists (lib.attrValues (environment.prefix or { }));
   # The compiled-in store paths the tree stands in for, which programs may still probe.
+  # Set-only locators have no compiled-in fallback and must never probe the host store.
   replaced =
     map (fallback: fallback.target) fallbacks
-    ++ lib.concatMap (wrapper: paths (wrapper.relocated or { })) wrappers;
+    ++ lib.concatMap (wrapper: paths ((wrapper.relocated or { }) // { set = { }; })) wrappers;
 
   # The launcher prefixes each store path with the tree root, so a value must be a store
   # path that needs no escaping in Rust and holds no separator.
@@ -135,6 +136,8 @@ let
       )} \
       ${lib.concatMapStrings ({ original, replacement }: "--substitute ${original}=${replacement} ") substitutes} \
       --glibc-floor ${glibcFloor} "''${hostLibraries[@]}" "$out"
+    # The static bootstrap ships unchanged; only its launcher-supplied locator relocates.
+    cp -a ${installer} "$out${installer}"
     ${lib.concatMapStrings ({ link, target }: ''
       ln -s "$(realpath -s -m --relative-to="$out${dirOf link}" "$out${target}")" "$out${link}"
       test -d "$out${link}/"

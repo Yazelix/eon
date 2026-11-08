@@ -181,9 +181,70 @@ fn checksums_reject_ambiguous_bindings_and_arguments_reject_invalid_requests() {
         vec!["rollback", "invalid", "--dry-run"],
         vec!["remove", "--prefix", "relative"],
         vec!["install", "http://host/a.tar.zst", "--signers", "keys"],
+        vec![
+            "install",
+            "https://host/eon-0.1.21-x86_64-linux.tar.zst",
+            "--signers",
+            "relative",
+        ],
     ] {
         assert!(options(args.into_iter().map(Into::into)).is_err());
     }
+}
+
+#[test]
+fn missing_signer_refuses_before_download_or_prefix_creation() {
+    let temp = tempfile::tempdir().unwrap();
+    let prefix = temp.path().join("prefix");
+    let mut invalid = vec![temp.path().join("missing"), temp.path().to_path_buf()];
+    for (name, text) in [
+        ("empty", ""),
+        ("garbage", "garbage\n"),
+        ("invalid-key", "eon-release ssh-ed25519 garbage\n"),
+    ] {
+        let signers = temp.path().join(name);
+        fs::write(&signers, text).unwrap();
+        invalid.push(signers);
+    }
+    if fs::metadata("/proc/self").unwrap().uid() != 0 {
+        let signers = temp.path().join("unreadable");
+        fs::write(&signers, "eon-release ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIBMTxGb8xY/l3DZByI/WsCKqDrCqpmbdbA+WnNoPkbdW test\n").unwrap();
+        assert!(
+            Command::new("ssh-keygen")
+                .args(["-Y", "match-principals", "-I", "eon-release", "-f"])
+                .arg(&signers)
+                .status()
+                .unwrap()
+                .success()
+        );
+        fs::set_permissions(&signers, fs::Permissions::from_mode(0o000)).unwrap();
+        invalid.push(signers);
+    }
+    for signers in invalid {
+        let error = install(
+            &prefix,
+            "https://proof.invalid/eon-0.1.21-x86_64-linux.tar.zst",
+            &signers,
+            false,
+        )
+        .unwrap_err();
+        assert!(
+            error.to_string().contains("independently trusted"),
+            "{error}"
+        );
+        assert!(!prefix.exists());
+    }
+    let error = options(
+        [
+            "install",
+            "https://proof.invalid/eon-0.1.21-x86_64-linux.tar.zst",
+        ]
+        .into_iter()
+        .map(Into::into),
+    )
+    .err()
+    .unwrap();
+    assert!(error.to_string().contains("--signers"), "{error}");
 }
 
 #[test]

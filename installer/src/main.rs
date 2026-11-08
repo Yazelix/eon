@@ -10,6 +10,7 @@ use std::{
 };
 
 const MARKER: &str = "eon-install-v1\n";
+const SIGNERS_REQUIRED: &str = "provide --signers /ABS/ALLOWED_SIGNERS from an independently trusted release key; a key downloaded with the archive does not establish trust";
 const HELP: &str =
     "Usage: eon-install install HTTPS_ARCHIVE --signers ALLOWED_SIGNERS [--prefix DIR] [--dry-run]
        eon-install rollback SHA256 [--prefix DIR] [--dry-run]
@@ -322,6 +323,32 @@ fn checksum(text: &str, filename: &str) -> io::Result<String> {
 
 fn install(prefix: &Path, url: &str, signers: &Path, dry_run: bool) -> io::Result<()> {
     let (base, filename, root) = release(url)?;
+    let invalid_signers = || {
+        invalid(format!(
+            "signer record is missing, unreadable or invalid for eon-release ({}); {SIGNERS_REQUIRED}",
+            signers.display()
+        ))
+    };
+    if !fs::metadata(signers).is_ok_and(|metadata| metadata.is_file()) {
+        return Err(invalid_signers());
+    }
+    let parsed = Command::new("ssh-keygen")
+        .args(["-Y", "match-principals", "-I", "eon-release", "-f"])
+        .arg(signers)
+        .stdin(Stdio::null())
+        .stdout(Stdio::null())
+        .output()
+        .map_err(|error| match error.kind() {
+            io::ErrorKind::NotFound => invalid("ssh-keygen missing; install OpenSSH 8.9+"),
+            _ => invalid(format!("cannot run ssh-keygen: {error}")),
+        })?;
+    if parsed.stderr.starts_with(b"Unsupported operation for -Y:") {
+        return Err(invalid("this ssh-keygen is too old (needs OpenSSH 8.9+)"));
+    }
+    io::stderr().write_all(&parsed.stderr)?;
+    if !parsed.status.success() {
+        return Err(invalid_signers());
+    }
     let downloads = tempfile::tempdir()?;
     for name in ["SHA256SUMS", "SHA256SUMS.sig"] {
         download(&format!("{base}/{name}"), &downloads.path().join(name))?;
@@ -426,8 +453,7 @@ fn options(args: impl IntoIterator<Item = std::ffi::OsString>) -> io::Result<Opt
             }
             Some("--signers") if signers.is_none() => {
                 signers = Some(PathBuf::from(
-                    args.next()
-                        .ok_or_else(|| invalid("missing signer record"))?,
+                    args.next().ok_or_else(|| invalid(SIGNERS_REQUIRED))?,
                 ))
             }
             Some("--dry-run") if !dry_run => dry_run = true,
@@ -435,11 +461,21 @@ fn options(args: impl IntoIterator<Item = std::ffi::OsString>) -> io::Result<Opt
             _ => return Err(invalid("invalid argument; use --help")),
         }
     }
+    if positions
+        .first()
+        .is_some_and(|command| command == "install")
+        && signers.is_none()
+    {
+        return Err(invalid(SIGNERS_REQUIRED));
+    }
     let valid = matches!(positions.as_slice(), [command, _] if command == "install" && signers.is_some())
         || matches!(positions.as_slice(), [command, _] if command == "rollback" && signers.is_none())
         || matches!(positions.as_slice(), [command] if command == "remove" && signers.is_none());
     if !valid {
         return Err(invalid("invalid command; use --help"));
+    }
+    if signers.as_ref().is_some_and(|path| !path.is_absolute()) {
+        return Err(invalid(SIGNERS_REQUIRED));
     }
     if positions[0] == "install" {
         release(&positions[1])?;

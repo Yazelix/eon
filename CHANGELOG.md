@@ -5,6 +5,11 @@ installation, and proven contract changes.
 
 ## Unreleased
 
+- Direct Linux payloads carry the static trusted installer and the versioned
+  source receipt, with an exact installer path that follows payload relocation.
+  A missing signer record refuses installation before any download or prefix
+  creation; independent signer setup and host OpenSSH 8.9+ are required
+  (`eon-update-button-f10d1.5`).
 - `eon-bench memory` measures display-free server, empty/filled terminal and
   native reference-client PSS for Eon, Nix-pinned tmux and Zellij, with
   isolated processes, raw PSS/RSS/anonymous-PSS evidence and median/p05–p95

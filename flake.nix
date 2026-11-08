@@ -1106,14 +1106,17 @@
                 --set-default EON_BENCH_KITTEN ${pkgs.kitty.kitten}/bin/kitten
             '';
           };
+          installerPackage = import ./nix/installer.nix { inherit pkgs; };
           bundleRelink = import ./nix/bundle-relink.nix {
             inherit pkgs eonPackage wrapperArgs;
+            installer = installerPackage;
             wrappers = [
               {
                 program = "${eonPackage}/bin/eon";
                 environment = eonEnvironment "${eonPackage}";
                 # Bash's ncurses for terminal types other than Orbit's.
                 relocated.prefix.TERMINFO_DIRS = [ "${pkgs.ncurses}/share/terminfo" ];
+                relocated.set.EON_INSTALLER = "${installerPackage}/bin/eon-install";
               }
               {
                 program = "${venusPackage}/bin/yazelix-venus";
@@ -1176,9 +1179,9 @@
             bench = benchPackage;
             helix-grammar-sources = helix.packages.${system}.grammar-sources;
           } // lib.optionalAttrs pkgs.stdenv.isLinux rec {
-            installer = import ./nix/installer.nix { inherit pkgs; };
+            installer = installerPackage;
             manual-bundle = import ./nix/linux-bundle.nix {
-              inherit pkgs eonPackage;
+              inherit pkgs eonPackage eonProduct installer;
               relink = bundleRelink;
               manifestFile = ./components/eon-v5.json;
               lockFile = ./flake.lock;

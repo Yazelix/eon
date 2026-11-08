@@ -7,8 +7,9 @@ Normal installation remains Nix-based.
 
 The target is x86_64 Linux on native Wayland, with the bundle's documented
 [host prerequisites](MANUAL-BUNDLE.md#execution-and-host-boundary).
-Installation also requires host `curl` with HTTPS and OpenSSH `ssh-keygen`
-supporting `-Y verify`.
+Installation also requires host `curl` with HTTPS and OpenSSH 8.9 or newer `ssh-keygen`
+supporting `-Y match-principals` and `-Y verify`.
+Missing or older `ssh-keygen` gets its own prerequisite error before downloads.
 Install and rollback use host GNU coreutils `timeout` to bound the packaged
 check and kill its entire process group if it hangs. Rust, Nix, tar and zstd
 commands are unnecessary on the target machine.
@@ -26,6 +27,24 @@ and its OpenSSH `SHA256SUMS.sig` in the same release directory. Obtain the
 approved `allowed_signers` record independently of those downloaded files.
 It must authorize identity `eon-release` in signature namespace `eon-bundle`.
 An accompanying downloaded public key alone is not a trust anchor.
+
+Create the signer record only after authenticating the release public key through
+an independent trusted channel. For example, with that authenticated key saved
+as `TRUSTED_RELEASE_KEY.pub`:
+
+```sh
+mkdir -p "$HOME/.config/eon"
+{ printf 'eon-release namespaces="eon-bundle" '; cat TRUSTED_RELEASE_KEY.pub; } \
+  > "$HOME/.config/eon/allowed_signers"
+chmod 600 "$HOME/.config/eon/allowed_signers"
+```
+
+Pass its absolute path as `--signers "$HOME/.config/eon/allowed_signers"`.
+The installer requires an absolute signer path and refuses a missing, unreadable,
+empty or invalid signer file before downloading anything or creating a prefix.
+OpenSSH parses the record and checks for `eon-release`; signature verification
+still authorizes the downloaded checksums. This setup never downloads or trusts a key
+alongside the archive; Lucca holds the release signing key.
 
 For a future approved release, replace `HTTPS_ARCHIVE` and `ALLOWED_SIGNERS`
 below with that exact HTTPS URL and your trusted local signer record:
@@ -51,6 +70,34 @@ directory without its ownership marker and preserves conflicting commands.
 
 Run `PREFIX/bin/eon`, or add `PREFIX/bin` to PATH yourself. The installer writes
 no shell startup file or desktop entry and does not replace a Nix profile.
+
+## Installer inside a payload
+
+Direct payloads carry the same static installer bytes as the release's separate
+bootstrap. Eon's bundle launcher sets `EON_INSTALLER` to that payload's exact
+`nix/store/…-eon-install-…/bin/eon-install`, recalculated from the launcher's
+own location. It replaces any inherited value; no PATH search, Nix invocation
+or checkout lookup locates the installer after relocation. The bundled
+installer still uses the host prerequisites above.
+
+The payload also carries `share/eon-source-receipt.json` next to the packaged
+Eon's `bin` directory. Its EON-C41 schema-1 fields bind repository, source
+revision (null for dirty/unknown source), build and platform; `attribute` is
+null for this direct channel. `provenance.json` records the installer producer
+output alongside the existing composition inputs. Installation adds the
+versioned `.eon-source` record with `eon-install-v1`, the archive SHA-256 and
+exact URL. Neither receipt establishes trust or prefix ownership on its own.
+
+Automatic direct updates remain planned in `eon-update-button-f10d1.6` and
+`.7`. Their `updates.allowed_signers` setting takes the same absolute signer
+file path shown above; Runtime will resolve it and the product helper will
+pass it to this installer as `--signers`, with the exact URL and validated
+prefix. That setting and `eon update --prefix` are not supported yet. An unset
+signer must refuse automatic installation with setup instructions. The helper
+must validate the owned prefix/selector/receipt chain before using its bundled
+installer; the environment locator alone grants no ownership, even when inherited
+from a bundled supervisor by a Nix executable. Payloads without
+the bundled helper remain manual, with no PATH fallback or bootstrap download.
 
 ## Release assets
 

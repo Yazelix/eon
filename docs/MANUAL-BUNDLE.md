@@ -20,6 +20,10 @@ bundle while stopped; keep the selected payload while terminals use it.
 Configuration, state and sockets follow the existing [rules](CONFIGURATION.md)
 outside the payload.
 
+The [installer](INSTALLER.md) additionally needs host `curl` with HTTPS,
+OpenSSH 8.9 or newer `ssh-keygen` for signer-file preflight and signature
+verification, and GNU coreutils `timeout` for the packaged check.
+
 The payload is Eon's Nix closure relinked at build time to run on the host's
 glibc. Every dynamically linked program's interpreter is the x86-64 psABI
 loader `/lib64/ld-linux-x86-64.so.2`, library search paths are relative to each
@@ -76,7 +80,7 @@ removed. Its accompanying public key alone supplies no release authority.
 Lucca's approved release trust anchor remains a publication prerequisite.
 
 Inside the archive, `component-manifest.json` and `flake.lock` are exact
-producer inputs. `provenance.json` schema 2 binds their SHA-256 values, the
+producer inputs. `provenance.json` schema 3 binds their SHA-256 values, the
 composed package and the target. Its `relink` entry records the glibc floor,
 the excluded glibc, Mesa and Wayland store paths, and each substituted path with
 the rebuild whose files ship under its name. ncurses is the one substitute: the
@@ -85,8 +89,21 @@ it runs on older glibc. The composed package path binds the in-tree Orbit,
 Venus, runtime and Eon sources. `closure-paths.txt` lists the store paths the
 payload ships; the rest of the package's closure is what the exclusions
 removed. Relinking patches the shipped files, so these paths name each file's
-origin, not its bytes. The payload holds no absolute symlink. These receipts
-consume the canonical graph rather than selecting components independently.
+origin, not its bytes. Archive assembly additionally writes the composition's
+`share/eon-source-receipt.json` beside the packaged Eon's `bin`; that receipt is
+not a file from the relinked package origin. The payload holds no absolute
+symlink. These receipts consume the canonical graph rather than selecting
+components independently.
+
+The payload includes the static `eon-install` from the same source revision;
+`provenance.json` names its producer output and `closure-paths.txt` includes it.
+Its bytes match the separate release bootstrap. The existing bundle launcher
+supplies Eon's product helper with its exact relocated `EON_INSTALLER` path,
+replacing inherited values without a PATH lookup. The packaged Eon's `share`
+directory carries the schema-1 `eon-source-receipt.json` (EON-C41), with the
+producer's repository/revision/build/platform and a null direct-channel
+`attribute`. The [installer guide](INSTALLER.md#installer-inside-a-payload)
+describes independent signer setup and the planned automatic-update consumer.
 
 ## Retained development proof
 

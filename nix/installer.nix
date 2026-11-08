@@ -16,6 +16,7 @@ pkgs.pkgsStatic.rustPlatform.buildRustPackage {
   src = source;
   cargoLock.lockFile = ../installer/Cargo.lock;
   nativeBuildInputs = [ pkgs.binutils ];
+  nativeCheckInputs = [ pkgs.openssh ];
   postInstall = ''
     headers=$(readelf -l "$out/bin/eon-install")
     if [[ "$headers" == *INTERP* ]]; then
