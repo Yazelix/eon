@@ -99,9 +99,8 @@ eon update --check
 It finds the installation the `eon` you ran came from, reads its source from
 Nix, asks GitHub where that source is now, and prints the owner, the source,
 the installed build, whether an update exists, and whether Eon may update
-that installation, with the command to run. Eon cannot install the update
-itself yet: `eon update --install` is not in this build, so run the printed
-command. The check changes nothing; `--json` prints the same facts as one
+that installation, with the command to run. The check changes nothing;
+`--json` prints the same facts as one
 object (EON-C41). It checks only when you run it.
 
 - A `main` or `edge` profile entry gets an answer from GitHub. A newer
@@ -121,14 +120,43 @@ installed build to its revision. An older build reports its provenance as
 unknown: it is never current and never shown an update as available until it
 is upgraded once.
 
-Update a `main` or `edge` install with:
+Update a validated `main` or `edge` profile entry with upstream or Determinate
+Nix 2.21 or later. Lix and other implementations are unsupported; integer and
+absolute-path entry names are refused because Nix can interpret them as selectors:
 
 ```sh
-nix profile upgrade --refresh eon
+eon update --install --profile ~/.nix-profile --entry eon
 ```
 
-Then open a new window. Windows already running keep their version until you
-close them. A tag install never updates; move it to `main` once with:
+Eon displays the exact profile, entry and source before asking. A decline or
+EOF cancels. For an agent or JSON caller, use `--yes` with that explicit target
+or configure `updates.nix_profile` and `updates.nix_entry`. `--yes` always requires
+one of those targets, even at a terminal; a discovered target alone is refused.
+Interactive confirmation requires stdin to name the controlling terminal. If
+its device cannot be opened or its identity verified, Install fails with
+`not-confirmed` without reading an answer.
+A custom profile or
+renamed entry uses its actual path/name. Only that entry is upgraded on its
+original ref; a failed build is reported with its actual selected state.
+An already current eligible entry succeeds unchanged. No channel switching,
+remove/add, retry, garbage collection or live adoption runs.
+
+Nix progress goes to stderr; JSON stdout contains one final result, including
+`selection` with the actual selected build/source after failure or cancellation.
+Ctrl+C, SIGTERM, SIGHUP and SIGQUIT terminate only helper-owned children,
+with a fixed five-second grace;
+cancellation cannot promise rollback. Eon serializes its own operations per
+resolved profile and rechecks its displayed source/entry/generation immediately
+before mutation. Nix owns selection and its transaction lock; an external writer
+can still race after that recheck. A detected change before mutation is refused
+with `target-changed`; a source change observed after Nix ran is a failure with
+`source-changed` and the observed selection. A changed unrelated entry also fails
+selection read-back.
+
+For builds whose provenance is unknown, update manually once with
+`nix profile upgrade --refresh eon`. Then use the reported profile launcher for
+fresh launches. Windows already running keep their build, terminals and layout;
+installation never stops or restarts them. A tag install never updates; move it to `main` once with:
 
 ```sh
 nix profile remove eon
@@ -604,6 +632,7 @@ line points agents to `eon --skill`.
 | `eon popup hide POPUP [--json]` | Hide popup `uN` of the session as its window's dismissal would: a keep-alive popup keeps running, a transient one stops, and a pending tab's Files starts the tab's first terminal at its starting directory |
 | `eon focus ID\|left\|right\|up\|down [--json]` | Focus a stable identity or traverse the session |
 | `eon versions` | Print Eon, protocol, and component identities |
+| `eon update --install [--yes] [--json] [--profile ABS --entry NAME]` | Upgrade one eligible Nix profile entry on its original ref for fresh launches; JSON/nonterminal consent requires an explicit or configured target; see [Update](#update) |
 | `eon update --check [--json] [--profile ABS --entry NAME]` | Report this installation's owner, source and installed build, whether an update exists, and whether Eon may install it, without changing anything; see [Update](#update) |
 | `eon config path` | Create the configuration root and print the full path of its settings file, `config.toml`, which need not exist yet |
 | `eon config dir` | Create and print the configuration root |
@@ -912,9 +941,16 @@ with `codex --no-daemon`.
 | 130 | Interrupted with Ctrl+C |
 
 The `code` in an `error` result, such as `unknown-tab`, names the failure more
-precisely. `eon update --check` exits 0 once it has checked, even when it
-reports that Eon may not install the update; 1 when GitHub could not answer;
-2 for invalid arguments; and 3 when the named profile or entry does not exist. `eon quit --all` and `eon window stop previous|all` exit with the
+precisely. `eon update --install` exits 0 for installed, unchanged or a human
+decline; 1 for failed checks/builds/selection, invalid configuration or absent
+noninteractive confirmation; 2 for invalid arguments; 3 for a missing target;
+4 for a typed refusal; and 130 for a handled interrupt. It reports the actual
+selection after failures and cancellation. `eon update --check` exits 0 once
+it has checked, even when it reports that Eon may not install the update;
+1 when GitHub could not answer; 2 for invalid arguments; 3 when the named
+profile or entry does not exist; and 130 for a handled interrupt. Both modes
+stop their owned helper processes when interrupted.
+`eon quit --all` and `eon window stop previous|all` exit with the
 largest status among their attempts. `eon window attach|stop ID` exits with
 the selected window's status, and `eon window attach ID` exits 4 once that
 window has ended. An `eon window attach` that runs the `eon` of another build

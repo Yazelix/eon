@@ -5,6 +5,15 @@ installation, and proven contract changes.
 
 ## Unreleased
 
+- `eon update --install [--yes] [--json]` upgrades one validated official
+  `main`/`edge` Nix profile entry on its own ref and attribute, with target
+  confirmation, revalidation and actual selected-build reporting after failure
+  or cancellation. `updates.nix_profile`/`updates.nix_entry` configure the target;
+  JSON and nonterminal callers require `--yes` and an explicit/configured target.
+  Both update modes clean up their helper processes on interruption.
+  Running windows retain their builds, terminals and layout
+  (`eon-update-button-f10d1.3`, EON-C41).
+
 - Ctrl+click on an unchanged terminal link keeps working while agent status
   updates in the sidebar, in panes and popups. The pointer shows a hand over
   links only while Ctrl is held (Command on macOS; `eon-ctrl-click-links-n8uar`).
@@ -35,7 +44,7 @@ installation, and proven contract changes.
   checks fail rather than report a guess. `--profile ABS --entry NAME` names
   one profile entry. The Nix package carries a source receipt tying the
   build to its revision; builds without one never report an update as
-  available. Installing stays manual until `eon update --install`
+  available.
   (`eon-update-button-f10d1.2`, EON-C41).
 - Agents sidebar rows use a pane's pinned name ahead of the agent's own name,
   keeping the app icon. The attention inbox does the same for panes in the shown

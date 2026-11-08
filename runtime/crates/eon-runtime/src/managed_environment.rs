@@ -39,6 +39,7 @@ struct EonConfig {
     sidebar: SidebarSettings,
     agents: AgentSettings,
     editor: EditorSettings,
+    updates: UpdateSettings,
     popups: BTreeMap<String, PopupEntrySettings>,
     #[serde(flatten)]
     unknown: BTreeMap<String, toml::Value>,
@@ -64,6 +65,7 @@ impl EonConfig {
             ("sidebar.", &self.sidebar.unknown),
             ("agents.", &self.agents.unknown),
             ("editor.", &self.editor.unknown),
+            ("updates.", &self.updates.unknown),
         ] {
             keys.extend(unknown.keys().map(|key| format!("{prefix}{key}")));
         }
@@ -72,6 +74,35 @@ impl EonConfig {
         }
         keys.sort();
         keys
+    }
+}
+
+#[derive(Debug, Default, Deserialize)]
+#[serde(default)]
+struct UpdateSettings {
+    nix_profile: Option<PathBuf>,
+    nix_entry: Option<String>,
+    #[serde(flatten)]
+    unknown: BTreeMap<String, toml::Value>,
+}
+
+/// The configured installation target, read without preparing directories or a window.
+/// The product update helper owns its package-manager policy.
+pub fn update_target(defaults: &Defaults) -> Result<Option<(PathBuf, String)>, String> {
+    if ["EON_CONFIG_HOME", "XDG_CONFIG_HOME", "HOME"]
+        .iter()
+        .all(|name| nonempty_environment_path(name).is_none())
+    {
+        return Ok(None);
+    }
+    let root = super::supervisor::configuration_directory()?;
+    let settings = read_config(&root, defaults, None)?.updates;
+    match (settings.nix_profile, settings.nix_entry) {
+        (None, None) => Ok(None),
+        (Some(profile), Some(entry)) if profile.is_absolute() && !entry.is_empty() => {
+            Ok(Some((profile, entry)))
+        }
+        _ => Err("updates.nix_profile and updates.nix_entry require an absolute profile path and a nonempty entry name together".into()),
     }
 }
 
@@ -681,9 +712,11 @@ pub(crate) fn print_defaults(defaults: &Defaults, json: bool) -> Result<String, 
             "terminal_access": defaults.terminal_access,
         },
         "editor": { "command": defaults.editor },
+        "updates": {},
         "popups": popups,
     });
     if json {
+        config.as_object_mut().unwrap().remove("updates");
         config["terminal"]
             .as_object_mut()
             .unwrap()
@@ -695,7 +728,7 @@ pub(crate) fn print_defaults(defaults: &Defaults, json: bool) -> Result<String, 
     let mut output =
         String::from("# Built-in defaults. Unset and Eon-owned settings remain omitted.\n");
     for section in [
-        "bar", "terminal", "shell", "anima", "session", "sidebar", "agents", "editor",
+        "bar", "terminal", "shell", "anima", "session", "sidebar", "agents", "editor", "updates",
     ] {
         defaults_table(&mut output, section, &config[section])?;
     }
@@ -710,6 +743,10 @@ fn defaults_table(
     section: &str,
     settings: &serde_json::Value,
 ) -> Result<(), String> {
+    if section == "updates" {
+        output.push_str("\n# [updates]\n# nix_profile: unset. Absolute profile path; set with nix_entry.\n# nix_entry: unset. Exact profile entry name; set with nix_profile.\n");
+        return Ok(());
+    }
     output.push_str(&format!("\n[{section}]\n"));
     if section == "popups.project" {
         output.push_str("# Project is required and shows the tab's Files on quick search.\n");

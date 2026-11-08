@@ -932,6 +932,10 @@ const HELP_SECTIONS: &[(&str, &[(&str, &str)])] = &[
                 "update --check --profile ABS --entry NAME",
                 "Check that profile entry",
             ),
+            (
+                "update --install [--yes] [--json]",
+                "Upgrade one Nix profile entry",
+            ),
             ("config path", "Create the config root and print"),
             ("", "its config.toml path"),
             ("config dir", "Create and print the config root"),

@@ -13,7 +13,7 @@ fn main() -> ExitCode {
             revision: None,
             platform: eon_manifest::target().map(Into::into),
         };
-        return ExitCode::from(update::run(&arguments, invoked));
+        return ExitCode::from(update::run(&arguments, invoked, &inputs.defaults));
     }
     let (product, result) = eon_runtime::run(inputs);
     match result {

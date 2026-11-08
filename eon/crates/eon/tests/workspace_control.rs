@@ -3404,6 +3404,16 @@ fn update_check_reports_a_profile_entry_as_one_json_object_without_changing_it()
     assert_eq!(discovered["invoked"]["revision"], old);
     assert_eq!(discovered["availability"]["state"], "available");
 
+    let output = eon_command(binary)
+        .args(["update", "--check", "--json"])
+        .env_remove("HOME")
+        .env_remove("XDG_CONFIG_HOME")
+        .env_remove("EON_CONFIG_HOME")
+        .stdin(Stdio::null())
+        .output()
+        .unwrap();
+    assert_eq!(report(&output)["capability"]["reason"], "install-ambiguous");
+
     // A personal symlink to the profile's launcher still runs through the profile.
     fs::create_dir_all(root.join("home/.local/bin")).unwrap();
     symlink(
@@ -3425,6 +3435,557 @@ fn update_check_reports_a_profile_entry_as_one_json_object_without_changing_it()
     );
     assert_eq!(output.status.code(), Some(0), "{output:?}");
     assert_eq!(report(&output)["install_kind"], "unmanaged");
+
+    // Install binds consent to the exact name and source and reads back the manager result.
+    let selected_b = root.join("store/eon-b");
+    fs::create_dir_all(selected_b.join("bin")).unwrap();
+    fs::create_dir_all(selected_b.join("share")).unwrap();
+    fs::copy(binary, selected_b.join("bin/eon")).unwrap();
+    let mut receipt_b: serde_json::Value =
+        serde_json::from_slice(&fs::read(package.join("share/eon-source-receipt.json")).unwrap())
+            .unwrap();
+    receipt_b["revision"] = new.clone().into();
+    receipt_b["build"] = "g1-bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb".into();
+    fs::write(
+        selected_b.join("share/eon-source-receipt.json"),
+        receipt_b.to_string(),
+    )
+    .unwrap();
+    let environment_b = root.join("store/profile-env-b");
+    fs::create_dir_all(environment_b.join("bin")).unwrap();
+    fs::write(environment_b.join("manifest.json"), "{}").unwrap();
+    symlink(selected_b.join("bin/eon"), environment_b.join("bin/eon")).unwrap();
+    symlink(&environment_b, root.join("profiles/profile-2-link")).unwrap();
+    let mut install_a = listing.clone();
+    let mut entry = install_a["elements"]
+        .as_object_mut()
+        .unwrap()
+        .remove("eon")
+        .unwrap();
+    install_a["elements"]["eon+x"] = entry.clone();
+    install_a["elements"]["eonx"] =
+        serde_json::json!({"storePaths": [], "active": true, "priority": 7});
+    entry["url"] = format!("github:Yazelix/eon/{new}?narHash=sha256-b").into();
+    entry["storePaths"] = serde_json::json!([selected_b]);
+    let mut install_b = install_a.clone();
+    install_b["elements"]["eon+x"] = entry;
+    fs::write(root.join("before.json"), install_a.to_string()).unwrap();
+    fs::write(root.join("after.json"), install_b.to_string()).unwrap();
+    fs::write(root.join("listing.json"), install_a.to_string()).unwrap();
+    let install = [
+        "--install".as_ref(),
+        "--json".as_ref(),
+        "--yes".as_ref(),
+        "--profile".as_ref(),
+        profile.as_os_str(),
+        "--entry".as_ref(),
+        "eon+x".as_ref(),
+    ];
+    executable(
+        &stubs.join("nix"),
+        format!(
+            r#"#!/bin/sh
+case "$1 $2" in
+  '--version ') if [ -f '{r}/nix-version' ]; then cat '{r}/nix-version'; else echo 'nix (Nix) 2.34.1'; fi; exit ;;
+  'profile list') if [ "$(cat '{r}/mode')" = read-cancel ]; then echo $$ > '{r}/read-manager-pid'; exec sleep 30; fi; cat '{r}/listing.json'; exit ;;
+  'profile upgrade')
+    printf '%s\n' "$@" > '{r}/upgrade-argv'
+    echo 'manager output goes to stderr'
+    case "$(cat '{r}/mode')" in
+      fail) echo 'build failed' >&2; exit 1 ;;
+      cancel) trap '' TERM; sleep 30 & echo $! > '{r}/sleep-pid'; echo $$ > '{r}/manager-pid'; wait ;;
+      hard-kill) echo $$ > '{r}/manager-pid'; exec sleep 30 ;;
+      unreadable) rm '{r}/listing.json'; exit 1 ;;
+    esac
+    cp '{r}/after.json' '{r}/listing.json'
+    ln -sfn profile-2-link '{p}'
+    if [ "$(cat '{r}/mode')" = late-fail ]; then exit 1; fi ;;
+  *) exit 99 ;;
+esac
+"#,
+            r = root.display(),
+            p = profile.display()
+        ),
+    );
+    fs::write(root.join("mode"), "success").unwrap();
+    let without_yes = install
+        .iter()
+        .copied()
+        .filter(|word| *word != OsStr::new("--yes"))
+        .collect::<Vec<_>>();
+    let output = check(binary, &without_yes);
+    assert_eq!(
+        report(&output)["error"]["code"],
+        "not-confirmed",
+        "{output:?}"
+    );
+    let prompt = without_yes
+        .iter()
+        .copied()
+        .filter(|word| *word != OsStr::new("--json"))
+        .collect::<Vec<_>>();
+    for ending in [
+        "decline",
+        "interrupt",
+        "stopped",
+        "kill",
+        "no-controlling-terminal",
+        "different-terminal",
+        "unreadable-terminal",
+    ] {
+        let (mut leader, device) = pseudo_terminal();
+        if ending == "unreadable-terminal" {
+            assert_eq!(unsafe { libc::fchmod(device.as_raw_fd(), 0) }, 0);
+        }
+        let mut other = (ending == "different-terminal").then(pseudo_terminal);
+        let controlling = other
+            .as_ref()
+            .map_or(libc::STDIN_FILENO, |(_, device)| device.as_raw_fd());
+        if let Some((leader, _)) = other.as_mut() {
+            leader.write_all(b"y\n").unwrap();
+        }
+        let flags = unsafe { libc::fcntl(device.as_raw_fd(), libc::F_GETFL) };
+        assert_eq!(flags & libc::O_NONBLOCK, 0);
+        let mut command = eon_command(binary);
+        command
+            .arg("update")
+            .args(&prompt)
+            .env("PATH", std::env::join_paths(&path).unwrap())
+            .env("HOME", root.join("home"))
+            .env("EON_CONFIG_HOME", root.join("absent-config"))
+            .env("EON_CURL", &curl)
+            .stdin(Stdio::from(device.try_clone().unwrap()))
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped());
+        // Only this private PTY becomes the child's controlling terminal.
+        unsafe {
+            command.pre_exec(move || {
+                if libc::setsid() == -1 {
+                    return Err(std::io::Error::last_os_error());
+                }
+                if ending != "no-controlling-terminal"
+                    && libc::ioctl(controlling, libc::TIOCSCTTY, 0) == -1
+                {
+                    return Err(std::io::Error::last_os_error());
+                }
+                Ok(())
+            });
+        }
+        let mut child = ManagedChild(command.spawn().unwrap());
+        let mut err = child.0.stderr.take().unwrap();
+        let mut diagnostics = Vec::new();
+        let deadline = Instant::now() + Duration::from_secs(10);
+        if !matches!(ending, "no-controlling-terminal" | "different-terminal") {
+            while !diagnostics.ends_with(b"[y/N] ") {
+                assert!(Instant::now() < deadline, "no question: {diagnostics:?}");
+                let mut polled = libc::pollfd {
+                    fd: err.as_raw_fd(),
+                    events: libc::POLLIN,
+                    revents: 0,
+                };
+                if unsafe { libc::poll(&mut polled, 1, 100) } > 0 {
+                    let mut bytes = [0; 256];
+                    let count = err.read(&mut bytes).unwrap();
+                    assert!(count > 0, "helper exited before question: {diagnostics:?}");
+                    diagnostics.extend_from_slice(&bytes[..count]);
+                }
+            }
+            if ending == "stopped" {
+                unsafe {
+                    libc::kill(child.0.id() as i32, libc::SIGSTOP);
+                }
+            }
+            for _ in 0..10 {
+                assert_eq!(
+                    unsafe { libc::fcntl(device.as_raw_fd(), libc::F_GETFL) },
+                    flags,
+                    "{ending}: inherited stdin flags changed during prompt"
+                );
+                thread::sleep(Duration::from_millis(20));
+            }
+            match ending {
+                "interrupt" => unsafe {
+                    libc::kill(child.0.id() as i32, libc::SIGINT);
+                },
+                "kill" => child.0.kill().unwrap(),
+                _ => {
+                    if ending == "stopped" {
+                        unsafe {
+                            libc::kill(child.0.id() as i32, libc::SIGCONT);
+                        }
+                    }
+                    leader.write_all(b"n\n").unwrap();
+                }
+            }
+        }
+        let status = loop {
+            if let Some(status) = child.0.try_wait().unwrap() {
+                break status;
+            }
+            assert!(Instant::now() < deadline, "{ending}: helper did not finish");
+            thread::sleep(Duration::from_millis(10));
+        };
+        assert_eq!(
+            unsafe { libc::fcntl(device.as_raw_fd(), libc::F_GETFL) },
+            flags,
+            "{ending}: inherited stdin flags changed after exit"
+        );
+        let mut bytes = Vec::new();
+        child
+            .0
+            .stdout
+            .take()
+            .unwrap()
+            .read_to_end(&mut bytes)
+            .unwrap();
+        err.read_to_end(&mut diagnostics).unwrap();
+        let output = Output {
+            status,
+            stdout: bytes,
+            stderr: diagnostics,
+        };
+        match ending {
+            "kill" => assert_eq!(status.signal(), Some(libc::SIGKILL)),
+            "no-controlling-terminal" | "different-terminal" => {
+                assert_eq!(status.code(), Some(1), "{output:?}");
+                assert!(
+                    String::from_utf8_lossy(&output.stderr).contains("controlling terminal"),
+                    "{output:?}"
+                );
+                assert!(!output.stderr.windows(6).any(|word| word == b"[y/N] "));
+            }
+            _ => {
+                assert_eq!(
+                    status.code(),
+                    Some(if ending == "interrupt" { 130 } else { 0 }),
+                    "{output:?}"
+                );
+                assert!(
+                    stdout(&output).contains("Selection: unchanged"),
+                    "{output:?}"
+                );
+            }
+        }
+        assert!(!root.join("upgrade-argv").exists());
+        assert_eq!(
+            fs::read_to_string(root.join("listing.json")).unwrap(),
+            install_a.to_string()
+        );
+    }
+    let output = check(
+        &root.join("home/.nix-profile/bin/eon"),
+        &["--install".as_ref(), "--yes".as_ref(), "--json".as_ref()],
+    );
+    assert_eq!(output.status.code(), Some(4));
+    assert_eq!(report(&output)["error"]["code"], "install-ambiguous");
+    assert!(!root.join("upgrade-argv").exists());
+    let mut pinned = install_a.clone();
+    pinned["elements"]["eon+x"]["originalUrl"] = "github:Yazelix/eon/v0.1.21".into();
+    fs::write(root.join("listing.json"), pinned.to_string()).unwrap();
+    let human = install
+        .iter()
+        .copied()
+        .filter(|word| *word != OsStr::new("--json"))
+        .collect::<Vec<_>>();
+    let output = check(binary, &human);
+    assert_eq!(output.status.code(), Some(4), "{output:?}");
+    assert!(stdout(&output).contains("Result: refused"), "{output:?}");
+    assert!(
+        stdout(&output).contains("Selection: unchanged"),
+        "{output:?}"
+    );
+    fs::write(root.join("listing.json"), install_a.to_string()).unwrap();
+    for version in ["nix (Nix) 2.20.9", "nix (Lix, like Nix) 2.93.0"] {
+        fs::write(root.join("nix-version"), version).unwrap();
+        let output = check(binary, &install);
+        assert_eq!(output.status.code(), Some(1), "{output:?}");
+        assert_eq!(report(&output)["error"]["stage"], "resolve");
+        assert_eq!(report(&output)["selection"]["state"], "unchanged");
+        assert!(!root.join("upgrade-argv").exists());
+    }
+    fs::remove_file(root.join("nix-version")).unwrap();
+    for name in ["1", "+1", "/nix/store/00000000000000000000000000000000-eon"] {
+        let mut ambiguous = install_a.clone();
+        let element = ambiguous["elements"]
+            .as_object_mut()
+            .unwrap()
+            .remove("eon+x")
+            .unwrap();
+        ambiguous["elements"][name] = element;
+        fs::write(root.join("listing.json"), ambiguous.to_string()).unwrap();
+        let mut arguments = install.to_vec();
+        *arguments.last_mut().unwrap() = OsStr::new(name);
+        let output = check(binary, &arguments);
+        assert_eq!(output.status.code(), Some(4), "{output:?}");
+        assert_eq!(report(&output)["error"]["code"], "install-ambiguous");
+        assert!(!root.join("upgrade-argv").exists());
+    }
+    fs::write(root.join("listing.json"), install_a.to_string()).unwrap();
+    let output = check(binary, &install);
+    assert_eq!(output.status.code(), Some(0), "{output:?}");
+    assert_eq!(report(&output)["outcome"], "installed");
+    assert_eq!(report(&output)["installed"]["revision"], old);
+    assert_eq!(report(&output)["selection"]["selected"]["revision"], new);
+    assert_eq!(
+        report(&output)["selection"]["source"]["original_ref"],
+        "github:Yazelix/eon/edge"
+    );
+    assert_eq!(
+        fs::read_to_string(root.join("upgrade-argv")).unwrap(),
+        format!(
+            "profile\nupgrade\n--profile\n{}\n--refresh\n--\neon+x\n",
+            profile.display()
+        )
+    );
+    assert!(String::from_utf8_lossy(&output.stderr).contains("manager output goes to stderr"));
+    let selected: serde_json::Value =
+        serde_json::from_slice(&fs::read(root.join("listing.json")).unwrap()).unwrap();
+    assert_eq!(selected["elements"]["eonx"], install_a["elements"]["eonx"]);
+    let output = check(binary, &install);
+    assert_eq!(report(&output)["outcome"], "unchanged", "{output:?}");
+    assert_eq!(report(&output)["selection"]["state"], "unchanged");
+    let reset = || {
+        fs::write(root.join("listing.json"), install_a.to_string()).unwrap();
+        fs::remove_file(&profile).unwrap();
+        symlink("profile-1-link", &profile).unwrap();
+    };
+    for (kind, expected_code, expected_state, status) in [
+        ("generation", None, "unchanged", 0),
+        ("other", Some("selection-failed"), "changed", 1),
+        ("only-other", Some("selection-failed"), "unchanged", 1),
+        ("source", Some("source-changed"), "changed", 1),
+        ("failed-source", Some("source-changed"), "changed", 1),
+    ] {
+        reset();
+        fs::write(
+            root.join("mode"),
+            if kind == "failed-source" {
+                "late-fail"
+            } else {
+                "success"
+            },
+        )
+        .unwrap();
+        fs::remove_file(root.join("profiles/profile-2-link")).unwrap();
+        symlink(
+            if kind == "generation" || kind == "only-other" {
+                &environment
+            } else {
+                &environment_b
+            },
+            root.join("profiles/profile-2-link"),
+        )
+        .unwrap();
+        let mut selected = if kind == "generation" || kind == "only-other" {
+            install_a.clone()
+        } else {
+            install_b.clone()
+        };
+        if kind == "other" || kind == "only-other" {
+            selected["elements"]["eonx"]["priority"] = 8.into();
+        }
+        if kind == "source" || kind == "failed-source" {
+            selected["elements"]["eon+x"]["originalUrl"] = "github:Yazelix/eon/main".into();
+        }
+        fs::write(root.join("after.json"), selected.to_string()).unwrap();
+        let output = check(binary, &install);
+        assert_eq!(output.status.code(), Some(status), "{kind}: {output:?}");
+        assert_eq!(
+            report(&output)["selection"]["state"],
+            expected_state,
+            "{kind}: {output:?}"
+        );
+        if let Some(code) = expected_code {
+            assert_eq!(report(&output)["outcome"], "failed");
+            assert_eq!(report(&output)["error"]["code"], code, "{kind}: {output:?}");
+            assert_eq!(report(&output)["error"]["stage"], "inspect-result");
+            if code == "source-changed" {
+                assert_eq!(report(&output)["selection"]["source"]["policy"], "main");
+            }
+        } else {
+            assert_eq!(report(&output)["outcome"], "unchanged");
+        }
+    }
+    fs::remove_file(root.join("profiles/profile-2-link")).unwrap();
+    symlink(&environment_b, root.join("profiles/profile-2-link")).unwrap();
+    fs::write(root.join("after.json"), install_b.to_string()).unwrap();
+    reset();
+    fs::write(root.join("mode"), "fail").unwrap();
+    let output = check(binary, &install);
+    assert_eq!(output.status.code(), Some(1));
+    assert_eq!(report(&output)["error"]["code"], "selection-failed");
+    assert_eq!(report(&output)["selection"]["state"], "unchanged");
+    fs::write(root.join("mode"), "unreadable").unwrap();
+    let output = check(binary, &install);
+    assert_eq!(report(&output)["error"]["code"], "selection-failed");
+    assert_eq!(report(&output)["selection"]["state"], "unknown");
+    reset();
+    // A source edit during remote metadata lookup invalidates the displayed snapshot.
+    let original_curl = fs::read_to_string(&curl).unwrap();
+    let mut changed = install_a.clone();
+    changed["elements"]["eon+x"]["originalUrl"] = "github:Yazelix/eon/main".into();
+    fs::write(root.join("changed.json"), changed.to_string()).unwrap();
+    fs::remove_file(root.join("upgrade-argv")).unwrap();
+    executable(
+        &curl,
+        format!(
+            r#"#!/bin/sh
+for url; do :; done
+case "$url" in
+  */commits/edge) printf '{new}\n200' ;;
+  *) cp '{r}/changed.json' '{r}/listing.json'; printf '{{"status":"ahead"}}\n200' ;;
+esac
+"#,
+            r = root.display()
+        ),
+    );
+    let output = check(binary, &install);
+    assert_eq!(output.status.code(), Some(4), "{output:?}");
+    assert_eq!(report(&output)["error"]["code"], "target-changed");
+    assert_eq!(report(&output)["selection"]["source"]["policy"], "main");
+    assert!(!root.join("upgrade-argv").exists());
+    executable(&curl, original_curl);
+    reset();
+    fs::write(root.join("mode"), "fail").unwrap();
+    // Configured target works from a window's pinned binary, without routing to a window.
+    let config = root.join("config");
+    fs::create_dir(&config).unwrap();
+    let configured = |text: &str, selector: &[&OsStr]| {
+        fs::write(config.join("config.toml"), text).unwrap();
+        eon_command(binary)
+            .args(["update", "--install", "--yes", "--json"])
+            .args(selector)
+            .env("EON_CONFIG_HOME", &config)
+            .env("PATH", std::env::join_paths(&path).unwrap())
+            .env("HOME", root.join("home"))
+            .env("EON_CURL", &curl)
+            .env("EON_RUNTIME_DIR", root.join("must-not-exist"))
+            .stdin(Stdio::null())
+            .output()
+            .unwrap()
+    };
+    let output = configured("[updates]\nnix_entry = 'eon+x'\n", &[]);
+    assert_eq!(report(&output)["error"]["code"], "invalid-configuration");
+    let output = configured(
+        &format!(
+            "[updates]\nnix_profile = '{}'\nnix_entry = 'eon+x'\n",
+            profile.display()
+        ),
+        &[],
+    );
+    assert_eq!(report(&output)["error"]["code"], "selection-failed");
+    for text in [
+        "[broken",
+        "[updates]\nnix_profile = '/missing/profile'\nnix_entry = 'other'\n",
+    ] {
+        let output = configured(text, &install[3..]);
+        assert_eq!(
+            report(&output)["target"]["profile"],
+            profile.to_str().unwrap()
+        );
+        assert_eq!(report(&output)["target"]["entry"], "eon+x");
+        assert_eq!(
+            report(&output)["error"]["code"],
+            "selection-failed",
+            "{output:?}"
+        );
+    }
+    assert!(!root.join("must-not-exist").exists());
+    let stopped = |files: &[&str]| {
+        let pids = files
+            .iter()
+            .map(|name| {
+                fs::read_to_string(root.join(name))
+                    .unwrap()
+                    .trim()
+                    .parse::<i32>()
+                    .unwrap()
+            })
+            .collect::<Vec<_>>();
+        let deadline = Instant::now() + Duration::from_secs(3);
+        while pids.iter().any(|pid| unsafe { libc::kill(*pid, 0) } == 0)
+            && Instant::now() < deadline
+        {
+            thread::sleep(Duration::from_millis(20));
+        }
+        let leaked = pids
+            .into_iter()
+            .filter(|pid| unsafe { libc::kill(*pid, 0) } == 0)
+            .collect::<Vec<_>>();
+        for pid in &leaked {
+            unsafe {
+                libc::kill(*pid, libc::SIGKILL);
+            }
+        }
+        assert!(leaked.is_empty(), "helper left processes {leaked:?}");
+    };
+    // An interrupt reaches only the child this helper started, then reports selection.
+    for signal in [libc::SIGINT, libc::SIGTERM, libc::SIGHUP, libc::SIGQUIT] {
+        let _ = fs::remove_file(root.join("manager-pid"));
+        let _ = fs::remove_file(root.join("sleep-pid"));
+        fs::write(root.join("mode"), "cancel").unwrap();
+        let mut child = eon_command(binary)
+            .arg("update")
+            .args(install)
+            .env("PATH", std::env::join_paths(&path).unwrap())
+            .env("HOME", root.join("home"))
+            .env("EON_CONFIG_HOME", root.join("absent-config"))
+            .env("EON_CURL", &curl)
+            .stdin(Stdio::null())
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped())
+            .spawn()
+            .unwrap();
+        let deadline = Instant::now() + Duration::from_secs(10);
+        while !root.join("manager-pid").exists() && Instant::now() < deadline {
+            thread::sleep(Duration::from_millis(20));
+        }
+        assert!(root.join("manager-pid").exists());
+        let output_busy = check(binary, &install);
+        assert_eq!(report(&output_busy)["error"]["code"], "operation-busy");
+        unsafe {
+            libc::kill(child.id() as i32, signal);
+        }
+        let deadline = Instant::now() + Duration::from_secs(8);
+        while child.try_wait().unwrap().is_none() && Instant::now() < deadline {
+            thread::sleep(Duration::from_millis(20));
+        }
+        if child.try_wait().unwrap().is_none() {
+            child.kill().unwrap();
+            panic!("cancel did not finish within grace");
+        }
+        let output = child.wait_with_output().unwrap();
+        assert_eq!(output.status.code(), Some(130), "{output:?}");
+        assert_eq!(report(&output)["error"]["code"], "interrupted");
+        assert_eq!(report(&output)["selection"]["state"], "unchanged");
+        stopped(&["manager-pid", "sleep-pid"]);
+    }
+    #[cfg(target_os = "linux")]
+    {
+        fs::remove_file(root.join("manager-pid")).unwrap();
+        fs::write(root.join("mode"), "hard-kill").unwrap();
+        let mut child = eon_command(binary)
+            .arg("update")
+            .args(install)
+            .env("PATH", std::env::join_paths(&path).unwrap())
+            .env("HOME", root.join("home"))
+            .env("EON_CURL", &curl)
+            .stdin(Stdio::null())
+            .stdout(Stdio::null())
+            .stderr(Stdio::null())
+            .spawn()
+            .unwrap();
+        let deadline = Instant::now() + Duration::from_secs(10);
+        while !root.join("manager-pid").exists() && Instant::now() < deadline {
+            thread::sleep(Duration::from_millis(20));
+        }
+        assert!(root.join("manager-pid").exists());
+        child.kill().unwrap();
+        child.wait().unwrap();
+        stopped(&["manager-pid"]);
+    }
+    // Restore check fixture.
+    fs::write(root.join("listing.json"), listing.to_string()).unwrap();
 
     // Offline is a failed check, never an up-to-date one.
     executable(
@@ -3464,6 +4025,52 @@ fn update_check_reports_a_profile_entry_as_one_json_object_without_changing_it()
     let invalid = report(&output);
     assert_eq!(invalid["operation"], serde_json::Value::Null);
     assert_eq!(invalid["error"]["code"], "invalid-arguments");
+    // Check's process group must also end when its caller cancels the helper.
+    fs::write(root.join("mode"), "read-cancel").unwrap();
+    let mut child = eon_command(binary)
+        .arg("update")
+        .args(explicit)
+        .env("PATH", std::env::join_paths(&path).unwrap())
+        .env("HOME", root.join("home"))
+        .env("EON_CURL", &curl)
+        .stdin(Stdio::null())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .unwrap();
+    let deadline = Instant::now() + Duration::from_secs(10);
+    while !root.join("read-manager-pid").exists() && Instant::now() < deadline {
+        thread::sleep(Duration::from_millis(20));
+    }
+    assert!(root.join("read-manager-pid").exists());
+    let manager: i32 = fs::read_to_string(root.join("read-manager-pid"))
+        .unwrap()
+        .trim()
+        .parse()
+        .unwrap();
+    unsafe {
+        libc::kill(child.id() as i32, libc::SIGINT);
+    }
+    let deadline = Instant::now() + Duration::from_secs(8);
+    while child.try_wait().unwrap().is_none() && Instant::now() < deadline {
+        thread::sleep(Duration::from_millis(20));
+    }
+    if child.try_wait().unwrap().is_none() {
+        child.kill().unwrap();
+    }
+    let output = child.wait_with_output().unwrap();
+    let leaked = unsafe { libc::kill(manager, 0) } == 0;
+    if leaked {
+        unsafe {
+            libc::kill(manager, libc::SIGKILL);
+        }
+    }
+    assert_eq!(output.status.code(), Some(130), "{output:?}");
+    assert!(!leaked, "Check left its own manager child running");
+    stopped(&["read-manager-pid"]);
+    assert_eq!(report(&output)["error"]["code"], "interrupted");
+    assert_eq!(report(&output)["selection"], serde_json::Value::Null);
+    fs::write(root.join("mode"), "fail").unwrap();
     // Bare `eon update` is not a package mode.
     let output = check(binary, &["--json".as_ref()]);
     assert_eq!(output.status.code(), Some(2), "{output:?}");

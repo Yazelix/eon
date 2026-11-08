@@ -128,6 +128,10 @@ terminal_access = "window" # Let `eon pane read`, `history` and `send` reach thi
 [editor]
 command = ["hx"] # Direct argv that `eon edit` and Files run with the file appended.
 
+# [updates]
+# nix_profile: unset. Absolute profile path; set with nix_entry.
+# nix_entry: unset. Exact profile entry name; set with nix_profile.
+
 [popups.agent]
 command = "auto" # Direct argv, or auto for Agent's command selection.
 enabled = true # Enable this feature or popup.
@@ -662,3 +666,29 @@ DIR but still takes `helix.scm` and `init.scm` from `$(eon config dir)/helix/`.
 Eon does not start Helix when the configuration root's path is not valid UTF-8.
 Eon does not rewrite the parent PATH, aliases, shell startup files, or native
 tool data paths.
+
+## Installation updates
+
+`updates.nix_profile` and `updates.nix_entry` are unset by default. Set both to
+choose the absolute Nix user-profile path and its exact entry name for
+`eon update --check` and `--install`. A CLI `--profile ABS --entry NAME`
+replaces this pair. With neither, Eon discovers only the invoking installation.
+An incomplete pair, a relative profile or an empty name fails without mutation.
+Without a CLI pair, any `config.toml` error, including in another section,
+fails both modes with `invalid-configuration`. A complete CLI pair bypasses
+configuration loading for these commands.
+
+```toml
+[updates]
+nix_profile = "/home/me/.local/state/nix/profiles/profile"
+nix_entry = "eon"
+```
+
+Checks run only when requested. Install requires consent; in JSON or without
+a terminal, pass `--yes` and set an explicit or configured target. Channel,
+automatic installation/restart and custom manager commands are fixed by the
+installation's ownership and live-work safety rules. Cancellation gives only
+the helper's children a fixed five-second termination grace before killing
+and reaping them. This safety budget bounds shutdown and lets Nix release
+resources; it is not a configurable build timeout. The shared Nix daemon and
+running Eon processes receive no signal.

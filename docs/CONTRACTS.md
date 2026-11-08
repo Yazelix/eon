@@ -5029,8 +5029,10 @@ names its socket. CLI JSON names a session `session` and a terminal
   by eon-overseer under Lucca's "auto-decide stuff unless critical"
   direction. Check for Nix profile installs, discovery and the Nix
   package's source receipt are implemented (`eon-update-button-f10d1.2`);
-  `--install`, `--prefix` and the configuration keys remain planned and
-  return `invalid-arguments` until their slices land.
+  Nix-profile `--install` and `updates.nix_profile`/`updates.nix_entry` are
+  implemented (`eon-update-button-f10d1.3`); `--prefix` and the direct-backend
+  configuration keys remain planned and return `invalid-arguments` until
+  their slices land.
 - **Consumer:** A person or local agent acting as that person, using full
   Eon's product CLI or its future Commands/menu action to inspect or update
   one installation. eonbase is outside this scope.
@@ -5083,6 +5085,10 @@ names its socket. CLI JSON names a session `session` and a terminal
     is the product package recorded in the receipt, Install asks Nix to
     upgrade that exact named entry on its original ref and attribute.
     A renamed entry or custom profile uses its actual manager identity.
+    Exact-name Install requires upstream or Determinate Nix 2.21 or later;
+    unsupported implementations, including Lix, cannot authorize mutation.
+    Integer and absolute-path entry names refuse `install-ambiguous` because
+    Nix may interpret them as indices or store-path selectors.
     Never use an all-packages or pattern selector, remove/add the entry,
     change branch, or invoke a shell command string. Nix owns realization
     and profile selection. Report the actual resulting locked revision and
@@ -5147,9 +5153,10 @@ names its socket. CLI JSON names a session `session` and a terminal
     waives no refusal. The manager owns its transaction/lock; no atomic
     compare-and-swap against arbitrary external writers is promised.
     Terminate only helper-owned children on cancellation, within a bounded
-    wait: `eon-update-button-f10d1.3` must set and document that deadline and
-    its default before implementation; `.7` consumes the same limit. Record
-    its fixed safety-budget reason or configuration key in that slice. Never
+    wait: the fixed default grace is five seconds before killing/reaping the
+    helper-owned process group (`eon-update-button-f10d1.3`); `.7` consumes
+    the same limit. This safety budget bounds shutdown while letting children
+    release resources; it is not a build timeout. Never
     signal a shared Nix daemon, supervisor or Orbit host. After interruption
     or failure inspect and report the actual selector, or unknown
     if it cannot be read. Cancellation does not promise rollback. No automatic
@@ -5239,6 +5246,8 @@ names its socket. CLI JSON names a session `session` and a terminal
     metadata failures, `verification-failed` for signature/hash or verified
     payload/URL-version mismatch, `preflight-failed` for payload preflight,
     or `selection-failed` for manager build/selection/read-back failures.
+    A target identity or source change observed after Nix ran gives
+    `source-changed`, stage `inspect-result`, exit 1 with the observed selection.
     A failed remote check has availability unknown, never current.
     `not-confirmed` also gives `failed`, stage `confirm`, exit 1 as in
     EON-C10, when required `--yes` is absent.
@@ -5253,7 +5262,7 @@ names its socket. CLI JSON names a session `session` and a terminal
 
   Invalid configuration also gives exit 1 as specified below. No raw backend
   exit replaces this mapping.
-- **Configuration:** Draft keys, all unset by default:
+- **Configuration:** Keys, all unset by default (direct-backend keys remain planned):
   `updates.nix_profile` and `updates.nix_entry` select one profile/entry
   pair; `updates.bundle_prefix` selects an existing managed prefix and
   excludes that pair; `updates.allowed_signers` names an absolute,
@@ -5293,7 +5302,7 @@ names its socket. CLI JSON names a session `session` and a terminal
   channel promotion/switching, repinning, rollback UI, background service or
   compatibility policy. It adds no support promise beyond the named platform
   and distribution proofs.
-- **Proof:** Check only (`eon-update-button-f10d1.2`): the `eon` crate's
+- **Proof:** Check (`eon-update-button-f10d1.2`): the `eon` crate's
   `update` fixture tests cover argument rejections, discovery through the
   starting path's profile chain (one owning entry, declarative and Home
   Manager launches, no owner, the profile's own output started directly,
@@ -5303,8 +5312,18 @@ names its socket. CLI JSON names a session `session` and a terminal
   `update_check_reports_a_profile_entry_as_one_json_object_without_changing_it`
   test runs the binary, and a copy started through a fake default profile,
   against stub `nix` and a stub pinned curl. The package build
-  writes and the candidate check reads the receipt. No Install, prefix or
-  native macOS proof.
+  writes and the candidate check reads the receipt. Install
+  (`eon-update-button-f10d1.3`) extends the binary fixtures with consent,
+  exact-name/version refusals, source/entry revalidation, manager failures,
+  cancellation/child cleanup, configuration precedence and actual read-back.
+  The 2026-11-08 isolated Linux observation uses a disposable native Nix
+  profile with `eon+x` on its original edge ref and unrelated coreutils;
+  the real upgrade retains coreutils, reports B's actual receipt, leaves
+  A's two-pane window/build/layout intact and makes a fresh launcher use B.
+  A real external removal after the final recheck upgrades no other entry
+  and reports failed/unknown selection, proving the advisory-lock limit.
+  Exact artifacts, attempts and results are recorded in the bead's proof.
+  Prefix and native macOS Install/HTTPS proof remain open.
 - **Open proof:** Cheapest falsifiers for the clauses above:
   - Product helper/Trigger: argument fixtures reject mixed/implicit package
     modes; isolated normal launch invokes neither Nix nor update networking.
