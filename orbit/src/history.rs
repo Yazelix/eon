@@ -7,7 +7,7 @@
 use crate::frame::title_and_directory;
 use libghostty_vt::{
     Terminal,
-    fmt::{Format, Formatter, FormatterOptions},
+    fmt::{Format, Formatter},
     screen::Screen as GhosttyScreen,
 };
 use orbit_protocol::{
@@ -33,14 +33,15 @@ pub(crate) fn read(terminal: &Terminal<'static, '_>, revision: u64) -> Option<Hi
     };
     // The formatter's own trim treats a blank cell that carries a combining
     // mark as blank and drops the mark, so only real spaces are trimmed here.
-    let options = FormatterOptions::new()
-        .with_format(Format::Plain)
-        .with_unwrap(true)
-        .with_trim(false);
-    let bytes = Formatter::new(terminal, options)
+    let mut formatter = Formatter::new(terminal).ok()?;
+    formatter
+        .set_format(Format::Plain)
         .ok()?
-        .format_alloc(None)
+        .set_unwrap(true)
+        .ok()?
+        .set_trim(false)
         .ok()?;
+    let bytes = formatter.format_alloc(None).ok()?;
     let text = trimmed(std::str::from_utf8(&bytes).ok()?);
     let (omitted_lines, cut_bytes, text) = fit(&text, MAX_HISTORY_TEXT_BYTES);
     let title = title_and_directory(terminal).0.to_owned();

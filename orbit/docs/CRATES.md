@@ -15,8 +15,9 @@ dependency gate, and Beads retain the full candidate evidence.
 ### Authoritative terminal semantics
 
 - **Selected shape:** `libghostty-vt` and `libghostty-vt-sys` 0.2.1 from upstream
-  `Uzaaft/libghostty-rs` master at `9ede35b8ea94a55ed3608408d67e102883129f1e`, building
-  pinned Ghostty `521cf2c5d30bd48028ca61546c64e7913764073d` with Zig 0.17
+  `Uzaaft/libghostty-rs` master at `9b598d6528c08c013407052767bb2e885ba869ba`, building
+  pinned Ghostty vt-1.0.0 `0fa3d577a5614150ff8e2c152de5fb9d5c6d2dec` with Zig 0.17
+  and Rust 1.96.1
 - **Status:** Selected for the experiment
 - **Credible alternatives:** Formatter reconstruction with the same crate; waiting for a
   crates.io release that builds Ghostty `8c425a7bd`; replacement by `rio-vt`.
@@ -43,15 +44,17 @@ dependency gate, and Beads retain the full candidate evidence.
   Windows-linking and baseline-CPU fixes. Lucca approved a git pin, an
   exception to `orb-ze3`'s rule against unpublished Git dependencies, for this
   dependency only (`eon-a9tr.1`, 2026-10-21), and approved moving it from the fork to an
-  exact upstream master commit (`eon-9rtt.4`, 2026-10-26). The pin moves only by a
+  exact upstream master commit (`eon-9rtt.4`, 2026-10-26). Lucca approved the Ghostty 1.0 upstream git
+  update before v0.2.0 (`eon-9rtt.9`, 2026-11-08). The pin moves only by a
   bead. Exit condition: return to crates.io with the first release whose
-  `GHOSTTY_COMMIT` contains `8c425a7bd` and whose API has both callback wrappers and
+  `GHOSTTY_COMMIT` contains vt-1.0.0 and whose API has both callback wrappers and
   the image iterator (`eon-9rtt.3`).
 - **Evidence:** `orb-bi4.1` and its immutable negative corpus; accepted `orb-bi4.3`
   proof; portable build adoption with downstream acceptance tracked by Eon
   `eon-portable-orbit-cpu-omxq`. Those Beads record the pre-consolidation
   revisions. `eon-a9tr.1` measured the bump and chose the fork; `eon-a9tr.2`
-  landed it; `eon-9rtt.4` moved the pin to upstream.
+  landed it; `eon-9rtt.4` moved the pin to upstream; `eon-9rtt.9` adopts
+  upstream's Ghostty 1.0 API and the pinned Rust 1.96 toolchain.
 
 ### Platform-specific PTY and local-runtime mechanics
 

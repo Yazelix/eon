@@ -6,7 +6,7 @@ owns native presentation and input. Yazelix Nova remains a separate
 product line.
 
 Enter the pinned x86_64-linux development environment with `nix develop`.
-It provides Rust and Cargo, formatting and lint tools, Git, `br` 0.7.2,
+It provides Rust/Cargo 1.96.1, formatting and lint tools, Git, `br` 0.7.2,
 `bv` 0.25.2, the pinned Ghostty source, Zig, native libraries and fonts that
 Orbit and Venus build and test with, and `eon-test`. The Beads binaries come
 from hash-verified release archives and retain their full upstream licenses

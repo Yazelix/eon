@@ -5,6 +5,8 @@ installation, and proven contract changes.
 
 ## Unreleased
 
+- Orbit uses upstream libghostty on the Ghostty vt-1.0.0 core, pinned by
+  exact Git revision (`eon-9rtt.9`).
 - `eon update --check [--json] [--prefix ABS]` discovers official numbered
   Linux releases for a validated installer-managed prefix, reports the exact
   archive and keeps metadata separate from signature verification. Manual

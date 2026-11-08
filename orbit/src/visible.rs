@@ -6,9 +6,9 @@
 use crate::frame::title_and_directory;
 use libghostty_vt::{
     Terminal,
-    fmt::Format,
+    fmt::{Format, Formatter},
     screen::Screen as GhosttyScreen,
-    selection::{FormatOptions, Selection},
+    selection::Selection,
     terminal::{Point, PointCoordinate},
 };
 use orbit_protocol::{
@@ -62,16 +62,21 @@ fn row_text(terminal: &Terminal<'static, '_>, y: u16, columns: u16) -> Option<St
             .ok()
     };
     let selection = Selection::new(at(0)?, at(columns - 1)?, false);
-    let options = FormatOptions::new()
-        .with_emit_format(Format::Plain)
-        .with_unwrap(false)
+    let mut formatter = Formatter::new(terminal).ok()?;
+    formatter
+        .set_format(Format::Plain)
+        .ok()?
+        .set_unwrap(false)
+        .ok()?
         // The formatter's own trim drops a combining mark on a blank cell, so
         // only real spaces are trimmed below.
-        .with_trim(false)
-        .with_selection(&selection);
-    let bytes = terminal.format_selection_alloc(None, options).ok()?;
-    let bytes = bytes.as_deref().unwrap_or_default();
-    let text = std::str::from_utf8(bytes).ok()?;
+        .set_trim(false)
+        .ok()?;
+    // SAFETY: Both endpoints came from this terminal's active screen; its
+    // shared borrow prevents mutation until formatting finishes.
+    unsafe { formatter.set_selection(Some(&selection)) }.ok()?;
+    let bytes = formatter.format_alloc(None).ok()?;
+    let text = std::str::from_utf8(&bytes).ok()?;
     Some(sanitized(
         text.trim_end_matches(['\n', '\r']).trim_end_matches(' '),
     ))

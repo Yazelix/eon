@@ -10,6 +10,10 @@
 
   inputs = {
     nixpkgs.url = "github:NixOS/nixpkgs/567a49d1913ce81ac6e9582e3553dd90a955875f";
+    rust-overlay = {
+      url = "github:oxalica/rust-overlay/fe5aee0952e8e1525533d61defd9e36513db811b";
+      inputs.nixpkgs.follows = "nixpkgs";
+    };
     anima = {
       url = "github:Yazelix/anima/aa93bf16474f2e6692fdf96a82f6664fa03a18e6";
       inputs.nixpkgs.follows = "nixpkgs";
@@ -31,7 +35,7 @@
     # carries; it supplies Orbit's Zig and nothing else (eon-a9tr.1).
     nixpkgs-zig.url = "github:NixOS/nixpkgs/02c087f3fe673c9e317f206a627cb6b910336dbe";
     ghostty = {
-      url = "github:ghostty-org/ghostty/521cf2c5d30bd48028ca61546c64e7913764073d";
+      url = "github:ghostty-org/ghostty/0fa3d577a5614150ff8e2c152de5fb9d5c6d2dec";
       flake = false;
     };
     # Orbit's build-time Bend compiler (orbit/build.rs).
@@ -50,6 +54,7 @@
       self,
       nixpkgs,
       nixpkgs-zig,
+      rust-overlay,
       anima,
       helix,
       yazi,
@@ -65,7 +70,15 @@
       perSystem =
         system:
         let
-          pkgs = import nixpkgs { inherit system; };
+          pkgs = import nixpkgs {
+            inherit system;
+            overlays = [ rust-overlay.overlays.default ];
+          };
+          rustToolchain = pkgs.rust-bin.stable."1.96.1".default;
+          rustPlatform = pkgs.makeRustPlatform {
+            cargo = rustToolchain;
+            rustc = rustToolchain;
+          };
           zig = nixpkgs-zig.legacyPackages.${system}.zig_0_17;
           eonCargo = builtins.fromTOML (builtins.readFile ./eon/crates/eon/Cargo.toml);
           helixCargo = builtins.fromTOML (builtins.readFile "${helix}/Cargo.toml");
@@ -144,7 +157,7 @@
           workspaceCargoLock = {
             lockFile = ./Cargo.lock;
             outputHashes."dpi-0.1.1" = "sha256-fJQqcXhKPGtivKo1AyyGhy1oNebTFGyzWDmOesFsltI=";
-            outputHashes."libghostty-vt-0.2.1" = "sha256-Zojd1ziCw9+tbhmGYaFHFPlaxgbNbtmVBR99Otmg+o0=";
+            outputHashes."libghostty-vt-0.2.1" = "sha256-wkBrC+C/VOlallPH1m6Rtl81ys7HE67WamKFXrxpQ1o=";
           };
           codexbarIdentity = component "codexbar";
           animaIdentity = component "anima";
@@ -234,20 +247,16 @@
               meta = { license = lib.licenses.mit; platforms = [ system ]; };
             };
 
-          ghosttyDepsArchives = zig.fetchDeps {
-            pname = "ghostty";
-            version = "0-unstable";
-            src = ghostty;
-            fetchAll = true;
-            hash = "sha256-Q0ZgKPVtXbiTbJqrMlGPJBnNpmaXNLUAk0VcqLBFGFI=";
-          };
-          # Zig 0.17 keeps fetched packages as archives, but `zig build --system`
-          # wants them unpacked; each archive holds its package directory.
-          ghosttyDeps = pkgs.runCommand "ghostty-zig-system-deps" { } ''
-            mkdir "$out"
-            for archive in ${ghosttyDepsArchives}/*.tar.gz; do
-              tar -xzf "$archive" -C "$out"
-            done
+          # Upstream's library-only list includes lazy transitive packages too.
+          ghosttyDeps = pkgs.runCommand "ghostty-zig-system-deps" {
+            nativeBuildInputs = [ zig pkgs.cacert ];
+            outputHashMode = "recursive";
+            outputHashAlgo = "sha256";
+            outputHash = "sha256-esU273Hc2wlU9qZZPk7xa1DGFpw0pPJDCkLGS5SolwY=";
+          } ''
+            export ZIG_GLOBAL_CACHE_DIR="$TMPDIR/zig-cache"
+            sh ${ghostty}/nix/build-support/fetch-zig-cache.sh ${ghostty}/deps/libghostty-vt.txt
+            mv "$ZIG_GLOBAL_CACHE_DIR/p" "$out"
           '';
           # libghostty's build script compiles the pinned Ghostty source with Zig
           # instead of cloning it; Orbit's package and the dev shell share this.
@@ -288,9 +297,9 @@
           # real-PTY checks. tests/lifecycle.rs needs host /usr/bin/setsid, which
           # the build sandbox lacks, so eon-test runs it.
           orbitPackage =
-            assert ghostty.rev == "521cf2c5d30bd48028ca61546c64e7913764073d";
+            assert ghostty.rev == "0fa3d577a5614150ff8e2c152de5fb9d5c6d2dec";
             assert bend.rev == "624dd9f4607cd29b0871a9b96d413bfb11e92f52";
-            pkgs.rustPlatform.buildRustPackage {
+            rustPlatform.buildRustPackage {
               pname = workspacePackages.orbit;
               inherit (orbitIdentity) version;
               src = crateSource;
@@ -405,7 +414,7 @@
             };
           };
           venusPackage =
-            pkgs.rustPlatform.buildRustPackage ({
+            rustPlatform.buildRustPackage ({
               pname = workspacePackages.venus;
               inherit (venusIdentity) version;
               src = crateSource;
@@ -812,7 +821,7 @@
             assert helix.rev == helixIdentity.revision;
             assert lib.assertMsg (helixCargo.workspace.package.version == helixIdentity.version)
               "Helix manifest version does not match the selected Cargo workspace package";
-            pkgs.rustPlatform.buildRustPackage {
+            rustPlatform.buildRustPackage {
               pname = "eon";
               inherit (eonCargo.package) version;
               src = workspaceSource;
@@ -1046,7 +1055,7 @@
           };
           # The macOS proof harness (docs/DEVELOPMENT.md), a development tool
           # outside Eon's closure. eon-test runs its tests.
-          macProof = pkgs.rustPlatform.buildRustPackage {
+          macProof = rustPlatform.buildRustPackage {
             pname = "mac-proof";
             inherit ((builtins.fromTOML (builtins.readFile ./eon/tools/mac-proof/Cargo.toml)).package) version;
             src = crateSource;
@@ -1073,7 +1082,7 @@
           # outside Eon's closure. eon-test runs its tests. Its wrapper names
           # the release Orbit, vtebench's scripts and their tools, kitty's
           # kitten, and memory's supervisor, reference servers and isolation.
-          benchPackage = pkgs.rustPlatform.buildRustPackage {
+          benchPackage = rustPlatform.buildRustPackage {
             pname = "eon-bench";
             inherit ((builtins.fromTOML (builtins.readFile ./eon/tools/eon-bench/Cargo.toml)).package) version;
             src = crateSource;
@@ -1241,10 +1250,7 @@
           } // orbitChecks;
           devShells.${system}.default = pkgs.mkShell ({
             packages = [
-              pkgs.cargo
-              pkgs.rustc
-              pkgs.clippy
-              pkgs.rustfmt
+              rustToolchain
               pkgs.git
               pkgs.ncurses
               pkgs.pkg-config

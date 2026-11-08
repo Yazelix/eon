@@ -6,13 +6,10 @@
 use crate::errno;
 use libghostty_vt::{
     Terminal,
-    fmt::Format,
-    selection::{
-        FormatOptions,
-        gesture::{
-            Autoscroll, AutoscrollTickEvent, Behavior, Behaviors, DragEvent, Geometry, Gesture,
-            PressEvent, ReleaseEvent,
-        },
+    fmt::{Format, Formatter},
+    selection::gesture::{
+        Autoscroll, AutoscrollTickEvent, Behavior, Behaviors, DragEvent, Geometry, Gesture,
+        PressEvent, ReleaseEvent,
     },
     terminal::{Point, PointCoordinate},
 };
@@ -328,24 +325,20 @@ pub(crate) fn viewport_point(
 /// The selection as plain unwrapped, trimmed text, or None if it is empty to
 /// libghostty or longer than one maximum copy.
 fn format_selection(terminal: &Terminal<'static, 'static>) -> Option<String> {
-    let options = || {
-        FormatOptions::new()
-            .with_emit_format(Format::Plain)
-            .with_unwrap(true)
-            .with_trim(true)
-    };
-    let required = match terminal.format_selection_buf(options(), &mut []) {
-        Ok(Some(written)) => written,
-        Err(libghostty_vt::error::Error::OutOfSpace { required }) => required,
-        _ => return None,
-    };
+    let mut formatter = Formatter::new_selection(terminal).ok()??;
+    formatter
+        .set_format(Format::Plain)
+        .ok()?
+        .set_unwrap(true)
+        .ok()?
+        .set_trim(true)
+        .ok()?;
+    let required = formatter.format_len().ok()?;
     if required > session::MAX_COPY_BYTES {
         return None;
     }
     let mut bytes = vec![0; required];
-    let written = terminal
-        .format_selection_buf(options(), &mut bytes)
-        .ok()??;
+    let written = formatter.format_buf(&mut bytes).ok()?;
     bytes.truncate(written);
     String::from_utf8(bytes).ok()
 }

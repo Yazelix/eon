@@ -92,6 +92,7 @@ pub(crate) fn encode_input(
                     padding_right: surface.padding_right,
                     padding_left: surface.padding_left,
                 })
+                .map_err(|_| errno(libc::EIO))?
                 .set_any_button_pressed(
                     input.button.is_some()
                         && input.action != session::MouseAction::Release

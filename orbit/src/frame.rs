@@ -184,7 +184,10 @@ impl FrameExtractor {
             terminal.active_screen().map_err(|_| errno(libc::EIO))?,
             GhosttyScreen::Alternate
         );
-        let storage = terminal.kitty_graphics().map_err(|_| errno(libc::EIO))?;
+        let storage = terminal
+            .kitty_graphics()
+            .map_err(|_| errno(libc::EIO))?
+            .ok_or(errno(libc::EIO))?;
         let resources = &mut self.resources;
         if resources.started.len() + retiring >= MAX_UNRETIRED {
             return Err(errno(libc::EPROTO));
@@ -628,7 +631,10 @@ fn graphics(
     terminal: &Terminal<'static, '_>,
     serial: u64,
 ) -> io::Result<Graphics> {
-    let storage = terminal.kitty_graphics().map_err(|_| errno(libc::EIO))?;
+    let storage = terminal
+        .kitty_graphics()
+        .map_err(|_| errno(libc::EIO))?
+        .ok_or(errno(libc::EIO))?;
     let alternate = matches!(
         terminal.active_screen().map_err(|_| errno(libc::EIO))?,
         GhosttyScreen::Alternate
