@@ -1113,6 +1113,19 @@
                     ++ lib.optional pkgs.stdenv.isLinux pkgs.procps
                   )
                 } \
+                ${lib.optionalString pkgs.stdenv.isLinux ''
+                  --prefix PATH : ${lib.makeBinPath [
+                    pkgs.sway
+                    pkgs.dbus
+                    pkgs.coreutils
+                    pkgs.grim
+                  ]} \
+                  --set-default EON_BENCH_VULKAN ${pkgs.mesa}/share/vulkan/icd.d \
+                  --set-default EON_BENCH_GBM ${pkgs.mesa}/lib/gbm \
+                  --set-default EON_BENCH_DRI ${pkgs.mesa}/lib/dri \
+                  --set-default EON_BENCH_EGL ${pkgs.mesa}/share/glvnd/egl_vendor.d/50_mesa.json \
+                  --set-default EON_BENCH_LAVAPIPE ${pkgs.mesa}/share/vulkan/icd.d/lvp_icd.x86_64.json \
+                ''} \
                 --set-default EON_BENCH_KITTEN ${pkgs.kitty.kitten}/bin/kitten
             '';
           };

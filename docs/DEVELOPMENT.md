@@ -357,6 +357,54 @@ failed/disconnected diagnostic readers fail the run. Incomplete runs retain
 evidence and remove result/summary. These Linux measures follow the four
 axes of Superlogical Rex's comparison, not its macOS `phys_footprint` values.
 
+### Headless display launcher
+
+`nix run .#bench -- headless --eon PATH --out DIR` checks a Nix candidate on
+an isolated Linux headless Sway at 1280×800. Build the candidate with an
+out-link, never an installed profile. The shared `launcher.rs` owns Sway,
+D-Bus, a cleared subject environment, HOME, configuration, state, short
+runtime roots and process identity checks. The response suite uses the same
+launcher; terminal comparisons and Venus memory remain separate beads
+(`eon-benchmarks-xl2bp.6`, `.18`).
+
+The `headless` check reuses the memory suite's bubblewrap containment: private
+PID/network namespaces, read-only host root, writable evidence and private
+`/tmp` and `/run`. An interruption destroys the namespace, including daemonized
+children. No ambient Wayland/D-Bus socket, activation token or Eon namespace
+is inherited by a launched subject. Sway uses pixman for software mode;
+Venus's GPU is recorded separately. `--renderer lavapipe` (default) selects the Nix-pinned Mesa Vulkan
+ICD without hardware devices. `--renderer /dev/dri/renderD128` exposes only
+that render node, uses a GLES Sway compositor to provide dmabuf, and rejects
+software fallback. Mesa's EGL vendor file, GBM backend and DRI drivers are
+supplied by the bench closure. Hardware mode pins `VK_DRIVER_FILES` to that
+Mesa's Vulkan manifest directory; `result.json` records it (software mode
+records the lavapipe manifest file). Available nodes vary by host.
+The `headless` D-Bus uses a self-contained session policy without host service
+activation and must be listening before Sway starts. Response keeps D-Bus's
+`--session` configuration and startup ordering. The bench closure supplies
+the compositor, bus and software renderer outside
+the product closure. The smoke dismisses the startup picker through Eon's
+`popup hide` CLI; it needs no input injector.
+
+For an existing private artifact directory in `display_root`:
+
+```sh
+nix build .#default --out-link "$display_root/candidate"
+nix build .#bench --out-link "$display_root/bench"
+"$display_root/bench/bin/eon-bench" headless \
+  --eon "$display_root/candidate/bin/eon" --out "$display_root/lavapipe"
+"$display_root/bench/bin/eon-bench" headless \
+  --eon "$display_root/candidate/bin/eon" --out "$display_root/hardware" \
+  --renderer /dev/dri/renderD128
+```
+
+Use the active coordinator's heavy-command wrapper for builds and benchmark
+runs. `--out` must not exist. `result.json` records the candidate, private roots,
+Sway version, actual output mode, requested renderer and Venus's reported GPU,
+load and startup/stop result. A presented terminal and the expected renderer
+must be observed before Stop succeeds. Trace and process logs stay beside it.
+This is a startup/cleanup check, without throughput, memory or latency claims.
+
 ### Native idle input response
 
 `eon-bench response --eon PATH --out DIR` is an on-demand Linux/Wayland test,
@@ -367,14 +415,14 @@ The candidate must be a Nix store executable; build it with an out-link so GC
 cannot remove it between build and observation. The probe does not build,
 install, refresh a profile or create machine stress.
 
-For example, from the candidate checkout, with an existing private artifact
-directory in `response_root`:
+Provide `wdotool` on PATH (it is not in the pinned nixpkgs). For example,
+from the candidate checkout, with an existing private artifact directory in
+`response_root`:
 
 ```sh
 nix build .#default --out-link "$response_root/candidate"
 nix build .#bench --out-link "$response_root/bench"
-nix shell --inputs-from . nixpkgs#sway nixpkgs#wdotool nixpkgs#grim nixpkgs#dbus nixpkgs#coreutils \
-  --command "$response_root/bench/bin/eon-bench" response \
+"$response_root/bench/bin/eon-bench" response \
   --eon "$response_root/candidate/bin/eon" --out "$response_root/idle" --samples 3
 ```
 

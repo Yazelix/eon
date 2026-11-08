@@ -2,13 +2,14 @@
 
 use std::{path::PathBuf, process::ExitCode};
 
-use eon_bench::{child, corpus, floor, memory, orbit, response, writer};
+use eon_bench::{child, corpus, floor, headless, memory, orbit, response, writer};
 
 const USAGE: &str = "\
 usage: eon-bench corpus --out DIR [--only ID]...
        eon-bench floor --layer pty --out DIR [OPTIONS]
        eon-bench orbit --out DIR [OPTIONS]
        eon-bench memory --out DIR [OPTIONS]
+       eon-bench headless --eon PATH --out DIR [OPTIONS]
        eon-bench response --eon PATH --out DIR [OPTIONS]
        eon-bench write FILE --report REPORT
        eon-bench COMMAND --help";
@@ -34,6 +35,7 @@ enum Command {
     Write(PathBuf, PathBuf),
     Response(response::Options),
     Fixture(Vec<String>),
+    Headless(headless::Options, bool),
 }
 
 fn corpus_help() -> String {
@@ -86,6 +88,8 @@ fn main() -> ExitCode {
         Some("memory" | "memory-inner") => memory::options(rest)
             .map(|options| Command::Memory(options, arguments[0] == "memory-inner")),
         Some("child") => child::options(rest).map(Command::Child),
+        Some("headless" | "headless-inner") => headless::options(rest)
+            .map(|options| Command::Headless(options, arguments[0] == "headless-inner")),
         Some("response") => response::options(rest).map(Command::Response),
         Some("response-fixture") if rest.len() == 4 => Ok(Command::Fixture(rest.to_vec())),
         Some("write") => write_options(rest).map(|(file, report)| Command::Write(file, report)),
@@ -115,6 +119,8 @@ fn main() -> ExitCode {
         },
         Command::Write(file, report) => writer::run(&file, &report),
         Command::Response(options) => response::run(&options),
+        Command::Headless(options, false) => headless::run(rest, &options),
+        Command::Headless(options, true) => headless::run_inner(&options),
         Command::Fixture(arguments) => response::fixture(&arguments),
     };
     match outcome {

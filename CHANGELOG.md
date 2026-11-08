@@ -12,6 +12,13 @@ installation, and proven contract changes.
   archive and keeps metadata separate from signature verification. Manual
   extractions remain unmanaged; direct installation remains planned. Bundled
   HTTPS checks use packaged CA certificates (`eon-update-button-f10d1.6`).
+- `eon-bench headless` checks an isolated Sway/Eon launch and stop, recording
+  the output mode and Venus GPU for lavapipe or a selected hardware render
+  node. The response diagnostic shares its launcher; the bench package
+  supplies the display tools. `headless` checks its private D-Bus at startup
+  without activating host desktop services; response keeps D-Bus's session
+  policy. The old Orbit baseline script's lifecycle mode is removed
+  (`eon-benchmarks-xl2bp.16`).
 
 - Direct Linux payloads carry the static trusted installer and the versioned
   source receipt, with an exact installer path that follows payload relocation.

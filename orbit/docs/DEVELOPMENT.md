@@ -36,39 +36,31 @@ repeats the manual Linux baseline without vendoring a benchmark corpus or
 adding a product mode. It consumes exact caller-supplied Orbit and Venus
 binaries. Throughput mode also consumes an exact upstream
 [vtebench](https://github.com/alacritty/vtebench) checkout whose release binary
-and existing `benchmarks/` corpus have already been built. Lifecycle mode uses
-exact caller-supplied Neovim and Yazi binaries.
+and existing `benchmarks/` corpus have already been built.
 
-Run the local checks first, then leave the desktop idle. Benchmark runs open
-native Venus windows and 50 short-lived `foot` windows, so they can change
-focus and tiling temporarily. Evidence includes local paths, machine and display
-details, and process logs; review it before sharing.
+Run the local checks first. This remaining desktop throughput script opens
+native Venus windows, so it can change focus and tiling temporarily; it must
+not run on the active desktop. Evidence includes local paths, machine and
+display details, and process logs; review it before sharing.
 
 ```sh
 orbit/tools/perf/orbit-venus-baseline.sh --self-check
 
 export ORB_BASELINE_CPUS=9-15
 export ORB_BASELINE_GRID='58 93'
-export ORB_BASELINE_NVIM="$(command -v nvim)"
-export ORB_BASELINE_YAZI="$(command -v yazi)"
 
 orbit/tools/perf/orbit-venus-baseline.sh throughput \
   /exact/orbit/bin/yazelix-orbit \
   /exact/venus/bin/yazelix-venus \
   /exact/vtebench-checkout \
   /tmp/eon-performance
-
-orbit/tools/perf/orbit-venus-baseline.sh lifecycle \
-  /exact/orbit/bin/yazelix-orbit \
-  /exact/venus/bin/yazelix-venus \
-  /tmp/eon-performance
 ```
 
 The harness requires native Wayland plus `pidstat`, `taskset`, `ss`, and
-standard GNU command-line tools. Throughput also requires Git; lifecycle also
-requires `foot`. It validates required commands and host load before launching
-Orbit, then rejects any grid mismatch before the measured workload starts.
-Each mode attempt creates a unique evidence directory beneath the supplied
+standard GNU command-line tools and Git. It validates required commands and
+host load before launching Orbit, then rejects any grid mismatch before the
+measured workload starts.
+Each attempt creates a unique evidence directory beneath the supplied
 parent and records the exact harness, hashes, revisions, environment, process
 samples, and summaries; throughput also retains raw vtebench DAT files. This
 output is an internal, intentionally unstable evidence artifact rather than a
@@ -84,11 +76,11 @@ message, with frame and CPU counters. The repository's
 [BEHAVIOR.md](BEHAVIOR.md#throughput) records its measurements.
 
 vtebench measures blocking PTY consumption, not frame rate or visual latency.
-The lifecycle reattachment check proves process survival, transport attachment,
-and authoritative grid continuity. Native Wayland does not expose another
-client's keypress-to-pixel or first-visible-frame timing, so the harness reports
-those visual metrics as unavailable instead of substituting title changes,
-wrong-output screenshots, or internal timestamps.
+The script's lifecycle mode is removed. Display suites use the shared private
+Sway launcher in [Eon's benchmark harness](../../docs/DEVELOPMENT.md#headless-display-launcher).
+The old CPU/RSS thresholds and desktop resize/reattachment workloads are not
+part of that launcher. Native input-to-visible response remains the separate
+`eon-bench response` diagnostic.
 
 ## CI
 

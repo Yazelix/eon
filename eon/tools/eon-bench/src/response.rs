@@ -6,7 +6,7 @@ use std::{
     io::{Read, Write},
     os::unix::{fs::DirBuilderExt, net::UnixDatagram},
     path::{Path, PathBuf},
-    process::{Child, Command, Stdio},
+    process::Command,
     sync::{
         Arc,
         atomic::{AtomicBool, AtomicU64, Ordering},
@@ -16,7 +16,14 @@ use std::{
     time::{Duration, Instant, SystemTime},
 };
 
-use crate::{environment, json::Value, result::utc_timestamp, sha256::Sha256, stats::Summary};
+use crate::{
+    environment,
+    json::Value,
+    launcher::{BusPolicy, Headless, live_identity},
+    result::utc_timestamp,
+    sha256::Sha256,
+    stats::Summary,
+};
 
 type Result<T = ()> = std::result::Result<T, String>;
 
@@ -407,168 +414,6 @@ impl Picture {
     }
 }
 
-struct Roots(Vec<PathBuf>, bool);
-impl Roots {
-    fn create() -> Result<Self> {
-        // SAFETY: geteuid has no side effects or arguments.
-        let parent = PathBuf::from(format!("/run/user/{}", unsafe { libc::geteuid() }));
-        let mut roots = Self(Vec::new(), false);
-        for index in 0..4096 {
-            let path = parent.join(format!("b{:03x}", (nanos() as usize + index) % 4096));
-            if path.as_os_str().len() > 19 {
-                return Err("Eon test needs a runtime root <=19 bytes".into());
-            }
-            match fs::DirBuilder::new().mode(0o700).create(&path) {
-                Ok(()) => roots.0.push(path),
-                Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => continue,
-                Err(error) => return Err(failure(error)),
-            }
-            if roots.0.len() == 2 {
-                return Ok(roots);
-            }
-        }
-        Err("no private runtime roots available".into())
-    }
-}
-impl Drop for Roots {
-    fn drop(&mut self) {
-        if self.1 {
-            return;
-        }
-        for root in &self.0 {
-            let _ = fs::remove_dir_all(root);
-        }
-    }
-}
-
-struct Processes {
-    children: Vec<Child>,
-    known: BTreeMap<u32, String>,
-    marker: String,
-}
-fn process_state(pid: u32) -> Option<(String, bool, u32)> {
-    let stat = fs::read_to_string(format!("/proc/{pid}/stat")).ok()?;
-    let fields = stat
-        .rsplit_once(") ")?
-        .1
-        .split_whitespace()
-        .collect::<Vec<_>>();
-    Some((
-        fields.get(19)?.to_string(),
-        fields.first() != Some(&"Z"),
-        fields.get(1)?.parse().ok()?,
-    ))
-}
-fn live_identity(pid: u32, identity: &str) -> bool {
-    process_state(pid).is_some_and(|(now, running, _)| now == identity && running)
-}
-#[cfg(target_os = "linux")]
-fn signal_owned(pid: u32, identity: &str, signal: i32) {
-    use std::os::fd::{AsRawFd, FromRawFd};
-    // SAFETY: pidfd_open has no pointers and returns a new owned descriptor.
-    let fd = unsafe { libc::syscall(libc::SYS_pidfd_open, pid, 0) };
-    if fd < 0 {
-        return;
-    }
-    // SAFETY: the successful syscall returned this fresh descriptor.
-    let fd = unsafe { std::os::fd::OwnedFd::from_raw_fd(fd as i32) };
-    if live_identity(pid, identity) {
-        // SAFETY: the pidfd pins this exact process even if its numeric PID is reused.
-        unsafe {
-            libc::syscall(
-                libc::SYS_pidfd_send_signal,
-                fd.as_raw_fd(),
-                signal,
-                std::ptr::null::<libc::siginfo_t>(),
-                0,
-            );
-        }
-    }
-}
-#[cfg(not(target_os = "linux"))]
-fn signal_owned(_: u32, _: &str, _: i32) {}
-impl Processes {
-    fn remember(&mut self, pid: u32) -> Option<String> {
-        let (identity, running, _) = process_state(pid)?;
-        let owned = fs::read(format!("/proc/{pid}/environ"))
-            .ok()?
-            .split(|&b| b == 0)
-            .any(|item| item == self.marker.as_bytes());
-        if !running || !owned || !live_identity(pid, &identity) {
-            return None;
-        }
-        self.known.insert(pid, identity.clone());
-        Some(identity)
-    }
-    fn descendants(&mut self, pid: u32, identity: &str) {
-        if !live_identity(pid, identity) {
-            return;
-        }
-        let Ok(children) = fs::read_to_string(format!("/proc/{pid}/task/{pid}/children")) else {
-            return;
-        };
-        if !live_identity(pid, identity) {
-            return;
-        }
-        for child in children
-            .split_whitespace()
-            .filter_map(|pid| pid.parse().ok())
-        {
-            let Some((start, true, parent)) = process_state(child) else {
-                continue;
-            };
-            if parent != pid || !live_identity(pid, identity) {
-                continue;
-            }
-            // Ownership and both identities must survive the environment read.
-            if self.remember(child).as_deref() != Some(start.as_str()) {
-                self.known.remove(&child);
-                continue;
-            }
-            if !live_identity(pid, identity)
-                || process_state(child).is_none_or(|(now, _, parent)| now != start || parent != pid)
-            {
-                self.known.remove(&child);
-                continue;
-            }
-            self.descendants(child, &start);
-        }
-    }
-    fn cleanup(&mut self) -> bool {
-        // Saved PIDs are never roots for traversal until their start identity matches.
-        for (pid, identity) in self.known.clone() {
-            self.descendants(pid, &identity);
-        }
-        for signal in [libc::SIGTERM, libc::SIGKILL] {
-            for (&pid, identity) in &self.known {
-                signal_owned(pid, identity, signal);
-            }
-            let deadline = Instant::now() + Duration::from_secs(1);
-            while self
-                .known
-                .iter()
-                .any(|(&pid, identity)| live_identity(pid, identity))
-                && Instant::now() < deadline
-            {
-                thread::sleep(Duration::from_millis(10));
-            }
-        }
-        for child in &mut self.children {
-            let _ = child.try_wait();
-        }
-        !self
-            .known
-            .iter()
-            .any(|(&pid, identity)| live_identity(pid, identity))
-    }
-}
-
-impl Drop for Processes {
-    fn drop(&mut self) {
-        let _ = self.cleanup();
-    }
-}
-
 struct Collector {
     receiver: mpsc::Receiver<Event>,
     alive: Arc<AtomicBool>,
@@ -655,23 +500,16 @@ impl Drop for Collector {
 }
 
 struct Session {
-    // Processes drop before Roots so no socket directory vanishes under a live child.
-    processes: Processes,
+    launch: Headless,
     collector: Collector,
-    _roots: Roots,
     deadline: Instant,
-    env: BTreeMap<String, String>,
-    eon: PathBuf,
-    out: PathBuf,
     events: Vec<Event>,
     targets: HashMap<String, Rect>,
     grid: Option<[f64; 3]>,
 }
 impl Session {
     fn command(&self, program: impl AsRef<std::ffi::OsStr>) -> Command {
-        let mut command = Command::new(program);
-        command.env_clear().envs(&self.env).stdin(Stdio::null());
-        command
+        self.launch.command(program)
     }
     fn call(&mut self, program: impl AsRef<std::ffi::OsStr>, args: &[&str]) -> Result<String> {
         if CANCELLED.load(Ordering::Relaxed) {
@@ -698,7 +536,7 @@ impl Session {
         String::from_utf8(result.stdout).map_err(failure)
     }
     fn eon(&mut self, args: &[&str]) -> Result<Value> {
-        let program = self.eon.clone();
+        let program = self.launch.eon.clone();
         let output = self.call(program, args)?;
         Value::parse(&output)
     }
@@ -706,19 +544,6 @@ impl Session {
         let mut all = vec!["--backend", "wlr-protocols"];
         all.extend_from_slice(args);
         self.call("wdotool", &all).map(|_| ())
-    }
-    fn spawn(&mut self, program: &str, args: &[&str], log: &str) -> Result {
-        let output = File::create(self.out.join(log)).map_err(failure)?;
-        let child = self
-            .command(program)
-            .args(args)
-            .stdout(output.try_clone().map_err(failure)?)
-            .stderr(output)
-            .spawn()
-            .map_err(failure)?;
-        self.processes.remember(child.id());
-        self.processes.children.push(child);
-        Ok(())
     }
     fn pump(&mut self) -> Result {
         for event in self.collector.receiver.try_iter() {
@@ -744,8 +569,8 @@ impl Session {
                 self.grid = Some(numbers.try_into().map_err(|_| "bad grid")?);
             }
             // Retain private instrumented descendants before their parent can exit.
-            if !self.processes.known.contains_key(&event.pid) {
-                self.processes.remember(event.pid);
+            if !self.launch.processes.known.contains_key(&event.pid) {
+                self.launch.processes.remember(event.pid);
             }
             self.events.push(event);
         }
@@ -756,6 +581,7 @@ impl Session {
     }
     fn fixture_command(&mut self, pid: u32, message: &str) -> Result<String> {
         if !self
+            .launch
             .processes
             .known
             .get(&pid)
@@ -763,7 +589,7 @@ impl Session {
         {
             return Err(format!("fixture {pid} is no longer owned/live"));
         }
-        let directory = Path::new(&self.env["XDG_RUNTIME_DIR"]);
+        let directory = Path::new(&self.launch.env["XDG_RUNTIME_DIR"]);
         let reply_path = directory.join("reply");
         let target = directory.join(format!("f{pid}"));
         let _ = fs::remove_file(&reply_path);
@@ -927,7 +753,7 @@ impl Session {
         self.native(&["click", "1"])
     }
     fn capture(&mut self, name: &str, rect: Option<Rect>) -> Result<(Picture, u64, u64)> {
-        let path = self.out.join(name);
+        let path = self.launch.out.join(name);
         let geometry = rect.map(|r| format!("{},{} {}x{}", r.x, r.y, r.w, r.h));
         let mut args = vec!["-t", "ppm"];
         if let Some(geometry) = &geometry {
@@ -945,26 +771,10 @@ impl Session {
     }
 }
 
-impl Drop for Session {
-    fn drop(&mut self) {
-        if !self.processes.cleanup() {
-            self._roots.1 = true;
-            eprintln!(
-                "eon-bench: private processes still live; preserving {:?}",
-                self._roots.0
-            );
-        }
-    }
-}
-
 fn start(options: &Options) -> Result<Session> {
-    let roots = Roots::create()?;
-    let out = fs::canonicalize(&options.out).map_err(failure)?;
-    let runtime = roots.0[0].clone();
-    let eon_root = roots.0[1].clone();
-    for directory in ["home", "config", "state"] {
-        fs::create_dir(out.join(directory)).map_err(failure)?;
-    }
+    let mut launch = Headless::new(&options.out, &options.eon)?;
+    let out = launch.out.clone();
+    let runtime = PathBuf::from(&launch.env["XDG_RUNTIME_DIR"]);
     let bench = std::env::current_exe().map_err(failure)?;
     let socket_path = runtime.join("trace");
     let argv = Value::Array(vec![
@@ -982,101 +792,27 @@ fn start(options: &Options) -> Result<Session> {
         argv.trim()
     );
     fs::write(out.join("config/config.toml"), config).map_err(failure)?;
-    let sway_config = out.join("sway.conf");
-    fs::write(&sway_config, "output * mode 1280x800\noutput * bg #202020 solid_color\nseat seat0 fallback true\nxwayland disable\ndefault_border none\nfocus_follows_mouse no\nfor_window [app_id=\"eon\"] fullscreen enable\n").map_err(failure)?;
     let socket = UnixDatagram::bind(&socket_path).map_err(failure)?;
-    let env = BTreeMap::from([
-        ("PATH".into(), std::env::var("PATH").map_err(failure)?),
-        ("HOME".into(), out.join("home").display().to_string()),
-        (
-            "EON_CONFIG_HOME".into(),
-            out.join("config").display().to_string(),
-        ),
-        (
-            "XDG_STATE_HOME".into(),
-            out.join("state").display().to_string(),
-        ),
-        ("XDG_RUNTIME_DIR".into(), runtime.display().to_string()),
-        ("EON_RUNTIME_DIR".into(), eon_root.display().to_string()),
-        ("EON_BENCH_TRACE".into(), socket_path.display().to_string()),
-        (
-            "DBUS_SESSION_BUS_ADDRESS".into(),
-            format!("unix:path={}/bus", runtime.display()),
-        ),
-        ("WLR_BACKENDS".into(), "headless".into()),
-        ("WLR_RENDERER".into(), "pixman".into()),
-        ("WLR_LIBINPUT_NO_DEVICES".into(), "1".into()),
-        ("LANG".into(), "C.UTF-8".into()),
-    ]);
+    launch
+        .env
+        .insert("EON_BENCH_TRACE".into(), socket_path.display().to_string());
     let mut session = Session {
-        processes: Processes {
-            children: Vec::new(),
-            known: BTreeMap::new(),
-            marker: format!("EON_RUNTIME_DIR={}", eon_root.display()),
-        },
+        launch,
         collector: Collector::start(
             socket,
-            File::create(options.out.join("trace.tsv")).map_err(failure)?,
+            File::create(out.join("trace.tsv")).map_err(failure)?,
         )?,
-        _roots: roots,
         deadline: Instant::now() + Duration::from_secs(15 * 60),
-        env,
-        eon: fs::canonicalize(&options.eon).map_err(failure)?,
-        out,
         events: Vec::new(),
         targets: HashMap::new(),
         grid: None,
     };
-    let executable = session.eon.clone();
+    let executable = session.launch.eon.clone();
     let versions = session.call(executable, &["versions"])?;
-    fs::write(session.out.join("versions.txt"), versions).map_err(failure)?;
-    let address = session.env["DBUS_SESSION_BUS_ADDRESS"].clone();
-    session.spawn(
-        "dbus-daemon",
-        &["--session", "--nofork", &format!("--address={address}")],
-        "dbus.log",
-    )?;
-    session.spawn(
-        "sway",
-        &[
-            "--unsupported-gpu",
-            "--config",
-            sway_config.to_str().ok_or("non-UTF8 output path")?,
-        ],
-        "sway.log",
-    )?;
-    let deadline = Instant::now() + Duration::from_secs(15);
-    loop {
-        let files: Vec<_> = fs::read_dir(&runtime)
-            .map_err(failure)?
-            .filter_map(|entry| entry.ok())
-            .collect();
-        let wayland = files.iter().find(|entry| {
-            entry.file_name().to_string_lossy().starts_with("wayland-")
-                && !entry.file_name().to_string_lossy().ends_with(".lock")
-        });
-        let ipc = files.iter().find(|entry| {
-            entry.file_name().to_string_lossy().starts_with("sway-ipc.")
-                && entry.file_name().to_string_lossy().ends_with(".sock")
-        });
-        if let (Some(wayland), Some(ipc)) = (wayland, ipc) {
-            session.env.insert(
-                "WAYLAND_DISPLAY".into(),
-                wayland.file_name().to_string_lossy().into(),
-            );
-            session
-                .env
-                .insert("SWAYSOCK".into(), ipc.path().display().to_string());
-            break;
-        }
-        if Instant::now() >= deadline {
-            return Err("private Sway did not become ready; see sway.log".into());
-        }
-        thread::sleep(Duration::from_millis(20));
-    }
-    session.spawn("wdotool", &["prime"], "prime.log")?;
-    let eon = session.eon.to_string_lossy().into_owned();
-    session.spawn(&eon, &[], "eon.log")?;
+    fs::write(out.join("versions.txt"), versions).map_err(failure)?;
+    session.launch.start_compositor(BusPolicy::Session)?;
+    session.launch.spawn("wdotool", &["prime"], "prime.log")?;
+    session.launch.start_eon()?;
     session.wait(0, "popup=+")?;
     // Escape is the documented startup-picker dismissal; no shell/zoxide timing dependency.
     session.key("Escape")?;
@@ -1407,13 +1143,13 @@ fn measure(
     let prefix = format!("{}-{ordinal}", case.name);
     if verdict != Verdict::OnTime {
         fs::copy(
-            session.out.join("before.ppm"),
-            session.out.join(format!("{prefix}-before.ppm")),
+            session.launch.out.join("before.ppm"),
+            session.launch.out.join(format!("{prefix}-before.ppm")),
         )
         .map_err(failure)?;
         fs::copy(
-            session.out.join("after.ppm"),
-            session.out.join(format!("{prefix}-after.ppm")),
+            session.launch.out.join("after.ppm"),
+            session.launch.out.join(format!("{prefix}-after.ppm")),
         )
         .map_err(failure)?;
     }
@@ -1489,6 +1225,7 @@ fn cases(session: &mut Session, options: &Options, samples: &mut Vec<Value>) -> 
     let mut timing_failures = 0;
     session.eon(&["pane", "create", "--json"])?;
     let directory = session
+        .launch
         .out
         .to_str()
         .ok_or("non-UTF8 output path")?
@@ -1942,10 +1679,7 @@ pub fn run(options: &Options) -> Result {
     }
     #[cfg(target_os = "linux")]
     let _interrupts = Interrupts::enter()?;
-    let eon = fs::canonicalize(&options.eon).map_err(failure)?;
-    if !eon.starts_with("/nix/store") {
-        return Err("--eon must name a Nix candidate, not a profile/checkout fallback".into());
-    }
+    let eon = crate::launcher::candidate(&options.eon)?;
     fs::DirBuilder::new()
         .mode(0o700)
         .create(&options.out)
@@ -1961,36 +1695,8 @@ pub fn run(options: &Options) -> Result {
             // Explicitly stop only the private root. The Child/PID cleanup guard handles failure.
             // Teardown must still run after cancellation or the measurement deadline.
             let fixtures_finished = session.finish_fixtures();
-            let stopped = session
-                .command("timeout")
-                .arg("10s")
-                .arg(&session.eon)
-                .args(["window", "stop", "all", "--json"])
-                .output()
-                .map_err(failure)
-                .and_then(|output| {
-                    if output.status.success() {
-                        Ok(())
-                    } else {
-                        Err(format!(
-                            "private Stop failed: {}",
-                            String::from_utf8_lossy(&output.stderr)
-                        ))
-                    }
-                });
-            if stopped.is_ok() {
-                let deadline = Instant::now() + Duration::from_secs(15);
-                while let Some(child) = session.processes.children.last_mut() {
-                    if child.try_wait().map_err(failure)?.is_some() {
-                        break;
-                    }
-                    if Instant::now() >= deadline {
-                        return Err("private supervisor did not exit after Stop".into());
-                    }
-                    thread::sleep(Duration::from_millis(20));
-                }
-            }
-            if !session.processes.cleanup() {
+            let stopped = session.launch.stop_eon();
+            if !session.launch.processes.cleanup() {
                 return Err(
                     "private process cleanup did not finish; runtime roots retained".into(),
                 );
@@ -2452,39 +2158,6 @@ mod tests {
         receipts.push(Event::parse("fixture\t3\t1\t101\t0\tfixture_input\t1").unwrap());
         assert!(!receipts_match(&receipts, 2, 7, 1));
         assert_ne!(Verdict::FixtureDropped.name(), Verdict::Missing.name());
-    }
-    #[cfg(target_os = "linux")]
-    #[test]
-    fn cleanup_refuses_reused_roots_and_unowned_descendants() {
-        let mut child = Command::new("sh")
-            .args(["-c", "sleep 2 & wait"])
-            .env_remove("EON_RUNTIME_DIR")
-            .spawn()
-            .unwrap();
-        let mut processes = Processes {
-            children: Vec::new(),
-            known: BTreeMap::from([(child.id(), "different-lifetime".into())]),
-            marker: "EON_RUNTIME_DIR=private-bench-test".into(),
-        };
-        let deadline = Instant::now() + Duration::from_secs(1);
-        while fs::read_to_string(format!("/proc/{}/task/{}/children", child.id(), child.id()))
-            .unwrap_or_default()
-            .trim()
-            .is_empty()
-        {
-            assert!(Instant::now() < deadline);
-            thread::sleep(Duration::from_millis(10));
-        }
-        processes.descendants(child.id(), "different-lifetime");
-        assert_eq!(processes.known.len(), 1);
-        let identity = process_state(child.id()).unwrap().0;
-        processes.descendants(child.id(), &identity);
-        assert_eq!(processes.known.len(), 1);
-        assert!(processes.remember(child.id()).is_none());
-        assert!(processes.cleanup());
-        assert!(child.try_wait().unwrap().is_none());
-        // Let the short-lived unowned fixture reap its own child.
-        assert!(child.wait().unwrap().success());
     }
     #[test]
     fn visible_barcode_and_regions_detect_the_wrong_identity_counter_and_crop() {

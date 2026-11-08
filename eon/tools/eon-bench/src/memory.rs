@@ -165,65 +165,27 @@ pub fn run(args: &[String], options: &Options) -> Result {
     remove_results(&options.settings.out);
     live_artifacts(options)?;
     let exe = std::env::current_exe().map_err(error)?;
-    let bwrap = std::env::var_os("EON_BENCH_BWRAP").unwrap_or_else(|| "bwrap".into());
     let out = fs::canonicalize(&options.settings.out).map_err(error)?;
     let mut arguments = args.to_vec();
     if let Some(index) = arguments.iter().position(|arg| arg == "--out") {
         arguments[index + 1] = out.display().to_string();
     }
-    let mut command = Command::new(bwrap);
-    command.args([
-        "--die-with-parent",
-        "--unshare-pid",
-        "--unshare-net",
-        "--ro-bind",
-        "/",
-        "/",
-        "--proc",
-        "/proc",
-        "--dev",
-        "/dev",
-        "--tmpfs",
-        "/tmp",
-        "--chdir",
-        "/",
-    ]);
-    command.arg("--bind").arg(&out).arg(&out);
-    for tool in [
-        &options.orbit,
-        &options.eonbase,
-        &options.tmux,
-        &options.zellij,
-    ] {
-        if !tool.as_os_str().is_empty() {
-            command.arg("--ro-bind").arg(tool).arg(tool);
-        }
-    }
+    let mut command = crate::isolation::command(
+        &out,
+        &[
+            &options.orbit,
+            &options.eonbase,
+            &options.tmux,
+            &options.zellij,
+        ],
+    );
     command
         .arg("--")
         .arg(exe)
         .arg("memory-inner")
         .args(&arguments)
         .stdin(Stdio::null());
-    suite::interrupt::install()?;
-    let mut child = environment::die_with_parent(&mut command)
-        .spawn()
-        .map_err(error)?;
-    let result = loop {
-        if suite::interrupt::check().is_err() {
-            let _ = child.kill();
-            let _ = child.wait();
-            break Err("memory interrupted".into());
-        }
-        if let Some(status) = child.try_wait().map_err(error)? {
-            break if status.success() {
-                Ok(())
-            } else {
-                Err(format!("isolated memory run: {status}"))
-            };
-        }
-        std::thread::sleep(Duration::from_millis(50));
-    };
+    let result = crate::isolation::run(&mut command);
     if result.is_err() {
         remove_results(&options.settings.out);
     }

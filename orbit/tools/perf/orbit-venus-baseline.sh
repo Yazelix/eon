@@ -16,14 +16,12 @@ usage() {
 Usage:
   $SCRIPT_NAME --self-check
   $SCRIPT_NAME throughput ORBIT_BIN VENUS_BIN VTEBENCH_DIR EVIDENCE_PARENT
-  $SCRIPT_NAME lifecycle  ORBIT_BIN VENUS_BIN EVIDENCE_PARENT
 
 Required environment for benchmark runs:
   ORB_BASELINE_CPUS       taskset CPU list, for example 9-15
   ORB_BASELINE_GRID       expected PTY grid as "ROWS COLS"
 
-Lifecycle also requires ORB_BASELINE_NVIM and ORB_BASELINE_YAZI.
-The run opens native Venus and resize-stimulus windows; leave the desktop idle.
+The run opens native Venus windows; use an isolated display.
 EOF
 }
 
@@ -111,7 +109,7 @@ assert_dat_columns() {
 }
 
 self_check() {
-    local stats max extracted aggregated pidstat_sample pidstat_phase_sample failure
+    local stats max extracted pidstat_sample failure
     local check_parent evidence_root socket_check_root socket_path
     stats=$(printf '5\n1\n4\n2\n3\n' | stats_values 'percentile self-check')
     [[ $stats == '5 3 5 5' ]] || die "percentile self-check failed: $stats"
@@ -154,15 +152,6 @@ self_check() {
     fi
     if pidstat_max_percent 42 <<<"${pidstat_sample/9.00/oops}" >/dev/null; then
         die 'non-numeric pidstat CPU self-check failed'
-    fi
-    pidstat_phase_sample=$'00:00:01 1000 42 0 0 0 0 1 9 0 0 10 100 0 process-a\n00:00:01 1000 43 0 0 0 0 2 8 0 0 20 200 0 process-b'
-    aggregated=$(phase_samples <(printf '%s\n' "$pidstat_phase_sample") 1)
-    [[ $aggregated == '00:00:01 3 300' ]] || die "phase aggregation self-check failed: $aggregated"
-    if phase_samples <(printf '%s\n' "${pidstat_phase_sample/ 1 9 / oops 9 }") 1 >/dev/null; then
-        die 'non-numeric phase CPU self-check failed'
-    fi
-    if phase_samples <(printf '%s\n' "${pidstat_phase_sample/ 100 0 process-a/ nope 0 process-a}") 1 >/dev/null; then
-        die 'non-numeric phase RSS self-check failed'
     fi
     extracted=$(printf 'left right\n1 2\n' | tail -n +2 | awk -v column=2 '{ print $column }')
     [[ $extracted == 2 ]] || die "DAT column self-check failed: $extracted"
@@ -394,233 +383,6 @@ run_throughput() {
     summarize_throughput "$root"
 }
 
-lifecycle_child() {
-    local state=$1 nvim=$2 yazi=$3
-    wait_for() { until [[ -e $1 ]]; do sleep 0.05; done; }
-    printf '\033]0;orb-1sd lifecycle\007'
-    sleep 2
-    stty size >"$state/initial-grid.txt"
-    touch "$state/boot.ready"
-
-    wait_for "$state/idle.go"
-    printf '\033]0;orb-1sd idle\007'
-    sleep 30
-    touch "$state/idle.done"
-
-    wait_for "$state/shell.go"
-    printf '\033[2J\033[H\033]0;orb-1sd shell\007\033[1;36mOrbit shell baseline\033[0m\nASCII abc XYZ 0123 | Unicode λ界🙂 é\n'
-    sleep 10
-    touch "$state/shell.done"
-
-    wait_for "$state/nvim.go"
-    printf '\033]0;orb-1sd Neovim\007'
-    timeout --signal=TERM --kill-after=1s 10s "$nvim" --clean || true
-    touch "$state/nvim.done"
-
-    wait_for "$state/yazi.go"
-    printf '\033]0;orb-1sd Yazi\007'
-    timeout --signal=TERM --kill-after=1s 10s "$yazi" || true
-    touch "$state/yazi.done"
-
-    wait_for "$state/sustained.go"
-    printf '\033]0;orb-1sd sustained\007'
-    timeout --signal=TERM --kill-after=1s 20s /bin/sh -c 'while :; do seq 1 20000; done' || true
-    printf '\033[2J\033[HORB1SD_FINAL\n\033]0;ORB1SD_FINAL\007'
-    touch "$state/sustained.done"
-
-    wait_for "$state/resize.go"
-    trap 'printf "%s " "$(date +%s%N)" >>"$state/resize-events.txt"; stty size >>"$state/resize-events.txt"' WINCH
-    touch "$state/resize.ready"
-    wait_for "$state/resize.stop"
-    stty size >"$state/resize-final-grid.txt"
-    trap - WINCH
-    touch "$state/resize.done"
-
-    wait_for "$state/detach.go"
-    touch "$state/detach.ready"
-    wait_for "$state/detach.emit"
-    printf '\033[2J\033[HORB1SD_DETACHED_FINAL\n\033]0;ORB1SD_DETACHED_FINAL\007'
-    touch "$state/detach.emitted"
-    wait_for "$state/detach.finish"
-    stty size >"$state/detach-final-grid.txt"
-    touch "$state/detach.done"
-}
-export -f lifecycle_child
-
-sample_phase() {
-    local root=$1 state=$2 phase=$3 timeout_seconds=$4
-    pidstat -h -u -r -p "$orbit_pid,$venus_pid" 1 >"$root/$phase-pidstat.txt" &
-    sampler_pid=$!
-    local start_ns end_ns completed=no
-    start_ns=$(date +%s%N)
-    touch "$state/$phase.go"
-    local attempt
-    for ((attempt = 0; attempt < timeout_seconds * 20; attempt++)); do
-        if [[ -e $state/$phase.done ]]; then completed=yes; break; fi
-        sleep 0.05
-    done
-    end_ns=$(date +%s%N)
-    kill "$sampler_pid" 2>/dev/null || true
-    wait "$sampler_pid" 2>/dev/null || true
-    sampler_pid=
-    printf 'phase=%s\nwall_ms=%s\ncompleted=%s\n' "$phase" "$(((end_ns - start_ns) / 1000000))" "$completed" \
-        >"$root/$phase-run.txt"
-    [[ $completed == yes ]] || die "$phase did not complete"
-}
-
-phase_samples() {
-    local file=$1 limit=$2
-    awk '$3 ~ /^[0-9]+$/ {
-        if ($8 !~ /^[0-9]+([.][0-9]+)?$/ || $13 !~ /^[0-9]+$/) {
-            invalid = 1
-            next
-        }
-        cpu[$1] += $8
-        rss[$1] += $13
-        rows[$1]++
-        if (!seen[$1]++) order[++count] = $1
-    }
-    END {
-        if (invalid) exit 1
-        for (i = 1; i <= count; i++) {
-            time = order[i]
-            if (rows[time] == 2) print time, cpu[time], rss[time]
-        }
-    }' "$file" | head -n "$limit"
-}
-
-summarize_phase() {
-    local root=$1 phase=$2 limit=$3 cpu_limit=$4 rss_limit_mib=$5
-    local samples="$root/$phase-samples.tsv"
-    phase_samples "$root/$phase-pidstat.txt" "$limit" >"$samples" ||
-        die "$phase pidstat contains non-numeric CPU or RSS"
-    local count cpu_stats p50 p95 max peak_rss first_rss
-    count=$(wc -l <"$samples")
-    ((count == limit)) || die "$phase has $count complete process samples, expected $limit"
-    cpu_stats=$(awk '{ print $2 }' "$samples" | stats_values "$phase CPU samples")
-    read -r _ p50 p95 max <<<"$cpu_stats"
-    peak_rss=$(awk '$3 > max { max = $3 } END { print max + 0 }' "$samples")
-    first_rss=$(awk 'NR == 1 { print $3 }' "$samples")
-    printf '%s\t%s\t%s\t%s\t%s\t%.1f\t%.1f\n' "$phase" "$count" "$p50" "$p95" "$max" \
-        "$(awk -v value="$peak_rss" 'BEGIN { print value / 1024 }')" \
-        "$(awk -v value="$first_rss" 'BEGIN { print value / 1024 }')" >>"$root/lifecycle-summary.tsv"
-    awk -v value="$p95" -v limit="$cpu_limit" 'BEGIN { exit !(value <= limit) }' || die "$phase CPU p95 $p95 exceeds $cpu_limit"
-    awk -v value="$peak_rss" -v limit="$((rss_limit_mib * 1024))" 'BEGIN { exit !(value <= limit) }' ||
-        die "$phase RSS exceeds ${rss_limit_mib}MiB"
-}
-
-run_lifecycle() {
-    local orbit=$1 venus=$2 parent=$3
-    need_file "$orbit"
-    need_file "$venus"
-    [[ -n ${ORB_BASELINE_NVIM:-} && -n ${ORB_BASELINE_YAZI:-} ]] || die 'ORB_BASELINE_NVIM and ORB_BASELINE_YAZI are required'
-    need_file "$ORB_BASELINE_NVIM"
-    need_file "$ORB_BASELINE_YAZI"
-    need_command foot
-    need_command timeout
-    local root state socket foot
-    foot=$(command -v foot)
-    root=$(new_evidence_root "$parent" lifecycle)
-    state="$root/child"
-    mkdir -p "$state"
-    printf 'evidence_root=%s\n' "$root"
-    record_environment "$root" "$orbit" "$venus"
-    {
-        printf 'nvim=%s\nyazi=%s\nfoot=%s\n' \
-            "$(readlink -f "$ORB_BASELINE_NVIM")" "$(readlink -f "$ORB_BASELINE_YAZI")" "$(readlink -f "$foot")"
-        sha256sum "$ORB_BASELINE_NVIM" "$ORB_BASELINE_YAZI" "$foot"
-        "$ORB_BASELINE_NVIM" --version | head -n 2
-        "$ORB_BASELINE_YAZI" --version | head -n 1
-        "$foot" --version | head -n 1
-    } >"$root/workload-versions.txt"
-    preflight "$root"
-    socket_root=$(new_socket_root)
-    socket="$socket_root/orbit.sock"
-
-    taskset -c "$ORB_BASELINE_CPUS" env \
-        XDG_RUNTIME_DIR="$XDG_RUNTIME_DIR" WAYLAND_DISPLAY="$WAYLAND_DISPLAY" \
-        XDG_SESSION_TYPE=wayland TERM=eon \
-        "$orbit" serve "$socket" --ansi-palette-v1 "$PALETTE" -- /bin/bash -c \
-        'lifecycle_child "$1" "$2" "$3"' bash "$state" "$ORB_BASELINE_NVIM" "$ORB_BASELINE_YAZI" \
-        >"$root/orbit.log" 2>&1 &
-    orbit_pid=$!
-    for _ in {1..200}; do [[ -S $socket ]] && break; sleep 0.05; done
-    [[ -S $socket ]] || die 'Orbit socket did not appear'
-    launch_venus "$venus" "$socket" "$root/venus-initial.log"
-    wait_for_file "$state/boot.ready" || die 'lifecycle child did not become ready'
-    assert_grid "$state/initial-grid.txt"
-
-    sample_phase "$root" "$state" idle 35
-    sample_phase "$root" "$state" shell 15
-    sample_phase "$root" "$state" nvim 15
-    sample_phase "$root" "$state" yazi 15
-    sample_phase "$root" "$state" sustained 25
-
-    printf 'phase\tsamples\tcpu_p50\tcpu_p95\tcpu_max\tpeak_rss_mib\tfirst_rss_mib\n' >"$root/lifecycle-summary.tsv"
-    summarize_phase "$root" idle 30 5 128
-    summarize_phase "$root" shell 10 100 192
-    summarize_phase "$root" nvim 10 100 192
-    summarize_phase "$root" yazi 10 100 192
-    summarize_phase "$root" sustained 20 200 192
-    local sustained_first sustained_peak
-    sustained_first=$(awk 'NR == 1 { print $3 }' "$root/sustained-samples.tsv")
-    sustained_peak=$(awk '$3 > max { max = $3 } END { print max + 0 }' "$root/sustained-samples.tsv")
-    (((sustained_peak - sustained_first) <= 32 * 1024)) || die 'sustained RSS grew by more than 32MiB'
-
-    touch "$state/resize.go"
-    wait_for_file "$state/resize.ready" || die 'resize phase did not become ready'
-    local cycle
-    for cycle in {1..50}; do
-        env XDG_RUNTIME_DIR="$XDG_RUNTIME_DIR" WAYLAND_DISPLAY="$WAYLAND_DISPLAY" \
-            "$foot" --title=orb-1sd-resize /bin/sh -c 'sleep 0.12' >"$root/foot-$cycle.log" 2>&1
-        sleep 0.05
-    done
-    sleep 0.1
-    touch "$state/resize.stop"
-    wait_for_file "$state/resize.done" || die 'resize phase did not finish'
-    assert_grid "$state/resize-final-grid.txt"
-    local event_count restore_start restore_end restore_ms
-    event_count=$(wc -l <"$state/resize-events.txt")
-    ((event_count >= 2)) || die "resize emitted only $event_count PTY size events"
-    restore_start=$(tail -n 2 "$state/resize-events.txt" | head -n 1 | awk '{ print $1 }')
-    restore_end=$(tail -n 1 "$state/resize-events.txt" | awk '{ print $1 }')
-    restore_ms=$(((restore_end - restore_start) / 1000000))
-    ((restore_ms <= 1000)) || die "resize restoration took ${restore_ms}ms"
-    printf 'cycles=50\nevents=%s\nrestore_pair_ms=%s\nfinal_grid=%s %s\n' \
-        "$event_count" "$restore_ms" "$expected_rows" "$expected_cols" >"$root/resize-summary.txt"
-
-    touch "$state/detach.go"
-    wait_for_file "$state/detach.ready" || die 'detach phase did not become ready'
-    kill "$venus_pid"
-    wait "$venus_pid" 2>/dev/null || true
-    venus_pid=
-    kill -0 "$orbit_pid" 2>/dev/null || die 'Orbit died with Venus'
-    [[ -S $socket ]] || die 'Orbit socket disappeared with Venus'
-    touch "$state/detach.emit"
-    wait_for_file "$state/detach.emitted" || die 'detached marker was not emitted'
-    local reattach_start reattach_end
-    reattach_start=$(date +%s%N)
-    launch_venus "$venus" "$socket" "$root/venus-reattach.log"
-    reattach_end=$(date +%s%N)
-    local reattach_ms=$(((reattach_end - reattach_start) / 1000000))
-    ((reattach_ms <= 2000)) || die "reattachment took ${reattach_ms}ms"
-    sleep 0.5
-    touch "$state/detach.finish"
-    wait_for_file "$state/detach.done" || die 'detach phase did not finish'
-    assert_grid "$state/detach-final-grid.txt"
-    printf 'orbit_survived=yes\nsocket_ms=%s\nfinal_grid=%s %s\nvisible_coherence=unavailable_on_native_wayland\n' \
-        "$reattach_ms" "$expected_rows" "$expected_cols" >"$root/detach-summary.txt"
-
-    local orbit_status
-    if wait "$orbit_pid"; then orbit_status=0; else orbit_status=$?; fi
-    orbit_pid=
-    ((orbit_status == 0)) || die "Orbit lifecycle process failed (status: $orbit_status)"
-    cleanup
-    cat "$root/lifecycle-summary.tsv"
-    cat "$root/resize-summary.txt"
-    cat "$root/detach-summary.txt"
-}
-
 main() {
     case ${1:-} in
     --self-check)
@@ -631,11 +393,6 @@ main() {
         [[ $# == 5 ]] || { usage >&2; exit 2; }
         validate_run_environment
         run_throughput "$2" "$3" "$4" "$5"
-        ;;
-    lifecycle)
-        [[ $# == 4 ]] || { usage >&2; exit 2; }
-        validate_run_environment
-        run_lifecycle "$2" "$3" "$4"
         ;;
     *)
         usage >&2
