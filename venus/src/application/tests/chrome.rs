@@ -35,7 +35,8 @@ fn close_prompt_asks_for_a_final_close() {
         active_workspace: "s1".into(),
         workspaces: vec![eon_workspace_protocol::v38::WorkspaceInfo {
             id: "s1".into(),
-            persistent_id: "s1".into(),
+            persistent_id: Some("s1".into()),
+            registration_error: None,
             name: None,
             tab_count: tabs.len(),
             attention: None,
@@ -92,7 +93,8 @@ fn close_prompt_asks_for_a_final_close() {
         .workspaces
         .push(eon_workspace_protocol::v38::WorkspaceInfo {
             id: "s2".into(),
-            persistent_id: "s2".into(),
+            persistent_id: Some("s2".into()),
+            registration_error: None,
             name: None,
             tab_count: 1,
             attention: None,
@@ -223,7 +225,8 @@ fn zoom_names_the_tab_panes_columns_and_selected_pane() {
         active_workspace: "s1".into(),
         workspaces: vec![eon_workspace_protocol::v38::WorkspaceInfo {
             id: "s1".into(),
-            persistent_id: "s1".into(),
+            persistent_id: Some("s1".into()),
+            registration_error: None,
             name: None,
             tab_count: tabs.len(),
             attention: None,
@@ -513,7 +516,8 @@ fn sidebar_rows_take_f6_focus_step_by_arrow_and_follow_their_jump() {
         active_workspace: "s1".into(),
         workspaces: vec![eon_workspace_protocol::v38::WorkspaceInfo {
             id: "s1".into(),
-            persistent_id: "s1".into(),
+            persistent_id: Some("s1".into()),
+            registration_error: None,
             name: None,
             tab_count: 2,
             attention: None,

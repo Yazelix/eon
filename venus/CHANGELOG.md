@@ -2,6 +2,9 @@
 
 ## Unreleased
 
+- EONW v38 carries nullable recovered session IDs and registration diagnostics.
+  A registry failure shows a notice while the recovered terminal remains usable.
+
 - VEN-C18: a popup's catalog label sits in a rounded tab continuous with its
   left and top frame edges, on the terminal background and opacity. The original
   border-gap title remains when the tab's clearance cannot fit

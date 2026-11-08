@@ -123,12 +123,20 @@ installation, and proven contract changes.
   `persistent_id`; creation also reports `created_persistent_id`.
   `eon session registry [ID] [--json]` reads retained metadata without a
   window, and inspect/switch/rename/close accept `--id ID` within the selected
-  window. Registration precedes startup; rename persistence precedes memory
+  window. Registration precedes fresh startup; rename persistence precedes memory
   and events. Close/exit retain registrations, and merged restart recovery
-  gets a new ID. Registration does not prove liveness or recovery; an uncertain
+  stays usable by local handle with a null ID and a visible registration error
+  until a new ID is confirmed (`session-registered`). Registry work runs outside
+  the control loop; contention reports `registry-busy` without allocating an
+  ID, and inspection and Stop keep working.
+  Startup and recovery retry temporary contention on the worker for up to two
+  seconds; registry reads share a lock. Registry setup failure leaves recovered
+  work usable with its diagnostic. Registration does not prove
+  liveness or recovery; an uncertain
   creation needs inspection before any retry. EONW v38 carries the mapping
-  and typed targets; the Reserved Stop is unchanged.
-
+  and typed targets; the Reserved Stop is unchanged. Eon is 0.1.22: restart
+  running windows to use v38 commands; their live terminals keep running on
+  the earlier build until you close them.
 - Every Stop is now the Reserved Stop, one message whose bytes no later Eon
   changes, so `eon window stop`, `eon quit`, `eon quit --all` and Venus's Quit
   stop a window of another Eon build without running that build's `eon`,

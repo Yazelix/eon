@@ -1,6 +1,6 @@
 use super::cli::WORKSPACE_PICKER;
 use super::managed_environment::{PopupCatalog, PopupCommand, PopupDefinition};
-use super::session_registry::{Registration, Registry};
+use super::session_registry::{Completion, Operation, Registration, Registry};
 use eon_workspace_protocol::v38::{
     Action, Attention, AttentionKind, AttentionState, BusyTerminals, ClaudeQuotaState,
     CodexQuotaState, Column as SnapshotColumn, Direction, Editing, FILES_ENTRY, Failure,
@@ -189,12 +189,13 @@ impl IdAllocator {
 /// Supervisor-wide admission, identities and replay protection; topology stays local.
 #[derive(Clone, Debug, PartialEq)]
 pub(crate) struct WorkspaceSet {
-    registry: Registry,
+    registry: Option<Registry>,
     workspaces: Vec<Workspace>,
     shown: usize,
     ids: IdAllocator,
     recent_inspections: VecDeque<String>,
     recent_mutations: VecDeque<String>,
+    in_flight: Option<String>,
     /// Every live workspace once, most recently shown first, so the shown one leads.
     recent_workspaces: VecDeque<String>,
 }
@@ -213,7 +214,7 @@ impl WorkspaceSet {
             Registry::in_test_directory(super::supervisor::temporary_directory().join("sessions"));
         let registration = registry.create(None).unwrap();
         Self::registered_pending(
-            registry,
+            Some(registry),
             registration,
             runtime,
             directory,
@@ -233,7 +234,7 @@ impl WorkspaceSet {
         prepare: impl FnMut(&PopupCommand, &Path) -> Result<Vec<OsString>, String>,
         operate: impl FnMut(SessionOperation) -> Result<(), String>,
     ) -> Result<(), String> {
-        let registration = self.registry.create(None).unwrap();
+        let registration = self.registry.as_ref().unwrap().create(None).unwrap();
         self.insert_registered_pending(registration, directory, home, catalog, prepare, operate)
     }
 
@@ -249,8 +250,8 @@ impl WorkspaceSet {
             Registry::in_test_directory(super::supervisor::temporary_directory().join("sessions"));
         let registration = registry.create(None).unwrap();
         Self::registered_recovered(
-            registry,
-            registration,
+            Some(registry),
+            Some(registration),
             runtime,
             directory,
             home,
@@ -259,8 +260,9 @@ impl WorkspaceSet {
         )
     }
 
+    #[allow(clippy::too_many_arguments)]
     pub(crate) fn registered_pending(
-        registry: Registry,
+        registry: Option<Registry>,
         registration: Registration,
         runtime: PathBuf,
         directory: PathBuf,
@@ -277,6 +279,7 @@ impl WorkspaceSet {
             recent_inspections: VecDeque::new(),
             recent_workspaces: VecDeque::new(),
             recent_mutations: VecDeque::new(),
+            in_flight: None,
         };
         set.insert_registered_pending(registration, directory, home, catalog, prepare, operate)?;
         Ok(set)
@@ -344,8 +347,8 @@ impl WorkspaceSet {
     }
 
     pub(crate) fn registered_recovered(
-        registry: Registry,
-        registration: Registration,
+        registry: Option<Registry>,
+        registration: Option<Registration>,
         runtime: PathBuf,
         directory: PathBuf,
         home: Option<PathBuf>,
@@ -380,7 +383,147 @@ impl WorkspaceSet {
             recent_inspections: VecDeque::new(),
             recent_workspaces,
             recent_mutations: VecDeque::new(),
+            in_flight: None,
         })
+    }
+
+    pub(crate) fn prepare_registration(
+        &self,
+        request_id: &str,
+        caller: Option<&str>,
+        action: &Action,
+    ) -> Result<Operation, Failure> {
+        self.reject_duplicate(request_id)?;
+        let index = self.caller_workspace(caller)?;
+        match action {
+            Action::Workspace(WorkspaceAction::NewWorkspace { name, .. }) => {
+                if let Some(name) = name {
+                    eon_workspace_protocol::v38::validate_workspace_name(name)
+                        .map_err(|error| action_error("malformed-action", error.to_string()))?;
+                }
+                self.pending_allowance()?;
+                let home = self.workspaces[self.shown].home.as_ref().ok_or_else(|| {
+                    action_error(
+                        "invalid-directory",
+                        "cannot resolve the current user home directory",
+                    )
+                })?;
+                validated_directory(home.as_os_str().as_bytes().to_vec())?;
+                Ok(Operation::Create { name: name.clone() })
+            }
+            Action::Workspace(WorkspaceAction::RenameWorkspace { workspace, name }) => {
+                if !name.is_empty() {
+                    eon_workspace_protocol::v38::validate_workspace_name(name)
+                        .map_err(|error| action_error("malformed-action", error.to_string()))?;
+                }
+                let target = workspace
+                    .as_ref()
+                    .map(|target| self.resolve_workspace(target))
+                    .transpose()?
+                    .unwrap_or(index);
+                let id = self.workspaces[target]
+                    .persistent_id
+                    .clone()
+                    .ok_or_else(|| {
+                        action_error(
+                            "session-registry",
+                            "recovered session has no confirmed registration",
+                        )
+                    })?;
+                Ok(Operation::Rename {
+                    id,
+                    name: (!name.is_empty()).then(|| name.clone()),
+                })
+            }
+            _ => Err(action_error(
+                "malformed-action",
+                "action does not mutate the registry",
+            )),
+        }
+    }
+
+    #[cfg(test)]
+    pub(crate) fn registry(&self) -> &Registry {
+        self.registry.as_ref().unwrap()
+    }
+
+    pub(crate) fn reserve_registration(&mut self, request_id: &str) -> Result<(), Failure> {
+        self.reject_duplicate(request_id)?;
+        if self.in_flight.is_some() {
+            return Err(super::session_registry::Failure::busy().into_control());
+        }
+        self.in_flight = Some(request_id.to_owned());
+        Ok(())
+    }
+
+    pub(crate) fn release_registration(&mut self, request_id: &str) {
+        if self.in_flight.as_deref() == Some(request_id) {
+            self.in_flight = None;
+        }
+    }
+
+    pub(crate) fn remember_registration(&mut self, request_id: &str) {
+        if !self.recent_mutations.iter().any(|id| id == request_id) {
+            self.remember(request_id, true);
+        }
+    }
+
+    pub(crate) fn registered_recovery(&mut self, target: &str, result: Completion) {
+        let Some(workspace) = self
+            .workspaces
+            .iter_mut()
+            .find(|workspace| workspace.id == target && workspace.persistent_id.is_none())
+        else {
+            return;
+        };
+        match result {
+            Ok(Some(record)) => {
+                workspace.persistent_id = Some(record.id);
+                workspace.name = record.name;
+                workspace.registration_error = None;
+            }
+            Ok(None) => {
+                workspace.registration_error = Some(action_error(
+                    "session-registry",
+                    "recovered registration is missing",
+                ))
+            }
+            Err(error) => workspace.registration_error = Some(error.into_control()),
+        }
+    }
+
+    #[cfg(test)]
+    pub(crate) fn dispatch(
+        &mut self,
+        request_id: &str,
+        caller: Option<&str>,
+        action: Action,
+        prepare: impl FnMut(&PopupCommand, &Path) -> Result<Vec<OsString>, String>,
+        operate: impl FnMut(SessionOperation) -> Result<(), String>,
+    ) -> Result<(), Failure> {
+        // State tests execute prepared I/O directly; supervisor tests exercise the worker.
+        let registration = if matches!(
+            action,
+            Action::Workspace(
+                WorkspaceAction::NewWorkspace { .. } | WorkspaceAction::RenameWorkspace { .. }
+            )
+        ) {
+            let operation = self.prepare_registration(request_id, caller, &action)?;
+            match self.registry.as_ref().unwrap().perform(operation) {
+                Ok(record) => record,
+                Err(error) => {
+                    if error.reserved_id.is_some()
+                        || error.publication == super::session_registry::Publication::Uncertain
+                    {
+                        self.remember_registration(request_id);
+                    }
+                    return Err(error.into_control());
+                }
+            }
+        } else {
+            None
+        };
+        self.apply_action(request_id, caller, action, registration, prepare, operate)
     }
 
     pub(crate) fn snapshot(&self) -> Snapshot {
@@ -414,6 +557,7 @@ impl WorkspaceSet {
             .map(|workspace| eon_workspace_protocol::v38::WorkspaceInfo {
                 id: workspace.id.clone(),
                 persistent_id: workspace.persistent_id.clone(),
+                registration_error: workspace.registration_error.clone(),
                 name: workspace.name.clone(),
                 tab_count: workspace.tabs.len(),
                 // The attention owner sets each rollup.
@@ -580,7 +724,7 @@ impl WorkspaceSet {
                 (
                     workspace.id.as_str(),
                     workspace.name.as_deref(),
-                    workspace.persistent_id.as_str(),
+                    workspace.persistent_id.as_deref(),
                 )
             }),
             target,
@@ -692,11 +836,12 @@ impl WorkspaceSet {
             .map(|(_, workspace)| workspace.id.as_str())
     }
 
-    pub(crate) fn dispatch(
+    pub(crate) fn apply_action(
         &mut self,
         request_id: &str,
         caller: Option<&str>,
         action: Action,
+        registration: Option<Registration>,
         prepare: impl FnMut(&PopupCommand, &Path) -> Result<Vec<OsString>, String>,
         operate: impl FnMut(SessionOperation) -> Result<(), String>,
     ) -> Result<(), Failure> {
@@ -747,17 +892,12 @@ impl WorkspaceSet {
                 })?;
                 let directory = validated_directory(home.as_os_str().as_bytes().to_vec())?;
                 let catalog = shown.catalog.clone();
-                let registration = match self.registry.create(name.as_deref()) {
-                    Ok(registration) => registration,
-                    Err(error) => {
-                        if error.reserved_id.is_some()
-                            || error.publication == super::session_registry::Publication::Uncertain
-                        {
-                            self.remember(request_id, true);
-                        }
-                        return Err(error.into_control());
-                    }
-                };
+                let registration = registration.ok_or_else(|| {
+                    action_error(
+                        "session-registry",
+                        "creation requires confirmed registration",
+                    )
+                })?;
                 self.remember(request_id, true);
                 let persistent_id = registration.id.clone();
                 self.insert_registered_pending(
@@ -801,14 +941,17 @@ impl WorkspaceSet {
                     .map(|id| self.resolve_workspace(id))
                     .transpose()?
                     .unwrap_or(index);
-                let name = (!name.is_empty()).then_some(name);
-                let registration = self
-                    .registry
-                    .rename(&self.workspaces[target].persistent_id, name.as_deref())
-                    .map_err(super::session_registry::Failure::into_control)?
-                    .ok_or_else(|| {
-                        action_error("unknown-session", "session registration is missing")
-                    })?;
+                let registration = registration.ok_or_else(|| {
+                    action_error("session-registry", "rename requires confirmed persistence")
+                })?;
+                if self.workspaces[target].persistent_id.as_deref()
+                    != Some(registration.id.as_str())
+                {
+                    return Err(action_error(
+                        "unknown-session",
+                        "registered target left this window",
+                    ));
+                }
                 self.workspaces[target].name = registration.name;
             }
             action => {
@@ -1052,11 +1195,12 @@ impl WorkspaceSet {
     }
 
     fn reject_duplicate(&self, request_id: &str) -> Result<(), Failure> {
-        if self
-            .recent_mutations
-            .iter()
-            .chain(&self.recent_inspections)
-            .any(|seen| seen == request_id)
+        if self.in_flight.as_deref() == Some(request_id)
+            || self
+                .recent_mutations
+                .iter()
+                .chain(&self.recent_inspections)
+                .any(|seen| seen == request_id)
         {
             Err(action_error(
                 "duplicate-request",
@@ -1084,7 +1228,8 @@ impl WorkspaceSet {
 #[derive(Clone, Debug, PartialEq)]
 struct Workspace {
     id: String,
-    persistent_id: String,
+    persistent_id: Option<String>,
+    registration_error: Option<Failure>,
     name: Option<String>,
     catalog: PopupCatalog,
     home: Option<PathBuf>,
@@ -1093,6 +1238,7 @@ struct Workspace {
 }
 
 impl Workspace {
+    #[allow(clippy::too_many_arguments)]
     fn pending(
         registration: Registration,
         ids: &mut IdAllocator,
@@ -1105,7 +1251,8 @@ impl Workspace {
     ) -> Result<Self, String> {
         let mut workspace = Self {
             id: format!("s{}", ids.next_workspace),
-            persistent_id: registration.id,
+            persistent_id: Some(registration.id),
+            registration_error: None,
             name: registration.name,
             catalog,
             home,
@@ -1140,7 +1287,7 @@ impl Workspace {
     }
 
     fn with_recovered_sessions(
-        registration: Registration,
+        registration: Option<Registration>,
         ids: &IdAllocator,
         directory: PathBuf,
         home: Option<PathBuf>,
@@ -1157,8 +1304,9 @@ impl Workspace {
             .collect::<Vec<_>>();
         Self {
             id: format!("s{}", ids.next_workspace),
-            persistent_id: registration.id,
-            name: registration.name,
+            persistent_id: registration.as_ref().map(|record| record.id.clone()),
+            registration_error: None,
+            name: registration.and_then(|record| record.name),
             catalog,
             home,
             tabs: vec![Tab {
@@ -1182,6 +1330,7 @@ impl Workspace {
             workspaces: vec![eon_workspace_protocol::v38::WorkspaceInfo {
                 id: self.id.clone(),
                 persistent_id: self.persistent_id.clone(),
+                registration_error: self.registration_error.clone(),
                 name: self.name.clone(),
                 tab_count: self.tabs.len(),
                 attention: None,
@@ -3438,9 +3587,9 @@ pub(crate) fn json_workspace(
     shown: bool,
 ) {
     output.push_str(&format!(
-        "{{\"id\":\"{}\",\"persistent_id\":\"{}\",\"name\":",
+        "{{\"id\":\"{}\",{},\"name\":",
         json_escape(&workspace.id),
-        json_escape(&workspace.persistent_id),
+        registration_json(workspace),
     ));
     json_option(output, workspace.name.as_deref());
     output.push_str(&format!(
@@ -3449,6 +3598,21 @@ pub(crate) fn json_workspace(
     ));
     json_option(output, workspace.attention.map(attention_name));
     output.push_str(&format!(",\"recency\":{}}}", workspace.recency));
+}
+
+pub(crate) fn registration_json(workspace: &eon_workspace_protocol::v38::WorkspaceInfo) -> String {
+    let mut output = String::from("\"persistent_id\":");
+    json_option(&mut output, workspace.persistent_id.as_deref());
+    output.push_str(",\"registration_error\":");
+    match &workspace.registration_error {
+        Some(error) => output.push_str(&format!(
+            "{{\"code\":\"{}\",\"detail\":\"{}\"}}",
+            json_escape(&error.code),
+            json_escape(&error.detail)
+        )),
+        None => output.push_str("null"),
+    }
+    output
 }
 
 /// The local handles, persistent IDs, names and summaries of this window's members.
@@ -3558,7 +3722,7 @@ fn index_after_removal(selected: usize, removed: usize, remaining: usize) -> usi
 
 /// Explicit persistent targets never fall through to a window-local name.
 pub(crate) fn resolve_target<'a>(
-    workspaces: impl Iterator<Item = (&'a str, Option<&'a str>, &'a str)>,
+    workspaces: impl Iterator<Item = (&'a str, Option<&'a str>, Option<&'a str>)>,
     target: &WorkspaceTarget,
 ) -> Result<usize, Failure> {
     match target {
@@ -3572,7 +3736,9 @@ pub(crate) fn resolve_target<'a>(
                 .map_err(|error| action_error("malformed-action", error.to_string()))?;
             workspaces
                 .enumerate()
-                .find_map(|(index, (_, _, persistent))| (persistent == id).then_some(index))
+                .find_map(|(index, (_, _, persistent))| {
+                    (persistent == Some(id.as_str())).then_some(index)
+                })
                 .ok_or_else(|| {
                     action_error(
                         "unknown-session",
@@ -3698,7 +3864,7 @@ mod tests {
         let registry = Registry::in_test_directory(root.join("sessions"));
         let registration = registry.create(Some("same")).unwrap();
         let set = WorkspaceSet::registered_pending(
-            registry.clone(),
+            Some(registry.clone()),
             registration,
             root.join("runtime"),
             root.into(),
@@ -3765,7 +3931,7 @@ mod tests {
                 name: None,
                 focus: true,
             });
-            set.registry.inject(Some(fault));
+            set.registry.as_mut().unwrap().inject(Some(fault));
             let error = set
                 .dispatch(&request, None, create.clone(), prepared, |_| {
                     panic!("unconfirmed registration starts nothing")
@@ -3781,7 +3947,7 @@ mod tests {
                 );
             }
             assert_eq!(set.snapshot(), before);
-            set.registry.inject(None);
+            set.registry.as_mut().unwrap().inject(None);
             assert_eq!(
                 set.dispatch(&request, None, create, prepared, |_| panic!(
                     "a replay cannot launch"
@@ -3800,13 +3966,13 @@ mod tests {
         use super::super::session_registry::Fault;
         let root = super::super::supervisor::temporary_directory();
         let (registry, mut set) = c38_set(&root);
-        let id = set.snapshot().workspaces[0].persistent_id.clone();
+        let id = set.snapshot().workspaces[0].persistent_id.clone().unwrap();
         for (index, fault) in [Fault::RecordBeforePublish, Fault::RecordDirectorySync]
             .into_iter()
             .enumerate()
         {
             let before = set.snapshot();
-            set.registry.inject(Some(fault));
+            set.registry.as_mut().unwrap().inject(Some(fault));
             let error = set
                 .dispatch(
                     &format!("rename-{index}"),
@@ -3833,7 +3999,7 @@ mod tests {
                 Some(if index == 0 { "same" } else { "unconfirmed" })
             );
         }
-        set.registry.inject(None);
+        set.registry.as_mut().unwrap().inject(None);
         registry.rename(&id, Some("external")).unwrap();
         set.dispatch(
             "clear",
@@ -3848,7 +4014,10 @@ mod tests {
         .unwrap();
         let current = registry.lookup(&id).unwrap().unwrap();
         assert_eq!(current.name, None);
-        assert_eq!(set.snapshot().workspaces[0].persistent_id, id);
+        assert_eq!(
+            set.snapshot().workspaces[0].persistent_id.as_deref(),
+            Some(id.as_str())
+        );
         assert_eq!(set.snapshot().workspaces[0].name, None);
         fs::remove_dir_all(root).unwrap();
     }
@@ -3934,7 +4103,7 @@ mod tests {
             "unknown-session"
         );
         assert_eq!(set.snapshot(), before);
-        let exact = WorkspaceTarget::PersistentId(created.persistent_id.clone());
+        let exact = WorkspaceTarget::PersistentId(created.persistent_id.clone().unwrap());
         assert_eq!(set.inspected_workspace_id(&exact).unwrap(), created.id);
         set.dispatch(
             "switch",
@@ -3961,7 +4130,12 @@ mod tests {
             after.workspaces[0].persistent_id,
             sibling.workspaces[0].persistent_id
         );
-        assert!(registry.lookup(&created.persistent_id).unwrap().is_some());
+        assert!(
+            registry
+                .lookup(created.persistent_id.as_deref().unwrap())
+                .unwrap()
+                .is_some()
+        );
         assert_eq!(
             set.resolve_workspace(&exact).unwrap_err().code,
             "unknown-session"

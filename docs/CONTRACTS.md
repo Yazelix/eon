@@ -1193,13 +1193,17 @@ names its socket. CLI JSON names a session `session` and a terminal
   by `eon-rcxu5`: a stale caller's `unknown-caller` names its terminal and
   window, and a selected supervisor of another EONW runs its recorded build
   (EON-C11, Routing).
-  Planned fork amendment, approved by Yu Sun on 2026-11-07, slice 2a
-  (`eon-remote-workspaces-52i4.5`), for EON-C38. Implementation and proof
-  are pending. EONW v38 carries each session's persistent ID beside
-  its window-local `sN`. `eon session` adds `persistent_id`; `session ls`
-  retains `id: sN` and adds `persistent_id`; successful creation retains
-  `created: sN` and adds `created_persistent_id`. Compact lists and pickers
-  continue to show names and local handles; detailed inspection shows the ID.
+  Quoted amendment direction approved on 2026-11-08 by Lucca
+  ("2 we fix and push", relayed by eon-overseer) for `eon-remote-workspaces-52i4.5`:
+  EONW v38 carries each session's persistent ID beside its window-local
+  `sN`. Ordinary inspection and `session ls` include `persistent_id` and
+  `registration_error`. `persistent_id` is null only for an existing recovered
+  member whose registration is pending or failed; `registration_error` is null
+  or a bounded `{code, detail}` diagnostic. Local-handle inspection and terminal
+  operations remain available for that member; `--id` never matches a missing
+  persistent ID. Successful new-session creation retains `created: sN` and
+  returns non-null `created_persistent_id` after registration commits.
+  Compact lists and pickers continue to show names and local handles.
   `eon session registry [ID] [--json]` reads registrations independently of
   callers and windows, without connecting to or starting a supervisor or
   creating state. It returns only `{persistent_id, name}`, sorted by ID for
@@ -1209,19 +1213,30 @@ names its socket. CLI JSON names a session `session` and a terminal
   mutually exclusive with a positional handle/name target. Resolution stays
   within the selected window; a registered ID outside it is missing, never
   attached or recovered. Existing window/caller validation and close
-  confirmation remain; a confirmed close sends the exact persistent target.
+  confirmation remain.
   Syntax exits 2; ambiguity, corrupt registry or persistence failure exits 1;
   missing ID/member exits 3; unreachable supervisor or lost reply exits 4,
   consistently in text and JSON. Creation validates name, capacity, directory
   and configuration before durable registration, then starts terminals.
   Startup failure reports and retains the committed ID without adding a
-  false member. Definitive failure, uncertain commit and lost reply remain
-  distinct; uncertain creation must not be blindly retried. Committed or
-  uncertain creation attempts enter the existing 256-mutation replay window,
-  bounded by retention and the supervisor lifetime. Rename/clear persists
-  before memory, events and success; a post-publication sync failure reports
-  uncertainty and retains the last confirmed in-memory name. The next change
-  locks and rereads disk; no rollback is claimed.
+  false member. `registry-busy` exits 1 and means that no identity was allocated
+  and no record was published for that request. An accepted registry mutation
+  is protected against replay while in flight. Memory, events and success
+  follow confirmed persistence. A lost connection or uncertain publication is
+  not a definitive creation failure and must not be blindly retried. Committed
+  or uncertain creation attempts enter the existing 256-mutation replay window,
+  bounded by retention and the supervisor lifetime. A late completion after
+  Stop or target removal may retain metadata but never starts a terminal or
+  binds another member to that result. Rename/clear persists before memory,
+  events and success; a post-publication sync failure reports uncertainty and
+  retains the last confirmed in-memory name. The next change rereads disk under
+  the lock; no rollback is claimed.
+  Amendment approved on 2026-11-08 by Lucca
+  ("ok", relayed by eon-overseer) for `eon-remote-workspaces-52i4.5`: a confirmed
+  close sends the exact persistent target when present, otherwise the recovered
+  member's local handle after verifying that the supervisor endpoint and local
+  member are unchanged. Confirmation accepts a null-to-confirmed ID transition
+  on that same member and uses its confirmed ID when available.
 - **Consumer:** One local CLI or approved composition controlling a live Eon
   supervisor.
 - **Trigger:** The client submits one versioned session or supervisor-lifecycle
@@ -4062,14 +4077,18 @@ names its socket. CLI JSON names a session `session` and a terminal
   Amended on 2026-11-07 (approved by eon-overseer under Lucca's standing rule)
   by `eon-30skm` (S3): the heading names sessions, and its prose says session
   for the product concept.
-  Planned fork amendment, approved by Yu Sun on 2026-11-07, slice 2a
-  (`eon-remote-workspaces-52i4.5`), for EON-C38. Implementation and proof
-  are pending. Close, natural terminal exit and empty-session pruning
-  remove only current window membership and retain registrations. Disconnect
-  and reconnect to the same supervisor preserve the `sN`/persistent-ID mapping.
-  After a supervisor restart the old registrations remain queryable; existing
-  merged-terminal recovery gets a new persistent ID. This neither infers old
-  groups/layouts nor expands EON-C15 recovery guarantees.
+  Quoted amendment direction approved on 2026-11-08 by Lucca
+  ("2 we fix and push", relayed by eon-overseer) for `eon-remote-workspaces-52i4.5`:
+  Close, natural terminal exit and empty-session pruning remove only current
+  window membership and retain registrations. Disconnect and reconnect to the
+  same supervisor preserve the `sN`/persistent-ID mapping. After a supervisor
+  restart, old registrations remain queryable. Existing merged-terminal
+  recovery exposes the normally recoverable validated runs without waiting for
+  registry work. Its member has `persistent_id: null` until a fresh registration
+  is confirmed, and a registration failure is shown without hiding or stopping
+  that recovered work. No replacement terminal starts to compensate for a
+  registry failure. This neither infers old groups/layouts nor expands EON-C15
+  recovery guarantees.
 - **Consumer:** One full-Eon user, or an agent working for them, who keeps
   several separate sets of work in one Eon window.
 - **Trigger:** Alt+Shift+S or Commands > Switch session; Alt+Shift+1
@@ -4739,6 +4758,10 @@ names its socket. CLI JSON names a session `session` and a terminal
   by `eon-30skm` (S1): session IDs `sN`.
   Amended on 2026-11-07 (approved by eon-overseer under Lucca's standing rule)
   by `eon-30skm` (S3): its prose says session for the product concept.
+  Quoted amendment direction approved on 2026-11-08 by Lucca
+  ("2 we fix and push", relayed by eon-overseer) for `eon-remote-workspaces-52i4.5`:
+  recovery remains usable through a registry failure, and registry work does
+  not hold the supervisor's control loop.
 - **Consumer:** Local and remote Eon session clients and the host's
   ID-targeted session operations.
 - **Trigger:** Create or rename a session, list/read its registration, resolve
@@ -4760,6 +4783,27 @@ names its socket. CLI JSON names a session `session` and a terminal
     successful new identity or partly committed registration. IDs are not reused.
     Version changes preserve the old durable file as the repository's durable
     format policy requires; no unknown version is silently overwritten.
+  - New sessions obtain a confirmed durable registration before any terminal
+    starts. Recovery of already-live terminals under EON-C15 does not wait for
+    registry availability. A recovered member without confirmed registration
+    has no persistent ID; it remains usable by its window-local handle, and its
+    registration error is visible to the person and the CLI. No transient value
+    is presented as a persistent identity. Corrupt or unknown registry state
+    remains available for diagnosis.
+  - Registry work does not hold the supervisor's control loop: unrelated
+    inspection, attention processing and Stop remain serviceable while a
+    registry operation is pending. Contention gives an explicit busy result
+    without allocating an ID or publishing a record.
+  - Runtime uses this user's configured state directory for the registry:
+    `$XDG_STATE_HOME/eon/sessions`, with the documented HOME fallback. Clients
+    intended to share registrations must use the same state-directory setting.
+  - Amendment approved on 2026-11-08 by Lucca
+    ("ok", relayed by eon-overseer) for `eon-remote-workspaces-52i4.5`: startup and
+    recovered registrations retry only definitive busy results on the registry
+    worker for up to two seconds, with bounded backoff. Interactive create and
+    rename still return busy immediately. Registry list/lookup use shared locks;
+    mutations use exclusive locks. Setup failure remains a recovered member's
+    visible registration error and does not block recovery or control binding.
 - **Important failures:** Unknown/stale/ambiguous targets, corrupt or unknown
   registry versions and persistence failures give explicit diagnostics rather
   than guessed targets or a replacement with the same name. Malformed state
@@ -4819,11 +4863,19 @@ names its socket. CLI JSON names a session `session` and a terminal
   Amended on 2026-11-07 (approved by eon-overseer under Lucca's standing rule)
   by `eon-30skm` (S3): the heading names session events, and its prose says
   session for the product concept.
-  Planned fork amendment, approved by Yu Sun on 2026-11-07, slice 2a
-  (`eon-remote-workspaces-52i4.5`), for EON-C38. Implementation and proof
-  are pending. EONW v38 initial and gap snapshots and session events
-  carry the same local-handle/persistent-ID mapping as ordinary inspection.
-  Registry presence alone never denotes live membership or recoverability.
+  Quoted amendment direction approved on 2026-11-08 by Lucca
+  ("2 we fix and push", relayed by eon-overseer) for `eon-remote-workspaces-52i4.5`:
+  EONW v38 initial and gap snapshots and session events carry the same
+  local-handle/persistent-ID mapping and `registration_error` as ordinary
+  inspection, including a null ID for an unregistered recovered member.
+  Confirming registration for an already published recovered member emits
+  `session-registered` with its local handle and confirmed ID. Registry presence
+  alone never denotes live membership or recoverability.
+  Amendment approved on 2026-11-08 by Lucca
+  ("ok", relayed by eon-overseer) for `eon-remote-workspaces-52i4.5`: a failed registration
+  emits `session-registration-failed` with its diagnostic so subscribers also
+  see the failure state. A Registered event requires a confirmed ID, and a
+  RegistrationFailed event requires a diagnostic.
 - **Consumer:** An agent or script running as the person's user, in an Eon
   terminal or outside one, that must notice session and attention changes
   without polling: an overseer answering its tab's questions (`eon-ciwn.4`),

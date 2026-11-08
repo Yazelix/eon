@@ -566,6 +566,8 @@ fn event_line(event: &wire::Event, json: bool) -> String {
                 W::Renamed => "session-renamed",
                 W::Closed => "session-closed",
                 W::Shown => "session-shown",
+                W::Registered => "session-registered",
+                W::RegistrationFailed => "session-registration-failed",
             },
         ),
         Change::Tab { change, .. } => (
@@ -858,7 +860,8 @@ mod tests {
         let entry = wire::WorkspaceEntry {
             workspace: wire::WorkspaceInfo {
                 id: "s1".into(),
-                persistent_id: "0123456789abcdef0123456789abcdef0000000000000001".into(),
+                persistent_id: Some("0123456789abcdef0123456789abcdef0000000000000001".into()),
+                registration_error: None,
                 name: Some("a\"b".into()),
                 tab_count: 1,
                 attention: None,

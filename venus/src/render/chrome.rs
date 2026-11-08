@@ -3893,7 +3893,8 @@ mod tests {
             active_workspace: "s1".into(),
             workspaces: vec![eon_workspace_protocol::v38::WorkspaceInfo {
                 id: "s1".into(),
-                persistent_id: "s1".into(),
+                persistent_id: Some("s1".into()),
+                registration_error: None,
                 name: None,
                 tab_count: 1,
                 attention: Some(AttentionState::Working),
@@ -4564,7 +4565,8 @@ mod tests {
                     active_workspace: "s1".into(),
                     workspaces: vec![eon_workspace_protocol::v38::WorkspaceInfo {
                         id: "s1".into(),
-                        persistent_id: "s1".into(),
+                        persistent_id: Some("s1".into()),
+                        registration_error: None,
                         name: None,
                         tab_count: 1,
                         attention: None,
@@ -5111,7 +5113,8 @@ mod tests {
             active_workspace: "s1".into(),
             workspaces: vec![WorkspaceInfo {
                 id: "s1".into(),
-                persistent_id: "s1".into(),
+                persistent_id: Some("s1".into()),
+                registration_error: None,
                 name: Some("gpy-jq".into()),
                 tab_count: 2,
                 attention: None,

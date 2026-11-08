@@ -16,12 +16,11 @@ use super::{
     MAX_WORKSPACE_NAME_BYTES, MAX_WORKSPACES, Pane, Popup, Result, Tab, TerminalTarget, WireTab,
     WorkspaceInfo, assemble_tab, decode_attention, decode_bool, decode_caller, decode_failure,
     decode_layout, decode_optional, decode_pane, decode_popup, decode_state, decode_target,
-    decode_u64, decode_wire_tab, decode_workspace_optional, encode_attention, encode_caller,
-    encode_failure, encode_layout, encode_optional, encode_pane, encode_popup, encode_state,
-    encode_target, encode_wire_tab, entry_id, frame, identity, queued, unframe, validate_attention,
-    validate_busy_terminal, validate_columns, validate_endpoint, validate_pane_label,
-    validate_tabs, validate_target, validate_window_id, validate_workspace_id,
-    validate_workspace_info, validate_workspace_name,
+    decode_u64, decode_wire_tab, encode_attention, encode_caller, encode_failure, encode_layout,
+    encode_optional, encode_pane, encode_popup, encode_state, encode_target, encode_wire_tab,
+    entry_id, frame, identity, queued, unframe, validate_attention, validate_busy_terminal,
+    validate_columns, validate_endpoint, validate_pane_label, validate_tabs, validate_target,
+    validate_window_id, validate_workspace_id, validate_workspace_info, validate_workspace_name,
 };
 
 pub(super) const SUBSCRIBE: u8 = 40;
@@ -137,6 +136,8 @@ pub enum WorkspaceChange {
     Renamed,
     Closed,
     Shown,
+    Registered,
+    RegistrationFailed,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -469,7 +470,7 @@ fn validate_snapshot(snapshot: &WindowSnapshot) -> Result<()> {
     ) || !distinct(
         &workspaces
             .iter()
-            .map(|e| &e.workspace.persistent_id)
+            .filter_map(|e| e.workspace.persistent_id.as_ref())
             .collect::<Vec<_>>(),
     ) || !distinct(
         &workspaces
@@ -494,26 +495,13 @@ fn validate_snapshot(snapshot: &WindowSnapshot) -> Result<()> {
 }
 
 fn encode_workspace_entry(encoder: &mut Encoder, entry: &WorkspaceEntry) {
-    let workspace = &entry.workspace;
-    encoder.string(&workspace.id);
-    encoder.string(&workspace.persistent_id);
-    encode_optional(encoder, &workspace.name);
-    encoder.count(workspace.tab_count);
-    encode_state(encoder, workspace.attention);
-    encoder.byte(workspace.recency);
+    super::encode_workspace_info(encoder, &entry.workspace);
     encoder.string(&entry.active_tab);
 }
 
 fn decode_workspace_entry(decoder: &mut Decoder<'_>) -> Result<WorkspaceEntry> {
     Ok(WorkspaceEntry {
-        workspace: WorkspaceInfo {
-            id: decoder.string("workspace id", MAX_ID_BYTES)?,
-            persistent_id: decoder.string("persistent id", MAX_ID_BYTES)?,
-            name: decode_workspace_optional(decoder)?,
-            tab_count: decoder.count("workspace tabs", MAX_TABS)?,
-            attention: decode_state(decoder, "workspace attention")?,
-            recency: decoder.byte()?,
-        },
+        workspace: super::decode_workspace_info(decoder)?,
         active_tab: decoder.string("active tab", MAX_ID_BYTES)?,
     })
 }
@@ -732,7 +720,24 @@ fn validate_column_order(
 
 fn validate_change(change: &Change) -> Result<()> {
     match change {
-        Change::Workspace { workspace, .. } => validate_workspace_entry(workspace),
+        Change::Workspace { change, workspace } => {
+            validate_workspace_entry(workspace)?;
+            match change {
+                WorkspaceChange::Registered if workspace.workspace.persistent_id.is_none() => {
+                    Err(Error::InvalidSnapshot {
+                        field: "registered persistent id",
+                    })
+                }
+                WorkspaceChange::RegistrationFailed
+                    if workspace.workspace.registration_error.is_none() =>
+                {
+                    Err(Error::InvalidSnapshot {
+                        field: "registration error",
+                    })
+                }
+                _ => Ok(()),
+            }
+        }
         Change::Tab {
             change,
             workspace,
@@ -885,11 +890,13 @@ fn decode_change(decoder: &mut Decoder<'_>) -> Result<Change> {
         })?;
     Ok(match kind {
         EventKind::Workspace => Change::Workspace {
-            change: match change_tag(decoder.byte()?, "workspace change", 4)? {
+            change: match change_tag(decoder.byte()?, "workspace change", 6)? {
                 0 => WorkspaceChange::Created,
                 1 => WorkspaceChange::Renamed,
                 2 => WorkspaceChange::Closed,
-                _ => WorkspaceChange::Shown,
+                3 => WorkspaceChange::Shown,
+                4 => WorkspaceChange::Registered,
+                _ => WorkspaceChange::RegistrationFailed,
             },
             workspace: decode_workspace_entry(decoder)?,
         },
@@ -1236,7 +1243,8 @@ mod tests {
         WorkspaceEntry {
             workspace: WorkspaceInfo {
                 id: id.into(),
-                persistent_id: persistent_id.into(),
+                persistent_id: Some(persistent_id.into()),
+                registration_error: None,
                 name: None,
                 tab_count: 1,
                 attention: None,
@@ -1324,12 +1332,23 @@ mod tests {
             WorkspaceChange::Renamed,
             WorkspaceChange::Closed,
             WorkspaceChange::Shown,
+            WorkspaceChange::Registered,
         ] {
             samples.push(event(Change::Workspace {
                 change,
                 workspace: entry("s2", "0123456789abcdef0123456789abcdef0000000000000002", 1),
             }));
         }
+        let mut failed = entry("s2", "0123456789abcdef0123456789abcdef0000000000000002", 1);
+        failed.workspace.persistent_id = None;
+        failed.workspace.registration_error = Some(Failure {
+            code: "registry-busy".into(),
+            detail: "held".into(),
+        });
+        samples.push(event(Change::Workspace {
+            change: WorkspaceChange::RegistrationFailed,
+            workspace: failed,
+        }));
         for change in [
             TabChange::Created,
             TabChange::Moved,
@@ -1554,7 +1573,7 @@ mod tests {
             assert!(decode_subscription_message(&forge(&message)).is_err());
         }
         let mut bad = second;
-        bad.workspace.persistent_id.clear();
+        bad.workspace.persistent_id = Some(String::new());
         let message = event(Change::Workspace {
             change: WorkspaceChange::Renamed,
             workspace: bad,
@@ -1582,6 +1601,78 @@ mod tests {
             }))
             .unwrap();
         assert!(decode_subscription_message(&ended).is_err());
+    }
+
+    #[test]
+    fn registration_events_require_the_state_they_claim_on_both_sides() {
+        let mut registered = entry("s1", "confirmed", 0);
+        registered.workspace.persistent_id = None;
+        for message in [
+            event(Change::Workspace {
+                change: WorkspaceChange::Registered,
+                workspace: registered,
+            }),
+            event(Change::Workspace {
+                change: WorkspaceChange::RegistrationFailed,
+                workspace: entry("s1", "confirmed", 0),
+            }),
+        ] {
+            assert!(encode_subscription_message(&message).is_err());
+            assert!(decode_subscription_message(&forge(&message)).is_err());
+        }
+    }
+
+    #[test]
+    fn c38_pending_registration_and_errors_reach_initial_gap_and_events() {
+        let mut snapshot = window_snapshot();
+        snapshot.workspaces[0].workspace.persistent_id = None;
+        snapshot.workspaces[0].workspace.registration_error = Some(Failure {
+            code: "registry-busy".into(),
+            detail: "held".into(),
+        });
+        for message in [
+            subscribed(Some(snapshot.clone())),
+            SubscriptionMessage::Gap(Gap {
+                seq: 90,
+                reason: GapReason::Overflow,
+                snapshot: snapshot.clone(),
+            }),
+            event(Change::Workspace {
+                change: WorkspaceChange::RegistrationFailed,
+                workspace: snapshot.workspaces[0].clone(),
+            }),
+        ] {
+            assert_eq!(
+                decode_subscription_message(&encode_subscription_message(&message).unwrap())
+                    .unwrap(),
+                message
+            );
+        }
+        for length in [MAX_ID_BYTES, MAX_ID_BYTES + 1] {
+            snapshot.workspaces[0].workspace.persistent_id = Some("a".repeat(length));
+            let message = event(Change::Workspace {
+                change: WorkspaceChange::Registered,
+                workspace: snapshot.workspaces[0].clone(),
+            });
+            assert_eq!(
+                encode_subscription_message(&message).is_ok(),
+                length == MAX_ID_BYTES
+            );
+            assert_eq!(
+                decode_subscription_message(&forge(&message)).is_ok(),
+                length == MAX_ID_BYTES
+            );
+        }
+        snapshot.workspaces[0].workspace.persistent_id = None;
+        snapshot.workspaces[0]
+            .workspace
+            .registration_error
+            .as_mut()
+            .unwrap()
+            .detail = "a".repeat(super::super::MAX_DETAIL_BYTES + 1);
+        let message = subscribed(Some(snapshot));
+        assert!(encode_subscription_message(&message).is_err());
+        assert!(decode_subscription_message(&forge(&message)).is_err());
     }
 
     /// Encodes `message` without its validation, as a forging peer would.
@@ -1694,13 +1785,7 @@ mod tests {
             gap(&|s| s.tab_messages = MAX_WORKSPACES + 1),
             gap(&|s| {
                 s.workspaces = (1..=MAX_WORKSPACES + 1)
-                    .map(|n| {
-                        entry(
-                            &format!("s{n}"),
-                            &format!("0123456789abcdef0123456789abcdef{n:016x}"),
-                            (n - 1) as u8,
-                        )
-                    })
+                    .map(|n| entry(&format!("s{n}"), &format!("{n:0128x}"), (n - 1) as u8))
                     .collect()
             }),
             SubscriptionMessage::Tabs(Tabs {
@@ -1888,6 +1973,30 @@ mod tests {
 
     #[test]
     fn subscription_messages_keep_their_wire_bytes() {
+        let confirmed = entry("s1", "r", 0);
+        let mut failed = confirmed.clone();
+        failed.workspace.persistent_id = None;
+        failed.workspace.registration_error = Some(Failure {
+            code: "registry-busy".into(),
+            detail: "held".into(),
+        });
+        for (change, workspace, expected) in [
+            (
+                WorkspaceChange::Registered,
+                confirmed,
+                "454f4e5726008a001c0000002a000000000000000004020073310101007200000100000002007431",
+            ),
+            (
+                WorkspaceChange::RegistrationFailed,
+                failed,
+                "454f4e5726008a002e0000002a0000000000000000050200733100010d0072656769737472792d62757379040068656c64000100000002007431",
+            ),
+        ] {
+            let message = event(Change::Workspace { change, workspace });
+            let bytes = encode_subscription_message(&message).unwrap();
+            assert_eq!(hex(&bytes), expected);
+            assert_eq!(decode_subscription_message(&bytes).unwrap(), message);
+        }
         let request = subscribe(
             Filter {
                 workspaces: vec!["s2".into()],
@@ -1947,7 +2056,7 @@ mod tests {
             ),
             (
                 subscribed(Some(window_snapshot())),
-                "454f4e572600880074000000100067312e313730303030303030303030302900000000000000020067310000010100020073313000303132333435363738396162636465663031323334353637383961626364656630303030303030303030303030303031000100000002007431010002007331020074310200703101000100",
+                "454f4e572600880076000000100067312e3137303030303030303030303029000000000000000200673100000101000200733101300030313233343536373839616263646566303132333435363738396162636465663030303030303030303030303030303100000100000002007431010002007331020074310200703101000100",
             ),
             (
                 SubscriptionMessage::Tabs(Tabs {
@@ -1982,7 +2091,7 @@ mod tests {
                     reason: GapReason::Overflow,
                     snapshot: window_snapshot(),
                 }),
-                "454f4e5726008b005c0000005a00000000000000000100020073313000303132333435363738396162636465663031323334353637383961626364656630303030303030303030303030303031000100000002007431010002007331020074310200703101000100",
+                "454f4e5726008b005e0000005a000000000000000001000200733101300030313233343536373839616263646566303132333435363738396162636465663030303030303030303030303030303100000100000002007431010002007331020074310200703101000100",
             ),
             (
                 SubscriptionMessage::End(End::Ended {
@@ -2042,7 +2151,18 @@ mod tests {
             2 + MAX_COLUMNS * 4 + id + 2 + MAX_DIRECTORY_BYTES + 1 + 2 * (1 + id) + 2 + 2 + 1;
         let target_bytes = 4 * id + 1;
         let queue_bytes = 2 + MAX_SESSIONS * (3 * id + 1);
-        let workspace_bytes = 2 * id + 1 + 2 + MAX_WORKSPACE_NAME_BYTES + 2 + 1 + 1 + id;
+        let workspace_bytes = 2 * id
+            + 2
+            + id
+            + 2
+            + super::super::MAX_DETAIL_BYTES
+            + 1
+            + 2
+            + MAX_WORKSPACE_NAME_BYTES
+            + 2
+            + 1
+            + 1
+            + id;
         let snapshot_bytes = 2
             + MAX_WORKSPACES * workspace_bytes
             + queue_bytes
@@ -2171,7 +2291,11 @@ mod tests {
                         } else {
                             format!("s{n}")
                         },
-                        persistent_id: format!("0123456789abcdef0123456789abcdef{n:016x}"),
+                        persistent_id: Some(format!("{n:0128x}")),
+                        registration_error: Some(Failure {
+                            code: "e".repeat(MAX_ID_BYTES),
+                            detail: "e".repeat(super::super::MAX_DETAIL_BYTES),
+                        }),
                         name: Some("🦀".repeat(MAX_WORKSPACE_NAME_CHARS)),
                         tab_count: MAX_TABS,
                         attention: Some(AttentionState::NeedsInput),

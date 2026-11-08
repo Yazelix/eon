@@ -1368,7 +1368,8 @@ mod tests {
                 active_workspace: "s1".into(),
                 workspaces: vec![eon_workspace_protocol::v38::WorkspaceInfo {
                     id: "s1".into(),
-                    persistent_id: "s1".into(),
+                    persistent_id: Some("s1".into()),
+                    registration_error: None,
                     name: None,
                     tab_count: tabs.len(),
                     attention: None,
@@ -1457,7 +1458,8 @@ mod tests {
                             active_workspace: "s1".into(),
                             workspaces: vec![eon_workspace_protocol::v38::WorkspaceInfo {
                                 id: "s1".into(),
-                                persistent_id: "s1".into(),
+                                persistent_id: Some("s1".into()),
+                                registration_error: None,
                                 name: None,
                                 tab_count,
                                 attention: None,
@@ -1651,7 +1653,8 @@ mod tests {
                     active_workspace: "s1".into(),
                     workspaces: vec![eon_workspace_protocol::v38::WorkspaceInfo {
                         id: "s1".into(),
-                        persistent_id: "s1".into(),
+                        persistent_id: Some("s1".into()),
+                        registration_error: None,
                         name: None,
                         tab_count: 1,
                         attention: None,
@@ -1725,7 +1728,8 @@ mod tests {
                             active_workspace: "s1".into(),
                             workspaces: vec![eon_workspace_protocol::v38::WorkspaceInfo {
                                 id: "s1".into(),
-                                persistent_id: "s1".into(),
+                                persistent_id: Some("s1".into()),
+                                registration_error: None,
                                 name: None,
                                 tab_count,
                                 attention: None,
@@ -1899,7 +1903,8 @@ mod tests {
             active_workspace: "s1".into(),
             workspaces: vec![eon_workspace_protocol::v38::WorkspaceInfo {
                 id: "s1".into(),
-                persistent_id: "s1".into(),
+                persistent_id: Some("s1".into()),
+                registration_error: None,
                 name: None,
                 tab_count: 1,
                 attention: None,
@@ -2100,7 +2105,8 @@ mod tests {
             active_workspace: "s1".into(),
             workspaces: vec![eon_workspace_protocol::v38::WorkspaceInfo {
                 id: "s1".into(),
-                persistent_id: "s1".into(),
+                persistent_id: Some("s1".into()),
+                registration_error: None,
                 name: None,
                 tab_count: 1,
                 attention: None,
@@ -2340,7 +2346,8 @@ mod tests {
                 active_workspace: "s1".into(),
                 workspaces: vec![eon_workspace_protocol::v38::WorkspaceInfo {
                     id: "s1".into(),
-                    persistent_id: "s1".into(),
+                    persistent_id: Some("s1".into()),
+                    registration_error: None,
                     name: None,
                     tab_count: 1,
                     attention: None,
@@ -2585,7 +2592,8 @@ mod tests {
                             active_workspace: "s1".into(),
                             workspaces: vec![eon_workspace_protocol::v38::WorkspaceInfo {
                                 id: "s1".into(),
-                                persistent_id: "s1".into(),
+                                persistent_id: Some("s1".into()),
+                                registration_error: None,
                                 name: None,
                                 tab_count: 1,
                                 attention: None,
@@ -2895,7 +2903,8 @@ mod tests {
             workspaces: vec![
                 WorkspaceInfo {
                     id: "s1".into(),
-                    persistent_id: "s1".into(),
+                    persistent_id: Some("s1".into()),
+                    registration_error: None,
                     name: None,
                     tab_count: 2,
                     attention: None,
@@ -2903,7 +2912,8 @@ mod tests {
                 },
                 WorkspaceInfo {
                     id: "s2".into(),
-                    persistent_id: "s2".into(),
+                    persistent_id: Some("s2".into()),
+                    registration_error: None,
                     name: Some("Review".into()),
                     tab_count: 1,
                     attention: None,
@@ -3595,7 +3605,8 @@ mod tests {
             active_workspace: "s1".into(),
             workspaces: vec![eon_workspace_protocol::v38::WorkspaceInfo {
                 id: "s1".into(),
-                persistent_id: "s1".into(),
+                persistent_id: Some("s1".into()),
+                registration_error: None,
                 name: None,
                 tab_count: 1,
                 attention: None,
@@ -3740,7 +3751,8 @@ mod tests {
             active_workspace: "s1".into(),
             workspaces: vec![eon_workspace_protocol::v38::WorkspaceInfo {
                 id: "s1".into(),
-                persistent_id: "s1".into(),
+                persistent_id: Some("s1".into()),
+                registration_error: None,
                 name: None,
                 tab_count: 1,
                 attention: None,
@@ -3892,7 +3904,8 @@ mod tests {
             active_workspace: "s1".into(),
             workspaces: vec![eon_workspace_protocol::v38::WorkspaceInfo {
                 id: "s1".into(),
-                persistent_id: "s1".into(),
+                persistent_id: Some("s1".into()),
+                registration_error: None,
                 name: None,
                 tab_count: 1,
                 attention: None,
@@ -4091,7 +4104,8 @@ mod tests {
                 active_workspace: "s1".into(),
                 workspaces: vec![eon_workspace_protocol::v38::WorkspaceInfo {
                     id: "s1".into(),
-                    persistent_id: "s1".into(),
+                    persistent_id: Some("s1".into()),
+                    registration_error: None,
                     name: None,
                     tab_count: 1,
                     attention: None,
@@ -4155,7 +4169,8 @@ mod tests {
                 .enumerate()
                 .map(|(index, name)| eon_workspace_protocol::v38::WorkspaceInfo {
                     id: format!("s{}", index + 1),
-                    persistent_id: format!("s{}", index + 1),
+                    persistent_id: Some(format!("s{}", index + 1)),
+                    registration_error: None,
                     name: name.map(Into::into),
                     tab_count: 1,
                     attention: None,
@@ -4361,7 +4376,8 @@ mod tests {
                 active_workspace: "s1".into(),
                 workspaces: vec![eon_workspace_protocol::v38::WorkspaceInfo {
                     id: "s1".into(),
-                    persistent_id: "s1".into(),
+                    persistent_id: Some("s1".into()),
+                    registration_error: None,
                     name: None,
                     tab_count: 1,
                     attention: None,
@@ -4517,7 +4533,8 @@ mod tests {
             active_workspace: "s1".into(),
             workspaces: vec![eon_workspace_protocol::v38::WorkspaceInfo {
                 id: "s1".into(),
-                persistent_id: "s1".into(),
+                persistent_id: Some("s1".into()),
+                registration_error: None,
                 name: None,
                 tab_count: 1,
                 attention: None,
@@ -4587,7 +4604,8 @@ mod tests {
             active_workspace: "s1".into(),
             workspaces: vec![eon_workspace_protocol::v38::WorkspaceInfo {
                 id: "s1".into(),
-                persistent_id: "s1".into(),
+                persistent_id: Some("s1".into()),
+                registration_error: None,
                 name: None,
                 tab_count: 1,
                 attention: None,

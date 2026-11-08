@@ -20,7 +20,8 @@ fn agent_sidebar_pushes_columns_hides_for_width_and_shows_its_empty_state() {
         active_workspace: "s1".into(),
         workspaces: vec![eon_workspace_protocol::v38::WorkspaceInfo {
             id: "s1".into(),
-            persistent_id: "s1".into(),
+            persistent_id: Some("s1".into()),
+            registration_error: None,
             name: None,
             tab_count: 1,
             attention: None,
@@ -226,7 +227,8 @@ fn agent_sidebar_rows_show_attention_in_tab_order_and_reveal_the_focused_row() {
         active_workspace: "s1".into(),
         workspaces: vec![eon_workspace_protocol::v38::WorkspaceInfo {
             id: "s1".into(),
-            persistent_id: "s1".into(),
+            persistent_id: Some("s1".into()),
+            registration_error: None,
             name: None,
             tab_count: 3,
             attention: None,
@@ -474,7 +476,8 @@ fn agent_sidebar_rows_show_attention_in_tab_order_and_reveal_the_focused_row() {
         .workspaces
         .push(eon_workspace_protocol::v38::WorkspaceInfo {
             id: "s2".into(),
-            persistent_id: "0123456789abcdef0123456789abcdef0000000000000002".into(),
+            persistent_id: Some("0123456789abcdef0123456789abcdef0000000000000002".into()),
+            registration_error: None,
             name: None,
             tab_count: 1,
             attention: Some(AttentionState::NeedsInput),

@@ -117,7 +117,8 @@ fn retained_frame_text_clip(size: PhysicalSize<u32>) -> (WorkspaceScene, SceneRe
         active_workspace: "s1".into(),
         workspaces: vec![eon_workspace_protocol::v38::WorkspaceInfo {
             id: "s1".into(),
-            persistent_id: "s1".into(),
+            persistent_id: Some("s1".into()),
+            registration_error: None,
             name: None,
             tab_count: 1,
             attention: None,
@@ -209,7 +210,8 @@ fn fractional_card_workspace(scale: f64, scroll: f32) -> WorkspaceScene {
         active_workspace: "s1".into(),
         workspaces: vec![eon_workspace_protocol::v38::WorkspaceInfo {
             id: "s1".into(),
-            persistent_id: "s1".into(),
+            persistent_id: Some("s1".into()),
+            registration_error: None,
             name: None,
             tab_count: 1,
             attention: None,

@@ -25,7 +25,8 @@ fn shared_popup_projection_keeps_hidden_work_and_one_input_surface() {
         active_workspace: "s1".into(),
         workspaces: vec![eon_workspace_protocol::v38::WorkspaceInfo {
             id: "s1".into(),
-            persistent_id: "s1".into(),
+            persistent_id: Some("s1".into()),
+            registration_error: None,
             name: None,
             tab_count: 1,
             attention: None,
@@ -213,7 +214,8 @@ fn eon_workspace_becomes_one_bounded_native_accordion() {
         active_workspace: "s1".into(),
         workspaces: vec![eon_workspace_protocol::v38::WorkspaceInfo {
             id: "s1".into(),
-            persistent_id: "s1".into(),
+            persistent_id: Some("s1".into()),
+            registration_error: None,
             name: None,
             tab_count: 2,
             attention: None,
@@ -1580,7 +1582,8 @@ fn columns_sit_side_by_side_and_zoom_only_the_selected_pane() {
         active_workspace: "s1".into(),
         workspaces: vec![eon_workspace_protocol::v38::WorkspaceInfo {
             id: "s1".into(),
-            persistent_id: "s1".into(),
+            persistent_id: Some("s1".into()),
+            registration_error: None,
             name: None,
             tab_count: 1,
             attention: None,

@@ -9,7 +9,9 @@ of a running window and targets a member by its full persistent ID.
 
 This fork's integration acceptance and independent reviews remain pending.
 The registry stores neither membership nor layout. Restart recovery still
-merges surviving terminals into a session with a new ID; restoring original
+merges surviving terminals into a session that remains usable by its local
+handle with a null persistent ID until registration confirms a new ID.
+Registration errors are visible without stopping recovered work; restoring original
 groups belongs to slice 2b. The remote flows below remain a plan and future
 acceptance matrix, not implemented SSH or recovery guarantees.
 

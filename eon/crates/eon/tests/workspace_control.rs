@@ -4,8 +4,9 @@ use eon_workspace_protocol::v38::{
     Filter, HEADER_BYTES, InvokeIntent, LifecycleResponse, MAX_SESSIONS, Popup, PopupTarget,
     Request, Response, Runtime, Screen, Sent, Snapshot, SubscriptionMessage, Tab, TabChange,
     TargetId, TerminalHistory, TerminalInput, TerminalTarget, TerminalText, VERSION,
-    WorkspaceAction as Action, declared_message_len, decode_request, decode_response,
-    decode_subscription_message, encode_lifecycle_response, encode_request, encode_response,
+    WorkspaceAction as Action, declared_message_len, decode_lifecycle_response, decode_request,
+    decode_response, decode_subscription_message, encode_lifecycle_response, encode_request,
+    encode_response,
 };
 use orbit_protocol::management::{
     self as management, ClientMessage as ManagementClientMessage, EndpointIdentity, Failure,
@@ -1892,6 +1893,9 @@ fn snapshot_sessions(snapshot: &Snapshot) -> Vec<String> {
 }
 
 fn wait_for(path: &Path) {
+    if path.file_name().is_some_and(|name| name == "eon.sock") {
+        return wait_for_ready(path);
+    }
     let ready =
         || fs::metadata(path).is_ok_and(|metadata| !metadata.is_file() || metadata.len() != 0);
     let deadline = Instant::now() + Duration::from_secs(5);
@@ -1901,15 +1905,40 @@ fn wait_for(path: &Path) {
     assert!(ready(), "{} was not created or populated", path.display());
 }
 
-fn wait_for_connection(path: &Path) {
+fn wait_for_ready(path: &Path) {
     let deadline = Instant::now() + Duration::from_secs(5);
     loop {
-        if UnixStream::connect(path).is_ok() {
+        let ready = (|| {
+            let mut stream = UnixStream::connect(path).ok()?;
+            let remaining = deadline.checked_duration_since(Instant::now())?;
+            stream.set_read_timeout(Some(remaining)).ok()?;
+            stream.set_write_timeout(Some(remaining)).ok()?;
+            stream
+                .write_all(
+                    &encode_request(&Request {
+                        id: "await-runtime".into(),
+                        caller: None,
+                        action: ProtocolAction::Workspace(Action::InspectRuntime),
+                    })
+                    .unwrap(),
+                )
+                .ok()?;
+            let mut bytes = vec![0; HEADER_BYTES];
+            stream.read_exact(&mut bytes).ok()?;
+            bytes.resize(declared_message_len(&bytes).ok()?, 0);
+            stream.read_exact(&mut bytes[HEADER_BYTES..]).ok()?;
+            match decode_lifecycle_response(&bytes).ok()? {
+                LifecycleResponse::Runtime(runtime) => Some(runtime.attach.available),
+                LifecycleResponse::Failure(_) => Some(false),
+            }
+        })()
+        .unwrap_or(false);
+        if ready {
             return;
         }
         assert!(
             Instant::now() < deadline,
-            "{} did not become connectable",
+            "{} did not admit a ready runtime",
             path.display()
         );
         thread::sleep(Duration::from_millis(10));
@@ -2214,7 +2243,7 @@ while [ ! -e "$EON_TEST_STOP" ]; do sleep 0.01; done
     /// Starts `eon run`, with `child` as `eon run -- CHILD` when given.
     fn spawn(&self, child: &[&str]) -> TestProcess {
         let process = self.start(self.command(child));
-        wait_for_connection(&self.control());
+        wait_for_ready(&self.control());
         process
     }
 
@@ -2234,6 +2263,7 @@ while [ ! -e "$EON_TEST_STOP" ]; do sleep 0.01; done
         command
             .current_dir(&self.launch)
             .env("HOME", &self.home)
+            .env("XDG_STATE_HOME", self.root.join("state"))
             .env("XDG_RUNTIME_DIR", &self.xdg)
             .env("EON_RUNTIME_DIR", &self.runtime)
             .env("EON_CONFIG_HOME", &self.config)
@@ -3225,7 +3255,7 @@ fn a_pending_pair_left_by_a_failed_rollback_is_stopped_by_recovery() {
         assert!(Instant::now() < deadline, "the fallback pane did not start");
         thread::sleep(Duration::from_millis(10));
     }
-    wait_for_connection(&window.control());
+    wait_for_ready(&window.control());
     let pair = live_identity(&generation.join("terminal-2.sock"));
     let marker = artifact_path(&generation.join("terminal-2.sock"), ".pending");
     let marked = marker.exists();
@@ -4254,13 +4284,16 @@ fn eon_command(binary: &Path) -> Command {
     let mut command = Command::new(binary);
     command
         .env("HOME", std::env::temp_dir())
-        .env(
-            "XDG_STATE_HOME",
-            std::env::temp_dir().join("eon-test-state"),
-        )
+        .env("XDG_STATE_HOME", test_state_directory())
         .env_remove("EON_SESSION_BIN")
         .env("PATH", std::env::join_paths(path).unwrap());
     command
+}
+
+fn test_state_directory() -> PathBuf {
+    std::env::temp_dir()
+        .join("eon-test-state")
+        .join(std::thread::current().name().unwrap_or("unnamed"))
 }
 
 fn stdout(output: &Output) -> &str {
@@ -4422,7 +4455,7 @@ fn stop_result_covers_queued_operation_and_managed_cleanup() {
         stop,
     };
     let generation = generation_runtime(&runtime);
-    wait_for_connection(&generation.join("eon.sock"));
+    wait_for_ready(&generation.join("eon.sock"));
     let mut stopping = TestProcess {
         child: eon_command(binary)
             .args(["window", "stop", "default"])
@@ -4509,7 +4542,7 @@ fn events_cli_streams_resumes_interrupts_and_exits_on_closed_stdout() {
         stop: stop.clone(),
     };
     let generation = generation_runtime(&runtime);
-    wait_for_connection(&generation.join("eon.sock"));
+    wait_for_ready(&generation.join("eon.sock"));
     let stream_command = || {
         let mut command = eon_command(binary);
         command
@@ -4768,7 +4801,7 @@ fn a_stalled_subscriber_never_delays_requests_another_subscriber_or_stop() {
     };
     let generation = generation_runtime(&runtime);
     let control = generation.join("eon.sock");
-    wait_for_connection(&control);
+    wait_for_ready(&control);
     let id = generation.file_name().unwrap().to_str().unwrap().to_owned();
     let deadline = Instant::now() + Duration::from_secs(10);
     let mut dismissed = false;
@@ -5550,7 +5583,12 @@ cat >/dev/null
     };
     let generation = generation_runtime(&runtime);
     let generation_id = generation.file_name().unwrap().to_str().unwrap();
-    wait_for(&generation.join("eon.sock"));
+    // This fixture deliberately takes six seconds to admit its native surface.
+    let bound = Instant::now() + Duration::from_secs(5);
+    while !generation.join("eon.sock").exists() {
+        assert!(Instant::now() < bound, "eonbase did not bind its endpoint");
+        thread::sleep(Duration::from_millis(10));
+    }
     // The first Venus admits after session start's five seconds; its terminal still starts.
     thread::sleep(Duration::from_secs(6));
     wait_for(&venus_log);
@@ -5654,7 +5692,7 @@ cat >/dev/null
         .unwrap();
     assert!(reopened.status.success());
     assert!(supervisor.child.try_wait().unwrap().is_none());
-    let diagnostic = fs::read_dir(std::env::temp_dir().join("eon-test-state/eon/logs"))
+    let diagnostic = fs::read_dir(test_state_directory().join("eon/logs"))
         .unwrap()
         .map(|entry| entry.unwrap().path())
         .find(|path| {
@@ -5804,7 +5842,7 @@ fn eonbase_replaces_exact_residue_after_its_supervisor_and_session_die() {
     let generation = generation_runtime(&runtime);
     let control = generation.join("eon.sock");
     let orbit_socket = generation.join("orbit.sock");
-    wait_for_connection(&control);
+    wait_for_ready(&control);
     wait_for(&orbit_log);
     assert_eq!(fs::read_to_string(&orbit_log).unwrap().lines().count(), 1);
     let orbit_pid = live_identity(&orbit_socket).process_id;
@@ -5820,7 +5858,7 @@ fn eonbase_replaces_exact_residue_after_its_supervisor_and_session_die() {
         child: launch(&second_stop),
         stop: second_stop.clone(),
     };
-    wait_for_connection(&control);
+    wait_for_ready(&control);
     wait_for(&orbit_log);
     assert_eq!(fs::read_to_string(&orbit_log).unwrap().lines().count(), 1);
     let generation_id = generation.file_name().unwrap().to_str().unwrap();
@@ -6295,7 +6333,7 @@ fn c38_cli_identity_targets_and_creation_results_keep_exact_membership() {
     let mut launch = window.command(&[]);
     launch.env("XDG_STATE_HOME", &state);
     let mut supervisor = window.start(launch);
-    wait_for_connection(&window.control());
+    wait_for_ready(&window.control());
     let command = |arguments: &[&str]| {
         let mut command = eon_command(&window.binary);
         command
@@ -6312,8 +6350,8 @@ fn c38_cli_identity_targets_and_creation_results_keep_exact_membership() {
         serde_json::from_slice::<serde_json::Value>(&output.stdout).unwrap()
     };
     let initial = window.inspect("initial");
-    let first = &initial.workspaces[0].persistent_id;
-    assert_eq!(read(&["session", "--json"])["persistent_id"], *first);
+    let first = initial.workspaces[0].persistent_id.as_deref().unwrap();
+    assert_eq!(read(&["session", "--json"])["persistent_id"], first);
     let a = read(&["session", "new", "--name", "same", "--no-focus", "--json"]);
     let b = read(&["session", "new", "--name", "same", "--no-focus", "--json"]);
     let second = a["created_persistent_id"].as_str().unwrap();
@@ -6321,7 +6359,7 @@ fn c38_cli_identity_targets_and_creation_results_keep_exact_membership() {
     assert_ne!(first, second);
     assert_ne!(second, third);
     assert_eq!(a["created"], "s2");
-    assert_eq!(a["persistent_id"], *first);
+    assert_eq!(a["persistent_id"], first);
     let listing = read(&["session", "ls", "--json"]);
     for (handle, id) in [("s2", second), ("s3", third)] {
         assert!(
@@ -6420,7 +6458,10 @@ fn c38_cli_identity_targets_and_creation_results_keep_exact_membership() {
     assert_eq!(vanished.status.code(), Some(3), "{vanished:?}");
     let remaining = window.inspect("remaining");
     assert_eq!(remaining.workspaces.len(), 1);
-    assert_eq!(remaining.workspaces[0].persistent_id, *first);
+    assert_eq!(
+        remaining.workspaces[0].persistent_id.as_deref(),
+        Some(first)
+    );
     assert_eq!(
         read(&["session", "registry", second, "--json"])["persistent_id"],
         second
@@ -7930,7 +7971,7 @@ fn launch_directory_can_disappear_after_the_initial_session_starts() {
         stop: stop.clone(),
     };
     let control = generation_runtime(&runtime).join("eon.sock");
-    wait_for_connection(&control);
+    wait_for_ready(&control);
 
     let snapshot = invoke(&binary, &runtime, &config, &["session", "--json"]);
     assert!(snapshot.status.success());
@@ -8002,7 +8043,7 @@ fn terminals_drop_the_launching_agents_tool_settings() {
         stop: stop.clone(),
     };
     let generation = generation_runtime(&runtime);
-    wait_for_connection(&generation.join("eon.sock"));
+    wait_for_ready(&generation.join("eon.sock"));
     assert!(
         invoke(&binary, &runtime, &config, &["session", "--json"])
             .status
@@ -8110,7 +8151,7 @@ fn tab_directory_retargets_future_sessions_without_crossing_tabs() {
     };
     let generation = generation_runtime(&runtime);
     let control = generation.join("eon.sock");
-    wait_for_connection(&control);
+    wait_for_ready(&control);
     // The exiting Venus stub dismisses t1's pair, so the tab keeps its launch directory.
     wait_for_commit(&control, &first_directory);
 
@@ -8295,7 +8336,7 @@ fn tab_directory_records_one_zoxide_visit_unless_disabled() {
         stop: stop.clone(),
     };
     let control = generation_runtime(&runtime).join("eon.sock");
-    wait_for_connection(&control);
+    wait_for_ready(&control);
     // The exiting Venus stub dismisses the pair, which records no visit.
     let mut snapshot = wait_for_commit(&control, &launch_directory);
     let deadline = Instant::now() + Duration::from_secs(5);
@@ -8735,7 +8776,7 @@ fn launch_overlapping_last_session_exit_starts_a_fresh_session() {
     let generation = generation_runtime(&runtime);
     let control = generation.join("eon.sock");
     let record = artifact_path(&generation.join("orbit.sock"), ".record");
-    wait_for_connection(&control);
+    wait_for_ready(&control);
     assert!(matches!(
         workspace_action(&control, "startup-ready", Action::Inspect),
         Response::Snapshot(_)
@@ -8813,7 +8854,7 @@ fn launch_overlapping_last_session_exit_starts_a_fresh_session() {
     };
     assert_ne!(second_orbit, first_orbit);
     assert_eq!(fs::read_to_string(&orbit_log).unwrap().lines().count(), 2);
-    wait_for_connection(&control);
+    wait_for_ready(&control);
 
     let stopped = invoke(
         &binary,
@@ -8864,7 +8905,7 @@ fn replacement_reconciles_exact_tombstone_endpoints_without_deleting_replacement
     let presentation = generation.join("orbit.sock");
     let management = artifact_path(&presentation, ".management");
     let record = artifact_path(&presentation, ".record");
-    wait_for_connection(&control);
+    wait_for_ready(&control);
     wait_for(&orbit_log);
     let identity = live_identity(&presentation);
 
@@ -8943,7 +8984,7 @@ fn replacement_reconciles_exact_tombstone_endpoints_without_deleting_replacement
         child: replacement().spawn().unwrap(),
         stop: stop.clone(),
     };
-    wait_for_connection(&control);
+    wait_for_ready(&control);
     assert_ne!(live_identity(&presentation).run_id, reconciled.run_id);
     let deadline = Instant::now() + Duration::from_secs(5);
     while fs::read_to_string(&orbit_log).unwrap().lines().count() != 2 {
@@ -9090,7 +9131,7 @@ fn replacement_eon_adopts_exact_runs_and_projects_numeric_workspace() {
         child: launch(),
         stop: fallback_stop.clone(),
     };
-    wait_for_connection(&control);
+    wait_for_ready(&control);
     // The replacement names its own Venus to the terminals it recovered.
     let deadline = Instant::now() + Duration::from_secs(5);
     let replacement_venus: u32 = loop {
@@ -9339,7 +9380,7 @@ fn lost_stop_response_still_finishes_the_supervisor() {
     };
     let generation = generation_runtime(&runtime);
     let control = generation.join("eon.sock");
-    wait_for_connection(&control);
+    wait_for_ready(&control);
     let orbit_pid = live_identity(&generation.join("orbit.sock")).process_id;
     let generation_id = generation.file_name().unwrap().to_str().unwrap();
     let request = stop::encode_request(generation_id).unwrap();
@@ -9386,7 +9427,7 @@ fn a_reserved_stop_for_another_generation_stops_nothing() {
     };
     let generation = generation_runtime(&runtime);
     let control = generation.join("eon.sock");
-    wait_for_connection(&control);
+    wait_for_ready(&control);
     let orbit_pid = live_identity(&generation.join("orbit.sock")).process_id;
     let generation_id = generation.file_name().unwrap().to_str().unwrap();
     let other = format!("g1-{:032x}", 9);
@@ -9692,7 +9733,7 @@ fn quit_workspace() -> (PathBuf, TestProcess) {
             .unwrap(),
         stop: root.join("stop"),
     };
-    wait_for_connection(&generation_runtime(&root.join("r")).join("eon.sock"));
+    wait_for_ready(&generation_runtime(&root.join("r")).join("eon.sock"));
     (root, supervisor)
 }
 
@@ -10283,7 +10324,7 @@ fn quit_all_stops_the_default_namespace_and_every_window_caller_last() {
             .unwrap(),
         stop: root.join("stop"),
     };
-    wait_for_connection(&generation_runtime(&runtime).join("eon.sock"));
+    wait_for_ready(&generation_runtime(&runtime).join("eon.sock"));
     let caller = open_quit_window(&root);
     let other = open_quit_window(&root);
     let caller_root = runtime.join("w").join(&caller);
@@ -10359,7 +10400,7 @@ fn quit_all_stops_the_default_namespace_and_every_window_caller_last() {
         stop: root.join("stop"),
     };
     let default_generation = generation_runtime(&runtime);
-    wait_for_connection(&default_generation.join("eon.sock"));
+    wait_for_ready(&default_generation.join("eon.sock"));
     let independent = open_quit_window(&root);
     let independent_generation = generation_runtime(&runtime.join("w").join(&independent));
     let output = quit_command(&root)
@@ -10436,7 +10477,7 @@ while [ ! -e "$EON_TEST_STOP" ]; do sleep 0.01; done
         stop: stop.clone(),
     };
     let control = generation_runtime(&runtime).join("eon.sock");
-    wait_for_connection(&control);
+    wait_for_ready(&control);
     let pair_logs = || {
         fs::read_dir(&logs)
             .unwrap()
@@ -10746,7 +10787,7 @@ fn running_windows_name_each_other_and_refresh_on_start_and_end() {
         stop: stop.clone(),
     };
     let control = generation_runtime(&runtime).join("eon.sock");
-    wait_for_connection(&control);
+    wait_for_ready(&control);
     let query = |window: Option<&str>| {
         let mut c = command();
         c.args(["session", "--json"]);
@@ -10833,7 +10874,7 @@ fn running_windows_name_each_other_and_refresh_on_start_and_end() {
     );
     let second = stdout(&output).trim().to_owned();
     let second_control = generation_runtime(&runtime.join("w").join(&second)).join("eon.sock");
-    wait_for_connection(&second_control);
+    wait_for_ready(&second_control);
     let a = wait(None, 1);
     let b = wait(Some(&second), 1);
     assert_eq!(a["others"][0]["window"], second);
@@ -10974,7 +11015,7 @@ fn running_windows_name_each_other_and_refresh_on_start_and_end() {
         .stderr(Stdio::null())
         .spawn()
         .unwrap();
-    wait_for_connection(&control);
+    wait_for_ready(&control);
     wait(Some(&second), 1);
     assert!(
         query(None)["this"]["started_at"].as_u64().unwrap()
@@ -11044,7 +11085,7 @@ fn new_windows_keep_independent_supervisors_and_stop_by_window_id() {
         stop: stop.clone(),
     };
     let default_control = generation_runtime(&runtime).join("eon.sock");
-    wait_for_connection(&default_control);
+    wait_for_ready(&default_control);
     let open = || {
         let output = command().args(["window", "new"]).output().unwrap();
         assert!(
@@ -11061,8 +11102,8 @@ fn new_windows_keep_independent_supervisors_and_stop_by_window_id() {
     let first_control = generation_runtime(&runtime.join("w").join(&first)).join("eon.sock");
     let second_control = generation_runtime(&runtime.join("w").join(&second)).join("eon.sock");
     assert_ne!(first_control, second_control);
-    wait_for_connection(&first_control);
-    wait_for_connection(&second_control);
+    wait_for_ready(&first_control);
+    wait_for_ready(&second_control);
     let endpoint = second_control.parent().unwrap().join("orbit.sock");
     let environment = process::environ(live_identity(&endpoint).process_id);
     let caller = environment
@@ -11387,12 +11428,12 @@ fn window_ls_lists_the_default_and_an_independent_window_and_one_stop_form_stops
         stop: stop.clone(),
     };
     let default_control = generation_runtime(&runtime).join("eon.sock");
-    wait_for_connection(&default_control);
+    wait_for_ready(&default_control);
     let output = command().args(["window", "new"]).output().unwrap();
     assert!(output.status.success(), "{output:?}");
     let first = stdout(&output).trim().to_owned();
     let first_control = generation_runtime(&runtime.join("w").join(&first)).join("eon.sock");
-    wait_for_connection(&first_control);
+    wait_for_ready(&first_control);
     let file_name = |path: &Path| path.file_name().unwrap().to_str().unwrap().to_owned();
     let default_generation = file_name(&generation_runtime(&runtime));
     let first_generation = file_name(first_control.parent().unwrap());
@@ -12589,7 +12630,7 @@ fn generations_that_predate_the_reserved_stop_say_how_to_quit_them() {
         assert!(current.child.try_wait().unwrap().is_none());
         thread::sleep(Duration::from_millis(10));
     };
-    wait_for_connection(&control);
+    wait_for_ready(&control);
     let deadline = Instant::now() + Duration::from_secs(3);
     loop {
         let output = invoke(&binary, &runtime, &config, &["session", "--json"]);
@@ -13420,7 +13461,7 @@ fn stop_without_terminal_requires_yes() {
         stop,
     };
     let generation = generation_runtime(&runtime);
-    wait_for_connection(&generation.join("eon.sock"));
+    wait_for_ready(&generation.join("eon.sock"));
 
     let declined = invoke(&binary, &runtime, &config, &["window", "stop", "default"]);
     assert_eq!(declined.status.code(), Some(1), "{declined:?}");
@@ -13510,7 +13551,7 @@ fn batch_stop_preserves_current_until_all_and_reports_unavailable_generations() 
         stop: stop.clone(),
     };
     let current_runtime = generation_runtime(&runtime);
-    wait_for_connection(&current_runtime.join("eon.sock"));
+    wait_for_ready(&current_runtime.join("eon.sock"));
     let current_id = current_runtime.file_name().unwrap().to_str().unwrap();
     // Each window's one Stop result, in stop order.
     let results = |output: &Output| {
@@ -13935,7 +13976,7 @@ impl PairWindow {
 
     fn spawn_scrollback(&self) -> TestProcess {
         let process = self.start(self.scrollback_command());
-        wait_for_connection(&self.control());
+        wait_for_ready(&self.control());
         process
     }
 

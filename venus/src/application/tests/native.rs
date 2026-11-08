@@ -189,7 +189,8 @@ fn typography_without_grid_waits_for_and_validates_workspace_geometry() {
                     active_workspace: "s1".into(),
                     workspaces: vec![eon_workspace_protocol::v38::WorkspaceInfo {
                         id: "s1".into(),
-                        persistent_id: "s1".into(),
+                        persistent_id: Some("s1".into()),
+                        registration_error: None,
                         name: None,
                         tab_count: 1,
                         attention: None,
@@ -1507,7 +1508,8 @@ fn live_output_keeps_application_input_admitted_before_repaint() {
         active_workspace: "s1".into(),
         workspaces: vec![eon_workspace_protocol::v38::WorkspaceInfo {
             id: "s1".into(),
-            persistent_id: "s1".into(),
+            persistent_id: Some("s1".into()),
+            registration_error: None,
             name: None,
             tab_count: 2,
             attention: None,
@@ -2834,7 +2836,8 @@ fn run_quit_probe(name: &str, check: QuitCheck) {
         active_workspace: "s1".into(),
         workspaces: vec![workspace::WorkspaceInfo {
             id: "s1".into(),
-            persistent_id: "s1".into(),
+            persistent_id: Some("s1".into()),
+            registration_error: None,
             name: None,
             tab_count: 1,
             attention: None,

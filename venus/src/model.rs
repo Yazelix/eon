@@ -415,6 +415,16 @@ impl WorkspaceModel {
     pub fn apply(&mut self, response: WorkspaceResponse) -> (bool, bool) {
         match response {
             WorkspaceResponse::Snapshot(snapshot) => {
+                let registration_notice = |snapshot: &Snapshot| {
+                    snapshot
+                        .workspaces
+                        .iter()
+                        .find(|member| member.id == snapshot.workspace)
+                        .and_then(|member| member.registration_error.as_ref())
+                        .map(|error| bounded(format!("Eon {}: {}", error.code, error.detail)))
+                };
+                let previous_registration = self.snapshot.as_ref().and_then(registration_notice);
+                let registration = registration_notice(&snapshot);
                 let workspace_changed = self.snapshot.as_ref().is_none_or(|current| {
                     current.workspace != snapshot.workspace
                         || current.active_tab != snapshot.active_tab
@@ -464,9 +474,22 @@ impl WorkspaceModel {
                     }
                     notice => notice.is_some(),
                 };
+                let registration_changed = previous_registration != registration;
+                if let Some(text) = registration {
+                    if registration_changed || workspace_changed {
+                        self.set_notice(WorkspaceNotice::Action(text), false);
+                    }
+                } else if let Some(previous) = previous_registration
+                    && matches!(&self.notice, Some(WorkspaceNotice::Action(text)) if *text == previous)
+                {
+                    self.notice = None;
+                }
                 self.snapshot = Some(snapshot);
                 self.unavailable = false;
-                (snapshot_changed || notice_cleared, workspace_changed)
+                (
+                    snapshot_changed || notice_cleared || registration_changed,
+                    workspace_changed,
+                )
             }
             WorkspaceResponse::Failure(failure) => {
                 let notice = if failure.code == "no-attention" {
@@ -1054,7 +1077,8 @@ mod tests {
             active_workspace: "s1".into(),
             workspaces: vec![workspace::WorkspaceInfo {
                 id: "s1".into(),
-                persistent_id: "s1".into(),
+                persistent_id: Some("s1".into()),
+                registration_error: None,
                 name: None,
                 tab_count: 1,
                 attention: None,
@@ -1178,13 +1202,37 @@ mod tests {
     }
 
     /// A workspace of two tabs whose snapshot carries both quotas.
+    #[test]
+    fn recovered_registration_notice_keeps_the_terminal_available() {
+        let mut snapshot = quota_snapshot();
+        snapshot.workspaces[0].persistent_id = None;
+        let mut model = WorkspaceModel::default();
+        model.apply(WorkspaceResponse::Snapshot(snapshot.clone()));
+        assert!(!model.unavailable());
+        snapshot.workspaces[0].registration_error = Some(Failure {
+            code: "registry-busy".into(),
+            detail: "registry held".into(),
+        });
+        assert!(model.apply(WorkspaceResponse::Snapshot(snapshot.clone())).0);
+        assert_eq!(model.notice(), Some("Eon registry-busy: registry held"));
+        assert!(!model.unavailable());
+        assert_eq!(focused_terminal(model.snapshot().unwrap()), Some("pane-1"));
+        snapshot.workspaces[0].persistent_id = Some("confirmed".into());
+        snapshot.workspaces[0].registration_error = None;
+        assert!(model.apply(WorkspaceResponse::Snapshot(snapshot)).0);
+        assert_eq!(model.notice(), None);
+        assert!(!model.unavailable());
+    }
+
+    /// A workspace of two tabs whose snapshot carries both quotas.
     fn quota_snapshot() -> Snapshot {
         Snapshot {
             workspace: "s1".into(),
             active_workspace: "s1".into(),
             workspaces: vec![eon_workspace_protocol::v38::WorkspaceInfo {
                 id: "s1".into(),
-                persistent_id: "s1".into(),
+                persistent_id: Some("s1".into()),
+                registration_error: None,
                 name: None,
                 tab_count: 2,
                 attention: None,
@@ -1439,7 +1487,8 @@ mod tests {
         summaries.workspaces[0].name = Some("renamed".into());
         summaries.workspaces.push(workspace::WorkspaceInfo {
             id: "s2".into(),
-            persistent_id: "s2".into(),
+            persistent_id: Some("s2".into()),
+            registration_error: None,
             name: None,
             tab_count: 3,
             attention: None,
@@ -1568,7 +1617,8 @@ mod tests {
         }
         working.workspaces.push(workspace::WorkspaceInfo {
             id: "s2".into(),
-            persistent_id: "s2".into(),
+            persistent_id: Some("s2".into()),
+            registration_error: None,
             name: None,
             tab_count: 1,
             attention: None,
@@ -1701,7 +1751,8 @@ mod tests {
             active_workspace: "s1".into(),
             workspaces: vec![eon_workspace_protocol::v38::WorkspaceInfo {
                 id: "s1".into(),
-                persistent_id: "s1".into(),
+                persistent_id: Some("s1".into()),
+                registration_error: None,
                 name: None,
                 tab_count: 2,
                 attention: None,
@@ -1786,7 +1837,8 @@ mod tests {
             active_workspace: "s1".into(),
             workspaces: vec![eon_workspace_protocol::v38::WorkspaceInfo {
                 id: "s1".into(),
-                persistent_id: "s1".into(),
+                persistent_id: Some("s1".into()),
+                registration_error: None,
                 name: None,
                 tab_count: 1,
                 attention: None,

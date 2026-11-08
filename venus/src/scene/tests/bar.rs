@@ -1046,7 +1046,8 @@ fn eon_bar_keeps_tabs_controls_and_drag_hits_disjoint_under_pressure() {
         active_workspace: "s1".into(),
         workspaces: vec![eon_workspace_protocol::v38::WorkspaceInfo {
             id: "s1".into(),
-            persistent_id: "s1".into(),
+            persistent_id: Some("s1".into()),
+            registration_error: None,
             name: None,
             tab_count: 1,
             attention: None,
@@ -1302,7 +1303,8 @@ fn attention_badges_mark_tab_corners_without_moving_tabs() {
         active_workspace: "s1".into(),
         workspaces: vec![eon_workspace_protocol::v38::WorkspaceInfo {
             id: "s1".into(),
-            persistent_id: "s1".into(),
+            persistent_id: Some("s1".into()),
+            registration_error: None,
             name: None,
             tab_count: 1,
             attention: None,
@@ -1908,7 +1910,8 @@ fn cpu_and_ram_chips_colour_under_load_and_say_so() {
         active_workspace: "s1".into(),
         workspaces: vec![eon_workspace_protocol::v38::WorkspaceInfo {
             id: "s1".into(),
-            persistent_id: "s1".into(),
+            persistent_id: Some("s1".into()),
+            registration_error: None,
             name: None,
             tab_count: 1,
             attention: None,
@@ -2080,7 +2083,8 @@ fn disk_chip_shows_filesystem_use_and_colours_only_when_filling_up() {
         active_workspace: "s1".into(),
         workspaces: vec![eon_workspace_protocol::v38::WorkspaceInfo {
             id: "s1".into(),
-            persistent_id: "s1".into(),
+            persistent_id: Some("s1".into()),
+            registration_error: None,
             name: None,
             tab_count: 1,
             attention: None,
@@ -2206,7 +2210,8 @@ fn eon_icon_leads_the_bar_and_survives_tab_overflow() {
                 workspaces: (1..=workspaces)
                     .map(|n| eon_workspace_protocol::v38::WorkspaceInfo {
                         id: format!("s{n}"),
-                        persistent_id: format!("s{n}"),
+                        persistent_id: Some(format!("s{n}")),
+                        registration_error: None,
                         name: None,
                         tab_count,
                         attention: None,
@@ -2713,7 +2718,8 @@ fn a_full_bar_with_room_shows_the_icon() {
     };
     let workspace = |id: &str, name: &str, recency| WorkspaceInfo {
         id: id.into(),
-        persistent_id: id.into(),
+        persistent_id: Some(id.into()),
+        registration_error: None,
         name: Some(name.into()),
         tab_count: 1,
         attention: None,

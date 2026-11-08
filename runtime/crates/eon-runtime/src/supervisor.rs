@@ -13,7 +13,7 @@ use super::{
     notification, pair, platform, quota,
     running::Running,
     scrollback::{self, Snapshots},
-    session_registry::Registry,
+    session_registry::{self, Registration, Registry},
     sessions::{
         self, AttachName, RunningSession, TAB_VARIABLE, TERMINAL_VARIABLE,
         acquire_generation_sessions, bound_io, name_presentation, recover_sessions,
@@ -97,14 +97,17 @@ pub(super) fn probe_supervisor(
         })?;
     let result = (|| {
         let info = probe_presentable_runtime(socket)?;
-        if !info.attach.available {
-            return Err(EndpointFailure::new(
-                EndpointFailureKind::Incompatible,
-                info.attach.reason,
-            ));
-        }
         validate_runtime(inputs, &info, generation)
             .map_err(|detail| EndpointFailure::new(EndpointFailureKind::Corrupt, detail))?;
+        if !info.attach.available {
+            // Fresh bootstrap has no admitted member; a competing launch waits for it.
+            let kind = if info.name.is_none() && info.sessions.is_empty() {
+                EndpointFailureKind::Starting
+            } else {
+                EndpointFailureKind::Incompatible
+            };
+            return Err(EndpointFailure::new(kind, info.attach.reason));
+        }
         probe_launch_mode(socket)
     })();
     if socket_identity(socket)
@@ -199,7 +202,9 @@ pub(super) fn launch_current(
                     Err(error)
                         if matches!(
                             error.kind,
-                            EndpointFailureKind::Dead | EndpointFailureKind::Unreachable
+                            EndpointFailureKind::Dead
+                                | EndpointFailureKind::Starting
+                                | EndpointFailureKind::Unreachable
                         ) =>
                     {
                         error
@@ -210,14 +215,19 @@ pub(super) fn launch_current(
             Err(error)
                 if matches!(
                     error.kind,
-                    EndpointFailureKind::Dead | EndpointFailureKind::Unreachable
+                    EndpointFailureKind::Dead
+                        | EndpointFailureKind::Starting
+                        | EndpointFailureKind::Unreachable
                 ) =>
             {
                 error
             }
             Err(error) => return Err(error.detail),
         };
-        let lifecycle_lock = if endpoint_failure.kind == EndpointFailureKind::Dead {
+        let lifecycle_lock = if matches!(
+            endpoint_failure.kind,
+            EndpointFailureKind::Dead | EndpointFailureKind::Starting
+        ) {
             let Some(lock) = try_lock_supervisor_lifecycle(&lifecycle_lock_path)? else {
                 let deadline = missing_deadline.get_or_insert_with(|| {
                     Instant::now() + SESSION_START_TIMEOUT.saturating_add(Duration::from_secs(1))
@@ -318,7 +328,9 @@ fn attach_competing_supervisor(
             Err(error)
                 if matches!(
                     error.kind,
-                    EndpointFailureKind::Dead | EndpointFailureKind::Unreachable
+                    EndpointFailureKind::Dead
+                        | EndpointFailureKind::Starting
+                        | EndpointFailureKind::Unreachable
                 ) && Instant::now() < deadline =>
             {
                 thread::sleep(Duration::from_millis(25));
@@ -367,6 +379,7 @@ pub(super) fn present_at(
     }
     match send_action_on(
         stream,
+        None,
         Action::Workspace(WorkspaceAction::Present {
             workspace: mode == LaunchMode::Workspace,
         }),
@@ -977,31 +990,91 @@ fn supervise(
         geometry: inputs.defaults.popups.geometry,
         entries: Vec::new(),
     });
-    let registry = (mode == LaunchMode::Workspace)
-        .then(Registry::new)
-        .transpose()
-        .map_err(|error| error.to_string())?;
-    let registration = registry
-        .as_ref()
-        .map(|registry| registry.create(None))
-        .transpose()
-        .map_err(|error| error.to_string())?;
-    let startup_error = |detail: String| match &registration {
-        Some(registration) => format!("{detail}; registered persistent_id={}", registration.id),
-        None => detail,
-    };
     let (mut sessions, recovered_pair) = recover_sessions(
         runtime,
         mode,
         generation,
         log.orbit_directory().ok(),
         Instant::now() + SESSION_START_TIMEOUT,
-    )
-    .map_err(&startup_error)?;
+    )?;
     let mut scrollback = Snapshots::new(runtime);
     scrollback.sweep(sessions.iter().map(|session| session.id.as_str()), log);
-    let control_listener =
-        ControlListener::bind(&runtime.join("eon.sock")).map_err(&startup_error)?;
+    let control_listener = ControlListener::bind(&runtime.join("eon.sock"))?;
+    let recovering = mode == LaunchMode::Workspace && !sessions.is_empty();
+    let (registry, mut registry_setup_error) = match (mode == LaunchMode::Workspace)
+        .then(Registry::new)
+        .transpose()
+    {
+        Ok(registry) => (registry, None),
+        Err(error) => (None, Some(error)),
+    };
+    #[cfg(test)]
+    let registry = registry.map(|mut registry| {
+        if env::var_os("EON_C38_FAIL_WORKER").is_some() {
+            registry.inject(Some(session_registry::Fault::WorkerSpawn));
+        } else if env::var_os("EON_C38_OBSERVE_BUSY_RETRY").is_some() {
+            registry.inject(Some(session_registry::Fault::ObserveBusyRetry));
+        }
+        registry
+    });
+    let mut registry_worker = match registry
+        .as_ref()
+        .map(|registry| session_registry::Worker::start(registry.clone()))
+        .transpose()
+    {
+        Ok(worker) => worker,
+        Err(error) => {
+            registry_setup_error = Some(error);
+            None
+        }
+    };
+    if let Some(worker) = &mut registry_worker
+        && let Err(error) = worker.submit(session_registry::Operation::Register)
+    {
+        registry_setup_error = Some(error);
+        registry_worker = None;
+    }
+    if !recovering && let Some(error) = registry_setup_error.take() {
+        return Err(error.to_string());
+    }
+    let registration = if mode == LaunchMode::Workspace && !recovering {
+        let starting = Runtime {
+            generation: generation.into(),
+            name: None,
+            started_at,
+            eon_version: inputs.version.into(),
+            workspace_protocol: VERSION,
+            component_report: inputs.component_report()?.to_owned(),
+            sessions: Vec::new(),
+            attach: Availability {
+                available: false,
+                reason: "session registration is pending".into(),
+            },
+            stop: Availability {
+                available: true,
+                reason: "generation-aware supervisor is starting".into(),
+            },
+            busy: None,
+        };
+        let Some(registration) = await_initial_registration(
+            &control_listener,
+            registry_worker
+                .as_mut()
+                .ok_or("session registry worker is unavailable")?,
+            &starting,
+        )?
+        else {
+            remove_launcher(runtime);
+            return Ok(0);
+        };
+        Some(registration)
+    } else {
+        None
+    };
+    let startup_error = |detail: String| match &registration {
+        Some(registration) => format!("{detail}; registered persistent_id={}", registration.id),
+        None => detail,
+    };
     let initial_endpoint = runtime.join("orbit.sock");
     let initial_session_id = "terminal-1";
     let presentation_socket = if mode == LaunchMode::Workspace {
@@ -1017,7 +1090,7 @@ fn supervise(
         let snapshot = if mode == LaunchMode::Workspace {
             let workspaces = if sessions.is_empty() && !recovered_pair {
                 WorkspaceSet::registered_pending(
-                    registry.as_ref().unwrap().clone(),
+                    registry.clone(),
                     registration.as_ref().unwrap().clone(),
                     runtime.to_path_buf(),
                     launch_directory.clone(),
@@ -1040,8 +1113,8 @@ fn supervise(
                     recovered_workspace_sessions(&sessions).map_err(&startup_error)?
                 };
                 WorkspaceSet::registered_recovered(
-                    registry.as_ref().unwrap().clone(),
-                    registration.as_ref().unwrap().clone(),
+                    registry.clone(),
+                    registration.clone(),
                     runtime.to_path_buf(),
                     launch_directory.clone(),
                     env::home_dir(),
@@ -1129,10 +1202,10 @@ fn supervise(
         );
         initial_child.clear();
     }
-    let workspaces = if mode == LaunchMode::Workspace {
+    let mut workspaces = if mode == LaunchMode::Workspace {
         Some(if sessions.is_empty() {
             WorkspaceSet::registered_pending(
-                registry.as_ref().unwrap().clone(),
+                registry.clone(),
                 registration.as_ref().unwrap().clone(),
                 runtime.to_path_buf(),
                 launch_directory.clone(),
@@ -1165,8 +1238,8 @@ fn supervise(
             .map_err(&startup_error)?
         } else {
             WorkspaceSet::registered_recovered(
-                registry.as_ref().unwrap().clone(),
-                registration.as_ref().unwrap().clone(),
+                registry.clone(),
+                registration.clone(),
                 runtime.to_path_buf(),
                 launch_directory,
                 env::home_dir(),
@@ -1178,7 +1251,15 @@ fn supervise(
     } else {
         None
     };
+    if let Some(error) = registry_setup_error
+        && let Some(workspaces) = &mut workspaces
+    {
+        workspaces.registered_recovery("s1", Err(error));
+    }
+    let registration_pending = recovering && registry_worker.is_some();
     let mut state = SupervisorState {
+        registry_worker,
+        registry_pending: registration_pending.then(|| RegistryPending::Recovery("s1".into())),
         started_at,
         window,
         running,
@@ -1248,6 +1329,7 @@ fn supervise(
 
     let status = (|| {
         loop {
+            state.poll_registry(inputs, config, runtime, generation);
             if !state.stopping {
                 reap_finished_sessions(&mut state, inputs, config)?;
             }
@@ -1293,6 +1375,14 @@ fn supervise(
                         .subscribers
                         .attach(stream, *subscriber, Instant::now());
                 }
+                Accepted::Deferred(stream) => {
+                    if let Some(RegistryPending::Action {
+                        stream: pending, ..
+                    }) = &mut state.registry_pending
+                    {
+                        *pending = Some(stream);
+                    }
+                }
             }
         }
     })();
@@ -1310,7 +1400,58 @@ fn supervise(
     status
 }
 
+fn await_initial_registration(
+    listener: &ControlListener,
+    worker: &mut session_registry::Worker,
+    starting: &Runtime,
+) -> Result<Option<Registration>, String> {
+    loop {
+        let accepted = listener.accept(|incoming| match incoming {
+            Incoming::Stop(target) if target == starting.generation => Dispatched::Stop(
+                eon_workspace_protocol::stop::Reply::Stopped {
+                    generation: target,
+                    terminals: Vec::new(),
+                },
+                true,
+            ),
+            Incoming::Stop(_) => Dispatched::Stop(
+                stop_failure(failure(
+                    "generation-mismatch",
+                    "supervisor owns another generation",
+                )),
+                false,
+            ),
+            Incoming::Request(Request {
+                action:
+                    Action::Workspace(
+                        WorkspaceAction::InspectRuntime | WorkspaceAction::InspectPresentation,
+                    ),
+                ..
+            }) => Dispatched::Reply(
+                ControlResponse::Lifecycle(LifecycleResponse::Runtime(starting.clone())),
+                false,
+            ),
+            Incoming::Request(_) => Dispatched::Reply(
+                ControlResponse::Workspace(Response::Failure(failure(
+                    "registry-busy",
+                    "initial session registration is pending; no terminal has started",
+                ))),
+                false,
+            ),
+        })?;
+        if matches!(accepted, Accepted::Replied { shutdown: true }) {
+            return Ok(None);
+        }
+        if let Some(result) = worker.poll() {
+            return result.map_err(|error| error.to_string());
+        }
+        thread::sleep(Duration::from_millis(25));
+    }
+}
+
 struct SupervisorState {
+    registry_worker: Option<session_registry::Worker>,
+    registry_pending: Option<RegistryPending>,
     started_at: u64,
     window: Option<String>,
     running: Option<Running>,
@@ -1338,7 +1479,81 @@ struct SupervisorState {
     log: Arc<DiagnosticLog>,
 }
 
+enum RegistryPending {
+    Recovery(String),
+    Action {
+        request: Request,
+        stream: Option<UnixStream>,
+    },
+}
+
 impl SupervisorState {
+    fn poll_registry(&mut self, inputs: &Inputs, config: &Path, runtime: &Path, generation: &str) {
+        let Some(result) = self
+            .registry_worker
+            .as_mut()
+            .and_then(|worker| worker.poll())
+        else {
+            return;
+        };
+        match self.registry_pending.take() {
+            Some(RegistryPending::Recovery(target)) if !self.stopping => {
+                if let Some(workspaces) = &mut self.workspaces {
+                    workspaces.registered_recovery(&target, result);
+                }
+            }
+            Some(RegistryPending::Action { request, stream }) => {
+                if let Some(workspaces) = &mut self.workspaces {
+                    workspaces.release_registration(&request.id);
+                }
+                let reply = match result {
+                    Ok(Some(registration)) if !self.stopping => {
+                        let reply = dispatch_registered_request(
+                            request.clone(),
+                            self,
+                            inputs,
+                            config,
+                            runtime,
+                            generation,
+                            Some(registration),
+                        );
+                        if let Some(workspaces) = &mut self.workspaces {
+                            workspaces.remember_registration(&request.id);
+                        }
+                        reply.0
+                    }
+                    result => {
+                        let error = match result {
+                            Err(error) => {
+                                if (error.reserved_id.is_some()
+                                    || error.publication
+                                        == session_registry::Publication::Uncertain)
+                                    && let Some(workspaces) = &mut self.workspaces
+                                {
+                                    workspaces.remember_registration(&request.id);
+                                }
+                                error.into_control()
+                            }
+                            Ok(None) => failure("unknown-session", "registered session is missing"),
+                            Ok(Some(_)) => {
+                                if let Some(workspaces) = &mut self.workspaces {
+                                    workspaces.remember_registration(&request.id);
+                                }
+                                failure("stop-incomplete", "window is stopping")
+                            }
+                        };
+                        ControlResponse::Workspace(Response::Failure(error))
+                    }
+                };
+                self.serve_subscribers(Instant::now());
+                if let Some(stream) = stream {
+                    super::control::complete(stream, reply);
+                }
+            }
+            _ => {}
+        }
+    }
+
     /// The name the running Venus attaches by (EON-C11).
     fn presentation_name(&self) -> Option<AttachName> {
         self.venus.as_ref().and_then(|venus| venus.name)
@@ -2425,6 +2640,64 @@ fn dispatch(
         return reply;
     }
     super::diagnostics::bench_trace("request", &request.id);
+    if !state.stopping
+        && matches!(
+            request.action,
+            Action::Workspace(
+                WorkspaceAction::NewWorkspace { .. } | WorkspaceAction::RenameWorkspace { .. }
+            )
+        )
+    {
+        let accepted = (|| {
+            let caller = caller_session(state, inputs, config, &request)?;
+            if matches!(
+                request.action,
+                Action::Workspace(WorkspaceAction::NewWorkspace { .. })
+            ) {
+                managed_environment::shell_command(config, &inputs.defaults, Some(&state.log))
+                    .map_err(|detail| failure("invalid-config", detail))?;
+            }
+            let workspaces = state
+                .workspaces
+                .as_mut()
+                .ok_or_else(|| failure("session-unavailable", "eonbase has no Eon session"))?;
+            let operation =
+                workspaces.prepare_registration(&request.id, caller.as_deref(), &request.action)?;
+            let mut request = request;
+            // Pin rename to the confirmed member before releasing the control turn.
+            if let session_registry::Operation::Rename { id, .. } = &operation
+                && let Action::Workspace(WorkspaceAction::RenameWorkspace { workspace, .. }) =
+                    &mut request.action
+            {
+                *workspace = Some(WorkspaceTarget::PersistentId(id.clone()));
+            }
+            workspaces.reserve_registration(&request.id)?;
+            let submitted = match state.registry_worker.as_mut() {
+                Some(worker) => worker
+                    .submit(operation)
+                    .map_err(|error| error.into_control()),
+                None => Err(failure(
+                    "session-registry",
+                    "registry worker is unavailable",
+                )),
+            };
+            if let Err(error) = submitted {
+                workspaces.release_registration(&request.id);
+                return Err(error);
+            }
+            state.registry_pending = Some(RegistryPending::Action {
+                request,
+                stream: None,
+            });
+            Ok(())
+        })();
+        return match accepted {
+            Ok(()) => Dispatched::Deferred,
+            Err(error) => {
+                Dispatched::Reply(ControlResponse::Workspace(Response::Failure(error)), false)
+            }
+        };
+    }
     let reply = dispatch_control_request(request, state, inputs, config, runtime, generation);
     super::diagnostics::bench_trace("dispatch_end", "");
     state.serve_subscribers(Instant::now());
@@ -2519,6 +2792,19 @@ fn dispatch_control_request(
     config: &Path,
     runtime: &Path,
     generation: &str,
+) -> (ControlResponse, bool) {
+    dispatch_registered_request(request, state, inputs, config, runtime, generation, None)
+}
+
+#[allow(clippy::too_many_arguments)]
+fn dispatch_registered_request(
+    request: Request,
+    state: &mut SupervisorState,
+    inputs: &Inputs,
+    config: &Path,
+    runtime: &Path,
+    generation: &str,
+    registration: Option<Registration>,
 ) -> (ControlResponse, bool) {
     let mode = launch_mode(state);
     if state.stopping
@@ -2913,10 +3199,11 @@ fn dispatch_control_request(
                         target,
                     )
                 }
-                _ => workspace.dispatch(
+                _ => workspace.apply_action(
                     &request.id,
                     caller.as_deref(),
                     action,
+                    registration,
                     |command, directory| {
                         managed_environment::prepare_popup_command(
                             &snapshot_command(command, snapshot.as_ref()),
@@ -3070,7 +3357,7 @@ fn edit_terminal_history(
     let log = &state.log;
     // The target's tab is the shown workspace's active tab, which a request
     // without a caller acts on.
-    let result = workspace.dispatch(
+    let result = workspace.apply_action(
         &request.id,
         None,
         Action::InvokePopup {
@@ -3079,6 +3366,7 @@ fn edit_terminal_history(
             expected_instance: None,
             intent: InvokeIntent::Toggle,
         },
+        None,
         |command, directory| {
             managed_environment::prepare_popup_command(
                 &snapshot_command(command, Some(&snapshot)),
@@ -3533,7 +3821,12 @@ mod tests {
         let Some(root) = std::env::var_os("EON_C38_STARTUP_ROOT").map(PathBuf::from) else {
             return;
         };
-        let inputs = crate::fixtures::inputs();
+        let mut inputs = crate::fixtures::inputs();
+        if root.join("venus").exists() {
+            inputs.venus = root.join("venus");
+        }
+        let generation =
+            std::env::var("EON_C38_GENERATION").unwrap_or_else(|_| "component-1".into());
         let log = DiagnosticLog::open_in(Ok(root.join("logs")), "component-1", "eon");
         let lock = super::lock_supervisor_lifecycle(&root.join("startup.lock")).unwrap();
         let mode = if std::env::var_os("EON_C38_BASE").is_some() {
@@ -3551,33 +3844,50 @@ mod tests {
             lock,
             &root.join("a/b"),
             &[],
-            "component-1",
+            &generation,
             mode,
             "",
             false,
             &log,
         );
-        fs::write(root.join("startup-result"), result.unwrap_err()).unwrap();
+        fs::write(
+            root.join("startup-result"),
+            match result {
+                Ok(status) => format!("exit {status}"),
+                Err(error) => error,
+            },
+        )
+        .unwrap();
     }
 
-    // Registration gates recovery itself; failed launches retain metadata, eonbase does not register.
+    // Fresh launches retain committed metadata; eonbase does not register.
     #[test]
     fn c38_supervisor_startup_gates_recovery_and_retains_identity() {
         use crate::session_registry::Registry;
-        for case in ["config", "registry", "launch", "base"] {
+        for case in ["config", "launch", "base", "busy"] {
             let root = temporary_directory();
             fs::set_permissions(&root, fs::Permissions::from_mode(0o700)).unwrap();
             let runtime = root.join("a/b");
             fs::create_dir_all(&runtime).unwrap();
             let registry = Registry::in_test_directory(root.join("state/eon/sessions"));
-            let mut live = None;
+            let release = if case == "busy" {
+                registry.create(None).unwrap();
+                let lock = fs::File::open(root.join("state/eon/sessions/registry.lock")).unwrap();
+                lock.lock().unwrap();
+                let marker = root.join("state/eon/sessions/.tmp-test-retrying");
+                Some(std::thread::spawn(move || {
+                    let deadline = Instant::now() + Duration::from_secs(5);
+                    while !marker.exists() {
+                        assert!(Instant::now() < deadline, "startup did not retry busy");
+                        std::thread::sleep(Duration::from_millis(1));
+                    }
+                    lock.unlock().unwrap();
+                }))
+            } else {
+                None
+            };
             if case == "config" {
                 fs::write(root.join("config.toml"), "[shell]\ncommand = []\n").unwrap();
-            } else if case == "registry" {
-                registry.create(None).unwrap();
-                fs::write(root.join("state/eon/sessions/allocator.json"), b"{").unwrap();
-                live = Some(leased_orbit(&runtime, "exec sleep 30"));
-                sessions::mark_pending_pair(&runtime.join("orbit.sock")).unwrap();
             }
             let mut command = Command::new(std::env::current_exe().unwrap());
             command
@@ -3595,7 +3905,13 @@ mod tests {
             if case == "base" {
                 command.env("EON_C38_BASE", "1");
             }
+            if case == "busy" {
+                command.env("EON_C38_OBSERVE_BUSY_RETRY", "1");
+            }
             let output = command.output().unwrap();
+            if let Some(release) = release {
+                release.join().unwrap();
+            }
             assert!(
                 output.status.success(),
                 "{}",
@@ -3607,22 +3923,194 @@ mod tests {
                     assert!(error.contains("shell.command"), "{error}");
                     assert!(registry.list().unwrap().is_empty());
                 }
-                "registry" => {
-                    assert!(error.contains("session registry"), "{error}");
-                    assert!(sessions::pending_pair_marker(&runtime.join("orbit.sock")).exists());
-                    let mut sessions = vec![live.take().unwrap()];
-                    assert_eq!(sessions::session_finished(&mut sessions[0]).unwrap(), None);
-                    let log =
-                        DiagnosticLog::open_in(Ok(root.join("cleanup-logs")), "component-1", "eon");
-                    super::stop_owned_session(&mut sessions, "terminal-1", &log).unwrap();
-                }
-                "launch" => {
+                "launch" | "busy" => {
                     let records = registry.list().unwrap();
-                    assert_eq!(records.len(), 1);
-                    assert!(error.contains(&records[0].id), "{error}");
+                    assert_eq!(records.len(), if case == "busy" { 2 } else { 1 });
+                    assert!(error.contains(&records.last().unwrap().id), "{error}");
                 }
                 "base" => assert!(registry.list().unwrap().is_empty()),
                 _ => unreachable!(),
+            }
+            fs::remove_dir_all(root).unwrap();
+        }
+    }
+
+    #[test]
+    fn c38_restart_keeps_live_terminals_reachable_when_registry_is_unavailable() {
+        use crate::{control, session_registry::Registry};
+        const GENERATION: &str = "g1-00000000000000000000000000000001";
+        for case in ["corrupt", "permissions", "held", "state-root", "worker"] {
+            let root = temporary_directory();
+            fs::set_permissions(&root, fs::Permissions::from_mode(0o700)).unwrap();
+            let runtime = root.join("a/b");
+            fs::create_dir_all(&runtime).unwrap();
+            fs::set_permissions(&runtime, fs::Permissions::from_mode(0o700)).unwrap();
+            let registry_root = root.join("state/eon/sessions");
+            let registry = Registry::in_test_directory(registry_root.clone());
+            registry.create(None).unwrap();
+            let held = if case == "held" {
+                let lock = fs::File::open(registry_root.join("registry.lock")).unwrap();
+                lock.lock().unwrap();
+                Some(lock)
+            } else {
+                None
+            };
+            if case == "corrupt" {
+                fs::write(registry_root.join("allocator.json"), b"{").unwrap();
+            }
+            if case == "permissions" {
+                fs::set_permissions(&registry_root, fs::Permissions::from_mode(0o755)).unwrap();
+            }
+            script(&root.join("venus"), "#!/bin/sh\nexec sleep 60\n");
+            let mut inputs = crate::fixtures::inputs();
+            inputs.orbit = std::env::var_os("ORBIT_BIN").unwrap().into();
+            let log = DiagnosticLog::open_in(Ok(root.join("orbit-logs")), GENERATION, "eon");
+            let live = super::start_orbit(
+                &inputs,
+                &root,
+                &runtime.join("orbit.sock"),
+                "terminal-1",
+                GENERATION,
+                &root,
+                &[
+                    "sh".into(),
+                    "-c".into(),
+                    "printf 'recovered-terminal\\n'; exec sleep 60".into(),
+                ],
+                None,
+                &log,
+                Instant::now() + Duration::from_secs(5),
+            )
+            .unwrap();
+            let pid = orbit_pid(&live);
+            drop(live);
+            let mut command = Command::new(std::env::current_exe().unwrap());
+            command
+                .args([
+                    "--exact",
+                    "supervisor::tests::c38_supervisor_startup_process",
+                    "--nocapture",
+                ])
+                .env("EON_C38_STARTUP_ROOT", &root)
+                .env("HOME", &root)
+                .env("EON_C38_GENERATION", GENERATION)
+                .env("XDG_STATE_HOME", root.join("state"))
+                .env("EON_RUNTIME_DIR", root.join("runtime"))
+                .current_dir(&root)
+                .stdin(std::process::Stdio::null())
+                .stdout(std::process::Stdio::piped())
+                .stderr(std::process::Stdio::piped());
+            if case == "state-root" {
+                command
+                    .env("HOME", "relative")
+                    .env("XDG_STATE_HOME", "relative");
+            }
+            if case == "worker" {
+                command.env("EON_C38_FAIL_WORKER", "1");
+            }
+            let mut child = command.spawn().unwrap();
+            let socket = runtime.join("eon.sock");
+            let deadline = Instant::now() + Duration::from_secs(10);
+            let snapshot = loop {
+                if socket.exists()
+                    && let Ok(control::ControlResponse::Workspace(super::Response::Snapshot(
+                        snapshot,
+                    ))) =
+                        control::send_action(&socket, Action::Workspace(WorkspaceAction::Inspect))
+                    && snapshot.workspaces[0].registration_error.is_some()
+                {
+                    break snapshot;
+                }
+                if Instant::now() >= deadline || child.try_wait().unwrap().is_some() {
+                    let _ = child.kill();
+                    let output = child.wait_with_output().unwrap();
+                    // SAFETY: this is the exact Orbit PID started by this test.
+                    unsafe {
+                        libc::kill(pid, libc::SIGKILL);
+                        libc::waitpid(pid, std::ptr::null_mut(), 0);
+                    }
+                    panic!(
+                        "{case}: recovery unavailable: {} {}",
+                        String::from_utf8_lossy(&output.stdout),
+                        String::from_utf8_lossy(&output.stderr)
+                    );
+                }
+                std::thread::sleep(Duration::from_millis(10));
+            };
+            assert_eq!(snapshot.workspaces[0].id, "s1");
+            assert_eq!(snapshot.workspaces[0].persistent_id, None);
+            if case == "state-root" {
+                assert!(
+                    snapshot.workspaces[0]
+                        .registration_error
+                        .as_ref()
+                        .unwrap()
+                        .detail
+                        .contains("cannot resolve session state directory")
+                );
+            }
+            if case == "worker" {
+                assert!(
+                    snapshot.workspaces[0]
+                        .registration_error
+                        .as_ref()
+                        .unwrap()
+                        .detail
+                        .contains("worker spawn failure")
+                );
+            }
+            let pane = snapshot.tabs[0].panes().next().unwrap();
+            assert_eq!(pane.session, "terminal-1");
+            assert_eq!(
+                pane.endpoint,
+                runtime.join("orbit.sock").as_os_str().as_encoded_bytes()
+            );
+            assert!(matches!(
+                control::send_action(
+                    &socket,
+                    Action::ReadTerminal {
+                        target: "p1".into()
+                    }
+                )
+                .unwrap(),
+                control::ControlResponse::Workspace(super::Response::Text(_))
+            ));
+            assert!(matches!(
+                control::send_action(
+                    &socket,
+                    Action::Workspace(WorkspaceAction::NewWorkspace {
+                        name: None,
+                        focus: false
+                    })
+                )
+                .unwrap(),
+                control::ControlResponse::Workspace(super::Response::Failure(_))
+            ));
+            let stopped =
+                control::send_stop_on(UnixStream::connect(&socket).unwrap(), GENERATION).unwrap();
+            assert!(matches!(
+                stopped,
+                control::StopAnswer::Reply(eon_workspace_protocol::stop::Reply::Stopped { .. })
+            ));
+            let output = child.wait_with_output().unwrap();
+            assert!(
+                output.status.success(),
+                "{}",
+                String::from_utf8_lossy(&output.stderr)
+            );
+            // SAFETY: reap the exact child started here, after the supervisor confirmed Stop.
+            unsafe {
+                libc::waitpid(pid, std::ptr::null_mut(), 0);
+            }
+            drop(held);
+            if case == "corrupt" {
+                assert_eq!(
+                    fs::read(registry_root.join("allocator.json")).unwrap(),
+                    b"{"
+                );
+            }
+            if case == "permissions" {
+                assert_eq!(fs::metadata(&registry_root).unwrap().mode() & 0o7777, 0o755);
             }
             fs::remove_dir_all(root).unwrap();
         }
@@ -3634,6 +4122,336 @@ mod tests {
             send_enter_delay_ms: 300,
             send_typing_quiet_ms: 2000,
         }
+    }
+
+    #[test]
+    fn c38_registered_recovery_retries_and_publishes_the_confirmed_same_member() {
+        use crate::session_registry::{Operation, Registry, Worker};
+        use eon_workspace_protocol::v38::{Change, SubscriptionMessage, WorkspaceChange};
+        let (root, inputs, mut state, old_peer) = subscribed_window();
+        drop(old_peer);
+        let registry_root = root.join("registry");
+        let registry = Registry::in_test_directory(registry_root.clone());
+        registry.create(None).unwrap();
+        state.workspaces = Some(
+            WorkspaceSet::registered_recovered(
+                Some(registry.clone()),
+                None,
+                root.clone(),
+                root.clone(),
+                Some(root.clone()),
+                vec![(
+                    1,
+                    Session {
+                        id: "terminal-1".into(),
+                        endpoint: root.join("orbit.sock"),
+                    },
+                )],
+                inputs.defaults.popups.clone(),
+            )
+            .unwrap(),
+        );
+        state.subscribers = crate::subscriptions::Subscribers::new("component-1");
+        let before = state.workspace_snapshot_in(None).unwrap();
+        let Dispatched::Subscribe(subscriber) = super::dispatch(
+            super::Incoming::Request(super::Request {
+                id: "recovered-subscribe".into(),
+                caller: None,
+                action: Action::Subscribe {
+                    filter: Default::default(),
+                    after: None,
+                },
+            }),
+            &mut state,
+            &inputs,
+            &root,
+            &root,
+            "component-1",
+        ) else {
+            panic!("subscription refused");
+        };
+        let (stream, mut peer) = UnixStream::pair().unwrap();
+        state
+            .subscribers
+            .attach(stream, *subscriber, Instant::now());
+        let initial = subscription_messages(&mut peer);
+        assert!(
+            matches!(&initial[0], SubscriptionMessage::Subscribed(subscribed)
+            if subscribed.snapshot.as_ref().unwrap().workspaces[0].workspace.persistent_id.is_none())
+        );
+        let lock = fs::File::open(registry_root.join("registry.lock")).unwrap();
+        lock.lock().unwrap();
+        let mut worker = Worker::start(registry.clone()).unwrap();
+        worker.submit(Operation::Register).unwrap();
+        state.registry_worker = Some(worker);
+        state.registry_pending = Some(super::RegistryPending::Recovery("s1".into()));
+        std::thread::sleep(Duration::from_millis(100));
+        state.poll_registry(&inputs, &root, &root, "component-1");
+        assert!(
+            state.workspace_snapshot_in(None).unwrap().workspaces[0]
+                .persistent_id
+                .is_none()
+        );
+        drop(lock);
+        let deadline = Instant::now() + Duration::from_secs(5);
+        while state.registry_pending.is_some() {
+            assert!(
+                Instant::now() < deadline,
+                "recovered registration did not retry"
+            );
+            state.poll_registry(&inputs, &root, &root, "component-1");
+            state.end_turn(Instant::now());
+            std::thread::sleep(Duration::from_millis(1));
+        }
+        let after = state.workspace_snapshot_in(None).unwrap();
+        let id = registry.list().unwrap().last().unwrap().id.clone();
+        assert_eq!(
+            after.workspaces[0].persistent_id.as_deref(),
+            Some(id.as_str())
+        );
+        assert_eq!(after.workspaces[0].registration_error, None);
+        assert_eq!(after.workspace, before.workspace);
+        assert_eq!(after.tabs, before.tabs);
+        let messages = subscription_messages(&mut peer);
+        assert!(messages.iter().any(|message| matches!(message,
+            SubscriptionMessage::Event(event) if matches!(&event.change,
+                Change::Workspace { change: WorkspaceChange::Registered, workspace }
+                    if workspace.workspace.id == "s1" && workspace.workspace.persistent_id.as_deref() == Some(id.as_str())))), "{messages:?}");
+        drop((peer, state));
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn c38_fresh_start_services_lifecycle_and_stop_before_registration_finishes() {
+        use crate::{
+            control,
+            session_registry::{Fault, Operation, Registry, Worker},
+        };
+        let root = temporary_directory();
+        let inputs = crate::fixtures::inputs();
+        let registry_root = root.join("registry");
+        let mut registry = Registry::in_test_directory(registry_root.clone());
+        registry.create(None).unwrap();
+        registry.inject(Some(Fault::WaitBeforeRecordPublication));
+        let mut worker = Worker::start(registry.clone()).unwrap();
+        worker.submit(Operation::Create { name: None }).unwrap();
+        let socket = root.join("eon.sock");
+        let listener = control::ControlListener::bind(&socket).unwrap();
+        let generation = "g1-00000000000000000000000000000001";
+        let starting = eon_workspace_protocol::v38::Runtime {
+            generation: generation.into(),
+            name: None,
+            started_at: 1,
+            eon_version: inputs.version.into(),
+            workspace_protocol: eon_workspace_protocol::v38::VERSION,
+            component_report: inputs.component_report().unwrap().into(),
+            sessions: Vec::new(),
+            attach: eon_workspace_protocol::v38::Availability {
+                available: false,
+                reason: "registering".into(),
+            },
+            stop: eon_workspace_protocol::v38::Availability {
+                available: true,
+                reason: "starting".into(),
+            },
+            busy: None,
+        };
+        let supervisor = std::thread::spawn(move || {
+            super::await_initial_registration(&listener, &mut worker, &starting)
+        });
+        let deadline = Instant::now() + Duration::from_secs(5);
+        while !registry_root.join(".tmp-test-waiting").exists() {
+            assert!(Instant::now() < deadline);
+            std::thread::sleep(Duration::from_millis(1));
+        }
+        let control::ControlResponse::Lifecycle(
+            eon_workspace_protocol::v38::LifecycleResponse::Runtime(status),
+        ) = control::send_action(&socket, Action::Workspace(WorkspaceAction::InspectRuntime))
+            .unwrap()
+        else {
+            panic!("starting runtime inspection failed");
+        };
+        assert!(!status.attach.available);
+        assert!(status.stop.available);
+        assert!(status.sessions.is_empty());
+        let awaiting = super::probe_supervisor(&inputs, &socket, generation)
+            .err()
+            .expect("starting supervisor is not attachable yet");
+        assert_eq!(
+            awaiting.kind,
+            control::EndpointFailureKind::Starting,
+            "a competing launch must retry the still-starting supervisor"
+        );
+        assert!(matches!(
+            control::send_stop_on(UnixStream::connect(socket).unwrap(), generation).unwrap(),
+            control::StopAnswer::Reply(eon_workspace_protocol::stop::Reply::Stopped { .. })
+        ));
+        assert_eq!(supervisor.join().unwrap().unwrap(), None);
+        fs::write(registry_root.join(".tmp-test-release"), b"release").unwrap();
+        while registry.list().is_err() {
+            assert!(Instant::now() < deadline);
+            std::thread::sleep(Duration::from_millis(1));
+        }
+        assert_eq!(registry.list().unwrap().len(), 2);
+        assert!(!root.join("orbit.sock.record").exists());
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn c38_pending_registry_io_services_inspection_and_stop_and_discards_late_creation() {
+        use crate::{
+            control,
+            session_registry::{Fault, Registry, Worker},
+        };
+        use eon_workspace_protocol::v38::{Request, encode_request};
+        use std::io::Write;
+        let (root, inputs, mut state, peer) = subscribed_window();
+        let registry_root = root.join("registry");
+        let mut registry = Registry::in_test_directory(registry_root.clone());
+        let registration = registry.create(None).unwrap();
+        state.workspaces = Some(
+            WorkspaceSet::registered_pending(
+                Some(registry.clone()),
+                registration,
+                root.clone(),
+                root.clone(),
+                Some(root.clone()),
+                inputs.defaults.popups.clone(),
+                |_, _| Ok(Vec::new()),
+                |_| Ok(()),
+            )
+            .unwrap(),
+        );
+        registry.inject(Some(Fault::WaitBeforeRecordPublication));
+        state.registry_worker = Some(Worker::start(registry.clone()).unwrap());
+        let before = state.workspaces.as_ref().unwrap().snapshot();
+        let listener = control::ControlListener::bind(&root.join("eon.sock")).unwrap();
+        let request = Request {
+            id: "paused-create".into(),
+            caller: None,
+            action: Action::Workspace(WorkspaceAction::NewWorkspace {
+                name: None,
+                focus: true,
+            }),
+        };
+        let mut client = UnixStream::connect(root.join("eon.sock")).unwrap();
+        client
+            .write_all(&encode_request(&request).unwrap())
+            .unwrap();
+        let super::Accepted::Deferred(stream) = listener
+            .accept(|incoming| {
+                super::dispatch(
+                    incoming,
+                    &mut state,
+                    &inputs,
+                    &root,
+                    &root,
+                    "g1-00000000000000000000000000000001",
+                )
+            })
+            .unwrap()
+        else {
+            panic!("registry request did not defer");
+        };
+        if let Some(super::RegistryPending::Action {
+            stream: pending, ..
+        }) = &mut state.registry_pending
+        {
+            *pending = Some(stream);
+        }
+        let deadline = Instant::now() + Duration::from_secs(5);
+        while !registry_root.join(".tmp-test-waiting").exists() {
+            assert!(
+                Instant::now() < deadline,
+                "worker did not reach the publication barrier"
+            );
+            std::thread::sleep(Duration::from_millis(5));
+        }
+        let replay = super::dispatch(
+            super::Incoming::Request(request),
+            &mut state,
+            &inputs,
+            &root,
+            &root,
+            "g1-00000000000000000000000000000001",
+        );
+        assert!(
+            matches!(replay, Dispatched::Reply(control::ControlResponse::Workspace(super::Response::Failure(error)), false) if error.code == "duplicate-request")
+        );
+        // The first accept returned with the file lock still held; another real client is serviced.
+        let socket = root.join("eon.sock");
+        let inspect = std::thread::spawn(move || {
+            control::send_action(&socket, Action::Workspace(WorkspaceAction::Inspect))
+        });
+        loop {
+            let accepted = listener
+                .accept(|incoming| {
+                    super::dispatch(
+                        incoming,
+                        &mut state,
+                        &inputs,
+                        &root,
+                        &root,
+                        "g1-00000000000000000000000000000001",
+                    )
+                })
+                .unwrap();
+            if !matches!(accepted, super::Accepted::None) {
+                break;
+            }
+            assert!(Instant::now() < deadline);
+            std::thread::sleep(Duration::from_millis(1));
+        }
+        assert!(matches!(
+            inspect.join().unwrap().unwrap(),
+            control::ControlResponse::Workspace(super::Response::Snapshot(_))
+        ));
+        let socket = root.join("eon.sock");
+        let stop = std::thread::spawn(move || {
+            control::send_stop_on(
+                UnixStream::connect(socket).unwrap(),
+                "g1-00000000000000000000000000000001",
+            )
+        });
+        loop {
+            let accepted = listener
+                .accept(|incoming| {
+                    super::dispatch(
+                        incoming,
+                        &mut state,
+                        &inputs,
+                        &root,
+                        &root,
+                        "g1-00000000000000000000000000000001",
+                    )
+                })
+                .unwrap();
+            if matches!(accepted, super::Accepted::Replied { shutdown: true }) {
+                break;
+            }
+            assert!(Instant::now() < deadline);
+            std::thread::sleep(Duration::from_millis(1));
+        }
+        assert!(matches!(
+            stop.join().unwrap().unwrap(),
+            control::StopAnswer::Reply(eon_workspace_protocol::stop::Reply::Stopped { .. })
+        ));
+        assert!(state.stopping);
+        fs::write(registry_root.join(".tmp-test-release"), b"release").unwrap();
+        while state.registry_pending.is_some() {
+            assert!(Instant::now() < deadline);
+            state.poll_registry(&inputs, &root, &root, "g1-00000000000000000000000000000001");
+            std::thread::sleep(Duration::from_millis(1));
+        }
+        assert!(state.sessions.is_empty());
+        assert_eq!(state.workspaces.as_ref().unwrap().snapshot(), before);
+        assert_eq!(
+            registry.list().unwrap().len(),
+            2,
+            "only retained metadata may finish after Stop"
+        );
+        drop((client, listener, peer, state));
+        fs::remove_dir_all(root).unwrap();
     }
 
     /// A supervisor keeps a `Subscribe`'s connection for the stream, which
@@ -3653,6 +4471,8 @@ mod tests {
         )
         .unwrap();
         let mut state = SupervisorState {
+            registry_worker: None,
+            registry_pending: None,
             started_at: 1,
             window: None,
             running: None,
@@ -3810,8 +4630,8 @@ mod tests {
         fs::remove_dir_all(root).unwrap();
     }
 
-    /// EON-C39: a turn publishes once, so a change its tending made and the
-    /// change of its action coalesce into one event.
+    /// A deferred registry action completes on a later turn; the tending
+    /// change is published while it waits, then the confirmed rename follows.
     #[test]
     fn a_turn_with_an_action_publishes_once() {
         let (root, inputs, mut state, peer) = subscribed_window();
@@ -3835,7 +4655,11 @@ mod tests {
         let client = rename_client(&root, peer);
         serve_turn(&control, &mut state, &inputs, &root);
         let (_, held) = client.join().unwrap();
-        assert_eq!(renames(&held), [Some("renamed".to_owned())], "{held:?}");
+        assert_eq!(
+            renames(&held),
+            [Some("tended".to_owned()), Some("renamed".to_owned())],
+            "{held:?}"
+        );
         drop(control);
         drop(state);
         fs::remove_dir_all(root).unwrap();
@@ -3857,6 +4681,10 @@ mod tests {
         )
         .unwrap();
         let mut state = SupervisorState {
+            registry_worker: Some(
+                crate::session_registry::Worker::start(workspace.registry().clone()).unwrap(),
+            ),
+            registry_pending: None,
             started_at: 1,
             window: None,
             running: None,
@@ -3959,6 +4787,20 @@ mod tests {
             .unwrap();
         state.end_turn(Instant::now());
         assert!(!matches!(accepted, super::Accepted::None));
+        if let super::Accepted::Deferred(stream) = accepted {
+            if let Some(super::RegistryPending::Action {
+                stream: pending, ..
+            }) = &mut state.registry_pending
+            {
+                *pending = Some(stream);
+            }
+            let deadline = Instant::now() + Duration::from_secs(5);
+            while state.registry_pending.is_some() {
+                assert!(Instant::now() < deadline, "registry did not complete");
+                state.poll_registry(inputs, root, root, "component-1");
+                std::thread::sleep(Duration::from_millis(1));
+            }
+        }
     }
 
     /// The names of the `workspace-renamed` events in `messages`.
@@ -4036,6 +4878,8 @@ mod tests {
         )
         .unwrap();
         let mut state = SupervisorState {
+            registry_worker: None,
+            registry_pending: None,
             started_at: 1,
             window: None,
             running: None,
@@ -4152,6 +4996,8 @@ mod tests {
         )
         .unwrap();
         let state = SupervisorState {
+            registry_worker: None,
+            registry_pending: None,
             started_at: 1,
             window: None,
             running: None,
@@ -4489,6 +5335,8 @@ mod tests {
         .unwrap();
         let (notices, take_close) = crate::notification::Notices::record_closes();
         let mut state = SupervisorState {
+            registry_worker: None,
+            registry_pending: None,
             started_at: 1,
             window: None,
             running: None,
@@ -4573,6 +5421,8 @@ mod tests {
         venus.child.wait().unwrap();
         let (notices, take_show) = crate::notification::Notices::record_shows();
         let mut state = SupervisorState {
+            registry_worker: None,
+            registry_pending: None,
             started_at: 1,
             window: None,
             running: None,
@@ -4719,6 +5569,8 @@ mod tests {
         );
         assert_eq!(sessions.len(), 2);
         let mut state = SupervisorState {
+            registry_worker: None,
+            registry_pending: None,
             started_at: 1,
             window: None,
             running: None,
@@ -4925,6 +5777,8 @@ mod tests {
         let record = sessions::tests::record(&sessions[0]).to_path_buf();
         fs::set_permissions(&record, fs::Permissions::from_mode(0o644)).unwrap();
         let mut state = SupervisorState {
+            registry_worker: None,
+            registry_pending: None,
             started_at: 1,
             window: None,
             running: None,
@@ -5049,6 +5903,8 @@ mod tests {
         assert_eq!(sessions[0].orbit_log.as_ref(), Some(&orbit_log));
         kill_orbit_worker(orbit);
         let mut state = SupervisorState {
+            registry_worker: None,
+            registry_pending: None,
             started_at: 1,
             window: None,
             running: None,
@@ -5106,6 +5962,8 @@ mod tests {
         let orbit_log = session.orbit_log.clone().unwrap();
         kill_worker(&session);
         let mut state = SupervisorState {
+            registry_worker: None,
+            registry_pending: None,
             started_at: 1,
             window: None,
             running: None,
@@ -5377,7 +6235,8 @@ mod tests {
             active_workspace: "s1".into(),
             workspaces: vec![eon_workspace_protocol::v38::WorkspaceInfo {
                 id: "s1".into(),
-                persistent_id: "s1".into(),
+                persistent_id: Some("s1".into()),
+                registration_error: None,
                 name: None,
                 tab_count: 64,
                 attention: None,

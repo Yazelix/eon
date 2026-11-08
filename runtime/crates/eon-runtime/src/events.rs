@@ -36,7 +36,8 @@ pub(super) enum Kind {
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub(super) struct WorkspaceItem {
     pub(super) id: String,
-    pub(super) persistent_id: String,
+    pub(super) persistent_id: Option<String>,
+    pub(super) registration_error: Option<eonw::Failure>,
     pub(super) name: Option<String>,
     pub(super) shown: bool,
     pub(super) tabs: usize,
@@ -99,6 +100,8 @@ pub(super) enum WorkspaceChange {
     Created,
     Renamed,
     Closed,
+    Registered,
+    RegistrationFailed,
     Shown {
         /// The workspace it hid, which filters read and the wire leaves out.
         hidden: Option<String>,
@@ -179,6 +182,8 @@ impl Event {
                 WorkspaceChange::Created => "session-created",
                 WorkspaceChange::Renamed => "session-renamed",
                 WorkspaceChange::Closed => "session-closed",
+                WorkspaceChange::Registered => "session-registered",
+                WorkspaceChange::RegistrationFailed => "session-registration-failed",
                 WorkspaceChange::Shown { .. } => "session-shown",
             },
             Self::Tab(change, _) => match change {
@@ -332,6 +337,7 @@ impl Projection {
                     item: WorkspaceItem {
                         id: info.id.clone(),
                         persistent_id: info.persistent_id.clone(),
+                        registration_error: info.registration_error.clone(),
                         name: info.name.clone(),
                         shown: info.id == first.active_workspace,
                         tabs: info.tab_count,
@@ -518,6 +524,18 @@ impl Projection {
                     workspace.item.clone(),
                 )),
                 Some(_) => {}
+            }
+            if let Some(old) = old_workspace {
+                let change = if old.item.persistent_id != workspace.item.persistent_id {
+                    Some(WorkspaceChange::Registered)
+                } else if old.item.registration_error != workspace.item.registration_error {
+                    Some(WorkspaceChange::RegistrationFailed)
+                } else {
+                    None
+                };
+                if let Some(change) = change {
+                    events.push(Event::Workspace(change, workspace.item.clone()));
+                }
             }
             let moved_tabs = old_workspace.map_or_else(HashSet::new, |old| {
                 reordered(
@@ -1229,7 +1247,8 @@ pub(super) mod tests {
             .enumerate()
             .map(|(index, (id, name, tabs))| WorkspaceInfo {
                 id: (*id).into(),
-                persistent_id: (*id).into(),
+                persistent_id: Some((*id).into()),
+                registration_error: None,
                 name: name.map(Into::into),
                 tab_count: tabs.len(),
                 attention: (index == 0).then_some(State::Working),
@@ -1613,6 +1632,32 @@ pub(super) mod tests {
         );
     }
 
+    #[test]
+    fn recovered_registration_events_replay_the_same_member() {
+        let mut pending = base();
+        let member = &mut pending.workspaces[0].item;
+        member.persistent_id = None;
+        let mut failed = pending.clone();
+        failed.workspaces[0].item.registration_error = Some(eonw::Failure {
+            code: "registry-busy".into(),
+            detail: "held".into(),
+        });
+        assert!(matches!(
+            &pending.diff(&failed)[..],
+            [Event::Workspace(WorkspaceChange::RegistrationFailed, _)]
+        ));
+        assert_replays(&unfiltered(&pending), &pending, &failed);
+        let mut confirmed = failed.clone();
+        confirmed.workspaces[0].item.persistent_id = Some("registered".into());
+        confirmed.workspaces[0].item.registration_error = None;
+        assert!(matches!(
+            &failed.diff(&confirmed)[..],
+            [Event::Workspace(WorkspaceChange::Registered, _)]
+        ));
+        assert_replays(&unfiltered(&failed), &failed, &confirmed);
+        assert_eq!(failed.workspaces[0].tabs, confirmed.workspaces[0].tabs);
+    }
+
     /// From base: s3 "new" opens with t4 and p5 and is shown; s1 is renamed;
     /// t2 closes with p3; p2 is renamed and selected, so it expands; p1
     /// needs input and joins the queue.
@@ -1634,7 +1679,8 @@ pub(super) mod tests {
         after.workspaces.push(WorkspaceState {
             item: WorkspaceItem {
                 id: "s3".into(),
-                persistent_id: "s3".into(),
+                persistent_id: Some("s3".into()),
+                registration_error: None,
                 name: Some("new".into()),
                 shown: true,
                 tabs: 1,
@@ -1683,7 +1729,8 @@ pub(super) mod tests {
             [
                 &WorkspaceItem {
                     id: "s1".into(),
-                    persistent_id: "s1".into(),
+                    persistent_id: Some("s1".into()),
+                    registration_error: None,
                     name: None,
                     shown: false,
                     tabs: 1,
@@ -1693,7 +1740,8 @@ pub(super) mod tests {
                 },
                 &WorkspaceItem {
                     id: "s2".into(),
-                    persistent_id: "s2".into(),
+                    persistent_id: Some("s2".into()),
+                    registration_error: None,
                     name: Some("side".into()),
                     shown: true,
                     tabs: 2,
@@ -2745,7 +2793,8 @@ pub(super) mod tests {
                     let tab_id = self.id("t");
                     projection.workspaces.push(WorkspaceState {
                         item: WorkspaceItem {
-                            persistent_id: id.clone(),
+                            persistent_id: Some(id.clone()),
+                            registration_error: None,
                             id,
                             name: None,
                             shown: false,

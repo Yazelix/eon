@@ -9,6 +9,7 @@ use std::{
     io::{Read, Write},
     os::unix::fs::{DirBuilderExt, MetadataExt, OpenOptionsExt},
     path::{Path, PathBuf},
+    sync::mpsc::{self, Receiver, SyncSender},
     thread,
     time::{Duration, Instant},
 };
@@ -43,18 +44,36 @@ pub(super) struct Failure {
     pub publication: Publication,
     pub reserved_id: Option<String>,
     pub detail: String,
+    busy: bool,
 }
 
 impl Failure {
     pub(super) fn into_control(self) -> eon_workspace_protocol::v38::Failure {
+        let mut detail = self.to_string();
+        let bound = eon_workspace_protocol::v38::MAX_DETAIL_BYTES;
+        if detail.len() > bound {
+            let tail = self
+                .reserved_id
+                .as_ref()
+                .map_or_else(String::new, |id| format!("; reserved persistent_id={id}"));
+            let mut end = bound - tail.len() - 3;
+            while !detail.is_char_boundary(end) {
+                end -= 1;
+            }
+            detail.truncate(end);
+            detail.push_str("...");
+            detail.push_str(&tail);
+        }
         eon_workspace_protocol::v38::Failure {
             code: if self.publication == Publication::Uncertain {
                 "registry-uncertain"
+            } else if self.busy {
+                "registry-busy"
             } else {
                 "session-registry"
             }
             .into(),
-            detail: self.to_string(),
+            detail,
         }
     }
 
@@ -63,6 +82,14 @@ impl Failure {
             publication: Publication::Definitive,
             reserved_id: None,
             detail: detail.into(),
+            busy: false,
+        }
+    }
+
+    pub(super) fn busy() -> Self {
+        Self {
+            busy: true,
+            ..Self::new("session registry is busy; no change was published")
         }
     }
 
@@ -91,6 +118,99 @@ pub(super) struct Registry {
     fault: Option<Fault>,
 }
 
+struct RegistryLock(File);
+
+impl std::ops::Deref for RegistryLock {
+    type Target = File;
+    fn deref(&self) -> &File {
+        &self.0
+    }
+}
+
+impl Drop for RegistryLock {
+    fn drop(&mut self) {
+        // A concurrent fork can retain the open description until exec.
+        let _ = self.0.unlock();
+    }
+}
+
+#[derive(Debug, Clone)]
+pub(super) enum Operation {
+    Register,
+    Create { name: Option<String> },
+    Rename { id: String, name: Option<String> },
+}
+
+pub(super) type Completion = Result<Option<Registration>, Failure>;
+
+/// One operation at a time; the supervisor only submits and polls.
+pub(super) struct Worker {
+    sender: SyncSender<Operation>,
+    receiver: Receiver<Completion>,
+    in_flight: bool,
+}
+
+impl Worker {
+    pub(super) fn start(registry: Registry) -> Result<Self, Failure> {
+        #[cfg(test)]
+        if registry.fault == Some(Fault::WorkerSpawn) {
+            return Err(Failure::new(
+                "injected session registry worker spawn failure",
+            ));
+        }
+        let (sender, operations) = mpsc::sync_channel(1);
+        let (results, receiver) = mpsc::sync_channel(1);
+        thread::Builder::new()
+            .name("eon-session-registry".into())
+            .spawn(move || {
+                while let Ok(operation) = operations.recv() {
+                    if results.send(registry.perform(operation)).is_err() {
+                        break;
+                    }
+                }
+            })
+            .map_err(|error| {
+                Failure::new(format!("cannot start session registry worker: {error}"))
+            })?;
+        Ok(Self {
+            sender,
+            receiver,
+            in_flight: false,
+        })
+    }
+
+    pub(super) fn submit(&mut self, operation: Operation) -> Result<(), Failure> {
+        if self.in_flight {
+            return Err(Failure::busy());
+        }
+        self.sender
+            .try_send(operation)
+            .map_err(|error| match error {
+                mpsc::TrySendError::Full(_) => Failure::busy(),
+                mpsc::TrySendError::Disconnected(_) => {
+                    Failure::new("session registry worker ended")
+                }
+            })?;
+        self.in_flight = true;
+        Ok(())
+    }
+
+    pub(super) fn poll(&mut self) -> Option<Completion> {
+        if !self.in_flight {
+            return None;
+        }
+        let result = match self.receiver.try_recv() {
+            Ok(result) => result,
+            Err(mpsc::TryRecvError::Empty) => return None,
+            Err(mpsc::TryRecvError::Disconnected) => Err(Failure::new(
+                "session registry worker ended with an operation in flight",
+            )),
+        };
+        self.in_flight = false;
+        Some(result)
+    }
+}
+
 #[cfg(test)]
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) enum Fault {
@@ -102,9 +222,38 @@ pub(crate) enum Fault {
     ExitAfterDirectoryCreate,
     InitializationParentSync,
     WaitBeforeDirectoryCreate,
+    WaitBeforeRecordPublication,
+    WorkerSpawn,
+    ObserveBusyRetry,
 }
 
 impl Registry {
+    pub(super) fn perform(&self, operation: Operation) -> Completion {
+        match operation {
+            Operation::Register => {
+                let deadline = Instant::now() + Duration::from_secs(2);
+                let mut backoff = Duration::from_millis(20);
+                loop {
+                    match self.create(None) {
+                        Err(error) if error.busy && Instant::now() < deadline => {
+                            #[cfg(test)]
+                            if self.fault == Some(Fault::ObserveBusyRetry) {
+                                fs::write(self.root.join(".tmp-test-retrying"), b"retry")
+                                    .map_err(|error| Failure::at(&self.root, error))?;
+                            }
+                            thread::sleep(
+                                backoff.min(deadline.saturating_duration_since(Instant::now())),
+                            );
+                            backoff = (backoff * 2).min(Duration::from_millis(100));
+                        }
+                        result => return result.map(Some),
+                    }
+                }
+            }
+            Operation::Create { name } => self.create(name.as_deref()).map(Some),
+            Operation::Rename { id, name } => self.rename(&id, name.as_deref()),
+        }
+    }
     #[cfg(test)]
     pub(crate) fn in_test_directory(root: PathBuf) -> Self {
         Self { root, fault: None }
@@ -129,7 +278,7 @@ impl Registry {
         if !self.present()? {
             return Ok(Vec::new());
         }
-        let lock = self.lock(false)?;
+        let lock = self.lock(false, true)?;
         let (allocator, records) = self.load()?;
         if lock.is_none() && allocator.is_some() {
             return Err(Failure::new("session registry lock is missing"));
@@ -145,8 +294,17 @@ impl Registry {
     pub(super) fn create(&self, name: Option<&str>) -> Result<Registration, Failure> {
         validate_name(name)?;
         self.prepare_directory()?;
-        let _lock = self.lock(true)?;
+        let _lock = self.lock(true, false)?;
         let (allocator, records) = self.load()?;
+        if allocator.is_none() {
+            // A racing initializer may have opened the lock before its creator synced it.
+            _lock
+                .as_ref()
+                .expect("create acquires a lock")
+                .sync_all()
+                .map_err(|error| Failure::at(&self.root, error))?;
+            sync_directory(&self.root)?;
+        }
         let mut allocator = match allocator {
             Some(allocator) => allocator,
             None => {
@@ -203,7 +361,7 @@ impl Registry {
         if !self.present()? {
             return Ok(None);
         }
-        let lock = self.lock(false)?;
+        let lock = self.lock(false, false)?;
         let (allocator, records) = self.load()?;
         if lock.is_none() && allocator.is_some() {
             return Err(Failure::new("session registry lock is missing"));
@@ -245,20 +403,14 @@ impl Registry {
         for path in self.root.ancestors() {
             let directory = match open_directory(path) {
                 Ok(directory) => directory,
-                Err(error) if error.kind() == std::io::ErrorKind::NotFound && parent.is_none() => {
+                Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
                     missing.push(path);
                     continue;
-                }
-                // A directory created here always had an openable parent before mkdir.
-                Err(error)
-                    if error.kind() == std::io::ErrorKind::PermissionDenied && parent.is_some() =>
-                {
-                    break;
                 }
                 Err(error) => return Err(Failure::at(path, error)),
             };
             #[cfg(test)]
-            if self.fault == Some(Fault::InitializationParentSync) && parent.is_some() {
+            if self.fault == Some(Fault::InitializationParentSync) {
                 return Err(Failure::at(
                     path,
                     "injected initialization parent sync failure",
@@ -267,9 +419,8 @@ impl Registry {
             directory
                 .sync_all()
                 .map_err(|error| Failure::at(path, error))?;
-            if parent.is_none() {
-                parent = Some((path, directory));
-            }
+            parent = Some((path, directory));
+            break;
         }
         let (mut parent_path, mut parent) =
             parent.ok_or_else(|| Failure::new("no accessible session registry parent"))?;
@@ -317,7 +468,7 @@ impl Registry {
         }
     }
 
-    fn lock(&self, create: bool) -> Result<Option<File>, Failure> {
+    fn lock(&self, create: bool, shared: bool) -> Result<Option<RegistryLock>, Failure> {
         let path = self.root.join("registry.lock");
         let mut file = open_private_file(&path, false)?;
         if file.is_none() && create {
@@ -334,33 +485,18 @@ impl Registry {
         let Some(file) = file else {
             return Ok(None);
         };
-        let deadline = Instant::now() + Duration::from_secs(6);
-        loop {
-            if Instant::now() >= deadline {
-                return Err(Failure::at(
-                    &path,
-                    "timed out waiting for the registry lock",
-                ));
-            }
-            match file.try_lock() {
-                Ok(()) => break,
-                Err(fs::TryLockError::WouldBlock) => {
-                    thread::sleep(
-                        Duration::from_millis(25)
-                            .min(deadline.saturating_duration_since(Instant::now())),
-                    );
-                }
-                Err(fs::TryLockError::Error(error))
-                    if error.kind() == std::io::ErrorKind::Interrupted => {}
-                Err(error) => return Err(Failure::at(&path, error)),
-            }
+        match if shared {
+            file.try_lock_shared()
+        } else {
+            file.try_lock()
+        } {
+            Ok(()) => {}
+            Err(fs::TryLockError::WouldBlock) => return Err(Failure::busy()),
+            Err(error) => return Err(Failure::at(&path, error)),
         }
-        validate_file(&file, &path)?;
-        if create {
-            file.sync_all().map_err(|error| Failure::at(&path, error))?;
-            sync_directory(&self.root)?;
-        }
-        Ok(Some(file))
+        let lock = RegistryLock(file);
+        validate_file(&lock, &path)?;
+        Ok(Some(lock))
     }
 
     fn load(&self) -> Result<(Option<Allocator>, Vec<Registration>), Failure> {
@@ -448,6 +584,20 @@ impl Registry {
                 .map_err(|error| Failure::at(&temporary, error))?;
             file.sync_all()
                 .map_err(|error| Failure::at(&temporary, error))?;
+            #[cfg(test)]
+            if self.fault == Some(Fault::WaitBeforeRecordPublication)
+                && path != self.root.join("allocator.json")
+            {
+                fs::write(self.root.join(".tmp-test-waiting"), b"ready")
+                    .map_err(|error| Failure::at(&self.root, error))?;
+                let deadline = Instant::now() + Duration::from_secs(10);
+                while !self.root.join(".tmp-test-release").exists() {
+                    if Instant::now() >= deadline {
+                        return Err(Failure::new("test publication was not released"));
+                    }
+                    thread::sleep(Duration::from_millis(5));
+                }
+            }
             #[cfg(test)]
             if matches!(
                 (path == self.root.join("allocator.json"), self.fault),

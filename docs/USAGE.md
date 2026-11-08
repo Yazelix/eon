@@ -254,6 +254,12 @@ Each session has a persistent ID and an optional name. `s1`, `s2`, … are local
 to one window. Names may repeat, renaming keeps the persistent ID, and a tab's
 directory does not identify its session. Detailed inspection prints
 `persistent_id`; `session ls --json` includes it beside each local `id`.
+Recovered live terminals remain usable by their local handle while registration
+is pending or failed. Their `persistent_id` is null, and nullable
+`registration_error: {code, detail}` exposes any failure in inspection and
+session listings. Venus shows that failure without disabling terminal input.
+Confirmation emits `session-registered`; a failed registration emits
+`session-registration-failed`. `--id` never matches an absent ID.
 
 Use `eon session --id ID --json` to inspect a member, or
 `eon session switch/rename/close --id ID …` for the corresponding operation.
@@ -267,11 +273,21 @@ array sorted by ID, or one object for a specified ID, containing only
 `persistent_id` and nullable `name`. A missing registry lists empty; a missing
 ID exits 3. Window and generation flags are invalid for this command.
 Registration does not mean that terminals are live or recoverable.
+The registry belongs to this user's configured state directory
+(`$XDG_STATE_HOME/eon/sessions`, otherwise `~/.local/state/eon/sessions`);
+different state roots select independent registries.
 
 Creation validates its inputs, commits the registration, then starts terminals.
 Success retains `created: sN` and adds `created_persistent_id`. A failed start
 after registration reports that persistent ID and retains it without adding a
-member. A registry failure starts nothing. An uncertain commit or lost reply
+member. A registry failure starts no fresh terminal. `registry-busy` exits 1
+and means no identity was allocated or record published for that request.
+Registry I/O does not block inspection, attention processing or Stop.
+Startup and recovery retry temporary registry contention on the worker for up
+to two seconds. Interactive create/rename still return busy immediately;
+registry list/lookup share a read lock. Missing state-directory resolution or
+worker setup also leaves recovered work usable with its diagnostic.
+An uncertain commit or lost reply
 needs inspection; do not automatically resend a new-session request. Replay
 protection lasts only while the request remains in the supervisor's recent
 256 mutations and that supervisor has not restarted.
@@ -281,7 +297,8 @@ post-publication sync failure reports uncertainty, retains the last confirmed
 in-memory name, and rereads disk under the lock on the next change. Close,
 natural exit and empty-session cleanup retain registrations. Disconnect and
 reconnect keep the current mapping; supervisor restart recovery gives its
-merged session a new ID while old registrations remain queryable.
+merged session a new ID after confirmation, while old registrations remain
+queryable. Registry failure never hides or stops those recovered terminals.
 
 A **session** is the whole collection of tabs and panes. A **tab** groups
 panes around its launch directory and shows them in one to four side-by-side

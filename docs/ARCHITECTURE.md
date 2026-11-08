@@ -319,14 +319,24 @@ and optional, non-unique names under `$XDG_STATE_HOME/eon/sessions`, with
 `~/.local/state/eon/sessions` as the fallback. Its versioned allocator consumes
 an ID durably before publishing a registration. Mutations use a stable private
 lock, atomic file replacement and file/directory sync; reads validate the
-whole registry without repairing it. Registration precedes terminal startup
-or recovery, and rename persistence precedes memory and events. Closing or
-pruning a member retains its registration.
+whole registry without repairing it. A single Runtime worker performs registry
+I/O while the control loop services other clients. Contention returns
+`registry-busy` before allocation for interactive create/rename. Startup and
+recovery retry transient busy results on that worker for up to two seconds;
+list/lookup share a read lock. Registry setup failure is a recovered diagnostic,
+independent of recovery and control binding. Registration precedes fresh terminal startup;
+rename persistence precedes memory and events. Closing or pruning a member
+retains its registration.
 
 A window's `sN` maps explicitly to its persistent ID. The registry stores no
 membership, layout, PID or liveness. Reconnecting to the same supervisor keeps
-its mapping; existing merged recovery after a restart gets a fresh ID. The
-old registrations remain queryable and do not imply recoverability.
+its mapping. Merged recovery after a restart stays usable by its local handle
+while registration is pending or failed: `persistent_id` is null and
+`registration_error` carries any failure. Confirmation assigns a fresh ID to
+the same member and emits `session-registered`; failure emits
+`session-registration-failed`. Old registrations remain queryable and do not
+imply recoverability. State is scoped to the current user's configured state
+directory; different `XDG_STATE_HOME` values select different registries.
 
 ### EONW boundary
 

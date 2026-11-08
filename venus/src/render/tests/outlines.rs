@@ -65,7 +65,8 @@ fn popup_title_workspace(
         active_workspace: "s1".into(),
         workspaces: vec![eon_workspace_protocol::v38::WorkspaceInfo {
             id: "s1".into(),
-            persistent_id: "s1".into(),
+            persistent_id: Some("s1".into()),
+            registration_error: None,
             name: None,
             tab_count: 1,
             attention: None,
@@ -989,7 +990,8 @@ fn selected_pane_outline_uses_scaled_widths_without_overlap_or_gaps() {
                             active_workspace: "s1".into(),
                             workspaces: vec![eon_workspace_protocol::v38::WorkspaceInfo {
                                 id: "s1".into(),
-                                persistent_id: "s1".into(),
+                                persistent_id: Some("s1".into()),
+                                registration_error: None,
                                 name: None,
                                 tab_count: 1,
                                 attention: None,
@@ -1506,7 +1508,8 @@ fn retained_resize_keeps_strokes_clear_of_displayed_rows() {
             active_workspace: "s1".into(),
             workspaces: vec![eon_workspace_protocol::v38::WorkspaceInfo {
                 id: "s1".into(),
-                persistent_id: "s1".into(),
+                persistent_id: Some("s1".into()),
+                registration_error: None,
                 name: None,
                 tab_count: 1,
                 attention: None,
@@ -1796,7 +1799,8 @@ fn shared_bottom_preserves_grid_and_bounds_short_scene_paint() {
                             active_workspace: "s1".into(),
                             workspaces: vec![eon_workspace_protocol::v38::WorkspaceInfo {
                                 id: "s1".into(),
-                                persistent_id: "s1".into(),
+                                persistent_id: Some("s1".into()),
+                                registration_error: None,
                                 name: None,
                                 tab_count: 1,
                                 attention: None,
@@ -2468,7 +2472,8 @@ fn terminal_paint_stays_inside_rounded_fill_during_cursor_handoff() {
         active_workspace: "s1".into(),
         workspaces: vec![eon_workspace_protocol::v38::WorkspaceInfo {
             id: "s1".into(),
-            persistent_id: "s1".into(),
+            persistent_id: Some("s1".into()),
+            registration_error: None,
             name: None,
             tab_count: 1,
             attention: None,
@@ -2761,7 +2766,8 @@ fn card_backdrop_keeps_cards_like_the_agent_sidebar_at_terminal_opacity() {
                         active_workspace: "s1".into(),
                         workspaces: vec![eon_workspace_protocol::v38::WorkspaceInfo {
                             id: "s1".into(),
-                            persistent_id: "s1".into(),
+                            persistent_id: Some("s1".into()),
+                            registration_error: None,
                             name: None,
                             tab_count: 1,
                             attention: None,

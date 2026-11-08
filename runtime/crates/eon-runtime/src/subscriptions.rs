@@ -579,6 +579,7 @@ fn workspace_entry(item: &WorkspaceItem) -> WorkspaceEntry {
         workspace: WorkspaceInfo {
             id: item.id.clone(),
             persistent_id: item.persistent_id.clone(),
+            registration_error: item.registration_error.clone(),
             name: item.name.clone(),
             tab_count: item.tabs,
             attention: item.attention,
@@ -613,6 +614,8 @@ fn event_message(seq: u64, event: &Event) -> SubscriptionMessage {
                 WorkspaceChange::Created => eonw::WorkspaceChange::Created,
                 WorkspaceChange::Renamed => eonw::WorkspaceChange::Renamed,
                 WorkspaceChange::Closed => eonw::WorkspaceChange::Closed,
+                WorkspaceChange::Registered => eonw::WorkspaceChange::Registered,
+                WorkspaceChange::RegistrationFailed => eonw::WorkspaceChange::RegistrationFailed,
                 WorkspaceChange::Shown { .. } => eonw::WorkspaceChange::Shown,
             },
             workspace: workspace_entry(item),

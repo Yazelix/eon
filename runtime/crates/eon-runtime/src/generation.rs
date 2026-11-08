@@ -994,7 +994,7 @@ fn failed_generation(
         EndpointFailureKind::Dead => "dead",
         EndpointFailureKind::Incompatible => "incompatible",
         EndpointFailureKind::InvalidAction | EndpointFailureKind::Corrupt => "corrupt",
-        EndpointFailureKind::Unreachable => "unreachable",
+        EndpointFailureKind::Unreachable | EndpointFailureKind::Starting => "unreachable",
     };
     GenerationRecord {
         id: id.into(),

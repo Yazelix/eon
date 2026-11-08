@@ -19,8 +19,8 @@ use super::{
     windows,
     workspace::{
         caller_output, failure_human, human as human_output, json as json_output, json_escape,
-        list_human, list_json, resolve_target, terminal_editing_json, terminal_history_json,
-        terminal_sent_json, terminal_text_json,
+        list_human, list_json, registration_json, resolve_target, terminal_editing_json,
+        terminal_history_json, terminal_sent_json, terminal_text_json,
     },
 };
 use eon_workspace_protocol::v38::{
@@ -1336,6 +1336,7 @@ fn control(
     };
     let generation = &resolved.generation;
     let socket = &resolved.socket;
+    let mut confirmed_connection = None;
     // Every tab or pane close inspects first, even with --json or --yes, and
     // asks about its own busy or unknown terminals and a final close (EON-C10).
     if let Some(target_label) = close_target_label(&action) {
@@ -1386,6 +1387,7 @@ fn control(
     if let Action::Workspace(WorkspaceAction::CloseWorkspace { workspace }) = &mut action
         && !json
     {
+        let endpoint = super::control::socket_identity(socket)?;
         let listed = match inspect(socket, caller.as_deref(), &resolved.label) {
             Ok(snapshot) => snapshot.workspaces,
             Err(error) => return report_failure(&error, json),
@@ -1395,7 +1397,7 @@ fn control(
                 (
                     item.id.as_str(),
                     item.name.as_deref(),
-                    item.persistent_id.as_str(),
+                    item.persistent_id.as_deref(),
                 )
             }),
             workspace,
@@ -1421,21 +1423,37 @@ fn control(
         )? {
             return Ok(status);
         }
-        match inspect(socket, caller.as_deref(), &resolved.label) {
-            Ok(snapshot)
-                if snapshot
+        if endpoint.is_none() || super::control::socket_identity(socket)? != endpoint {
+            return report_failure(
+                &failure("unknown-session", "supervisor changed during confirmation"),
+                json,
+            );
+        }
+        let confirmed =
+            match inspect(socket, caller.as_deref(), &resolved.label).and_then(|snapshot| {
+                snapshot
                     .workspaces
                     .iter()
-                    .any(|item| item.persistent_id == target.persistent_id) => {}
-            Ok(_) => {
-                return report_failure(
-                    &failure("unknown-session", format!("session {id} is not live")),
-                    json,
-                );
+                    .find_map(|item| confirmed_close_target(target, item))
+                    .ok_or_else(|| failure("unknown-session", format!("session {id} is not live")))
+            }) {
+                Ok(target) => target,
+                Err(error) => return report_failure(&error, json),
+            };
+        *workspace = confirmed;
+        let stream = match super::control::connect_control(socket) {
+            Ok(stream) => stream,
+            Err(error) => {
+                return report_failure(&unreachable_supervisor(error, &resolved.label), json);
             }
-            Err(error) => return report_failure(&error, json),
+        };
+        if super::control::socket_identity(socket)? != endpoint {
+            return report_failure(
+                &failure("unknown-session", "supervisor changed during confirmation"),
+                json,
+            );
         }
-        *workspace = SessionTarget::PersistentId(target.persistent_id.clone());
+        confirmed_connection = Some(stream);
     }
     let creation = match action {
         Action::Workspace(WorkspaceAction::NewWorkspace { .. }) => Some(Creation::Workspace),
@@ -1453,7 +1471,10 @@ fn control(
     );
     let inspecting = !list
         && (explicit_inspection || matches!(action, Action::Workspace(WorkspaceAction::Inspect)));
-    let response = match send_action_from(Ok(socket), caller.clone(), action) {
+    let response = match match confirmed_connection {
+        Some(stream) => super::control::send_action_on(stream, caller.clone(), action),
+        None => send_action_from(Ok(socket), caller.clone(), action),
+    } {
         Ok(response) => response,
         Err(error) if error.kind == EndpointFailureKind::InvalidAction => {
             return report_failure(&failure("malformed-action", error.detail), json);
@@ -1465,12 +1486,12 @@ fn control(
     let window = window_json(resolved.window.as_deref());
     match response {
         ControlResponse::Workspace(Response::Snapshot(snapshot)) => {
-            let persistent_id = &snapshot
+            let member = snapshot
                 .workspaces
                 .iter()
                 .find(|item| item.id == snapshot.workspace)
-                .expect("a snapshot projects a live session")
-                .persistent_id;
+                .expect("a snapshot projects a live session");
+            let persistent_id = member.persistent_id.as_deref().unwrap_or("null");
             let caller = if inspecting {
                 // Explicit inspection describes the target, not the caller's session.
                 let caller_snapshot = if explicit_inspection && caller.is_some() {
@@ -1509,14 +1530,19 @@ fn control(
                 Some(Creation::Workspace) => newest(&snapshot.workspaces, 's', |item| &item.id),
                 _ => None,
             };
+            let created_id = match created_workspace.map(created_persistent_id).transpose() {
+                Ok(id) => id,
+                Err(error) => return report_failure(&error, json),
+            };
             let (created, created_line) = match creation {
                 Some(Creation::Workspace) => created_workspace
-                    .map(|item| {
+                    .zip(created_id)
+                    .map(|(item, persistent_id)| {
                         (
                             format!("\"{}\"", json_escape(&item.id)),
                             format!(
                                 "created {}\ncreated_persistent_id {}\n",
-                                item.id, item.persistent_id
+                                item.id, persistent_id
                             ),
                         )
                     })
@@ -1542,14 +1568,14 @@ fn control(
             };
             write_stdout(if json {
                 format!(
-                    "{{\"generation\":\"{}\",\"window\":{window},\"session\":\"{}\",\"persistent_id\":\"{}\",{caller}{}{}{}",
+                    "{{\"generation\":\"{}\",\"window\":{window},\"session\":\"{}\",{},{caller}{}{}{}",
                     json_escape(generation),
                     json_escape(&snapshot.workspace),
-                    json_escape(persistent_id),
+                    registration_json(member),
                     created.map_or_else(String::new, |value| format!("\"created\":{value},")),
-                    created_workspace.map_or_else(String::new, |item| format!(
+                    created_id.map_or_else(String::new, |id| format!(
                         "\"created_persistent_id\":\"{}\",",
-                        json_escape(&item.persistent_id)
+                        json_escape(id)
                     )),
                     &if list {
                         list_json(&snapshot)
@@ -1565,7 +1591,17 @@ fn control(
                     if list {
                         String::new()
                     } else {
-                        format!("persistent_id {persistent_id}\n")
+                        format!(
+                            "persistent_id {persistent_id}\n{}",
+                            member.registration_error.as_ref().map_or_else(
+                                String::new,
+                                |error| format!(
+                                    "registration_error {}: {}\n",
+                                    error.code,
+                                    super::workspace::terminal_text(&error.detail)
+                                )
+                            )
+                        )
                     },
                     created_line.unwrap_or_default(),
                     if list {
@@ -1671,6 +1707,33 @@ enum Creation {
     Workspace,
     Tab,
     Pane,
+}
+
+fn created_persistent_id(workspace: &WorkspaceInfo) -> Result<&str, Failure> {
+    workspace.persistent_id.as_deref().ok_or_else(|| {
+        failure(
+            "unrepresentable-state",
+            "new session reply has no confirmed persistent ID; inspect before retrying",
+        )
+    })
+}
+
+fn confirmed_close_target(
+    previous: &WorkspaceInfo,
+    current: &WorkspaceInfo,
+) -> Option<SessionTarget> {
+    if previous.id != current.id
+        || previous
+            .persistent_id
+            .as_ref()
+            .is_some_and(|id| current.persistent_id.as_ref() != Some(id))
+    {
+        return None;
+    }
+    Some(current.persistent_id.as_ref().map_or_else(
+        || SessionTarget::Selector(current.id.clone()),
+        |id| SessionTarget::PersistentId(id.clone()),
+    ))
 }
 
 /// The item with the highest `prefix`N identity, which is the newest: Runtime
@@ -2622,6 +2685,40 @@ mod tests {
     use super::*;
 
     #[test]
+    fn c38_creation_requires_an_id_and_close_accepts_late_registration() {
+        let pending = WorkspaceInfo {
+            id: "s1".into(),
+            persistent_id: None,
+            registration_error: None,
+            name: None,
+            tab_count: 1,
+            attention: None,
+            recency: 0,
+        };
+        let error = created_persistent_id(&pending).unwrap_err();
+        assert_eq!(error.code, "unrepresentable-state");
+        assert!(error.detail.contains("inspect before retrying"));
+        let mut confirmed = pending.clone();
+        confirmed.persistent_id = Some("confirmed".into());
+        assert_eq!(created_persistent_id(&confirmed).unwrap(), "confirmed");
+        assert_eq!(
+            confirmed_close_target(&pending, &confirmed),
+            Some(SessionTarget::PersistentId("confirmed".into()))
+        );
+        assert_eq!(
+            confirmed_close_target(&pending, &pending),
+            Some(SessionTarget::Selector("s1".into()))
+        );
+        assert_eq!(confirmed_close_target(&confirmed, &pending), None);
+        let mut other = confirmed.clone();
+        other.id = "s2".into();
+        assert_eq!(confirmed_close_target(&pending, &other), None);
+        other.id = "s1".into();
+        other.persistent_id = Some("different".into());
+        assert_eq!(confirmed_close_target(&confirmed, &other), None);
+    }
+
+    #[test]
     fn help_flags_that_are_operands_or_anima_options_reach_their_commands() {
         for arguments in [
             &["run", "--", "--help"][..],
@@ -2852,7 +2949,8 @@ mod tests {
         let workspace =
             |id: &str, name: Option<&str>, tab_count, recency, attention| WorkspaceInfo {
                 id: id.into(),
-                persistent_id: id.into(),
+                persistent_id: Some(id.into()),
+                registration_error: None,
                 name: name.map(Into::into),
                 tab_count,
                 attention,
@@ -3376,7 +3474,8 @@ mod tests {
             active_workspace: "s1".into(),
             workspaces: vec![WorkspaceInfo {
                 id: "s1".into(),
-                persistent_id: "s1".into(),
+                persistent_id: Some("s1".into()),
+                registration_error: None,
                 name: None,
                 tab_count: 2,
                 attention: None,
@@ -3607,7 +3706,8 @@ mod tests {
             active_workspace: "s1".into(),
             workspaces: vec![WorkspaceInfo {
                 id: "s1".into(),
-                persistent_id: "s1".into(),
+                persistent_id: Some("s1".into()),
+                registration_error: None,
                 name: None,
                 tab_count: 1,
                 attention: None,
@@ -3743,7 +3843,8 @@ mod tests {
         snap.workspaces = vec![
             WorkspaceInfo {
                 id: "s1".into(),
-                persistent_id: "s1".into(),
+                persistent_id: Some("s1".into()),
+                registration_error: None,
                 name: Some("my \"notes\"".into()),
                 tab_count: 1,
                 attention: None,
@@ -3751,7 +3852,8 @@ mod tests {
             },
             WorkspaceInfo {
                 id: "s2".into(),
-                persistent_id: "s2".into(),
+                persistent_id: Some("s2".into()),
+                registration_error: None,
                 name: None,
                 tab_count: 1,
                 attention: None,

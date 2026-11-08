@@ -80,7 +80,15 @@ owns product policy and installed acceptance.
 EONW v38 adds persistent session IDs to ordinary and subscription snapshots
 and session events, and typed selector/ID targets for inspect, switch, rename
 and close (EON-C38). The host registry stores only identity and optional name;
-window membership stays with each supervisor.
+window membership stays with each supervisor. Recovered members remain usable
+with a null ID while registration is pending or failed, with a bounded nullable
+`registration_error`. Confirmation emits `session-registered`; failure emits
+`session-registration-failed`. Registry I/O runs on one worker; interactive contention
+returns `registry-busy` before allocation, and inspection and Stop keep working.
+Startup/recovery registration retries transient busy for up to two seconds on
+that worker; interactive mutations remain immediate. Registry reads share a
+lock. State-directory or worker setup failure is exposed on recovered members.
+The registry is scoped to the current user's configured state directory.
 
 EONW v37 removes the versioned Stop and its `Stopped` reply: every Stop is
 the Reserved Stop in `src/stop.rs`, whose bytes, like the 6-byte prefix of

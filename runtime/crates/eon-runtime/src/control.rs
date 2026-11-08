@@ -45,6 +45,7 @@ const REPLY_DEADLINE: Duration = Duration::from_secs(2);
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(super) enum EndpointFailureKind {
+    Starting,
     Dead,
     Incompatible,
     InvalidAction,
@@ -105,6 +106,7 @@ pub(super) enum Dispatched {
     /// The answer to a Reserved Stop, in its own framing.
     Stop(stop::Reply, bool),
     Subscribe(Box<Subscriber>),
+    Deferred,
 }
 
 impl From<(ControlResponse, bool)> for Dispatched {
@@ -122,6 +124,7 @@ pub(super) enum Accepted {
     },
     /// The subscriber's connection, now its own.
     Subscribed(UnixStream, Box<Subscriber>),
+    Deferred(UnixStream),
 }
 
 #[cfg(test)]
@@ -239,9 +242,10 @@ fn connect_control_with_timeout(
 
 pub(super) fn send_action_on(
     stream: UnixStream,
+    caller: Option<String>,
     action: Action,
 ) -> Result<ControlResponse, EndpointFailure> {
-    send_prepared_action(stream, prepare_action(None, action)?, None)
+    send_prepared_action(stream, prepare_action(caller, action)?, None)
 }
 
 fn prepare_action(
@@ -714,6 +718,7 @@ fn handle_client<D: Into<Dispatched>>(
         ),
         // The supervisor writes to a subscriber without waiting.
         Dispatched::Subscribe(subscriber) => return Accepted::Subscribed(stream, subscriber),
+        Dispatched::Deferred => return Accepted::Deferred(stream),
     };
     if let Some(encoded) = encoded {
         super::diagnostics::bench_trace("reply_begin", encoded.len());
@@ -721,6 +726,22 @@ fn handle_client<D: Into<Dispatched>>(
     }
     super::diagnostics::bench_trace("reply_end", "");
     Accepted::Replied { shutdown }
+}
+
+pub(super) fn complete(mut stream: UnixStream, response: ControlResponse) {
+    let encoded = match response {
+        ControlResponse::Workspace(response) => encode_response(&response),
+        ControlResponse::Lifecycle(response) => encode_lifecycle_response(&response),
+    }
+    .or_else(|error| {
+        encode_response(&Response::Failure(failure(
+            "unrepresentable-state",
+            format!("cannot encode Eon session result: {error}"),
+        )))
+    });
+    if let Ok(encoded) = encoded {
+        write_reply(&mut stream, &encoded, Instant::now() + REPLY_DEADLINE);
+    }
 }
 
 /// `failure` as a Reserved Stop reply.

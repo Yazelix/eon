@@ -850,7 +850,8 @@ mod tests {
             active_workspace: "s1".into(),
             workspaces: vec![eon_workspace_protocol::v38::WorkspaceInfo {
                 id: "s1".into(),
-                persistent_id: "s1".into(),
+                persistent_id: Some("s1".into()),
+                registration_error: None,
                 name: None,
                 tab_count: tabs.len(),
                 attention: None,
@@ -1605,7 +1606,8 @@ mod tests {
             .enumerate()
             .map(|(index, workspace)| eonw::WorkspaceInfo {
                 id: workspace.workspace.clone(),
-                persistent_id: workspace.workspace.clone(),
+                persistent_id: Some(workspace.workspace.clone()),
+                registration_error: None,
                 name: None,
                 tab_count: workspace.tabs.len(),
                 attention: None,
@@ -1960,7 +1962,8 @@ mod tests {
         reply.workspaces = ["s1", "s2"]
             .map(|id| eon_workspace_protocol::v38::WorkspaceInfo {
                 id: id.into(),
-                persistent_id: id.into(),
+                persistent_id: Some(id.into()),
+                registration_error: None,
                 ..reply.workspaces[0].clone()
             })
             .into();

@@ -513,7 +513,8 @@ fn structural_shortcuts_do_not_repeat_and_popup_focus_is_explicit() {
         active_workspace: "s1".into(),
         workspaces: vec![eon_workspace_protocol::v38::WorkspaceInfo {
             id: "s1".into(),
-            persistent_id: "s1".into(),
+            persistent_id: Some("s1".into()),
+            registration_error: None,
             name: None,
             tab_count: 1,
             attention: None,
@@ -625,7 +626,8 @@ fn attention_inbox_keeps_the_queue_filter_and_entry_across_refreshes() {
         workspaces: vec![
             WorkspaceInfo {
                 id: "s1".into(),
-                persistent_id: "s1".into(),
+                persistent_id: Some("s1".into()),
+                registration_error: None,
                 name: None,
                 tab_count: 2,
                 attention: None,
@@ -633,7 +635,8 @@ fn attention_inbox_keeps_the_queue_filter_and_entry_across_refreshes() {
             },
             WorkspaceInfo {
                 id: "s2".into(),
-                persistent_id: "s2".into(),
+                persistent_id: Some("s2".into()),
+                registration_error: None,
                 name: Some("Review".into()),
                 tab_count: 1,
                 attention: None,

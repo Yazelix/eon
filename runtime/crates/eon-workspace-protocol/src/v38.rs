@@ -596,7 +596,8 @@ pub struct WorkspaceInfo {
     /// The window-local handle.
     pub id: String,
     /// Runtime-owned opaque persistent identity; names and directories never derive it.
-    pub persistent_id: String,
+    pub persistent_id: Option<String>,
+    pub registration_error: Option<Failure>,
     pub name: Option<String>,
     pub tab_count: usize,
     /// The most urgent attention among the workspace's terminals (EON-C33).
@@ -1937,14 +1938,9 @@ pub fn decode_response(bytes: &[u8]) -> Result<Response> {
     snapshot.active_workspace = decoder.string("active workspace", MAX_ID_BYTES)?;
     let count = decoder.count("workspaces", MAX_WORKSPACES)?;
     for _ in 0..count {
-        snapshot.workspaces.push(WorkspaceInfo {
-            id: decoder.string("workspace id", MAX_ID_BYTES)?,
-            persistent_id: decoder.string("persistent id", MAX_ID_BYTES)?,
-            name: decode_workspace_optional(&mut decoder)?,
-            tab_count: decoder.count("workspace tabs", MAX_TABS)?,
-            attention: decode_state(&mut decoder, "workspace attention")?,
-            recency: decoder.byte()?,
-        });
+        snapshot
+            .workspaces
+            .push(decode_workspace_info(&mut decoder)?);
     }
     let count = decoder.count("attention queue", MAX_SESSIONS)?;
     for _ in 0..count {
@@ -2001,13 +1997,36 @@ fn encode_workspace_set(encoder: &mut Encoder, snapshot: &Snapshot) {
     encoder.string(&snapshot.active_workspace);
     encoder.count(snapshot.workspaces.len());
     for workspace in &snapshot.workspaces {
-        encoder.string(&workspace.id);
-        encoder.string(&workspace.persistent_id);
-        encode_optional(encoder, &workspace.name);
-        encoder.count(workspace.tab_count);
-        encode_state(encoder, workspace.attention);
-        encoder.byte(workspace.recency);
+        encode_workspace_info(encoder, workspace);
     }
+}
+
+fn encode_workspace_info(encoder: &mut Encoder, workspace: &WorkspaceInfo) {
+    encoder.string(&workspace.id);
+    encode_optional(encoder, &workspace.persistent_id);
+    encoder.byte(u8::from(workspace.registration_error.is_some()));
+    if let Some(error) = &workspace.registration_error {
+        encoder.string(&error.code);
+        encoder.string(&error.detail);
+    }
+    encode_optional(encoder, &workspace.name);
+    encoder.count(workspace.tab_count);
+    encode_state(encoder, workspace.attention);
+    encoder.byte(workspace.recency);
+}
+
+fn decode_workspace_info(decoder: &mut Decoder<'_>) -> Result<WorkspaceInfo> {
+    Ok(WorkspaceInfo {
+        id: decoder.string("workspace id", MAX_ID_BYTES)?,
+        persistent_id: decode_optional(decoder, "persistent id")?,
+        registration_error: decode_bool(decoder, "registration error")?
+            .then(|| decode_failure(decoder))
+            .transpose()?,
+        name: decode_workspace_optional(decoder)?,
+        tab_count: decoder.count("workspace tabs", MAX_TABS)?,
+        attention: decode_state(decoder, "workspace attention")?,
+        recency: decoder.byte()?,
+    })
 }
 
 fn encode_workspace(encoder: &mut Encoder, snapshot: &Snapshot, tabs: &[WireTab]) {
@@ -2341,7 +2360,9 @@ fn validate_workspace(snapshot: &Snapshot, tabs: &[WireTab]) -> Result<()> {
                 field: "workspace id",
             });
         }
-        if !persistent_ids.insert(workspace.persistent_id.as_str()) {
+        if let Some(id) = &workspace.persistent_id
+            && !persistent_ids.insert(id.as_str())
+        {
             return Err(Error::InvalidSnapshot {
                 field: "persistent id",
             });
@@ -2431,7 +2452,13 @@ fn validate_workspace_id(id: &str) -> Result<()> {
 /// Checks one workspace summary on its own; set rules stay with the caller.
 fn validate_workspace_info(workspace: &WorkspaceInfo) -> Result<()> {
     validate_workspace_id(&workspace.id)?;
-    identity("persistent id", &workspace.persistent_id)?;
+    if let Some(id) = &workspace.persistent_id {
+        identity("persistent id", id)?;
+    }
+    if let Some(error) = &workspace.registration_error {
+        identity("failure code", &error.code)?;
+        nonempty("failure detail", &error.detail, MAX_DETAIL_BYTES)?;
+    }
     if let Some(name) = &workspace.name {
         validate_workspace_name(name)?;
     }
@@ -3612,6 +3639,29 @@ mod tests {
     use super::*;
 
     #[test]
+    fn c38_recovered_registration_state_is_optional_bounded_and_round_trips() {
+        let mut state = snapshot();
+        state.workspaces[0].persistent_id = None;
+        state.workspaces[0].registration_error = Some(Failure {
+            code: "registry-busy".into(),
+            detail: "registration unavailable; recovered terminals remain usable".into(),
+        });
+        let response = Response::Snapshot(state.clone());
+        assert_eq!(
+            decode_response(&encode_response(&response).unwrap()).unwrap(),
+            response
+        );
+        assert!(decode_response(&forge(&state)).is_ok());
+        state.workspaces[0]
+            .registration_error
+            .as_mut()
+            .unwrap()
+            .detail = "x".repeat(MAX_DETAIL_BYTES + 1);
+        assert!(encode_response(&Response::Snapshot(state.clone())).is_err());
+        assert!(decode_response(&forge(&state)).is_err());
+    }
+
+    #[test]
     fn c38_workspace_targets_keep_their_wire_discriminant() {
         let persistent = "0123456789abcdef0123456789abcdef0000000000000001";
         for action in [43, 33, 34, 35] {
@@ -3695,7 +3745,8 @@ mod tests {
         let mut state = snapshot();
         state.workspaces.push(WorkspaceInfo {
             id: "s2".into(),
-            persistent_id: "fedcba9876543210fedcba98765432100000000000000001".into(),
+            persistent_id: Some("fedcba9876543210fedcba98765432100000000000000001".into()),
+            registration_error: None,
             recency: 1,
             ..state.workspaces[0].clone()
         });
@@ -3709,10 +3760,10 @@ mod tests {
             String::new(),
             "invalid id".into(),
             "a".repeat(MAX_ID_BYTES + 1),
-            state.workspaces[1].persistent_id.clone(),
+            state.workspaces[1].persistent_id.clone().unwrap(),
         ] {
             let mut bad = state.clone();
-            bad.workspaces[0].persistent_id = invalid;
+            bad.workspaces[0].persistent_id = Some(invalid);
             assert!(encode_response(&Response::Snapshot(bad.clone())).is_err());
             assert!(decode_response(&forge(&bad)).is_err());
         }
@@ -3847,7 +3898,8 @@ mod tests {
         state.workspaces = (1..=MAX_WORKSPACES)
             .map(|index| WorkspaceInfo {
                 id: format!("s{index}"),
-                persistent_id: format!("0123456789abcdef0123456789abcdef{index:016x}"),
+                persistent_id: Some(format!("{index:0128x}")),
+                registration_error: None,
                 name: Some(name.clone()),
                 tab_count: 4,
                 attention: (index % 3 == 0).then_some(AttentionState::Working),
@@ -3960,7 +4012,8 @@ mod tests {
             active_workspace: "s1".into(),
             workspaces: vec![WorkspaceInfo {
                 id: "s1".into(),
-                persistent_id: "0123456789abcdef0123456789abcdef0000000000000001".into(),
+                persistent_id: Some("0123456789abcdef0123456789abcdef0000000000000001".into()),
+                registration_error: None,
                 name: None,
                 tab_count: 4,
                 attention: Some(AttentionState::NeedsInput),
@@ -4937,7 +4990,8 @@ mod tests {
             active_workspace: "s1".into(),
             workspaces: vec![WorkspaceInfo {
                 id: "s1".into(),
-                persistent_id: "0123456789abcdef0123456789abcdef0000000000000001".into(),
+                persistent_id: Some("0123456789abcdef0123456789abcdef0000000000000001".into()),
+                registration_error: None,
                 name: None,
                 tab_count: 1,
                 attention: Some(AttentionState::NeedsInput),
@@ -5037,7 +5091,7 @@ mod tests {
             (
                 snapshot,
                 concat!(
-                    "454f4e57260081004e0100000100020002000100010000000200743100000041",
+                    "454f4e5726008100500100000100020002000100010000000200743100000041",
                     "00008040010003006769740300476974000404004b6579470100020074310400",
                     "2f746d700001020070330102007531030002007031030073703103002f703101",
                     "02007031000002007032030073703203002f7032010200703200000200703303",
@@ -5047,7 +5101,7 @@ mod tests {
                     "0000000001015a00000000000000020060270000070000602700003c00010500",
                     "4661626c6500015f00000000000000010102007331020073310100",
                     // s1's local/persistent IDs, absent name, tab count, rollup and rank.
-                    "020073313000303132333435363738396162636465663031323334353637383961626364656630303030303030303030303030303031000100",
+                    "0200733101300030313233343536373839616263646566303132333435363738396162636465663030303030303030303030303030303100000100",
                     "0100",
                     // v27's empty attention queue, v28's absent running summary,
                     // then v29's absent busy list.
@@ -5193,7 +5247,8 @@ mod tests {
             active_workspace: "s1".into(),
             workspaces: vec![WorkspaceInfo {
                 id: "s1".into(),
-                persistent_id: "0123456789abcdef0123456789abcdef0000000000000001".into(),
+                persistent_id: Some("0123456789abcdef0123456789abcdef0000000000000001".into()),
+                registration_error: None,
                 name: None,
                 tab_count: 1,
                 attention: Some(AttentionState::NeedsInput),
@@ -5244,10 +5299,10 @@ mod tests {
         assert_eq!(
             hex(&bytes),
             concat!(
-                "454f4e5726008100bc00000001000100010000000100740000000000000000",
+                "454f4e5726008100be00000001000100010000000100740000000000000000",
                 "0000010001007401002f00010100700001000100700200737002002f700101007000",
                 "010128000000000000000001000000000000000000000000010000000002",
-                "020073310200733101000200733130003031323334353637383961626364656630313233343536373839616263646566303030303030303030303030303030310001000100",
+                "0200733102007331010002007331013000303132333435363738396162636465663031323334353637383961626364656630303030303030303030303030303031000001000100",
                 // u16 count, workspace, tab, target, then needs-input permission at 40%.
                 "0100020073310100740100700101280000000000000000010000000000000000000000",
                 // v29's absent busy list.
@@ -5284,10 +5339,10 @@ mod tests {
         assert_eq!(
             hex(&bytes),
             concat!(
-                "454f4e5726008100ed0000000100010001000000010074000000000000000000",
+                "454f4e5726008100ef0000000100010001000000010074000000000000000000",
                 "00010001007401002f00010100700001000100700200737002002f7001010070",
                 "0001012800000000000000000100000000000000000000000001000000000202",
-                "00733102007331010002007331300030313233343536373839616263646566303132333435363738396162636465663030303030303030303030303030303100010001000100020073310100740100700101",
+                "007331020073310100020073310130003031323334353637383961626364656630313233343536373839616263646566303030303030303030303030303030310000010001000100020073310100740100700101",
                 "2800000000000000000100000000000000000000010108003132333461626364",
                 "0200673101040068657265012a00000000000000010300000101000002006732",
                 "000000010700",
@@ -5803,7 +5858,8 @@ mod tests {
         let mut state = snapshot();
         state.workspaces.push(WorkspaceInfo {
             id: "s2".into(),
-            persistent_id: "0123456789abcdef0123456789abcdef0000000000000002".into(),
+            persistent_id: Some("0123456789abcdef0123456789abcdef0000000000000002".into()),
+            registration_error: None,
             name: None,
             tab_count: 1,
             attention: None,
@@ -6312,7 +6368,18 @@ mod tests {
             + 1
             + 2 * id
             + 2
-            + MAX_WORKSPACES * (2 * id + 1 + 2 + MAX_WORKSPACE_NAME_BYTES + 2 + 1 + 1)
+            + MAX_WORKSPACES
+                * (2 * id
+                    + 2
+                    + id
+                    + 2
+                    + MAX_DETAIL_BYTES
+                    + 1
+                    + 2
+                    + MAX_WORKSPACE_NAME_BYTES
+                    + 2
+                    + 1
+                    + 1)
             + 2
             + MAX_SESSIONS * (3 * id + attention)
             + 1
@@ -6422,7 +6489,11 @@ mod tests {
         state.workspaces = (1..=MAX_WORKSPACES)
             .map(|index| WorkspaceInfo {
                 id: format!("s{index}"),
-                persistent_id: format!("0123456789abcdef0123456789abcdef{index:016x}"),
+                persistent_id: Some(format!("{index:0128x}")),
+                registration_error: Some(Failure {
+                    code: "e".repeat(MAX_ID_BYTES),
+                    detail: "e".repeat(MAX_DETAIL_BYTES),
+                }),
                 name: Some("🦀".repeat(MAX_WORKSPACE_NAME_CHARS)),
                 tab_count: MAX_TABS,
                 attention: Some(AttentionState::NeedsInput),

@@ -462,7 +462,13 @@ fn c38_unsafe_files_fail_without_repair_or_following_links() {
                 registry.create(None).map(|_| ()),
                 registry.rename(&record.id, None).map(|_| ()),
             ] {
-                assert!(result.is_err(), "{role}: {kind}");
+                let error = result.unwrap_err();
+                assert_eq!(error.publication, Publication::Definitive, "{role}: {kind}");
+                assert_eq!(error.reserved_id, None, "{role}: {kind}");
+                assert!(
+                    error.detail.contains(&path.display().to_string()),
+                    "{role}: {kind}: {error}"
+                );
             }
             let after = fs::symlink_metadata(&path).unwrap();
             assert_eq!(
@@ -492,8 +498,18 @@ fn c38_unsafe_registry_directories_are_preserved() {
             }
         }
         let before = fs::symlink_metadata(&registry.root).unwrap();
-        assert!(registry.list().is_err());
-        assert!(registry.create(None).is_err());
+        for result in [
+            registry.list().map(|_| ()),
+            registry.create(None).map(|_| ()),
+        ] {
+            let error = result.unwrap_err();
+            assert_eq!(error.publication, Publication::Definitive);
+            assert_eq!(error.reserved_id, None);
+            assert!(
+                error.detail.contains(&registry.root.display().to_string()),
+                "{error}"
+            );
+        }
         let after = fs::symlink_metadata(&registry.root).unwrap();
         assert_eq!(
             (after.ino(), after.mode(), after.uid()),
@@ -545,7 +561,7 @@ fn c38_missing_state_home_requires_a_sync_capable_parent() {
     assert!(!fixture.0.join("state").exists());
 }
 
-// Catches skipping the containing-parent sync on retry after an actual initializer exit.
+// A retry must sync its first existing parent before creating more directories.
 #[test]
 fn c38_initialization_retry_syncs_the_interrupted_creation_chain() {
     let fixture = Fixture::new();
@@ -564,8 +580,13 @@ fn c38_initialization_retry_syncs_the_interrupted_creation_chain() {
     let error = registry.create(None).unwrap_err();
     assert_eq!(error.publication, Publication::Definitive);
     assert_eq!(error.reserved_id, None);
-    assert!(error.detail.contains("initialization parent sync failure"));
-    assert!(error.detail.contains(&fixture.0.display().to_string()));
+    assert_eq!(
+        error.detail,
+        format!(
+            "session registry {}: injected initialization parent sync failure",
+            state.display()
+        )
+    );
     assert_eq!(fs::metadata(&state).unwrap().ino(), inode);
     assert!(!state.join("eon").exists());
     assert!(!registry.root.join("registry.lock").exists());
@@ -711,10 +732,8 @@ fn c38_process_writer() {
         fs::write(directory.join(format!("ready-{worker}")), b"ready").unwrap();
     }
     for sequence in 0..10 {
-        let record = registry.create(Some("same")).unwrap();
-        registry
-            .rename(&record.id, Some(&format!("worker-{worker}-{sequence}")))
-            .unwrap()
+        let record = retry_busy(|| registry.create(Some("same")));
+        retry_busy(|| registry.rename(&record.id, Some(&format!("worker-{worker}-{sequence}"))))
             .unwrap();
     }
 }
@@ -725,7 +744,7 @@ fn c38_processes_serialize_allocations_and_renames() {
     let fixture = Fixture::new();
     let registry = fixture.registry();
     registry.prepare_directory().unwrap();
-    let lock = registry.lock(true).unwrap().unwrap();
+    let lock = registry.lock(true, false).unwrap().unwrap();
     let inode = lock.metadata().unwrap().ino();
     let mut workers = Workers(Vec::new());
     for worker in 0..4 {
@@ -853,17 +872,24 @@ fn c38_process_exit_after_reservation_burns_the_sequence() {
 }
 
 #[test]
-fn c38_lock_contention_times_out_without_mutating_state() {
+fn c38_lock_contention_is_immediately_busy_without_mutating_state() {
     let fixture = Fixture::new();
     let registry = fixture.registry();
     let record = registry.create(None).unwrap();
-    let lock = registry.lock(false).unwrap().unwrap();
+    let lock = registry.lock(false, false).unwrap().unwrap();
     let allocator = fs::read(registry.root.join("allocator.json")).unwrap();
     let start = Instant::now();
     let error = registry.create(None).unwrap_err();
-    assert!(start.elapsed() >= Duration::from_secs(6));
-    assert!(start.elapsed() < Duration::from_secs(8));
-    assert!(error.detail.contains("timed out"));
+    assert!(start.elapsed() < Duration::from_secs(1));
+    assert!(error.busy);
+    assert_eq!(
+        registry
+            .rename(&record.id, Some("busy"))
+            .unwrap_err()
+            .into_control()
+            .code,
+        "registry-busy"
+    );
     assert_eq!(error.publication, Publication::Definitive);
     assert_eq!(error.reserved_id, None);
     assert_eq!(
@@ -872,4 +898,57 @@ fn c38_lock_contention_times_out_without_mutating_state() {
     );
     drop(lock);
     assert_eq!(registry.list().unwrap(), vec![record]);
+}
+
+fn retry_busy<T>(mut operation: impl FnMut() -> Result<T, Failure>) -> T {
+    let deadline = Instant::now() + Duration::from_secs(10);
+    loop {
+        match operation() {
+            Ok(value) => return value,
+            Err(error) if error.busy && Instant::now() < deadline => {
+                thread::sleep(Duration::from_millis(5))
+            }
+            Err(error) => panic!("{error}"),
+        }
+    }
+}
+
+#[test]
+fn c38_readers_share_the_lock_and_initial_registration_retries_busy() {
+    let fixture = Fixture::new();
+    let mut registry = fixture.registry();
+    let first = registry.create(None).unwrap();
+    let reader = registry.lock(false, true).unwrap().unwrap();
+    assert_eq!(registry.list().unwrap(), vec![first.clone()]);
+    assert_eq!(registry.lookup(&first.id).unwrap(), Some(first));
+    registry.inject(Some(Fault::ObserveBusyRetry));
+    let mut worker = Worker::start(registry.clone()).unwrap();
+    worker.submit(Operation::Register).unwrap();
+    let deadline = Instant::now() + Duration::from_secs(5);
+    while !registry.root.join(".tmp-test-retrying").exists() {
+        assert!(Instant::now() < deadline, "worker did not observe busy");
+        thread::sleep(Duration::from_millis(1));
+    }
+    assert!(
+        worker.poll().is_none(),
+        "transient busy must not finish registration"
+    );
+    assert_eq!(
+        registry.create(None).unwrap_err().into_control().code,
+        "registry-busy"
+    );
+    drop(reader);
+    let deadline = Instant::now() + Duration::from_secs(5);
+    let registered = loop {
+        if let Some(result) = worker.poll() {
+            break result.unwrap().unwrap();
+        }
+        assert!(
+            Instant::now() < deadline,
+            "registration did not retry after the reader released"
+        );
+        thread::sleep(Duration::from_millis(5));
+    };
+    assert!(registered.id.ends_with("0000000000000002"));
+    assert_eq!(registry.list().unwrap().len(), 2);
 }
