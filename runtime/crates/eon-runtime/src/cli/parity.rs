@@ -5,7 +5,7 @@
 //! `eon window stop` and `eon quit`.
 
 use super::*;
-use eon_workspace_protocol::v37::{Filter, InvokeIntent, TerminalInput};
+use eon_workspace_protocol::v38::{Filter, InvokeIntent, TerminalInput};
 
 enum CliPath {
     /// These arguments parse to exactly this action.
@@ -35,9 +35,22 @@ fn cli_path(action: &Action) -> CliPath {
         Direction::Down => "down",
     };
     let bytes = |bytes: &Vec<u8>| OsString::from_vec(bytes.clone());
+    let target = |workspace: &SessionTarget| match workspace {
+        SessionTarget::Selector(selector) => words(&["--", selector]),
+        SessionTarget::PersistentId(id) => words(&["--id", id]),
+    };
     Command(match action {
         Action::Workspace(action) => match action {
             WorkspaceAction::Inspect => words(&["session"]),
+            WorkspaceAction::InspectWorkspace {
+                workspace: SessionTarget::Selector(_),
+            } => {
+                // Resolve the selector with session ls, then inspect its persistent ID.
+                return Lifecycle("session ls");
+            }
+            WorkspaceAction::InspectWorkspace { workspace } => {
+                [words(&["session"]), target(workspace)].concat()
+            }
             WorkspaceAction::InspectRuntime | WorkspaceAction::InspectPresentation => {
                 return Lifecycle("window ls");
             }
@@ -52,16 +65,20 @@ fn cli_path(action: &Action) -> CliPath {
             ]
             .concat(),
             WorkspaceAction::SwitchWorkspace { workspace } => {
-                words(&["session", "switch", "--", workspace])
+                [words(&["session", "switch"]), target(workspace)].concat()
             }
             WorkspaceAction::RenameWorkspace { workspace, name } => [
-                words(&["session", "rename", "--"]),
-                workspace.iter().map(OsString::from).collect(),
+                words(&["session", "rename"]),
+                workspace.as_ref().map_or_else(|| words(&["--"]), &target),
+                flag(
+                    matches!(workspace, Some(SessionTarget::PersistentId(_))),
+                    "--",
+                ),
                 words(&[name]),
             ]
             .concat(),
             WorkspaceAction::CloseWorkspace { workspace } => {
-                words(&["session", "close", "--", workspace])
+                [words(&["session", "close"]), target(workspace)].concat()
             }
             WorkspaceAction::CreatePane { focus } => {
                 [words(&["pane", "create"]), flag(!focus, "--no-focus")].concat()
@@ -162,6 +179,30 @@ fn every_eonw_action_has_a_cli_path_or_a_named_exception() {
     };
     let mut samples = vec![
         WorkspaceAction::Inspect,
+        WorkspaceAction::InspectWorkspace {
+            workspace: SessionTarget::Selector(text("notes")),
+        },
+        WorkspaceAction::InspectWorkspace {
+            workspace: SessionTarget::PersistentId(text(
+                "0123456789abcdef0123456789abcdef0000000000000001",
+            )),
+        },
+        WorkspaceAction::SwitchWorkspace {
+            workspace: SessionTarget::PersistentId(text(
+                "0123456789abcdef0123456789abcdef0000000000000001",
+            )),
+        },
+        WorkspaceAction::RenameWorkspace {
+            workspace: Some(SessionTarget::PersistentId(text(
+                "0123456789abcdef0123456789abcdef0000000000000001",
+            ))),
+            name: text("--json"),
+        },
+        WorkspaceAction::CloseWorkspace {
+            workspace: SessionTarget::PersistentId(text(
+                "0123456789abcdef0123456789abcdef0000000000000001",
+            )),
+        },
         WorkspaceAction::InspectRuntime,
         WorkspaceAction::InspectPresentation,
         WorkspaceAction::Present { workspace: true },
@@ -175,18 +216,18 @@ fn every_eonw_action_has_a_cli_path_or_a_named_exception() {
             focus: false,
         },
         WorkspaceAction::SwitchWorkspace {
-            workspace: text("-s2"),
+            workspace: SessionTarget::Selector(text("-s2")),
         },
         WorkspaceAction::RenameWorkspace {
             workspace: None,
             name: text("--json"),
         },
         WorkspaceAction::RenameWorkspace {
-            workspace: Some(text("s2")),
+            workspace: Some(SessionTarget::Selector(text("s2"))),
             name: String::new(),
         },
         WorkspaceAction::CloseWorkspace {
-            workspace: text("-s2"),
+            workspace: SessionTarget::Selector(text("-s2")),
         },
         WorkspaceAction::CreatePane { focus: true },
         WorkspaceAction::CreatePane { focus: false },

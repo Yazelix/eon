@@ -109,14 +109,15 @@ fn clipping_test_fonts() -> FontSetup {
 }
 
 fn retained_frame_text_clip(size: PhysicalSize<u32>) -> (WorkspaceScene, SceneRect) {
-    use eon_workspace_protocol::v37::{Column, Pane, PopupGeometry, Sidebar, Snapshot, Tab};
+    use eon_workspace_protocol::v38::{Column, Pane, PopupGeometry, Sidebar, Snapshot, Tab};
 
     let metrics = CellMetrics::for_scale(1.0);
     let snapshot = Snapshot {
         workspace: "s1".into(),
         active_workspace: "s1".into(),
-        workspaces: vec![eon_workspace_protocol::v37::WorkspaceInfo {
+        workspaces: vec![eon_workspace_protocol::v38::WorkspaceInfo {
             id: "s1".into(),
+            persistent_id: "s1".into(),
             name: None,
             tab_count: 1,
             attention: None,
@@ -201,13 +202,14 @@ fn retained_frame_text_clip(size: PhysicalSize<u32>) -> (WorkspaceScene, SceneRe
 
 fn fractional_card_workspace(scale: f64, scroll: f32) -> WorkspaceScene {
     use crate::scene::{EonBar, ShortcutHintsScene};
-    use eon_workspace_protocol::v37::{Column, Pane, PopupGeometry, Sidebar, Snapshot, Tab};
+    use eon_workspace_protocol::v38::{Column, Pane, PopupGeometry, Sidebar, Snapshot, Tab};
 
     let snapshot = Snapshot {
         workspace: "s1".into(),
         active_workspace: "s1".into(),
-        workspaces: vec![eon_workspace_protocol::v37::WorkspaceInfo {
+        workspaces: vec![eon_workspace_protocol::v38::WorkspaceInfo {
             id: "s1".into(),
+            persistent_id: "s1".into(),
             name: None,
             tab_count: 1,
             attention: None,

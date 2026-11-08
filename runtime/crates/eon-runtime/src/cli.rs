@@ -19,14 +19,14 @@ use super::{
     windows,
     workspace::{
         caller_output, failure_human, human as human_output, json as json_output, json_escape,
-        list_human, list_json, resolve_selector, terminal_editing_json, terminal_history_json,
+        list_human, list_json, resolve_target, terminal_editing_json, terminal_history_json,
         terminal_sent_json, terminal_text_json,
     },
 };
-use eon_workspace_protocol::v37::{
+use eon_workspace_protocol::v38::{
     Action, AttentionState, Direction, Failure, MAX_HISTORY_TEXT_BYTES, MAX_PASTE_BYTES, Pane,
     PopupTarget, Response, Side, Snapshot, Tab, TerminalHistory, TerminalInput, VERSION,
-    WorkspaceAction, WorkspaceInfo, valid_caller, validate_paste,
+    WorkspaceAction, WorkspaceInfo, WorkspaceTarget as SessionTarget, valid_caller, validate_paste,
 };
 use std::{
     env,
@@ -653,6 +653,12 @@ fn execute(inputs: &Inputs, arguments: Vec<OsString>) -> Result<i32, Error> {
     if let Some(result) = command_help(inputs.version, &arguments) {
         return result;
     }
+    if let [command, operation, rest @ ..] = arguments.as_slice()
+        && command == "session"
+        && operation == "registry"
+    {
+        return registry_command(rest);
+    }
     if arguments.first().is_some_and(|word| word == "events")
         || (arguments.first().is_some_and(|word| word == "--window")
             && arguments.get(2).is_some_and(|word| word == "events"))
@@ -774,6 +780,71 @@ fn execute(inputs: &Inputs, arguments: Vec<OsString>) -> Result<i32, Error> {
     Ok(result?)
 }
 
+fn registry_command(arguments: &[OsString]) -> Result<i32, Error> {
+    use super::session_registry::{Failure as RegistryFailure, Registry, validate_id};
+
+    let (mut id, mut json) = (None, false);
+    for argument in arguments {
+        match argument.to_str() {
+            Some("--json") if !json => json = true,
+            Some(value) if id.is_none() && !value.starts_with('-') => {
+                validate_id(value).map_err(|error| Error::usage(error.to_string()))?;
+                id = Some(value);
+            }
+            _ => return Err(Error::usage(EON_USAGE)),
+        }
+    }
+    let records = Registry::new()
+        .map_err(RegistryFailure::into_control)
+        .and_then(|registry| {
+            if let Some(id) = id {
+                registry
+                    .lookup(id)
+                    .map_err(RegistryFailure::into_control)?
+                    .map(|record| vec![record])
+                    .ok_or_else(|| {
+                        failure(
+                            "unknown-session",
+                            format!("session registration {id} is missing"),
+                        )
+                    })
+            } else {
+                registry.list().map_err(RegistryFailure::into_control)
+            }
+        });
+    let records = match records {
+        Ok(records) => records,
+        Err(error) => return Ok(report_failure(&error, json)?),
+    };
+    write_stdout(if json {
+        let mut values: Vec<_> = records
+            .iter()
+            .map(|record| serde_json::json!({"persistent_id": record.id, "name": record.name}))
+            .collect();
+        let value = if id.is_some() {
+            values.remove(0)
+        } else {
+            serde_json::Value::Array(values)
+        };
+        format!("{value}\n")
+    } else {
+        records
+            .iter()
+            .map(|record| {
+                format!(
+                    "persistent_id={} name={}\n",
+                    record.id,
+                    record
+                        .name
+                        .as_ref()
+                        .map_or_else(|| "none".into(), |name| format!("{name:?}")),
+                )
+            })
+            .collect()
+    })?;
+    Ok(0)
+}
+
 /// Whether control arguments that parsed as an inspection are `session ls`, with `--json`
 /// anywhere after `session`.
 fn lists_sessions(arguments: &[OsString]) -> bool {
@@ -859,6 +930,11 @@ const HELP_SECTIONS: &[(&str, &[(&str, &str)])] = &[
         &[
             ("session ls [--json]", "List this window's sessions"),
             ("session [--json]", "Inspect the session"),
+            ("session --id ID [--json]", "Inspect an exact window member"),
+            (
+                "session registry [ID] [--json]",
+                "Read this user's registrations",
+            ),
             ("events [--json]", "Subscribe to this window's events"),
             (
                 "  --session SESSION --tab TAB --target ID",
@@ -1105,7 +1181,12 @@ Explicit targets still validate EON_TERMINAL; independent windows use
 attach's rule.
 Results name generation, window (null for default), and session.
 SESSION is a session ID (s1, s2, ...) or its exact name.
-session new --name NAME names the new session; created gives its ID.
+Inspect/switch/rename/close accept --id ID instead of a SESSION target.
+ID is the full persistent_id, scoped to the selected window.
+session registry reads metadata without a window; it does not show liveness.
+session new --name NAME names the new session; created gives its local ID,
+created_persistent_id its durable identity. Uncertain creation needs inspection,
+not an automatic retry.
 With --no-focus, session new keeps the shown session, and either
 pane create keeps the selected pane and any popup.
 pane read, history and send reach hidden sessions; [agents]
@@ -1301,12 +1382,7 @@ fn control(
             }
         }
     }
-    // Closing a workspace asks as Stop does, about the sN that WS resolves to
-    // by Runtime's rule; a WS that resolves to none or several fails unasked.
-    // After a yes it checks again that the sN is live before closing it, since
-    // Runtime would read a departed sN as another workspace's name; the check
-    // and the close are not atomic. EONW lists only
-    // the caller's or shown workspace's terminals, so the prompt names none.
+    // Confirm the resolved member, then send its exact persistent identity.
     if let Action::Workspace(WorkspaceAction::CloseWorkspace { workspace }) = &mut action
         && !json
     {
@@ -1314,10 +1390,14 @@ fn control(
             Ok(snapshot) => snapshot.workspaces,
             Err(error) => return report_failure(&error, json),
         };
-        let target = match resolve_selector(
-            listed
-                .iter()
-                .map(|item| (item.id.as_str(), item.name.as_deref())),
+        let target = match resolve_target(
+            listed.iter().map(|item| {
+                (
+                    item.id.as_str(),
+                    item.name.as_deref(),
+                    item.persistent_id.as_str(),
+                )
+            }),
             workspace,
         ) {
             Ok(index) => &listed[index],
@@ -1342,7 +1422,11 @@ fn control(
             return Ok(status);
         }
         match inspect(socket, caller.as_deref(), &resolved.label) {
-            Ok(snapshot) if snapshot.workspaces.iter().any(|item| item.id == *id) => {}
+            Ok(snapshot)
+                if snapshot
+                    .workspaces
+                    .iter()
+                    .any(|item| item.persistent_id == target.persistent_id) => {}
             Ok(_) => {
                 return report_failure(
                     &failure("unknown-session", format!("session {id} is not live")),
@@ -1351,7 +1435,7 @@ fn control(
             }
             Err(error) => return report_failure(&error, json),
         }
-        *workspace = id.clone();
+        *workspace = SessionTarget::PersistentId(target.persistent_id.clone());
     }
     let creation = match action {
         Action::Workspace(WorkspaceAction::NewWorkspace { .. }) => Some(Creation::Workspace),
@@ -1363,7 +1447,12 @@ fn control(
         | Action::Edit { .. } => Some(Creation::Pane),
         _ => None,
     };
-    let inspecting = !list && matches!(action, Action::Workspace(WorkspaceAction::Inspect));
+    let explicit_inspection = matches!(
+        action,
+        Action::Workspace(WorkspaceAction::InspectWorkspace { .. })
+    );
+    let inspecting = !list
+        && (explicit_inspection || matches!(action, Action::Workspace(WorkspaceAction::Inspect)));
     let response = match send_action_from(Ok(socket), caller.clone(), action) {
         Ok(response) => response,
         Err(error) if error.kind == EndpointFailureKind::InvalidAction => {
@@ -1376,9 +1465,24 @@ fn control(
     let window = window_json(resolved.window.as_deref());
     match response {
         ControlResponse::Workspace(Response::Snapshot(snapshot)) => {
+            let persistent_id = &snapshot
+                .workspaces
+                .iter()
+                .find(|item| item.id == snapshot.workspace)
+                .expect("a snapshot projects a live session")
+                .persistent_id;
             let caller = if inspecting {
+                // Explicit inspection describes the target, not the caller's session.
+                let caller_snapshot = if explicit_inspection && caller.is_some() {
+                    match inspect(socket, caller.as_deref(), &resolved.label) {
+                        Ok(snapshot) => Some(snapshot),
+                        Err(error) => return report_failure(&error, json),
+                    }
+                } else {
+                    None
+                };
                 caller_output(
-                    &snapshot,
+                    caller_snapshot.as_ref().unwrap_or(&snapshot),
                     caller.as_deref().and_then(terminal_session),
                     json,
                 )
@@ -1401,12 +1505,19 @@ fn control(
             };
             // The JSON value, and the human line only a new workspace prints.
             // A pending tab has no pane until its directory is picked.
+            let created_workspace = match creation {
+                Some(Creation::Workspace) => newest(&snapshot.workspaces, 's', |item| &item.id),
+                _ => None,
+            };
             let (created, created_line) = match creation {
-                Some(Creation::Workspace) => newest(&snapshot.workspaces, 's', |item| &item.id)
+                Some(Creation::Workspace) => created_workspace
                     .map(|item| {
                         (
                             format!("\"{}\"", json_escape(&item.id)),
-                            format!("created {}\n", item.id),
+                            format!(
+                                "created {}\ncreated_persistent_id {}\n",
+                                item.id, item.persistent_id
+                            ),
                         )
                     })
                     .unzip(),
@@ -1431,10 +1542,15 @@ fn control(
             };
             write_stdout(if json {
                 format!(
-                    "{{\"generation\":\"{}\",\"window\":{window},\"session\":\"{}\",{caller}{}{}",
+                    "{{\"generation\":\"{}\",\"window\":{window},\"session\":\"{}\",\"persistent_id\":\"{}\",{caller}{}{}{}",
                     json_escape(generation),
                     json_escape(&snapshot.workspace),
+                    json_escape(persistent_id),
                     created.map_or_else(String::new, |value| format!("\"created\":{value},")),
+                    created_workspace.map_or_else(String::new, |item| format!(
+                        "\"created_persistent_id\":\"{}\",",
+                        json_escape(&item.persistent_id)
+                    )),
                     &if list {
                         list_json(&snapshot)
                     } else {
@@ -1443,9 +1559,14 @@ fn control(
                 )
             } else {
                 format!(
-                    "generation {generation}\nwindow {}\nsession {}\n{caller}{}{}",
+                    "generation {generation}\nwindow {}\nsession {}\n{caller}{}{}{}",
                     resolved.window.as_deref().unwrap_or("default"),
                     snapshot.workspace,
+                    if list {
+                        String::new()
+                    } else {
+                        format!("persistent_id {persistent_id}\n")
+                    },
                     created_line.unwrap_or_default(),
                     if list {
                         list_human(&snapshot)
@@ -1780,7 +1901,7 @@ fn close_question(
     let Some(target_label) = close_target_label(action) else {
         return Ok(None);
     };
-    let tab_terminals = |tab: &eon_workspace_protocol::v37::Tab| -> Vec<(String, String)> {
+    let tab_terminals = |tab: &eon_workspace_protocol::v38::Tab| -> Vec<(String, String)> {
         tab.panes()
             .map(|pane| (pane.session.clone(), pane.label.clone()))
             .chain(tab.popups.iter().map(|popup| {
@@ -2215,7 +2336,7 @@ fn parse_pane_rename_arguments(arguments: &[OsString]) -> Result<(Action, bool),
         _ => return Err(Error::usage(EON_USAGE)),
     };
     if let Some(name) = name {
-        eon_workspace_protocol::v37::validate_pane_name(name)
+        eon_workspace_protocol::v38::validate_pane_name(name)
             .map_err(|error| Error::usage(error.to_string()))?;
     }
     Ok((
@@ -2231,16 +2352,32 @@ fn parse_pane_rename_arguments(arguments: &[OsString]) -> Result<(Action, bool),
 /// runtime resolves; after `--`, operands may start with `-`. Names are
 /// trimmed, as pane names are, and an empty rename clears the name.
 fn parse_workspace_arguments(arguments: &[OsString]) -> Result<Option<(Action, bool)>, Error> {
-    let [command, operation, rest @ ..] = arguments else {
+    let [command, arguments @ ..] = arguments else {
         return Ok(None);
     };
-    let operation = match operation.to_str() {
-        Some(operation @ ("new" | "switch" | "rename" | "close")) if command == "session" => {
-            operation
+    if command != "session" {
+        return Ok(None);
+    }
+    let (operation, rest) = match arguments {
+        [operation, rest @ ..]
+            if matches!(
+                operation.to_str(),
+                Some("new" | "switch" | "rename" | "close")
+            ) =>
+        {
+            (operation.to_str().unwrap(), rest)
+        }
+        _ if arguments
+            .iter()
+            .take_while(|argument| *argument != "--")
+            .any(|argument| argument == "--id") =>
+        {
+            ("inspect", arguments)
         }
         _ => return Ok(None),
     };
     let (mut json, mut focus, mut name, mut literal) = (false, true, None, false);
+    let mut id = None;
     let mut values = Vec::new();
     let mut rest = rest.iter();
     while let Some(argument) = rest.next() {
@@ -2259,28 +2396,44 @@ fn parse_workspace_arguments(arguments: &[OsString]) -> Result<Option<(Action, b
                         .trim(),
                 );
             }
+            "--id" if !literal && id.is_none() && operation != "new" => {
+                let value = rest
+                    .next()
+                    .and_then(|value| value.to_str())
+                    .ok_or_else(|| Error::usage(EON_USAGE))?;
+                super::session_registry::validate_id(value)
+                    .map_err(|error| Error::usage(error.to_string()))?;
+                id = Some(SessionTarget::PersistentId(value.into()));
+            }
             value if !literal && value.starts_with('-') => return Err(Error::usage(EON_USAGE)),
             _ => values.push(value),
         }
     }
-    let action = match (operation, values.as_slice()) {
-        ("new", []) => WorkspaceAction::NewWorkspace {
+    let action = match (operation, id, values.as_slice()) {
+        ("inspect", Some(workspace), []) => WorkspaceAction::InspectWorkspace { workspace },
+        ("new", None, []) => WorkspaceAction::NewWorkspace {
             name: name.map(str::to_owned),
             focus,
         },
-        ("switch", [workspace]) => WorkspaceAction::SwitchWorkspace {
-            workspace: (*workspace).into(),
+        ("switch", Some(workspace), []) => WorkspaceAction::SwitchWorkspace { workspace },
+        ("switch", None, [workspace]) => WorkspaceAction::SwitchWorkspace {
+            workspace: SessionTarget::Selector((*workspace).into()),
         },
-        ("rename", [name]) => WorkspaceAction::RenameWorkspace {
+        ("rename", Some(workspace), [name]) => WorkspaceAction::RenameWorkspace {
+            workspace: Some(workspace),
+            name: name.trim().into(),
+        },
+        ("rename", None, [name]) => WorkspaceAction::RenameWorkspace {
             workspace: None,
             name: name.trim().into(),
         },
-        ("rename", [workspace, name]) => WorkspaceAction::RenameWorkspace {
-            workspace: Some((*workspace).into()),
+        ("rename", None, [workspace, name]) => WorkspaceAction::RenameWorkspace {
+            workspace: Some(SessionTarget::Selector((*workspace).into())),
             name: name.trim().into(),
         },
-        ("close", [workspace]) => WorkspaceAction::CloseWorkspace {
-            workspace: (*workspace).into(),
+        ("close", Some(workspace), []) => WorkspaceAction::CloseWorkspace { workspace },
+        ("close", None, [workspace]) => WorkspaceAction::CloseWorkspace {
+            workspace: SessionTarget::Selector((*workspace).into()),
         },
         _ => return Err(Error::usage(EON_USAGE)),
     };
@@ -2699,6 +2852,7 @@ mod tests {
         let workspace =
             |id: &str, name: Option<&str>, tab_count, recency, attention| WorkspaceInfo {
                 id: id.into(),
+                persistent_id: id.into(),
                 name: name.map(Into::into),
                 tab_count,
                 attention,
@@ -3195,7 +3349,7 @@ mod tests {
 
     #[test]
     fn close_question_is_target_scoped_and_conservative() {
-        use eon_workspace_protocol::v37::{
+        use eon_workspace_protocol::v38::{
             BusyTerminal, BusyTerminals, Column, Pane, Popup, PopupEntry, PopupGeometry, PopupKey,
             Sidebar, Tab, TargetId, TerminalTarget,
         };
@@ -3222,6 +3376,7 @@ mod tests {
             active_workspace: "s1".into(),
             workspaces: vec![WorkspaceInfo {
                 id: "s1".into(),
+                persistent_id: "s1".into(),
                 name: None,
                 tab_count: 2,
                 attention: None,
@@ -3443,7 +3598,7 @@ mod tests {
 
     #[test]
     fn close_question_combines_busy_and_final_warnings_once() {
-        use eon_workspace_protocol::v37::{
+        use eon_workspace_protocol::v38::{
             BusyTerminal, BusyTerminals, Column, Pane, Popup, PopupEntry, PopupGeometry, PopupKey,
             Sidebar, Tab, TargetId, TerminalTarget,
         };
@@ -3452,6 +3607,7 @@ mod tests {
             active_workspace: "s1".into(),
             workspaces: vec![WorkspaceInfo {
                 id: "s1".into(),
+                persistent_id: "s1".into(),
                 name: None,
                 tab_count: 1,
                 attention: None,
@@ -3587,6 +3743,7 @@ mod tests {
         snap.workspaces = vec![
             WorkspaceInfo {
                 id: "s1".into(),
+                persistent_id: "s1".into(),
                 name: Some("my \"notes\"".into()),
                 tab_count: 1,
                 attention: None,
@@ -3594,6 +3751,7 @@ mod tests {
             },
             WorkspaceInfo {
                 id: "s2".into(),
+                persistent_id: "s2".into(),
                 name: None,
                 tab_count: 1,
                 attention: None,
@@ -3813,7 +3971,7 @@ mod tests {
         assert_eq!(
             parse(&["session", "rename", "s2", "  "]).map_err(|_| ()),
             workspace(WorkspaceAction::RenameWorkspace {
-                workspace: Some("s2".into()),
+                workspace: Some(SessionTarget::Selector("s2".into())),
                 name: String::new(),
             })
         );

@@ -1,4 +1,4 @@
-use eon_workspace_protocol::v37::{
+use eon_workspace_protocol::v38::{
     ClaudeQuota, ClaudeQuotaState, CodexQuota, CodexQuotaState, MAX_QUOTA_SCOPE_BYTES,
     MAX_SCOPED_QUOTA_WINDOWS, QuotaFailure, QuotaFailureReason as Failure, QuotaWindow, Snapshot,
 };
@@ -1295,7 +1295,7 @@ mod tests {
             active_workspace: String::new(),
             workspaces: vec![],
             active_tab: String::new(),
-            geometry: eon_workspace_protocol::v37::PopupGeometry {
+            geometry: eon_workspace_protocol::v38::PopupGeometry {
                 side_margin: 0.0,
                 vertical_margin: 0.0,
             },
@@ -1307,7 +1307,7 @@ mod tests {
             claude_quota_failure: None,
             running: None,
             busy: None,
-            sidebar: eon_workspace_protocol::v37::Sidebar::Off,
+            sidebar: eon_workspace_protocol::v38::Sidebar::Off,
             attention_queue: vec![],
         };
         let deadline = Instant::now() + Duration::from_secs(5);

@@ -3,7 +3,7 @@ use crate::application::shortcuts::{
     ALT_SHIFT, CTRL_ALT, CTRL_SHIFT, FIXED_SHORTCUTS, command_q_for, native_pointer_shortcut_for,
     shortcut_groups_for,
 };
-use eon_workspace_protocol::v37::{InvokeIntent, Side, Tab};
+use eon_workspace_protocol::v38::{InvokeIntent, Side, Tab};
 
 #[test]
 fn new_window_shortcut_invokes_the_supplied_eon_command() {
@@ -21,7 +21,7 @@ fn new_window_shortcut_invokes_the_supplied_eon_command() {
         shortcut_groups_for(
             NativePlatform::Linux,
             &[],
-            eon_workspace_protocol::v37::Sidebar::Open,
+            eon_workspace_protocol::v38::Sidebar::Open,
             true
         )
         .iter()
@@ -190,14 +190,14 @@ fn shortcut_viewer_uses_live_rows_and_captures_its_local_sequence() {
         id: "project".into(),
         label: "Money ops".into(),
         shortcut: PopupKey::Bound(Shortcut {
-            modifiers: eon_workspace_protocol::v37::ALT,
+            modifiers: eon_workspace_protocol::v38::ALT,
             key: "KeyZ".into(),
         }),
     }];
     let groups = shortcut_groups_for(
         NativePlatform::Linux,
         &entries,
-        eon_workspace_protocol::v37::Sidebar::Open,
+        eon_workspace_protocol::v38::Sidebar::Open,
         true,
     );
     let key_shortcut = |key, modifiers| {
@@ -291,7 +291,7 @@ fn shortcut_viewer_uses_live_rows_and_captures_its_local_sequence() {
         shortcut_groups_for(
             NativePlatform::Linux,
             &[],
-            eon_workspace_protocol::v37::Sidebar::Open,
+            eon_workspace_protocol::v38::Sidebar::Open,
             true
         )
         .iter()
@@ -427,7 +427,7 @@ fn macos_uses_command_for_standard_host_actions_only() {
     let rows = shortcut_groups_for(
         NativePlatform::Macos,
         &[],
-        eon_workspace_protocol::v37::Sidebar::Open,
+        eon_workspace_protocol::v38::Sidebar::Open,
         true,
     )
     .into_iter()
@@ -511,15 +511,16 @@ fn structural_shortcuts_do_not_repeat_and_popup_focus_is_explicit() {
     let mut snapshot = Snapshot {
         workspace: "s1".into(),
         active_workspace: "s1".into(),
-        workspaces: vec![eon_workspace_protocol::v37::WorkspaceInfo {
+        workspaces: vec![eon_workspace_protocol::v38::WorkspaceInfo {
             id: "s1".into(),
+            persistent_id: "s1".into(),
             name: None,
             tab_count: 1,
             attention: None,
             recency: 0,
         }],
         active_tab: "t1".into(),
-        geometry: eon_workspace_protocol::v37::PopupGeometry {
+        geometry: eon_workspace_protocol::v38::PopupGeometry {
             side_margin: 8.0,
             vertical_margin: 4.0,
         },
@@ -540,7 +541,7 @@ fn structural_shortcuts_do_not_repeat_and_popup_focus_is_explicit() {
         claude_quota_failure: None,
         running: None,
         busy: None,
-        sidebar: eon_workspace_protocol::v37::Sidebar::Open,
+        sidebar: eon_workspace_protocol::v38::Sidebar::Open,
         attention_queue: Vec::new(),
     };
     show_test_popup(&mut snapshot);
@@ -565,7 +566,7 @@ fn structural_shortcuts_do_not_repeat_and_popup_focus_is_explicit() {
                     intent
                 }
             );
-            eon_workspace_protocol::v37::check_popup_action(&snapshot, &action).unwrap();
+            eon_workspace_protocol::v38::check_popup_action(&snapshot, &action).unwrap();
         }
         let action = popup_shortcut(
             KeyCode::KeyZ,
@@ -574,7 +575,7 @@ fn structural_shortcuts_do_not_repeat_and_popup_focus_is_explicit() {
             focused,
         )
         .unwrap();
-        eon_workspace_protocol::v37::check_popup_action(&snapshot, &action).unwrap();
+        eon_workspace_protocol::v38::check_popup_action(&snapshot, &action).unwrap();
         assert!(!sends_workspace_shortcut(
             &action,
             ElementState::Pressed,
@@ -609,7 +610,7 @@ fn attention_inbox_binding_opens_under_every_sidebar() {
 
 #[test]
 fn attention_inbox_keeps_the_queue_filter_and_entry_across_refreshes() {
-    use eon_workspace_protocol::v37::{
+    use eon_workspace_protocol::v38::{
         Attention, AttentionState, PopupGeometry, QueueEntry, WorkspaceInfo,
     };
     use orbit_protocol::session::Modifiers;
@@ -624,6 +625,7 @@ fn attention_inbox_keeps_the_queue_filter_and_entry_across_refreshes() {
         workspaces: vec![
             WorkspaceInfo {
                 id: "s1".into(),
+                persistent_id: "s1".into(),
                 name: None,
                 tab_count: 2,
                 attention: None,
@@ -631,6 +633,7 @@ fn attention_inbox_keeps_the_queue_filter_and_entry_across_refreshes() {
             },
             WorkspaceInfo {
                 id: "s2".into(),
+                persistent_id: "s2".into(),
                 name: Some("Review".into()),
                 tab_count: 1,
                 attention: None,
@@ -645,9 +648,9 @@ fn attention_inbox_keeps_the_queue_filter_and_entry_across_refreshes() {
                 pending: false,
                 selected_pane: Some(id.replace('t', "p")),
                 selected_popup: None,
-                columns: vec![eon_workspace_protocol::v37::Column {
+                columns: vec![eon_workspace_protocol::v38::Column {
                     expanded: id.replace('t', "p"),
-                    panes: vec![eon_workspace_protocol::v37::Pane {
+                    panes: vec![eon_workspace_protocol::v38::Pane {
                         id: id.replace('t', "p"),
                         label: id.replace('t', "p"),
                         pinned_name: None,
@@ -685,7 +688,7 @@ fn attention_inbox_keeps_the_queue_filter_and_entry_across_refreshes() {
             target: target.into(),
             attention: Attention {
                 state,
-                record: Some(eon_workspace_protocol::v37::AttentionRecord {
+                record: Some(eon_workspace_protocol::v38::AttentionRecord {
                     kind: None,
                     progress: None,
                     app: "codex".into(),
@@ -739,12 +742,12 @@ fn attention_inbox_keeps_the_queue_filter_and_entry_across_refreshes() {
     assert_eq!(inbox.filter, AttentionFilter::Error);
     assert_eq!(scene(&inbox, &snapshot).attention_rows[0].target, "p2");
     let mut model = WorkspaceModel::default();
-    model.apply(eon_workspace_protocol::v37::Response::Snapshot(
+    model.apply(eon_workspace_protocol::v38::Response::Snapshot(
         snapshot.clone(),
     ));
     let index = inbox.index(&snapshot).unwrap();
     snapshot.attention_queue[1].attention.record =
-        Some(eon_workspace_protocol::v37::AttentionRecord {
+        Some(eon_workspace_protocol::v38::AttentionRecord {
             kind: None,
             progress: None,
             app: "codex".into(),
@@ -756,7 +759,7 @@ fn attention_inbox_keeps_the_queue_filter_and_entry_across_refreshes() {
             others: 0,
         });
     assert_eq!(
-        model.apply(eon_workspace_protocol::v37::Response::Snapshot(
+        model.apply(eon_workspace_protocol::v38::Response::Snapshot(
             snapshot.clone()
         )),
         (false, false),
@@ -893,8 +896,8 @@ fn quit_key_lists_hints_and_yields_to_a_popup() {
     let files = [PopupEntry {
         id: "files".into(),
         label: "Files".into(),
-        shortcut: PopupKey::Bound(eon_workspace_protocol::v37::Shortcut {
-            modifiers: eon_workspace_protocol::v37::SUPER,
+        shortcut: PopupKey::Bound(eon_workspace_protocol::v38::Shortcut {
+            modifiers: eon_workspace_protocol::v38::SUPER,
             key: "KeyQ".into(),
         }),
     }];
@@ -916,8 +919,8 @@ fn quit_key_lists_hints_and_yields_to_a_popup() {
     let monitor = [PopupEntry {
         id: "monitor".into(),
         label: "Monitor".into(),
-        shortcut: PopupKey::Bound(eon_workspace_protocol::v37::Shortcut {
-            modifiers: eon_workspace_protocol::v37::ALT | eon_workspace_protocol::v37::SHIFT,
+        shortcut: PopupKey::Bound(eon_workspace_protocol::v38::Shortcut {
+            modifiers: eon_workspace_protocol::v38::ALT | eon_workspace_protocol::v38::SHIFT,
             key: "KeyQ".into(),
         }),
     }];

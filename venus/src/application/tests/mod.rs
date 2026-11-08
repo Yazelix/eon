@@ -1,5 +1,5 @@
 use super::*;
-use eon_workspace_protocol::v37::{Popup, PopupKey, Shortcut, Snapshot};
+use eon_workspace_protocol::v38::{Popup, PopupKey, Shortcut, Snapshot};
 
 mod chrome;
 mod native;
@@ -14,7 +14,7 @@ pub(super) fn show_test_popup(snapshot: &mut Snapshot) {
             id: "project".into(),
             label: "Quick search".into(),
             shortcut: PopupKey::Bound(Shortcut {
-                modifiers: eon_workspace_protocol::v37::ALT,
+                modifiers: eon_workspace_protocol::v38::ALT,
                 key: "KeyZ".into(),
             }),
         },
@@ -22,7 +22,7 @@ pub(super) fn show_test_popup(snapshot: &mut Snapshot) {
             id: "files".into(),
             label: "Files".into(),
             shortcut: PopupKey::Bound(Shortcut {
-                modifiers: eon_workspace_protocol::v37::ALT | eon_workspace_protocol::v37::SHIFT,
+                modifiers: eon_workspace_protocol::v38::ALT | eon_workspace_protocol::v38::SHIFT,
                 key: "KeyY".into(),
             }),
         },

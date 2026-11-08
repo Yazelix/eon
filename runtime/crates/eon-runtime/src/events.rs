@@ -4,7 +4,7 @@
 //! publishes and serves subscribers; nothing here touches a connection.
 
 use super::{supervisor::request_id, workspace::resolve_selector};
-use eon_workspace_protocol::v37::{
+use eon_workspace_protocol::v38::{
     self as eonw, AttentionState as State, Failure, Snapshot, TargetId, TerminalTarget,
 };
 use std::{
@@ -36,6 +36,7 @@ pub(super) enum Kind {
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub(super) struct WorkspaceItem {
     pub(super) id: String,
+    pub(super) persistent_id: String,
     pub(super) name: Option<String>,
     pub(super) shown: bool,
     pub(super) tabs: usize,
@@ -330,6 +331,7 @@ impl Projection {
                 WorkspaceState {
                     item: WorkspaceItem {
                         id: info.id.clone(),
+                        persistent_id: info.persistent_id.clone(),
                         name: info.name.clone(),
                         shown: info.id == first.active_workspace,
                         tabs: info.tab_count,
@@ -1146,7 +1148,7 @@ impl Events {
 #[cfg(test)]
 pub(super) mod tests {
     use super::*;
-    use eon_workspace_protocol::v37::{
+    use eon_workspace_protocol::v38::{
         AttentionRecord, BusyTerminal, Column, PopupGeometry, QueueEntry, Sidebar, WorkspaceInfo,
     };
     use std::collections::BTreeMap;
@@ -1227,6 +1229,7 @@ pub(super) mod tests {
             .enumerate()
             .map(|(index, (id, name, tabs))| WorkspaceInfo {
                 id: (*id).into(),
+                persistent_id: (*id).into(),
                 name: name.map(Into::into),
                 tab_count: tabs.len(),
                 attention: (index == 0).then_some(State::Working),
@@ -1631,6 +1634,7 @@ pub(super) mod tests {
         after.workspaces.push(WorkspaceState {
             item: WorkspaceItem {
                 id: "s3".into(),
+                persistent_id: "s3".into(),
                 name: Some("new".into()),
                 shown: true,
                 tabs: 1,
@@ -1679,6 +1683,7 @@ pub(super) mod tests {
             [
                 &WorkspaceItem {
                     id: "s1".into(),
+                    persistent_id: "s1".into(),
                     name: None,
                     shown: false,
                     tabs: 1,
@@ -1688,6 +1693,7 @@ pub(super) mod tests {
                 },
                 &WorkspaceItem {
                     id: "s2".into(),
+                    persistent_id: "s2".into(),
                     name: Some("side".into()),
                     shown: true,
                     tabs: 2,
@@ -2739,6 +2745,7 @@ pub(super) mod tests {
                     let tab_id = self.id("t");
                     projection.workspaces.push(WorkspaceState {
                         item: WorkspaceItem {
+                            persistent_id: id.clone(),
                             id,
                             name: None,
                             shown: false,
@@ -2881,7 +2888,7 @@ pub(super) mod tests {
         projection.queue = queue;
     }
 
-    /// What the v37 codec checks of a pane or popup event: but for a close,
+    /// What the v38 codec checks of a pane or popup event: but for a close,
     /// its `column` and `expanded` and its `chosen` agree with the order it
     /// carries, and only a close may carry the empty order of a gone tab.
     fn assert_placed(event: &Event) {

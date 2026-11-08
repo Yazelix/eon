@@ -118,6 +118,17 @@ installation, and proven contract changes.
   stays open while the pointer is over it, and a section too tall for the
   window continues in another column. Custom popups list after the built-in
   ones under Popups. Screen readers hear the section names before their keys.
+- Sessions have durable host IDs and optional, non-unique names (EON-C38,
+  `eon-remote-workspaces-52i4.5`). Window-local `sN` handles map to
+  `persistent_id`; creation also reports `created_persistent_id`.
+  `eon session registry [ID] [--json]` reads retained metadata without a
+  window, and inspect/switch/rename/close accept `--id ID` within the selected
+  window. Registration precedes startup; rename persistence precedes memory
+  and events. Close/exit retain registrations, and merged restart recovery
+  gets a new ID. Registration does not prove liveness or recovery; an uncertain
+  creation needs inspection before any retry. EONW v38 carries the mapping
+  and typed targets; the Reserved Stop is unchanged.
+
 - Every Stop is now the Reserved Stop, one message whose bytes no later Eon
   changes, so `eon window stop`, `eon quit`, `eon quit --all` and Venus's Quit
   stop a window of another Eon build without running that build's `eon`,

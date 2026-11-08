@@ -469,6 +469,11 @@ fn validate_snapshot(snapshot: &WindowSnapshot) -> Result<()> {
     ) || !distinct(
         &workspaces
             .iter()
+            .map(|e| &e.workspace.persistent_id)
+            .collect::<Vec<_>>(),
+    ) || !distinct(
+        &workspaces
+            .iter()
             .map(|e| e.workspace.recency)
             .collect::<Vec<_>>(),
     ) {
@@ -491,6 +496,7 @@ fn validate_snapshot(snapshot: &WindowSnapshot) -> Result<()> {
 fn encode_workspace_entry(encoder: &mut Encoder, entry: &WorkspaceEntry) {
     let workspace = &entry.workspace;
     encoder.string(&workspace.id);
+    encoder.string(&workspace.persistent_id);
     encode_optional(encoder, &workspace.name);
     encoder.count(workspace.tab_count);
     encode_state(encoder, workspace.attention);
@@ -502,6 +508,7 @@ fn decode_workspace_entry(decoder: &mut Decoder<'_>) -> Result<WorkspaceEntry> {
     Ok(WorkspaceEntry {
         workspace: WorkspaceInfo {
             id: decoder.string("workspace id", MAX_ID_BYTES)?,
+            persistent_id: decoder.string("persistent id", MAX_ID_BYTES)?,
             name: decode_workspace_optional(decoder)?,
             tab_count: decoder.count("workspace tabs", MAX_TABS)?,
             attention: decode_state(decoder, "workspace attention")?,
@@ -1225,10 +1232,11 @@ mod tests {
         }
     }
 
-    fn entry(id: &str, recency: u8) -> WorkspaceEntry {
+    fn entry(id: &str, persistent_id: &str, recency: u8) -> WorkspaceEntry {
         WorkspaceEntry {
             workspace: WorkspaceInfo {
                 id: id.into(),
+                persistent_id: persistent_id.into(),
                 name: None,
                 tab_count: 1,
                 attention: None,
@@ -1240,7 +1248,11 @@ mod tests {
 
     fn window_snapshot() -> WindowSnapshot {
         WindowSnapshot {
-            workspaces: vec![entry("s1", 0)],
+            workspaces: vec![entry(
+                "s1",
+                "0123456789abcdef0123456789abcdef0000000000000001",
+                0,
+            )],
             attention_queue: vec![QueueItem {
                 workspace: "s1".into(),
                 tab: "t1".into(),
@@ -1315,7 +1327,7 @@ mod tests {
         ] {
             samples.push(event(Change::Workspace {
                 change,
-                workspace: entry("s2", 1),
+                workspace: entry("s2", "0123456789abcdef0123456789abcdef0000000000000002", 1),
             }));
         }
         for change in [
@@ -1517,6 +1529,41 @@ mod tests {
     }
 
     #[test]
+    fn c38_subscription_mapping_round_trips_and_rejects_duplicate_identities() {
+        let mut snapshot = window_snapshot();
+        let second = entry("s2", "fedcba9876543210fedcba98765432100000000000000001", 1);
+        snapshot.workspaces.push(second.clone());
+        let messages = |snapshot: WindowSnapshot| {
+            [
+                subscribed(Some(snapshot.clone())),
+                SubscriptionMessage::Gap(Gap {
+                    seq: 90,
+                    reason: GapReason::Overflow,
+                    snapshot,
+                }),
+            ]
+        };
+        for message in messages(snapshot.clone()) {
+            let bytes = encode_subscription_message(&message).unwrap();
+            assert_eq!(decode_subscription_message(&bytes).unwrap(), message);
+        }
+        snapshot.workspaces[1].workspace.persistent_id =
+            snapshot.workspaces[0].workspace.persistent_id.clone();
+        for message in messages(snapshot) {
+            assert!(encode_subscription_message(&message).is_err());
+            assert!(decode_subscription_message(&forge(&message)).is_err());
+        }
+        let mut bad = second;
+        bad.workspace.persistent_id.clear();
+        let message = event(Change::Workspace {
+            change: WorkspaceChange::Renamed,
+            workspace: bad,
+        });
+        assert!(encode_subscription_message(&message).is_err());
+        assert!(decode_subscription_message(&forge(&message)).is_err());
+    }
+
+    #[test]
     fn subscription_messages_round_trip() {
         for message in samples() {
             let bytes = encode_subscription_message(&message).unwrap();
@@ -1627,15 +1674,33 @@ mod tests {
         let invalid = [
             gap(&|s| s.attention_queue[0].state = AttentionState::Working),
             gap(&|s| s.attention_queue[0].workspace = "s01".into()),
-            gap(&|s| s.workspaces.push(entry("s1", 1))),
-            gap(&|s| s.workspaces.push(entry("s2", 0))),
+            gap(&|s| {
+                s.workspaces.push(entry(
+                    "s1",
+                    "0123456789abcdef0123456789abcdef0000000000000002",
+                    1,
+                ))
+            }),
+            gap(&|s| {
+                s.workspaces.push(entry(
+                    "s2",
+                    "0123456789abcdef0123456789abcdef0000000000000002",
+                    0,
+                ))
+            }),
             gap(&|s| s.workspaces[0].workspace.recency = MAX_WORKSPACES as u8),
             gap(&|s| s.workspaces[0].workspace.tab_count = 0),
             gap(&|s| s.workspaces[0].active_tab = "t 1".into()),
             gap(&|s| s.tab_messages = MAX_WORKSPACES + 1),
             gap(&|s| {
                 s.workspaces = (1..=MAX_WORKSPACES + 1)
-                    .map(|n| entry(&format!("s{n}"), (n - 1) as u8))
+                    .map(|n| {
+                        entry(
+                            &format!("s{n}"),
+                            &format!("0123456789abcdef0123456789abcdef{n:016x}"),
+                            (n - 1) as u8,
+                        )
+                    })
                     .collect()
             }),
             SubscriptionMessage::Tabs(Tabs {
@@ -1838,7 +1903,7 @@ mod tests {
         );
         assert_eq!(
             hex(&encode_request(&request).unwrap()),
-            "454f4e57250001002d00000002007231002801000200733201000200743101000200703101000401000101040067312e370500000000000000"
+            "454f4e57260001002d00000002007231002801000200733201000200743101000200703101000401000101040067312e370500000000000000"
         );
         let attention_event = event(Change::Attention {
             target: target("s1", "t1", TargetId::Pane("p1".into())),
@@ -1878,38 +1943,38 @@ mod tests {
         for (message, expected) in [
             (
                 subscribed(None),
-                "454f4e572500880021000000100067312e31373030303030303030303030290000000000000002006731000000",
+                "454f4e572600880021000000100067312e31373030303030303030303030290000000000000002006731000000",
             ),
             (
                 subscribed(Some(window_snapshot())),
-                "454f4e572500880042000000100067312e31373030303030303030303030290000000000000002006731000001010002007331000100000002007431010002007331020074310200703101000100",
+                "454f4e572600880074000000100067312e313730303030303030303030302900000000000000020067310000010100020073313000303132333435363738396162636465663031323334353637383961626364656630303030303030303030303030303031000100000002007431010002007331020074310200703101000100",
             ),
             (
                 SubscriptionMessage::Tabs(Tabs {
                     workspace: "s1".into(),
                     tabs: vec![tab("t1", &["p1"])],
                 }),
-                "454f4e5725008900340000000200733101000100010000000200743101002f00010200703100010002007031030073703103002f703101020070310000000000",
+                "454f4e5726008900340000000200733101000100010000000200743101002f00010200703100010002007031030073703103002f703101020070310000000000",
             ),
             (
                 attention_event,
-                "454f4e5725008a00400000002a00000000000000040200733102007431000200703102007331040102ff0600636c6175646500000900436f6e74696e75653f00000700000000000000000000",
+                "454f4e5726008a00400000002a00000000000000040200733102007431000200703102007331040102ff0600636c6175646500000900436f6e74696e75653f00000700000000000000000000",
             ),
             (
                 tab_event,
-                "454f4e5725008a00460000002a000000000000000101020073310100010000000200743201002f00010200703300010002007033030073703303002f70330102007033000000000002000200743202007431",
+                "454f4e5726008a00460000002a000000000000000101020073310100010000000200743201002f00010200703300010002007033030073703303002f70330102007033000000000002000200743202007431",
             ),
             (
                 pane_event,
-                "454f4e5725008a00370000002a000000000000000201020073310200743102007032030073703203002f70320102007032000001010100020002007031020070320100",
+                "454f4e5726008a00370000002a000000000000000201020073310200743102007032030073703203002f70320102007032000001010100020002007031020070320100",
             ),
             (
                 popup_event,
-                "454f4e5725008a00290000002a00000000000000030102007331020074310200753105006167656e74030073753103002f75310001",
+                "454f4e5726008a00290000002a00000000000000030102007331020074310200753105006167656e74030073753103002f75310001",
             ),
             (
                 busy_event,
-                "454f4e5725008a00250000002a00000000000000060200733102007431000200703102007331010107007031202076696d",
+                "454f4e5726008a00250000002a00000000000000060200733102007431000200703102007331010107007031202076696d",
             ),
             (
                 SubscriptionMessage::Gap(Gap {
@@ -1917,21 +1982,21 @@ mod tests {
                     reason: GapReason::Overflow,
                     snapshot: window_snapshot(),
                 }),
-                "454f4e5725008b002a0000005a0000000000000000010002007331000100000002007431010002007331020074310200703101000100",
+                "454f4e5726008b005c0000005a00000000000000000100020073313000303132333435363738396162636465663031323334353637383961626364656630303030303030303030303030303031000100000002007431010002007331020074310200703101000100",
             ),
             (
                 SubscriptionMessage::End(End::Ended {
                     generation: "g1".into(),
                 }),
-                "454f4e5725008c00050000000002006731",
+                "454f4e5726008c00050000000002006731",
             ),
             (
                 SubscriptionMessage::End(End::TargetsGone),
-                "454f4e5725008c000100000001",
+                "454f4e5726008c000100000001",
             ),
             (
                 SubscriptionMessage::End(End::TooSlow),
-                "454f4e5725008c000100000002",
+                "454f4e5726008c000100000002",
             ),
         ] {
             assert_eq!(
@@ -1977,7 +2042,7 @@ mod tests {
             2 + MAX_COLUMNS * 4 + id + 2 + MAX_DIRECTORY_BYTES + 1 + 2 * (1 + id) + 2 + 2 + 1;
         let target_bytes = 4 * id + 1;
         let queue_bytes = 2 + MAX_SESSIONS * (3 * id + 1);
-        let workspace_bytes = id + 1 + 2 + MAX_WORKSPACE_NAME_BYTES + 2 + 1 + 1 + id;
+        let workspace_bytes = 2 * id + 1 + 2 + MAX_WORKSPACE_NAME_BYTES + 2 + 1 + 1 + id;
         let snapshot_bytes = 2
             + MAX_WORKSPACES * workspace_bytes
             + queue_bytes
@@ -2106,6 +2171,7 @@ mod tests {
                         } else {
                             format!("s{n}")
                         },
+                        persistent_id: format!("0123456789abcdef0123456789abcdef{n:016x}"),
                         name: Some("🦀".repeat(MAX_WORKSPACE_NAME_CHARS)),
                         tab_count: MAX_TABS,
                         attention: Some(AttentionState::NeedsInput),
