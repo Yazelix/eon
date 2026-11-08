@@ -1,6 +1,6 @@
 use super::super::{control as endpoint, supervisor::request_id, workspace as projection};
 use super::*;
-use eon_workspace_protocol::v37::{self as wire, EventKind, Filter, Resume};
+use eon_workspace_protocol::v38::{self as wire, EventKind, Filter, Resume};
 
 pub(super) struct Options {
     pub(super) filter: Filter,
@@ -858,6 +858,7 @@ mod tests {
         let entry = wire::WorkspaceEntry {
             workspace: wire::WorkspaceInfo {
                 id: "s1".into(),
+                persistent_id: "0123456789abcdef0123456789abcdef0000000000000001".into(),
                 name: Some("a\"b".into()),
                 tab_count: 1,
                 attention: None,
@@ -894,6 +895,10 @@ mod tests {
             .collect::<Vec<_>>();
         assert_eq!(lines.len(), 3);
         assert_eq!(lines[0]["sessions"][0]["name"], "a\"b");
+        assert_eq!(
+            lines[0]["sessions"][0]["persistent_id"],
+            "0123456789abcdef0123456789abcdef0000000000000001"
+        );
         assert_eq!(lines[0]["sessions"][0]["shown"], true);
         assert_eq!(lines[0]["tabs"][0]["session"], "s1");
         assert_eq!(lines[0]["tabs"][0]["panes"][0]["terminal"], "terminal-1");

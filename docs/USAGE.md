@@ -210,6 +210,39 @@ Reattach earlier work with its retained exact Eon or eonbase executable.
 
 ## Session and quick search
 
+Each session has a persistent ID and an optional name. `s1`, `s2`, … are local
+to one window. Names may repeat, renaming keeps the persistent ID, and a tab's
+directory does not identify its session. Detailed inspection prints
+`persistent_id`; `session ls --json` includes it beside each local `id`.
+
+Use `eon session --id ID --json` to inspect a member, or
+`eon session switch/rename/close --id ID …` for the corresponding operation.
+Pass the full ID instead of a positional handle/name. Selection stays within
+the addressed window (`--window ID` keeps its existing meaning); an identity
+registered elsewhere is missing here and is never joined or restored.
+
+`eon session registry [ID] [--json]` reads this user's host registrations
+without resolving a caller or window or starting a supervisor. JSON is an
+array sorted by ID, or one object for a specified ID, containing only
+`persistent_id` and nullable `name`. A missing registry lists empty; a missing
+ID exits 3. Window and generation flags are invalid for this command.
+Registration does not mean that terminals are live or recoverable.
+
+Creation validates its inputs, commits the registration, then starts terminals.
+Success retains `created: sN` and adds `created_persistent_id`. A failed start
+after registration reports that persistent ID and retains it without adding a
+member. A registry failure starts nothing. An uncertain commit or lost reply
+needs inspection; do not automatically resend a new-session request. Replay
+protection lasts only while the request remains in the supervisor's recent
+256 mutations and that supervisor has not restarted.
+
+Renaming or clearing a name persists before memory, events and success. A
+post-publication sync failure reports uncertainty, retains the last confirmed
+in-memory name, and rereads disk under the lock on the next change. Close,
+natural exit and empty-session cleanup retain registrations. Disconnect and
+reconnect keep the current mapping; supervisor restart recovery gives its
+merged session a new ID while old registrations remain queryable.
+
 A **session** is the whole collection of tabs and panes. A **tab** groups
 panes around its launch directory and shows them in one to four side-by-side
 **columns**. Each column stacks its panes and expands one. A **pane** is a view
@@ -570,9 +603,11 @@ line points agents to `eon --skill`.
 | `eon window stop all [--json]` | Attempt Stop in every running window, the default one included, the caller's window last |
 | `eon quit [--json]` | Quit the window of the calling terminal, stopping its terminals; it asks first only while another terminal of the window runs something other than its idle shell, and names those terminals (the Files and Git popups never count; the Agent popup does); outside Eon, quit the only running window, or list the running windows and stop nothing when several run |
 | `eon quit --all [--json]` | Attempt Stop in every running window, as `eon window stop all` does, asking for each window as `eon quit` does |
-| `eon session ls [--json]` | List the window's sessions in order, with each one's ID, name, whether it is shown, its tab count, its most urgent agent attention state, and its recency (0 for the shown one, then 1 for the one shown before it, and so on, the Sessions picker's order) |
+| `eon session ls [--json]` | List the window's sessions in order, with each one's local ID, persistent ID (JSON), name, whether it is shown, its tab count, its most urgent agent attention state, and its recency (0 for the shown one, then 1 for the one shown before it, and so on, the Sessions picker's order) |
 | `eon session [--json]` | Inspect the live tab, pane, popup, and terminal mapping, with each terminal's agent attention state, app and name; JSON includes each terminal's full agent attention record and the Codex and Claude quota readings, and the calling terminal in `caller` (null without `EON_TERMINAL`; a `caller` line in human output only when present); JSON `running` holds this window and the other running Eon windows, each with its ID, generation, name, start time and live terminal count; JSON `busy` lists the window's busy terminals, each with its session, tab, pane or popup, terminal and name, and `omitted` counts those past 32, with one `busy` line per terminal in human output |
-| `eon session new [--name NAME] [--no-focus] [--json]` | Add a session after the shown one, with one tab on quick search, and show it; with `--no-focus` the shown session stays. The reply names the new session's ID in `created` (`created sN` in human output) |
+| `eon session registry [ID] [--json]` | Read host registrations without a window; registration alone says nothing about running terminals |
+| `eon session --id ID [--json]` | Inspect that exact member without changing the shown session |
+| `eon session new [--name NAME] [--no-focus] [--json]` | Add a session after the shown one, with one tab on quick search, and show it; with `--no-focus` the shown session stays. The reply names the new session's ID in `created` and its persistent ID in `created_persistent_id` (also printed in human output) |
 | `eon session switch SESSION [--json]` | Show session SESSION, with its tabs, panes and popups as it left them |
 | `eon session rename [SESSION] NAME [--json]` | Name session SESSION, or the caller's session; an empty NAME clears the name |
 | `eon session close SESSION [--json]` | Stop every terminal of SESSION and remove it, asking first without `--json`; closing the last session quits the window |

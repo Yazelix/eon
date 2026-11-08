@@ -759,7 +759,7 @@ names its socket. CLI JSON names a session `session` and a terminal
 - **Owner:** Eon Runtime session topology, identity, focus, pruning and action
   enforcement; Eon supplies product defaults/policy. Orbit owns terminals and
   Venus owns native materialization.
-- **Consumes:** Current EONW v37 session/popup values, Orbit terminal
+- **Consumes:** Current EONW v38 session/popup values, Orbit terminal
   identities/endpoints and Venus `VEN-C8`.
 - **Boundary:** No arbitrary split tree, vertical splits, column resizing,
   arbitrary reorder target, cross-tab pane movement, picker relocation, durable layout
@@ -1193,6 +1193,35 @@ names its socket. CLI JSON names a session `session` and a terminal
   by `eon-rcxu5`: a stale caller's `unknown-caller` names its terminal and
   window, and a selected supervisor of another EONW runs its recorded build
   (EON-C11, Routing).
+  Planned fork amendment, approved by Yu Sun on 2026-11-07, slice 2a
+  (`eon-remote-workspaces-52i4.5`), for EON-C38. Implementation and proof
+  are pending. EONW v38 carries each session's persistent ID beside
+  its window-local `sN`. `eon session` adds `persistent_id`; `session ls`
+  retains `id: sN` and adds `persistent_id`; successful creation retains
+  `created: sN` and adds `created_persistent_id`. Compact lists and pickers
+  continue to show names and local handles; detailed inspection shows the ID.
+  `eon session registry [ID] [--json]` reads registrations independently of
+  callers and windows, without connecting to or starting a supervisor or
+  creating state. It returns only `{persistent_id, name}`, sorted by ID for
+  a list; an absent registry lists empty. Window and removed generation
+  selectors are invalid here. `eon session --id ID`, and
+  `session switch/rename/close --id ID`, accept a complete persistent ID,
+  mutually exclusive with a positional handle/name target. Resolution stays
+  within the selected window; a registered ID outside it is missing, never
+  attached or recovered. Existing window/caller validation and close
+  confirmation remain; a confirmed close sends the exact persistent target.
+  Syntax exits 2; ambiguity, corrupt registry or persistence failure exits 1;
+  missing ID/member exits 3; unreachable supervisor or lost reply exits 4,
+  consistently in text and JSON. Creation validates name, capacity, directory
+  and configuration before durable registration, then starts terminals.
+  Startup failure reports and retains the committed ID without adding a
+  false member. Definitive failure, uncertain commit and lost reply remain
+  distinct; uncertain creation must not be blindly retried. Committed or
+  uncertain creation attempts enter the existing 256-mutation replay window,
+  bounded by retention and the supervisor lifetime. Rename/clear persists
+  before memory, events and success; a post-publication sync failure reports
+  uncertainty and retains the last confirmed in-memory name. The next change
+  locks and rereads disk; no rollback is claimed.
 - **Consumer:** One local CLI or approved composition controlling a live Eon
   supervisor.
 - **Trigger:** The client submits one versioned session or supervisor-lifecycle
@@ -1492,7 +1521,7 @@ names its socket. CLI JSON names a session `session` and a terminal
 - **Owner:** Eon Runtime supervisor session/action state and CLI projection;
   its canonical EONW package owns types, codec and result ordering. Eon supplies
   validated component facts and product defaults.
-- **Consumes:** Current EONW v37 and accepted Orbit management operations.
+- **Consumes:** Current EONW v38 and accepted Orbit management operations.
 - **Boundary:** Additive lifecycle tags do not widen the pinned Venus workspace
   consumer. There is no event stream or subscription policy other than
   EON-C39's event subscription, and no remote transport,
@@ -1504,7 +1533,7 @@ names its socket. CLI JSON names a session `session` and a terminal
   child-protocol escape hatch.
 - **Package owner:** The canonical EONW crate lives in
   `runtime/crates/eon-workspace-protocol` with its accepted package/API and
-  v37 bytes. Venus, Eon Runtime and Eon consume it by path.
+  v38 bytes. Venus, Eon Runtime and Eon consume it by path.
   See [package selection](ARCHITECTURE.md#in-tree-package-selection).
 - **Runtime policy:** Project is required and defaults to Alt+Z; it has no
   command of its own and shows the tab's pair (EON-C18) on quick search. Git
@@ -1586,8 +1615,8 @@ names its socket. CLI JSON names a session `session` and a terminal
   fzf list of the popup's window's sessions (EON-C33's picker); Commands >
   Switch session runs the same list in the Commands popup. Each row shows
   the session's name, or its `sN` when unnamed, its tab count, and
-  ` · needs input` when its EONW v37 `attention` is needs input. Rows run by
-  EONW v37 `recency`, most recently shown first, with the shown session last
+  ` · needs input` when its EONW v38 `attention` is needs input. Rows run by
+  EONW v38 `recency`, most recently shown first, with the shown session last
   and marked ` · shown`, and the query matches only that name or `sN`. Enter on the highlighted row,
   including on an empty query, runs `eon session switch sN` once the CLI
   has checked again that the `sN` is live; otherwise it changes nothing and
@@ -2626,7 +2655,7 @@ names its socket. CLI JSON names a session `session` and a terminal
   Yazi owns filesystem browsing, and Anima owns style selection, rendering,
   input dismissal, playback timing, and terminal restoration. Eon consumes one
   picked directory per pick without interpreting Yazi's navigation state.
-- **Consumes:** EON-C17, current EONW v37 popup/pending-tab values, Orbit's
+- **Consumes:** EON-C17, current EONW v38 popup/pending-tab values, Orbit's
   accepted terminal startup/attachment/exit/stop contracts and the selected exact
   Venus consumer.
 - **Boundary:** No custom filesystem walker, file opening from a pending tab's
@@ -3688,7 +3717,7 @@ names its socket. CLI JSON names a session `session` and a terminal
   - **Orbit** owns the records, their neutral facts and the terminal title.
   - **Venus** owns presentation and hiding for width (VEN-C30).
 - **Consumes:** ORB-C15, ORB-C13 generation 7, EON-C8 topology, and EON-C10
-  (EONW v37, request and response). EON-C39 exposes a stream of its changes.
+  (EONW v38, request and response). EON-C39 exposes a stream of its changes.
 - **Boundary:**
   - no hooks and no edits to agent configuration;
   - no provider parsing; the Runtime passes `app` and `name` through unchanged, and Venus maps
@@ -4011,6 +4040,14 @@ names its socket. CLI JSON names a session `session` and a terminal
   Amended on 2026-11-07 (approved by eon-overseer under Lucca's standing rule)
   by `eon-30skm` (S3): the heading names sessions, and its prose says session
   for the product concept.
+  Planned fork amendment, approved by Yu Sun on 2026-11-07, slice 2a
+  (`eon-remote-workspaces-52i4.5`), for EON-C38. Implementation and proof
+  are pending. Close, natural terminal exit and empty-session pruning
+  remove only current window membership and retain registrations. Disconnect
+  and reconnect to the same supervisor preserve the `sN`/persistent-ID mapping.
+  After a supervisor restart the old registrations remain queryable; existing
+  merged-terminal recovery gets a new persistent ID. This neither infers old
+  groups/layouts nor expands EON-C15 recovery guarantees.
 - **Consumer:** One full-Eon user, or an agent working for them, who keeps
   several separate sets of work in one Eon window.
 - **Trigger:** Alt+Shift+S or Commands > Switch session; Alt+Shift+1
@@ -4760,6 +4797,11 @@ names its socket. CLI JSON names a session `session` and a terminal
   Amended on 2026-11-07 (approved by eon-overseer under Lucca's standing rule)
   by `eon-30skm` (S3): the heading names session events, and its prose says
   session for the product concept.
+  Planned fork amendment, approved by Yu Sun on 2026-11-07, slice 2a
+  (`eon-remote-workspaces-52i4.5`), for EON-C38. Implementation and proof
+  are pending. EONW v38 initial and gap snapshots and session events
+  carry the same local-handle/persistent-ID mapping as ordinary inspection.
+  Registry presence alone never denotes live membership or recoverability.
 - **Consumer:** An agent or script running as the person's user, in an Eon
   terminal or outside one, that must notice session and attention changes
   without polling: an overseer answering its tab's questions (`eon-ciwn.4`),
@@ -4778,7 +4820,7 @@ names its socket. CLI JSON names a session `session` and a terminal
   - `eon pane wait TARGET --until done|needs-input|attention|ended
     [--timeout SECONDS] [--json]`.
 - **Result:**
-  - **One subscription.** The CLI sends one EONW v37 `Subscribe` request.
+  - **One subscription.** The CLI sends one EONW v38 `Subscribe` request.
     The supervisor either refuses it with an ordinary EONW `Failure` reply
     and closes the connection, or answers `SUBSCRIBED` and keeps the
     connection open for `TABS`, `EVENT`, `GAP` and `END` messages. A
@@ -4960,9 +5002,9 @@ names its socket. CLI JSON names a session `session` and a terminal
     subscriber, the attention poller or Stop.
 - **Owner:** Eon Runtime: the event projection, sequence, retained events,
   filters, subscriber bounds and CLI projection. Its canonical EONW package
-  owns the v37 `Subscribe` action and the `SUBSCRIBED`, `TABS`, `EVENT`,
+  owns the v38 `Subscribe` action and the `SUBSCRIBED`, `TABS`, `EVENT`,
   `GAP` and `END` messages.
-- **Consumes:** EON-C10 (current EONW v37; subscriptions introduced in v30
+- **Consumes:** EON-C10 (current EONW v38; subscriptions introduced in v30
   by `eon-ciwn.6`, targeting, exit codes),
   EON-C31 (attention records, the queue and its CLI visibility), EON-C11
   (busy terminals, generations), EON-C23 (window and supervisor start time)

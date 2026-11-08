@@ -1,15 +1,17 @@
-# Recoverable workspaces: slice 2a contract review and acceptance plan
+# Recoverable sessions: identity and later recovery
 
-This PR contains documentation only. The next contract to review is
-[EON-C38: persistent identity and the host registry](#eon-c38--persistent-workspace-identity-and-host-registry).
-Its exact text is not yet approved or indexed. Once Lucca approves it, it goes
-into [the contract index](CONTRACTS.md) as **Planned**, before implementation.
-The rest of this document is a plan and future acceptance matrix, not a batch
-of new contracts or a claim that any new behavior is already implemented.
+[EON-C38](CONTRACTS.md#eon-c38--persistent-workspace-identity-and-host-registry)
+was approved as Planned on 2026-11-03. Slice 2a
+(`eon-remote-workspaces-52i4.5`) implements persistent IDs and optional names
+for this user's host registry. Each window still owns its session members;
+its `sN` handles map to durable IDs. The CLI reads registrations independently
+of a running window and targets a member by its full persistent ID.
 
-Review tracking stays in `eon-remote-workspaces-52i4.4`. This PR does not change
-`.beads/issues.jsonl`; Lucca will record the proof/review notes there with `br`
-when the text lands. Existing approved contracts and proof remain unchanged.
+This fork's integration acceptance and independent reviews remain pending.
+The registry stores neither membership nor layout. Restart recovery still
+merges surviving terminals into a session with a new ID; restoring original
+groups belongs to slice 2b. The remote flows below remain a plan and future
+acceptance matrix, not implemented SSH or recovery guarantees.
 
 ## Office to home, with one active PC
 

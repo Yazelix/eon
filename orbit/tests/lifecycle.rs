@@ -1817,7 +1817,7 @@ fn shutdown_escalates_foreground_and_permits_a_detached_process() -> TestResult 
             .arg("/bin/bash")
             .arg("-c")
             .arg(
-                "set -m; printf '%s\\n' \"$$\" > \"$ORBIT_INITIAL_PID\"; \
+                "trap '' HUP; set -m; printf '%s\\n' \"$$\" > \"$ORBIT_INITIAL_PID\"; \
                  /usr/bin/setsid --fork /bin/sh -c 'printf \"%s\\n\" \"$$\" > \"$ORBIT_DETACHED_PID\"; exec sleep 60' </dev/null >/dev/null 2>&1; \
                  while [ ! -s \"$ORBIT_DETACHED_PID\" ]; do :; done; \
                  /bin/sh -c 'trap \"\" HUP; printf \"%s\\n\" \"$$\" > \"$ORBIT_FOREGROUND_PID\"; exec sleep 60'",

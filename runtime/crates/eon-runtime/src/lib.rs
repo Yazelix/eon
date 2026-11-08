@@ -14,6 +14,7 @@ mod platform;
 mod quota;
 mod running;
 mod scrollback;
+mod session_registry;
 mod sessions;
 mod subscriptions;
 mod supervisor;

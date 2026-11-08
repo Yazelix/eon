@@ -2,7 +2,7 @@ use super::*;
 
 #[test]
 fn agent_sidebar_pushes_columns_hides_for_width_and_shows_its_empty_state() {
-    use eon_workspace_protocol::v37::{
+    use eon_workspace_protocol::v38::{
         AttentionState, Column, Popup, PopupEntry, PopupGeometry, PopupKey, Shortcut,
     };
 
@@ -18,8 +18,9 @@ fn agent_sidebar_pushes_columns_hides_for_width_and_shows_its_empty_state() {
     let mut snapshot = Snapshot {
         workspace: "s1".into(),
         active_workspace: "s1".into(),
-        workspaces: vec![eon_workspace_protocol::v37::WorkspaceInfo {
+        workspaces: vec![eon_workspace_protocol::v38::WorkspaceInfo {
             id: "s1".into(),
+            persistent_id: "s1".into(),
             name: None,
             tab_count: 1,
             attention: None,
@@ -142,7 +143,7 @@ fn agent_sidebar_pushes_columns_hides_for_width_and_shows_its_empty_state() {
 
     // Any attention replaces the empty state.
     snapshot.sidebar = Sidebar::Open;
-    snapshot.tabs[0].popups[0].attention = Some(eon_workspace_protocol::v37::Attention {
+    snapshot.tabs[0].popups[0].attention = Some(eon_workspace_protocol::v38::Attention {
         state: AttentionState::Unavailable,
         record: None,
     });
@@ -152,7 +153,7 @@ fn agent_sidebar_pushes_columns_hides_for_width_and_shows_its_empty_state() {
 
 #[test]
 fn agent_sidebar_rows_show_attention_in_tab_order_and_reveal_the_focused_row() {
-    use eon_workspace_protocol::v37::{
+    use eon_workspace_protocol::v38::{
         Attention, AttentionRecord, Column, Popup, PopupEntry, PopupGeometry, PopupKey, Shortcut,
     };
 
@@ -223,8 +224,9 @@ fn agent_sidebar_rows_show_attention_in_tab_order_and_reveal_the_focused_row() {
     let snapshot = Snapshot {
         workspace: "s1".into(),
         active_workspace: "s1".into(),
-        workspaces: vec![eon_workspace_protocol::v37::WorkspaceInfo {
+        workspaces: vec![eon_workspace_protocol::v38::WorkspaceInfo {
             id: "s1".into(),
+            persistent_id: "s1".into(),
             name: None,
             tab_count: 3,
             attention: None,
@@ -427,7 +429,7 @@ fn agent_sidebar_rows_show_attention_in_tab_order_and_reveal_the_focused_row() {
         record.app = app.into();
         record.name = name.into();
         record.title.clear();
-        renamed.attention_queue = vec![eon_workspace_protocol::v37::QueueEntry {
+        renamed.attention_queue = vec![eon_workspace_protocol::v38::QueueEntry {
             workspace: renamed.workspace.clone(),
             tab: "t2".into(),
             target: "p2".into(),
@@ -470,8 +472,9 @@ fn agent_sidebar_rows_show_attention_in_tab_order_and_reveal_the_focused_row() {
     let mut other_session = renamed.clone();
     other_session
         .workspaces
-        .push(eon_workspace_protocol::v37::WorkspaceInfo {
+        .push(eon_workspace_protocol::v38::WorkspaceInfo {
             id: "s2".into(),
+            persistent_id: "0123456789abcdef0123456789abcdef0000000000000002".into(),
             name: None,
             tab_count: 1,
             attention: Some(AttentionState::NeedsInput),

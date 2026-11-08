@@ -1,5 +1,5 @@
 use crate::scene::{DrawRow, Scene, ScenePreview, bar_workspace, hidden_needs_input};
-use eon_workspace_protocol::v37::{
+use eon_workspace_protocol::v38::{
     AttentionState, Pane, Popup, Response as WorkspaceResponse, Snapshot, Tab,
 };
 use orbit_protocol::FrameReducer;
@@ -1042,7 +1042,7 @@ fn bounded(mut detail: String) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use eon_workspace_protocol::v37::{
+    use eon_workspace_protocol::v38::{
         self as workspace, CodexQuota, CodexQuotaState, Failure, Pane, PopupEntry, PopupKey,
         Shortcut, Tab,
     };
@@ -1054,6 +1054,7 @@ mod tests {
             active_workspace: "s1".into(),
             workspaces: vec![workspace::WorkspaceInfo {
                 id: "s1".into(),
+                persistent_id: "s1".into(),
                 name: None,
                 tab_count: 1,
                 attention: None,
@@ -1181,8 +1182,9 @@ mod tests {
         Snapshot {
             workspace: "s1".into(),
             active_workspace: "s1".into(),
-            workspaces: vec![eon_workspace_protocol::v37::WorkspaceInfo {
+            workspaces: vec![eon_workspace_protocol::v38::WorkspaceInfo {
                 id: "s1".into(),
+                persistent_id: "s1".into(),
                 name: None,
                 tab_count: 2,
                 attention: None,
@@ -1197,7 +1199,7 @@ mod tests {
                     id: "t1".into(),
                     directory: b"/tmp/eon".to_vec(),
                     selected_pane: Some("pane-1".into()),
-                    columns: vec![eon_workspace_protocol::v37::Column {
+                    columns: vec![eon_workspace_protocol::v38::Column {
                         panes: vec![Pane {
                             label: "pane-1".into(),
                             pinned_name: None,
@@ -1218,7 +1220,7 @@ mod tests {
                     id: "t2".into(),
                     directory: b"/tmp/nova".to_vec(),
                     selected_pane: Some("pane-2".into()),
-                    columns: vec![eon_workspace_protocol::v37::Column {
+                    columns: vec![eon_workspace_protocol::v38::Column {
                         panes: vec![Pane {
                             label: "pane-2".into(),
                             pinned_name: None,
@@ -1233,7 +1235,7 @@ mod tests {
                     attention_rollup: None,
                 },
             ],
-            geometry: eon_workspace_protocol::v37::PopupGeometry {
+            geometry: eon_workspace_protocol::v38::PopupGeometry {
                 side_margin: 8.0,
                 vertical_margin: 4.0,
             },
@@ -1437,6 +1439,7 @@ mod tests {
         summaries.workspaces[0].name = Some("renamed".into());
         summaries.workspaces.push(workspace::WorkspaceInfo {
             id: "s2".into(),
+            persistent_id: "s2".into(),
             name: None,
             tab_count: 3,
             attention: None,
@@ -1565,6 +1568,7 @@ mod tests {
         }
         working.workspaces.push(workspace::WorkspaceInfo {
             id: "s2".into(),
+            persistent_id: "s2".into(),
             name: None,
             tab_count: 1,
             attention: None,
@@ -1695,8 +1699,9 @@ mod tests {
         let mut snapshot = Snapshot {
             workspace: "s1".into(),
             active_workspace: "s1".into(),
-            workspaces: vec![eon_workspace_protocol::v37::WorkspaceInfo {
+            workspaces: vec![eon_workspace_protocol::v38::WorkspaceInfo {
                 id: "s1".into(),
+                persistent_id: "s1".into(),
                 name: None,
                 tab_count: 2,
                 attention: None,
@@ -1732,7 +1737,7 @@ mod tests {
             claude_quota_failure: None,
             running: None,
             busy: None,
-            sidebar: eon_workspace_protocol::v37::Sidebar::Open,
+            sidebar: eon_workspace_protocol::v38::Sidebar::Open,
             attention_queue: Vec::new(),
         };
         let wire =
@@ -1779,8 +1784,9 @@ mod tests {
         let mut snapshot = Snapshot {
             workspace: "s1".into(),
             active_workspace: "s1".into(),
-            workspaces: vec![eon_workspace_protocol::v37::WorkspaceInfo {
+            workspaces: vec![eon_workspace_protocol::v38::WorkspaceInfo {
                 id: "s1".into(),
+                persistent_id: "s1".into(),
                 name: None,
                 tab_count: 1,
                 attention: None,
@@ -1812,7 +1818,7 @@ mod tests {
             claude_quota_failure: None,
             running: None,
             busy: None,
-            sidebar: eon_workspace_protocol::v37::Sidebar::Open,
+            sidebar: eon_workspace_protocol::v38::Sidebar::Open,
             attention_queue: Vec::new(),
         };
         let mut model = WorkspaceModel::default();

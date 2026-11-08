@@ -1625,7 +1625,7 @@ mod tests {
     fn images_draw_in_panes_and_popups_and_refusals_keep_the_renderer() {
         use super::super::{FontSettings, FontSetup, PaddingColor, PresentOutcome, Renderer};
         use crate::{WorkspaceFocus, WorkspaceScene};
-        use eon_workspace_protocol::v37::{
+        use eon_workspace_protocol::v38::{
             ALT, Column, Pane, Popup, PopupEntry, PopupGeometry, PopupKey, Shortcut, Sidebar,
             Snapshot, Tab, WorkspaceInfo,
         };
@@ -1668,6 +1668,7 @@ mod tests {
                 active_workspace: "s1".into(),
                 workspaces: vec![WorkspaceInfo {
                     id: "s1".into(),
+                    persistent_id: "s1".into(),
                     name: None,
                     tab_count: 1,
                     attention: None,

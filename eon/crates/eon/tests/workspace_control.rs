@@ -1,5 +1,5 @@
 use eon_workspace_protocol::stop;
-use eon_workspace_protocol::v37::{
+use eon_workspace_protocol::v38::{
     Action as ProtocolAction, Availability, Change, Direction, End, Failure as ProtocolFailure,
     Filter, HEADER_BYTES, InvokeIntent, LifecycleResponse, MAX_SESSIONS, Popup, PopupTarget,
     Request, Response, Runtime, Screen, Sent, Snapshot, SubscriptionMessage, Tab, TabChange,
@@ -5318,7 +5318,7 @@ fn workspace_requests_project_callers_and_close_only_the_target_workspace() {
         &control,
         "switch",
         Action::SwitchWorkspace {
-            workspace: "original".into(),
+            workspace: eon_workspace_protocol::v38::WorkspaceTarget::Selector("original".into()),
         },
     ));
     assert_eq!(switched.workspace, "s1");
@@ -5328,7 +5328,7 @@ fn workspace_requests_project_callers_and_close_only_the_target_workspace() {
                 &control,
                 "same",
                 Action::SwitchWorkspace {
-                    workspace: "s1".into()
+                    workspace: eon_workspace_protocol::v38::WorkspaceTarget::Selector("s1".into())
                 }
             ))
             .tabs
@@ -5339,7 +5339,7 @@ fn workspace_requests_project_callers_and_close_only_the_target_workspace() {
         &control,
         "back",
         Action::SwitchWorkspace {
-            workspace: "s2".into(),
+            workspace: eon_workspace_protocol::v38::WorkspaceTarget::Selector("s2".into()),
         },
     ));
     let inspected = snapshot(protocol_action_from(
@@ -5354,7 +5354,7 @@ fn workspace_requests_project_callers_and_close_only_the_target_workspace() {
     // The first confirmed stop is pruned; the failing terminal and workspace remain.
     fs::write(&fail, "terminal-2").unwrap();
     assert!(
-        matches!(workspace_action(&control, "close-fails", Action::CloseWorkspace { workspace: "s1".into() }), Response::Failure(error) if error.code == "session-close-failed" && error.detail.contains("injected stop failure"))
+        matches!(workspace_action(&control, "close-fails", Action::CloseWorkspace { workspace: eon_workspace_protocol::v38::WorkspaceTarget::Selector("s1".into()) }), Response::Failure(error) if error.code == "session-close-failed" && error.detail.contains("injected stop failure"))
     );
     let remaining = snapshot(protocol_action_from(
         &control,
@@ -5372,14 +5372,14 @@ fn workspace_requests_project_callers_and_close_only_the_target_workspace() {
     );
     assert_eq!(remaining.active_workspace, "s2");
     assert!(
-        matches!(workspace_action(&control, "close-fails", Action::CloseWorkspace { workspace: "s1".into() }), Response::Failure(error) if error.code == "duplicate-request")
+        matches!(workspace_action(&control, "close-fails", Action::CloseWorkspace { workspace: eon_workspace_protocol::v38::WorkspaceTarget::Selector("s1".into()) }), Response::Failure(error) if error.code == "duplicate-request")
     );
     let closed = snapshot(protocol_action_from(
         &control,
         "retry-close",
         Some(&second),
         ProtocolAction::Workspace(Action::CloseWorkspace {
-            workspace: "s1".into(),
+            workspace: eon_workspace_protocol::v38::WorkspaceTarget::Selector("s1".into()),
         }),
     ));
     assert_eq!(
@@ -5401,7 +5401,7 @@ fn workspace_requests_project_callers_and_close_only_the_target_workspace() {
             &control,
             "last",
             Action::CloseWorkspace {
-                workspace: "s2".into()
+                workspace: eon_workspace_protocol::v38::WorkspaceTarget::Selector("s2".into())
             }
         ),
         Response::Ended(_)
@@ -5409,6 +5409,301 @@ fn workspace_requests_project_callers_and_close_only_the_target_workspace() {
     wait_for_successful_exit(&mut supervisor.child);
     assert!(!control.exists());
     fs::remove_dir_all(root).unwrap();
+}
+
+#[test]
+fn c38_registry_queries_are_read_only_and_independent_of_windows() {
+    let root = temporary_directory();
+    let state = root.join("state");
+    let runtime = root.join("absent-runtime");
+    let config = root.join("absent-config");
+    let run = |arguments: &[&str]| {
+        eon_command(Path::new(env!("CARGO_BIN_EXE_eon")))
+            .args(arguments)
+            .env("XDG_STATE_HOME", &state)
+            .env("EON_RUNTIME_DIR", &runtime)
+            .env("EON_CONFIG_HOME", &config)
+            .env("EON_WINDOW_RUNTIME_DIR", root.join("stale-window"))
+            .env("EON_TERMINAL", "invalid caller")
+            .env("EON_ORBIT", root.join("missing-orbit"))
+            .env("EON_VENUS", root.join("missing-venus"))
+            .output()
+            .unwrap()
+    };
+    let empty = run(&["session", "registry", "--json"]);
+    assert_eq!(empty.status.code(), Some(0), "{empty:?}");
+    assert_eq!(stdout(&empty), "[]\n");
+    assert!(!state.exists());
+
+    let first = "0123456789abcdef0123456789abcdef0000000000000001";
+    let second = "0123456789abcdef0123456789abcdef0000000000000002";
+    let missing = "0123456789abcdef0123456789abcdef0000000000000003";
+    let registry = state.join("eon/sessions");
+    fs::create_dir_all(&registry).unwrap();
+    fs::set_permissions(&registry, fs::Permissions::from_mode(0o700)).unwrap();
+    for (name, value) in [
+        ("registry.lock".to_owned(), String::new()),
+        (
+            "allocator.json".to_owned(),
+            r#"{"format":1,"namespace":"0123456789abcdef0123456789abcdef","sequence":2}"#.into(),
+        ),
+        (
+            format!("{second}.json"),
+            serde_json::json!({"format":1,"id":second}).to_string(),
+        ),
+        (
+            format!("{first}.json"),
+            serde_json::json!({"format":1,"id":first,"name":"a\"b"}).to_string(),
+        ),
+    ] {
+        fs::OpenOptions::new()
+            .write(true)
+            .create_new(true)
+            .mode(0o600)
+            .open(registry.join(name))
+            .unwrap()
+            .write_all(value.as_bytes())
+            .unwrap();
+    }
+    let expected = serde_json::json!([
+        {"persistent_id":first,"name":"a\"b"},
+        {"persistent_id":second,"name":null},
+    ]);
+    let listed = run(&["session", "registry", "--json"]);
+    assert_eq!(listed.status.code(), Some(0), "{listed:?}");
+    assert_eq!(
+        serde_json::from_slice::<serde_json::Value>(&listed.stdout).unwrap(),
+        expected
+    );
+    let read = run(&["session", "registry", first, "--json"]);
+    assert_eq!(read.status.code(), Some(0), "{read:?}");
+    assert_eq!(
+        serde_json::from_slice::<serde_json::Value>(&read.stdout).unwrap(),
+        expected[0]
+    );
+    let human = run(&["session", "registry", first]);
+    assert_eq!(human.status.code(), Some(0), "{human:?}");
+    assert!(stdout(&human).contains(first) && stdout(&human).contains("a\\\"b"));
+    for json in [false, true] {
+        let mut args = vec!["session", "registry", missing];
+        if json {
+            args.push("--json");
+        }
+        let output = run(&args);
+        assert_eq!(output.status.code(), Some(3), "{output:?}");
+    }
+    for arguments in [
+        vec!["session", "registry", "--window", "default"],
+        vec!["--window", "default", "session", "registry"],
+        vec!["session", "--window", "default", "registry"],
+        vec!["session", "registry", "--generation", "g1"],
+        vec!["session", "registry", "--json", "--json"],
+        vec!["session", "registry", first, second],
+        vec!["session", "registry", "0123"],
+    ] {
+        let output = run(&arguments);
+        assert_eq!(output.status.code(), Some(2), "{arguments:?}: {output:?}");
+    }
+    let corrupt = registry.join(format!("{second}.json"));
+    fs::write(&corrupt, b"{").unwrap();
+    for json in [false, true] {
+        let mut args = vec!["session", "registry"];
+        if json {
+            args.push("--json");
+        }
+        let output = run(&args);
+        assert_eq!(output.status.code(), Some(1), "{output:?}");
+        assert!(
+            !stdout(&output).contains(first),
+            "no partial list: {output:?}"
+        );
+    }
+    assert_eq!(fs::read(corrupt).unwrap(), b"{");
+    assert!(!runtime.exists() && !config.exists());
+    fs::remove_dir_all(root).unwrap();
+}
+
+#[test]
+fn c38_cli_identity_targets_and_creation_results_keep_exact_membership() {
+    let window = PairWindow::new();
+    let state = window.root.join("state");
+    let mut launch = window.command(&[]);
+    launch.env("XDG_STATE_HOME", &state);
+    let mut supervisor = window.start(launch);
+    wait_for_connection(&window.control());
+    let command = |arguments: &[&str]| {
+        let mut command = eon_command(&window.binary);
+        command
+            .args(arguments)
+            .env("HOME", &window.home)
+            .env("XDG_STATE_HOME", &state)
+            .env("EON_RUNTIME_DIR", &window.runtime)
+            .env("EON_CONFIG_HOME", &window.config);
+        command
+    };
+    let read = |arguments: &[&str]| {
+        let output = command(arguments).output().unwrap();
+        assert_eq!(output.status.code(), Some(0), "{arguments:?}: {output:?}");
+        serde_json::from_slice::<serde_json::Value>(&output.stdout).unwrap()
+    };
+    let initial = window.inspect("initial");
+    let first = &initial.workspaces[0].persistent_id;
+    assert_eq!(read(&["session", "--json"])["persistent_id"], *first);
+    let a = read(&["session", "new", "--name", "same", "--no-focus", "--json"]);
+    let b = read(&["session", "new", "--name", "same", "--no-focus", "--json"]);
+    let second = a["created_persistent_id"].as_str().unwrap();
+    let third = b["created_persistent_id"].as_str().unwrap();
+    assert_ne!(first, second);
+    assert_ne!(second, third);
+    assert_eq!(a["created"], "s2");
+    assert_eq!(a["persistent_id"], *first);
+    let listing = read(&["session", "ls", "--json"]);
+    for (handle, id) in [("s2", second), ("s3", third)] {
+        assert!(
+            listing["sessions"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .any(|item| item["id"] == handle && item["persistent_id"] == id)
+        );
+    }
+    let inspected = read(&["session", "--id", second, "--json"]);
+    assert_eq!(inspected["session"], "s2");
+    assert_eq!(inspected["persistent_id"], second);
+    assert_eq!(window.inspect("after-id-inspect").active_workspace, "s1");
+    assert_eq!(
+        inspected["tabs"][0]["directory"],
+        read(&["session", "--id", third, "--json"])["tabs"][0]["directory"]
+    );
+    let human = command(&["session", "--id", second]).output().unwrap();
+    assert!(stdout(&human).contains(&format!("persistent_id {second}\n")));
+    let caller = quit_terminal_caller(Path::new(OsStr::from_bytes(
+        &initial.tabs[0].popups[0].endpoint,
+    )));
+    let from_caller = |arguments: &[&str]| {
+        let output = command(arguments)
+            .env("EON_TERMINAL", OsStr::from_bytes(&caller))
+            .output()
+            .unwrap();
+        assert_eq!(output.status.code(), Some(0), "{arguments:?}: {output:?}");
+        output
+    };
+    let ordinary: serde_json::Value =
+        serde_json::from_slice(&from_caller(&["session", "--json"]).stdout).unwrap();
+    assert_eq!(
+        ordinary["caller"],
+        serde_json::json!({"terminal":"terminal-2","tab":"t1","pane":null,"popup":"u1"})
+    );
+    let targeted: serde_json::Value =
+        serde_json::from_slice(&from_caller(&["session", "--id", second, "--json"]).stdout)
+            .unwrap();
+    assert_eq!(targeted["caller"], ordinary["caller"]);
+    assert_eq!(targeted["session"], "s2");
+    assert_eq!(targeted["persistent_id"], second);
+    assert_eq!(targeted["tabs"], inspected["tabs"]);
+    let human = from_caller(&["session", "--id", second]);
+    assert!(stdout(&human).contains("caller terminal=terminal-2 tab=t1 pane=none popup=u1\n"));
+    let after = window.inspect("after-caller-inspect");
+    assert_eq!(after.active_workspace, "s1");
+    assert_eq!(after.active_tab, initial.active_tab);
+    assert_eq!(after.tabs, initial.tabs);
+    let ambiguous = command(&["session", "switch", "same", "--json"])
+        .output()
+        .unwrap();
+    assert_eq!(ambiguous.status.code(), Some(1), "{ambiguous:?}");
+    read(&["session", "rename", "--id", second, "renamed", "--json"]);
+    assert_eq!(
+        read(&["session", "registry", second, "--json"]),
+        serde_json::json!({"persistent_id":second,"name":"renamed"})
+    );
+    read(&["session", "rename", "--id", second, "", "--json"]);
+    assert!(read(&["session", "registry", second, "--json"])["name"].is_null());
+    let switched = read(&["session", "switch", "--id", second, "--json"]);
+    assert_eq!(switched["session"], "s2");
+    for arguments in [
+        vec!["session", "--id", "0123", "--json"],
+        vec!["session", "--id", second, "--id", third],
+        vec!["session", "switch", "s1", "--id", second],
+        vec!["session", "rename", "s1", "x", "--id", second],
+        vec!["session", "close", "s1", "--id", second],
+        vec!["session", "new", "--id", second],
+        vec!["session", "ls", "--id", second],
+    ] {
+        let output = command(&arguments).output().unwrap();
+        assert_eq!(output.status.code(), Some(2), "{arguments:?}: {output:?}");
+    }
+    // A registration without membership never resolves through another member's name.
+    read(&["session", "close", "--id", third, "--json"]);
+    read(&["session", "rename", "--id", second, third, "--json"]);
+    for arguments in [
+        vec!["session", "--id", third, "--json"],
+        vec!["session", "switch", "--id", third, "--json"],
+        vec!["session", "rename", "--id", third, "wrong", "--json"],
+        vec!["session", "close", "--id", third, "--json"],
+    ] {
+        let output = command(&arguments).output().unwrap();
+        assert_eq!(output.status.code(), Some(3), "{arguments:?}: {output:?}");
+    }
+    let vanished = at_terminal(
+        &mut command(&["session", "close", "--id", second]),
+        Some(b"y\n"),
+        || {
+            read(&["session", "close", "--id", second, "--json"]);
+            read(&["session", "rename", "--id", first, "s2", "--json"]);
+        },
+    );
+    assert_eq!(vanished.status.code(), Some(3), "{vanished:?}");
+    let remaining = window.inspect("remaining");
+    assert_eq!(remaining.workspaces.len(), 1);
+    assert_eq!(remaining.workspaces[0].persistent_id, *first);
+    assert_eq!(
+        read(&["session", "registry", second, "--json"])["persistent_id"],
+        second
+    );
+    assert_eq!(
+        read(&["session", "registry", third, "--json"])["persistent_id"],
+        third
+    );
+
+    // Losing a reply after acceptance cannot create another identity on replay.
+    let request = Request {
+        id: "c38-lost-reply".into(),
+        caller: None,
+        action: ProtocolAction::Workspace(Action::NewWorkspace {
+            name: None,
+            focus: false,
+        }),
+    };
+    let mut stream = UnixStream::connect(window.control()).unwrap();
+    stream
+        .write_all(&encode_request(&request).unwrap())
+        .unwrap();
+    stream.shutdown(Shutdown::Both).unwrap();
+    drop(stream);
+    let created = wait_for_snapshot(&window.control(), "lost-reply", |snapshot| {
+        snapshot.workspaces.len() == 2
+    });
+    assert!(
+        matches!(protocol_action_from(&window.control(), &request.id, None, request.action), Response::Failure(error) if error.code == "duplicate-request")
+    );
+    assert_eq!(window.inspect("replayed").workspaces, created.workspaces);
+    let count = read(&["session", "registry", "--json"])
+        .as_array()
+        .unwrap()
+        .len();
+    assert_eq!(count, 4);
+    window.stop_generation(&mut supervisor);
+    let unavailable = command(&["session", "--id", first, "--json"])
+        .output()
+        .unwrap();
+    assert_eq!(unavailable.status.code(), Some(4), "{unavailable:?}");
+    assert_eq!(
+        read(&["session", "registry", "--json"])
+            .as_array()
+            .unwrap()
+            .len(),
+        count
+    );
 }
 
 #[test]
@@ -7548,7 +7843,7 @@ fn a_workspace_final_close_shows_the_recent_one_and_attach_keeps_it() {
         &control,
         "back",
         Action::SwitchWorkspace {
-            workspace: "s1".into(),
+            workspace: eon_workspace_protocol::v38::WorkspaceTarget::Selector("s1".into()),
         },
     ));
     assert_eq!(first.tabs.len(), 1);
@@ -9738,7 +10033,7 @@ fn running_windows_name_each_other_and_refresh_on_start_and_end() {
         }
         let response = read_request(&mut stream);
         assert!(matches!(
-            eon_workspace_protocol::v37::decode_lifecycle_response(&response).unwrap(),
+            eon_workspace_protocol::v38::decode_lifecycle_response(&response).unwrap(),
             LifecycleResponse::Runtime(_)
         ));
     }

@@ -13,6 +13,7 @@ use super::{
     notification, pair, platform, quota,
     running::Running,
     scrollback::{self, Snapshots},
+    session_registry::Registry,
     sessions::{
         self, AttachName, RunningSession, TAB_VARIABLE, TERMINAL_VARIABLE,
         acquire_generation_sessions, bound_io, name_presentation, recover_sessions,
@@ -21,11 +22,11 @@ use super::{
     subscriptions::{Subscriber, Subscribers},
     workspace::{self, LaunchCommand, SessionEnd, SessionOperation, WorkspaceSet},
 };
-use eon_workspace_protocol::v37::{
+use eon_workspace_protocol::v38::{
     Action, Availability, BusyTerminals, Editing, Ended, FILES_ENTRY, Failure, InvokeIntent,
     LifecycleResponse, Request, Response, Runtime, Screen, Sent, Snapshot, TargetId,
     TerminalHistory, TerminalInput, TerminalText, VERSION, WindowEntry, WindowState,
-    WorkspaceAction,
+    WorkspaceAction, WorkspaceTarget,
 };
 use orbit_protocol::management::{LeaseInput, Screen as OrbitScreen};
 use std::{
@@ -683,7 +684,7 @@ impl PresentationProcess {
                 };
                 if let Some(snapshot) = snapshot {
                     let bytes =
-                        eon_workspace_protocol::v37::encode_response(&Response::Snapshot(snapshot))
+                        eon_workspace_protocol::v38::encode_response(&Response::Snapshot(snapshot))
                             .map_err(|error| format!("cannot encode startup snapshot: {error}"))?;
                     let mut remaining = bytes.as_slice();
                     while !remaining.is_empty() {
@@ -952,6 +953,7 @@ fn supervise(
     // Each edit rereads `[editor]`; a malformed one fails the start as other settings do.
     if mode == LaunchMode::Workspace {
         managed_environment::editor_command(config, &inputs.defaults, Some(log))?;
+        managed_environment::shell_command(config, &inputs.defaults, Some(log))?;
     }
     // Full Eon only; eonbase has no poller and no sidebar (EON-C31).
     let mut attention = if mode == LaunchMode::Workspace {
@@ -967,16 +969,31 @@ fn supervise(
         geometry: inputs.defaults.popups.geometry,
         entries: Vec::new(),
     });
+    let registry = (mode == LaunchMode::Workspace)
+        .then(Registry::new)
+        .transpose()
+        .map_err(|error| error.to_string())?;
+    let registration = registry
+        .as_ref()
+        .map(|registry| registry.create(None))
+        .transpose()
+        .map_err(|error| error.to_string())?;
+    let startup_error = |detail: String| match &registration {
+        Some(registration) => format!("{detail}; registered persistent_id={}", registration.id),
+        None => detail,
+    };
     let (mut sessions, recovered_pair) = recover_sessions(
         runtime,
         mode,
         generation,
         log.orbit_directory().ok(),
         Instant::now() + SESSION_START_TIMEOUT,
-    )?;
+    )
+    .map_err(&startup_error)?;
     let mut scrollback = Snapshots::new(runtime);
     scrollback.sweep(sessions.iter().map(|session| session.id.as_str()), log);
-    let control_listener = ControlListener::bind(&runtime.join("eon.sock"))?;
+    let control_listener =
+        ControlListener::bind(&runtime.join("eon.sock")).map_err(&startup_error)?;
     let initial_endpoint = runtime.join("orbit.sock");
     let initial_session_id = "terminal-1";
     let presentation_socket = if mode == LaunchMode::Workspace {
@@ -991,14 +1008,17 @@ fn supervise(
     let admitted = if terminal.requires_startup_admission() || fresh_animation {
         let snapshot = if mode == LaunchMode::Workspace {
             let workspaces = if sessions.is_empty() && !recovered_pair {
-                WorkspaceSet::pending(
+                WorkspaceSet::registered_pending(
+                    registry.as_ref().unwrap().clone(),
+                    registration.as_ref().unwrap().clone(),
                     runtime.to_path_buf(),
                     launch_directory.clone(),
                     env::home_dir(),
                     popup_catalog.clone(),
                     |_, _| Ok(Vec::new()),
                     |_| Ok(()),
-                )?
+                )
+                .map_err(&startup_error)?
             } else {
                 let recovered = if sessions.is_empty() {
                     vec![(
@@ -1009,15 +1029,18 @@ fn supervise(
                         },
                     )]
                 } else {
-                    recovered_workspace_sessions(&sessions)?
+                    recovered_workspace_sessions(&sessions).map_err(&startup_error)?
                 };
-                WorkspaceSet::with_recovered_sessions(
+                WorkspaceSet::registered_recovered(
+                    registry.as_ref().unwrap().clone(),
+                    registration.as_ref().unwrap().clone(),
                     runtime.to_path_buf(),
                     launch_directory.clone(),
                     env::home_dir(),
                     recovered,
                     popup_catalog.clone(),
-                )?
+                )
+                .map_err(&startup_error)?
             };
             let mut snapshot = workspaces.snapshot();
             if let Some(running) = &running {
@@ -1060,14 +1083,17 @@ fn supervise(
             animate_working_badge,
             number_keys,
         );
-        Some(PresentationProcess::start(
-            command,
-            true,
-            snapshot,
-            PRESENTATION_ADMISSION_TIMEOUT,
-            &mut sessions,
-            log,
-        )?)
+        Some(
+            PresentationProcess::start(
+                command,
+                true,
+                snapshot,
+                PRESENTATION_ADMISSION_TIMEOUT,
+                &mut sessions,
+                log,
+            )
+            .map_err(&startup_error)?,
+        )
     } else {
         None
     };
@@ -1077,24 +1103,29 @@ fn supervise(
         Vec::new()
     };
     if sessions.is_empty() && (mode == LaunchMode::Terminal || recovered_pair) {
-        sessions.push(start_orbit(
-            inputs,
-            config,
-            &initial_endpoint,
-            initial_session_id,
-            generation,
-            &launch_directory,
-            &initial_child,
-            None,
-            log,
-            // Starts after admission, which may have used most of its own deadline.
-            Instant::now() + SESSION_START_TIMEOUT,
-        )?);
+        sessions.push(
+            start_orbit(
+                inputs,
+                config,
+                &initial_endpoint,
+                initial_session_id,
+                generation,
+                &launch_directory,
+                &initial_child,
+                None,
+                log,
+                // Starts after admission, which may have used most of its own deadline.
+                Instant::now() + SESSION_START_TIMEOUT,
+            )
+            .map_err(&startup_error)?,
+        );
         initial_child.clear();
     }
     let workspaces = if mode == LaunchMode::Workspace {
         Some(if sessions.is_empty() {
-            WorkspaceSet::pending(
+            WorkspaceSet::registered_pending(
+                registry.as_ref().unwrap().clone(),
+                registration.as_ref().unwrap().clone(),
                 runtime.to_path_buf(),
                 launch_directory.clone(),
                 env::home_dir(),
@@ -1122,15 +1153,19 @@ fn supervise(
                         admitted.as_ref().and_then(|venus| venus.name),
                     )
                 },
-            )?
+            )
+            .map_err(&startup_error)?
         } else {
-            WorkspaceSet::with_recovered_sessions(
+            WorkspaceSet::registered_recovered(
+                registry.as_ref().unwrap().clone(),
+                registration.as_ref().unwrap().clone(),
                 runtime.to_path_buf(),
                 launch_directory,
                 env::home_dir(),
-                recovered_workspace_sessions(&sessions)?,
+                recovered_workspace_sessions(&sessions).map_err(&startup_error)?,
                 popup_catalog,
-            )?
+            )
+            .map_err(&startup_error)?
         })
     } else {
         None
@@ -1197,7 +1232,7 @@ fn supervise(
             if let Err(cleanup) = session_cleanup {
                 errors.push(format!("cannot roll back terminals: {cleanup}"));
             }
-            return Err(errors.join("; "));
+            return Err(startup_error(errors.join("; ")));
         }
     };
     // Terminals started after an admitted Venus spawned.
@@ -1699,7 +1734,7 @@ fn close_workspace_pane(
 
 fn close_workspace(
     request: &Request,
-    target: &str,
+    target: &WorkspaceTarget,
     state: &mut SupervisorState,
     inputs: &Inputs,
     config: &Path,
@@ -2692,13 +2727,37 @@ fn dispatch_control_request(
                 Ok(caller) => caller,
                 Err(error) => return (ControlResponse::Workspace(Response::Failure(error)), false),
             };
+            if matches!(
+                request.action,
+                Action::Workspace(WorkspaceAction::NewWorkspace { .. })
+            ) && let Err(detail) =
+                managed_environment::shell_command(config, &inputs.defaults, Some(&state.log))
+            {
+                return (
+                    ControlResponse::Workspace(Response::Failure(failure(
+                        "invalid-config",
+                        detail,
+                    ))),
+                    false,
+                );
+            }
             let Some(workspace) = &mut state.workspaces else {
                 unreachable!("reconciliation keeps the workspace owner");
             };
-            let reply_workspace = match workspace.caller_workspace_id(caller.as_deref()) {
-                Ok(workspace) => workspace,
-                Err(error) => return (ControlResponse::Workspace(Response::Failure(error)), false),
-            };
+            let reply_workspace =
+                match workspace
+                    .caller_workspace_id(caller.as_deref())
+                    .and_then(|caller| match &request.action {
+                        Action::Workspace(WorkspaceAction::InspectWorkspace {
+                            workspace: target,
+                        }) => workspace.inspected_workspace_id(target).map(Some),
+                        _ => Ok(caller),
+                    }) {
+                    Ok(workspace) => workspace,
+                    Err(error) => {
+                        return (ControlResponse::Workspace(Response::Failure(error)), false);
+                    }
+                };
             // A queue jump is the FocusAttention of its target in the target's
             // workspace, which it shows; an empty queue is rejected and changes
             // nothing (EON-C31, EON-C33).
@@ -3454,6 +3513,107 @@ mod tests {
         fs::remove_dir_all(runtime).unwrap();
     }
 
+    // Environment-sensitive startup runs in its own process, never changing the test runner.
+    #[test]
+    fn c38_supervisor_startup_process() {
+        let Some(root) = std::env::var_os("EON_C38_STARTUP_ROOT").map(PathBuf::from) else {
+            return;
+        };
+        let inputs = crate::fixtures::inputs();
+        let log = DiagnosticLog::open_in(Ok(root.join("logs")), "component-1", "eon");
+        let lock = super::lock_supervisor_lifecycle(&root.join("startup.lock")).unwrap();
+        let mode = if std::env::var_os("EON_C38_BASE").is_some() {
+            LaunchMode::Terminal
+        } else {
+            LaunchMode::Workspace
+        };
+        let result = super::supervise(
+            &inputs,
+            &root,
+            inputs.defaults.terminal.clone(),
+            &super::window_bar(mode, &root, &inputs, None).unwrap(),
+            Some(inputs.defaults.popups.clone()),
+            None,
+            lock,
+            &root.join("a/b"),
+            &[],
+            "component-1",
+            mode,
+            "",
+            false,
+            &log,
+        );
+        fs::write(root.join("startup-result"), result.unwrap_err()).unwrap();
+    }
+
+    // Registration gates recovery itself; failed launches retain metadata, eonbase does not register.
+    #[test]
+    fn c38_supervisor_startup_gates_recovery_and_retains_identity() {
+        use crate::session_registry::Registry;
+        for case in ["config", "registry", "launch", "base"] {
+            let root = temporary_directory();
+            fs::set_permissions(&root, fs::Permissions::from_mode(0o700)).unwrap();
+            let runtime = root.join("a/b");
+            fs::create_dir_all(&runtime).unwrap();
+            let registry = Registry::in_test_directory(root.join("state/eon/sessions"));
+            let mut live = None;
+            if case == "config" {
+                fs::write(root.join("config.toml"), "[shell]\ncommand = []\n").unwrap();
+            } else if case == "registry" {
+                registry.create(None).unwrap();
+                fs::write(root.join("state/eon/sessions/allocator.json"), b"{").unwrap();
+                live = Some(leased_orbit(&runtime, "exec sleep 30"));
+                sessions::mark_pending_pair(&runtime.join("orbit.sock")).unwrap();
+            }
+            let mut command = Command::new(std::env::current_exe().unwrap());
+            command
+                .args([
+                    "--exact",
+                    "supervisor::tests::c38_supervisor_startup_process",
+                    "--nocapture",
+                ])
+                .env("EON_C38_STARTUP_ROOT", &root)
+                .env("HOME", &root)
+                .env("XDG_STATE_HOME", root.join("state"))
+                .env("EON_RUNTIME_DIR", root.join("runtime"))
+                .current_dir(&root)
+                .stdin(std::process::Stdio::null());
+            if case == "base" {
+                command.env("EON_C38_BASE", "1");
+            }
+            let output = command.output().unwrap();
+            assert!(
+                output.status.success(),
+                "{}",
+                String::from_utf8_lossy(&output.stderr)
+            );
+            let error = fs::read_to_string(root.join("startup-result")).unwrap();
+            match case {
+                "config" => {
+                    assert!(error.contains("shell.command"), "{error}");
+                    assert!(registry.list().unwrap().is_empty());
+                }
+                "registry" => {
+                    assert!(error.contains("session registry"), "{error}");
+                    assert!(sessions::pending_pair_marker(&runtime.join("orbit.sock")).exists());
+                    let mut sessions = vec![live.take().unwrap()];
+                    assert_eq!(sessions::session_finished(&mut sessions[0]).unwrap(), None);
+                    let log =
+                        DiagnosticLog::open_in(Ok(root.join("cleanup-logs")), "component-1", "eon");
+                    super::stop_owned_session(&mut sessions, "terminal-1", &log).unwrap();
+                }
+                "launch" => {
+                    let records = registry.list().unwrap();
+                    assert_eq!(records.len(), 1);
+                    assert!(error.contains(&records[0].id), "{error}");
+                }
+                "base" => assert!(registry.list().unwrap().is_empty()),
+                _ => unreachable!(),
+            }
+            fs::remove_dir_all(root).unwrap();
+        }
+    }
+
     fn window_agents() -> crate::managed_environment::Agents {
         crate::managed_environment::Agents {
             terminal_access: crate::managed_environment::TerminalAccess::Window,
@@ -3534,16 +3694,16 @@ mod tests {
         state
             .subscribers
             .attach(stream, *subscriber, Instant::now());
-        let mut message = vec![0; eon_workspace_protocol::v37::HEADER_BYTES];
+        let mut message = vec![0; eon_workspace_protocol::v38::HEADER_BYTES];
         peer.read_exact(&mut message).unwrap();
         message.resize(
-            eon_workspace_protocol::v37::declared_message_len(&message).unwrap(),
+            eon_workspace_protocol::v38::declared_message_len(&message).unwrap(),
             0,
         );
-        peer.read_exact(&mut message[eon_workspace_protocol::v37::HEADER_BYTES..])
+        peer.read_exact(&mut message[eon_workspace_protocol::v38::HEADER_BYTES..])
             .unwrap();
-        let eon_workspace_protocol::v37::SubscriptionMessage::Subscribed(subscribed) =
-            eon_workspace_protocol::v37::decode_subscription_message(&message).unwrap()
+        let eon_workspace_protocol::v38::SubscriptionMessage::Subscribed(subscribed) =
+            eon_workspace_protocol::v38::decode_subscription_message(&message).unwrap()
         else {
             panic!("no SUBSCRIBED");
         };
@@ -3559,7 +3719,7 @@ mod tests {
         assert_eq!(state.workspace_snapshot_in(None).unwrap(), before);
         assert!(state.venus.is_none());
 
-        let missing = eon_workspace_protocol::v37::Filter {
+        let missing = eon_workspace_protocol::v38::Filter {
             workspaces: vec!["s9".into()],
             ..Default::default()
         };
@@ -3670,7 +3830,7 @@ mod tests {
     /// A pending window with one unfiltered subscriber that has read its
     /// snapshot, and that subscriber's end of the connection.
     fn subscribed_window() -> (PathBuf, crate::cli::Inputs, SupervisorState, UnixStream) {
-        use eon_workspace_protocol::v37::SubscriptionMessage;
+        use eon_workspace_protocol::v38::SubscriptionMessage;
         let root = temporary_directory();
         let inputs = crate::fixtures::inputs();
         let workspace = WorkspaceSet::pending(
@@ -3741,9 +3901,9 @@ mod tests {
         mut peer: UnixStream,
     ) -> std::thread::JoinHandle<(
         super::Response,
-        Vec<eon_workspace_protocol::v37::SubscriptionMessage>,
+        Vec<eon_workspace_protocol::v38::SubscriptionMessage>,
     )> {
-        use eon_workspace_protocol::v37::{
+        use eon_workspace_protocol::v38::{
             HEADER_BYTES, declared_message_len, decode_response, encode_request,
         };
         use std::io::Write;
@@ -3789,9 +3949,9 @@ mod tests {
 
     /// The names of the `workspace-renamed` events in `messages`.
     fn renames(
-        messages: &[eon_workspace_protocol::v37::SubscriptionMessage],
+        messages: &[eon_workspace_protocol::v38::SubscriptionMessage],
     ) -> Vec<Option<String>> {
-        use eon_workspace_protocol::v37::{Change, SubscriptionMessage, WorkspaceChange};
+        use eon_workspace_protocol::v38::{Change, SubscriptionMessage, WorkspaceChange};
         messages
             .iter()
             .filter_map(|message| match message {
@@ -3810,8 +3970,8 @@ mod tests {
     /// Every whole subscription message already written to `peer`.
     fn subscription_messages(
         peer: &mut UnixStream,
-    ) -> Vec<eon_workspace_protocol::v37::SubscriptionMessage> {
-        use eon_workspace_protocol::v37::{declared_message_len, decode_subscription_message};
+    ) -> Vec<eon_workspace_protocol::v38::SubscriptionMessage> {
+        use eon_workspace_protocol::v38::{declared_message_len, decode_subscription_message};
         peer.set_nonblocking(true).unwrap();
         let mut bytes = Vec::new();
         let mut buffer = [0; 65536];
@@ -3839,7 +3999,7 @@ mod tests {
     #[cfg(target_os = "linux")]
     #[test]
     fn attention_reaches_subscribers_in_the_loop_turn_that_polls_it() {
-        use eon_workspace_protocol::v37::{AttentionState, Change, SubscriptionMessage};
+        use eon_workspace_protocol::v38::{AttentionState, Change, SubscriptionMessage};
         let root = temporary_directory();
         let inputs = crate::fixtures::inputs();
         let session = leased_orbit(
@@ -3888,8 +4048,8 @@ mod tests {
                 id: "subscribe-1".into(),
                 caller: None,
                 action: Action::Subscribe {
-                    filter: eon_workspace_protocol::v37::Filter {
-                        kinds: vec![eon_workspace_protocol::v37::EventKind::Attention],
+                    filter: eon_workspace_protocol::v38::Filter {
+                        kinds: vec![eon_workspace_protocol::v38::EventKind::Attention],
                         ..Default::default()
                     },
                     after: None,
@@ -4028,8 +4188,8 @@ mod tests {
     fn inspected(
         state: &mut SupervisorState,
     ) -> (
-        Option<eon_workspace_protocol::v37::Attention>,
-        Vec<eon_workspace_protocol::v37::QueueEntry>,
+        Option<eon_workspace_protocol::v38::Attention>,
+        Vec<eon_workspace_protocol::v38::QueueEntry>,
     ) {
         // Each request ID is accepted once.
         static INSPECTIONS: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
@@ -4048,10 +4208,10 @@ mod tests {
         );
         assert!(!ended);
         let snapshot = match response {
-            super::ControlResponse::Workspace(eon_workspace_protocol::v37::Response::Snapshot(
+            super::ControlResponse::Workspace(eon_workspace_protocol::v38::Response::Snapshot(
                 snapshot,
             )) => snapshot,
-            super::ControlResponse::Workspace(eon_workspace_protocol::v37::Response::Failure(
+            super::ControlResponse::Workspace(eon_workspace_protocol::v38::Response::Failure(
                 failure,
             )) => panic!("Inspect failed: {} {}", failure.code, failure.detail),
             _ => panic!("Inspect answers with a snapshot"),
@@ -4070,9 +4230,9 @@ mod tests {
     fn raise_finish(
         state: &mut SupervisorState,
         gate: &Path,
-    ) -> eon_workspace_protocol::v37::AttentionState {
-        use eon_workspace_protocol::v37::AttentionState;
-        let changed = |attention: &Option<eon_workspace_protocol::v37::Attention>| {
+    ) -> eon_workspace_protocol::v38::AttentionState {
+        use eon_workspace_protocol::v38::AttentionState;
+        let changed = |attention: &Option<eon_workspace_protocol::v38::Attention>| {
             attention
                 .as_ref()
                 .and_then(|attention| attention.record.as_ref())
@@ -4105,7 +4265,7 @@ mod tests {
     #[cfg(target_os = "linux")]
     #[test]
     fn selected_raise_waits_for_native_window_focus() {
-        use eon_workspace_protocol::v37::AttentionState::{Finished, Idle};
+        use eon_workspace_protocol::v38::AttentionState::{Finished, Idle};
         use std::io::Write;
         let root = temporary_directory();
         let (mut state, gate) = finishing_window(&root);
@@ -4226,7 +4386,7 @@ mod tests {
     #[cfg(target_os = "linux")]
     #[test]
     fn replacement_venus_does_not_inherit_focus() {
-        use eon_workspace_protocol::v37::AttentionState::{Finished, Idle};
+        use eon_workspace_protocol::v38::AttentionState::{Finished, Idle};
         use std::{io::Write, net::Shutdown};
         let root = temporary_directory();
         let (mut state, gate) = finishing_window(&root);
@@ -5192,7 +5352,7 @@ mod tests {
 
     #[test]
     fn startup_snapshot_transfer_uses_the_admission_deadline() {
-        use eon_workspace_protocol::v37::{
+        use eon_workspace_protocol::v38::{
             Column, Pane, PopupGeometry, Response, Snapshot, Tab, encode_response,
         };
         use std::time::{Duration, Instant};
@@ -5201,8 +5361,9 @@ mod tests {
         let snapshot = Snapshot {
             workspace: "s1".into(),
             active_workspace: "s1".into(),
-            workspaces: vec![eon_workspace_protocol::v37::WorkspaceInfo {
+            workspaces: vec![eon_workspace_protocol::v38::WorkspaceInfo {
                 id: "s1".into(),
+                persistent_id: "s1".into(),
                 name: None,
                 tab_count: 64,
                 attention: None,
@@ -5243,7 +5404,7 @@ mod tests {
             claude_quota_failure: None,
             running: None,
             busy: None,
-            sidebar: eon_workspace_protocol::v37::Sidebar::Open,
+            sidebar: eon_workspace_protocol::v38::Sidebar::Open,
             attention_queue: Vec::new(),
         };
         let expected = encode_response(&Response::Snapshot(snapshot.clone())).unwrap();
