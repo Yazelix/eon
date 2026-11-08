@@ -23,6 +23,8 @@ use std::{
 
 use serde_json::{Value, json};
 
+mod direct;
+
 const REPOSITORY: &str = "https://github.com/Yazelix/eon";
 const API: &str = "https://api.github.com/repos/Yazelix/eon";
 /// The composition's source receipt, beside the package's `bin`.
@@ -59,7 +61,7 @@ pub(crate) fn wanted(arguments: &[OsString]) -> bool {
 pub(crate) fn run(arguments: &[OsString], invoked: Build, defaults: &eon_runtime::Defaults) -> u8 {
     let mut request = parse(&arguments[2..]);
     let mut config_error = None;
-    if matches!(request.selection, Ok(None)) {
+    if request.prefix.is_none() && matches!(request.selection, Ok(None)) {
         match eon_runtime::update_target(defaults) {
             Ok(target) => {
                 request.selection = Ok(target.map(|(profile, entry)| Selector { profile, entry }))
@@ -85,13 +87,21 @@ pub(crate) fn run(arguments: &[OsString], invoked: Build, defaults: &eon_runtime
                 let mut report = if request.operation == Some("install") {
                     install(&request, invoked, &places, &system)
                 } else {
-                    check(
-                        selector.as_ref(),
-                        invoked,
-                        &places,
-                        &system,
-                        SystemTime::now(),
-                    )
+                    if let Some(prefix) = &request.prefix {
+                        check_remote(
+                            direct::inspect(Some(prefix), invoked, &places, SystemTime::now())
+                                .unwrap(),
+                            &system,
+                        )
+                    } else {
+                        check(
+                            selector.as_ref(),
+                            invoked,
+                            &places,
+                            &system,
+                            SystemTime::now(),
+                        )
+                    }
                 };
                 if INTERRUPTED.swap(false, Ordering::Relaxed) {
                     let stage = report.error.as_ref().map_or("check", |error| error.stage);
@@ -131,6 +141,7 @@ pub(crate) fn run(arguments: &[OsString], invoked: Build, defaults: &eon_runtime
 
 struct Request {
     json: bool,
+    prefix: Option<PathBuf>,
     yes: bool,
     operation: Option<&'static str>,
     selection: Result<Option<Selector>, String>,
@@ -203,8 +214,9 @@ fn parse(options: &[OsString]) -> Request {
         [mode] => Some(*mode),
         _ => None,
     };
-    let selection = selection(&modes, yes, profile, entry, prefix, problem);
+    let selection = selection(&modes, yes, profile, entry, prefix.clone(), problem);
     Request {
+        prefix: prefix.map(PathBuf::from),
         json,
         yes,
         operation,
@@ -231,12 +243,21 @@ fn selection(
     if yes && modes == ["check"] {
         return Err("--yes applies only to --install".into());
     }
-    if prefix.is_some() {
-        return Err(if profile.is_some() || entry.is_some() {
-            "--prefix excludes --profile and --entry".into()
-        } else {
-            "eon update --prefix is not available in this build".into()
-        });
+    if let Some(prefix) = prefix {
+        if profile.is_some() || entry.is_some() {
+            return Err("--prefix excludes --profile and --entry".into());
+        }
+        let prefix = PathBuf::from(prefix);
+        if !prefix.is_absolute()
+            || prefix
+                .components()
+                .any(|part| part == std::path::Component::ParentDir)
+        {
+            return Err("--prefix needs an absolute path without ..".into());
+        }
+        if modes == ["install"] {
+            return Err("eon update --install --prefix is not available in this build".into());
+        }
     }
     match (profile, entry) {
         (None, None) => Ok(None),
@@ -271,6 +292,7 @@ struct Places {
     /// names the installation that launched it. A store output alone does
     /// not, since `nix run` and a profile can run the same one.
     launcher: Option<PathBuf>,
+    installer: Option<PathBuf>,
     /// HOME is unset or relative, so the default profile is unknown.
     homeless: bool,
     /// The user's default profile, as Nix names it with and without XDG
@@ -321,6 +343,7 @@ impl Places {
                 .ok()
                 .and_then(|path| path.parent().map(Path::to_path_buf)),
             launcher,
+            installer: absolute("EON_INSTALLER"),
             homeless: home.is_none(),
             user_profiles: home
                 .map(|home| home.join(".nix-profile"))
@@ -340,13 +363,19 @@ trait Host {
     /// `nix profile list --json` for `profile`.
     fn profile_list(&self, profile: &Path) -> Result<Vec<u8>, Trouble>;
     /// One HTTPS GET: the status and body, or why no response arrived.
-    fn get(&self, url: &str, accept: &str) -> Result<(u16, Vec<u8>), Trouble>;
+    fn get(&self, url: &str, accept: &str, limit: Duration) -> Result<(u16, Vec<u8>), Trouble>;
 }
 
 struct System {
     version: &'static str,
     /// The composition's pinned curl, `EON_CURL`.
     curl: Option<PathBuf>,
+}
+
+fn curl_ca_configured(value: impl Fn(&str) -> Option<OsString>) -> bool {
+    ["CURL_CA_BUNDLE", "SSL_CERT_FILE", "SSL_CERT_DIR"]
+        .iter()
+        .any(|name| value(name).is_some())
 }
 
 impl Host for System {
@@ -378,7 +407,7 @@ impl Host for System {
         }
     }
 
-    fn get(&self, url: &str, accept: &str) -> Result<(u16, Vec<u8>), Trouble> {
+    fn get(&self, url: &str, accept: &str, limit: Duration) -> Result<(u16, Vec<u8>), Trouble> {
         let Some(curl) = &self.curl else {
             return Err((
                 "curl-unavailable",
@@ -389,6 +418,16 @@ impl Host for System {
         // The installer's discipline: no curlrc, HTTPS only, no redirects,
         // bounded time and size (a fixed safety budget).
         let mut command = Command::new(curl);
+        if !curl_ca_configured(|name| env::var_os(name))
+            && let Ok(executable) = env::current_exe()
+            && let Some(package) = executable.parent().and_then(Path::parent)
+        {
+            let certificates = package.join("share/eon/update-ca-bundle.crt");
+            if certificates.is_file() {
+                command.env("CURL_CA_BUNDLE", certificates);
+            }
+        }
+        let max_time = limit.min(Duration::from_secs(30)).as_secs_f64().to_string();
         command.args([
             "-q",
             "--silent",
@@ -400,7 +439,7 @@ impl Host for System {
             "--connect-timeout",
             "10",
             "--max-time",
-            "30",
+            &max_time,
             "--max-filesize",
             "16777216",
             "--header",
@@ -413,7 +452,7 @@ impl Host for System {
             "\n%{http_code}",
             url,
         ]);
-        let output = bounded(command, CURL_LIMIT).map_err(|error| {
+        let output = bounded(command, limit).map_err(|error| {
             error.trouble(["curl-unavailable", "offline", "curl-failed"], "curl")
         })?;
         let diagnostics = String::from_utf8_lossy(&output.stderr).trim().to_owned();
@@ -808,6 +847,8 @@ fn through(launcher: &Path, profile: &Path) -> bool {
 /// What the profile entry records about its source.
 #[derive(Clone, Debug, PartialEq)]
 struct Source {
+    archive_url: Option<String>,
+    archive_sha256: Option<String>,
     repository: Option<String>,
     policy: &'static str,
     original_ref: Option<String>,
@@ -854,6 +895,8 @@ fn source(element: &Element) -> Source {
         None => (None, "unknown"),
     };
     Source {
+        archive_url: None,
+        archive_sha256: None,
         repository,
         policy,
         original_ref: element.original_url.clone(),
@@ -899,14 +942,27 @@ struct Receipt {
     attribute: Option<String>,
 }
 
-fn receipt(package: &Path) -> Option<Receipt> {
-    let mut bytes = Vec::new();
-    fs::File::open(package.join(RECEIPT))
-        .ok()?
-        .take(64 * 1024)
-        .read_to_end(&mut bytes)
+/// Read one regular descriptor without following its final link or waiting on a FIFO.
+fn bounded_file(path: &Path) -> Option<Vec<u8>> {
+    let file = fs::OpenOptions::new()
+        .read(true)
+        .custom_flags(libc::O_NOFOLLOW | libc::O_NONBLOCK)
+        .open(path)
         .ok()?;
-    let value: Value = serde_json::from_slice(&bytes).ok()?;
+    if !file.metadata().ok()?.is_file() {
+        return None;
+    }
+    let mut bytes = Vec::new();
+    file.take(65537).read_to_end(&mut bytes).ok()?;
+    (bytes.len() <= 65536).then_some(bytes)
+}
+
+fn receipt(package: &Path) -> Option<Receipt> {
+    parse_receipt(&bounded_file(&package.join(RECEIPT))?)
+}
+
+fn parse_receipt(bytes: &[u8]) -> Option<Receipt> {
+    let value: Value = serde_json::from_slice(bytes).ok()?;
     let object = value.as_object()?;
     let optional = |name: &str| match object.get(name)? {
         Value::Null => Some(None),
@@ -965,9 +1021,11 @@ struct Report {
     /// The owner in words, for human output.
     owner: Option<String>,
     target: Option<Selector>,
+    prefix: Option<PathBuf>,
+    candidate_release: Option<direct::Release>,
     launcher: Option<PathBuf>,
     source: Option<Source>,
-    /// Whether the installed build is tied to its locked source revision.
+    /// Whether this backend's local source and build receipts form a validated chain.
     proved: bool,
     invoked: Option<Build>,
     installed: Option<Build>,
@@ -980,6 +1038,29 @@ struct Report {
 }
 
 impl Report {
+    fn checking(invoked: Build, now: SystemTime) -> Self {
+        Self {
+            operation: Some("check"),
+            outcome: "checked",
+            install_kind: "unknown",
+            owner: None,
+            target: None,
+            prefix: None,
+            candidate_release: None,
+            launcher: None,
+            source: None,
+            proved: false,
+            invoked: Some(invoked),
+            installed: None,
+            checked_at: Some(rfc3339(now)),
+            availability: unknown(None),
+            capability: undecided(None),
+            selection: None,
+            snapshot: None,
+            error: None,
+        }
+    }
+
     fn invalid(operation: Option<&'static str>, message: String) -> Self {
         Self {
             operation,
@@ -987,6 +1068,8 @@ impl Report {
             install_kind: "unknown",
             owner: None,
             target: None,
+            prefix: None,
+            candidate_release: None,
             launcher: None,
             source: None,
             proved: false,
@@ -1041,33 +1124,26 @@ impl Report {
             "operation": self.operation,
             "outcome": self.outcome,
             "install_kind": self.install_kind,
-            "target": self.target.as_ref().map(|target| json!({
+            "target": self.prefix.as_deref().map(|prefix| json!({"prefix":json_path(prefix)})).or_else(|| self.target.as_ref().map(|target| json!({
                 "profile": json_path(&target.profile),
                 "entry": target.entry,
-            })),
+            }))),
             "launcher": self.launcher.as_deref().map(json_path),
-            "source": self.source.as_ref().map(|source| json!({
-                "repository": source.repository,
-                "policy": source.policy,
-                "original_ref": source.original_ref,
-                "locked_ref": source.locked_ref,
-                "attribute": source.attribute,
-                "revision": source.revision,
-                "archive_url": null,
-                "archive_sha256": null,
-            })),
+            "source": self.source.as_ref().map(Source::json),
             "invoked": build(&self.invoked),
             "installed": build(&self.installed),
             "running": null,
             "checked_at": self.checked_at,
             "availability": {
                 "state": self.availability.state,
-                "candidate": self.availability.candidate.as_ref().map(|revision| json!({
+                "candidate": self.candidate_release.as_ref().map(|release| json!({
+                    "version":release.version,"build":null,"revision":null,"archive_url":release.archive_url
+                })).or_else(|| self.availability.candidate.as_ref().map(|revision| json!({
                     "version": null,
                     "build": null,
                     "revision": revision,
                     "archive_url": null,
-                })),
+                }))),
                 "reason": self.availability.reason,
             },
             "capability": {
@@ -1125,21 +1201,26 @@ impl Report {
             lines.push(format!("Launcher: {}", launcher.display()));
         }
         if let Some(source) = &self.source {
-            lines.push(format!(
-                "Source: {} ({}), locked at {}",
-                source.policy,
-                source
-                    .original_ref
-                    .as_deref()
-                    .unwrap_or("no flake reference"),
-                source.revision.as_deref().unwrap_or("an unknown revision")
-            ));
-            lines.push(if self.proved {
+            if let Some(url) = &source.archive_url {
+                lines.push(format!("Source: release {url}"));
+                lines.push("Provenance: local installer and build receipts agree; discovery verifies no signature or archive bytes.".into());
+            } else {
+                lines.push(format!(
+                    "Source: {} ({}), locked at {}",
+                    source.policy,
+                    source
+                        .original_ref
+                        .as_deref()
+                        .unwrap_or("no flake reference"),
+                    source.revision.as_deref().unwrap_or("an unknown revision")
+                ));
+                lines.push(if self.proved {
                 "Provenance: proved, the installed build's receipt names that revision".into()
             } else {
                 "Provenance: unknown, no source receipt ties the installed build to that revision"
                     .into()
             });
+            }
         }
         lines.extend(
             self.invoked
@@ -1158,7 +1239,19 @@ impl Report {
             .map_or(String::new(), |revision| {
                 format!(", the source is at {revision}")
             });
+        let candidate = self
+            .candidate_release
+            .as_ref()
+            .map_or(candidate, |release| {
+                format!(
+                    ", eon {} at {} (metadata only; installer verification required)",
+                    release.version, release.archive_url
+                )
+            });
         lines.push(match (self.availability.state, self.availability.reason) {
+            ("current", _) if self.install_kind == "eon-install" => format!(
+                "Update: none, the selected archive matches the latest release metadata{candidate}"
+            ),
             ("current", _) => {
                 "Update: none, the installed build is the source's current revision".into()
             }
@@ -1237,7 +1330,7 @@ impl Source {
     fn json(&self) -> Value {
         json!({"repository": self.repository, "policy": self.policy, "original_ref": self.original_ref,
             "locked_ref": self.locked_ref, "attribute": self.attribute, "revision": self.revision,
-            "archive_url": null, "archive_sha256": null})
+            "archive_url": self.archive_url, "archive_sha256": self.archive_sha256})
     }
 }
 
@@ -1294,6 +1387,9 @@ fn check(
 }
 
 fn check_remote(mut report: Report, host: &dyn Host) -> Report {
+    if report.install_kind == "eon-install" {
+        return direct::check_remote(report, host);
+    }
     let Some(source) = report.source.clone() else {
         return report;
     };
@@ -1342,24 +1438,13 @@ fn inspect(
     host: &dyn Host,
     now: SystemTime,
 ) -> Report {
-    let mut report = Report {
-        operation: Some("check"),
-        outcome: "checked",
-        install_kind: "unknown",
-        owner: None,
-        target: selector.cloned(),
-        launcher: None,
-        source: None,
-        proved: false,
-        invoked: Some(invoked.clone()),
-        installed: None,
-        checked_at: Some(rfc3339(now)),
-        availability: unknown(None),
-        capability: undecided(None),
-        selection: None,
-        snapshot: None,
-        error: None,
-    };
+    if selector.is_none()
+        && let Some(report) = direct::inspect(None, invoked.clone(), places, now)
+    {
+        return report;
+    }
+    let mut report = Report::checking(invoked.clone(), now);
+    report.target = selector.cloned();
     let refuse = |report: &mut Report, reason, next_step: String| {
         report.availability = unknown(Some(reason));
         report.capability = Capability {
@@ -2090,7 +2175,11 @@ fn remote(
 /// One API request: its body on success, None when GitHub has no such
 /// object, or why the check failed.
 fn request(host: &dyn Host, url: &str, accept: &str) -> Result<Option<Vec<u8>>, Trouble> {
-    match host.get(url, accept)? {
+    response(host.get(url, accept, CURL_LIMIT)?)
+}
+
+fn response(reply: (u16, Vec<u8>)) -> Result<Option<Vec<u8>>, Trouble> {
+    match reply {
         (200, body) => Ok(Some(body)),
         (404 | 422, _) => Ok(None),
         (403 | 429, _) => Err((
@@ -2226,15 +2315,15 @@ mod tests {
 
     const OLD: &str = "1111111111111111111111111111111111111111";
     const NEW: &str = "2222222222222222222222222222222222222222";
-    const BUILD: &str = "g1-aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
+    pub(super) const BUILD: &str = "g1-aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
     const OTHER_BUILD: &str = "g1-bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb";
     const ATTRIBUTE: &str = "packages.x86_64-linux.default";
 
     /// A fake store, profiles and launchers under one temporary directory.
-    struct Tree(PathBuf);
+    pub(super) struct Tree(pub(super) PathBuf);
 
     impl Tree {
-        fn new() -> Self {
+        pub(super) fn new() -> Self {
             static NEXT: AtomicUsize = AtomicUsize::new(0);
             let path = env::temp_dir().join(format!(
                 "eon-update-{}-{}",
@@ -2278,12 +2367,13 @@ mod tests {
         }
 
         /// Discovery for an `eon` started as `launcher`.
-        fn places(&self, launcher: &Path) -> Places {
+        pub(super) fn places(&self, launcher: &Path) -> Places {
             Places {
                 invoked: fs::canonicalize(launcher)
                     .ok()
                     .and_then(|path| path.parent().map(Path::to_path_buf)),
                 launcher: Some(launcher.to_path_buf()),
+                installer: None,
                 homeless: false,
                 user_profiles: vec![
                     self.0.join("home/.nix-profile"),
@@ -2356,11 +2446,12 @@ mod tests {
     type Response = Result<(u16, Vec<u8>), Trouble>;
 
     #[derive(Default)]
-    struct Fake {
-        listings: HashMap<PathBuf, Result<Vec<u8>, Trouble>>,
+    pub(super) struct Fake {
+        pub(super) listings: HashMap<PathBuf, Result<Vec<u8>, Trouble>>,
         /// Responses by URL prefix after the API root.
-        responses: Vec<(&'static str, Response)>,
-        requests: RefCell<Vec<String>>,
+        pub(super) responses: Vec<(&'static str, Response)>,
+        pub(super) requests: RefCell<Vec<String>>,
+        pub(super) limits: RefCell<Vec<Duration>>,
     }
 
     impl Host for Fake {
@@ -2371,8 +2462,9 @@ mod tests {
                 .unwrap_or_else(|| panic!("unexpected listing of {}", profile.display()))
         }
 
-        fn get(&self, url: &str, _accept: &str) -> Response {
+        fn get(&self, url: &str, _accept: &str, limit: Duration) -> Response {
             self.requests.borrow_mut().push(url.into());
+            self.limits.borrow_mut().push(limit);
             self.responses
                 .iter()
                 .find(|(prefix, _)| url.starts_with(&format!("{API}/{prefix}")))
@@ -2383,7 +2475,7 @@ mod tests {
         }
     }
 
-    fn invoked() -> Build {
+    pub(super) fn invoked() -> Build {
         Build {
             version: Some("0.1.21".into()),
             build: Some(BUILD.into()),
@@ -2392,7 +2484,7 @@ mod tests {
         }
     }
 
-    fn at(time: u64) -> SystemTime {
+    pub(super) fn at(time: u64) -> SystemTime {
         UNIX_EPOCH + Duration::from_secs(time)
     }
 
@@ -2424,6 +2516,25 @@ mod tests {
 
     fn words(words: &[&str]) -> Vec<OsString> {
         words.iter().map(OsString::from).collect()
+    }
+
+    #[test]
+    fn curl_keeps_explicit_curl_and_openssl_trust_settings() {
+        assert!(!curl_ca_configured(|_| None));
+        for (name, value) in [
+            ("CURL_CA_BUNDLE", "/corporate/ca.pem"),
+            ("SSL_CERT_FILE", "/corporate/ca.pem"),
+            ("SSL_CERT_DIR", "/corporate/certificates"),
+            ("SSL_CERT_FILE", ""),
+        ] {
+            assert!(
+                curl_ca_configured(|key| (key == name).then(|| value.into())),
+                "{name}"
+            );
+        }
+        assert!(!curl_ca_configured(
+            |name| (name == "SSL_CERT_FILE_EXTRA").then(|| "/unrelated".into())
+        ));
     }
 
     #[test]
@@ -2465,11 +2576,16 @@ mod tests {
             }))
         );
         assert_eq!(parse(&words(&["--check"])).selection, Ok(None));
+        let direct = parse(&words(&["--check", "--prefix", "/x"]));
+        assert_eq!(direct.selection, Ok(None));
+        assert_eq!(direct.prefix, Some("/x".into()));
         for line in [
             &["--profile", "/p", "--entry", "e"][..],
             &["--check", "--install"],
             &["--check", "--yes"],
-            &["--check", "--prefix", "/x"],
+            &["--check", "--prefix", "relative"],
+            &["--check", "--prefix", "/x/../y"],
+            &["--install", "--prefix", "/x"],
             &[
                 "--check",
                 "--prefix",

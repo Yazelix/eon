@@ -5,6 +5,12 @@ installation, and proven contract changes.
 
 ## Unreleased
 
+- `eon update --check [--json] [--prefix ABS]` discovers official numbered
+  Linux releases for a validated installer-managed prefix, reports the exact
+  archive and keeps metadata separate from signature verification. Manual
+  extractions remain unmanaged; direct installation remains planned. Bundled
+  HTTPS checks use packaged CA certificates (`eon-update-button-f10d1.6`).
+
 - Direct Linux payloads carry the static trusted installer and the versioned
   source receipt, with an exact installer path that follows payload relocation.
   A missing signer record refuses installation before any download or prefix

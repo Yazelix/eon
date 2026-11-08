@@ -887,6 +887,7 @@
                 # The Eon Bar's icon: the mark in its own colours, centred in a 256x256 square,
                 # as raw 8-bit RGBA with premultiplied alpha.
                 mkdir -p "$out/share/eon"
+                ln -s ${pkgs.cacert}/etc/ssl/certs/ca-bundle.crt "$out/share/eon/update-ca-bundle.crt"
                 ${pkgs.imagemagick}/bin/magick ${./assets/eon.png} -trim +repage -background none \
                   -set option:side '%[fx:max(w,h)]' -gravity center -extent '%[side]x%[side]' \
                   -filter Box -resize 256x256 -channel RGB -fx 'u*u.a' +channel -depth 8 \

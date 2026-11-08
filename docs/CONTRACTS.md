@@ -5034,9 +5034,9 @@ names its socket. CLI JSON names a session `session` and a terminal
   direction. Check for Nix profile installs, discovery and the Nix
   package's source receipt are implemented (`eon-update-button-f10d1.2`);
   Nix-profile `--install` and `updates.nix_profile`/`updates.nix_entry` are
-  implemented (`eon-update-button-f10d1.3`); `--prefix` and the direct-backend
-  configuration keys remain planned and return `invalid-arguments` until
-  their slices land.
+  implemented (`eon-update-button-f10d1.3`); managed-prefix `--check` and
+  `--prefix` for Check are implemented (`eon-update-button-f10d1.6`);
+  direct `--install` and direct-backend configuration keys remain planned.
 - **Consumer:** A person or local agent acting as that person, using full
   Eon's product CLI or its future Commands/menu action to inspect or update
   one installation. eonbase is outside this scope.

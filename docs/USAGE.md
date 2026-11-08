@@ -97,7 +97,7 @@ eon update --check
 ```
 
 It finds the installation the `eon` you ran came from, reads its source from
-Nix, asks GitHub where that source is now, and prints the owner, the source,
+Nix or its managed Linux prefix, asks GitHub where that source is now, and prints the owner, the source,
 the installed build, whether an update exists, and whether Eon may update
 that installation, with the command to run. The check changes nothing;
 `--json` prints the same facts as one
@@ -114,6 +114,18 @@ object (EON-C41). It checks only when you run it.
   own build, and `nix run` or a local build belongs to no installation; there,
   name it: `eon update --check --profile ~/.nix-profile --entry eon`, with
   absolute paths.
+
+For an installer-owned Linux prefix, use `eon update --check --prefix /ABS/PREFIX`
+or run the selected prefix's `bin/eon update --check`. This discovers published
+numbered official releases and the exact Linux archive URL, excluding drafts
+and prereleases. Matching version, archive URL and digest metadata means
+unchanged; equal versions with different artifacts refuse, and lower releases
+are never offered as upgrades. Network and malformed-metadata failures exit 1.
+Manual extractions remain unmanaged. Discovery verifies no signature or archive
+bytes; direct installation and signer configuration remain planned. See the
+[installer guide](INSTALLER.md#installer-inside-a-payload) for independent
+signer setup and manual installation. `--prefix` replaces any configured Nix
+target for that check and excludes `--profile`/`--entry`.
 
 Only builds from this release on carry the source receipt that ties an
 installed build to its revision. An older build reports its provenance as
@@ -643,7 +655,7 @@ line points agents to `eon --skill`.
 | `eon focus ID\|left\|right\|up\|down [--json]` | Focus a stable identity or traverse the session |
 | `eon versions` | Print Eon, protocol, and component identities |
 | `eon update --install [--yes] [--json] [--profile ABS --entry NAME]` | Upgrade one eligible Nix profile entry on its original ref for fresh launches; JSON/nonterminal consent requires an explicit or configured target; see [Update](#update) |
-| `eon update --check [--json] [--profile ABS --entry NAME]` | Report this installation's owner, source and installed build, whether an update exists, and whether Eon may install it, without changing anything; see [Update](#update) |
+| `eon update --check [--json] [--profile ABS --entry NAME \| --prefix ABS]` | Report this installation's owner, source and installed build, whether an update exists, and whether Eon may install it, without changing anything; see [Update](#update) |
 | `eon config path` | Create the configuration root and print the full path of its settings file, `config.toml`, which need not exist yet |
 | `eon config dir` | Create and print the configuration root |
 | `eon config defaults [--json]` | Print built-in defaults as commented TOML or a nested JSON object, without reading user configuration |

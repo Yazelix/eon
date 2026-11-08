@@ -7683,6 +7683,7 @@ fn terminals_drop_the_launching_agents_tool_settings() {
     let child = command
         .env("PATH", std::env::join_paths(path).unwrap())
         .arg("run")
+        .env_remove("CURL_CA_BUNDLE")
         .env("EON_RUNTIME_DIR", &runtime)
         .env("EON_CONFIG_HOME", &config)
         .env("EON_ORBIT", &orbit)
@@ -7727,6 +7728,11 @@ fn terminals_drop_the_launching_agents_tool_settings() {
     // Fails when Codex's forced locale survives a desktop session that has its own.
     assert_eq!(value("LANG").as_deref(), Some("pt_BR.UTF-8"));
     assert_eq!(value("EDITOR").as_deref(), Some("hx"));
+    assert_eq!(
+        value("CURL_CA_BUNDLE"),
+        None,
+        "update-check certificates reach the terminal"
+    );
 
     fs::write(&stop, "").unwrap();
     wait_for_successful_exit(&mut supervisor.child);
@@ -16225,5 +16231,114 @@ fn a_confirmed_close_inspects_first_and_a_failed_inspection_closes_nothing() {
     done.store(true, Ordering::SeqCst);
     server.join().unwrap();
     drop(held);
+    fs::remove_dir_all(root).unwrap();
+}
+
+#[cfg(all(target_os = "linux", target_arch = "x86_64"))]
+#[test]
+fn update_check_discovers_a_managed_prefix_without_installing_or_trusting_metadata() {
+    let root = temporary_directory();
+    let binary = Path::new(env!("CARGO_BIN_EXE_eon"));
+    let versions = Command::new(binary).arg("versions").output().unwrap();
+    let text = stdout(&versions);
+    let identity: Vec<_> = text.lines().next().unwrap().split_whitespace().collect();
+    let (version, build) = (identity[1], identity[2]);
+    let hash = "a".repeat(64);
+    let prefix = root.join("managed prefix ' with spaces");
+    let payload = prefix.join("versions").join(&hash);
+    let package = payload.join("nix/store/product");
+    fs::create_dir_all(package.join("bin")).unwrap();
+    fs::create_dir(package.join("share")).unwrap();
+    fs::create_dir(prefix.join("bin")).unwrap();
+    for path in [
+        &prefix,
+        &prefix.join("versions"),
+        &prefix.join("bin"),
+        &payload,
+    ] {
+        fs::set_permissions(path, fs::Permissions::from_mode(0o700)).unwrap();
+    }
+    fs::copy(binary, package.join("bin/eon")).unwrap();
+    fs::write(package.join("share/eon-source-receipt.json"), serde_json::json!({
+        "schema_version":1,"repository":"https://github.com/Yazelix/eon","revision":"1".repeat(40),
+        "build":build,"platform":"x86_64-linux","attribute":null
+    }).to_string()).unwrap();
+    fs::write(prefix.join(".eon-install"), "eon-install-v1\n").unwrap();
+    let archive_url = format!(
+        "https://github.com/Yazelix/eon/releases/download/v{version}/eon-{version}-x86_64-linux.tar.zst"
+    );
+    fs::write(
+        payload.join(".eon-source"),
+        format!("eon-install-v1\n{hash}\n{archive_url}\n"),
+    )
+    .unwrap();
+    symlink("nix/store/product/bin/eon", payload.join("eon")).unwrap();
+    symlink(format!("versions/{hash}"), prefix.join("current")).unwrap();
+    symlink("../current/eon", prefix.join("bin/eon")).unwrap();
+    let installer = package.join("bin/eon-install");
+    executable(&installer, "#!/bin/sh\nexit 99\n");
+    let metadata = root.join("releases.json");
+    let asset = "eon-999.0.0-x86_64-linux.tar.zst";
+    let assets: Vec<_> = [asset,"SHA256SUMS","SHA256SUMS.sig"].iter().map(|name| serde_json::json!({
+        "name":name,"state":"uploaded","size":123,"digest":format!("sha256:{hash}"),
+        "browser_download_url":format!("https://github.com/Yazelix/eon/releases/download/v999.0.0/{name}")
+    })).collect();
+    fs::write(
+        &metadata,
+        serde_json::json!([{"tag_name":"v999.0.0","draft":false,"prerelease":false,
+        "published_at":"2026-11-08T12:00:00Z","assets":assets}])
+        .to_string(),
+    )
+    .unwrap();
+    let curl = root.join("curl-fixture");
+    executable(
+        &curl,
+        "#!/bin/sh\nfor url; do :; done\ncase \"$url\" in\nhttps://api.github.com/repos/Yazelix/eon/releases\\?*) cat \"$EON_UPDATE_FIXTURE\"; printf '\\n200' ;;\n*) exit 99 ;;\nesac\n",
+    );
+    let run = |program: &Path, explicit: bool, helper: &Path, human: bool| {
+        let mut command = eon_command(program);
+        command.args(["update", "--check"]);
+        if !human {
+            command.arg("--json");
+        }
+        if explicit {
+            command.arg("--prefix").arg(&prefix);
+        }
+        command
+            .env("EON_CURL", &curl)
+            .env("EON_UPDATE_FIXTURE", &metadata)
+            .env("EON_INSTALLER", helper)
+            .stdin(Stdio::null())
+            .output()
+            .unwrap()
+    };
+    let before = fs::read_link(prefix.join("current")).unwrap();
+    let output = run(&prefix.join("bin/eon"), false, &installer, false);
+    assert_eq!(output.status.code(), Some(0), "{output:?}");
+    let report: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
+    assert_eq!(report["target"], serde_json::json!({"prefix":prefix}));
+    assert_eq!(report["install_kind"], "eon-install");
+    assert_eq!(report["source"]["archive_url"], archive_url);
+    assert_eq!(report["availability"]["state"], "available");
+    assert_eq!(
+        report["availability"]["candidate"]["archive_url"],
+        format!("https://github.com/Yazelix/eon/releases/download/v999.0.0/{asset}")
+    );
+    assert_eq!(report["capability"]["install"], false);
+    assert_eq!(report["capability"]["reason"], "trust-unconfigured");
+    assert_eq!(report["selection"], serde_json::Value::Null);
+    let output = run(binary, true, &installer, false);
+    assert_eq!(output.status.code(), Some(0), "{output:?}");
+    let report: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
+    assert_eq!(
+        report["capability"]["reason"], "installer-unavailable",
+        "an inherited helper cannot own a different running executable"
+    );
+    let output = run(&prefix.join("bin/eon"), false, binary, true);
+    assert_eq!(output.status.code(), Some(0), "{output:?}");
+    assert!(stdout(&output).contains("installer-unavailable"));
+    assert!(stdout(&output).contains("verifies no signature or archive bytes"));
+    assert_eq!(fs::read_link(prefix.join("current")).unwrap(), before);
+    assert_eq!(fs::read_dir(prefix.join("versions")).unwrap().count(), 1);
     fs::remove_dir_all(root).unwrap();
 }

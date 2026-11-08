@@ -88,11 +88,29 @@ output alongside the existing composition inputs. Installation adds the
 versioned `.eon-source` record with `eon-install-v1`, the archive SHA-256 and
 exact URL. Neither receipt establishes trust or prefix ownership on its own.
 
-Automatic direct updates remain planned in `eon-update-button-f10d1.6` and
-`.7`. Their `updates.allowed_signers` setting takes the same absolute signer
-file path shown above; Runtime will resolve it and the product helper will
-pass it to this installer as `--signers`, with the exact URL and validated
-prefix. That setting and `eon update --prefix` are not supported yet. An unset
+`eon update --check [--json] [--prefix /ABS/PREFIX]` discovers the greatest
+published numbered official Linux release and its exact archive URL. Without
+`--prefix`, only the managed prefix whose selected payload owns the running
+`eon` is eligible for discovery. The check validates the private prefix,
+selectors and receipts without writing it. For an explicit prefix that does not
+own the running `eon`, the installed version is the receipt's URL version and
+has not been checked against that payload's executable. Manual extractions remain unmanaged.
+The result compares archive URL and SHA-256 metadata as well as version; remote
+failures never mean current. Drafts, prereleases and releases missing the Linux
+archive or signed-checksum companions are unavailable. Metadata establishes no
+signature or archive verification. Eon's own curl child defaults `CURL_CA_BUNDLE`
+to the packaged CA certificates, including after relocation, unless
+`CURL_CA_BUNDLE`, `SSL_CERT_FILE` or `SSL_CERT_DIR` is already set. Shells and
+other programs inherit no certificate setting from this helper. Release pagination
+shares one 30-second network deadline across at most ten pages.
+
+Automatic direct installation remains planned in `eon-update-button-f10d1.7`.
+Its `updates.allowed_signers` setting will take the same absolute signer file
+path shown above; Runtime will resolve it and the product helper will pass it
+to this installer as `--signers`, with the exact URL and validated prefix.
+That setting, `updates.bundle_prefix` and `eon update --install --prefix` are
+not supported yet. Checks report `trust-unconfigured` when a bundled helper
+belongs to the running payload, or `installer-unavailable` otherwise. An unset
 signer must refuse automatic installation with setup instructions. The helper
 must validate the owned prefix/selector/receipt chain before using its bundled
 installer; the environment locator alone grants no ownership, even when inherited
