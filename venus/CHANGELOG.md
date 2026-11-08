@@ -2,6 +2,11 @@
 
 ## Unreleased
 
+- CPU, RAM and disk chips use common yellow/orange/red percentage grades,
+  with descriptive hover and accessibility text; CPU use can also turn red
+  and keeps the stronger utilization or temperature colour
+  (`eon-chip-grade-60-21mnn`). New launch flags, no wire change.
+
 - VEN-C30: popup-source sidebar and attention inbox rows in the shown session
   take a readable, opaque focus-colour tint and retain their inline marker and
   focus outlines (`eon-sidebar-popup-mark-fmn4v`). No wire change.

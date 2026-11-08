@@ -96,7 +96,8 @@ pub(super) const QUOTA_PACE: [(f32, SceneColor); 5] = [
     // A quarter of a window early or more: a saturated red at 5.5:1 on the bar.
     (0.25, rgb(255, 59, 59)),
 ];
-/// CPU, RAM and disk chips under load (`docs/PRESENTATION.md`, Eon Bar): the pace scale's orange
-/// and red.
+/// CPU, RAM and disk chips under load (`docs/PRESENTATION.md`, Eon Bar): the pace scale's yellow,
+/// orange and red.
+pub(super) const LOAD_NOTICE: SceneColor = QUOTA_PACE[2].1;
 pub(super) const LOAD_HIGH: SceneColor = QUOTA_PACE[3].1;
 pub(super) const LOAD_CRITICAL: SceneColor = QUOTA_PACE[4].1;

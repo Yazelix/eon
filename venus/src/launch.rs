@@ -23,7 +23,7 @@ const CURSOR_COLOR_PRESETS: [(&str, Color); 8] = [
     ("nebula", rgb(0xa970ff)),
     ("bubblegum", rgb(0xff5da2)),
 ];
-const USAGE: &str = "usage: yazelix-venus [--application-id ID] [--no-decorations] [--pane-frames true|false] [--focus-color preset:NAME|custom:#RRGGBB] [--border-width 1..3] [--focus-border-width 1..3] [--warning-close-last-tab true|false] [--animate-working-badge true|false] [--number-keys true|false] [--eon-version VERSION] [--eon-icon ABSOLUTE_PATH] [--bar-items ITEM,...] [--ram-warning-percent 1..100] [--ram-critical-percent 1..100] [--cpu-warning-percent 1..100] [--cpu-average-seconds 2..600] [--cpu-temperature-warning-celsius 30..120] [--cpu-temperature-critical-celsius 30..120] [--disk-warning-percent 1..100] [--disk-critical-percent 1..100] [--disk-path ABSOLUTE_PATH] [--background-opacity VALUE] [--background-blur] [--padding-color extend|extend-always|background] [--cursor-trail-color random|preset:NAME|custom:#RRGGBB] [--cursor-effect-v1 none|tail] [--cursor-trail-color-v1 #RRGGBB] [--cursor-trail-duration-v1 0|0.25..4.0] [--font-family FAMILY] [--font-fallback FAMILY] [--font-size 6..96] [--line-height 1..3] [--columns N] [--rows N] [ORBIT_SOCKET | --workspace EON_WORKSPACE_SOCKET]";
+const USAGE: &str = "usage: yazelix-venus [--application-id ID] [--no-decorations] [--pane-frames true|false] [--focus-color preset:NAME|custom:#RRGGBB] [--border-width 1..3] [--focus-border-width 1..3] [--warning-close-last-tab true|false] [--animate-working-badge true|false] [--number-keys true|false] [--eon-version VERSION] [--eon-icon ABSOLUTE_PATH] [--bar-items ITEM,...] [--ram-notice-percent 1..100] [--ram-warning-percent 1..100] [--ram-critical-percent 1..100] [--cpu-notice-percent 1..100] [--cpu-warning-percent 1..100] [--cpu-critical-percent 1..100] [--cpu-average-seconds 2..600] [--cpu-temperature-warning-celsius 30..120] [--cpu-temperature-critical-celsius 30..120] [--disk-notice-percent 1..100] [--disk-warning-percent 1..100] [--disk-critical-percent 1..100] [--disk-path ABSOLUTE_PATH] [--background-opacity VALUE] [--background-blur] [--padding-color extend|extend-always|background] [--cursor-trail-color random|preset:NAME|custom:#RRGGBB] [--cursor-effect-v1 none|tail] [--cursor-trail-color-v1 #RRGGBB] [--cursor-trail-duration-v1 0|0.25..4.0] [--font-family FAMILY] [--font-fallback FAMILY] [--font-size 6..96] [--line-height 1..3] [--columns N] [--rows N] [ORBIT_SOCKET | --workspace EON_WORKSPACE_SOCKET]";
 
 #[derive(Debug)]
 pub(super) struct LaunchArguments {
@@ -77,12 +77,16 @@ pub(super) fn launch_arguments(
     let mut eon_version = None;
     let mut eon_icon: Option<PathBuf> = None;
     let mut bar_items = None;
+    let mut ram_notice_percent = None;
     let mut ram_warning_percent = None;
     let mut ram_critical_percent = None;
+    let mut cpu_notice_percent = None;
     let mut cpu_warning_percent = None;
+    let mut cpu_critical_percent = None;
     let mut cpu_average_seconds = None;
     let mut cpu_temperature_warning_celsius = None;
     let mut cpu_temperature_critical_celsius = None;
+    let mut disk_notice_percent = None;
     let mut disk_warning_percent = None;
     let mut disk_critical_percent = None;
     let mut disk_path: Option<PathBuf> = None;
@@ -140,22 +144,27 @@ pub(super) fn launch_arguments(
             if bar_items.is_none() {
                 return Err(USAGE.into());
             }
-        } else if argument == "--ram-warning-percent"
+        } else if argument == "--ram-notice-percent"
+            || argument == "--ram-warning-percent"
             || argument == "--ram-critical-percent"
+            || argument == "--cpu-notice-percent"
             || argument == "--cpu-warning-percent"
+            || argument == "--cpu-critical-percent"
+            || argument == "--disk-notice-percent"
             || argument == "--disk-warning-percent"
             || argument == "--disk-critical-percent"
         {
-            let percent = if argument == "--ram-warning-percent" {
-                &mut ram_warning_percent
-            } else if argument == "--ram-critical-percent" {
-                &mut ram_critical_percent
-            } else if argument == "--cpu-warning-percent" {
-                &mut cpu_warning_percent
-            } else if argument == "--disk-warning-percent" {
-                &mut disk_warning_percent
-            } else {
-                &mut disk_critical_percent
+            let percent = match argument.to_str() {
+                Some("--ram-notice-percent") => &mut ram_notice_percent,
+                Some("--ram-warning-percent") => &mut ram_warning_percent,
+                Some("--ram-critical-percent") => &mut ram_critical_percent,
+                Some("--cpu-notice-percent") => &mut cpu_notice_percent,
+                Some("--cpu-warning-percent") => &mut cpu_warning_percent,
+                Some("--cpu-critical-percent") => &mut cpu_critical_percent,
+                Some("--disk-notice-percent") => &mut disk_notice_percent,
+                Some("--disk-warning-percent") => &mut disk_warning_percent,
+                Some("--disk-critical-percent") => &mut disk_critical_percent,
+                _ => unreachable!(),
             };
             option_value(percent, arguments.next())?;
             if !percent.is_some_and(|percent| (1..=100).contains(&percent)) {
@@ -329,32 +338,113 @@ pub(super) fn launch_arguments(
         }
     }
 
-    let load_given = ram_warning_percent
+    let load_given = ram_notice_percent
+        .or(ram_warning_percent)
         .or(ram_critical_percent)
+        .or(cpu_notice_percent)
         .or(cpu_warning_percent)
+        .or(cpu_critical_percent)
         .or(cpu_temperature_warning_celsius)
         .or(cpu_temperature_critical_celsius)
+        .or(disk_notice_percent)
         .or(disk_warning_percent)
         .or(disk_critical_percent)
         .is_some()
         || cpu_average_seconds.is_some()
         || disk_path.is_some();
     let defaults = LoadLevels::default();
+    let percentages = |input: [Option<u8>; 3], defaults: [u8; 3]| -> Result<[u8; 3]> {
+        let [notice, warning, critical] = input;
+        let mut notice_level = notice.unwrap_or(defaults[0]);
+        let mut warning_level = warning.unwrap_or(defaults[1]);
+        let mut critical_level = critical.unwrap_or(defaults[2]);
+        if warning.is_none() {
+            if notice.is_some() && critical.is_some() && notice_level > critical_level {
+                return Err(USAGE.into());
+            }
+            if notice.is_some() {
+                warning_level = warning_level.max(notice_level);
+            }
+            if critical.is_some() {
+                warning_level = warning_level.min(critical_level);
+            }
+        }
+        if notice.is_none() {
+            notice_level = notice_level.min(warning_level);
+        }
+        if critical.is_none() {
+            critical_level = critical_level.max(warning_level);
+        }
+        if notice_level > warning_level || warning_level > critical_level {
+            return Err(USAGE.into());
+        }
+        Ok([notice_level, warning_level, critical_level])
+    };
+    let [
+        ram_notice_percent,
+        ram_warning_percent,
+        ram_critical_percent,
+    ] = percentages(
+        [
+            ram_notice_percent,
+            ram_warning_percent,
+            ram_critical_percent,
+        ],
+        [
+            defaults.ram_notice_percent,
+            defaults.ram_warning_percent,
+            defaults.ram_critical_percent,
+        ],
+    )?;
+    let [
+        cpu_notice_percent,
+        cpu_warning_percent,
+        cpu_critical_percent,
+    ] = percentages(
+        [
+            cpu_notice_percent,
+            cpu_warning_percent,
+            cpu_critical_percent,
+        ],
+        [
+            defaults.cpu_notice_percent,
+            defaults.cpu_warning_percent,
+            defaults.cpu_critical_percent,
+        ],
+    )?;
+    let [
+        disk_notice_percent,
+        disk_warning_percent,
+        disk_critical_percent,
+    ] = percentages(
+        [
+            disk_notice_percent,
+            disk_warning_percent,
+            disk_critical_percent,
+        ],
+        [
+            defaults.disk_notice_percent,
+            defaults.disk_warning_percent,
+            defaults.disk_critical_percent,
+        ],
+    )?;
     let load_levels = LoadLevels {
-        ram_warning_percent: ram_warning_percent.unwrap_or(defaults.ram_warning_percent),
-        ram_critical_percent: ram_critical_percent.unwrap_or(defaults.ram_critical_percent),
-        cpu_warning_percent: cpu_warning_percent.unwrap_or(defaults.cpu_warning_percent),
+        ram_notice_percent,
+        ram_warning_percent,
+        ram_critical_percent,
+        cpu_notice_percent,
+        cpu_warning_percent,
+        cpu_critical_percent,
         cpu_average: cpu_average_seconds.map_or(defaults.cpu_average, Duration::from_secs),
         cpu_temperature_warning_celsius: cpu_temperature_warning_celsius
             .unwrap_or(defaults.cpu_temperature_warning_celsius),
         cpu_temperature_critical_celsius: cpu_temperature_critical_celsius
             .unwrap_or(defaults.cpu_temperature_critical_celsius),
-        disk_warning_percent: disk_warning_percent.unwrap_or(defaults.disk_warning_percent),
-        disk_critical_percent: disk_critical_percent.unwrap_or(defaults.disk_critical_percent),
+        disk_notice_percent,
+        disk_warning_percent,
+        disk_critical_percent,
     };
     if load_levels.cpu_temperature_critical_celsius < load_levels.cpu_temperature_warning_celsius
-        || load_levels.ram_critical_percent < load_levels.ram_warning_percent
-        || load_levels.disk_critical_percent < load_levels.disk_warning_percent
         || ((eon_version.is_some() || eon_icon.is_some() || bar_items.is_some() || load_given)
             && workspace_socket.is_none())
     {
@@ -661,6 +751,56 @@ mod tests {
     }
 
     #[test]
+    fn chip_percent_defaults_follow_explicit_levels() {
+        for chip in ["cpu", "ram", "disk"] {
+            for (notice, warning, critical, expected) in [
+                (None, Some(50_u8), None, [50, 50, 90]),
+                (None, Some(95), None, [60, 95, 95]),
+                (Some(80), None, None, [80, 80, 90]),
+                (Some(95), None, None, [95, 95, 95]),
+                (None, None, Some(40), [40, 40, 40]),
+                (Some(50), None, Some(85), [50, 75, 85]),
+                (Some(80), None, Some(85), [80, 80, 85]),
+                (None, Some(50), Some(85), [50, 50, 85]),
+                (Some(1), None, Some(100), [1, 75, 100]),
+            ] {
+                let mut args = vec![OsString::from("--workspace"), OsString::from("eon.sock")];
+                for (tier, value) in ["notice", "warning", "critical"]
+                    .into_iter()
+                    .zip([notice, warning, critical])
+                {
+                    if let Some(value) = value {
+                        args.push(format!("--{chip}-{tier}-percent").into());
+                        args.push(value.to_string().into());
+                    }
+                }
+                let load = launch_arguments(args, None).unwrap().load_levels;
+                let actual = match chip {
+                    "cpu" => [
+                        load.cpu_notice_percent,
+                        load.cpu_warning_percent,
+                        load.cpu_critical_percent,
+                    ],
+                    "ram" => [
+                        load.ram_notice_percent,
+                        load.ram_warning_percent,
+                        load.ram_critical_percent,
+                    ],
+                    _ => [
+                        load.disk_notice_percent,
+                        load.disk_warning_percent,
+                        load.disk_critical_percent,
+                    ],
+                };
+                assert_eq!(
+                    actual, expected,
+                    "{chip}: {notice:?}/{warning:?}/{critical:?}"
+                );
+            }
+        }
+    }
+
+    #[test]
     fn load_levels_are_a_bounded_workspace_choice() {
         let parse = |items: &[&str]| {
             launch_arguments(
@@ -675,11 +815,17 @@ mod tests {
         assert_eq!(parse(&[]).unwrap().load_levels, LoadLevels::default());
         assert_eq!(
             parse(&[
+                "--ram-notice-percent",
+                "1",
                 "--ram-warning-percent",
                 "1",
                 "--ram-critical-percent",
                 "1",
+                "--cpu-notice-percent",
+                "1",
                 "--cpu-warning-percent",
+                "100",
+                "--cpu-critical-percent",
                 "100",
                 "--cpu-average-seconds",
                 "600",
@@ -687,6 +833,8 @@ mod tests {
                 "30",
                 "--cpu-temperature-critical-celsius",
                 "120",
+                "--disk-notice-percent",
+                "1",
                 "--disk-warning-percent",
                 "1",
                 "--disk-critical-percent",
@@ -695,16 +843,42 @@ mod tests {
             .unwrap()
             .load_levels,
             LoadLevels {
+                ram_notice_percent: 1,
                 ram_warning_percent: 1,
                 ram_critical_percent: 1,
+                cpu_notice_percent: 1,
                 cpu_warning_percent: 100,
+                cpu_critical_percent: 100,
                 cpu_average: Duration::from_secs(600),
                 cpu_temperature_warning_celsius: 30,
                 cpu_temperature_critical_celsius: 120,
+                disk_notice_percent: 1,
                 disk_warning_percent: 1,
                 disk_critical_percent: 100,
             }
         );
+        for chip in ["cpu", "ram", "disk"] {
+            let notice = format!("--{chip}-notice-percent");
+            let warning = format!("--{chip}-warning-percent");
+            let critical = format!("--{chip}-critical-percent");
+            for value in ["1", "100"] {
+                assert!(parse(&[&notice, value, &warning, value, &critical, value]).is_ok());
+            }
+            for flag in [&notice, &warning, &critical] {
+                for value in ["0", "101", "-1", "60.5"] {
+                    assert!(parse(&[flag, value]).is_err());
+                }
+                assert!(parse(&[flag, "60", flag, "60"]).is_err());
+                assert!(parse(&[flag]).is_err());
+                assert!(
+                    launch_arguments([flag.as_str(), "60"].into_iter().map(OsString::from), None)
+                        .is_err()
+                );
+            }
+            assert!(parse(&[&notice, "76", &warning, "75"]).is_err());
+            assert!(parse(&[&warning, "75", &critical, "74"]).is_err());
+            assert!(parse(&[&notice, "95", &critical, "90"]).is_err());
+        }
         // The disk chip measures `--disk-path`, else an absolute HOME.
         assert_eq!(
             parse(&[]).unwrap().disk_path,
@@ -734,7 +908,12 @@ mod tests {
         for items in [
             vec!["--disk-warning-percent", "0"],
             vec!["--disk-critical-percent", "101"],
-            vec!["--disk-warning-percent", "96"],
+            vec![
+                "--disk-warning-percent",
+                "96",
+                "--disk-critical-percent",
+                "90",
+            ],
             vec![
                 "--disk-critical-percent",
                 "95",
@@ -765,7 +944,12 @@ mod tests {
             vec!["--cpu-average-seconds", "1"],
             vec!["--cpu-average-seconds", "601"],
             vec!["--cpu-average-seconds", "2.5"],
-            vec!["--ram-warning-percent", "95"],
+            vec![
+                "--ram-warning-percent",
+                "95",
+                "--ram-critical-percent",
+                "90",
+            ],
             vec!["--ram-warning-percent", "70", "--ram-warning-percent", "70"],
             vec!["--cpu-warning-percent"],
         ] {

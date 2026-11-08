@@ -278,6 +278,15 @@ fn color_pane_identity(buffer: &mut Buffer, fonts: &mut FontSystem, id: &str, co
     buffer.shape_until_scroll(fonts, false);
 }
 
+fn load_color(load: Load) -> SceneColor {
+    match load {
+        Load::Normal => palette::SECONDARY_TEXT,
+        Load::Notice => palette::LOAD_NOTICE,
+        Load::High => palette::LOAD_HIGH,
+        Load::Critical => palette::LOAD_CRITICAL,
+    }
+}
+
 fn quota_pace_color(shortfall: f32) -> SceneColor {
     let gradient = palette::QUOTA_PACE;
     if shortfall <= gradient[0].0 {
@@ -2251,11 +2260,7 @@ impl Renderer {
             let Some(label) = label else {
                 continue;
             };
-            let color = match label.load {
-                Load::Normal => palette::SECONDARY_TEXT,
-                Load::High => palette::LOAD_HIGH,
-                Load::Critical => palette::LOAD_CRITICAL,
-            };
+            let color = load_color(label.load);
             let content = workspace.bar_item_rect(label.rect, self.metrics);
             let visual = workspace.bar_pill_rect(
                 header_item_visual(label.rect, self.metrics.padding),
@@ -3203,6 +3208,7 @@ mod tests {
 
     #[test]
     fn quota_pace_gradient_is_ordered_readable_and_colors_only_judged_windows() {
+        assert_eq!(load_color(Load::Notice), palette::LOAD_NOTICE);
         for (shortfall, color) in palette::QUOTA_PACE {
             assert_eq!(quota_pace_color(shortfall), color);
             assert!(

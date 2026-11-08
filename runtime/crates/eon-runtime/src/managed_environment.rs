@@ -118,18 +118,26 @@ pub struct StartupAnimation {
 /// When the Eon Bar's CPU, RAM and disk chips colour (`[bar]`).
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct BarLoad {
+    /// RAM use, in whole percent, from which the chip is yellow.
+    pub ram_notice_percent: u8,
     /// RAM use, in whole percent, from which the RAM chip is orange.
     pub ram_warning_percent: u8,
     /// RAM use, in whole percent, from which the RAM chip is red.
     pub ram_critical_percent: u8,
+    /// CPU use, in whole percent, from which the chip is yellow.
+    pub cpu_notice_percent: u8,
     /// CPU use over the last 2 seconds, in whole percent, from which the CPU chip is orange.
     pub cpu_warning_percent: u8,
+    /// CPU use, in whole percent, from which the CPU chip is red.
+    pub cpu_critical_percent: u8,
     /// How many seconds of CPU use the average in the CPU chip's hover covers.
     pub cpu_average_seconds: u16,
     /// CPU temperature in Celsius from which the CPU chip is orange.
     pub cpu_temperature_warning_celsius: u8,
     /// CPU temperature in Celsius from which the CPU chip is red.
     pub cpu_temperature_critical_celsius: u8,
+    /// Disk use, in whole percent, from which the chip is yellow.
+    pub disk_notice_percent: u8,
     /// Disk use, in whole percent, from which the disk chip is orange.
     pub disk_warning_percent: u8,
     /// Disk use, in whole percent, from which the disk chip is red.
@@ -162,12 +170,16 @@ impl Defaults {
 #[serde(default)]
 struct BarSettings {
     widgets: Option<Vec<String>>,
+    ram_notice_percent: Option<u64>,
     ram_warning_percent: Option<u64>,
     ram_critical_percent: Option<u64>,
+    cpu_notice_percent: Option<u64>,
     cpu_warning_percent: Option<u64>,
+    cpu_critical_percent: Option<u64>,
     cpu_average_seconds: Option<u64>,
     cpu_temperature_warning_celsius: Option<u64>,
     cpu_temperature_critical_celsius: Option<u64>,
+    disk_notice_percent: Option<u64>,
     disk_warning_percent: Option<u64>,
     disk_critical_percent: Option<u64>,
     disk_path: Option<String>,
@@ -221,19 +233,96 @@ pub(crate) fn bar(
                 .ok_or_else(|| format!("bar.{key} must be from 1 through 100"))
         })
     };
-    let ram_warning_percent = percent(
-        "ram_warning_percent",
-        settings.ram_warning_percent,
-        defaults.bar_load.ram_warning_percent,
+    let levels =
+        |chip: &str, input: [Option<u64>; 3], defaults: [u8; 3]| -> Result<[u8; 3], String> {
+            let [notice, warning, critical] = input;
+            let mut notice_level = percent(&format!("{chip}_notice_percent"), notice, defaults[0])?;
+            let mut warning_level =
+                percent(&format!("{chip}_warning_percent"), warning, defaults[1])?;
+            let mut critical_level =
+                percent(&format!("{chip}_critical_percent"), critical, defaults[2])?;
+            if warning.is_none() {
+                if notice.is_some() && critical.is_some() && notice_level > critical_level {
+                    return Err(format!(
+                        "bar.{chip}_critical_percent must not be below bar.{chip}_notice_percent"
+                    ));
+                }
+                if notice.is_some() {
+                    warning_level = warning_level.max(notice_level);
+                }
+                if critical.is_some() {
+                    warning_level = warning_level.min(critical_level);
+                }
+            }
+            if notice.is_none() {
+                notice_level = notice_level.min(warning_level);
+            }
+            if critical.is_none() {
+                critical_level = critical_level.max(warning_level);
+            }
+            if notice_level > warning_level {
+                return Err(format!(
+                    "bar.{chip}_warning_percent must not be below bar.{chip}_notice_percent"
+                ));
+            }
+            if warning_level > critical_level {
+                return Err(format!(
+                    "bar.{chip}_critical_percent must not be below bar.{chip}_warning_percent"
+                ));
+            }
+            Ok([notice_level, warning_level, critical_level])
+        };
+    let [
+        ram_notice_percent,
+        ram_warning_percent,
+        ram_critical_percent,
+    ] = levels(
+        "ram",
+        [
+            settings.ram_notice_percent,
+            settings.ram_warning_percent,
+            settings.ram_critical_percent,
+        ],
+        [
+            defaults.bar_load.ram_notice_percent,
+            defaults.bar_load.ram_warning_percent,
+            defaults.bar_load.ram_critical_percent,
+        ],
     )?;
-    let ram_critical_percent = percent(
-        "ram_critical_percent",
-        settings.ram_critical_percent,
-        defaults.bar_load.ram_critical_percent,
+    let [
+        cpu_notice_percent,
+        cpu_warning_percent,
+        cpu_critical_percent,
+    ] = levels(
+        "cpu",
+        [
+            settings.cpu_notice_percent,
+            settings.cpu_warning_percent,
+            settings.cpu_critical_percent,
+        ],
+        [
+            defaults.bar_load.cpu_notice_percent,
+            defaults.bar_load.cpu_warning_percent,
+            defaults.bar_load.cpu_critical_percent,
+        ],
     )?;
-    if ram_critical_percent < ram_warning_percent {
-        return Err("bar.ram_critical_percent must not be below bar.ram_warning_percent".into());
-    }
+    let [
+        disk_notice_percent,
+        disk_warning_percent,
+        disk_critical_percent,
+    ] = levels(
+        "disk",
+        [
+            settings.disk_notice_percent,
+            settings.disk_warning_percent,
+            settings.disk_critical_percent,
+        ],
+        [
+            defaults.bar_load.disk_notice_percent,
+            defaults.bar_load.disk_warning_percent,
+            defaults.bar_load.disk_critical_percent,
+        ],
+    )?;
     let temperature = |key: &str, value: Option<u64>, default: u8| {
         value.map_or(Ok(default), |value| {
             u8::try_from(value)
@@ -255,19 +344,6 @@ pub(crate) fn bar(
     if cpu_temperature_critical_celsius < cpu_temperature_warning_celsius {
         return Err("bar.cpu_temperature_critical_celsius must not be below bar.cpu_temperature_warning_celsius".into());
     }
-    let disk_warning_percent = percent(
-        "disk_warning_percent",
-        settings.disk_warning_percent,
-        defaults.bar_load.disk_warning_percent,
-    )?;
-    let disk_critical_percent = percent(
-        "disk_critical_percent",
-        settings.disk_critical_percent,
-        defaults.bar_load.disk_critical_percent,
-    )?;
-    if disk_critical_percent < disk_warning_percent {
-        return Err("bar.disk_critical_percent must not be below bar.disk_warning_percent".into());
-    }
     let disk_path = disk_path(
         settings
             .disk_path
@@ -278,13 +354,12 @@ pub(crate) fn bar(
     let load = BarLoad {
         cpu_temperature_warning_celsius,
         cpu_temperature_critical_celsius,
+        ram_notice_percent,
         ram_warning_percent,
         ram_critical_percent,
-        cpu_warning_percent: percent(
-            "cpu_warning_percent",
-            settings.cpu_warning_percent,
-            defaults.bar_load.cpu_warning_percent,
-        )?,
+        cpu_notice_percent,
+        cpu_warning_percent,
+        cpu_critical_percent,
         cpu_average_seconds: settings.cpu_average_seconds.map_or(
             Ok(defaults.bar_load.cpu_average_seconds),
             |seconds| {
@@ -294,6 +369,7 @@ pub(crate) fn bar(
                     .ok_or("bar.cpu_average_seconds must be from 2 through 600")
             },
         )?,
+        disk_notice_percent,
         disk_warning_percent,
         disk_critical_percent,
     };
@@ -576,12 +652,16 @@ pub(crate) fn print_defaults(defaults: &Defaults, json: bool) -> Result<String, 
     let mut config = json!({
         "bar": {
             "widgets": defaults.bar_widgets,
+            "ram_notice_percent": defaults.bar_load.ram_notice_percent,
             "ram_warning_percent": defaults.bar_load.ram_warning_percent,
             "ram_critical_percent": defaults.bar_load.ram_critical_percent,
+            "cpu_notice_percent": defaults.bar_load.cpu_notice_percent,
             "cpu_warning_percent": defaults.bar_load.cpu_warning_percent,
+            "cpu_critical_percent": defaults.bar_load.cpu_critical_percent,
             "cpu_average_seconds": defaults.bar_load.cpu_average_seconds,
             "cpu_temperature_warning_celsius": defaults.bar_load.cpu_temperature_warning_celsius,
             "cpu_temperature_critical_celsius": defaults.bar_load.cpu_temperature_critical_celsius,
+            "disk_notice_percent": defaults.bar_load.disk_notice_percent,
             "disk_warning_percent": defaults.bar_load.disk_warning_percent,
             "disk_critical_percent": defaults.bar_load.disk_critical_percent,
             "disk_path": defaults.bar_disk_path,
@@ -643,8 +723,11 @@ fn defaults_table(
             "widgets" => {
                 "Eon Bar widgets: header widgets in display order; the clock sits at the bottom bar's left end and the version at its right end, wherever they are listed. Each quota widget selects a window; claude_quota_scoped selects all model-scoped Claude windows."
             }
+            "ram_notice_percent" => "RAM use from which the RAM chip turns yellow.",
             "ram_warning_percent" => "RAM use from which the RAM chip turns orange.",
             "ram_critical_percent" => "RAM use from which the RAM chip turns red.",
+            "cpu_notice_percent" => "CPU use from which the CPU chip turns yellow.",
+            "cpu_critical_percent" => "CPU use from which the CPU chip turns red.",
             "cpu_warning_percent" => "CPU use from which the CPU chip turns orange.",
             "cpu_temperature_warning_celsius" => {
                 "CPU temperature in Celsius from which the CPU chip turns orange (Linux CPU sensors only)."
@@ -653,6 +736,7 @@ fn defaults_table(
                 "CPU temperature in Celsius from which the CPU chip turns red (Linux CPU sensors only)."
             }
             "cpu_average_seconds" => "Seconds of CPU use that the hover's average covers.",
+            "disk_notice_percent" => "Disk use from which the disk chip turns yellow.",
             "disk_warning_percent" => "Disk use from which the disk chip turns orange.",
             "disk_critical_percent" => "Disk use from which the disk chip turns red.",
             "disk_path" => "Path whose filesystem the disk chip measures.",
@@ -2039,6 +2123,121 @@ mod tests {
         thread,
         time::{Duration, Instant},
     };
+
+    #[test]
+    fn chip_percent_defaults_follow_explicit_levels() {
+        let root = crate::supervisor::temporary_directory();
+        let defaults = crate::fixtures::inputs().defaults;
+        for chip in ["cpu", "ram", "disk"] {
+            for (notice, warning, critical, expected) in [
+                (None, Some(50_u8), None, [50, 50, 90]),
+                (None, Some(95), None, [60, 95, 95]),
+                (Some(80), None, None, [80, 80, 90]),
+                (Some(95), None, None, [95, 95, 95]),
+                (None, None, Some(40), [40, 40, 40]),
+                (Some(50), None, Some(85), [50, 75, 85]),
+                (Some(80), None, Some(85), [80, 80, 85]),
+                (None, Some(50), Some(85), [50, 50, 85]),
+                (Some(1), None, Some(100), [1, 75, 100]),
+            ] {
+                let mut source = String::from("[bar]\n");
+                for (tier, value) in ["notice", "warning", "critical"]
+                    .into_iter()
+                    .zip([notice, warning, critical])
+                {
+                    if let Some(value) = value {
+                        source.push_str(&format!("{chip}_{tier}_percent = {value}\n"));
+                    }
+                }
+                fs::write(root.join("config.toml"), &source).unwrap();
+                let load = super::bar(&root, &defaults, None).unwrap().load;
+                let actual = match chip {
+                    "cpu" => [
+                        load.cpu_notice_percent,
+                        load.cpu_warning_percent,
+                        load.cpu_critical_percent,
+                    ],
+                    "ram" => [
+                        load.ram_notice_percent,
+                        load.ram_warning_percent,
+                        load.ram_critical_percent,
+                    ],
+                    _ => [
+                        load.disk_notice_percent,
+                        load.disk_warning_percent,
+                        load.disk_critical_percent,
+                    ],
+                };
+                assert_eq!(actual, expected, "{source}");
+            }
+        }
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn chip_use_levels_validate_all_three_tiers() {
+        let root = crate::supervisor::temporary_directory();
+        let defaults = crate::fixtures::inputs().defaults;
+        let read = |settings: &str| {
+            fs::write(root.join("config.toml"), format!("[bar]\n{settings}")).unwrap();
+            super::bar(&root, &defaults, None)
+        };
+        for chip in ["cpu", "ram", "disk"] {
+            let load = read(&format!("{chip}_notice_percent = 20\n{chip}_warning_percent = 40\n{chip}_critical_percent = 80")).unwrap().load;
+            let values = match chip {
+                "cpu" => (
+                    load.cpu_notice_percent,
+                    load.cpu_warning_percent,
+                    load.cpu_critical_percent,
+                ),
+                "ram" => (
+                    load.ram_notice_percent,
+                    load.ram_warning_percent,
+                    load.ram_critical_percent,
+                ),
+                _ => (
+                    load.disk_notice_percent,
+                    load.disk_warning_percent,
+                    load.disk_critical_percent,
+                ),
+            };
+            assert_eq!(values, (20, 40, 80));
+            for value in [1, 100] {
+                assert!(read(&format!("{chip}_notice_percent = {value}\n{chip}_warning_percent = {value}\n{chip}_critical_percent = {value}")).is_ok());
+            }
+            for tier in ["notice", "warning", "critical"] {
+                for value in ["0", "101", "256", "-1", "60.5", "'high'"] {
+                    assert!(
+                        read(&format!("{chip}_{tier}_percent = {value}")).is_err(),
+                        "{chip} {tier} {value}"
+                    );
+                }
+            }
+            for (settings, error) in [
+                (
+                    format!("{chip}_notice_percent = 76\n{chip}_warning_percent = 75"),
+                    format!(
+                        "bar.{chip}_warning_percent must not be below bar.{chip}_notice_percent"
+                    ),
+                ),
+                (
+                    format!("{chip}_warning_percent = 75\n{chip}_critical_percent = 74"),
+                    format!(
+                        "bar.{chip}_critical_percent must not be below bar.{chip}_warning_percent"
+                    ),
+                ),
+                (
+                    format!("{chip}_notice_percent = 95\n{chip}_critical_percent = 90"),
+                    format!(
+                        "bar.{chip}_critical_percent must not be below bar.{chip}_notice_percent"
+                    ),
+                ),
+            ] {
+                assert_eq!(read(&settings).unwrap_err(), error);
+            }
+        }
+        fs::remove_dir_all(root).unwrap();
+    }
 
     #[test]
     fn cpu_temperature_levels_validate_range_order_and_types() {

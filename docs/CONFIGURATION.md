@@ -68,14 +68,18 @@ The following block is checked against the command by the test suite.
 
 [bar]
 cpu_average_seconds = 30 # Seconds of CPU use that the hover's average covers.
+cpu_critical_percent = 90 # CPU use from which the CPU chip turns red.
+cpu_notice_percent = 60 # CPU use from which the CPU chip turns yellow.
 cpu_temperature_critical_celsius = 95 # CPU temperature in Celsius from which the CPU chip turns red (Linux CPU sensors only).
 cpu_temperature_warning_celsius = 85 # CPU temperature in Celsius from which the CPU chip turns orange (Linux CPU sensors only).
-cpu_warning_percent = 90 # CPU use from which the CPU chip turns orange.
-disk_critical_percent = 95 # Disk use from which the disk chip turns red.
+cpu_warning_percent = 75 # CPU use from which the CPU chip turns orange.
+disk_critical_percent = 90 # Disk use from which the disk chip turns red.
+disk_notice_percent = 60 # Disk use from which the disk chip turns yellow.
 disk_path = "~" # Path whose filesystem the disk chip measures.
-disk_warning_percent = 85 # Disk use from which the disk chip turns orange.
+disk_warning_percent = 75 # Disk use from which the disk chip turns orange.
 ram_critical_percent = 90 # RAM use from which the RAM chip turns red.
-ram_warning_percent = 80 # RAM use from which the RAM chip turns orange.
+ram_notice_percent = 60 # RAM use from which the RAM chip turns yellow.
+ram_warning_percent = 75 # RAM use from which the RAM chip turns orange.
 widgets = ["codex_quota_5h", "codex_quota_7d", "claude_quota_5h", "claude_quota_7d", "claude_quota_scoped", "cpu", "ram", "disk", "clock", "version"] # Eon Bar widgets: header widgets in display order; the clock sits at the bottom bar's left end and the version at its right end, wherever they are listed. Each quota widget selects a window; claude_quota_scoped selects all model-scoped Claude windows.
 
 [terminal]
@@ -217,22 +221,31 @@ reset before a read), or when a read finds the provider has gained or lost a
 window. The version belongs to its
 running supervisor; updating the installation does not change it.
 
-The CPU and RAM chips stay neutral on a healthy machine and colour only under
-load. RAM turns orange from `ram_warning_percent` and red from
-`ram_critical_percent`. CPU turns orange while the 2-second use it shows is at
-least `cpu_warning_percent`, so bursts show. On Linux with a supported CPU
-sensor, it also turns orange from `cpu_temperature_warning_celsius` (85 °C)
-and red from `cpu_temperature_critical_celsius` (95 °C); the stronger colour
-wins. Both temperature levels accept whole degrees from 30 through 120,
-with critical not below warning; equal levels skip orange. macOS has no CPU
-temperature reading. Hover and accessibility say in words why a chip is
+The CPU, RAM and disk chips use the same three grades by default: yellow
+from 60% use, orange from 75% and red from 90%, otherwise neutral. For each
+chip, `<chip>_notice_percent`, `<chip>_warning_percent` and
+`<chip>_critical_percent` set those levels (`cpu`, `ram` or `disk`). CPU
+compares the 2-second use it shows, so bursts show. On Linux with a supported
+CPU sensor, it also turns orange from `cpu_temperature_warning_celsius`
+(85 °C) and red from `cpu_temperature_critical_celsius` (95 °C); the stronger
+colour wins. Both temperature levels accept whole degrees from 30 through
+120, with critical not below warning; equal levels skip orange. macOS has no
+CPU temperature reading. Hover and accessibility say in words why a chip is
 coloured, and also give CPU's average over the last `cpu_average_seconds`.
 Use levels compare the whole percentage the chip shows; temperature levels
-compare the whole degrees in its hover. Percentages accept whole numbers from 1 through 100, and
-`ram_critical_percent` must not be below `ram_warning_percent`; set them equal
-to skip orange. `cpu_average_seconds` accepts 2 through 600. The defaults are
-listed above. Like `widgets`, they apply when a window next opens or reopens,
-and an out-of-range value is a configuration error.
+compare the whole degrees in its hover. Percentages accept whole numbers from
+1 through 100, with notice not above warning and warning not above critical
+for each chip; equal levels skip the lower colour. Omitted percentage levels
+start at their defaults and adjust only as needed around explicit levels: an
+omitted warning is raised to an explicit notice or lowered to an explicit
+critical when needed, an omitted notice is the lower of its default and the
+resolved warning, and an omitted critical is the higher of its default and the
+resolved warning. Explicitly inverted levels fail. For example,
+`cpu_warning_percent = 95` alone resolves to 60/95/95; `ram_warning_percent = 50`
+with `ram_critical_percent = 85` resolves to 50/50/85. `cpu_average_seconds`
+accepts 2 through 600. The defaults are listed above. Like `widgets`, they
+apply when a window next opens or reopens, and an out-of-range value is a
+configuration error.
 
 CPU hover also names the CPU, gives its temperature when available, the
 busiest logical CPU over the same 2 seconds (numbered from zero), and the
@@ -246,9 +259,8 @@ The disk chip shows how full the filesystem holding `disk_path` is, read every
 rounds it. `disk_path` is an absolute path, or `~` or a path starting with
 `~/` for your home directory and paths under it; empty, relative and `~user`
 paths are configuration errors. A path that doesn't exist is not an error: the
-chip shows no reading. The chip turns orange from `disk_warning_percent` and red
-from `disk_critical_percent`, under the same rules as RAM's levels:
-`disk_critical_percent` must not be below `disk_warning_percent`. The 30-second
+chip shows no reading. The chip uses the same notice, warning and critical
+grades described above. The 30-second
 refresh is fixed, since disk use changes slowly. Like the other `[bar]` keys,
 they apply when a window next opens or reopens.
 

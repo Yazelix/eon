@@ -1,0 +1,3 @@
+# Existing percentage keys without notice or CPU critical keys.
+[bar]
+disk_warning_percent = 92

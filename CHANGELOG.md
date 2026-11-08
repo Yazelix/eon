@@ -5,6 +5,12 @@ installation, and proven contract changes.
 
 ## Unreleased
 
+- CPU, RAM and disk chips share three configurable use levels: yellow from
+  60%, orange from 75% and red from 90%. Each chip has notice, warning and
+  critical percentage settings; omitted levels adjust around explicit ones.
+  CPU temperature still uses the stronger level
+  (`eon-chip-grade-60-21mnn`).
+
 - Popup rows from the shown session in the Agents sidebar and attention inbox
   have a background tint from the focus colour, keeping their window mark and
   readable labels under hover and keyboard focus (`eon-sidebar-popup-mark-fmn4v`).

@@ -3862,6 +3862,9 @@ names its socket. CLI JSON names a session `session` and a terminal
   Amended on 2026-11-07 (pre-approved by Lucca in
   `eon-cpu-tooltip-detail-6mnd1`): the CPU temperature threshold keys; installed
   proof of this amendment is pending.
+  Amended on 2026-11-07 (approved by eon-overseer under Lucca's standing rule)
+  by `eon-chip-grade-60-21mnn`: common notice, warning and critical percentage
+  levels for CPU, RAM and disk.
 - **Consumer:** Full-Eon session users.
 - **Trigger:** A full-Eon window opens or reopens.
 - **Result:** `[bar] widgets` is an ordered list of unique names from
@@ -3886,32 +3889,36 @@ names its socket. CLI JSON names a session `session` and a terminal
   [Configuration](CONFIGURATION.md). A listed widget without data still shows
   nothing, as [Eon Bar](../venus/docs/PRESENTATION.md#eon-bar) describes for
   each widget. Narrow windows keep the fixed hiding priority it gives, whatever
-  the order. `ram_warning_percent` and `ram_critical_percent` set the RAM use,
-  in whole percent, from which the RAM label turns orange and red (defaults 80
-  and 90); `cpu_warning_percent` sets the CPU use the label shows, over the last
-  2 seconds, from which the CPU label turns orange (default 90), and
-  `cpu_average_seconds` the window of the average CPU use that its hover and
-  accessibility text also give (default 30). `cpu_temperature_warning_celsius` and
-  `cpu_temperature_critical_celsius` set the CPU temperature from which the CPU
-  label turns orange and red (defaults 85 and 95 °C). Both are whole degrees
-  Celsius from 30 through 120, and the critical level is not below the warning
-  level. Temperature is available only on Linux with a supported CPU sensor;
-  unavailable temperature does not colour the label. `disk_path` (default `~`) names
-  the path whose filesystem `disk` measures: `~` or a path starting with `~/`
-  under HOME, or an absolute path.
-  `disk_warning_percent` and `disk_critical_percent` set the disk use from which
-  the disk label turns orange and red (defaults 85 and 95), with the same rule
-  as RAM's levels. Percentages are 1 through 100, `ram_critical_percent` is not
-  below `ram_warning_percent` nor `disk_critical_percent` below
-  `disk_warning_percent`, and the window is 2 through 600 seconds. They apply
-  when a window opens or reopens, like the list.
+  the order. For each of `cpu`, `ram` and `disk`, `<chip>_notice_percent`,
+  `<chip>_warning_percent` and `<chip>_critical_percent` set the whole displayed
+  use percentage from which its label turns yellow, orange and red, respectively
+  (defaults 60, 75 and 90 for all three). Percentages are whole numbers from 1
+  through 100, with notice not above warning and warning not above critical;
+  equal levels skip the lower colour. Omitted levels start at their defaults
+  and adjust only as needed around explicit levels: an omitted warning is
+  raised to an explicit notice or lowered to an explicit critical when needed,
+  an omitted notice is the lower of its default and the resolved warning, and
+  an omitted critical is the higher of its default and the resolved warning.
+  Explicitly inverted levels fail. CPU levels compare the use shown over the
+  last 2 seconds. `cpu_average_seconds` sets the window of the average CPU use
+  that hover and accessibility also give (default 30; 2 through 600 seconds).
+  `cpu_temperature_warning_celsius` and `cpu_temperature_critical_celsius` set
+  the CPU temperature from which the CPU label turns orange and red (defaults
+  85 and 95 °C). Both are whole degrees Celsius from 30 through 120, and the
+  critical level is not below the warning level. Temperature is available only
+  on Linux with a supported CPU sensor; unavailable temperature does not colour
+  the label. The stronger utilization or temperature colour wins. `disk_path`
+  (default `~`) names the path whose filesystem `disk` measures: `~` or a path
+  starting with `~/` under HOME, or an absolute path. These settings apply when
+  a window opens or reopens, like the list.
   A leftover `[bar] show_version` (deprecated in v0.1.2) still loads, with one
   warning naming `bar.widgets`: `false` reads as the default list without
   `version`, `true` as the default list, and a `widgets` key set beside it
   wins.
 - **Important failures:** A repeated known name, a non-string entry, a
   value that is not a list, a load level that is not a whole number in its
-  range, a critical level below its warning level, a `disk_path` other than
+  range, explicitly inverted percentage levels, a critical temperature below
+  its warning level, a `disk_path` other than
   `~`, a path starting with `~/` or an absolute path, or a `[bar] show_version`
   that is not true or false fails through the existing startup and replacement
   handling, preserving live terminals.
@@ -3975,6 +3982,17 @@ names its socket. CLI JSON names a session `session` and a terminal
     `window_menu_projects_summary_and_clips_actions_to_its_scroll_area`, and
     the isolated installed pointer, keyboard, AT-SPI, Quit and Detach
     observation recorded in `eon-7cf0y.6`.
+  - **Common use grades (`eon-chip-grade-60-21mnn`):**
+    `cpu_ram_and_disk_share_three_inclusive_use_levels` checks all three chips
+    at 59/60/74/75/89/90; configuration and launch tests cover all tiers,
+    ordering and equal levels, and `cpu_keeps_the_stronger_use_or_temperature_grade`
+    checks thermal precedence. The whole workspace, changed-crate formatting
+    and clippy passed. Eight isolated installed captures at 1280x720 showed
+    neutral, yellow, orange and red on every chip over dark and light terminal
+    backgrounds, using configured levels to select each grade. Installed
+    defaults confirmed 60/75/90 and the unchanged 85/95 °C thermal levels.
+    Exact source tree, Nix artifact, settings and environment are recorded in
+    the bead.
 
 ## EON-C33 — Several sessions in one window
 

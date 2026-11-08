@@ -287,7 +287,7 @@ holding your home directory is, refreshed every 30 seconds; hover them for
 their names and details, such as the disk's size, mount point and free space.
 Each hover is a short list, one fact per line, that leaves out what the chip
 already shows; screen readers read one sentence with every fact.
-They turn orange or red when the machine is under load or the disk fills up, at
+They turn yellow from 60%, orange from 75% and red from 90% use by default, at
 the levels [`[bar]`](CONFIGURATION.md#configuration-behavior) sets, which also
 chooses the path the disk chip measures.
 A reading that can't be taken shows no label rather than 0%. A 24-hour clock

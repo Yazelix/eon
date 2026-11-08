@@ -138,27 +138,26 @@ order, selection, and popups; Venus draws the visible scene.
   Sizes keep one decimal, like RAM's. A path that does not exist, or a
   reading that cannot be taken, shows no label, never 0%, until the next valid
   one. Other platforms show no label.
-- CPU, RAM and disk chips colour only under load, and a healthy machine looks
-  quiet: by default RAM is orange from 80% use and red from 90%, disk orange
-  from 85% and red from 95%, and CPU orange while the 2-second use it shows is
-  90% or more, so bursts show. A supported Linux CPU temperature also colours
-  the whole CPU chip orange from 85 °C and red from 95 °C, using the stronger
-  temperature or utilization severity. Hover adds `Running hot` and
-  accessibility appends `; running hot` at either thermal level. Accessibility says why in words, such
-  as `RAM use 91%, 28.5 GiB of 31.3 GiB: under heavy pressure`,
-  `Disk use 87% of 929.4 GiB on /, 120.8 GiB free: filling up` (`: nearly full`
-  when red) or
-  `CPU use 99% across 16 logical CPUs, over the last 2 seconds: under high load`,
-  and hover adds the line `Under heavy pressure` (`Under pressure` when
-  orange), `Filling up` (`Nearly full` when red) or `Under high load`, so
-  colour is never the only signal. CPU also gives its average over the last 30
-  seconds: accessibility appends `; 45% on average over the last 30 seconds`,
-  and hover lists `45% on average over the last 30 s` before the load line.
-  The average needs a full window of unbroken readings, so it starts over
-  after a failed reading or a stall.
-  The orange and red are the quota pace scale's, at 4.5:1 or more on the bar.
-  Eon's `[bar]` sets the levels and the averaging window; macOS uses the same
-  ones.
+- CPU, RAM and disk chips share three inclusive use grades: yellow from 60%,
+  orange from 75% and red from 90%, neutral below 60%. The grade follows the
+  whole percentage displayed, so CPU bursts show. A supported Linux CPU
+  temperature also colours the CPU chip orange from 85 °C and red from 95 °C,
+  using the stronger temperature or utilization severity. Hover adds
+  `Running hot` and accessibility appends `; running hot` at either thermal
+  level. Each chip names yellow as `Elevated use` in hover and `: elevated use`
+  in accessibility. CPU names orange `Under high load` and red
+  `Under heavy load`; RAM names orange `Under pressure` and red
+  `Under heavy pressure`; disk names orange `Filling up` and red `Nearly full`.
+  Accessibility uses the same words in lowercase after a colon, so colour is
+  never the only signal. CPU also gives its average over the last 30 seconds:
+  accessibility appends `; 45% on average over the last 30 seconds`, and hover
+  lists `45% on average over the last 30 s` before the load line. The average
+  needs a full window of unbroken readings, so it starts over after a failed
+  reading or a stall. Yellow, orange and red are the quota pace scale's, at
+  4.5:1 or more on the opaque bar, including over light terminal themes.
+  Eon's `[bar]` sets each chip's notice, warning and critical percentage and
+  the averaging window; equal percentage levels select the stronger grade.
+  macOS uses the same levels.
 - The clock shows local 24-hour `HH:MM` and changes within a second of each
   minute; after suspend or a system clock change it corrects within a minute.
   It sits at the left end of the bottom shortcut hints, one padding from the

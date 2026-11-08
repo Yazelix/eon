@@ -1,0 +1,4 @@
+# Existing percentage keys without notice or CPU critical keys.
+[bar]
+ram_warning_percent = 50
+ram_critical_percent = 85

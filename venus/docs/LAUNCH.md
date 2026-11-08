@@ -98,29 +98,32 @@ without data, such as a version Eon did not pass, still shows nothing. The input
 is workspace-only, and a missing value, an unknown, repeated or empty item, or a
 repeated flag fails before window creation.
 
-With the `ram` item it may pass `--ram-warning-percent N` and
-`--ram-critical-percent N`, and with `cpu`, `--cpu-warning-percent N`,
-`--cpu-average-seconds N`, `--cpu-temperature-warning-celsius N` and
-`--cpu-temperature-critical-celsius N`: the levels at which those chips turn
-orange or red,
-and the window of the CPU average that hover and accessibility give
-([Eon Bar](PRESENTATION.md#eon-bar)). Percentages are 1 through 100 and the
-critical RAM level is not below the warning one; the window is 2 through 600
-seconds. Absence keeps 80, 90, 90 and 30. The inputs are workspace-only, and a
-missing, out-of-range or repeated value fails before window creation. Eon owns
-these `[bar]` settings. CPU temperature levels are whole degrees Celsius from
-30 through 120, critical not below warning, defaulting to 85 and 95. They
-colour the CPU chip only when a supported Linux CPU sensor is available.
+With each of the `cpu`, `ram` and `disk` items Eon may pass
+`--<chip>-notice-percent N`, `--<chip>-warning-percent N` and
+`--<chip>-critical-percent N`: the displayed use percentages at which the chip
+turns yellow, orange and red. Each accepts 1 through 100, with notice not
+above warning and warning not above critical; equal levels skip the lower
+colour. With all three omitted, defaults are 60, 75 and 90. Omitted levels
+adjust around explicit ones: an omitted warning is raised to an explicit
+notice or lowered to an explicit critical, an omitted notice is the lower of
+60 and the resolved warning, and an omitted critical is the higher of 90 and
+the resolved warning. Explicit inversions still fail. With `cpu`, Eon may
+also pass `--cpu-average-seconds N` (2 through 600, default 30), the window of
+the average in hover and accessibility ([Eon Bar](PRESENTATION.md#eon-bar)),
+and `--cpu-temperature-warning-celsius N` and
+`--cpu-temperature-critical-celsius N`. Temperature levels are whole degrees
+from 30 through 120, critical not below warning, defaulting to 85 and 95.
+They colour the CPU chip only with a supported Linux CPU sensor; the stronger
+utilization or temperature colour wins. These inputs are workspace-only;
+missing, out-of-range, explicitly inverted or repeated values fail before window
+creation. Eon owns the `[bar]` settings.
 
-With the `disk` item it may pass `--disk-warning-percent N`,
-`--disk-critical-percent N` and `--disk-path PATH`: the levels at which the
-disk chip turns orange or red, and the path whose filesystem it measures.
-Percentages are 1 through 100 and the critical level is not below the warning
-one; the path must be absolute, since Eon expands `~` from HOME, and may be any
-bytes. Absence keeps 85, 95 and HOME, and an unset or relative HOME leaves the
-chip without a reading. The inputs are workspace-only, and a missing,
-out-of-range, relative or repeated value fails before window creation. A path
-that does not exist is not a launch failure: the chip shows no reading.
+With `disk` Eon may also pass `--disk-path PATH`, the path whose filesystem it
+measures. The path must be absolute, since Eon expands `~` from HOME, and may
+be any bytes. Absence keeps HOME; an unset or relative HOME leaves no reading.
+The input is workspace-only, and a missing, relative or repeated value fails
+before window creation. A path that does not exist is not a launch failure:
+the chip shows no reading.
 
 Pass `--pane-frames false` to hide decorative pane borders. The default is
 `true`; both modes keep the same terminal grid, pane headers, click targets and

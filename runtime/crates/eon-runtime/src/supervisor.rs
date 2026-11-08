@@ -485,6 +485,8 @@ fn venus_command(
         let load = &bar.load;
         if shown("ram") {
             command
+                .arg("--ram-notice-percent")
+                .arg(load.ram_notice_percent.to_string())
                 .arg("--ram-warning-percent")
                 .arg(load.ram_warning_percent.to_string())
                 .arg("--ram-critical-percent")
@@ -492,8 +494,12 @@ fn venus_command(
         }
         if shown("cpu") {
             command
+                .arg("--cpu-notice-percent")
+                .arg(load.cpu_notice_percent.to_string())
                 .arg("--cpu-warning-percent")
                 .arg(load.cpu_warning_percent.to_string())
+                .arg("--cpu-critical-percent")
+                .arg(load.cpu_critical_percent.to_string())
                 .arg("--cpu-average-seconds")
                 .arg(load.cpu_average_seconds.to_string())
                 .arg("--cpu-temperature-warning-celsius")
@@ -503,6 +509,8 @@ fn venus_command(
         }
         if shown("disk") {
             command
+                .arg("--disk-notice-percent")
+                .arg(load.disk_notice_percent.to_string())
                 .arg("--disk-warning-percent")
                 .arg(load.disk_warning_percent.to_string())
                 .arg("--disk-critical-percent")
@@ -5441,12 +5449,16 @@ mod tests {
         // terminal window. `~` names the supervisor's HOME.
         let levels = |inputs: &crate::Inputs, mode| {
             [
+                "--ram-notice-percent",
                 "--ram-warning-percent",
                 "--ram-critical-percent",
+                "--cpu-notice-percent",
                 "--cpu-warning-percent",
+                "--cpu-critical-percent",
                 "--cpu-average-seconds",
                 "--cpu-temperature-warning-celsius",
                 "--cpu-temperature-critical-celsius",
+                "--disk-notice-percent",
                 "--disk-warning-percent",
                 "--disk-critical-percent",
                 "--disk-path",
@@ -5463,25 +5475,29 @@ mod tests {
         fs::write(root.join("config.toml"), "").unwrap();
         assert_eq!(
             levels(&inputs, LaunchMode::Workspace),
-            ["80", "90", "90", "30", "85", "95", "85", "95", home]
+            [
+                "60", "75", "90", "60", "75", "90", "30", "85", "95", "60", "75", "90", home
+            ]
         );
         fs::write(
             root.join("config.toml"),
-            "[bar]\nwidgets = ['ram']\nram_warning_percent = 1\nram_critical_percent = 1\n",
+            "[bar]\nwidgets = ['ram']\nram_notice_percent = 1\nram_warning_percent = 1\nram_critical_percent = 1\n",
         )
         .unwrap();
         assert_eq!(
             levels(&inputs, LaunchMode::Workspace),
-            ["1", "1", "", "", "", "", "", "", ""]
+            ["1", "1", "1", "", "", "", "", "", "", "", "", "", ""]
         );
         fs::write(
             root.join("config.toml"),
-            "[bar]\nwidgets = ['cpu']\ncpu_warning_percent = 100\ncpu_average_seconds = 600\ncpu_temperature_warning_celsius = 30\ncpu_temperature_critical_celsius = 120\n",
+            "[bar]\nwidgets = ['cpu']\ncpu_notice_percent = 100\ncpu_critical_percent = 100\ncpu_warning_percent = 100\ncpu_average_seconds = 600\ncpu_temperature_warning_celsius = 30\ncpu_temperature_critical_celsius = 120\n",
         )
         .unwrap();
         assert_eq!(
             levels(&inputs, LaunchMode::Workspace),
-            ["", "", "100", "600", "30", "120", "", "", ""]
+            [
+                "", "", "", "100", "100", "100", "600", "30", "120", "", "", "", ""
+            ]
         );
         for (path, measured) in [
             ("~/work/eon", format!("{home}/work/eon")),
@@ -5490,21 +5506,44 @@ mod tests {
             fs::write(
                 root.join("config.toml"),
                 format!(
-                    "[bar]\nwidgets = ['disk']\ndisk_warning_percent = 1\n\
+                    "[bar]\nwidgets = ['disk']\ndisk_notice_percent = 1\ndisk_warning_percent = 1\n\
                      disk_critical_percent = 100\ndisk_path = '{path}'\n"
                 ),
             )
             .unwrap();
             assert_eq!(
                 levels(&inputs, LaunchMode::Workspace),
-                ["", "", "", "", "", "", "1", "100", &measured],
+                [
+                    "", "", "", "", "", "", "", "", "", "1", "1", "100", &measured
+                ],
                 "{path}"
             );
         }
         assert_eq!(
             levels(&inputs, LaunchMode::Terminal),
-            ["", "", "", "", "", "", "", "", ""]
+            ["", "", "", "", "", "", "", "", "", "", "", "", ""]
         );
+        for (chip, warning, expected) in [
+            ("cpu", 95, ["60", "95", "95"]),
+            ("ram", 50, ["50", "50", "90"]),
+            ("disk", 92, ["60", "92", "92"]),
+        ] {
+            fs::write(
+                root.join("config.toml"),
+                format!("[bar]\nwidgets = ['{chip}']\n{chip}_warning_percent = {warning}\n"),
+            )
+            .unwrap();
+            let actual = ["notice", "warning", "critical"].map(|tier| {
+                launch_input(
+                    &inputs,
+                    LaunchMode::Workspace,
+                    &format!("--{chip}-{tier}-percent"),
+                )[0]
+                .to_string_lossy()
+                .into_owned()
+            });
+            assert_eq!(actual, expected, "{chip}");
+        }
         inputs.defaults.bar_widgets = &["ram", "clock"];
         fs::write(root.join("config.toml"), "[bar]\nunknown = true\n").unwrap();
         assert_eq!(
@@ -5543,7 +5582,7 @@ mod tests {
                 false,
             ),
             (
-                "[bar]\nram_warning_percent = 95\n",
+                "[bar]\nram_warning_percent = 95\nram_critical_percent = 90\n",
                 "must not be below bar.ram_warning_percent",
                 false,
             ),
@@ -5575,7 +5614,7 @@ mod tests {
                 false,
             ),
             (
-                "[bar]\ndisk_warning_percent = 96\n",
+                "[bar]\ndisk_warning_percent = 96\ndisk_critical_percent = 90\n",
                 "bar.disk_critical_percent must not be below bar.disk_warning_percent",
                 false,
             ),
@@ -6053,7 +6092,11 @@ rows = 30
                 "--padding-color",
                 "extend",
                 "--background-blur",
+                "--cpu-notice-percent",
+                "60",
                 "--cpu-warning-percent",
+                "75",
+                "--cpu-critical-percent",
                 "90",
                 "--cpu-average-seconds",
                 "30",

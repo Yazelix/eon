@@ -1,0 +1,3 @@
+# Existing percentage keys without notice or CPU critical keys.
+[bar]
+cpu_warning_percent = 95

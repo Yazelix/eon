@@ -15,21 +15,23 @@ pub(crate) const RAM_ICON: char = '\u{efc5}';
 pub(crate) const DISK_ICON: char = '\u{f0a0}';
 
 /// How loaded a CPU, RAM or disk chip shows the machine; only load beyond normal colours it.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
 pub(crate) enum Load {
     Normal,
+    Notice,
     High,
     Critical,
 }
 
 impl Load {
-    /// A whole-percent use judged against two levels: high from `warning`, critical from
-    /// `critical`, both inclusive.
-    fn of(percent: u64, warning: u8, critical: u8) -> Self {
+    /// Inclusive whole-percent levels; equal levels select the stronger grade.
+    fn of(percent: u64, notice: u8, warning: u8, critical: u8) -> Self {
         if percent >= u64::from(critical) {
             Self::Critical
         } else if percent >= u64::from(warning) {
             Self::High
+        } else if percent >= u64::from(notice) {
+            Self::Notice
         } else {
             Self::Normal
         }
@@ -40,12 +42,16 @@ impl Load {
 /// configuration resolves them.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct LoadLevels {
+    pub ram_notice_percent: u8,
     pub ram_warning_percent: u8,
     pub ram_critical_percent: u8,
+    pub cpu_notice_percent: u8,
     pub cpu_warning_percent: u8,
+    pub cpu_critical_percent: u8,
     pub cpu_average: Duration,
     pub cpu_temperature_warning_celsius: u8,
     pub cpu_temperature_critical_celsius: u8,
+    pub disk_notice_percent: u8,
     pub disk_warning_percent: u8,
     pub disk_critical_percent: u8,
 }
@@ -53,14 +59,18 @@ pub struct LoadLevels {
 impl Default for LoadLevels {
     fn default() -> Self {
         Self {
-            ram_warning_percent: 80,
+            ram_notice_percent: 60,
+            ram_warning_percent: 75,
             ram_critical_percent: 90,
-            cpu_warning_percent: 90,
+            cpu_notice_percent: 60,
+            cpu_warning_percent: 75,
+            cpu_critical_percent: 90,
             cpu_average: Duration::from_secs(30),
             cpu_temperature_warning_celsius: 85,
             cpu_temperature_critical_celsius: 95,
-            disk_warning_percent: 85,
-            disk_critical_percent: 95,
+            disk_notice_percent: 60,
+            disk_warning_percent: 75,
+            disk_critical_percent: 90,
         }
     }
 }
@@ -425,7 +435,7 @@ pub struct CpuReadings {
 
 impl CpuReadings {
     /// Records a reading taken at `now`, or a failed one, and returns the use since the previous
-    /// reading, high from `levels.cpu_warning_percent` and with the average over
+    /// reading, judged against the configured use levels and with the average over
     /// `levels.cpu_average` once the readings span it. A failed reading, one taken `gap` or more
     /// after the previous, or one that gives no use starts over, so every value compares readings
     /// about one interval apart.
@@ -465,11 +475,19 @@ impl CpuReadings {
             self.readings.pop_front();
         }
         let mut shown = shown?;
-        let high = shown.percent >= u64::from(levels.cpu_warning_percent);
-        if high {
-            shown.load = Load::High;
-            shown.description.push_str(": under high load");
-        }
+        shown.load = Load::of(
+            shown.percent,
+            levels.cpu_notice_percent,
+            levels.cpu_warning_percent,
+            levels.cpu_critical_percent,
+        );
+        let (words, line) = match shown.load {
+            Load::Normal => ("", ""),
+            Load::Notice => (": elevated use", "\nElevated use"),
+            Load::High => (": under high load", "\nUnder high load"),
+            Load::Critical => (": under heavy load", "\nUnder heavy load"),
+        };
+        shown.description.push_str(words);
         if let Some(average) = self.average(now, window) {
             let seconds = window.as_secs();
             shown.description.push_str(&format!(
@@ -493,17 +511,16 @@ impl CpuReadings {
                 .description
                 .push_str(&format!("; Load {load} over 1 min"));
         }
-        if high {
-            shown.tooltip.push_str("\nUnder high load");
-        }
+        shown.tooltip.push_str(line);
         if let Some(temperature) = temperature {
             let thermal = Load::of(
                 temperature,
                 levels.cpu_temperature_warning_celsius,
+                levels.cpu_temperature_warning_celsius,
                 levels.cpu_temperature_critical_celsius,
             );
             if thermal != Load::Normal {
-                shown.load = thermal;
+                shown.load = shown.load.max(thermal);
                 shown.tooltip.push_str("\nRunning hot");
                 shown.description.push_str("; running hot");
             }
@@ -612,11 +629,13 @@ impl RamUse {
     pub fn rated(mut self, levels: LoadLevels) -> Self {
         self.load = Load::of(
             self.percent,
+            levels.ram_notice_percent,
             levels.ram_warning_percent,
             levels.ram_critical_percent,
         );
         let (words, line) = match self.load {
             Load::Normal => ("", ""),
+            Load::Notice => (": elevated use", "\nElevated use"),
             Load::High => (": under pressure", "\nUnder pressure"),
             Load::Critical => (": under heavy pressure", "\nUnder heavy pressure"),
         };
@@ -693,11 +712,13 @@ impl DiskUse {
     pub fn rated(mut self, levels: LoadLevels) -> Self {
         self.load = Load::of(
             self.percent,
+            levels.disk_notice_percent,
             levels.disk_warning_percent,
             levels.disk_critical_percent,
         );
         let (words, line) = match self.load {
             Load::Normal => ("", ""),
+            Load::Notice => (": elevated use", "\nElevated use"),
             Load::High => (": filling up", "\nFilling up"),
             Load::Critical => (": nearly full", "\nNearly full"),
         };
@@ -1007,7 +1028,7 @@ mod tests {
         let shown = readings
             .push(now + Duration::from_secs(2), Some(after), gap, levels)
             .unwrap();
-        assert_eq!(shown.tooltip, "CPU\n2 logical CPUs");
+        assert_eq!(shown.tooltip, "CPU\n2 logical CPUs\nElevated use");
         assert!(!shown.description.contains("CPU 0 at"));
         assert!(!shown.description.contains("CPU 1 at"));
     }
@@ -1087,6 +1108,38 @@ mod tests {
                     if hot { "; running hot" } else { "" }
                 )
             );
+        }
+    }
+
+    #[test]
+    fn cpu_keeps_the_stronger_use_or_temperature_grade() {
+        let now = Instant::now();
+        let gap = Duration::from_secs(3);
+        let first = CpuTimes::parse("cpu 0 0 0 0 0 0 0 0\ncpu0 0 0 0 0 0 0 0 0").unwrap();
+        for (percent, temperature, load) in [
+            (90, 85, Load::Critical),
+            (60, 85, Load::High),
+            (75, 95, Load::Critical),
+            (60, 84, Load::Notice),
+        ] {
+            let mut later = CpuTimes::parse(&format!(
+                "cpu {percent} 0 0 {} 0 0 0 0\ncpu0 0 0 0 0 0 0 0 0",
+                100 - percent
+            ))
+            .unwrap();
+            later.temperature = Some(temperature);
+            let mut readings = CpuReadings::default();
+            readings.push(now, Some(first.clone()), gap, LoadLevels::default());
+            let shown = readings
+                .push(
+                    now + Duration::from_secs(2),
+                    Some(later),
+                    gap,
+                    LoadLevels::default(),
+                )
+                .unwrap();
+            assert_eq!(shown.load, load, "{percent}% {temperature} °C");
+            assert_eq!(shown.description.contains("running hot"), temperature >= 85);
         }
     }
 

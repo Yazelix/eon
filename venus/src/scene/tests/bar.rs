@@ -1494,6 +1494,168 @@ fn tab_directory_labels_use_current_position_and_bounded_path_context() {
 }
 
 #[test]
+fn rounded_chip_percentages_select_the_shown_grade() {
+    use crate::{CpuReadings, CpuTimes, DiskUse, Load, LoadLevels, RamUse};
+    use std::time::{Duration, Instant};
+
+    for (busy, shown, grade) in [
+        (595, 60, Load::Notice),
+        (745, 75, Load::High),
+        (895, 90, Load::Critical),
+    ] {
+        let now = Instant::now();
+        let levels = LoadLevels::default();
+        let times = |busy, idle| {
+            CpuTimes::parse(&format!(
+                "cpu {busy} 0 0 {idle} 0 0 0 0\ncpu0 0 0 0 0 0 0 0 0"
+            ))
+        };
+        let mut readings = CpuReadings::default();
+        readings.push(now, times(0, 0), Duration::from_secs(3), levels);
+        let cpu = readings
+            .push(
+                now + Duration::from_secs(2),
+                times(busy, 1000 - busy),
+                Duration::from_secs(3),
+                levels,
+            )
+            .unwrap();
+        let ram = RamUse::parse(&format!(
+            "MemTotal: 1000 kB\nMemAvailable: {} kB",
+            1000 - busy
+        ))
+        .unwrap()
+        .rated(levels);
+        let free = 10000 - ((shown - 1) * 100 + 1);
+        let disk = DiskUse::of(10000, free, free, 4096, "/")
+            .unwrap()
+            .rated(levels);
+        for (label, load) in [
+            (&cpu.label, cpu.load),
+            (&ram.label, ram.load),
+            (&disk.label, disk.load),
+        ] {
+            assert_eq!(
+                (label.ends_with(&format!(" {shown}%")), load),
+                (true, grade),
+                "{label}"
+            );
+        }
+    }
+}
+
+#[test]
+fn cpu_ram_and_disk_share_three_inclusive_use_levels() {
+    use crate::{BarItem, CpuReadings, CpuTimes, DiskUse, Load, LoadLevels, RamUse};
+    use std::time::{Duration, Instant};
+
+    let snapshot = one_pane_snapshot();
+    let levels = LoadLevels::default();
+    for (percent, load, cpu_words, ram_words, disk_words) in [
+        (59, Load::Normal, "", "", ""),
+        (
+            60,
+            Load::Notice,
+            "elevated use",
+            "elevated use",
+            "elevated use",
+        ),
+        (
+            74,
+            Load::Notice,
+            "elevated use",
+            "elevated use",
+            "elevated use",
+        ),
+        (
+            75,
+            Load::High,
+            "under high load",
+            "under pressure",
+            "filling up",
+        ),
+        (
+            89,
+            Load::High,
+            "under high load",
+            "under pressure",
+            "filling up",
+        ),
+        (
+            90,
+            Load::Critical,
+            "under heavy load",
+            "under heavy pressure",
+            "nearly full",
+        ),
+    ] {
+        let start = Instant::now();
+        let mut readings = CpuReadings::default();
+        let times = |busy, idle| {
+            CpuTimes::parse(&format!(
+                "cpu {busy} 0 0 {idle} 0 0 0 0\ncpu0 0 0 0 0 0 0 0 0"
+            ))
+        };
+        readings.push(start, times(0, 0), Duration::from_secs(3), levels);
+        let cpu = readings
+            .push(
+                start + Duration::from_secs(2),
+                times(percent, 100 - percent),
+                Duration::from_secs(3),
+                levels,
+            )
+            .unwrap();
+        let ram = RamUse::parse(&format!(
+            "MemTotal: 100 kB\nMemAvailable: {} kB",
+            100 - percent
+        ))
+        .unwrap()
+        .rated(levels);
+        let disk = DiskUse::of(100, 100 - percent, 100 - percent, 4096, "/")
+            .unwrap()
+            .rated(levels);
+        let scene = WorkspaceScene::from_snapshot_with_bar(
+            &snapshot,
+            EonBar {
+                items: &[BarItem::Cpu, BarItem::Ram, BarItem::Disk],
+                cpu: Some(&cpu),
+                ram: Some(&ram),
+                disk: Some(&disk),
+                ..EonBar::default()
+            },
+            PhysicalSize::new(3000, 600),
+            CellMetrics::for_scale(1.0),
+            0.0,
+            0.0,
+            |_, text| (text.to_owned(), text.chars().count() as f32 * 10.0),
+            None,
+        );
+        for (chip, words) in [
+            (scene.cpu.unwrap(), cpu_words),
+            (scene.ram.unwrap(), ram_words),
+            (scene.disk.unwrap(), disk_words),
+        ] {
+            assert_eq!(chip.load, load, "{percent}%");
+            assert!(chip.label.ends_with(&format!("{percent}%")));
+            if words.is_empty() {
+                assert!(!chip.description.contains(": "), "{}", chip.description);
+            } else {
+                assert!(
+                    chip.description.ends_with(&format!(": {words}")),
+                    "{}",
+                    chip.description
+                );
+                assert!(
+                    chip.tooltip.to_lowercase().ends_with(words),
+                    "{}",
+                    chip.tooltip
+                );
+            }
+        }
+    }
+}
+
+#[test]
 fn cpu_and_ram_chips_colour_under_load_and_say_so() {
     use crate::{CpuReadings, CpuTimes, Load, LoadLevels, RamUse};
     use eon_workspace_protocol::v37::{Pane, PopupGeometry, Tab};
@@ -1509,10 +1671,12 @@ fn cpu_and_ram_chips_colour_under_load_and_say_so() {
         .rated(levels)
     };
     for (percent, used, load, words, line) in [
-        (79, "7.5", Load::Normal, "", ""),
+        (59, "5.6", Load::Normal, "", ""),
+        (60, "5.7", Load::Notice, ": elevated use", "\nElevated use"),
+        (74, "7.1", Load::Notice, ": elevated use", "\nElevated use"),
         (
-            80,
-            "7.6",
+            75,
+            "7.2",
             Load::High,
             ": under pressure",
             "\nUnder pressure",
@@ -1545,6 +1709,7 @@ fn cpu_and_ram_chips_colour_under_load_and_say_so() {
         );
     }
     let configured = LoadLevels {
+        ram_notice_percent: 50,
         ram_warning_percent: 50,
         ram_critical_percent: 50,
         ..levels
@@ -1587,59 +1752,59 @@ fn cpu_and_ram_chips_colour_under_load_and_say_so() {
     let busy = shown[15].as_ref().unwrap();
     assert_eq!(
         (busy.label.as_str(), busy.load),
-        ("\u{f4bc} 100%", Load::High)
+        ("\u{f4bc} 100%", Load::Critical)
     );
     assert_eq!(
         busy.description,
         format!(
-            "CPU use 100% across 1 logical CPU, over the last 2 seconds: under high load{}",
+            "CPU use 100% across 1 logical CPU, over the last 2 seconds: under heavy load{}",
             average(16, 30)
         )
     );
     // Hover lists the average and the load on their own lines, without the use the chip shows.
     assert_eq!(
         busy.tooltip,
-        "CPU\n1 logical CPU\n16% on average over the last 30 s\nUnder high load"
+        "CPU\n1 logical CPU\n16% on average over the last 30 s\nUnder heavy load"
     );
     // The level is inclusive and follows the shown use, whatever the average.
     let mut readings = CpuReadings::default();
     let mut at_level = vec![10; 17];
     at_level[16] = 90;
     let shown = run(&mut readings, levels, 0, &at_level).remove(16).unwrap();
-    assert_eq!(shown.load, Load::High);
+    assert_eq!(shown.load, Load::Critical);
     assert!(
         shown
             .description
-            .ends_with(&format!(": under high load{}", average(15, 30)))
+            .ends_with(&format!(": under heavy load{}", average(15, 30)))
     );
     let mut readings = CpuReadings::default();
     let mut below = vec![95; 17];
     below[16] = 89;
     let shown = run(&mut readings, levels, 0, &below).remove(16).unwrap();
-    assert_eq!(shown.load, Load::Normal);
+    assert_eq!(shown.load, Load::High);
     assert_eq!(
         shown.description,
         format!(
-            "CPU use 89% across 1 logical CPU, over the last 2 seconds{}",
+            "CPU use 89% across 1 logical CPU, over the last 2 seconds: under high load{}",
             average(95, 30)
         )
     );
     assert_eq!(
         shown.tooltip,
-        "CPU\n1 logical CPU\n95% on average over the last 30 s"
+        "CPU\n1 logical CPU\n95% on average over the last 30 s\nUnder high load"
     );
     // The average shows only once the readings span the window.
     let mut readings = CpuReadings::default();
     let shown = run(&mut readings, levels, 0, &[95; 16]);
     assert!(shown[0].is_none());
-    assert_eq!(shown[14].as_ref().unwrap().load, Load::High);
+    assert_eq!(shown[14].as_ref().unwrap().load, Load::Critical);
     assert_eq!(
         shown[14].as_ref().unwrap().description,
-        "CPU use 95% across 1 logical CPU, over the last 2 seconds: under high load"
+        "CPU use 95% across 1 logical CPU, over the last 2 seconds: under heavy load"
     );
     assert_eq!(
         shown[14].as_ref().unwrap().tooltip,
-        "CPU\n1 logical CPU\nUnder high load"
+        "CPU\n1 logical CPU\nUnder heavy load"
     );
     assert!(
         shown[15]
@@ -1672,7 +1837,9 @@ fn cpu_and_ram_chips_colour_under_load_and_say_so() {
     );
     // Configured levels and windows apply.
     let quick = LoadLevels {
+        cpu_notice_percent: 50,
         cpu_warning_percent: 50,
+        cpu_critical_percent: 50,
         cpu_average: Duration::from_secs(4),
         ..levels
     };
@@ -1680,13 +1847,14 @@ fn cpu_and_ram_chips_colour_under_load_and_say_so() {
     let shown = run(&mut readings, quick, 0, &[60, 40, 60]);
     assert_eq!(shown[1].as_ref().unwrap().load, Load::Normal);
     let quick_shown = shown[2].as_ref().unwrap();
-    assert_eq!(quick_shown.load, Load::High);
+    assert_eq!(quick_shown.load, Load::Critical);
     assert!(quick_shown.description.ends_with(&average(50, 4)));
     // The average covers exactly the window, even when it is odd or the readings are uneven:
     // an idle interval then a busy one is 67% over the last 3 of 4 seconds, and 50% over the last
     // 4 of 4.5 seconds when the idle interval took 2.5 of them.
     for (window, busy_at, average) in [(3, [2.0, 4.0], 67), (4, [2.5, 4.5], 50)] {
         let levels = LoadLevels {
+            cpu_notice_percent: 1,
             cpu_warning_percent: 1,
             cpu_average: Duration::from_secs(window),
             ..levels
@@ -1773,7 +1941,7 @@ fn cpu_and_ram_chips_colour_under_load_and_say_so() {
         None,
     );
     let (cpu, ram) = (scene.cpu.unwrap(), scene.ram.unwrap());
-    assert_eq!((cpu.load, ram.load), (Load::High, Load::Critical));
+    assert_eq!((cpu.load, ram.load), (Load::Critical, Load::Critical));
     assert_eq!(cpu.description, busy.description);
     assert_eq!(
         ram.description,
@@ -1846,10 +2014,12 @@ fn disk_chip_shows_filesystem_use_and_colours_only_when_filling_up() {
         .rated(levels)
     };
     for (percent, load, words, line) in [
-        (84, Load::Normal, "", ""),
-        (85, Load::High, ": filling up", "\nFilling up"),
-        (94, Load::High, ": filling up", "\nFilling up"),
-        (95, Load::Critical, ": nearly full", "\nNearly full"),
+        (59, Load::Normal, "", ""),
+        (60, Load::Notice, ": elevated use", "\nElevated use"),
+        (74, Load::Notice, ": elevated use", "\nElevated use"),
+        (75, Load::High, ": filling up", "\nFilling up"),
+        (89, Load::High, ": filling up", "\nFilling up"),
+        (90, Load::Critical, ": nearly full", "\nNearly full"),
     ] {
         let shown = disk(percent, levels);
         assert_eq!(shown.label, format!("\u{f0a0} {percent}%"));
@@ -1871,6 +2041,7 @@ fn disk_chip_shows_filesystem_use_and_colours_only_when_filling_up() {
         );
     }
     let configured = LoadLevels {
+        disk_notice_percent: 50,
         disk_warning_percent: 50,
         disk_critical_percent: 70,
         ..levels
