@@ -7,6 +7,42 @@ use crate::{
     sha256::Sha256,
 };
 
+/// Has `command`'s process get SIGKILL when this process dies, however it
+/// dies, and refuse to start if this process died before it could ask
+/// (Linux; elsewhere a no-op). A spawn from a thread that ends first kills
+/// it too, so callers spawn from the main thread.
+pub fn die_with_parent(command: &mut Command) -> &mut Command {
+    #[cfg(target_os = "linux")]
+    {
+        use std::os::unix::process::CommandExt;
+        let parent = std::process::id();
+        // SAFETY: prctl and getppid are async-signal-safe, and the errors
+        // need no allocation.
+        unsafe {
+            command.pre_exec(move || {
+                if libc::prctl(libc::PR_SET_PDEATHSIG, libc::SIGKILL) == -1 {
+                    return Err(std::io::Error::last_os_error());
+                }
+                if u32::try_from(libc::getppid()) != Ok(parent) {
+                    return Err(std::io::Error::from_raw_os_error(libc::ESRCH));
+                }
+                Ok(())
+            });
+        }
+    }
+    command
+}
+
+/// Nanoseconds on the system's monotonic clock, which every process reads
+/// alike, so times taken in different processes compare.
+pub fn monotonic_ns() -> u64 {
+    // SAFETY: timespec is plain data that clock_gettime fills.
+    let mut time = unsafe { std::mem::zeroed::<libc::timespec>() };
+    // SAFETY: time is a valid timespec; CLOCK_MONOTONIC always exists.
+    unsafe { libc::clock_gettime(libc::CLOCK_MONOTONIC, &raw mut time) };
+    time.tv_sec as u64 * 1_000_000_000 + time.tv_nsec as u64
+}
+
 /// The 1-minute load average.
 pub fn load() -> Result<f64, String> {
     let mut loads = [0.0; 1];
@@ -60,7 +96,9 @@ pub fn os() -> Option<String> {
 
 /// A command's trimmed standard output, when it succeeds and prints any.
 fn command_output(program: &str, arguments: &[&str]) -> Option<String> {
-    let output = Command::new(program).args(arguments).output().ok()?;
+    let output = die_with_parent(Command::new(program).args(arguments))
+        .output()
+        .ok()?;
     let text = String::from_utf8(output.stdout).ok()?.trim().to_owned();
     (output.status.success() && !text.is_empty()).then_some(text)
 }
@@ -208,10 +246,7 @@ fn checkout_source() -> Option<Source> {
     // The workspace root, three levels above this crate's manifest.
     let root = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../..");
     let git = |arguments: &[&str]| {
-        let output = Command::new("git")
-            .arg("-C")
-            .arg(&root)
-            .args(arguments)
+        let output = die_with_parent(Command::new("git").arg("-C").arg(&root).args(arguments))
             .output()
             .ok()?;
         output

@@ -6,7 +6,9 @@
 //! skipping work. Input queued before the run is discarded; the timer starts
 //! after FILE is in memory and stops at the reply; REPORT gets
 //! `{"bytes": N, "seconds": S}`. Without a reply within 60 s of the query it
-//! fails, and the terminal's mode is restored either way.
+//! fails, and the terminal's mode is restored either way. The report also
+//! holds the monotonic clock at the first write and at the reply
+//! (`started_ns`, `replied_ns`), which the `orbit` suite compares with frames.
 
 use std::{
     fs::File,
@@ -16,7 +18,7 @@ use std::{
     time::{Duration, Instant},
 };
 
-use crate::json::Value;
+use crate::{environment::monotonic_ns, json::Value};
 
 pub const STATUS_QUERY: &[u8] = b"\x1b[5n";
 pub const STATUS_OK: &[u8] = b"\x1b[0n";
@@ -39,6 +41,7 @@ pub fn run(file: &Path, report: &Path) -> Result<(), String> {
     );
     let mode =
         RawInput::enter(&input).map_err(|error| failure("stdin is not a terminal", error))?;
+    let started_ns = monotonic_ns();
     let start = Instant::now();
     output
         .write_all(&bytes)
@@ -46,10 +49,13 @@ pub fn run(file: &Path, report: &Path) -> Result<(), String> {
         .map_err(|error| failure("stdout", error))?;
     wait_for_reply(&mut input, REPLY_TIMEOUT)?;
     let seconds = start.elapsed().as_secs_f64();
+    let replied_ns = monotonic_ns();
     drop(mode);
     let result = Value::Object(vec![
         ("bytes".into(), (bytes.len() as u64).into()),
         ("seconds".into(), seconds.into()),
+        ("started_ns".into(), started_ns.into()),
+        ("replied_ns".into(), replied_ns.into()),
     ]);
     std::fs::write(report, result.to_pretty())
         .map_err(|error| failure(&report.display().to_string(), error))

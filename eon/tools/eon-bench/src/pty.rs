@@ -37,7 +37,7 @@ pub fn drain(
     report: &Path,
     expected_bytes: u64,
 ) -> Result<Drained, String> {
-    let (mut master, slave) = open_pty().map_err(|error| format!("openpty: {error}"))?;
+    let (mut master, slave) = open(ROWS, COLS).map_err(|error| format!("openpty: {error}"))?;
     let stdio = |slave: &File| {
         slave
             .try_clone()
@@ -177,14 +177,14 @@ impl QueryAtEnd {
     }
 }
 
-/// A PTY of the benchmark grid with both descriptors closed on exec and a
+/// A PTY of `rows` x `cols` with both descriptors closed on exec and a
 /// nonblocking master; the kernel's default line discipline, so output gets
 /// ONLCR.
-fn open_pty() -> std::io::Result<(File, File)> {
+pub fn open(rows: u16, cols: u16) -> std::io::Result<(File, File)> {
     let (mut master, mut slave) = (-1, -1);
     let mut size = libc::winsize {
-        ws_row: ROWS,
-        ws_col: COLS,
+        ws_row: rows,
+        ws_col: cols,
         ws_xpixel: 0,
         ws_ypixel: 0,
     };

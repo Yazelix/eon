@@ -2,11 +2,12 @@
 
 use std::{path::PathBuf, process::ExitCode};
 
-use eon_bench::{corpus, floor, writer};
+use eon_bench::{child, corpus, floor, orbit, writer};
 
 const USAGE: &str = "\
 usage: eon-bench corpus --out DIR [--only ID]...
        eon-bench floor --layer pty --out DIR [OPTIONS]
+       eon-bench orbit --out DIR [OPTIONS]
        eon-bench write FILE --report REPORT
        eon-bench COMMAND --help";
 
@@ -16,13 +17,17 @@ eon-bench write FILE --report REPORT: the completion writer
 Run inside a terminal: turns off line editing and echo on stdin and discards
 input already queued, writes FILE to stdout, asks for a status report (ESC[5n)
 and waits up to 60 s for the terminal's reply (ESC[0n), then restores stdin.
-REPORT gets {\"bytes\": N, \"seconds\": S}, the time from the first write to the
-reply. Exits 0 on a reply, 1 on a failure, an ESC[3n reply or no reply, and 2
-for a usage error.";
+REPORT gets {\"bytes\": N, \"seconds\": S, \"started_ns\": T0, \"replied_ns\": T1}:
+the time from the first write to the reply, and the monotonic clock at both.
+Exits 0 on a reply, 1 on a failure, an ESC[3n reply or no reply, and 2 for a
+usage error. It sets no deadline on its write: a suite that runs it inside a
+terminal kills that terminal when a sample overruns, which ends the writer.";
 
 enum Command {
     Corpus(PathBuf, Vec<&'static corpus::Corpus>),
     Floor(floor::Options),
+    Orbit(orbit::Options),
+    Child(child::Options),
     Write(PathBuf, PathBuf),
 }
 
@@ -59,6 +64,8 @@ fn main() -> ExitCode {
     let command = match arguments.first().map(String::as_str) {
         Some("corpus") => corpus_options(rest).map(|(out, only)| Command::Corpus(out, only)),
         Some("floor") => floor::options(rest).map(Command::Floor),
+        Some("orbit") => orbit::options(rest).map(Command::Orbit),
+        Some("child") => child::options(rest).map(Command::Child),
         Some("write") => write_options(rest).map(|(file, report)| Command::Write(file, report)),
         Some("--help" | "-h") => {
             println!("{USAGE}");
@@ -77,6 +84,11 @@ fn main() -> ExitCode {
     let outcome = match command {
         Command::Corpus(out, only) => corpus::write_files(&out, &only),
         Command::Floor(options) => floor::run(&options),
+        Command::Orbit(options) => orbit::run(&options),
+        Command::Child(options) => match child::run(&options) {
+            Ok(code) => return ExitCode::from(code),
+            Err(error) => Err(error),
+        },
         Command::Write(file, report) => writer::run(&file, &report),
     };
     match outcome {
@@ -122,12 +134,7 @@ fn corpus_options(arguments: &[String]) -> Result<(PathBuf, Vec<&'static corpus:
                         return Err(format!("--out is repeated\n{USAGE}"));
                     }
                 } else {
-                    let corpus = corpus::find(value).ok_or(format!(
-                        "no corpus {value}; `eon-bench corpus --help` lists them"
-                    ))?;
-                    if !only.iter().any(|known| known.id == corpus.id) {
-                        only.push(corpus);
-                    }
+                    corpus::add(&mut only, value)?;
                 }
             }
             _ => return Err(format!("unknown argument {flag}\n{USAGE}")),

@@ -74,10 +74,13 @@ samples, and summaries; throughput also retains raw vtebench DAT files. This
 output is an internal, intentionally unstable evidence artifact rather than a
 product trace format.
 
-[`tools/perf/headless-throughput.rs`](../tools/perf/headless-throughput.rs)
-runs the same vtebench command without a desktop, detached and with a client
-that reads and discards every message, for any servers that take Orbit's
-command line; its header gives its usage, and
+Without a desktop, Eon's benchmark harness measures Orbit's throughput to
+completion: `nix run .#bench -- orbit --out DIR` from the repository root
+runs the eon-bench corpora, vtebench's benchmarks and kitty's kitten in a
+release Orbit, detached and with a client that decodes and discards every
+message, with frame and CPU counters. The repository's
+[DEVELOPMENT.md](../../docs/DEVELOPMENT.md#benchmark-harness) describes it,
+`eon-bench orbit --help` gives its flags, and
 [BEHAVIOR.md](BEHAVIOR.md#throughput) records its measurements.
 
 vtebench measures blocking PTY consumption, not frame rate or visual latency.
@@ -129,7 +132,9 @@ reached through third-party packages. Every workspace member needs a rule.
 Beyond the root rule, the test lets `eon` depend on `eon-manifest`, limits Orbit
 to `orbit-protocol` and this tool to no workspace crate (chosen in
 `eon-monorepo-2oko.8`), limits Eon's `mac-proof` harness to `orbit-protocol`
-(`eon-mac-launch-kz4p.8`, `eon-mac-launch-kz4p.47`), and fails a new member
+(`eon-mac-launch-kz4p.8`, `eon-mac-launch-kz4p.47`) and `eon-bench`, whose
+`orbit` suite speaks Orbit's wire format, to it as well
+(`eon-benchmarks-xl2bp.4`), and fails a new member
 until the test gives it one. Orbit must keep its direct `libghostty-vt`
 dependency, so renaming the engine crate fails the test instead of disabling
 the rule.

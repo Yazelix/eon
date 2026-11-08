@@ -59,8 +59,10 @@ in a scratch copy and makes the proof fail.
 
 `docs/BEHAVIOR.md` states current behavior in the present tense, and each
 claim names the real-PTY check, unit test or proof that covers it, plus any
-sensitivity check. Throughput runs (`tools/perf`) mean something only below a
-load average of about 2; check `/proc/loadavg` first.
+sensitivity check. Throughput runs (`eon-bench orbit`) mean something only on
+a quiet machine: check `/proc/loadavg` first; each sample waits until the
+1-minute load is at most `--max-load` (online CPUs / 4 by default) and records
+it beside its result.
 
 ## Platform seam
 

@@ -1060,8 +1060,18 @@
               wrapProgram "$out/bin/mac-proof" --prefix PATH : ${lib.makeBinPath [ pkgs.git pkgs.gnutar ]}
             '';
           };
+          # vtebench at the revision of Orbit's earlier throughput tables; the
+          # orbit suite runs only its benchmark scripts.
+          vtebenchSource = pkgs.fetchFromGitHub {
+            owner = "alacritty";
+            repo = "vtebench";
+            rev = "ead80032e57dee2e75f0b51f2ea67528647d9944";
+            hash = "sha256-Ck+ObdRlLrKyMHGaBYuzIQnSwezs1mHpZLOJrM4hc3A=";
+          };
           # The benchmark harness (docs/DEVELOPMENT.md), a development tool
-          # outside Eon's closure. eon-test runs its tests.
+          # outside Eon's closure. eon-test runs its tests. Its wrapper names
+          # what the orbit suite runs: the release Orbit, vtebench's scripts
+          # and the tools they call, and kitty's kitten (only that output).
           benchPackage = pkgs.rustPlatform.buildRustPackage {
             pname = "eon-bench";
             inherit ((builtins.fromTOML (builtins.readFile ./eon/tools/eon-bench/Cargo.toml)).package) version;
@@ -1074,6 +1084,23 @@
             # Results name the Eon commit the binary was built from.
             EON_BENCH_REVISION = self.rev or self.dirtyRev or "";
             doCheck = false;
+            nativeBuildInputs = [ pkgs.makeWrapper ];
+            postFixup = ''
+              wrapProgram "$out/bin/eon-bench" \
+                --set-default EON_BENCH_ORBIT ${orbitPackage}/bin/yazelix-orbit \
+                --set-default EON_BENCH_VTEBENCH ${vtebenchSource}/benchmarks \
+                --set-default EON_BENCH_VTEBENCH_PATH ${
+                  lib.makeBinPath (
+                    [
+                      pkgs.bash
+                      pkgs.coreutils
+                      pkgs.ncurses
+                    ]
+                    ++ lib.optional pkgs.stdenv.isLinux pkgs.procps
+                  )
+                } \
+                --set-default EON_BENCH_KITTEN ${pkgs.kitty.kitten}/bin/kitten
+            '';
           };
           bundleRelink = import ./nix/bundle-relink.nix {
             inherit pkgs eonPackage wrapperArgs;

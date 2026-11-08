@@ -1836,17 +1836,155 @@ polls before it peeks and ignores a refused timeout.
 
 ## Throughput
 
-[tools/perf/orbit-venus-baseline.sh](../tools/perf/orbit-venus-baseline.sh)
-runs any server that takes Orbit's command line, the old Orbit included.
-[tools/perf/headless-throughput.rs](../tools/perf/headless-throughput.rs) runs
-that harness's vtebench command without a desktop. Each server runs it
-detached, with no client attached once the benchmark starts, and then again
-with a client that reads and discards every message as fast as it can. Once a
-second the harness also counts the runnable threads outside the benchmark, and
-it prints them after the table with the load.
+`eon-bench orbit` ([Benchmark harness](../../docs/DEVELOPMENT.md#benchmark-harness);
+`nix run .#bench -- orbit --out DIR` from the repository root) measures a
+release Orbit to completion without a desktop. Each sample runs a fresh
+`yazelix-orbit serve` whose child holds the workload until the harness is
+ready: the corpora, vtebench's benchmarks, or `kitten __benchmark__`. It runs
+detached, the harness's client closed once attached, and attached, with a
+client that decodes and discards every message as fast as it can. Time runs
+from the first write to Orbit's reply to the writer's status query, or is
+kitten's own. Counters come from the wire and `/proc`; Orbit is not
+instrumented.
 
-These measurements predate the import and come from the bend-orbit
-repository. In both tables, Bend is bend-orbit at the named revision and Old is
+### Orbit at Eon 31d08902
+
+Recorded 2026-11-08 with the bench package's release Orbit (Eon 31d08902,
+Bend 2.0.40), vtebench ead80032 and kitty 0.47.4, on CPUs 6-11 of the
+i5-13450HX, at `nice 19`, ten samples after two warmups per cell, in two
+rounds with harness builds that differ only in setup and cleanup handling.
+Every sample started at a 1-minute load of at most 4 (the suite's default
+for this machine's 16 CPUs, `--max-load`); the medians of the sample loads
+were 3.7 and 2.5 (58x93), 2.8 and 2.8 (24x80) and 2.4 (kitten, first round
+only). Other agents' work ran throughout; between rounds the detached cells
+moved by up to 5 ms on the light benchmarks and 41 ms on the scrolling
+ones.
+
+At the 58x93 grid of [bend-orbit's harness](#bend-orbits-harness), beside
+the Bend columns of its first table, bend-orbit at b017e4f0 (milliseconds,
+medians, first and second round; frames and host time per frame from the
+second):
+
+| Benchmark | b017e4f0 detached | Detached | b017e4f0 attached | Attached | Frames/MiB | KB/frame | Host µs/frame |
+| --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
+| cursor_motion | 6 | 8, 12 | 196 | 193, 190 | 256 | 136 | 604 |
+| dense_cells | 27 | 25, 28 | 698 | 622, 593 | 256 | 136 | 617 |
+| light_cells | 3 | 3, 6 | 175 | 169, 173 | 257 | 136 | 600 |
+| medium_cells | 7 | 9, 11 | 165 | 165, 169 | 257 | 133 | 620 |
+| scrolling | 193 | 191, 223 | 282 | 255, 271 | 372 | 130 | 710 |
+| scrolling_bottom_region | 191 | 174, 215 | 305 | 286, 274 | 402 | 130 | 663 |
+| scrolling_bottom_small_region | 192 | 205, 213 | 293 | 269, 292 | 439 | 130 | 646 |
+| scrolling_fullscreen | 7 | 8, 13 | 169 | 163, 170 | 259 | 136 | 622 |
+| scrolling_top_region | 187 | 195, 221 | 294 | 269, 290 | 425 | 130 | 663 |
+| scrolling_top_small_region | 186 | 210, 222 | 301 | 270, 294 | 436 | 130 | 653 |
+| sync_medium_cells | 7 | 9, 12 | 15 | 19, 32 | 10 | 131 | 2,383 |
+| unicode | 3 | 4, 8 | 158 | 164, 167 | 257 | 139 | 590 |
+
+The suite reproduces that table within its own run-to-run spread, though it
+times to Orbit's reply where bend-orbit's harness timed vtebench's blocking
+write. Detached, the light benchmarks took 3 to 13 ms against 3 to 7 ms, and
+the scrolling ones 174 to 223 ms against 186 to 193 ms. Attached, the light
+ones are within 6% of b017e4f0, `dense_cells` is 11 and 15% faster, and the
+scrolling ones up to 10% faster; `sync_medium_cells` took 19 and 32 ms
+against 15. vtebench writes its setup untimed, and so does the suite; timing
+the scrolling setups' 200 KB once made `scrolling_fullscreen` take 49 ms
+detached.
+
+The attached cost is frame production. Attached, a turn reads at most 8 KiB
+(detached, up to 512 KiB), and Bend publishes a full-grid frame per output
+turn. On the non-scrolling benchmarks the client read about 257 frames per
+MiB, so a turn averaged at most 4 KiB, and the host's voluntary context
+switches were the frames plus two in most samples. At 58x93 a frame is
+about 135 KB and costs the host 575 to 650 µs, so 257 frames cost about
+155 ms per MiB: the measured attached minus detached time on those
+benchmarks was 150 to 165 ms per MiB (`light_cells`: 167 ms, against 160 ms
+more host CPU). At 24x80, 48 KB frames cost 200 to 280 µs, and the gap falls
+to 52 to 62 ms per MiB: the cost per frame follows the grid's area (5,394
+cells against 1,920). The worker's share is small, 30 to 40 µs per frame.
+The scrolling benchmarks already take about 175 to 225 ms detached, while
+the host switches 5,000 to 10,000 times; attached, the slower host lets the
+writer get ahead, so the host switches only 350 to 440 times per MiB, and
+the gap is 48 to 112 ms. `sync_medium_cells` shows the cost without frames:
+synchronized updates hold them back to about 10 per MiB, but the host still
+switches about 262 times per MiB, and the attached extra was 10 to 20 ms per
+MiB of host and worker CPU.
+
+The decoding client is close to keeping up, no more. At 58x93 it used a
+median 42% of the sample's wall time in CPU, and up to 74%. In 3 of the 600
+attached vtebench and corpus samples (two cells at 58x93 and one at 24x80,
+all in the first round), six frames skipped revisions, hiding ten in all
+(3, 2 and 5 per sample): Orbit replaced queued frames because the client
+had fallen behind. In the others every
+revision after the go reached the client once and in order. Orbit does not
+pace frames otherwise: the frame rate follows the output turns, so
+coalescing frames, or pacing them to a display rate, bounds the attached
+time near the detached one.
+
+Completion hides at most one frame. In 574 of the 600 attached samples
+exactly one frame arrived after the writer's reply, the frame of the turn
+that read the query, since the host writes the reply after that turn's
+frame: 80 to 230 µs after the reply at 58x93 (cell medians) and 30 to 70 µs
+at 24x80. In the other 26 (2 at 58x93, 24 at 24x80) no frame followed the
+reply, which came 4 to 953 µs after the last frame. The handshake and first
+frame take 1.2 to 4 ms at 58x93 and 0.4 to 1.8 ms at 24x80, before the timed
+region.
+
+At the default 24x80 grid, second round, the corpora and vtebench (MB/s;
+frames and host time per frame from the attached samples):
+
+| Workload | Detached | Attached | Attached extra | Frames/MiB | Host µs/frame |
+| --- | ---: | ---: | ---: | ---: | ---: |
+| ascii | 98.0 | 18.6 | 730 ms | 260 | 203 |
+| styled-light | 118.0 | 16.9 | 850 ms | 259 | 226 |
+| styled-heavy | 67.0 | 14.0 | 946 ms | 257 | 278 |
+| unicode | 55.9 | 13.8 | 916 ms | 258 | 281 |
+| cursor | 135.1 | 18.7 | 773 ms | 256 | 206 |
+| cat64 | 99.4 | 18.8 | 2,894 ms | 260 | 201 |
+| vtebench-cursor_motion | 107.2 | 16.4 | 66 ms | 257 | 236 |
+| vtebench-dense_cells | 112.4 | 14.7 | 80 ms | 257 | 262 |
+| vtebench-light_cells | 219.0 | 17.0 | 57 ms | 257 | 224 |
+| vtebench-medium_cells | 83.6 | 16.0 | 54 ms | 258 | 239 |
+| vtebench-scrolling | 4.8 | 4.0 | 44 ms | 1,032 | 237 |
+| vtebench-scrolling_bottom_region | 4.7 | 3.9 | 44 ms | 1,120 | 223 |
+| vtebench-scrolling_bottom_small_region | 4.7 | 3.9 | 48 ms | 1,180 | 214 |
+| vtebench-scrolling_fullscreen | 100.1 | 16.7 | 52 ms | 259 | 226 |
+| vtebench-scrolling_top_region | 5.1 | 4.0 | 53 ms | 1,146 | 214 |
+| vtebench-scrolling_top_small_region | 4.8 | 3.9 | 52 ms | 1,134 | 221 |
+| vtebench-sync_medium_cells | 90.6 | 40.3 | 15 ms | 9 | 2,435 |
+| vtebench-unicode | 135.0 | 17.3 | 56 ms | 257 | 219 |
+
+The corpora are 16 MiB (cat64 64 MiB), so their extra time is 45 to 59 ms
+per MiB. At 24x80 the scrolling ones read 1,030 to 1,180 frames per MiB
+attached, so their turns average under 1 KiB.
+
+`kitten __benchmark__` at 24x80, first round, 50 repetitions
+(`--kitten-repetitions 50`; kitty's default is 100), with kitten's own times
+and rates:
+
+| Benchmark | MiB | Detached MB/s | Attached MB/s | Attached extra | Frames | Host switches detached | Host switches attached | Worker CPU extra |
+| --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
+| ascii | 100 | 241.3 | 131.5 | 362 ms | 4 | 458 | 25,688 | 380 ms |
+| unicode | 90 | 265.3 | 136.4 | 338 ms | 4 | 402 | 23,246 | 351 ms |
+| csi | 50 | 107.7 | 77.5 | 190 ms | 4 | 254 | 12,852 | 194 ms |
+| long_escape_codes | 392 | 492.9 | 179.6 | 1,456 ms | 1,532 | 17,554 | 100,558 | 1,530 ms |
+| images | 267 | 461.0 | 182.8 | 923 ms | 804 | 9,519 | 68,426 | 1,045 ms |
+
+kitten wraps its data in synchronized updates, so Bend publishes almost no
+frames, yet attached throughput still falls by 28 to 64%. The cost is in the
+host's smaller turns: detached it drains up to 512 KiB per turn, attached at
+most 8 KiB, and each turn makes a round trip through the worker. Attached
+the host switched about 257 times per MiB here too, against 458 times in all
+of `ascii`'s 100 MiB detached; the worker used 380 ms more CPU and the run
+took 362 ms longer, about 14 µs per extra switch. Coalescing frames alone
+would leave this per-turn cost.
+
+### bend-orbit's harness
+
+The tables below predate the import and come from the bend-orbit
+repository. Its harness ran vtebench itself, which times only its blocking
+write of each sample, detached and with a client that read and discarded
+every message, and counted the runnable threads outside the benchmark once a
+second. In both tables, Bend is bend-orbit at the named revision and Old is
 the old Orbit at Eon 1d287440. The first table measures bend-orbit at b017e4f0
 against the old Orbit, both built by bend-orbit's flake, with
 vtebench ead80032 at a 58x93 grid on CPUs 6-11 of an i5-13450HX. It comes from
@@ -1900,7 +2038,9 @@ libghostty-vt 0.2.2 nor the host's later restructuring explains that
 difference, and bend-orbit did not pursue it. The client does not
 render, so this does not replace the harness run with Venus.
 
-The Venus harness ran unchanged with native Venus (Eon a14a90cc) on the same
+[tools/perf/orbit-venus-baseline.sh](../tools/perf/orbit-venus-baseline.sh)
+runs any server that takes Orbit's command line, the old Orbit included, under
+Venus on a desktop. The Venus harness ran unchanged with native Venus (Eon a14a90cc) on the same
 CPUs, at Venus's 54x90 grid, for the old Orbit and for bend-orbit at
 f096691c, each starting below the harness's load limit (1.77 and 1.27) and
 under its compositor CPU limit. Medians of 15 samples:

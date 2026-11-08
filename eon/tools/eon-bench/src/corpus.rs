@@ -86,6 +86,17 @@ pub const CORPORA: [Corpus; 6] = [
     },
 ];
 
+/// Adds the corpus `id` to `only` once, for `--only`.
+pub fn add(only: &mut Vec<&'static Corpus>, id: &str) -> Result<(), String> {
+    let corpus = find(id).ok_or(format!(
+        "no corpus {id}; `eon-bench corpus --help` lists them"
+    ))?;
+    if !only.iter().any(|known| known.id == corpus.id) {
+        only.push(corpus);
+    }
+    Ok(())
+}
+
 pub fn find(id: &str) -> Option<&'static Corpus> {
     CORPORA.iter().find(|corpus| corpus.id == id)
 }
