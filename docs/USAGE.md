@@ -487,10 +487,10 @@ the panes' rows in pane order. A row shows:
 A needs-input row adds the agent's question. `+2` counts the terminal's other
 status records. A dimmed row marked `status stale` has not reported for more
 than 3 seconds. An Agent popup whose agent does not report shows `status
-unavailable`. A small window mark follows the popup's name on the row of an
-agent running in a popup, whether or not the popup is shown. The same mark
-after a tab's heading means that tab shows a popup now, so switching to it
-brings the popup up. While no agent reports, the sidebar says so.
+unavailable`. An agent running in a popup has a tinted row and a small window
+mark after the popup's name, whether or not the popup is shown. The attention
+inbox uses the same treatment for agents in the shown session. The current
+terminal's row has a separate outline. While no agent reports, the sidebar says so.
 
 Click a row, or press Enter or Space on it, to jump to that agent: Eon selects
 its tab and shows its pane or popup, and keyboard focus moves to that terminal.

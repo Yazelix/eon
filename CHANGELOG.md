@@ -5,6 +5,9 @@ installation, and proven contract changes.
 
 ## Unreleased
 
+- Popup rows from the shown session in the Agents sidebar and attention inbox
+  have a background tint from the focus colour, keeping their window mark and
+  readable labels under hover and keyboard focus (`eon-sidebar-popup-mark-fmn4v`).
 - The leading Eon icon opens a Window menu with this window's terminal count,
   other running windows, Detach and Quit. Pointer, keyboard and accessibility
   activation work with hints and the sidebar off and while tabs overflow; the

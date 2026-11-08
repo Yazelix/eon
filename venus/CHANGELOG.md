@@ -2,6 +2,9 @@
 
 ## Unreleased
 
+- VEN-C30: popup-source sidebar and attention inbox rows in the shown session
+  take a readable, opaque focus-colour tint and retain their inline marker and
+  focus outlines (`eon-sidebar-popup-mark-fmn4v`). No wire change.
 - VEN-C21: the leading Eon icon opens the accessible Window menu and stays
   reachable while tabs overflow. The session pill keeps its Sessions picker
   (`eon-7cf0y.6`).

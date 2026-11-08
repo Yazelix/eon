@@ -877,6 +877,71 @@ fn push_popup_marker(rectangles: &mut RectangleBatch, rect: SceneRect, color: Sc
     rectangles.push(rect.left, rect.top, rect.width, bar, color, 1.0);
 }
 
+/// Popup rows keep an opaque focus-colour tint over either terminal background or wallpaper.
+fn attention_row_fill(popup: bool, highlighted: bool, focus: SceneColor) -> Option<SceneColor> {
+    if !popup {
+        return highlighted.then_some(palette::CHROME_HIGHLIGHT);
+    }
+    let mix =
+        |base: u8, focus: u8| (f32::from(base) * 0.84 + f32::from(focus) * 0.16).round() as u8;
+    let base = palette::BAR_BACKGROUND;
+    let fill = blend_to_contrast(
+        SceneColor {
+            r: mix(base.r, focus.r),
+            g: mix(base.g, focus.g),
+            b: mix(base.b, focus.b),
+        },
+        base,
+        1.4,
+    );
+    Some(if highlighted {
+        blend_to_contrast(fill, fill, 1.5)
+    } else {
+        fill
+    })
+}
+
+fn attention_row_text(fill: Option<SceneColor>, dimmed: bool) -> (SceneColor, SceneColor) {
+    let (title, detail) = if dimmed {
+        (palette::SECONDARY_TEXT, palette::TERTIARY_TEXT)
+    } else {
+        (palette::PRIMARY_TEXT, palette::SECONDARY_TEXT)
+    };
+    // Lighter popup fills need brighter labels to keep both row and hover contrast.
+    let readable = |color| fill.map_or(color, |fill| blend_to_contrast(color, fill, 4.5));
+    (readable(title), readable(detail))
+}
+
+/// Paint the row and badge together, returning text colours readable on that surface.
+fn push_attention_row_surface(
+    row: &crate::SidebarRow,
+    hovered: bool,
+    radius: f32,
+    surface: Backing,
+    spinners: &mut Spinners,
+    rectangles: &mut RectangleBatch,
+) -> (SceneColor, SceneColor) {
+    let popup = row.popup_marker.is_some();
+    let fill = attention_row_fill(popup, row.focused || hovered, spinners.focus);
+    if let Some(fill) = fill {
+        rectangles.push_rounded(row.rect, radius, fill);
+    }
+    // The current outline stays above the fill and below keyboard focus.
+    if row.current {
+        rectangles.push_rounded_outline(row.rect, radius, palette::CARD_OUTLINE);
+    }
+    if row.focused {
+        rectangles.push_rounded_outline(row.rect, radius, palette::ACCENT);
+    }
+    let backing = match fill {
+        Some(fill) if popup => Backing::Surface(fill),
+        Some(fill) => Backing::Disc(fill),
+        None => surface,
+    };
+    spinners.push_badge(row.glyph, backing, rectangles);
+    attention_row_text(fill.filter(|_| popup), row.glyph.dimmed)
+}
+
 /// Draws one attention badge's glyph inside its disc: ◆ needs input, ✕ error, ✓ finished, the
 /// braille frame at `phase` for working, or the first frame without one, three still dots for
 /// background, both in `working`, and, in sidebar rows, ○ idle and · unavailable. Quads keep the
@@ -1269,32 +1334,17 @@ impl Renderer {
         if row.rect.intersection(list).is_none() {
             return;
         }
-        if row.focused || hovered {
-            rectangles.push_rounded(row.rect, padding / 2.0, palette::CHROME_HIGHLIGHT);
-        }
-        // The "you are here" outline, in the pane cards' outline color, over any
-        // highlight and under a focused row's outline.
-        if row.current {
-            rectangles.push_rounded_outline(row.rect, padding / 2.0, palette::CARD_OUTLINE);
-        }
-        if row.focused {
-            rectangles.push_rounded_outline(row.rect, padding / 2.0, palette::ACCENT);
-        }
-        // On a highlight a glyph's disc matches it.
-        let backing = if row.focused || hovered {
-            Backing::Disc(palette::CHROME_HIGHLIGHT)
-        } else {
-            surface
-        };
-        self.spinners.push_badge(row.glyph, backing, rectangles);
+        let (title, detail) = push_attention_row_surface(
+            row,
+            hovered,
+            padding / 2.0,
+            surface,
+            &mut self.spinners,
+            rectangles,
+        );
         if let Some((provider, rect)) = row.icon {
             self.push_quota_icon(provider, rect, Some(list));
         }
-        let (title, detail) = if row.glyph.dimmed {
-            (palette::SECONDARY_TEXT, palette::TERTIARY_TEXT)
-        } else {
-            (palette::PRIMARY_TEXT, palette::SECONDARY_TEXT)
-        };
         let text_width = (row.rect.right() - padding / 2.0 - row.text_left).max(0.0);
         let text_top = row.glyph.rect.top - (line - row.glyph.rect.height) / 2.0;
         for (index, (text, marker, color)) in [
@@ -2582,6 +2632,7 @@ impl Renderer {
 
 #[cfg(test)]
 mod tests {
+    use super::super::cells::contrast_ratio;
     use super::super::*;
     use super::*;
     use glyphon::cosmic_text::SubpixelBin;
@@ -2592,6 +2643,20 @@ mod tests {
         g: 0x07,
         b: 0xfb,
     };
+
+    const FOCUS_COLORS: [SceneColor; 7] = [
+        DEFAULT_FOCUS,
+        palette::ACCENT,
+        SceneColor { r: 0, g: 0, b: 0 },
+        SceneColor {
+            r: 255,
+            g: 255,
+            b: 255,
+        },
+        SceneColor { r: 255, g: 0, b: 0 },
+        SceneColor { r: 0, g: 255, b: 0 },
+        SceneColor { r: 0, g: 0, b: 255 },
+    ];
 
     /// The ink box of `buffer` as glyphon draws it from `left` and `top`: left, top, right and
     /// bottom in physical pixels.
@@ -3610,6 +3675,203 @@ mod tests {
         // `update_spinner` schedules no tick.
         assert_eq!((turning_slots, still_slots), (1, 0));
         assert_eq!(turning, still);
+    }
+
+    #[test]
+    fn popup_rows_keep_their_tint_and_readable_labels_under_highlighting() {
+        assert_eq!(
+            attention_row_text(None, false),
+            (palette::PRIMARY_TEXT, palette::SECONDARY_TEXT)
+        );
+        assert_eq!(
+            attention_row_text(None, true),
+            (palette::SECONDARY_TEXT, palette::TERTIARY_TEXT)
+        );
+        for highlighted in [false, true] {
+            assert_eq!(
+                attention_row_fill(false, highlighted, DEFAULT_FOCUS),
+                highlighted.then_some(palette::CHROME_HIGHLIGHT)
+            );
+            let fills =
+                FOCUS_COLORS.map(|focus| attention_row_fill(true, highlighted, focus).unwrap());
+            for (index, focus) in FOCUS_COLORS.into_iter().enumerate() {
+                for other in &fills[..index] {
+                    assert_ne!(fills[index], *other, "focus colour must affect the tint");
+                }
+                let fill = fills[index];
+                if !highlighted {
+                    assert!(
+                        contrast_ratio(fill, palette::BAR_BACKGROUND) >= 1.4,
+                        "resting popup must stand out for {focus:?}: {fill:?}"
+                    );
+                }
+                for dimmed in [false, true] {
+                    let (title, detail) = attention_row_text(Some(fill), dimmed);
+                    for text in [title, detail] {
+                        assert!(
+                            contrast_ratio(text, fill) >= 4.5,
+                            "{focus:?}, highlighted={highlighted}, dimmed={dimmed}, text={text:?} on {fill:?}"
+                        );
+                    }
+                }
+            }
+        }
+        for focus in FOCUS_COLORS {
+            let resting = attention_row_fill(true, false, focus).unwrap();
+            let highlighted = attention_row_fill(true, true, focus).unwrap();
+            assert!(
+                contrast_ratio(resting, highlighted) >= 1.5,
+                "hover must remain visible for {focus:?}: {resting:?} -> {highlighted:?}"
+            );
+            assert!(
+                contrast_ratio(highlighted, palette::BAR_BACKGROUND)
+                    > contrast_ratio(resting, palette::BAR_BACKGROUND),
+                "hover must lighten the resting tint"
+            );
+        }
+    }
+
+    #[test]
+    fn scene_popup_rows_paint_a_rounded_tint_and_use_it_as_the_badge_surface() {
+        use eon_workspace_protocol::v37::{
+            Attention, AttentionRecord, Column, Pane, Popup, PopupEntry, PopupGeometry, PopupKey,
+            Sidebar, Snapshot, Tab,
+        };
+
+        let attention = Attention {
+            state: AttentionState::Working,
+            record: Some(AttentionRecord {
+                kind: None,
+                progress: None,
+                app: "codex".into(),
+                name: String::new(),
+                title: "Review output".into(),
+                message: String::new(),
+                changed_at: 1,
+                stale: false,
+                others: 0,
+            }),
+        };
+        let pane = |id: &str, attention| Pane {
+            id: id.into(),
+            label: id.into(),
+            pinned_name: None,
+            session: format!("terminal-{id}"),
+            endpoint: format!("/tmp/{id}.sock").into_bytes(),
+            live: true,
+            attention,
+        };
+        let snapshot = Snapshot {
+            workspace: "s1".into(),
+            active_workspace: "s1".into(),
+            workspaces: vec![eon_workspace_protocol::v37::WorkspaceInfo {
+                id: "s1".into(),
+                name: None,
+                tab_count: 1,
+                attention: Some(AttentionState::Working),
+                recency: 0,
+            }],
+            active_tab: "t1".into(),
+            geometry: PopupGeometry {
+                side_margin: 8.0,
+                vertical_margin: 4.0,
+            },
+            entries: vec![PopupEntry {
+                id: "agent".into(),
+                label: "Agent".into(),
+                shortcut: PopupKey::Unbound,
+            }],
+            tabs: vec![Tab {
+                id: "t1".into(),
+                directory: b"/tmp".to_vec(),
+                pending: false,
+                selected_pane: Some("p2".into()),
+                selected_popup: None,
+                columns: vec![Column {
+                    panes: vec![pane("p1", Some(attention.clone())), pane("p2", None)],
+                    expanded: "p2".into(),
+                }],
+                popups: vec![Popup {
+                    id: "u1".into(),
+                    entry: "agent".into(),
+                    session: "terminal-u1".into(),
+                    endpoint: b"/tmp/u1.sock".to_vec(),
+                    attention: Some(attention),
+                }],
+                attention_rollup: Some(AttentionState::Working),
+            }],
+            codex_quota: None,
+            claude_quota: None,
+            codex_quota_failure: None,
+            claude_quota_failure: None,
+            running: None,
+            busy: None,
+            sidebar: Sidebar::Open,
+            attention_queue: Vec::new(),
+        };
+        let metrics = CellMetrics::for_scale(1.0);
+        let scene = WorkspaceScene::from_snapshot(
+            &snapshot,
+            PhysicalSize::new(1600, 900),
+            metrics,
+            0.0,
+            0.0,
+            |_, text| (text.into(), text.len() as f32 * metrics.width),
+        );
+        assert_eq!(scene.sidebar_rows().len(), 2);
+        for row in scene.sidebar_rows() {
+            assert!(!row.current && !row.focused);
+            for (focus, hovered) in FOCUS_COLORS
+                .into_iter()
+                .flat_map(|focus| [false, true].map(|hovered| (focus, hovered)))
+            {
+                for surface in [
+                    Backing::Translucent,
+                    Backing::Surface(palette::TERMINAL_FALLBACK),
+                ] {
+                    let mut actual = RectangleBatch::new(1600, 900);
+                    let (title, detail) = push_attention_row_surface(
+                        row,
+                        hovered,
+                        metrics.padding / 2.0,
+                        surface,
+                        &mut Spinners::new(false, focus),
+                        &mut actual,
+                    );
+                    let mut expected = RectangleBatch::new(1600, 900);
+                    let fill = match row.target.as_str() {
+                        "u1" => attention_row_fill(true, hovered, focus),
+                        "p1" => hovered.then_some(palette::CHROME_HIGHLIGHT),
+                        target => panic!("unexpected row {target}"),
+                    };
+                    if let Some(fill) = fill {
+                        expected.push_rounded(row.rect, metrics.padding / 2.0, fill);
+                        if row.target == "u1" {
+                            for text in [title, detail] {
+                                assert!(contrast_ratio(text, fill) >= 4.5);
+                            }
+                        }
+                    }
+                    if row.target == "p1" {
+                        assert_eq!(
+                            (title, detail),
+                            (palette::PRIMARY_TEXT, palette::SECONDARY_TEXT)
+                        );
+                    }
+                    let backing = match (row.target.as_str(), fill) {
+                        ("u1", Some(fill)) => Backing::Surface(fill),
+                        (_, Some(fill)) => Backing::Disc(fill),
+                        (_, None) => surface,
+                    };
+                    Spinners::new(false, focus).push_badge(row.glyph, backing, &mut expected);
+                    assert_eq!(
+                        actual.bytes, expected.bytes,
+                        "{} {focus:?} hovered={hovered} {surface:?}",
+                        row.target
+                    );
+                }
+            }
+        }
     }
 
     #[test]

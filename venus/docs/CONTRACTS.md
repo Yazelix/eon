@@ -1979,13 +1979,14 @@ re-proved when that platform or feature is next touched.
       full width, its controls and its drag region.
     - Its card uses the border width and the pane cards' corner radius, with
       "Agents" in its rounded top edge in the pane-title style, using the shared
-      chrome title metric. Where no row is highlighted, its fill, from its
+      chrome title metric. Behind rows, its fill, from its
       rounded top edge down, takes the background of the terminal in the
       leftmost visible column at the terminal-background opacity ([Window
       background and
       decorations](PRESENTATION.md#window-background-and-decorations)), so it
       reads like the panes and compositor blur shows through it as through them.
-      Focused and hovered rows take an opaque highlight. Without pane frames,
+      Focused and hovered rows take an opaque highlight; popup rows take their
+      opaque tint, as Contents describes. Without pane frames,
       where pane cards have no outline either, that column's background reaches
       across the sidebar's area.
     - It pushes the tab columns, so opening or closing it resizes the visible
@@ -2037,9 +2038,14 @@ re-proved when that platform or feature is next touched.
     - Rows never reorder by priority.
     - Within a tab, a row whose source terminal is a popup comes first; pane
       rows follow in pane order.
-    - **Popup marker.** A row whose source terminal is a popup always shows
-      the popup marker glyph after its catalog label, and its accessible label
-      adds "popup". Tab headers carry no marker.
+    - **Popup marker.** In the shown session, a row whose source terminal is a
+      popup always shows the popup marker glyph after its catalog label, and
+      its accessible label adds "popup". In both the sidebar and attention
+      inbox, the row also takes
+      an opaque tint of the terminal focus colour, retained under hover or
+      keyboard focus, with readable labels and a visible hover step for every
+      focus colour. The current-row and keyboard-focus outlines draw above it
+      (`eon-sidebar-popup-mark-fmn4v`). Tab headers carry no marker.
     - **Current row.** The row whose source terminal is the active tab's
       focused terminal (its shown popup, else its selected pane) takes a
       one-pixel outline in the pane cards' outline color. It draws over the
