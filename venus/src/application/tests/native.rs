@@ -826,6 +826,149 @@ fn live_output_keeps_application_input_admitted_before_repaint() {
                 "a success clears at its deadline"
             );
             app.inspect_pointer_link();
+            // Metadata repaints bar and sidebar controls, not the terminal link beneath a
+            // still pointer. Exercise pane and popup with the sidebar both visible and hidden.
+            let original_snapshot = app.workspace_model.snapshot().unwrap().clone();
+            let original_size = app.window.as_ref().unwrap().renderer.size();
+            let original_cursor = app.cursor;
+            app.window_event(
+                event_loop,
+                id,
+                WindowEvent::Resized(PhysicalSize::new(2000, 900)),
+            );
+            for (popup, sidebar_open) in
+                [(false, true), (true, true), (false, false), (true, false)]
+            {
+                let mut snapshot = original_snapshot.clone();
+                snapshot.sidebar = if sidebar_open {
+                    workspace::Sidebar::Open
+                } else {
+                    workspace::Sidebar::Closed
+                };
+                if popup {
+                    show_test_popup(&mut snapshot);
+                    snapshot.tabs[0].popups[0].endpoint =
+                        app.terminal.active_endpoint.clone().unwrap();
+                }
+                app.handle_workspace(WorkspaceEvent::Response(workspace::Response::Snapshot(
+                    snapshot.clone(),
+                )));
+                let workspace = app.workspace_scene().unwrap();
+                assert_eq!(workspace.sidebar().is_some(), sidebar_open);
+                let metrics = app.window.as_ref().unwrap().renderer.metrics();
+                app.cursor = PhysicalPosition::new(
+                    f64::from(workspace.terminal.left + metrics.padding + metrics.width * 1.5),
+                    f64::from(workspace.terminal.top + metrics.padding + metrics.height * 0.5),
+                );
+                app.render();
+                let focus = app.links.focus.clone();
+                use winit::keyboard::ModifiersState;
+                for (modifiers, expected) in [
+                    (ModifiersState::empty(), CursorIcon::Default),
+                    (ModifiersState::CONTROL, CursorIcon::Pointer),
+                    (ModifiersState::empty(), CursorIcon::Default),
+                    (ModifiersState::SHIFT, CursorIcon::Default),
+                    (
+                        ModifiersState::CONTROL | ModifiersState::SHIFT,
+                        CursorIcon::Default,
+                    ),
+                    (ModifiersState::CONTROL, CursorIcon::Pointer),
+                ] {
+                    // An expired age lets us observe refresh even when hover does not change.
+                    app.next_age = Some(Instant::now());
+                    let generation = app.presentation.generation;
+                    app.window_event(
+                        event_loop,
+                        id,
+                        WindowEvent::ModifiersChanged(modifiers.into()),
+                    );
+                    assert!(
+                        app.presentation.generation > generation,
+                        "modifiers must refresh the view"
+                    );
+                    assert_eq!(app.links.focus, focus, "modifiers keep the hovered target");
+                    assert_eq!(app.pointer_icon(false, None), expected);
+                }
+                app.links.focus = None;
+                assert_eq!(app.pointer_icon(false, None), CursorIcon::Default);
+                app.links.focus = focus.clone();
+                assert!(app.handle_link_button(ElementState::Pressed, MouseButton::Left));
+                for progress in [1, 2, 3] {
+                    snapshot.tabs[0].columns[0].panes[0].attention = Some(workspace::Attention {
+                        state: workspace::AttentionState::Working,
+                        record: Some(workspace::AttentionRecord {
+                            progress: Some(progress),
+                            app: "claude".into(),
+                            name: String::new(),
+                            title: String::new(),
+                            message: String::new(),
+                            kind: None,
+                            changed_at: 0,
+                            stale: false,
+                            others: 0,
+                        }),
+                    });
+                    app.handle_workspace(WorkspaceEvent::Response(workspace::Response::Snapshot(
+                        snapshot.clone(),
+                    )));
+                    assert_eq!(app.presentation.has_presented_geometry(), !sidebar_open);
+                    assert_eq!(app.links.focus, focus, "sidebar progress must keep hover");
+                    assert!(matches!(app.links.pressed, Some(LinkPress::Live(_))));
+                    assert_eq!(app.current_link().unwrap().uri, kept);
+                    app.render();
+                    assert_eq!(highlighted(app), Some((0, 0)));
+                }
+                let mut codex = snapshot.clone();
+                codex.codex_quota = Some(workspace::CodexQuota {
+                    state: workspace::CodexQuotaState::Fresh,
+                    observed_at: 1,
+                    windows: Vec::new(),
+                });
+                let mut claude = codex.clone();
+                claude.claude_quota = Some(workspace::ClaudeQuota {
+                    state: workspace::ClaudeQuotaState::Fresh,
+                    observed_at: 1,
+                    windows: Vec::new(),
+                });
+                let mut combined = claude.clone();
+                combined.codex_quota.as_mut().unwrap().observed_at += 1;
+                combined.claude_quota.as_mut().unwrap().observed_at += 1;
+                combined.tabs[0].columns[0].panes[0]
+                    .attention
+                    .as_mut()
+                    .unwrap()
+                    .record
+                    .as_mut()
+                    .unwrap()
+                    .progress = Some(4);
+                for snapshot in [codex, claude, combined, snapshot] {
+                    app.handle_workspace(WorkspaceEvent::Response(workspace::Response::Snapshot(
+                        snapshot,
+                    )));
+                    assert!(
+                        !app.presentation.has_presented_geometry(),
+                        "quota controls wait for repaint"
+                    );
+                    assert_eq!(app.links.focus, focus, "quota refresh must keep hover");
+                    assert!(matches!(app.links.pressed, Some(LinkPress::Live(_))));
+                    assert_eq!(app.current_link().unwrap().uri, kept);
+                    app.render();
+                    assert_eq!(highlighted(app), Some((0, 0)));
+                }
+                app.links.notice = None;
+                assert!(app.handle_link_button(ElementState::Released, MouseButton::Left));
+                assert_eq!(
+                    app.links.notice(),
+                    Some(refused),
+                    "the captured click must activate its kept target"
+                );
+            }
+            app.handle_workspace(WorkspaceEvent::Response(workspace::Response::Snapshot(
+                original_snapshot,
+            )));
+            app.cursor = original_cursor;
+            app.window_event(event_loop, id, WindowEvent::Resized(original_size));
+            app.render();
             // A target replaced by output retires its press for good, even
             // when it returns before the next frame.
             let press = |app: &mut Application, state| {

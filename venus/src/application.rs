@@ -3040,7 +3040,8 @@ impl Application {
         let (
             received_snapshot,
             snapshot_changed,
-            attention_only,
+            metadata_only,
+            quota_changed,
             badge_only,
             labels_only,
             sidebar_toggled,
@@ -3049,17 +3050,36 @@ impl Application {
                 let current = self.workspace_model.snapshot();
                 let attention_only =
                     current.is_some_and(|current| attention_only_change(current, snapshot));
+                let quota_changed = current.is_some_and(|current| {
+                    current.codex_quota != snapshot.codex_quota
+                        || current.claude_quota != snapshot.claude_quota
+                        || current.codex_quota_failure != snapshot.codex_quota_failure
+                        || current.claude_quota_failure != snapshot.claude_quota_failure
+                });
+                let metadata_only = attention_only
+                    || quota_changed
+                        && current.is_some_and(|current| {
+                            let mut next = snapshot.clone();
+                            next.codex_quota.clone_from(&current.codex_quota);
+                            next.claude_quota.clone_from(&current.claude_quota);
+                            next.codex_quota_failure
+                                .clone_from(&current.codex_quota_failure);
+                            next.claude_quota_failure
+                                .clone_from(&current.claude_quota_failure);
+                            current == &next || attention_only_change(current, &next)
+                        });
                 (
                     true,
                     current != Some(snapshot),
-                    attention_only,
+                    metadata_only,
+                    quota_changed,
                     // Another workspace's attention moves no tab, pane or sidebar row (VEN-C21).
                     attention_only && current.is_some_and(|current| current.tabs == snapshot.tabs),
                     current.is_some_and(|current| labels_only_change(current, snapshot)),
                     current.is_some_and(|current| current.sidebar != snapshot.sidebar),
                 )
             }
-            _ => (false, false, false, false, false, false),
+            _ => (false, false, false, false, false, false, false),
         };
         let unavailable = matches!(&event, WorkspaceEvent::Unavailable { .. });
         let quota_expired = unavailable
@@ -3153,12 +3173,12 @@ impl Application {
             };
             self.tab_scroll = scene.tab_scroll();
             self.pane_scroll = scene.pane_scroll();
-            // Attention moves no presented geometry outside a visible sidebar, so a held link
-            // press or a shortcut waiting on the presented scene survives it; the sidebar's rows
-            // are hit targets, so a refresh that moves them retires presses on them. The bar
-            // label's badge moves no row.
-            if labels_only || badge_only || attention_only && scene.sidebar().is_none() {
+            // Bar and sidebar controls wait for repaint; metadata never moves terminal links.
+            if labels_only || badge_only || metadata_only {
                 self.presentation.content_changed();
+                if quota_changed || !labels_only && !badge_only && scene.sidebar().is_some() {
+                    self.presentation.unpublish();
+                }
             } else {
                 self.presentation.invalidate();
                 // Showing or hiding the sidebar resizes the columns; other refreshes leave
@@ -4134,6 +4154,20 @@ impl Application {
         false
     }
 
+    fn pointer_icon(&self, dialog_open: bool, scrollback_rect: Option<SceneRect>) -> CursorIcon {
+        if !dialog_open
+            && (self.links.focus.is_some()
+                && native_pointer_shortcut(MouseButton::Left, self.input.modifiers())
+                    .is_some_and(|shortcut| shortcut.action == NativeShortcutAction::OpenLink)
+                || self.links.pointer_inside
+                    && pill_takes_pointer(scrollback_rect, self.cursor, self.input.is_selecting()))
+        {
+            CursorIcon::Pointer
+        } else {
+            CursorIcon::Default
+        }
+    }
+
     fn refresh_client_view(&mut self) {
         if !self.link_surface_available(self.links.unshifted) {
             self.links.pressed = None;
@@ -4176,6 +4210,7 @@ impl Application {
                 workspace_focus,
                 self.terminal.model.is_attached(),
             );
+        let pointer_icon = self.pointer_icon(dialog.is_some(), scrollback_rect);
         let Some(state) = &mut self.window else {
             return;
         };
@@ -4202,21 +4237,7 @@ impl Application {
             );
         }
         state.window.set_ime_allowed(ime_allowed);
-        state.window.set_cursor(
-            if dialog.is_none()
-                && (self.links.focus.is_some()
-                    || self.links.pointer_inside
-                        && pill_takes_pointer(
-                            scrollback_rect,
-                            self.cursor,
-                            self.input.is_selecting(),
-                        ))
-            {
-                CursorIcon::Pointer
-            } else {
-                CursorIcon::Default
-            },
-        );
+        state.window.set_cursor(pointer_icon);
         state.accessibility.update(
             &mut state.adapter,
             self.terminal.model.scene(),
@@ -4901,7 +4922,8 @@ impl ApplicationHandler<UserEvent> for Application {
                 self.cancel_terminal_scroll();
                 self.input.set_modifiers(modifiers.state());
                 if !dialog_open {
-                    self.inspect_pointer_link();
+                    self.hover_link(self.links.unshifted);
+                    self.refresh_client_view();
                 }
             }
             WindowEvent::KeyboardInput { event, .. } => {

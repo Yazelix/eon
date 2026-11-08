@@ -5,6 +5,9 @@ installation, and proven contract changes.
 
 ## Unreleased
 
+- Ctrl+click on an unchanged terminal link keeps working while agent status
+  updates in the sidebar, in panes and popups. The pointer shows a hand over
+  links only while Ctrl is held (Command on macOS; `eon-ctrl-click-links-n8uar`).
 - Popup names sit in rounded tabs that join the frame's left and top edges
   smoothly, with the terminal background and opacity behind the whole name.
   Tight surfaces retain the original border-gap title (VEN-C18,

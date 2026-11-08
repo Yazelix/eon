@@ -5,6 +5,8 @@
 Hover an explicit OSC 8 link, or an `http://` or `https://` URL printed as
 plain text, to highlight it and preview its actual target.
 Ctrl+left click opens it on Linux; Command+left click opens it on macOS.
+The pointer becomes a hand while that modifier is held. Agent status updates
+in the sidebar preserve hover and a held click on an unchanged link.
 Ctrl+Shift+C on Linux or Command+C on macOS copies the hovered target
 unless the terminal has selected text, in which case it copies that selection.
 Both Command actions on a hovered link are observed natively on Apple Silicon
