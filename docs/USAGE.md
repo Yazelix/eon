@@ -137,6 +137,15 @@ nix profile add --refresh github:Yazelix/eon/main
 
 ### Stop terminals
 
+Click the Eon icon at the top left for the **Window menu**: this window and
+its terminal count, other running windows, Detach and Quit. With keyboard
+focus in the bar (F6), Tab reaches the icon and Enter opens it. Use arrows or
+Tab to choose, Enter to activate, and Escape to close; pressing outside also
+closes it. This window's Quit asks while a terminal is busy; another window's
+Quit always asks first. The icon keeps working with hints and the sidebar off,
+and stays reachable while tabs overflow; only a tiny width hides it. The session pill opens
+the Sessions picker, and the bottom version label names the supervising build.
+
 To inspect or stop work explicitly:
 
 ```sh

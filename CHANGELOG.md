@@ -5,6 +5,11 @@ installation, and proven contract changes.
 
 ## Unreleased
 
+- The leading Eon icon opens a Window menu with this window's terminal count,
+  other running windows, Detach and Quit. Pointer, keyboard and accessibility
+  activation work with hints and the sidebar off and while tabs overflow; the
+  launch picker points to this menu and its CLI commands. Peer Quit rechecks
+  its target generation in fresh CLI inventory before stopping (`eon-7cf0y.6`).
 - `eon update --check [--json]` reports which installation an `eon` came
   from, its owner and source, the installed build, whether its `main` or
   `edge` branch has a newer revision, and whether Eon may install it, without

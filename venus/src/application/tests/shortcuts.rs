@@ -58,6 +58,119 @@ fn new_window_shortcut_invokes_the_supplied_eon_command() {
     );
     let error = run_new_window(&failing).unwrap_err();
     assert!(error.contains("window|new"), "{error}");
+    let peer = script(
+        "peer",
+        "#!/bin/sh\nif [ \"$#|$1|$2|$3\" = '3|window|ls|--json' ]; then printf '%s' '{\"windows\":[{\"id\":\"01234567\",\"generation\":\"g1-11111111111111111111111111111111\"},{\"id\":\"default\",\"generation\":\"g1-11111111111111111111111111111111\"}]}'; exit 0; fi\nprintf '%s|%s|%s|%s' \"$1\" \"$2\" \"$3\" \"$4\" >&2\nexit 7\n",
+    );
+    let mut snapshot = super::chrome::quit_snapshot();
+    let mut window = snapshot.running.as_ref().unwrap().this.clone();
+    window.window = Some("01234567".into());
+    window.generation = "g1-11111111111111111111111111111111".into();
+    snapshot.running.as_mut().unwrap().others = Some(vec![window.clone()]);
+    let action = WindowMenuAction::peer(&window);
+    let error = stop_other_window(&peer, &snapshot, &action).unwrap_err();
+    assert!(error.contains("window|stop|01234567|--json"), "{error}");
+    // The menu snapshot stays unchanged while the CLI inventory changes.
+    for (name, inventory) in [
+        (
+            "fresh-multiple",
+            r#"{"windows":[{"id":"01234567","generation":"g1-11111111111111111111111111111111"},{"id":"01234567","generation":"g1-22222222222222222222222222222222"}]}"#,
+        ),
+        (
+            "fresh-replacement",
+            r#"{"windows":[{"id":"01234567","generation":"g1-22222222222222222222222222222222"}]}"#,
+        ),
+        ("fresh-absent", r#"{"windows":[]}"#),
+        ("fresh-malformed", "not JSON"),
+        (
+            "fresh-missing-generation",
+            r#"{"windows":[{"id":"01234567"}]}"#,
+        ),
+    ] {
+        let fresh = script(
+            name,
+            &format!(
+                "#!/bin/sh\nif [ \"$#|$1|$2|$3\" = '3|window|ls|--json' ]; then printf '%s' '{inventory}'; exit 0; fi\nprintf '%s' 'STOP RAN' >&2\nexit 7\n"
+            ),
+        );
+        let error = stop_other_window(&fresh, &snapshot, &action).unwrap_err();
+        assert!(
+            error.contains("fresh inventory") && error.contains("eon window ls"),
+            "{error}"
+        );
+        fs::remove_file(fresh).unwrap();
+    }
+    let error = stop_other_window(&failing, &snapshot, &action).unwrap_err();
+    assert!(
+        error.contains("fresh inventory") && error.contains("window|ls"),
+        "{error}"
+    );
+    // The same namespace has another generation: no broader CLI dispatch is allowed.
+    let mut replacement = window.clone();
+    replacement.generation = "g1-22222222222222222222222222222222".into();
+    snapshot
+        .running
+        .as_mut()
+        .unwrap()
+        .others
+        .as_mut()
+        .unwrap()
+        .push(replacement);
+    let error = stop_other_window(&peer, &snapshot, &action).unwrap_err();
+    assert!(
+        error.contains("more than one generation") && error.contains("eon window stop 01234567"),
+        "{error}"
+    );
+    snapshot
+        .running
+        .as_mut()
+        .unwrap()
+        .others
+        .as_mut()
+        .unwrap()
+        .truncate(1);
+    snapshot.running.as_mut().unwrap().this.window = window.window.clone();
+    assert!(
+        stop_other_window(&peer, &snapshot, &action)
+            .unwrap_err()
+            .contains("includes this window")
+    );
+    snapshot.running.as_mut().unwrap().this.window = None;
+    snapshot.running.as_mut().unwrap().omitted = 1;
+    assert!(
+        stop_other_window(&peer, &snapshot, &action)
+            .unwrap_err()
+            .contains("scope unknown")
+    );
+    snapshot.running.as_mut().unwrap().omitted = 0;
+    // A default-namespace peer is addressed by the full CLI generation ID, never default.
+    window.window = None;
+    snapshot.running.as_mut().unwrap().others = Some(vec![window.clone()]);
+    let action = WindowMenuAction::peer(&window);
+    let error = stop_other_window(&peer, &snapshot, &action).unwrap_err();
+    assert!(
+        error.contains("window|stop|11111111111111111111111111111111|--json"),
+        "{error}"
+    );
+    snapshot.running.as_mut().unwrap().others.as_mut().unwrap()[0]
+        .generation
+        .push('2');
+    assert!(
+        stop_other_window(&peer, &snapshot, &action)
+            .unwrap_err()
+            .contains("confirmed generation")
+    );
+    let json_failure = script(
+        "json-failure",
+        "#!/bin/sh\nprintf '%s' '{\"error\":{\"code\":\"stop-failed\",\"detail\":\"the supervisor refused Stop\"}}'\nexit 1\n",
+    );
+    assert!(
+        run_new_window(&json_failure)
+            .unwrap_err()
+            .contains("the supervisor refused Stop")
+    );
+    fs::remove_file(json_failure).unwrap();
+    fs::remove_file(peer).unwrap();
     let succeeding = script("succeeding", "#!/bin/sh\nexit 0\n");
     assert_eq!(run_new_window(&succeeding), Ok(()));
     fs::remove_file(failing).unwrap();

@@ -1491,8 +1491,7 @@ impl Renderer {
         {
             (tooltip, label.rect)
         } else if let Some(control) = workspace
-            .controls
-            .iter()
+            .header_controls()
             .find(|control| self.header.hovers(WorkspaceFocus::Header(control.kind), ""))
         {
             (control.label, control.rect)
@@ -1828,7 +1827,10 @@ impl Renderer {
         }
         let key_cells = match viewer.kind {
             DialogKind::Shortcuts | DialogKind::AttentionInbox => 15.0,
-            DialogKind::CloseLastTab { .. } | DialogKind::QuitWindow { .. } => 6.0,
+            DialogKind::WindowMenu
+            | DialogKind::QuitOtherWindow { .. }
+            | DialogKind::CloseLastTab { .. }
+            | DialogKind::QuitWindow { .. } => 6.0,
         };
         let key_width = (self.metrics.font_size * key_cells).min(viewer.content.width * 0.4);
         let gap = padding.min(self.metrics.width);
@@ -1847,6 +1849,13 @@ impl Renderer {
                 );
             }
             for row in &group.rows {
+                if row.focused {
+                    rectangles.push_rounded(
+                        row.rect,
+                        self.metrics.padding / 3.0,
+                        palette::CONTROL_HOVER,
+                    );
+                }
                 self.push_text_clipped(
                     &row.shortcut,
                     row.rect.left,
@@ -2110,6 +2119,18 @@ impl Renderer {
         }
         rectangles.clip = None;
         if let Some(icon) = workspace.eon_icon {
+            let control = WorkspaceHeaderControl::WindowMenu;
+            if workspace.has_control(control) {
+                let visual = workspace.bar_pill_rect(icon, self.metrics);
+                if self.header.pressed_header == Some(control) {
+                    rectangles.push_rounded(visual, visual.height / 2.0, palette::CHROME_HIGHLIGHT);
+                } else if self.header.hovers(WorkspaceFocus::Header(control), "") {
+                    rectangles.push_rounded(visual, visual.height / 2.0, palette::CONTROL_HOVER);
+                }
+                if focus == WorkspaceFocus::Header(control) {
+                    rectangles.push_rounded_outline(visual, visual.height / 2.0, palette::ACCENT);
+                }
+            }
             self.push_bar_icon(EON_ICON_ID, palette::VERSION_TEXT, icon, None);
         }
         // The workspace label shares the tabs' band but reads as a bar widget, with the header

@@ -1516,10 +1516,13 @@ re-proved when that platform or feature is next touched.
   Amended on 2026-11-07 (approved by eon-overseer under Lucca's standing rule)
   by `eon-30skm` (S3): the heading and label say session, and the label's
   accessible name, needs-input suffix and tooltip quote the session strings.
+  Amended on 2026-11-07 (approved by eon-overseer under Lucca's standing rule)
+  by `eon-7cf0y.6`: the icon opens the Window menu; proven with an isolated
+  installed x86_64 Linux Wayland candidate on 2026-11-07.
 - **Consumer:** One person using a Venus surface controlled by a full Eon
   workspace.
 - **Trigger:** The person points at, focuses, or activates the session header;
-  uses the session label, New tab, Keyboard shortcuts, or active-tab Close;
+  uses the Eon icon, session label, New tab, Keyboard shortcuts, or active-tab Close;
   scrolls the tab region; or left-presses its empty drag region.
 - **Result:** The existing session tab strip remains one row at its existing
   height. Tabs keep their filled pills. Tab pills and the quota, CPU, RAM and disk widgets share
@@ -1530,26 +1533,21 @@ re-proved when that platform or feature is next touched.
   background. The clock and the version label are plain text in one colour.
   Keyboard shortcuts is a round outlined button as tall as the tab pills, with
   its glyph's ink centred in the circle, and New tab, Keyboard
-  shortcuts and Close centre on the same line. The decorative Eon icon, when Eon supplies one,
+  shortcuts and Close centre on the same line. The Eon icon, when Eon supplies one,
   leads the bar before the session label and tabs, two logical pixels shorter than the tab pills
-  and centred on them, with no action, hover or accessible node. It shows only while the bar
-  would show everything else with it at the widest it can be: for each provider that has a quota
-  fact, a chip for each window its latest read reported, each at the widest that window's text
-  can be with the widest digit in every digit's place, or Codex's one blocked or unknown chip;
-  each listed reading; every tab at its full width; and the whole tab strip
-  fitting unscrolled. So it hides
-  before any other item and stays hidden at every narrower width, and it hides whenever the tabs
-  overflow however wide the window. The tab scroll, a live value (quota numbers, a
-  reading) and a window's reset never show or hide it: a window keeps its room from its reset until
-  the next read. It can change once when a provider's quota first appears or goes away (as it
-  does when all its windows reset before a read), or when a read finds the provider has gained or
-  lost a window. Its centre lies as far from
+  and centred on them. With a running-windows summary it opens the Window menu
+  (eon-7cf0y.6; PRESENTATION.md), through pointer, keyboard or accessible
+  activation, with the header controls' hover, pressed and focus feedback. It keeps its slot while tabs overflow and scroll beside it.
+  Quota chips and the session label yield before the icon. It hides only at
+  the existing tiny-width minimum where the icon, one tab's minimum and
+  trailing controls cannot fit. Tab scroll, quota and reading values, and
+  the windows reported by a quota read do not hide it. Its centre lies as far from
   the window's left edge as the bar's centre line lies below the window's top, and what follows
   the icon starts as far after it as it lies from the window's left edge. Close's glyph ink lies
   as far from the window's right edge as from its top while that keeps every ink pixel inside
   Close's rectangle; otherwise its ink is centred on Close's glyph position, moved only as far as
   keeps it inside the rectangle. Hover and accessibility rectangles follow the drawn order: the
-  icon has none, Shortcuts' rectangle reaches back over the space after a chip, and Close's
+  icon has a Window menu target while actionable, Shortcuts' rectangle reaches back over the space after a chip, and Close's
   reaches the window's right edge. Width fitting keeps its order after the icon, and the blank
   drag region keeps its minimum. Scrollable tabs keep the leading space and retain their labels,
   overflow, reveal, selection, hover path, stable identity, and accessibility.
@@ -1568,7 +1566,7 @@ re-proved when that platform or feature is next touched.
   (`New tab`, `Close tab`). A bounded empty region between New tab and the
   trailing controls starts compositor-owned window movement only from its
   immediate left press.
-  The accessibility tree orders the session label while it shows, tabs, New
+  The accessibility tree orders the Window menu while it shows, the session label while it shows, tabs, New
   tab, optional quota, Shortcuts, then Close tab.
   It yields before tabs or controls when width contracts. Tab and Shift+Tab
   traverse focused header controls; Enter and Space activate them. Hover,
@@ -1584,8 +1582,8 @@ re-proved when that platform or feature is next touched.
   presentation is current, or Enter or Space after Tab focuses it, invokes the
   snapshot's `sessions` popup entry as that entry's key does. Its tooltip is
   that entry's label and any chord, such as `Sessions — Alt+Shift+S`; it takes
-  the header controls' hover, pressed and focus states and is the first header
-  control in Tab order. Without that entry it is inert text with no hover,
+  the header controls' hover, pressed and focus states and precedes the tab
+  pills in Tab order. Without that entry it is inert text with no hover,
   focus, tooltip or action. Its AccessKit node is a button, or a label while
   inert, named `Session NAME, N of M` with the scene's rectangle. While
   another session's `attention` is needs input, the needs-input badge (◆)
@@ -1634,6 +1632,15 @@ re-proved when that platform or feature is next touched.
   and its badge from its `workspace` and `workspaces`, and the
   `--animate-working-badge` launch argument.
 - **Proof:** `795d735a8f61ef439c56d68e1cc4d3929af0dfcf`
+  - **Window menu (`eon-7cf0y.6`):**
+    `eon_icon_opens_window_controls_without_hints_or_sidebar`,
+    `window_menu_projects_summary_and_clips_actions_to_its_scroll_area`,
+    `window_menu_navigation_keeps_peer_identity_and_rejects_ended_targets`,
+    `peer_quit_keeps_id_and_count_apart_from_a_long_name`,
+    `window_menu_pointer_waits_for_matching_release_and_hover_never_scrolls`,
+    `window_menu_application_routes_input_and_lifecycle`, and the isolated
+    installed pointer, keyboard, AT-SPI, Quit and Detach observation recorded
+    on the bead, x86_64 Linux Wayland, 2026-11-07.
   - **Environment:** Automated and installed.
   - **Evidence:** `eon_bar_controls_reuse_existing_actions_and_local_viewer`,
     `eon_bar_keeps_tabs_controls_and_drag_hits_disjoint_under_pressure`,
@@ -1646,7 +1653,7 @@ re-proved when that platform or feature is next touched.
   - **Eon icon, round Keyboard shortcuts and trailing order (`eon-369s`):**
     added checks `eon_icon_loads_only_bounded_square_rgba_images`,
     `eon_icon_rasterizes_in_its_own_colours_at_the_requested_pixels`,
-    `eon_icon_leads_the_bar_and_yields_first`,
+    `eon_icon_leads_the_bar_and_survives_tab_overflow`,
     `shortcuts_version_and_close_end_the_bar_one_edge_from_the_corner` and
     `round_shortcuts_glyph_centres_its_ink_on_the_circle`;
     `version_label_uses_only_spare_space_and_has_no_actions`,
@@ -1660,7 +1667,9 @@ re-proved when that platform or feature is next touched.
     `scoped_windows_keep_their_room_until_the_next_read`);
     `live_items_never_show_or_hide_the_icon_or_move_the_tabs` and
     `quota_facts_and_windows_appearing_may_hide_the_icon_once` updated; the
-    isolated installed observation recorded in `eon-nfrbn`.
+    isolated installed observation recorded in `eon-nfrbn`. The approved
+    Window menu amendment retires this reserved-window hiding rule, its
+    reservation-only memory and its dedicated test; menu-priority proof is above.
   - **Version in the hints bar (`eon-e3a1z.1`):** added checks
     `footer_centres_full_name_keycaps_and_keeps_the_version_clear`,
     `hint_keycap_hover_hits_its_group` and
@@ -1669,7 +1678,7 @@ re-proved when that platform or feature is next touched.
     `shortcuts_version_and_close_end_the_bar_one_edge_from_the_corner`) and
     `version_label_sits_after_the_hints_and_has_no_actions` (renamed from
     `version_label_uses_only_spare_space_and_has_no_actions`) updated, with
-    `eon_icon_leads_the_bar_and_yields_first`,
+    `eon_icon_leads_the_bar_and_survives_tab_overflow`,
     `local_clock_yields_first_and_has_no_actions`,
     `readings_yield_after_the_clock_and_have_no_actions` and
     `eon_orders_and_omits_bar_items`; the isolated installed observation

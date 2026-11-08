@@ -668,7 +668,7 @@ fn eon_bar_controls_reuse_existing_actions_and_local_viewer() {
         WorkspaceHeaderAction::Workspace(CommonAction::CloseTab { tab: "t7".into() })
     );
     assert_eq!(
-        cycle_header_focus(WorkspaceFocus::Tabs, false, false, true),
+        cycle_header_focus(WorkspaceFocus::Tabs, false, false, true, false),
         Some(WorkspaceFocus::Header(WorkspaceHeaderControl::NewTab))
     );
     assert_eq!(
@@ -676,17 +676,19 @@ fn eon_bar_controls_reuse_existing_actions_and_local_viewer() {
             WorkspaceFocus::Header(WorkspaceHeaderControl::NewTab),
             true,
             false,
-            true
+            true,
+            false
         ),
         Some(WorkspaceFocus::Tabs)
     );
     assert_eq!(
-        cycle_header_focus(WorkspaceFocus::Panes, false, false, true),
+        cycle_header_focus(WorkspaceFocus::Panes, false, false, true, false),
         None
     );
     assert_eq!(
         cycle_header_focus(
             WorkspaceFocus::Header(WorkspaceHeaderControl::NewTab),
+            false,
             false,
             false,
             false
@@ -698,6 +700,7 @@ fn eon_bar_controls_reuse_existing_actions_and_local_viewer() {
             WorkspaceFocus::Header(WorkspaceHeaderControl::CloseTab),
             true,
             false,
+            false,
             false
         ),
         Some(WorkspaceFocus::Header(WorkspaceHeaderControl::NewTab))
@@ -705,11 +708,11 @@ fn eon_bar_controls_reuse_existing_actions_and_local_viewer() {
     // A workspace label that opens the picker is the first header control.
     let label = WorkspaceFocus::Header(WorkspaceHeaderControl::Workspaces);
     assert_eq!(
-        cycle_header_focus(WorkspaceFocus::Tabs, false, true, true),
+        cycle_header_focus(WorkspaceFocus::Tabs, false, true, true, false),
         Some(label)
     );
     assert_eq!(
-        cycle_header_focus(label, false, true, true),
+        cycle_header_focus(label, false, true, true, false),
         Some(WorkspaceFocus::Header(WorkspaceHeaderControl::NewTab))
     );
     assert_eq!(
@@ -717,18 +720,19 @@ fn eon_bar_controls_reuse_existing_actions_and_local_viewer() {
             WorkspaceFocus::Header(WorkspaceHeaderControl::NewTab),
             true,
             true,
-            true
+            true,
+            false
         ),
         Some(label)
     );
     assert_eq!(
-        cycle_header_focus(label, true, true, true),
+        cycle_header_focus(label, true, true, true, false),
         Some(WorkspaceFocus::Tabs)
     );
 }
 
 /// A running window, generation g7, with three live terminals and none busy.
-fn quit_snapshot() -> Snapshot {
+pub(super) fn quit_snapshot() -> Snapshot {
     use eon_workspace_protocol::v37::{BusyTerminals, RunningWindows, WindowEntry, WindowState};
 
     Snapshot {
@@ -767,8 +771,57 @@ fn quit_snapshot() -> Snapshot {
     }
 }
 
+#[test]
+fn window_menu_navigation_keeps_peer_identity_and_rejects_ended_targets() {
+    let control = WorkspaceHeaderControl::WindowMenu;
+    assert_eq!(
+        workspace_header_action(control, "t1"),
+        WorkspaceHeaderAction::ToggleWindowMenu
+    );
+    let focus = WorkspaceFocus::Header(control);
+    assert_eq!(
+        cycle_header_focus(WorkspaceFocus::Tabs, false, true, true, true),
+        Some(focus)
+    );
+    assert_eq!(
+        cycle_header_focus(focus, true, true, true, true),
+        Some(WorkspaceFocus::Tabs)
+    );
+    let mut snapshot = quit_snapshot();
+    let mut peer = snapshot.running.as_ref().unwrap().this.clone();
+    peer.window = Some("12345678".into());
+    peer.generation = "g1-11111111111111111111111111111111".into();
+    let action = WindowMenuAction::peer(&peer);
+    snapshot.running.as_mut().unwrap().others = Some(vec![peer]);
+    let prompt = ClosePrompt {
+        target: PromptTarget::QuitOtherWindow(action.clone()),
+        scroll: 0.0,
+    };
+    assert!(prompt.names_live_target(&snapshot));
+    let actions = [
+        WindowMenuAction::Detach,
+        WindowMenuAction::Quit,
+        action.clone(),
+    ];
+    assert_eq!(
+        next_window_action(&actions, Some(&WindowMenuAction::Detach), true),
+        Some(action.clone())
+    );
+    assert_eq!(
+        next_window_action(&actions, Some(&action), false),
+        Some(WindowMenuAction::Detach)
+    );
+    // A replacement under the same window ID is not the prompt's generation.
+    snapshot.running.as_mut().unwrap().others.as_mut().unwrap()[0]
+        .generation
+        .push('2');
+    assert!(!prompt.names_live_target(&snapshot));
+    assert!(peer_window(&snapshot, &action).is_none());
+    assert_eq!(next_window_action(&[], None, false), None);
+}
+
 /// p1 runs a command.
-fn busy_p1() -> eon_workspace_protocol::v37::BusyTerminals {
+pub(super) fn busy_p1() -> eon_workspace_protocol::v37::BusyTerminals {
     use eon_workspace_protocol::v37::{BusyTerminal, BusyTerminals, TargetId, TerminalTarget};
 
     BusyTerminals {
@@ -1047,4 +1100,62 @@ fn a_close_request_quits_where_alt_shift_q_does() {
     eonbase.running = None;
     assert_eq!(close_request(Some(&eonbase), false), CloseRequest::Detach);
     assert_eq!(close_request(None, false), CloseRequest::Detach);
+}
+
+#[test]
+fn window_menu_pointer_waits_for_matching_release_and_hover_never_scrolls() {
+    let mut menu = WindowMenuState {
+        open: true,
+        scroll: 75.0,
+        ..WindowMenuState::default()
+    };
+    assert_eq!(
+        menu.button(
+            MouseButton::Left,
+            ElementState::Pressed,
+            Some(WindowMenuAction::Quit)
+        ),
+        None
+    );
+    menu.hover(WindowMenuAction::Detach);
+    assert_eq!(menu.scroll, 75.0);
+    assert_eq!(menu.highlighted, Some(WindowMenuAction::Detach));
+    assert_eq!(
+        menu.button(
+            MouseButton::Left,
+            ElementState::Released,
+            Some(WindowMenuAction::Detach)
+        ),
+        None
+    );
+    menu.button(
+        MouseButton::Left,
+        ElementState::Pressed,
+        Some(WindowMenuAction::Quit),
+    );
+    assert_eq!(
+        menu.button(MouseButton::Left, ElementState::Released, None),
+        None
+    );
+    menu.button(
+        MouseButton::Left,
+        ElementState::Pressed,
+        Some(WindowMenuAction::Quit),
+    );
+    assert_eq!(
+        menu.button(
+            MouseButton::Left,
+            ElementState::Released,
+            Some(WindowMenuAction::Quit)
+        ),
+        Some(WindowMenuAction::Quit)
+    );
+    assert_eq!(
+        menu.button(
+            MouseButton::Left,
+            ElementState::Released,
+            Some(WindowMenuAction::Quit)
+        ),
+        None
+    );
 }

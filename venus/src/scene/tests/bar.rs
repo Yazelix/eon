@@ -1,6 +1,167 @@
 use super::*;
 
 #[test]
+fn eon_icon_opens_window_controls_without_hints_or_sidebar() {
+    use eon_workspace_protocol::v37::{RunningWindows, WindowEntry, WindowState};
+    let mut snapshot = one_pane_snapshot();
+    snapshot.sidebar = eon_workspace_protocol::v37::Sidebar::Off;
+    snapshot.running = Some(RunningWindows {
+        this: WindowEntry {
+            window: None,
+            generation: "g1-0123456789abcdef0123456789abcdef".into(),
+            name: Some("project".into()),
+            started_at: Some(1),
+            live_terminals: Some(2),
+            state: WindowState::Live,
+        },
+        others: Some(vec![]),
+        omitted: 0,
+    });
+    snapshot.tabs = (1..=32)
+        .map(|n| {
+            let mut tab = snapshot.tabs[0].clone();
+            tab.id = format!("t{n}");
+            tab
+        })
+        .collect();
+    let scene = WorkspaceScene::from_snapshot_with_bar(
+        &snapshot,
+        EonBar {
+            icon: true,
+            items: &[],
+            ..EonBar::default()
+        },
+        PhysicalSize::new(1200, 720),
+        CellMetrics::for_scale(1.0),
+        0.0,
+        0.0,
+        |_, text| (text.to_owned(), text.len() as f32 * 10.0),
+        None,
+    );
+    assert!(scene.hints.is_none() && scene.sidebar().is_none());
+    assert!(scene.tab_scroll_limit() > 0.5);
+    let icon = scene.eon_icon.unwrap();
+    assert!(
+        matches!(
+            scene.hit_test(icon.left + icon.width / 2.0, icon.top + icon.height / 2.0),
+            Some(WorkspaceHit::Control(WorkspaceHeaderControl::WindowMenu))
+        ),
+        "the icon must be an actionable window control"
+    );
+}
+
+#[test]
+fn window_menu_projects_summary_and_clips_actions_to_its_scroll_area() {
+    use eon_workspace_protocol::v37::{RunningWindows, WindowEntry, WindowState};
+    let window = |id: &str, count| WindowEntry {
+        window: Some(id.into()),
+        generation: format!("g1-{id}"),
+        name: Some(format!("project-{id}")),
+        started_at: Some(1),
+        live_terminals: count,
+        state: WindowState::Live,
+    };
+    let mut running = RunningWindows {
+        this: window("01234567", Some(2)),
+        others: Some(vec![]),
+        omitted: 0,
+    };
+    let project = |running: &RunningWindows, scroll| {
+        DialogScene::window_menu(
+            running,
+            Some(&WindowMenuAction::Detach),
+            PhysicalSize::new(800, 500),
+            CellMetrics::for_scale(1.0),
+            scroll,
+        )
+    };
+    let empty = project(&running, 0.0);
+    assert!(
+        empty.groups[0]
+            .title
+            .contains("project-01234567 (01234567) · 2 terminals")
+    );
+    assert_eq!(empty.menu_rows().count(), 2);
+    assert_eq!(empty.groups[1].rows[0].action, "No other windows");
+    running.others = Some(
+        (0..32)
+            .map(|i| window(&format!("{i:08x}"), Some(i)))
+            .collect(),
+    );
+    running.omitted = 2;
+    let full = project(&running, 0.0);
+    assert_eq!(full.menu_rows().count(), 34);
+    assert!(full.max_scroll > 0.0);
+    for row in full.menu_rows() {
+        let x = row.rect.left + 1.0;
+        let y = row.rect.top + row.rect.height / 2.0;
+        assert_eq!(
+            full.menu_target_at(x, y),
+            full.content
+                .contains(x, y)
+                .then_some(row.menu_action.as_ref())
+                .flatten()
+        );
+    }
+    let end = project(&running, f32::MAX);
+    assert_eq!(end.scroll, end.max_scroll);
+    assert!(
+        end.groups[1]
+            .rows
+            .last()
+            .unwrap()
+            .action
+            .contains("2 more windows")
+    );
+    // Peers disappearing clamps a previously larger scroll before keyboard reveal.
+    running.others.as_mut().unwrap().truncate(8);
+    let shrunk = project(&running, end.scroll);
+    assert!(shrunk.scroll < end.scroll);
+    let revealed = project(
+        &running,
+        shrunk.menu_action_scroll(&WindowMenuAction::Detach),
+    );
+    let first = revealed.menu_rows().next().unwrap();
+    assert_eq!(first.rect.intersection(revealed.content), Some(first.rect));
+    let mut unknown = window("deadbeef", None);
+    unknown.state = WindowState::Unreachable;
+    assert!(window_summary(&unknown).ends_with("terminal count unknown · not answering"));
+    unknown.window = None;
+    unknown.generation = "g1-0123456789abcdef0123456789abcdef".into();
+    assert_eq!(
+        WindowMenuAction::peer(&unknown),
+        WindowMenuAction::QuitOther {
+            id: "0123456789abcdef0123456789abcdef".into(),
+            generation: unknown.generation,
+        }
+    );
+}
+
+#[test]
+fn peer_quit_keeps_id_and_count_apart_from_a_long_name() {
+    use eon_workspace_protocol::v37::{WindowEntry, WindowState};
+    let peer = WindowEntry {
+        window: Some("01234567".into()),
+        generation: "g1-11111111111111111111111111111111".into(),
+        name: Some("n".repeat(64)),
+        started_at: None,
+        live_terminals: Some(65535),
+        state: WindowState::Live,
+    };
+    let metrics = CellMetrics::for_scale(1.0);
+    let scene = DialogScene::quit_other_window(&peer, PhysicalSize::new(320, 500), metrics, 0.0);
+    assert_eq!(scene.kind.subtitle(), "n".repeat(64));
+    assert_eq!(scene.groups[0].rows[0].shortcut, "ID");
+    assert_eq!(scene.groups[0].rows[0].action, "01234567");
+    assert_eq!(scene.groups[0].rows[1].shortcut, "Terminals");
+    assert_eq!(scene.groups[0].rows[1].action, "65535");
+    for row in &scene.groups[0].rows {
+        assert_eq!(row.rect.intersection(scene.content), Some(row.rect));
+    }
+    assert!(scene.subtitle.bottom() <= scene.content.top);
+}
+
+#[test]
 fn eon_bar_pill_band_leaves_equal_title_cap_gap() {
     for (scale, line_height, expected) in [
         (1.0, 1.125, (10.0, 30.0)),
@@ -1812,7 +1973,7 @@ fn disk_chip_shows_filesystem_use_and_colours_only_when_filling_up() {
 }
 
 #[test]
-fn eon_icon_leads_the_bar_and_yields_first() {
+fn eon_icon_leads_the_bar_and_survives_tab_overflow() {
     use eon_workspace_protocol::v37::{Pane, PopupGeometry, Tab};
     let tab = |id: String| Tab {
         id: id.clone(),
@@ -1875,7 +2036,7 @@ fn eon_icon_leads_the_bar_and_yields_first() {
                 (None, None),
                 (Some("9.8.7"), Some(&used)),
             ] {
-                // The icon hides first and stays hidden: once it shows as the window widens, it
+                // At the tiny-width minimum the icon hides; once it shows as the window widens, it
                 // shows at every wider width.
                 let mut shown_from = None;
                 for logical_width in (100..=1600).step_by(10) {
@@ -1908,7 +2069,7 @@ fn eon_icon_leads_the_bar_and_yields_first() {
                     if tab_count == 12 && logical_width == 600 {
                         assert!(plain.tab_scroll_limit() > 0.5, "{scale}: 12 tabs overflow");
                     }
-                    // The icon yields before anything else: without room it leaves today's bar,
+                    // Below its minimum width the icon leaves the plain bar,
                     // whatever the tab scroll.
                     let Some(icon) = iconic.eon_icon else {
                         assert_eq!(iconic, plain);
@@ -1926,18 +2087,16 @@ fn eon_icon_leads_the_bar_and_yields_first() {
                     };
                     shown_from.get_or_insert(logical_width);
                     states[0] = true;
-                    // It costs nothing: the whole strip fits unscrolled with it, and every chip
-                    // and reading that has data shows, at any tab scroll.
-                    assert!(iconic.tab_scroll_limit() <= 0.5, "{scale} {logical_width}");
+                    // Overflowing tabs scroll beside the icon.
+                    if tab_count == 12 && logical_width == 600 {
+                        assert!(iconic.tab_scroll_limit() > 0.5);
+                    }
                     // The version label sits in the shortcut hints, never the header.
                     assert!(iconic.version.is_none());
-                    assert_eq!(iconic.ram.is_some(), ram.is_some());
                     assert_eq!(iconic.version, plain.version);
-                    assert_eq!(iconic.ram, plain.ram);
                     for tab_scroll in [5.0, 1.0e6] {
                         let scrolled = project(true, tab_scroll);
                         assert_eq!(scrolled.eon_icon, iconic.eon_icon);
-                        assert_eq!(scrolled.tabs, iconic.tabs);
                     }
                     // A square two logical pixels shorter than the tab pills, in whole pixels,
                     // whose centre is one bar edge from the window's left and top, with the same
@@ -1962,12 +2121,6 @@ fn eon_icon_leads_the_bar_and_yields_first() {
                         assert_eq!(iconic.tabs[0].rect.left, label.rect.right() + gap);
                     }
                     assert_eq!(iconic.tab_viewport.left, iconic.tabs[0].rect.left);
-                    // Every tab moves by the same amount without narrowing.
-                    let shift = icon.right() + icon.left - tab_inset(metrics, height);
-                    for (iconic, plain) in iconic.tabs.iter().zip(&plain.tabs) {
-                        assert_eq!(iconic.rect.left, plain.rect.left + shift);
-                        assert_eq!(iconic.rect.width, plain.rect.width);
-                    }
                     assert_eq!(iconic.version, plain.version);
                     // Close keeps the right end; nothing but the icon is drawn before the tabs.
                     assert_eq!(iconic.controls[2].rect.right(), size.width as f32);
@@ -2118,7 +2271,6 @@ fn live_items_never_show_or_hide_the_icon_or_move_the_tabs() {
         observed_at,
         windows,
     });
-    let (codex_read, claude_read) = (codex[1].clone(), claude[1].clone());
     let cpu = |percent: u64| crate::CpuUse {
         percent,
         label: format!("\u{f4bc} {percent}%"),
@@ -2135,16 +2287,12 @@ fn live_items_never_show_or_hide_the_icon_or_move_the_tabs() {
     let mut states = [false; 2];
     for scale in [1.0, 1.25, 2.0] {
         let metrics = CellMetrics::for_scale(scale);
-        // Every chip reserved at its widest needs a wide window for the icon.
+        // Quota values and resets do not displace the icon.
         for logical_width in (100..=3000).step_by(25) {
             let size = PhysicalSize::new((logical_width as f64 * scale) as u32, 600);
             let mut seen = None;
             for codex in &codex {
                 for claude in &claude {
-                    // What Venus remembers from the read that reported every window.
-                    let mut read = crate::QuotaWindows::default();
-                    read.observe(Some(&codex_read), Some(&claude_read));
-                    read.observe(Some(codex), Some(claude));
                     for (cpu, ram, disk, clock) in readings {
                         let mut snapshot = snapshot.clone();
                         snapshot.codex_quota = Some(codex.clone());
@@ -2158,7 +2306,6 @@ fn live_items_never_show_or_hide_the_icon_or_move_the_tabs() {
                                 ram,
                                 disk,
                                 clock,
-                                quota_windows: &read,
                                 ..EonBar::default()
                             },
                             size,
@@ -2198,7 +2345,7 @@ fn live_items_never_show_or_hide_the_icon_or_move_the_tabs() {
 }
 
 #[test]
-fn quota_facts_and_windows_appearing_may_hide_the_icon_once() {
+fn quota_facts_do_not_hide_the_window_menu() {
     use eon_workspace_protocol::v37::{
         ClaudeQuota, ClaudeQuotaState, CodexQuota, Pane, PopupGeometry, Tab,
     };
@@ -2325,17 +2472,14 @@ fn quota_facts_and_windows_appearing_may_hide_the_icon_once() {
                     .is_some()
                 };
                 let (shown_before, shown_after) = (project(before), project(after));
-                // More reserved chips never bring the icon back; near the threshold they hide it.
-                assert!(
-                    shown_before || !shown_after,
+                // Quota changes yield space to the menu, never hide it.
+                assert_eq!(
+                    shown_before, shown_after,
                     "{scale} {logical_width} change {index}"
                 );
                 toggled |= shown_before != shown_after;
             }
-            assert!(
-                toggled,
-                "{scale}: change {index} hides the icon at some width"
-            );
+            assert!(!toggled, "{scale}: change {index} must keep the icon");
         }
     }
 }
@@ -2393,8 +2537,6 @@ fn a_full_bar_with_room_shows_the_icon() {
         observed_at,
         windows: vec![weekly(None), weekly(Some("Fable"))],
     };
-    let mut read = crate::QuotaWindows::default();
-    read.observe(Some(&codex), Some(&claude));
     let levels = crate::LoadLevels::default();
     let ram = crate::RamUse::parse("MemTotal: 100000 kB\nMemAvailable: 50000 kB\n")
         .unwrap()
@@ -2451,7 +2593,6 @@ fn a_full_bar_with_room_shows_the_icon() {
                 ram: Some(&ram),
                 disk: Some(&disk),
                 clock: Some(&clock),
-                quota_windows: &read,
                 ..EonBar::default()
             },
             PhysicalSize::new(1861, 1000),
@@ -2725,54 +2866,7 @@ fn hint_keycap_hover_hits_its_group() {
 }
 
 #[test]
-fn quota_windows_keep_their_room_until_the_next_read() {
-    use eon_workspace_protocol::v37::{ClaudeQuota, ClaudeQuotaState, CodexQuota};
-    let window = |minutes: u32, scope: Option<&str>| QuotaWindow {
-        duration_minutes: minutes,
-        remaining_percent: 50,
-        resets_at: None,
-        scope: scope.map(Into::into),
-    };
-    let claude = |observed_at, windows| ClaudeQuota {
-        state: ClaudeQuotaState::Fresh,
-        observed_at,
-        windows,
-    };
-    let codex = |observed_at, windows| CodexQuota {
-        state: CodexQuotaState::Fresh,
-        observed_at,
-        windows,
-    };
-    let both = vec![(None, 300), (Some("Fable".to_owned()), 10_080)];
-    let mut read = crate::QuotaWindows::default();
-    read.observe(
-        Some(&codex(1, vec![window(300, None), window(300, None)])),
-        Some(&claude(
-            1,
-            vec![window(300, None), window(10_080, Some("Fable"))],
-        )),
-    );
-    assert_eq!(read.claude.windows, both);
-    assert_eq!(read.codex.windows, [(None, 300), (None, 300)]);
-    // The runtime drops a window at its reset; the same read keeps its room.
-    read.observe(
-        Some(&codex(1, vec![window(300, None)])),
-        Some(&claude(1, vec![window(10_080, Some("Fable"))])),
-    );
-    assert_eq!(read.claude.windows, both);
-    assert_eq!(read.codex.windows, [(None, 300), (None, 300)]);
-    // A new read decides the set again.
-    read.observe(None, Some(&claude(2, vec![window(300, None)])));
-    assert_eq!(read.claude.windows, [(None, 300)]);
-    read.observe(None, Some(&claude(3, vec![window(10_080, Some("Fable"))])));
-    assert_eq!(read.claude.windows, [(Some("Fable".to_owned()), 10_080)]);
-    // The quota going away forgets them.
-    read.observe(None, None);
-    assert_eq!(read, crate::QuotaWindows::default());
-}
-
-#[test]
-fn reserved_chips_take_the_widest_text() {
+fn quota_text_width_does_not_hide_the_menu() {
     use eon_workspace_protocol::v37::{CodexQuota, Pane, PopupGeometry, Tab};
     let snapshot = Snapshot {
         workspace: "s1".into(),
@@ -2861,7 +2955,7 @@ fn reserved_chips_take_the_widest_text() {
         )
     };
     let even = |text: &str| text.chars().count() as f32 * 10.0;
-    // Both supported window lengths retain their widest text.
+    // Different quota text widths cannot displace the icon.
     for (snapshot, measure) in [
         (
             codex(
@@ -2877,11 +2971,11 @@ fn reserved_chips_take_the_widest_text() {
             let scene = scene(&snapshot, logical_width, measure);
             seen[usize::from(scene.eon_icon.is_some())] = true;
             assert!(
-                scene.eon_icon.is_none() || (scene.bar_complete && scene.tab_scroll_limit() <= 0.5),
-                "{logical_width}: the icon shows beside a chip that does not fit"
+                scene.eon_icon.is_some(),
+                "{logical_width}: quota text displaced the icon"
             );
         }
-        assert_eq!(seen, [true; 2]);
+        assert_eq!(seen, [false, true]);
     }
     // Blocked and unknown keep one room, whichever word shows.
     let (blocked, unknown) = (
@@ -2893,15 +2987,15 @@ fn reserved_chips_take_the_widest_text() {
         let shown = [&blocked, &unknown].map(|snapshot| {
             let scene = scene(snapshot, logical_width, &letters);
             assert!(
-                scene.eon_icon.is_none() || (scene.bar_complete && scene.tab_scroll_limit() <= 0.5),
-                "{logical_width}: the icon shows beside a chip that does not fit"
+                scene.eon_icon.is_some(),
+                "{logical_width}: quota text displaced the icon"
             );
             scene.eon_icon.is_some()
         });
         assert_eq!(shown[0], shown[1], "{logical_width}");
         toggled[usize::from(shown[0])] = true;
     }
-    assert_eq!(toggled, [true; 2]);
+    assert_eq!(toggled, [false, true]);
 }
 
 #[test]
@@ -2969,11 +3063,6 @@ fn quota_window_widgets_filter_order_and_reserve_only_selected_windows() {
         observed_at: 100,
         windows: vec![window(300, None), window(10080, None)],
     });
-    let mut remembered = crate::QuotaWindows::default();
-    remembered.observe(
-        snapshot.codex_quota.as_ref(),
-        snapshot.claude_quota.as_ref(),
-    );
     let cpu = crate::CpuUse {
         percent: 12,
         label: "\u{f4bc} 12%".into(),
@@ -2981,27 +3070,23 @@ fn quota_window_widgets_filter_order_and_reserve_only_selected_windows() {
         description: "CPU".into(),
         load: Load::Normal,
     };
-    let render =
-        |snapshot: &Snapshot, items: &[BarItem], width, remembered: &crate::QuotaWindows| {
-            WorkspaceScene::from_snapshot_with_bar(
-                snapshot,
-                EonBar {
-                    items,
-                    icon: true,
-                    cpu: Some(&cpu),
-                    quota_windows: remembered,
-                    ..EonBar::default()
-                },
-                PhysicalSize::new(width, 600),
-                CellMetrics::for_scale(1.0),
-                0.0,
-                0.0,
-                |_, text| (text.to_owned(), text.chars().count() as f32 * 10.0),
-                None,
-            )
-        };
-    let project =
-        |snapshot: &Snapshot, items: &[BarItem], width| render(snapshot, items, width, &remembered);
+    let project = |snapshot: &Snapshot, items: &[BarItem], width| {
+        WorkspaceScene::from_snapshot_with_bar(
+            snapshot,
+            EonBar {
+                items,
+                icon: true,
+                cpu: Some(&cpu),
+                ..EonBar::default()
+            },
+            PhysicalSize::new(width, 600),
+            CellMetrics::for_scale(1.0),
+            0.0,
+            0.0,
+            |_, text| (text.to_owned(), text.chars().count() as f32 * 10.0),
+            None,
+        )
+    };
     let selected = [BarItem::ClaudeQuota7d, BarItem::Cpu, BarItem::ClaudeQuota5h];
     let scene = project(&snapshot, &selected, 3000);
     assert_eq!(
@@ -3067,14 +3152,9 @@ fn quota_window_widgets_filter_order_and_reserve_only_selected_windows() {
     for width in (500..1800).step_by(10) {
         assert_eq!(
             project(&snapshot, &selected, width).eon_icon.is_some(),
-            render(
-                &without_scoped,
-                &selected,
-                width,
-                &crate::QuotaWindows::default()
-            )
-            .eon_icon
-            .is_some(),
+            project(&without_scoped, &selected, width)
+                .eon_icon
+                .is_some(),
             "{width}"
         );
     }

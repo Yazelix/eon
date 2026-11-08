@@ -22,19 +22,34 @@ order, selection, and popups; Venus draws the visible scene.
 - The Eon logo, in its own colours and two logical pixels shorter than the tab
   pills, leads the bar before the session label and tabs. Its centre is as far
   from the window's left edge as the bar's centre line is below the window top,
-  and the next item starts as far after it as it is from the left edge. It is
-  decorative, with no action, hover or accessible node. It shows only while
-  everything else in the bar would show with it: a chip for each selected window each
-  provider's latest read reported, each at the widest that window's chip can
-  be, or Codex's one blocked or unknown chip; each reading at its widest; and
-  every tab unscrolled at its full width. So it hides before
-  any other item and stays hidden as the window narrows, and it hides whenever
-  the tabs overflow, however wide the window.
-  The tab scroll, a live value and a window's reset never show or hide it: a
-  window keeps its room from its reset until the next read. It can change once
-  when a provider's quota first appears or goes away (as it does when all its
-  windows reset before a read), or when a read finds the provider has gained or
-  lost a window. Without a readable icon from Eon there is none and no gap.
+  and the next item starts as far after it as it is from the left edge. With a
+  running-windows summary it is the **Window menu** button, with hover,
+  pressed and keyboard-focus feedback and an accessible name. It keeps its slot when tabs overflow and tabs scroll beside it.
+  Quota chips and the session label yield before the icon. Only a tiny width
+  that cannot fit the icon, the minimum tab area and the trailing controls
+  hides it; existing minimum geometry sets that threshold. Without a readable icon from Eon there is none and no gap.
+- The Window menu opens by clicking the Eon icon, activating its accessible
+  button, or pressing F6 then Tab to focus it and Enter or Space. It shows this
+  window's name, ID and live-terminal count, Detach and Quit, and the other
+  running windows with their counts and a Quit action each. These are Runtime's
+  running-window facts; unknown counts and unresponsive windows say so. The
+  menu stays available with shortcut hints and the sidebar off. Its icon keeps
+  the minimum-width rule above. The session pill still opens the Sessions picker;
+  the hints-bar version stays read-only.
+  Pointer activation waits for release over the pressed row; hover never scrolls.
+  Arrow keys or Tab/Shift+Tab choose an action; Enter or Space activates it.
+  Escape or a press outside closes the menu without activating what is behind
+  it. Longer lists scroll; accessible buttons retain their target identities
+  as windows appear or disappear. Detach keeps the window's terminals running.
+  This window's Quit uses the existing busy-terminal prompt; another window's
+  Quit always confirms its name, ID and count before `eon window stop ID`.
+  ID and count have their own confirmation rows; only the name is clipped.
+  Independent namespaces with several generations, this window, or unknown
+  scope are refused with the CLI commands to inspect and stop the namespace.
+  An ended target dismisses its prompt; failures appear as a local notice.
+  `eon window ls` reads the inventory, `eon quit` quits the caller's window,
+  and `eon window stop ID` quits an addressed window. Detach and opening this
+  native menu are local view actions.
 - New tab sits beside the last tab and pins to the tab-region edge when tabs
   overflow. Shortcut help, a round outlined button as tall as the tab pills
   with its `?` centred in the circle, then Close stay at the right; after a

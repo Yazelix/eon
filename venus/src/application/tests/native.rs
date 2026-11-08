@@ -5,6 +5,175 @@ use eon_workspace_protocol::v37::{Pane, Tab};
 
 #[test]
 #[cfg(target_os = "linux")]
+#[ignore = "starts its own isolated Wayland compositor; needs EON_VENUS_TEST_SWAY and EON_VENUS_TEST_LIBRARY_PATH"]
+fn window_menu_application_routes_input_and_lifecycle() {
+    use std::{fs, os::unix::fs::DirBuilderExt};
+    use winit::platform::wayland::EventLoopBuilderExtWayland;
+    if std::env::var_os("EON_VENUS_TEST_MENU_CHILD").is_none() {
+        let root = std::env::temp_dir().join(format!("venus-menu-{}", std::process::id()));
+        fs::DirBuilder::new().mode(0o700).create(&root).unwrap();
+        let config = root.join("sway.conf");
+        fs::write(&config, "output * resolution 800x600\nxwayland disable\n").unwrap();
+        let mut compositor = Command::new(std::env::var_os("EON_VENUS_TEST_SWAY").unwrap())
+            .args(["-c"])
+            .arg(&config)
+            .env("XDG_RUNTIME_DIR", &root)
+            .env("WLR_BACKENDS", "headless")
+            .env("WLR_LIBINPUT_NO_DEVICES", "1")
+            .env("WLR_RENDERER", "pixman")
+            .stdin(Stdio::null())
+            .stdout(Stdio::null())
+            .stderr(Stdio::null())
+            .spawn()
+            .unwrap();
+        let deadline = Instant::now() + Duration::from_secs(10);
+        let socket = loop {
+            if let Some(socket) = fs::read_dir(&root)
+                .unwrap()
+                .filter_map(|entry| entry.ok())
+                .find(|entry| {
+                    let name = entry.file_name();
+                    let name = name.to_string_lossy();
+                    name.starts_with("wayland-") && !name.ends_with(".lock")
+                })
+            {
+                break socket.path();
+            }
+            assert!(
+                Instant::now() < deadline,
+                "private compositor did not start"
+            );
+            thread::sleep(Duration::from_millis(50));
+        };
+        let result = Command::new(std::env::current_exe().unwrap())
+            .args([
+                "--ignored",
+                "--exact",
+                "application::tests::native::window_menu_application_routes_input_and_lifecycle",
+                "--nocapture",
+            ])
+            .env("EON_VENUS_TEST_MENU_CHILD", "1")
+            .env("XDG_RUNTIME_DIR", &root)
+            .env("WAYLAND_DISPLAY", socket)
+            .env(
+                "LD_LIBRARY_PATH",
+                std::env::var_os("EON_VENUS_TEST_LIBRARY_PATH").unwrap(),
+            )
+            .output()
+            .unwrap();
+        compositor.kill().unwrap();
+        compositor.wait().unwrap();
+        fs::remove_dir_all(root).unwrap();
+        assert!(
+            result.status.success(),
+            "{}\n{}",
+            String::from_utf8_lossy(&result.stdout),
+            String::from_utf8_lossy(&result.stderr)
+        );
+        return;
+    }
+    struct Probe(Application);
+    impl ApplicationHandler<UserEvent> for Probe {
+        fn resumed(&mut self, event_loop: &ActiveEventLoop) {
+            let app = &mut self.0;
+            let mut snapshot = super::chrome::quit_snapshot();
+            snapshot.busy = Some(super::chrome::busy_p1());
+            let mut peer = snapshot.running.as_ref().unwrap().this.clone();
+            peer.window = Some("01234567".into());
+            let action = WindowMenuAction::peer(&peer);
+            snapshot.running.as_mut().unwrap().others = Some(vec![peer]);
+            app.workspace_model
+                .apply(eon_workspace_protocol::v37::Response::Snapshot(snapshot));
+            app.set_window_menu(true);
+            app.handle_window_menu_button(
+                event_loop,
+                MouseButton::Left,
+                ElementState::Pressed,
+                false,
+                Some(WindowMenuAction::Quit),
+            );
+            assert_eq!(app.window_menu.pressed, Some(WindowMenuAction::Quit));
+            assert!(app.handle_window_menu_key(
+                event_loop,
+                &ShortcutKey {
+                    physical_key: PhysicalKey::Code(KeyCode::Escape),
+                    state: ElementState::Pressed,
+                    repeat: false,
+                }
+            ));
+            assert!(!app.window_menu.open);
+            assert!(app.window_menu.pressed.is_none());
+            app.set_window_menu(true);
+            app.handle_window_menu_button(
+                event_loop,
+                MouseButton::Left,
+                ElementState::Released,
+                false,
+                Some(WindowMenuAction::Quit),
+            );
+            assert!(app.close_prompt.is_none() && !event_loop.exiting());
+            assert!(app.handle_window_menu_button(
+                event_loop,
+                MouseButton::Left,
+                ElementState::Pressed,
+                true,
+                None
+            ));
+            assert!(!app.window_menu.open);
+            assert!(app.handle_window_menu_button(
+                event_loop,
+                MouseButton::Left,
+                ElementState::Released,
+                false,
+                None
+            ));
+            app.set_window_menu(true);
+            app.handle_window_menu_button(
+                event_loop,
+                MouseButton::Left,
+                ElementState::Pressed,
+                false,
+                Some(WindowMenuAction::Quit),
+            );
+            assert!(app.close_prompt.is_none());
+            app.handle_window_menu_button(
+                event_loop,
+                MouseButton::Left,
+                ElementState::Released,
+                false,
+                Some(WindowMenuAction::Detach),
+            );
+            assert!(app.close_prompt.is_none() && !event_loop.exiting());
+            app.activate_window_action(event_loop, WindowMenuAction::Quit);
+            assert!(matches!(
+                app.close_prompt.as_ref().map(|prompt| &prompt.target),
+                Some(PromptTarget::QuitWindow)
+            ));
+            app.close_prompt = None;
+            app.set_window_menu(true);
+            app.activate_window_action(event_loop, action.clone());
+            assert!(
+                matches!(app.close_prompt.as_ref().map(|prompt| &prompt.target), Some(PromptTarget::QuitOtherWindow(target)) if *target == action)
+            );
+            app.close_prompt = None;
+            app.set_window_menu(true);
+            app.activate_window_action(event_loop, WindowMenuAction::Detach);
+            assert!(event_loop.exiting());
+        }
+        fn window_event(&mut self, _: &ActiveEventLoop, _: WindowId, _: WindowEvent) {}
+    }
+    let event_loop = EventLoop::<UserEvent>::with_user_event()
+        .with_wayland()
+        .with_any_thread(true)
+        .build()
+        .unwrap();
+    let arguments = launch::launch_arguments([OsString::from("/unused-orbit.sock")], None).unwrap();
+    let mut probe = Probe(Application::new(arguments, event_loop.create_proxy()));
+    event_loop.run_app(&mut probe).unwrap();
+}
+
+#[test]
+#[cfg(target_os = "linux")]
 #[ignore = "requires an isolated native Wayland display"]
 fn typography_without_grid_waits_for_and_validates_workspace_geometry() {
     use winit::platform::wayland::EventLoopBuilderExtWayland;

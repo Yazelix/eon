@@ -3856,6 +3856,9 @@ names its socket. CLI JSON names a session `session` and a terminal
   by `eon-30skm` (S2): `eon session --json`.
   Amended on 2026-11-07 (approved by eon-overseer under Lucca's standing rule)
   by `eon-30skm` (S3): its prose says session for the product concept.
+  Amended on 2026-11-07 (approved by eon-overseer under Lucca's standing rule)
+  by `eon-7cf0y.6`: the leading icon opens the Window menu; proven with an
+  isolated installed x86_64 Linux Wayland candidate on 2026-11-07.
   Amended on 2026-11-07 (pre-approved by Lucca in
   `eon-cpu-tooltip-detail-6mnd1`): the CPU temperature threshold keys; installed
   proof of this amendment is pending.
@@ -3875,7 +3878,7 @@ names its socket. CLI JSON names a session `session` and a terminal
   and `ram` the whole-machine CPU and memory use labels, `disk` the used
   percentage of the filesystem holding the configured path, `clock` the local
   24-hour clock, and `version` the read-only `EON <version>` label of the
-  supervisor serving the window. The decorative Eon icon at the bar's leading
+  supervisor serving the window. The Eon icon at the bar's leading
   edge is not a widget: whatever the list, it shows when Eon has one and the
   bar has room for it (VEN-C21). A widget left out doesn't show, and
   `widgets = []` leaves only the icon, tabs and controls. Omitting the
@@ -3967,7 +3970,11 @@ names its socket. CLI JSON names a session `session` and a terminal
     `local_clock_leads_the_bottom_bar_and_has_no_actions`,
     `readings_yield_disk_first_and_have_no_actions` and
     `eon_orders_and_omits_bar_items`, and the isolated installed observation
-    recorded in `eon-e3a1z.2`.
+    recorded in `eon-e3a1z.2`. For the Window menu, Venus's
+    `eon_icon_opens_window_controls_without_hints_or_sidebar` and
+    `window_menu_projects_summary_and_clips_actions_to_its_scroll_area`, and
+    the isolated installed pointer, keyboard, AT-SPI, Quit and Detach
+    observation recorded in `eon-7cf0y.6`.
 
 ## EON-C33 — Several sessions in one window
 

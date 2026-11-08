@@ -27,13 +27,13 @@ pub use render::{
 pub use scene::{
     AttentionFilter, AttentionFilterChip, BarItem, Color, DialogKind, DialogScene, DrawCell,
     DrawCursor, DrawRow, DrawStyle, EonBar, GlyphRun, HeaderText, HintSection, Hyperlink,
-    LocalClock, QuotaWindows, Scene, SceneGraphics, ScenePlacement, ScenePreview, SceneRect,
-    ShortcutGroup, ShortcutHint, ShortcutHintsScene, ShortcutRow, SidebarRow, SidebarView,
+    LocalClock, Scene, SceneGraphics, ScenePlacement, ScenePreview, SceneRect, ShortcutGroup,
+    ShortcutHint, ShortcutHintsScene, ShortcutRow, SidebarRow, SidebarView, WindowMenuAction,
     WorkspaceColumn, WorkspaceFocus, WorkspaceHeaderControl, WorkspaceHit, WorkspacePane,
     WorkspaceScene, WorkspaceTab, attention_inbox_hints, shown_workspace, validate_copy_uri,
-    validate_open_uri, workspace_column_width,
+    validate_open_uri, window_summary, workspace_column_width,
 };
-pub(crate) use system::{CPU_ICON, DISK_ICON, Load, RAM_ICON};
+pub(crate) use system::Load;
 pub use system::{CpuReadings, CpuTimes, CpuUse, DiskUse, LoadLevels, RamUse};
 pub use transport::{
     Outgoing, SendError, Transport, TransportEvent, WorkspaceEvent, WorkspaceTransport,

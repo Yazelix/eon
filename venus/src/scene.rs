@@ -1,11 +1,11 @@
 use crate::{
-    CPU_ICON, CpuUse, DISK_ICON, DiskUse, Load, MAX_LINK_BYTES, RAM_ICON, RamUse,
+    CpuUse, DiskUse, Load, MAX_LINK_BYTES, RamUse,
     model::{active_popup, focused_terminal, presented_panes},
     render::{CellMetrics, FALLBACK_CAP_HEIGHT_EM},
 };
 use eon_workspace_protocol::v37::{
-    ALT, Attention, AttentionKind, AttentionState, BusyTerminals, ClaudeQuota, ClaudeQuotaState,
-    CodexQuota, CodexQuotaState, PopupEntry, QuotaWindow, SHIFT, Sidebar, Snapshot, Tab, TargetId,
+    ALT, Attention, AttentionKind, AttentionState, BusyTerminals, ClaudeQuotaState,
+    CodexQuotaState, PopupEntry, QuotaWindow, SHIFT, Sidebar, Snapshot, Tab, TargetId,
 };
 use orbit_protocol::{
     Cell, CellStyle, CellWidth, CursorShape, Frame, PlacementState, Rgb, Row, Screen, SourceRect,
@@ -467,6 +467,7 @@ pub(crate) fn tab_max_width(metrics: CellMetrics, viewport_width: f32) -> f32 {
 /// workspace picker, or a fixed control.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum WorkspaceHeaderControl {
+    WindowMenu,
     Workspaces,
     NewTab,
     Shortcuts,
@@ -485,6 +486,7 @@ impl WorkspaceHeaderControl {
             })
         };
         match self {
+            Self::WindowMenu => "Window menu",
             // The workspace label names itself from its popup entry.
             Self::Workspaces => "",
             Self::NewTab if taken("KeyT") => "New tab",
@@ -497,6 +499,7 @@ impl WorkspaceHeaderControl {
 
     pub(crate) fn glyph(self) -> &'static str {
         match self {
+            Self::WindowMenu => "",
             Self::Workspaces => "",
             Self::NewTab => "+",
             Self::Shortcuts => "?",
@@ -652,16 +655,6 @@ pub enum BarItem {
 }
 
 impl BarItem {
-    fn provider(self) -> Option<QuotaProvider> {
-        match self {
-            Self::CodexQuota5h | Self::CodexQuota7d => Some(QuotaProvider::Codex),
-            Self::ClaudeQuota5h | Self::ClaudeQuota7d | Self::ClaudeQuotaScoped => {
-                Some(QuotaProvider::Claude)
-            }
-            _ => None,
-        }
-    }
-
     fn selects(self, scope: Option<&str>, minutes: u32) -> bool {
         match self {
             Self::CodexQuota5h | Self::ClaudeQuota5h => scope.is_none() && minutes == 300,
@@ -702,78 +695,6 @@ pub struct EonBar<'a> {
     /// The `workspaces` popup entry's label and chord, while Eon configures that entry; the
     /// workspace label then opens it.
     pub workspace_picker: Option<&'a str>,
-    /// Each provider's windows as of its latest read, which keep their room in the bar after
-    /// they reset ([`QuotaWindows`]).
-    pub quota_windows: &'a QuotaWindows,
-}
-
-/// The windows each quota provider reported at its latest read. The runtime drops a window at
-/// its reset until the next read; remembering it until then, or until the provider's quota goes
-/// away, keeps every reset from showing or hiding the Eon icon.
-#[derive(Clone, Debug, Default, PartialEq, Eq)]
-pub struct QuotaWindows {
-    codex: ReadWindows,
-    claude: ReadWindows,
-}
-
-#[derive(Clone, Debug, Default, PartialEq, Eq)]
-struct ReadWindows {
-    observed_at: Option<u64>,
-    /// Scope and length of each window.
-    windows: Vec<(Option<String>, u32)>,
-}
-
-static NO_QUOTA_WINDOWS: QuotaWindows = QuotaWindows {
-    codex: ReadWindows::NONE,
-    claude: ReadWindows::NONE,
-};
-
-impl QuotaWindows {
-    pub fn observe(&mut self, codex: Option<&CodexQuota>, claude: Option<&ClaudeQuota>) {
-        self.codex
-            .observe(codex.map(|quota| (quota.observed_at, &quota.windows[..])));
-        self.claude
-            .observe(claude.map(|quota| (quota.observed_at, &quota.windows[..])));
-    }
-}
-
-impl ReadWindows {
-    const NONE: Self = Self {
-        observed_at: None,
-        windows: Vec::new(),
-    };
-
-    fn observe(&mut self, read: Option<(u64, &[QuotaWindow])>) {
-        let Some((observed_at, windows)) = read else {
-            *self = Self::default();
-            return;
-        };
-        if self.observed_at != Some(observed_at) {
-            self.observed_at = Some(observed_at);
-            self.windows.clear();
-        }
-        merge_windows(
-            &mut self.windows,
-            windows
-                .iter()
-                .map(|window| (window.scope.clone(), window.duration_minutes)),
-        );
-    }
-}
-
-/// Adds each window of `from` that `into` lacks, counting repeats: Codex may report two windows
-/// of one length.
-fn merge_windows<T: PartialEq>(into: &mut Vec<T>, from: impl IntoIterator<Item = T>) {
-    let mut matched = vec![false; into.len()];
-    for window in from {
-        match (0..into.len()).find(|&index| !matched[index] && into[index] == window) {
-            Some(index) => matched[index] = true,
-            None => {
-                into.push(window);
-                matched.push(true);
-            }
-        }
-    }
 }
 
 impl Default for EonBar<'_> {
@@ -788,7 +709,6 @@ impl Default for EonBar<'_> {
             clock: None,
             now: None,
             workspace_picker: None,
-            quota_windows: &NO_QUOTA_WINDOWS,
         }
     }
 }
@@ -852,12 +772,59 @@ pub enum WorkspaceFocus {
     Sidebar,
 }
 
-/// One read-only shortcut shown by the native viewer.
+/// One native dialog row; window-menu rows carry a semantic action.
 #[derive(Clone, Debug, PartialEq)]
 pub struct ShortcutRow {
     pub shortcut: String,
     pub action: String,
     pub rect: SceneRect,
+    pub menu_action: Option<WindowMenuAction>,
+    pub focused: bool,
+}
+
+/// A window-menu target keeps its identity across summary refreshes.
+#[derive(Clone, Debug, PartialEq, Eq, Hash)]
+pub enum WindowMenuAction {
+    Detach,
+    Quit,
+    QuitOther { id: String, generation: String },
+}
+
+impl WindowMenuAction {
+    #[must_use]
+    pub fn peer(window: &eon_workspace_protocol::v37::WindowEntry) -> Self {
+        Self::QuitOther {
+            // The full generation hex names a default-namespace peer across upgrades.
+            id: window.window.clone().unwrap_or_else(|| {
+                window
+                    .generation
+                    .strip_prefix("g1-")
+                    .unwrap_or(&window.generation)
+                    .into()
+            }),
+            generation: window.generation.clone(),
+        }
+    }
+}
+
+#[must_use]
+pub fn window_summary(window: &eon_workspace_protocol::v37::WindowEntry) -> String {
+    use eon_workspace_protocol::v37::WindowState;
+    let id = window
+        .window
+        .as_deref()
+        .unwrap_or_else(|| window.generation.get(3..11).unwrap_or(&window.generation));
+    let name = window.name.as_deref().unwrap_or(id);
+    let count = window.live_terminals.map_or_else(
+        || "terminal count unknown".into(),
+        |n| format!("{n} terminal{}", if n == 1 { "" } else { "s" }),
+    );
+    let state = match window.state {
+        WindowState::Live => "",
+        WindowState::Incompatible => " · another Eon build",
+        WindowState::Unreachable => " · not answering",
+    };
+    format!("{name} ({id}) · {count}{state}")
 }
 
 /// One binding-derived footer hint, before native width fitting.
@@ -1178,6 +1145,8 @@ impl ShortcutRow {
             shortcut: shortcut.into(),
             action: action.into(),
             rect: SceneRect::default(),
+            menu_action: None,
+            focused: false,
         }
     }
 }
@@ -1286,6 +1255,10 @@ pub fn attention_inbox_hints() -> Vec<ShortcutHint> {
 pub enum DialogKind {
     Shortcuts,
     AttentionInbox,
+    WindowMenu,
+    QuitOtherWindow {
+        name: String,
+    },
     /// The final-close prompt: how many terminals the close stops, the detach chord unless a
     /// popup takes it, and the shown workspace's name or `sN` while other workspaces remain.
     CloseLastTab {
@@ -1308,6 +1281,8 @@ impl DialogKind {
         match self {
             Self::Shortcuts => "Shortcuts",
             Self::AttentionInbox => "Attention inbox",
+            Self::WindowMenu => WorkspaceHeaderControl::WindowMenu.label(&[]),
+            Self::QuitOtherWindow { .. } => "Quit this other window?",
             Self::CloseLastTab { .. } => "Close the last tab?",
             Self::QuitWindow { .. } => "Quit this window?",
         }
@@ -1318,6 +1293,8 @@ impl DialogKind {
         match self {
             Self::Shortcuts => "Eon surface · physical keys".into(),
             Self::AttentionInbox => "Agents needing your attention".into(),
+            Self::WindowMenu => "Running Eon windows".into(),
+            Self::QuitOtherWindow { name } => name.clone().into(),
             Self::CloseLastTab {
                 terminals,
                 workspace,
@@ -1355,6 +1332,10 @@ impl DialogKind {
     pub(crate) fn footer(&self) -> Vec<String> {
         match self {
             Self::Shortcuts => vec!["Wheel or ↑↓ to scroll · Esc or Alt+/ to close".into()],
+            Self::WindowMenu => {
+                vec!["↑↓ or Tab to choose · Enter to activate · Esc to close".into()]
+            }
+            Self::QuitOtherWindow { .. } => vec!["Enter Quit · Esc Cancel".into()],
             Self::AttentionInbox => vec![
                 attention_inbox_hints()
                     .iter()
@@ -1386,7 +1367,7 @@ impl DialogKind {
     }
 }
 
-/// Bounded geometry for the one native dialog: the shortcut viewer or the final-close prompt.
+/// Bounded geometry shared by native viewers, the Window menu and close prompts.
 #[derive(Clone, Debug, PartialEq)]
 pub struct DialogScene {
     pub(crate) kind: DialogKind,
@@ -1403,6 +1384,121 @@ pub struct DialogScene {
 }
 
 impl DialogScene {
+    #[must_use]
+    pub fn quit_other_window(
+        window: &eon_workspace_protocol::v37::WindowEntry,
+        size: PhysicalSize<u32>,
+        metrics: CellMetrics,
+        scroll: f32,
+    ) -> Self {
+        let id = window
+            .window
+            .as_deref()
+            .unwrap_or_else(|| window.generation.get(3..11).unwrap_or(&window.generation));
+        let count = window
+            .live_terminals
+            .map_or_else(|| "unknown".into(), |count| count.to_string());
+        let groups = vec![ShortcutGroup::new(
+            "",
+            vec![
+                ShortcutRow::new("ID", id),
+                ShortcutRow::new("Terminals", count),
+            ],
+        )];
+        Self::new(
+            DialogKind::QuitOtherWindow {
+                name: window.name.clone().unwrap_or_else(|| id.into()),
+            },
+            groups,
+            size,
+            metrics,
+            scroll,
+        )
+    }
+    #[must_use]
+    pub fn window_menu(
+        running: &eon_workspace_protocol::v37::RunningWindows,
+        highlighted: Option<&WindowMenuAction>,
+        size: PhysicalSize<u32>,
+        metrics: CellMetrics,
+        scroll: f32,
+    ) -> Self {
+        let row = |label: &str, description: String, action: WindowMenuAction| {
+            let mut row = ShortcutRow::new(label, description);
+            row.focused = highlighted == Some(&action);
+            row.menu_action = Some(action);
+            row
+        };
+        let mut groups = vec![ShortcutGroup::new(
+            format!("This window · {}", window_summary(&running.this)),
+            vec![
+                row(
+                    "Detach",
+                    "Keep terminals running".into(),
+                    WindowMenuAction::Detach,
+                ),
+                row("Quit", "Close this window".into(), WindowMenuAction::Quit),
+            ],
+        )];
+        let mut others = match &running.others {
+            None => vec![ShortcutRow::new("", "Loading other windows…")],
+            Some(windows) if windows.is_empty() => vec![ShortcutRow::new("", "No other windows")],
+            Some(windows) => windows
+                .iter()
+                .map(|window| {
+                    row(
+                        "Quit",
+                        window_summary(window),
+                        WindowMenuAction::peer(window),
+                    )
+                })
+                .collect(),
+        };
+        if running.omitted > 0 {
+            others.push(ShortcutRow::new(
+                "…",
+                format!("{} more windows · eon window ls", running.omitted),
+            ));
+        }
+        groups.push(ShortcutGroup::new("Other windows", others));
+        Self::new(DialogKind::WindowMenu, groups, size, metrics, scroll)
+    }
+
+    pub fn menu_rows(&self) -> impl Iterator<Item = &ShortcutRow> {
+        self.groups
+            .iter()
+            .flat_map(|group| &group.rows)
+            .filter(|row| row.menu_action.is_some())
+    }
+
+    #[must_use]
+    pub fn menu_target_at(&self, x: f32, y: f32) -> Option<&WindowMenuAction> {
+        self.menu_rows()
+            .find(|row| {
+                row.rect
+                    .intersection(self.content)
+                    .is_some_and(|rect| rect.contains(x, y))
+            })?
+            .menu_action
+            .as_ref()
+    }
+
+    #[must_use]
+    pub fn menu_action_scroll(&self, action: &WindowMenuAction) -> f32 {
+        let Some(row) = self
+            .menu_rows()
+            .find(|row| row.menu_action.as_ref() == Some(action))
+        else {
+            return self.scroll;
+        };
+        let delta = if row.rect.top < self.content.top {
+            row.rect.top - self.content.top
+        } else {
+            (row.rect.bottom() - self.content.bottom()).max(0.0)
+        };
+        (self.scroll + delta).clamp(0.0, self.max_scroll)
+    }
+
     /// Shortcuts fill the window's height; the prompt fits its content. A group without a
     /// title has no heading.
     #[must_use]
@@ -1433,13 +1529,14 @@ impl DialogScene {
         let padding_for = |width: f32| metrics.padding.min(width / 8.0);
         let dialog_height = match kind {
             DialogKind::Shortcuts | DialogKind::AttentionInbox => available,
-            DialogKind::CloseLastTab { .. } | DialogKind::QuitWindow { .. } => {
-                (padding_for(dialog_width)
-                    + metrics.height * 3.0
-                    + content_height
-                    + metrics.height * (footer_lines + 0.75))
-                    .min(available)
-            }
+            DialogKind::WindowMenu
+            | DialogKind::QuitOtherWindow { .. }
+            | DialogKind::CloseLastTab { .. }
+            | DialogKind::QuitWindow { .. } => (padding_for(dialog_width)
+                + metrics.height * 3.0
+                + content_height
+                + metrics.height * (footer_lines + 0.75))
+                .min(available),
         };
         let bounds = SceneRect {
             left: ((width - dialog_width) / 2.0).max(0.0),
@@ -1796,13 +1893,10 @@ pub struct WorkspaceScene {
     /// The tab viewport less the columns its edge badges take, so no label is drawn over them.
     pub(crate) tab_label_clip: SceneRect,
     pub(crate) header: SceneRect,
-    /// The decorative Eon icon at the bar's leading edge, before the workspace label and tabs,
+    /// The Eon icon at the bar's leading edge, before the workspace label and tabs,
     /// while it shows.
     pub(crate) eon_icon: Option<SceneRect>,
-    /// Whether the bar shows everything it was asked to as a wide window would: the workspace
-    /// label, every tab at its full width, every quota chip and every listed reading that has
-    /// data.
-    bar_complete: bool,
+    pub(crate) window_menu: Option<WorkspaceControl>,
     /// The shown workspace's label before the tabs, while it shows.
     pub(crate) workspace_label: Option<WorkspaceNameLabel>,
     pub(crate) drag_region: SceneRect,
@@ -2879,55 +2973,6 @@ impl WorkspaceScene {
         zoom: bool,
         sidebar_view: SidebarView<'_>,
     ) -> Self {
-        // The icon yields first and stays gone at every narrower width: it shows only while the
-        // bar shows everything else with it, every listed live item at the widest it can be, and
-        // the whole tab strip fits unscrolled. None of that depends on the tab scroll or on what
-        // a quota or a reading shows, and all of it only fails as the window narrows.
-        let icon = bar.icon && {
-            let widest = Self::layout(
-                snapshot,
-                EonBar { ..bar },
-                size,
-                metrics,
-                0.0,
-                0.0,
-                &mut header_text,
-                hints.clone(),
-                zoom,
-                sidebar_view,
-                true,
-            );
-            widest.eon_icon.is_some() && widest.bar_complete && widest.tab_scroll_limit <= 0.5
-        };
-        Self::layout(
-            snapshot,
-            EonBar { icon, ..bar },
-            size,
-            metrics,
-            tab_scroll,
-            pane_scroll,
-            &mut header_text,
-            hints,
-            zoom,
-            sidebar_view,
-            false,
-        )
-    }
-
-    #[allow(clippy::too_many_arguments)]
-    fn layout(
-        snapshot: &Snapshot,
-        bar: EonBar<'_>,
-        size: PhysicalSize<u32>,
-        metrics: CellMetrics,
-        tab_scroll: f32,
-        pane_scroll: f32,
-        mut header_text: impl FnMut(HeaderText<'_>, &str) -> (String, f32),
-        hints: Option<ShortcutHintsScene>,
-        zoom: bool,
-        sidebar_view: SidebarView<'_>,
-        widest: bool,
-    ) -> Self {
         let width = size.width as f32;
         let height = size.height as f32;
         let pane_height = header_heights(metrics).1;
@@ -2997,7 +3042,7 @@ impl WorkspaceScene {
                 badge: None,
             }
         });
-        let lead = workspace_label.as_ref().map_or_else(
+        let mut lead = workspace_label.as_ref().map_or_else(
             || eon_icon.map_or(0.0, |_| start),
             |label| label.rect.right() + gap,
         );
@@ -3129,106 +3174,6 @@ impl WorkspaceScene {
                 }
             })
             .collect::<Vec<_>>();
-        if widest {
-            // Each provider with a quota fact reserves a chip for every window its latest read
-            // reported, each at the widest text that window can have, every digit the font's
-            // widest, so a value changing or a window resetting before the next read changes
-            // nothing. A blocked or unknown observation reserves its one chip.
-            let digit = ('0'..='9')
-                .map(|digit| (digit, header_text(HeaderText::Fact, &digit.to_string()).1))
-                .fold(('0', f32::MIN), |widest, digit| {
-                    if digit.1 > widest.1 { digit } else { widest }
-                })
-                .0;
-            // Only Codex reports no windows, while blocked or unknown: the wider word holds.
-            let no_window = [CodexQuotaState::Blocked, CodexQuotaState::Unknown]
-                .map(|state| {
-                    let text = quota_text(QuotaProvider::Codex, state, 0, None, None).label;
-                    header_text(HeaderText::Fact, &text).1
-                })
-                .into_iter()
-                .fold(0.0, f32::max);
-            // The longest position is the window's last minute or the last minute of its day or
-            // hour before: a 25-hour window's `23h` is longer than its `1d`.
-            let mut widest_text = |(scope, minutes): (Option<&str>, u32)| {
-                let last = u64::from(minutes.saturating_sub(1));
-                let unit = if minutes >= 24 * 60 { 24 * 60 } else { 60 };
-                [Some(last), (last / unit * unit).checked_sub(1)]
-                    .into_iter()
-                    .flatten()
-                    .map(|elapsed| {
-                        let label = format!(
-                            "{}/{} 100% old",
-                            quota_minutes(elapsed, minutes),
-                            quota_duration(minutes)
-                        );
-                        let label = match scope {
-                            Some(scope) => format!("{scope} {label}"),
-                            None => label,
-                        }
-                        .chars()
-                        .map(|c| if c.is_ascii_digit() { digit } else { c })
-                        .collect::<String>();
-                        header_text(HeaderText::Fact, &label).1
-                    })
-                    .fold(0.0, f32::max)
-            };
-            let mut reserved = Vec::new();
-            for item in bar.items {
-                let (provider, current, read) = match (
-                    item.provider(),
-                    &snapshot.codex_quota,
-                    &snapshot.claude_quota,
-                ) {
-                    (Some(QuotaProvider::Codex), Some(quota), _) => (
-                        QuotaProvider::Codex,
-                        &quota.windows,
-                        &bar.quota_windows.codex,
-                    ),
-                    (Some(QuotaProvider::Claude), _, Some(quota)) => (
-                        QuotaProvider::Claude,
-                        &quota.windows,
-                        &bar.quota_windows.claude,
-                    ),
-                    _ => continue,
-                };
-                let mut windows = current
-                    .iter()
-                    .map(|window| (window.scope.as_deref(), window.duration_minutes))
-                    .collect::<Vec<_>>();
-                merge_windows(
-                    &mut windows,
-                    read.windows
-                        .iter()
-                        .map(|(scope, minutes)| (scope.as_deref(), *minutes)),
-                );
-                let widths = if windows.is_empty() && *item == BarItem::CodexQuota5h {
-                    vec![no_window]
-                } else {
-                    windows
-                        .into_iter()
-                        .filter(|(scope, minutes)| item.selects(*scope, *minutes))
-                        .map(&mut widest_text)
-                        .collect()
-                };
-                reserved.extend(widths.into_iter().map(|width| WorkspaceQuota {
-                    item: *item,
-                    provider,
-                    window: None,
-                    rect: SceneRect {
-                        width: width + quota_padding,
-                        ..SceneRect::default()
-                    },
-                    logo: SceneRect::default(),
-                    accessible_label: String::new(),
-                    label: String::new(),
-                    pace: None,
-                    tooltip: String::new(),
-                    description: String::new(),
-                }));
-            }
-            quotas = reserved;
-        }
         let quota_count = quotas.len();
         // A chip or reading before Shortcuts keeps the chips' own spacing from its round button:
         // each chip's outline sits `chip_inset` inside its slot, and the circle inside its own.
@@ -3249,11 +3194,17 @@ impl WorkspaceScene {
                 edge,
                 &snapshot.entries,
             );
-            if geometry.3.is_some() || quotas.is_empty() {
-                break geometry;
+            if geometry.3.is_none() && !quotas.is_empty() {
+                // The chip closest to the tabs yields first.
+                quotas.remove(0);
+                continue;
             }
-            // The chip closest to the tabs yields first.
-            quotas.remove(0);
+            if geometry.1.left == 0.0 && workspace_label.is_some() {
+                workspace_label = None;
+                lead = eon_icon.map_or(0.0, |_| start);
+                continue;
+            }
+            break geometry;
         };
         let (header, mut tab_viewport, mut drag_region, quota_rect, mut controls) = geometry;
         let mut spaced = !quotas.is_empty();
@@ -3263,6 +3214,19 @@ impl WorkspaceScene {
             workspace_label = None;
             eon_icon = None;
         }
+        let window_menu =
+            eon_icon
+                .filter(|_| snapshot.running.is_some())
+                .map(|icon| WorkspaceControl {
+                    kind: WorkspaceHeaderControl::WindowMenu,
+                    centre: icon.left + icon.width / 2.0,
+                    label: WorkspaceHeaderControl::WindowMenu.label(&snapshot.entries),
+                    rect: SceneRect {
+                        top: 0.0,
+                        height: header.height,
+                        ..icon
+                    },
+                });
         let mut left = quota_rect.map_or(0.0, |rect| rect.left + controls[0].rect.width);
         for quota in &mut quotas {
             quota.rect.left = left;
@@ -3276,8 +3240,6 @@ impl WorkspaceScene {
             left = quota.rect.right();
         }
         let max_tab_width = tab_max_width(metrics, tab_viewport.width);
-        // Whether every tab keeps the width a wide window gives it.
-        let mut tabs_uncapped = true;
         let active_tab = snapshot
             .tabs
             .iter()
@@ -3330,9 +3292,6 @@ impl WorkspaceScene {
                 let (label, text_width) = header_text(HeaderText::Tab(&tab.id), &label);
                 let tab_width = (text_width.ceil() + metrics.padding * 2.0)
                     .clamp((metrics.font_size * 4.0).min(max_tab_width), max_tab_width);
-                tabs_uncapped &= tab_width
-                    >= (text_width.ceil() + metrics.padding * 2.0)
-                        .clamp(metrics.font_size * 4.0, metrics.font_size * 17.5);
                 let left = tab_end;
                 tab_end = left + tab_width + gap;
                 let rect = SceneRect {
@@ -3391,55 +3350,34 @@ impl WorkspaceScene {
         // Each reading keeps the width of its one-cell icon and ` 100%`, so the header never
         // shifts as they change.
         let readings = 1 + " 100%".len();
-        // The widest layout reserves every listed reading, with or without data.
-        let placeholder = |item, icon: char, cells| {
-            (widest && reading(item)).then(|| {
-                (
-                    format!("{icon} 100%"),
-                    String::new(),
-                    String::new(),
-                    cells,
-                    Load::Normal,
-                )
-            })
-        };
         let mut labels = [
-            bar.cpu
-                .filter(|_| reading(BarItem::Cpu))
-                .map(|cpu| {
-                    (
-                        cpu.label.clone(),
-                        cpu.tooltip.clone(),
-                        cpu.description.clone(),
-                        readings,
-                        cpu.load,
-                    )
-                })
-                .or_else(|| placeholder(BarItem::Cpu, CPU_ICON, readings)),
-            bar.ram
-                .filter(|_| reading(BarItem::Ram))
-                .map(|ram| {
-                    (
-                        ram.label.clone(),
-                        ram.tooltip.clone(),
-                        ram.description.clone(),
-                        readings,
-                        ram.load,
-                    )
-                })
-                .or_else(|| placeholder(BarItem::Ram, RAM_ICON, readings)),
-            bar.disk
-                .filter(|_| reading(BarItem::Disk))
-                .map(|disk| {
-                    (
-                        disk.label.clone(),
-                        disk.tooltip.clone(),
-                        disk.description.clone(),
-                        readings,
-                        disk.load,
-                    )
-                })
-                .or_else(|| placeholder(BarItem::Disk, DISK_ICON, readings)),
+            bar.cpu.filter(|_| reading(BarItem::Cpu)).map(|cpu| {
+                (
+                    cpu.label.clone(),
+                    cpu.tooltip.clone(),
+                    cpu.description.clone(),
+                    readings,
+                    cpu.load,
+                )
+            }),
+            bar.ram.filter(|_| reading(BarItem::Ram)).map(|ram| {
+                (
+                    ram.label.clone(),
+                    ram.tooltip.clone(),
+                    ram.description.clone(),
+                    readings,
+                    ram.load,
+                )
+            }),
+            bar.disk.filter(|_| reading(BarItem::Disk)).map(|disk| {
+                (
+                    disk.label.clone(),
+                    disk.tooltip.clone(),
+                    disk.description.clone(),
+                    readings,
+                    disk.load,
+                )
+            }),
         ]
         .map(|label| {
             label.map(
@@ -3476,7 +3414,6 @@ impl WorkspaceScene {
                 *label = None;
             }
         }
-        let bar_complete = !crowded && tabs_uncapped && quotas.len() == quota_count && fits;
         // Quota chips and labels sit in Eon's order between the drag region and Shortcuts; the
         // clock and the version label sit at the ends of the shortcut hints instead.
         let [cpu, ram, disk] = labels;
@@ -3585,6 +3522,7 @@ impl WorkspaceScene {
                 tab_label_clip,
                 header,
                 eon_icon,
+                window_menu,
                 workspace_label,
                 drag_region,
                 quotas,
@@ -3624,7 +3562,6 @@ impl WorkspaceScene {
                 tab_scroll,
                 pane_scroll: 0.0,
                 tab_scroll_limit,
-                bar_complete,
                 pane_scroll_limit: 0.0,
                 active_tab_scroll,
                 selected_pane_scroll: 0.0,
@@ -3768,6 +3705,7 @@ impl WorkspaceScene {
             tab_label_clip,
             header,
             eon_icon,
+            window_menu,
             workspace_label,
             drag_region,
             quotas,
@@ -3794,7 +3732,6 @@ impl WorkspaceScene {
             tab_scroll,
             pane_scroll,
             tab_scroll_limit,
-            bar_complete,
             pane_scroll_limit,
             active_tab_scroll,
             selected_pane_scroll,
@@ -3891,6 +3828,11 @@ impl WorkspaceScene {
 
     #[must_use]
     pub fn hit_test(&self, x: f32, y: f32) -> Option<WorkspaceHit<'_>> {
+        if let Some(control) = self.window_menu
+            && control.rect.contains(x, y)
+        {
+            return Some(WorkspaceHit::Control(control.kind));
+        }
         for tab in &self.tabs {
             if tab
                 .rect
@@ -3996,6 +3938,9 @@ impl WorkspaceScene {
     /// entry exists.
     #[must_use]
     pub fn has_control(&self, kind: WorkspaceHeaderControl) -> bool {
+        if kind == WorkspaceHeaderControl::WindowMenu {
+            return self.window_menu.is_some();
+        }
         if kind == WorkspaceHeaderControl::Workspaces {
             return self
                 .workspace_label
@@ -4005,6 +3950,10 @@ impl WorkspaceScene {
         self.controls
             .iter()
             .any(|control| control.kind == kind && control.rect.width > 0.0)
+    }
+
+    pub(crate) fn header_controls(&self) -> impl Iterator<Item = WorkspaceControl> + '_ {
+        self.window_menu.into_iter().chain(self.controls)
     }
 
     pub(crate) fn with_displayed_grids(

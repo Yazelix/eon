@@ -9379,7 +9379,7 @@ while [ ! -e "$EON_TEST_STOP" ]; do sleep 0.01; done
     };
     assert!(!wait_for_pairs(1)[0].contains("still running"));
     let name = root.file_name().unwrap().to_str().unwrap();
-    let hint = "See them: eon window ls · Quit one: eon window stop ID";
+    let hint = "See them or quit one: Window menu (Eon icon, top left)\nCLI: eon window ls · eon window stop ID";
     let mut windows = Vec::new();
     for count in 1..=2 {
         let output = command().args(["window", "new"]).output().unwrap();

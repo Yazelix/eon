@@ -55,6 +55,20 @@ for one zero-payload semantic action without a new dependency or adapter.
   lifetime.
   Revisit only if a supported Linux desktop cannot dispatch through host GIO.
 
+### Peer-window Quit admission
+
+- **Selected shape:** serde_json 1.0.151, the exact version already pinned by
+  Eon and Runtime, parses a fresh `eon window ls --json` response immediately
+  before peer Stop (`eon-7cf0y.6`). No new lockfile package or native dependency.
+- **Owner consequence:** Runtime owns the inventory and Stop. Venus checks the
+  returned ID/generation pairs only for destructive-action admission; EONW
+  remains the sole workspace topology and menu-data owner. This approved
+  one-shot check does not replace the workspace protocol with CLI polling.
+- **Rejected:** Handwritten JSON parsing, another parser, a shell parsing tool,
+  and linking Runtime into Venus. Remove this direct dependency when an accepted
+  atomic generation-bound CLI Stop replaces the read/Stop check, if no other
+  consumer needs it. The separate read and Stop retain a scheduling race.
+
 ### Eon workspace protocol consumer
 
 - **Selected shape:** The in-tree path dependency on the dependency-free,
@@ -422,8 +436,10 @@ host-access failure notice remains open.
 
 The canonical Eon Runtime package adds one direct lock entry and no transitive, native,
 or build dependency. Copying it would duplicate every EONW tag, bound, identity rule, and snapshot
-invariant. Parsing Eon CLI output, shelling out, and consuming the older private
-control format remain rejected. Provider relocation keeps the complete package
+invariant. Parsing Eon CLI output for topology, shelling out for topology, and
+consuming the older private control format remain rejected. The peer-window
+Quit admission check above is a separate, approved destructive-action guard.
+Provider relocation keeps the complete package
 unchanged and adds no dependency cost; an adapter or local mirror is not a
 replacement path.
 

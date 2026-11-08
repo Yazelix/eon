@@ -41,11 +41,11 @@ use yazelix_venus::{
     Color, ConnectionState, CpuReadings, CpuTimes, CpuUse, DialogKind, DialogScene, DiskUse,
     EonBar, FontSettings, FontSetup, HeaderText, Hyperlink, ImageKey, ImageResync, InputState,
     LoadLevels, LocalClock, LocalNoticeSource, MAX_LINK_BYTES, ModelEffect, ModelError, Outgoing,
-    PaddingColor, PresentOutcome, QuotaWindows, RamUse, Renderer, Scene, SceneRect, SessionModel,
-    ShortcutHintsScene, SidebarView, Transport, TransportEvent, WorkspaceEvent, WorkspaceFocus,
-    WorkspaceHeaderControl, WorkspaceHit, WorkspaceModel, WorkspaceScene, WorkspaceTransport,
-    active_popup, attention_only_change, focused_terminal, labels_only_change, read_eon_icon,
-    shown_workspace, validate_copy_uri, validate_open_uri,
+    PaddingColor, PresentOutcome, RamUse, Renderer, Scene, SceneRect, SessionModel,
+    ShortcutHintsScene, SidebarView, Transport, TransportEvent, WindowMenuAction, WorkspaceEvent,
+    WorkspaceFocus, WorkspaceHeaderControl, WorkspaceHit, WorkspaceModel, WorkspaceScene,
+    WorkspaceTransport, active_popup, attention_only_change, focused_terminal, labels_only_change,
+    read_eon_icon, shown_workspace, validate_copy_uri, validate_open_uri,
 };
 
 mod geometry;
@@ -357,18 +357,31 @@ fn link_spawn_error(platform: NativePlatform) -> &'static str {
 }
 
 fn run_new_window(executable: &Path) -> std::result::Result<(), String> {
+    run_window_command(executable, &["window", "new"], "open a new Eon window").map(|_| ())
+}
+
+fn run_window_command(
+    executable: &Path,
+    args: &[&str],
+    action: &str,
+) -> std::result::Result<Vec<u8>, String> {
     let output = Command::new(executable)
-        .args(["window", "new"])
+        .args(args)
         .stdin(Stdio::null())
         .output()
-        .map_err(|error| format!("Cannot open a new Eon window: {error}"))?;
+        .map_err(|error| format!("Cannot {action}: {error}"))?;
     if output.status.success() {
-        Ok(())
+        Ok(output.stdout)
     } else {
-        let detail = String::from_utf8_lossy(&output.stderr);
-        let detail = detail.trim();
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        let stdout = String::from_utf8_lossy(&output.stdout);
+        let detail = if stderr.trim().is_empty() {
+            stdout.trim()
+        } else {
+            stderr.trim()
+        };
         Err(format!(
-            "Cannot open a new Eon window: {}",
+            "Cannot {action}: {}",
             if detail.is_empty() {
                 output.status.to_string()
             } else {
@@ -447,7 +460,7 @@ enum UserEvent {
     Present,
     Transport,
     Workspace,
-    NewWindowFailed(String),
+    WindowCommandFailed(String),
     /// A disk reading taken off the event-loop thread, not yet rated.
     Disk(Option<DiskUse>),
 }
@@ -478,6 +491,39 @@ struct ShortcutViewerState {
     scroll: f32,
     /// The pointer button whose press closed the viewer, held until its release.
     dismissal: Option<MouseButton>,
+}
+
+#[derive(Debug, Default)]
+struct WindowMenuState {
+    open: bool,
+    highlighted: Option<WindowMenuAction>,
+    scroll: f32,
+    dismissal: Option<MouseButton>,
+    pressed: Option<WindowMenuAction>,
+}
+
+impl WindowMenuState {
+    fn hover(&mut self, action: WindowMenuAction) {
+        self.highlighted = Some(action);
+    }
+    fn button(
+        &mut self,
+        button: MouseButton,
+        state: ElementState,
+        target: Option<WindowMenuAction>,
+    ) -> Option<WindowMenuAction> {
+        if button != MouseButton::Left {
+            return None;
+        }
+        if state == ElementState::Pressed {
+            self.pressed = target;
+            None
+        } else {
+            self.pressed
+                .take()
+                .filter(|pressed| Some(pressed) == target.as_ref())
+        }
+    }
 }
 
 #[derive(Debug, Default)]
@@ -603,6 +649,7 @@ enum PromptTarget {
     },
     /// Quit this window: Stop for the generation the current snapshot names (EON-C8).
     QuitWindow,
+    QuitOtherWindow(WindowMenuAction),
 }
 
 impl ClosePrompt {
@@ -619,6 +666,7 @@ impl ClosePrompt {
                     _ => true,
                 }),
             PromptTarget::QuitWindow => snapshot.running.is_some(),
+            PromptTarget::QuitOtherWindow(action) => peer_window(snapshot, action).is_some(),
         }
     }
 }
@@ -1069,6 +1117,7 @@ struct Application {
     next_age: Option<Instant>,
     header_press: Option<HeaderPress>,
     shortcut_viewer: ShortcutViewerState,
+    window_menu: WindowMenuState,
     attention_inbox: AttentionInboxState,
     warning_close_last_tab: bool,
     close_prompt: Option<ClosePrompt>,
@@ -1079,8 +1128,6 @@ struct Application {
     zoom: Option<ZoomTarget>,
     tab_texts: HashMap<String, (String, f32)>,
     quota_widths: HashMap<String, f32>,
-    /// Each provider's windows, kept through their resets until its next read.
-    quota_windows: QuotaWindows,
     /// Fitted header texts, the workspace label's name, by their text.
     fitted_texts: HashMap<String, (String, f32)>,
     tab_scroll: f32,
@@ -1192,6 +1239,7 @@ impl Application {
             next_age: None,
             header_press: None,
             shortcut_viewer: ShortcutViewerState::default(),
+            window_menu: WindowMenuState::default(),
             attention_inbox: AttentionInboxState::default(),
             warning_close_last_tab,
             close_prompt: None,
@@ -1202,7 +1250,6 @@ impl Application {
             zoom: None,
             tab_texts: HashMap::new(),
             quota_widths: HashMap::new(),
-            quota_windows: QuotaWindows::default(),
             fitted_texts: HashMap::new(),
             tab_scroll: 0.0,
             pane_scroll: 0.0,
@@ -1456,7 +1503,6 @@ impl Application {
                     clock: self.clock.as_ref(),
                     now: now.as_ref(),
                     workspace_picker: picker.as_deref(),
-                    quota_windows: &self.quota_windows,
                 },
                 state.renderer.size(),
                 state.renderer.metrics(),
@@ -1488,11 +1534,24 @@ impl Application {
 
     /// Whether a dialog takes input from the workspace and terminal.
     fn dialog_open(&self) -> bool {
-        self.shortcut_viewer.open || self.close_prompt.is_some() || self.attention_inbox.open
+        self.window_menu.open
+            || self.shortcut_viewer.open
+            || self.close_prompt.is_some()
+            || self.attention_inbox.open
     }
 
     /// The open dialog: the close prompt, else the shortcut viewer.
     fn dialog_scene(&self) -> Option<DialogScene> {
+        if self.window_menu.open {
+            let state = self.window.as_ref()?;
+            return Some(DialogScene::window_menu(
+                self.workspace_model.snapshot()?.running.as_ref()?,
+                self.window_menu.highlighted.as_ref(),
+                state.renderer.size(),
+                state.renderer.metrics(),
+                self.window_menu.scroll,
+            ));
+        }
         if self.attention_inbox.open {
             let state = self.window.as_ref()?;
             return Some(DialogScene::attention_inbox(
@@ -1512,6 +1571,14 @@ impl Application {
         let snapshot = self.workspace_model.snapshot()?;
         let tab = match &prompt.target {
             PromptTarget::CloseTab { tab, .. } => tab,
+            PromptTarget::QuitOtherWindow(action) => {
+                return Some(DialogScene::quit_other_window(
+                    peer_window(snapshot, action)?,
+                    state.renderer.size(),
+                    state.renderer.metrics(),
+                    prompt.scroll,
+                ));
+            }
             // Worded from the current snapshot, so an open prompt follows the busy list.
             PromptTarget::QuitWindow => {
                 return Some(DialogScene::quit_window(
@@ -1579,6 +1646,137 @@ impl Application {
             app.shortcut_viewer.open = open;
             app.shortcut_viewer.scroll = 0.0;
         });
+    }
+
+    fn set_window_menu(&mut self, open: bool) {
+        if open
+            && self
+                .workspace_model
+                .snapshot()
+                .is_none_or(|s| s.running.is_none())
+        {
+            return;
+        }
+        self.change_dialog(|app| {
+            app.window_menu.open = open;
+            app.window_menu.pressed = None;
+            app.window_menu.scroll = 0.0;
+            app.window_menu.highlighted = Some(WindowMenuAction::Detach);
+        });
+    }
+
+    fn select_window_action(&mut self, action: WindowMenuAction) {
+        self.window_menu.highlighted = Some(action.clone());
+        if let Some(dialog) = self.dialog_scene() {
+            self.window_menu.scroll = dialog.menu_action_scroll(&action);
+        }
+        self.refresh_client_view();
+    }
+
+    fn activate_window_action(&mut self, event_loop: &ActiveEventLoop, action: WindowMenuAction) {
+        if !self.window_menu.open {
+            return;
+        }
+        match action {
+            WindowMenuAction::Detach => event_loop.exit(),
+            WindowMenuAction::Quit => {
+                self.set_window_menu(false);
+                self.begin_quit();
+            }
+            action @ WindowMenuAction::QuitOther { .. } => {
+                if self
+                    .workspace_model
+                    .snapshot()
+                    .is_none_or(|snapshot| peer_window(snapshot, &action).is_none())
+                {
+                    return;
+                }
+                self.change_dialog(|app| {
+                    app.window_menu.open = false;
+                    app.close_prompt = Some(ClosePrompt {
+                        target: PromptTarget::QuitOtherWindow(action),
+                        scroll: 0.0,
+                    });
+                });
+            }
+        }
+    }
+
+    fn handle_window_menu_button(
+        &mut self,
+        event_loop: &ActiveEventLoop,
+        button: MouseButton,
+        state: ElementState,
+        outside: bool,
+        target: Option<WindowMenuAction>,
+    ) -> bool {
+        match viewer_button(&mut self.window_menu.dismissal, button, state, outside) {
+            ViewerButton::Dismiss => {
+                self.set_window_menu(false);
+                return true;
+            }
+            ViewerButton::Capture => return true,
+            ViewerButton::Pass => {}
+        }
+        if !self.window_menu.open {
+            return false;
+        }
+        if let Some(action) = self.window_menu.button(button, state, target) {
+            self.activate_window_action(event_loop, action);
+        }
+        true
+    }
+
+    fn handle_window_menu_key(
+        &mut self,
+        event_loop: &ActiveEventLoop,
+        event: &ShortcutKey,
+    ) -> bool {
+        if !self.window_menu.open
+            || !self
+                .input
+                .consumes_shortcut(event.physical_key, event.state, event.repeat, true)
+        {
+            return false;
+        }
+        if event.state != ElementState::Pressed {
+            return true;
+        }
+        let PhysicalKey::Code(code) = event.physical_key else {
+            return true;
+        };
+        let modifiers = self.input.modifiers();
+        if code == KeyCode::Escape && !event.repeat {
+            self.set_window_menu(false);
+        } else if matches!(code, KeyCode::Enter | KeyCode::Space)
+            && !event.repeat
+            && modifiers == session::Modifiers::empty()
+        {
+            if let Some(action) = self.window_menu.highlighted.clone() {
+                self.activate_window_action(event_loop, action);
+            }
+        } else if (matches!(code, KeyCode::ArrowUp | KeyCode::ArrowDown)
+            && modifiers == session::Modifiers::empty())
+            || (code == KeyCode::Tab
+                && (modifiers == session::Modifiers::empty()
+                    || modifiers == session::Modifiers::SHIFT))
+        {
+            if let Some(dialog) = self.dialog_scene() {
+                let actions = dialog
+                    .menu_rows()
+                    .filter_map(|row| row.menu_action.clone())
+                    .collect::<Vec<_>>();
+                let backwards = code == KeyCode::ArrowUp || modifiers == session::Modifiers::SHIFT;
+                if let Some(action) =
+                    next_window_action(&actions, self.window_menu.highlighted.as_ref(), backwards)
+                {
+                    self.select_window_action(action);
+                }
+            }
+        } else if let Some(command) = shortcut_viewer_command(true, code, modifiers, event.repeat) {
+            self.scroll_dialog_by(command);
+        }
+        true
     }
 
     fn set_attention_inbox(&mut self, open: bool) {
@@ -1800,6 +1998,7 @@ impl Application {
                     self.send_stop(action);
                 }
             }
+            PromptTarget::QuitOtherWindow(action) => self.stop_other_window(action),
         }
     }
 
@@ -1821,6 +2020,7 @@ impl Application {
                     app.presentation.invalidate();
                 }
                 app.shortcut_viewer.open = false;
+                app.window_menu.open = false;
                 app.shortcut_viewer.scroll = 0.0;
                 app.close_prompt = Some(ClosePrompt {
                     target: PromptTarget::QuitWindow,
@@ -1852,6 +2052,7 @@ impl Application {
             || self.handle_detach_key(event_loop, event)
             || self.handle_quit_hold_key(event)
             || self.handle_close_prompt_key(event)
+            || self.handle_window_menu_key(event_loop, event)
             || self.handle_shortcut_viewer_key(event)
             || self.handle_link_copy(event.physical_key, event.state, event.repeat)
             || self.handle_workspace_key(event)
@@ -1917,6 +2118,9 @@ impl Application {
 
     /// The open dialog's scroll: the close prompt's, else the shortcut viewer's.
     fn dialog_scroll(&mut self) -> &mut f32 {
+        if self.window_menu.open {
+            return &mut self.window_menu.scroll;
+        }
         if self.attention_inbox.open {
             return &mut self.attention_inbox.scroll;
         }
@@ -1961,6 +2165,9 @@ impl Application {
         let scroll = (dialog.scroll + pixels).clamp(0.0, dialog.max_scroll);
         if *self.dialog_scroll() != scroll {
             *self.dialog_scroll() = scroll;
+            if self.window_menu.open {
+                self.presentation.invalidate();
+            }
             if self.attention_inbox.open {
                 if let Some(target) = self.dialog_scene().and_then(|dialog| {
                     dialog
@@ -2049,10 +2256,6 @@ impl Application {
         let zoom = self.zoomed();
         let state = self.window.as_mut()?;
         let snapshot = self.workspace_model.snapshot()?;
-        self.quota_windows.observe(
-            snapshot.codex_quota.as_ref(),
-            snapshot.claude_quota.as_ref(),
-        );
         let zoom = WorkspaceScene::zoom_visible(snapshot, zoom);
         self.hints = self.hints_visible.then(|| {
             ShortcutHintsScene::new(
@@ -2101,7 +2304,6 @@ impl Application {
                 clock: self.clock.as_ref(),
                 now: now.as_ref(),
                 workspace_picker: picker.as_deref(),
-                quota_windows: &self.quota_windows,
             },
             state.renderer.size(),
             state.renderer.metrics(),
@@ -2220,8 +2422,7 @@ impl Application {
         {
             self.set_workspace_focus(WorkspaceFocus::Terminal);
         }
-        let label = WorkspaceHeaderControl::Workspaces;
-        if self.workspace_focus == WorkspaceFocus::Header(label)
+        if let WorkspaceFocus::Header(label) = self.workspace_focus
             && !self
                 .workspace_scene()
                 .is_some_and(|scene| scene.has_control(label))
@@ -3016,6 +3217,7 @@ impl Application {
             WorkspaceHeaderAction::Workspace(action) => {
                 self.request_workspace(WorkspaceAction::Workspace(action));
             }
+            WorkspaceHeaderAction::ToggleWindowMenu => self.set_window_menu(!self.window_menu.open),
             WorkspaceHeaderAction::ToggleShortcuts => {
                 self.set_shortcut_viewer(!self.shortcut_viewer.open);
             }
@@ -3107,6 +3309,42 @@ impl Application {
         }
     }
 
+    fn stop_other_window(&mut self, action: WindowMenuAction) {
+        let Some(snapshot) = self.workspace_model.snapshot().cloned() else {
+            return;
+        };
+        if let Err(failure) = peer_quit_id(&snapshot, &action) {
+            self.terminal
+                .model
+                .set_venus_notice(LocalNoticeSource::Input, failure);
+            self.refresh_client_view();
+            return;
+        }
+        let Some(executable) = self.new_window_executable.clone() else {
+            self.terminal.model.set_venus_notice(
+                LocalNoticeSource::Input,
+                "Cannot quit another window: no Eon executable was supplied.",
+            );
+            self.refresh_client_view();
+            return;
+        };
+        let proxy = self.proxy.clone();
+        if let Err(error) = thread::Builder::new()
+            .name("venus-quit-eon-window".into())
+            .spawn(move || {
+                if let Err(failure) = stop_other_window(&executable, &snapshot, &action) {
+                    let _ = proxy.send_event(UserEvent::WindowCommandFailed(failure));
+                }
+            })
+        {
+            self.terminal.model.set_venus_notice(
+                LocalNoticeSource::Input,
+                format!("Cannot start window Quit: {error}"),
+            );
+            self.refresh_client_view();
+        }
+    }
+
     fn open_new_window(&mut self) {
         let Some(executable) = self.new_window_executable.clone() else {
             self.terminal.model.set_venus_notice(
@@ -3121,7 +3359,7 @@ impl Application {
             .name("venus-new-eon-window".into())
             .spawn(move || {
                 if let Err(failure) = run_new_window(&executable) {
-                    let _ = proxy.send_event(UserEvent::NewWindowFailed(failure));
+                    let _ = proxy.send_event(UserEvent::WindowCommandFailed(failure));
                 }
             });
         if let Err(error) = result {
@@ -3305,6 +3543,7 @@ impl Application {
                         modifiers == session::Modifiers::SHIFT,
                         shows(WorkspaceHeaderControl::Workspaces),
                         shows(WorkspaceHeaderControl::Shortcuts),
+                        shows(WorkspaceHeaderControl::WindowMenu),
                     )
                 }
             {
@@ -4097,6 +4336,7 @@ impl Application {
 
     fn cancel_pointer_sequence(&mut self) {
         self.terminal.selection_scroll.cancel();
+        self.window_menu.pressed = None;
         self.header_press = None;
         self.terminal.scrollback_press = None;
         let cancel_server = pointer_sequence_needs_cancel(
@@ -4554,6 +4794,12 @@ impl ApplicationHandler<UserEvent> for Application {
                 ..
             }
         ) && self.pointer_outside_viewer();
+        let window_menu_scene = self.window_menu.open.then(|| self.dialog_scene()).flatten();
+        let outside_menu = window_menu_scene.as_ref().is_some_and(|dialog| {
+            !dialog
+                .bounds
+                .contains(self.cursor.x as f32, self.cursor.y as f32)
+        });
         let candidate = self.presentation_candidate(workspace.as_ref());
         let presentation_current = self.presentation.has_presented_geometry();
         let presented_revision = self.presentation.presented_revision();
@@ -4565,6 +4811,22 @@ impl ApplicationHandler<UserEvent> for Application {
             return;
         }
         state.adapter.process_event(&state.window, &event);
+        if let WindowEvent::MouseInput { state, button, .. } = &event {
+            let target = window_menu_scene
+                .as_ref()
+                .filter(|_| presentation_current)
+                .and_then(|dialog| {
+                    dialog
+                        .menu_target_at(self.cursor.x as f32, self.cursor.y as f32)
+                        .cloned()
+                });
+            if self.handle_window_menu_button(event_loop, *button, *state, outside_menu, target) {
+                return;
+            }
+        }
+        let Some(state) = &mut self.window else {
+            return;
+        };
 
         match event {
             WindowEvent::CloseRequested => self.request_close(event_loop),
@@ -4728,6 +4990,24 @@ impl ApplicationHandler<UserEvent> for Application {
                     self.terminal.selection_scroll.cancel();
                     self.cursor = position;
                     self.links.pointer_inside = true;
+                    if self.window_menu.open {
+                        let action = window_menu_scene.as_ref().and_then(|dialog| {
+                            dialog
+                                .menu_target_at(position.x as f32, position.y as f32)
+                                .cloned()
+                        });
+                        state.window.set_cursor(if action.is_some() {
+                            CursorIcon::Pointer
+                        } else {
+                            CursorIcon::Default
+                        });
+                        if let Some(action) = action
+                            && self.window_menu.highlighted.as_ref() != Some(&action)
+                        {
+                            self.window_menu.hover(action);
+                            self.refresh_client_view();
+                        }
+                    }
                     return;
                 }
                 let header_at = |position: PhysicalPosition<f64>| {
@@ -5137,7 +5417,7 @@ impl ApplicationHandler<UserEvent> for Application {
 
     fn user_event(&mut self, event_loop: &ActiveEventLoop, event: UserEvent) {
         match event {
-            UserEvent::NewWindowFailed(detail) => {
+            UserEvent::WindowCommandFailed(detail) => {
                 self.terminal
                     .model
                     .set_venus_notice(LocalNoticeSource::Input, detail);
@@ -5213,6 +5493,13 @@ impl ApplicationHandler<UserEvent> for Application {
                             .accessibility
                             .action_target(request.target_node, request.action);
                         match target {
+                            Some(AccessibilityTarget::WindowMenu { action, activate }) => {
+                                if activate {
+                                    self.activate_window_action(event_loop, action);
+                                } else {
+                                    self.select_window_action(action);
+                                }
+                            }
                             Some(AccessibilityTarget::InboxFilter(filter)) => {
                                 self.filter_attention_inbox(filter)
                             }
@@ -5902,6 +6189,7 @@ fn accessibility_workspace_focus(
         AccessibilityTarget::Tab(id) => (WorkspaceFocus::Tabs, id),
         AccessibilityTarget::Pane(id) => (WorkspaceFocus::Panes, id),
         AccessibilityTarget::HeaderControl { .. }
+        | AccessibilityTarget::WindowMenu { .. }
         | AccessibilityTarget::InboxFilter(_)
         | AccessibilityTarget::InboxRow { .. }
         | AccessibilityTarget::SidebarRow { .. }
@@ -6013,6 +6301,7 @@ fn shortcut_viewer_command(
 enum WorkspaceHeaderAction {
     Workspace(CommonAction),
     ToggleShortcuts,
+    ToggleWindowMenu,
     PickWorkspace,
 }
 
@@ -6021,6 +6310,7 @@ fn workspace_header_action(
     active_tab: &str,
 ) -> WorkspaceHeaderAction {
     match control {
+        WorkspaceHeaderControl::WindowMenu => WorkspaceHeaderAction::ToggleWindowMenu,
         WorkspaceHeaderControl::Workspaces => WorkspaceHeaderAction::PickWorkspace,
         WorkspaceHeaderControl::NewTab => WorkspaceHeaderAction::Workspace(CommonAction::CreateTab),
         WorkspaceHeaderControl::Shortcuts => WorkspaceHeaderAction::ToggleShortcuts,
@@ -6032,39 +6322,151 @@ fn workspace_header_action(
     }
 }
 
-/// Tab and Shift+Tab move from the tabs through the header controls: the workspace label while
-/// it opens the picker, New tab, Shortcuts while it shows, then Close tab.
+/// Tab and Shift+Tab traverse the visible header controls, including the icon menu.
 fn cycle_header_focus(
     focus: WorkspaceFocus,
     backwards: bool,
     workspace_label: bool,
     shortcuts_visible: bool,
+    window_menu: bool,
 ) -> Option<WorkspaceFocus> {
-    use WorkspaceHeaderControl::{CloseTab, NewTab, Shortcuts, Workspaces};
-
-    Some(match (focus, backwards) {
-        (WorkspaceFocus::Tabs, false) if workspace_label => WorkspaceFocus::Header(Workspaces),
-        (WorkspaceFocus::Tabs | WorkspaceFocus::Header(Workspaces), false) => {
-            WorkspaceFocus::Header(NewTab)
-        }
-        (WorkspaceFocus::Header(NewTab), false) => WorkspaceFocus::Header(if shortcuts_visible {
-            Shortcuts
+    use WorkspaceHeaderControl::{CloseTab, NewTab, Shortcuts, WindowMenu, Workspaces};
+    let controls = [
+        Some(WorkspaceFocus::Tabs),
+        window_menu.then_some(WorkspaceFocus::Header(WindowMenu)),
+        workspace_label.then_some(WorkspaceFocus::Header(Workspaces)),
+        Some(WorkspaceFocus::Header(NewTab)),
+        shortcuts_visible.then_some(WorkspaceFocus::Header(Shortcuts)),
+        Some(WorkspaceFocus::Header(CloseTab)),
+    ]
+    .into_iter()
+    .flatten()
+    .collect::<Vec<_>>();
+    let index = controls.iter().position(|candidate| *candidate == focus)?;
+    Some(
+        controls[if backwards {
+            (index + controls.len() - 1) % controls.len()
         } else {
-            CloseTab
-        }),
-        (WorkspaceFocus::Header(Shortcuts), false) => WorkspaceFocus::Header(CloseTab),
-        (WorkspaceFocus::Header(CloseTab), false) => WorkspaceFocus::Tabs,
-        (WorkspaceFocus::Tabs, true) => WorkspaceFocus::Header(CloseTab),
-        (WorkspaceFocus::Header(CloseTab), true) => {
-            WorkspaceFocus::Header(if shortcuts_visible { Shortcuts } else { NewTab })
+            (index + 1) % controls.len()
+        }],
+    )
+}
+
+fn next_window_action(
+    actions: &[WindowMenuAction],
+    current: Option<&WindowMenuAction>,
+    backwards: bool,
+) -> Option<WindowMenuAction> {
+    if actions.is_empty() {
+        return None;
+    }
+    let next = actions
+        .iter()
+        .position(|action| Some(action) == current)
+        .map_or(0, |index| {
+            if backwards {
+                (index + actions.len() - 1) % actions.len()
+            } else {
+                (index + 1) % actions.len()
+            }
+        });
+    Some(actions[next].clone())
+}
+
+fn peer_window<'a>(
+    snapshot: &'a eon_workspace_protocol::v37::Snapshot,
+    action: &WindowMenuAction,
+) -> Option<&'a eon_workspace_protocol::v37::WindowEntry> {
+    snapshot
+        .running
+        .as_ref()?
+        .others
+        .as_ref()?
+        .iter()
+        .find(|window| WindowMenuAction::peer(window) == *action)
+}
+
+fn peer_quit_id<'a>(
+    snapshot: &eon_workspace_protocol::v37::Snapshot,
+    action: &'a WindowMenuAction,
+) -> std::result::Result<&'a str, String> {
+    let Some(peer) = peer_window(snapshot, action) else {
+        return Err("Cannot quit that window: its confirmed generation is no longer listed. Use eon window ls.".into());
+    };
+    let WindowMenuAction::QuitOther { id, .. } = action else {
+        unreachable!("peer_window only matches peer actions")
+    };
+    if peer.window.is_some() {
+        let running = snapshot
+            .running
+            .as_ref()
+            .expect("peer has a running summary");
+        // The CLI stops an independent namespace in full, not only the confirmed generation.
+        let reason = if running.this.window == peer.window {
+            Some("its namespace includes this window")
+        } else if running.others.as_ref().is_some_and(|others| {
+            others
+                .iter()
+                .any(|other| other.window == peer.window && other.generation != peer.generation)
+        }) {
+            Some("its namespace has more than one generation")
+        } else if running.omitted > 0 {
+            Some("the omitted windows leave its namespace scope unknown")
+        } else {
+            None
+        };
+        if let Some(reason) = reason {
+            return Err(format!(
+                "Cannot quit only that window: {reason}. Inspect with eon window ls; eon window stop {id} stops the whole namespace."
+            ));
         }
-        (WorkspaceFocus::Header(Shortcuts), true) => WorkspaceFocus::Header(NewTab),
-        (WorkspaceFocus::Header(NewTab), true) if workspace_label => {
-            WorkspaceFocus::Header(Workspaces)
+    }
+    Ok(id)
+}
+
+fn stop_other_window(
+    executable: &Path,
+    snapshot: &eon_workspace_protocol::v37::Snapshot,
+    action: &WindowMenuAction,
+) -> std::result::Result<(), String> {
+    let id = peer_quit_id(snapshot, action)?;
+    let peer = peer_window(snapshot, action).expect("peer_quit_id validated the target");
+    let refuse = || {
+        format!(
+            "Cannot quit that window: the fresh inventory cannot verify exactly its confirmed generation. Inspect with eon window ls before using eon window stop {id}."
+        )
+    };
+    let inventory = run_window_command(
+        executable,
+        &["window", "ls", "--json"],
+        "inspect running Eon windows",
+    )
+    .map_err(|error| format!("{} {error}", refuse()))?;
+    let inventory: serde_json::Value = serde_json::from_slice(&inventory).map_err(|_| refuse())?;
+    let windows = inventory["windows"].as_array().ok_or_else(refuse)?;
+    let mut matching = 0;
+    for window in windows {
+        let listed_id = window["id"].as_str().ok_or_else(refuse)?;
+        let generation = window["generation"].as_str().ok_or_else(refuse)?;
+        if listed_id == id
+            || (peer.window.is_none() && listed_id == "default" && generation == peer.generation)
+        {
+            matching += 1;
+            if generation != peer.generation {
+                return Err(refuse());
+            }
         }
-        (WorkspaceFocus::Header(NewTab | Workspaces), true) => WorkspaceFocus::Tabs,
-        _ => return None,
-    })
+    }
+    if matching != 1 {
+        return Err(refuse());
+    }
+    // shortcut: read and Stop are not atomic; use generation-bound CLI Stop when available.
+    run_window_command(
+        executable,
+        &["window", "stop", id, "--json"],
+        "quit another Eon window",
+    )
+    .map(|_| ())
 }
 
 fn sends_workspace_shortcut(action: &WorkspaceAction, state: ElementState, repeat: bool) -> bool {

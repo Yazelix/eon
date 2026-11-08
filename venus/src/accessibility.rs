@@ -1,6 +1,6 @@
 use crate::{
-    CellMetrics, DialogKind, DialogScene, MAX_LINK_BYTES, Scene, SceneRect, WorkspaceFocus,
-    WorkspaceHeaderControl, WorkspaceScene,
+    CellMetrics, DialogKind, DialogScene, MAX_LINK_BYTES, Scene, SceneRect, WindowMenuAction,
+    WorkspaceFocus, WorkspaceHeaderControl, WorkspaceScene,
     scene::{
         AccessiblePosition, AccessibleRow, AccessibleSelection, AccessibleText,
         QuotaWindowIdentity, SIDEBAR_EMPTY, WorkspaceQuota,
@@ -40,6 +40,7 @@ const SIDEBAR_EMPTY_STATE: NodeId = NodeId(19);
 const WORKSPACE_LABEL: NodeId = NodeId(20);
 const DISK: NodeId = NodeId(21);
 const HINT_PIECES: NodeId = NodeId(22);
+const WINDOW_MENU: NodeId = NodeId(64);
 /// One label per shortcut hints keycap; at most one group per set of modifiers.
 const HINT_GROUP_START: u64 = 23;
 // Scene rows are u16, so this range cannot collide with fixed or text-run nodes.
@@ -80,6 +81,7 @@ struct Snapshot {
     /// Agent sidebar headings by tab id and rows by target; EONW identities never collide.
     sidebar_ids: HashMap<String, NodeId>,
     inbox_ids: HashMap<(String, String), NodeId>,
+    menu_ids: HashMap<WindowMenuAction, NodeId>,
     next_workspace_id: u64,
     links: Vec<AccessibleLink>,
     link_identity: Option<(u64, u64)>,
@@ -104,6 +106,7 @@ impl Snapshot {
             pane_ids: HashMap::new(),
             sidebar_ids: HashMap::new(),
             inbox_ids: HashMap::new(),
+            menu_ids: HashMap::new(),
             next_workspace_id: WORKSPACE_NODE_START,
             links: Vec::new(),
             link_identity: None,
@@ -124,6 +127,27 @@ impl Snapshot {
             for row in &dialog.attention_rows {
                 let key = (row.tab.clone(), row.target.clone());
                 self.inbox_ids.entry(key).or_insert_with(|| {
+                    let id = NodeId(self.next_workspace_id);
+                    self.next_workspace_id = self
+                        .next_workspace_id
+                        .checked_add(1)
+                        .filter(|next| *next <= CODEX_QUOTA_NODE_START)
+                        .expect("AccessKit workspace node IDs exhausted");
+                    id
+                });
+            }
+        }
+        self.menu_ids.retain(|action, _| {
+            dialog.is_some_and(|dialog| {
+                dialog
+                    .menu_rows()
+                    .any(|row| row.menu_action.as_ref() == Some(action))
+            })
+        });
+        if let Some(dialog) = dialog {
+            for row in dialog.menu_rows() {
+                let action = row.menu_action.as_ref().expect("menu row has an action");
+                self.menu_ids.entry(action.clone()).or_insert_with(|| {
                     let id = NodeId(self.next_workspace_id);
                     self.next_workspace_id = self
                         .next_workspace_id
@@ -243,9 +267,9 @@ impl Snapshot {
         if let Some(viewer) = &self.dialog {
             root.set_children(vec![DIALOG]);
             let mut dialog = match &viewer.kind {
-                DialogKind::AttentionInbox => {
+                DialogKind::AttentionInbox | DialogKind::WindowMenu => {
                     let mut dialog = Node::new(Role::Dialog);
-                    dialog.set_label("Attention inbox");
+                    dialog.set_label(viewer.kind.title());
                     dialog.set_description(viewer.kind.footer().join(" · "));
                     dialog
                 }
@@ -255,6 +279,15 @@ impl Snapshot {
                     dialog.set_description(
                         "Native Eon surface shortcuts. Use arrows or Page Up and Page Down to scroll; press Escape or Alt+Slash to close.",
                     );
+                    dialog
+                }
+                DialogKind::QuitOtherWindow { .. } => {
+                    let mut dialog = Node::new(Role::AlertDialog);
+                    dialog.set_label(viewer.kind.title());
+                    dialog.set_description(format!(
+                        "{} Press Enter to quit or Escape to cancel.",
+                        viewer.kind.subtitle()
+                    ));
                     dialog
                 }
                 DialogKind::CloseLastTab { detach, .. } | DialogKind::QuitWindow { detach, .. } => {
@@ -326,8 +359,16 @@ impl Snapshot {
             }
             for (group_index, group) in viewer.groups.iter().enumerate() {
                 let group_id = NodeId(DIALOG_NODE_START + group_index as u64 * DIALOG_GROUP_STRIDE);
-                let row_ids = (0..group.rows.len())
-                    .map(|index| NodeId(group_id.0 + index as u64 + 1))
+                let row_ids = group
+                    .rows
+                    .iter()
+                    .enumerate()
+                    .map(|(index, row)| {
+                        row.menu_action.as_ref().map_or_else(
+                            || NodeId(group_id.0 + index as u64 + 1),
+                            |action| self.menu_ids[action],
+                        )
+                    })
                     .collect::<Vec<_>>();
                 // An untitled group's rows belong to the dialog itself.
                 if group.title.is_empty() {
@@ -343,12 +384,29 @@ impl Snapshot {
                     nodes.push((group_id, group_node));
                 }
                 for (row, id) in group.rows.iter().zip(row_ids) {
-                    let mut node = Node::new(Role::Label);
+                    let mut node = Node::new(if row.menu_action.is_some() {
+                        Role::Button
+                    } else {
+                        Role::Label
+                    });
+                    let label = format!("{} — {}", row.shortcut, row.action);
+                    if row.menu_action.is_some() {
+                        node.set_label(label);
+                        node.add_action(Action::Click);
+                        node.add_action(Action::Focus);
+                        if row.focused {
+                            focus = id;
+                        }
+                    }
                     node.set_value(match viewer.kind {
-                        DialogKind::Shortcuts | DialogKind::AttentionInbox => {
+                        DialogKind::Shortcuts
+                        | DialogKind::AttentionInbox
+                        | DialogKind::WindowMenu => {
                             format!("{} — {}", row.shortcut, row.action)
                         }
-                        DialogKind::CloseLastTab { .. } | DialogKind::QuitWindow { .. } => {
+                        DialogKind::QuitOtherWindow { .. }
+                        | DialogKind::CloseLastTab { .. }
+                        | DialogKind::QuitWindow { .. } => {
                             format!("{} {}", row.shortcut, row.action)
                         }
                     });
@@ -376,6 +434,9 @@ impl Snapshot {
                 .into_iter()
                 .chain([TAB_LIST, NEW_TAB])
                 .collect::<Vec<_>>();
+            if workspace.window_menu.is_some() {
+                children.insert(0, WINDOW_MENU);
+            }
             // Quota chips, labels and Shortcuts follow their visual order, which Eon chooses.
             let shortcuts = workspace.controls[1];
             let mut items = workspace
@@ -558,7 +619,7 @@ impl Snapshot {
                     nodes.push((id, node));
                 }
             }
-            for control in workspace.controls {
+            for control in workspace.header_controls() {
                 if control.rect.width <= 0.0 {
                     continue;
                 }
@@ -786,6 +847,14 @@ impl Snapshot {
 
     fn action_target(&self, target: NodeId, action: Action) -> Option<AccessibilityTarget> {
         if let Some(dialog) = &self.dialog {
+            if matches!(action, Action::Click | Action::Focus)
+                && let Some((target, _)) = self.menu_ids.iter().find(|(_, id)| **id == target)
+            {
+                return Some(AccessibilityTarget::WindowMenu {
+                    action: target.clone(),
+                    activate: action == Action::Click,
+                });
+            }
             if dialog.kind == DialogKind::AttentionInbox
                 && matches!(action, Action::Click | Action::Focus)
             {
@@ -985,6 +1054,10 @@ fn accessible_link_label(uri: &str) -> String {
 /// Accessible action routed back through Venus and Eon semantics.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum AccessibilityTarget {
+    WindowMenu {
+        action: WindowMenuAction,
+        activate: bool,
+    },
     InboxFilter(crate::AttentionFilter),
     InboxRow {
         tab: String,
@@ -1013,6 +1086,7 @@ pub enum AccessibilityTarget {
 
 fn control_node_id(control: WorkspaceHeaderControl) -> NodeId {
     match control {
+        WorkspaceHeaderControl::WindowMenu => WINDOW_MENU,
         WorkspaceHeaderControl::Workspaces => WORKSPACE_LABEL,
         WorkspaceHeaderControl::NewTab => NEW_TAB,
         WorkspaceHeaderControl::Shortcuts => SHORTCUTS,
@@ -1022,6 +1096,7 @@ fn control_node_id(control: WorkspaceHeaderControl) -> NodeId {
 
 fn header_control_for_node(node: NodeId) -> Option<WorkspaceHeaderControl> {
     match node {
+        WINDOW_MENU => Some(WorkspaceHeaderControl::WindowMenu),
         WORKSPACE_LABEL => Some(WorkspaceHeaderControl::Workspaces),
         NEW_TAB => Some(WorkspaceHeaderControl::NewTab),
         SHORTCUTS => Some(WorkspaceHeaderControl::Shortcuts),
@@ -1130,6 +1205,100 @@ fn lock<T>(mutex: &Mutex<T>) -> MutexGuard<'_, T> {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn window_menu_accessibility_preserves_targets_through_peer_refresh() {
+        use eon_workspace_protocol::v37::{RunningWindows, WindowEntry, WindowState};
+        let size = PhysicalSize::new(1200, 720);
+        let metrics = CellMetrics::for_scale(1.0);
+        let peer = |id: &str| WindowEntry {
+            window: Some(id.into()),
+            generation: format!("g1-{id}"),
+            name: Some(id.into()),
+            started_at: Some(1),
+            live_terminals: Some(1),
+            state: WindowState::Live,
+        };
+        let a = peer("01234567");
+        let b = peer("89abcdef");
+        let mut running = RunningWindows {
+            this: a.clone(),
+            others: Some(vec![b.clone()]),
+            omitted: 0,
+        };
+        let mut data = crate::scene::tests::bar::one_pane_snapshot();
+        data.sidebar = eon_workspace_protocol::v37::Sidebar::Off;
+        data.running = Some(running.clone());
+        let scene = WorkspaceScene::from_snapshot_with_bar(
+            &data,
+            crate::EonBar {
+                icon: true,
+                items: &[],
+                ..crate::EonBar::default()
+            },
+            size,
+            metrics,
+            0.0,
+            0.0,
+            |_, text| (text.into(), text.len() as f32 * 10.0),
+            None,
+        );
+        let mut snapshot = Snapshot::new(size);
+        snapshot.set_workspace(Some(&scene));
+        snapshot.workspace_focus = WorkspaceFocus::Header(WorkspaceHeaderControl::WindowMenu);
+        let update = snapshot.tree();
+        assert_eq!(update.focus, WINDOW_MENU);
+        assert_eq!(
+            update
+                .nodes
+                .iter()
+                .find(|(id, _)| *id == WINDOW)
+                .unwrap()
+                .1
+                .children()[0],
+            WINDOW_MENU
+        );
+        assert_eq!(
+            snapshot.action_target(WINDOW_MENU, Action::Click),
+            Some(AccessibilityTarget::HeaderControl {
+                control: WorkspaceHeaderControl::WindowMenu,
+                activate: true,
+            })
+        );
+        let action = WindowMenuAction::peer(&b);
+        let dialog = |running: &RunningWindows| {
+            DialogScene::window_menu(running, Some(&action), size, metrics, 0.0)
+        };
+        snapshot.set_dialog(Some(&dialog(&running)));
+        let id = snapshot.menu_ids[&action];
+        let tree = snapshot.tree();
+        assert_eq!(tree.focus, id);
+        assert_eq!(
+            tree.nodes
+                .iter()
+                .find(|(node, _)| *node == id)
+                .unwrap()
+                .1
+                .role(),
+            Role::Button
+        );
+        assert_eq!(
+            snapshot.action_target(id, Action::Click),
+            Some(AccessibilityTarget::WindowMenu {
+                action: action.clone(),
+                activate: true
+            })
+        );
+        // Inserting a peer before this one cannot redirect a stale accessible action.
+        running.others.as_mut().unwrap().insert(0, a);
+        snapshot.set_dialog(Some(&dialog(&running)));
+        assert_eq!(snapshot.menu_ids[&action], id);
+        running.others.as_mut().unwrap().pop();
+        snapshot.set_dialog(Some(&dialog(&running)));
+        assert_eq!(snapshot.action_target(id, Action::Click), None);
+        snapshot.set_dialog(None);
+        assert_eq!(snapshot.tree().focus, WINDOW_MENU);
+    }
+
     use super::*;
     use crate::scene::QuotaProvider;
     use crate::{

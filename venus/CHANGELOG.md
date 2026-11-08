@@ -2,6 +2,9 @@
 
 ## Unreleased
 
+- VEN-C21: the leading Eon icon opens the accessible Window menu and stays
+  reachable while tabs overflow. The session pill keeps its Sessions picker
+  (`eon-7cf0y.6`).
 - VEN-C30: a pane's pinned name leads its agent sidebar row and its attention
   inbox row in the shown session, ahead of reported names, with the app icon
   retained (`eon-sidebar-pinned-name-asubh`). No wire change.
