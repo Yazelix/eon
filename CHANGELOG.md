@@ -7,11 +7,18 @@ installation, and proven contract changes.
 
 - Orbit uses upstream libghostty on the Ghostty vt-1.0.0 core, pinned by
   exact Git revision (`eon-9rtt.9`).
+- `eon update --install [--yes] [--json] [--prefix ABS]` installs a discovered
+  official Linux release through the running payload's own trusted installer.
+  `updates.bundle_prefix` selects an existing prefix; `updates.allowed_signers`
+  supplies the independently trusted signer. Commands and the Window menu use
+  the same consent flow. Failed or interrupted installs report the actual
+  selected digest and preserve running work and retained payloads
+  (`eon-update-button-f10d1.7`).
 - `eon update --check [--json] [--prefix ABS]` discovers official numbered
   Linux releases for a validated installer-managed prefix, reports the exact
   archive and keeps metadata separate from signature verification. Manual
-  extractions remain unmanaged; direct installation remains planned. Bundled
-  HTTPS checks use packaged CA certificates (`eon-update-button-f10d1.6`).
+  extractions remain unmanaged. Bundled HTTPS checks use packaged CA
+  certificates (`eon-update-button-f10d1.6`).
 - `eon-bench headless` checks an isolated Sway/Eon launch and stop, recording
   the output mode and Venus GPU for lavapipe or a selected hardware render
   node. The response diagnostic shares its launcher; the bench package

@@ -122,10 +122,25 @@ and prereleases. Matching version, archive URL and digest metadata means
 unchanged; equal versions with different artifacts refuse, and lower releases
 are never offered as upgrades. Network and malformed-metadata failures exit 1.
 Manual extractions remain unmanaged. Discovery verifies no signature or archive
-bytes; direct installation and signer configuration remain planned. See the
-[installer guide](INSTALLER.md#installer-inside-a-payload) for independent
-signer setup and manual installation. `--prefix` replaces any configured Nix
-target for that check and excludes `--profile`/`--entry`.
+bytes. Install through that prefix's bundled installer after independently
+provisioning the signer described in the
+[installer guide](INSTALLER.md#installer-inside-a-payload):
+
+```toml
+[updates]
+bundle_prefix = "/home/me/.local/share/eon/install"
+allowed_signers = "/home/me/.config/eon/allowed_signers"
+```
+
+Run `eon update --install`, or pass `--prefix /ABS/PREFIX` explicitly.
+Commands' **Install update** and the Window menu's **Updates** route use the
+same configuration and confirmation. Eon uses only the installer inside the
+selected payload that owns the running executable; no PATH fallback or fetched
+bootstrap. Missing trust refuses with setup instructions. The installer verifies
+OpenSSH-signed checksums, the archive hash and the payload's URL version before
+selection. Old payloads and running terminals remain in place; rollback stays
+an explicit installer command. `--prefix` replaces any configured Nix target
+and excludes `--profile`/`--entry`.
 
 Only builds from this release on carry the source receipt that ties an
 installed build to its revision. An older build reports its provenance as
@@ -142,8 +157,9 @@ eon update --install --profile ~/.nix-profile --entry eon
 
 Eon displays the exact profile, entry and source before asking. A decline or
 EOF cancels. For an agent or JSON caller, use `--yes` with that explicit target
-or configure `updates.nix_profile` and `updates.nix_entry`. `--yes` always requires
-one of those targets, even at a terminal; a discovered target alone is refused.
+or configure `updates.nix_profile`/`updates.nix_entry` or `updates.bundle_prefix`.
+`--yes` always requires an explicit or configured target, even at a terminal;
+a discovered target alone is refused.
 Interactive confirmation requires stdin to name the controlling terminal. If
 its device cannot be opened or its identity verified, Install fails with
 `not-confirmed` without reading an answer.
@@ -153,12 +169,12 @@ original ref; a failed build is reported with its actual selected state.
 An already current eligible entry succeeds unchanged. No channel switching,
 remove/add, retry, garbage collection or live adoption runs.
 
-Nix progress goes to stderr; JSON stdout contains one final result, including
+Nix and installer progress goes to stderr; JSON stdout contains one final result, including
 `selection` with the actual selected build/source after failure or cancellation.
 Ctrl+C, SIGTERM, SIGHUP and SIGQUIT terminate only helper-owned children,
 with a fixed five-second grace;
 cancellation cannot promise rollback. Eon serializes its own operations per
-resolved profile and rechecks its displayed source/entry/generation immediately
+resolved installation and rechecks its displayed source/entry/generation immediately
 before mutation. Nix owns selection and its transaction lock; an external writer
 can still race after that recheck. A detected change before mutation is refused
 with `target-changed`; a source change observed after Nix ran is a failure with
@@ -706,7 +722,7 @@ line points agents to `eon --skill`.
 | `eon popup hide POPUP [--json]` | Hide popup `uN` of the session as its window's dismissal would: a keep-alive popup keeps running, a transient one stops, and a pending tab's Files starts the tab's first terminal at its starting directory |
 | `eon focus ID\|left\|right\|up\|down [--json]` | Focus a stable identity or traverse the session |
 | `eon versions` | Print Eon, protocol, and component identities |
-| `eon update --install [--yes] [--json] [--profile ABS --entry NAME]` | Upgrade one eligible Nix profile entry on its original ref for fresh launches; JSON/nonterminal consent requires an explicit or configured target; see [Update](#update) |
+| `eon update --install [--yes] [--json] [--profile ABS --entry NAME \| --prefix ABS]` | Update one eligible Nix entry on its original ref or one managed Linux prefix through its bundled installer for fresh launches; JSON/nonterminal consent requires an explicit or configured target; see [Update](#update) |
 | `eon update --check [--json] [--profile ABS --entry NAME \| --prefix ABS]` | Report this installation's owner, source and installed build, whether an update exists, and whether Eon may install it, without changing anything; see [Update](#update) |
 | `eon config path` | Create the configuration root and print the full path of its settings file, `config.toml`, which need not exist yet |
 | `eon config dir` | Create and print the configuration root |

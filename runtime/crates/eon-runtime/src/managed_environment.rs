@@ -79,30 +79,58 @@ impl EonConfig {
 
 #[derive(Debug, Default, Deserialize)]
 #[serde(default)]
-struct UpdateSettings {
-    nix_profile: Option<PathBuf>,
-    nix_entry: Option<String>,
+pub struct UpdateSettings {
+    pub nix_profile: Option<PathBuf>,
+    pub nix_entry: Option<String>,
+    pub bundle_prefix: Option<PathBuf>,
+    pub allowed_signers: Option<PathBuf>,
     #[serde(flatten)]
     unknown: BTreeMap<String, toml::Value>,
 }
 
 /// The configured installation target, read without preparing directories or a window.
 /// The product update helper owns its package-manager policy.
-pub fn update_target(defaults: &Defaults) -> Result<Option<(PathBuf, String)>, String> {
+pub fn update_target(defaults: &Defaults, explicit: bool) -> Result<UpdateSettings, String> {
     if ["EON_CONFIG_HOME", "XDG_CONFIG_HOME", "HOME"]
         .iter()
         .all(|name| nonempty_environment_path(name).is_none())
     {
-        return Ok(None);
+        return Ok(UpdateSettings::default());
     }
     let root = super::supervisor::configuration_directory()?;
-    let settings = read_config(&root, defaults, None)?.updates;
-    match (settings.nix_profile, settings.nix_entry) {
-        (None, None) => Ok(None),
-        (Some(profile), Some(entry)) if profile.is_absolute() && !entry.is_empty() => {
-            Ok(Some((profile, entry)))
+    read_config(&root, defaults, None)?
+        .updates
+        .resolve(explicit)
+}
+
+impl UpdateSettings {
+    fn resolve(mut self, explicit: bool) -> Result<Self, String> {
+        let absolute = |path: &Path| {
+            path.is_absolute()
+                && !path
+                    .components()
+                    .any(|part| part == std::path::Component::ParentDir)
+        };
+        if self
+            .allowed_signers
+            .as_deref()
+            .is_some_and(|path| !absolute(path))
+        {
+            return Err("updates.allowed_signers requires an absolute path without .. to an independently trusted signer file".into());
         }
-        _ => Err("updates.nix_profile and updates.nix_entry require an absolute profile path and a nonempty entry name together".into()),
+        if explicit {
+            self.nix_profile = None;
+            self.nix_entry = None;
+            self.bundle_prefix = None;
+            return Ok(self);
+        }
+        match (&self.nix_profile, &self.nix_entry, &self.bundle_prefix) {
+            (None, None, None) => (),
+            (Some(profile), Some(entry), None) if absolute(profile) && !entry.is_empty() => (),
+            (None, None, Some(prefix)) if absolute(prefix) => (),
+            _ => return Err("updates requires an absolute bundle_prefix or both absolute nix_profile and nonempty nix_entry, never both targets".into()),
+        }
+        Ok(self)
     }
 }
 
@@ -744,7 +772,7 @@ fn defaults_table(
     settings: &serde_json::Value,
 ) -> Result<(), String> {
     if section == "updates" {
-        output.push_str("\n# [updates]\n# nix_profile: unset. Absolute profile path; set with nix_entry.\n# nix_entry: unset. Exact profile entry name; set with nix_profile.\n");
+        output.push_str("\n# [updates]\n# nix_profile: unset. Absolute profile path; set with nix_entry.\n# nix_entry: unset. Exact profile entry name; set with nix_profile.\n# bundle_prefix: unset. Absolute existing managed prefix; excludes the Nix pair.\n# allowed_signers: unset. Absolute independently trusted OpenSSH signer file.\n");
         return Ok(());
     }
     output.push_str(&format!("\n[{section}]\n"));
@@ -2160,6 +2188,36 @@ mod tests {
         thread,
         time::{Duration, Instant},
     };
+
+    #[test]
+    fn update_targets_and_trust_are_resolved_independently() {
+        let parse = |text: &str| toml::from_str::<super::UpdateSettings>(text).unwrap();
+        let empty = parse("").resolve(false).unwrap();
+        assert!(empty.bundle_prefix.is_none() && empty.allowed_signers.is_none());
+        let settings =
+            parse("bundle_prefix = '/private/prefix'\nallowed_signers = '/private/signers'")
+                .resolve(false)
+                .unwrap();
+        assert_eq!(
+            settings.bundle_prefix.as_deref(),
+            Some(Path::new("/private/prefix"))
+        );
+        for text in [
+            "bundle_prefix = 'relative'",
+            "bundle_prefix = '/a/../b'",
+            "nix_entry = 'eon'",
+            "nix_profile = '/p'\nnix_entry = 'eon'\nbundle_prefix = '/b'",
+        ] {
+            assert!(parse(text).resolve(false).is_err(), "{text}");
+            assert!(parse(text).resolve(true).unwrap().bundle_prefix.is_none());
+        }
+        assert!(parse("allowed_signers = 'relative'").resolve(true).is_err());
+        let settings = parse("bundle_prefix = '/p'\nallowed_signers = '/s'")
+            .resolve(true)
+            .unwrap();
+        assert!(settings.bundle_prefix.is_none());
+        assert_eq!(settings.allowed_signers.as_deref(), Some(Path::new("/s")));
+    }
 
     #[test]
     fn chip_percent_defaults_follow_explicit_levels() {

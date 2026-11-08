@@ -13187,7 +13187,7 @@ fn a_stale_eon_terminal_names_its_terminal_and_window() {
     let stopped = routed_eon(
         &runtime,
         &state,
-        &["window", "stop", &compatible[3..11], "--json"],
+        &["window", "stop", &compatible[3..], "--json"],
         None,
         None,
         b"",
@@ -16572,7 +16572,7 @@ fn a_confirmed_close_inspects_first_and_a_failed_inspection_closes_nothing() {
 
 #[cfg(all(target_os = "linux", target_arch = "x86_64"))]
 #[test]
-fn update_check_discovers_a_managed_prefix_without_installing_or_trusting_metadata() {
+fn update_direct_checks_and_installs_only_through_the_owned_payload_helper() {
     let root = temporary_directory();
     let binary = Path::new(env!("CARGO_BIN_EXE_eon"));
     let versions = Command::new(binary).arg("versions").output().unwrap();
@@ -16676,5 +16676,261 @@ fn update_check_discovers_a_managed_prefix_without_installing_or_trusting_metada
     assert!(stdout(&output).contains("verifies no signature or archive bytes"));
     assert_eq!(fs::read_link(prefix.join("current")).unwrap(), before);
     assert_eq!(fs::read_dir(prefix.join("versions")).unwrap().count(), 1);
+
+    let config = root.join("direct-config");
+    fs::create_dir(&config).unwrap();
+    let signers = root.join("person's signers");
+    fs::write(&signers, "independently provisioned fixture signer\n").unwrap();
+    fs::write(
+        config.join("config.toml"),
+        format!(
+            "[updates]\nallowed_signers = {:?}\n",
+            signers.to_str().unwrap()
+        ),
+    )
+    .unwrap();
+    let args_file = root.join("installer-argv");
+    let second_hash = "b".repeat(64);
+    let second = prefix.join("versions").join(&second_hash);
+    fs::create_dir_all(second.join("nix/store/product/bin")).unwrap();
+    fs::create_dir(second.join("nix/store/product/share")).unwrap();
+    fs::set_permissions(&second, fs::Permissions::from_mode(0o700)).unwrap();
+    fs::copy(binary, second.join("nix/store/product/bin/eon")).unwrap();
+    let mut receipt: serde_json::Value =
+        serde_json::from_slice(&fs::read(package.join("share/eon-source-receipt.json")).unwrap())
+            .unwrap();
+    receipt["build"] = "g1-bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb".into();
+    fs::write(
+        second.join("nix/store/product/share/eon-source-receipt.json"),
+        receipt.to_string(),
+    )
+    .unwrap();
+    symlink("nix/store/product/bin/eon", second.join("eon")).unwrap();
+    let second_url = format!("https://github.com/Yazelix/eon/releases/download/v999.0.0/{asset}");
+    fs::write(
+        second.join(".eon-source"),
+        format!("eon-install-v1\n{second_hash}\n{second_url}\n"),
+    )
+    .unwrap();
+    let mut metadata_value: serde_json::Value =
+        serde_json::from_slice(&fs::read(&metadata).unwrap()).unwrap();
+    metadata_value[0]["assets"][0]["digest"] = format!("sha256:{second_hash}").into();
+    fs::write(&metadata, metadata_value.to_string()).unwrap();
+    executable(
+        &installer,
+        r#"#!/bin/sh
+printf '%s\n' "$@" > "$EON_UPDATE_ARGS"
+case "$EON_UPDATE_MODE" in
+  select|selected-failure|selected-interrupt|unknown)
+    ln -sfn "versions/$EON_UPDATE_HASH" "$EON_UPDATE_PREFIX/current" ;;
+esac
+case "$EON_UPDATE_MODE" in
+  selected-failure) exit 1 ;;
+  unknown) unlink "$EON_UPDATE_PREFIX/current" ;;
+  selected-interrupt) kill -INT "$PPID"; sleep 30 ;;
+  descendant) sleep 30 & echo $! > "$EON_UPDATE_PREFIX/descendant.pid"; exit 11 ;;
+  fail-*) exit "${EON_UPDATE_MODE#fail-}" ;;
+esac
+"#,
+    );
+    let install = |selector: bool, yes: bool, mode: &str, configured: bool| {
+        let mut command = eon_command(&package.join("bin/eon"));
+        command.args(["update", "--install", "--json"]);
+        if selector {
+            command.arg("--prefix").arg(&prefix);
+        }
+        if yes {
+            command.arg("--yes");
+        }
+        command
+            .env("EON_CURL", &curl)
+            .env("EON_UPDATE_FIXTURE", &metadata)
+            .env("EON_INSTALLER", &installer)
+            .env("EON_UPDATE_ARGS", &args_file)
+            .env("EON_UPDATE_MODE", mode)
+            .env("EON_UPDATE_HASH", &second_hash)
+            .env("EON_UPDATE_PREFIX", &prefix);
+        if configured {
+            command.env("EON_CONFIG_HOME", &config);
+        }
+        command.stdin(Stdio::null()).output().unwrap()
+    };
+    for (selector, yes, configured, status, code) in [
+        (false, true, true, 4, "install-ambiguous"),
+        (true, true, false, 4, "trust-unconfigured"),
+        (true, false, true, 1, "not-confirmed"),
+    ] {
+        let output = install(selector, yes, "select", configured);
+        assert_eq!(output.status.code(), Some(status), "{output:?}");
+        let report: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
+        assert_eq!(report["error"]["code"], code);
+        assert_eq!(report["selection"]["state"], "unchanged");
+        assert!(!args_file.exists());
+    }
+    let human_install = |answer: Option<&[u8]>| {
+        let mut command = eon_command(&package.join("bin/eon"));
+        command
+            .args(["update", "--install", "--prefix"])
+            .arg(&prefix)
+            .env("EON_CURL", &curl)
+            .env("EON_UPDATE_FIXTURE", &metadata)
+            .env("EON_INSTALLER", &installer)
+            .env("EON_UPDATE_ARGS", &args_file)
+            .env("EON_UPDATE_MODE", "select")
+            .env("EON_UPDATE_HASH", &second_hash)
+            .env("EON_UPDATE_PREFIX", &prefix)
+            .env("EON_CONFIG_HOME", &config);
+        // Consent reads this private controlling terminal, never the test runner's.
+        unsafe {
+            command.pre_exec(|| {
+                if libc::setsid() == -1 || libc::ioctl(libc::STDIN_FILENO, libc::TIOCSCTTY, 0) == -1
+                {
+                    return Err(std::io::Error::last_os_error());
+                }
+                Ok(())
+            });
+        }
+        at_terminal(&mut command, answer, || {})
+    };
+    for answer in [b"n\n".as_slice(), b"\x04".as_slice()] {
+        let output = human_install(Some(answer));
+        assert_eq!(output.status.code(), Some(0), "{output:?}");
+        assert!(stdout(&output).contains("cancelled"), "{output:?}");
+        assert!(!args_file.exists());
+        assert_eq!(fs::read_link(prefix.join("current")).unwrap(), before);
+    }
+    let output = human_install(Some(b"y\n"));
+    assert_eq!(output.status.code(), Some(0), "{output:?}");
+    assert!(stdout(&output).contains("installed"), "{output:?}");
+    assert!(stdout(&output).contains(&second_hash), "{output:?}");
+    fs::remove_file(&args_file).unwrap();
+    fs::remove_file(prefix.join("current")).unwrap();
+    symlink(format!("versions/{hash}"), prefix.join("current")).unwrap();
+    // A current release needs no human question; unattended consent still applies.
+    let newer_metadata = fs::read(&metadata).unwrap();
+    let mut current_metadata: serde_json::Value = serde_json::from_slice(&newer_metadata).unwrap();
+    current_metadata[0]["tag_name"] = format!("v{version}").into();
+    for asset in current_metadata[0]["assets"].as_array_mut().unwrap() {
+        let name = asset["name"].as_str().unwrap().replace("999.0.0", version);
+        asset["name"] = name.clone().into();
+        asset["browser_download_url"] =
+            format!("https://github.com/Yazelix/eon/releases/download/v{version}/{name}").into();
+        asset["digest"] = format!("sha256:{hash}").into();
+    }
+    fs::write(&metadata, current_metadata.to_string()).unwrap();
+    let output = install(true, true, "select", true);
+    assert_eq!(output.status.code(), Some(0), "{output:?}");
+    let report: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
+    assert_eq!(report["outcome"], "unchanged");
+    assert!(!args_file.exists());
+    let output = human_install(None);
+    assert_eq!(output.status.code(), Some(0), "{output:?}");
+    assert!(stdout(&output).contains("unchanged"), "{output:?}");
+    assert!(!output.stderr.windows(6).any(|word| word == b"[y/N] "));
+    assert!(!args_file.exists());
+    let output = install(true, false, "select", true);
+    assert_eq!(output.status.code(), Some(1), "{output:?}");
+    assert!(stdout(&output).contains("not-confirmed"));
+    fs::write(&metadata, newer_metadata).unwrap();
+    let lock = fs::OpenOptions::new()
+        .create(true)
+        .truncate(false)
+        .write(true)
+        .open(prefix.join(".eon-update.lock"))
+        .unwrap();
+    assert_eq!(
+        unsafe { libc::flock(lock.as_raw_fd(), libc::LOCK_EX | libc::LOCK_NB) },
+        0
+    );
+    let output = install(true, true, "select", true);
+    assert_eq!(output.status.code(), Some(4), "{output:?}");
+    let report: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
+    assert_eq!(report["error"]["code"], "operation-busy");
+    drop(lock);
+    let original_curl = fs::read(&curl).unwrap();
+    executable(
+        &curl,
+        "#!/bin/sh\nln -sfn \"versions/$EON_UPDATE_HASH\" \"$EON_UPDATE_PREFIX/current\"\ncat \"$EON_UPDATE_FIXTURE\"\nprintf '\\n200'\n",
+    );
+    let output = install(true, true, "select", true);
+    assert_eq!(output.status.code(), Some(4), "{output:?}");
+    let report: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
+    assert_eq!(report["error"]["code"], "target-changed");
+    assert_eq!(report["selection"]["source"]["archive_sha256"], second_hash);
+    assert!(!args_file.exists());
+    fs::remove_file(prefix.join("current")).unwrap();
+    symlink(format!("versions/{hash}"), prefix.join("current")).unwrap();
+    executable(&curl, original_curl);
+    for (mode, status, code, state) in [
+        ("fail-10", 1, Some("verification-failed"), "unchanged"),
+        ("fail-11", 1, Some("preflight-failed"), "unchanged"),
+        ("descendant", 1, Some("preflight-failed"), "unchanged"),
+        ("fail-12", 4, Some("operation-busy"), "unchanged"),
+        ("fail-13", 1, Some("remote-unavailable"), "unchanged"),
+        ("fail-14", 4, Some("trust-unconfigured"), "unchanged"),
+        ("fail-1", 1, Some("selection-failed"), "unchanged"),
+        ("selected-failure", 1, Some("selection-failed"), "changed"),
+        ("selected-interrupt", 130, Some("interrupted"), "changed"),
+        ("unknown", 1, Some("selection-failed"), "unknown"),
+        ("select", 0, None, "changed"),
+    ] {
+        let output = install(true, true, mode, true);
+        assert_eq!(output.status.code(), Some(status), "{mode}: {output:?}");
+        let report: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
+        assert_eq!(report["selection"]["state"], state, "{mode}: {report}");
+        if let Some(code) = code {
+            assert_eq!(report["error"]["code"], code);
+        } else {
+            assert_eq!(report["outcome"], "installed");
+        }
+        assert_eq!(report["installed"]["build"], build);
+        if mode == "descendant" {
+            let pid = fs::read_to_string(prefix.join("descendant.pid")).unwrap();
+            let executable = PathBuf::from(format!("/proc/{}/exe", pid.trim()));
+            let deadline = Instant::now() + Duration::from_secs(2);
+            while fs::read_link(&executable).is_ok() && Instant::now() < deadline {
+                thread::sleep(Duration::from_millis(10));
+            }
+            assert!(
+                fs::read_link(executable).is_err(),
+                "installer descendant survived"
+            );
+        }
+        if state == "changed" {
+            assert_eq!(report["selection"]["source"]["archive_sha256"], second_hash);
+        }
+        assert_eq!(
+            fs::read_to_string(&args_file)
+                .unwrap()
+                .lines()
+                .collect::<Vec<_>>(),
+            vec![
+                "install",
+                &second_url,
+                "--signers",
+                signers.to_str().unwrap(),
+                "--prefix",
+                prefix.to_str().unwrap()
+            ]
+        );
+        if prefix.join("current").exists() {
+            fs::remove_file(prefix.join("current")).unwrap();
+        }
+        symlink(format!("versions/{hash}"), prefix.join("current")).unwrap();
+    }
+    fs::write(
+        config.join("config.toml"),
+        format!(
+            "[updates]\nbundle_prefix = {:?}\nallowed_signers = {:?}\n",
+            prefix.to_str().unwrap(),
+            signers.to_str().unwrap()
+        ),
+    )
+    .unwrap();
+    let output = install(false, true, "select", true);
+    assert_eq!(output.status.code(), Some(0), "{output:?}");
+    let report: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
+    assert_eq!(report["outcome"], "installed");
+    assert!(payload.exists() && second.exists());
     fs::remove_dir_all(root).unwrap();
 }

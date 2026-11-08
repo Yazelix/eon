@@ -131,6 +131,8 @@ command = ["hx"] # Direct argv that `eon edit` and Files run with the file appen
 # [updates]
 # nix_profile: unset. Absolute profile path; set with nix_entry.
 # nix_entry: unset. Exact profile entry name; set with nix_profile.
+# bundle_prefix: unset. Absolute existing managed prefix; excludes the Nix pair.
+# allowed_signers: unset. Absolute independently trusted OpenSSH signer file.
 
 [popups.agent]
 command = "auto" # Direct argv, or auto for Agent's command selection.
@@ -679,10 +681,19 @@ tool data paths.
 choose the absolute Nix user-profile path and its exact entry name for
 `eon update --check` and `--install`. A CLI `--profile ABS --entry NAME`
 replaces this pair. With neither, Eon discovers only the invoking installation.
-An incomplete pair, a relative profile or an empty name fails without mutation.
-Without a CLI pair, any `config.toml` error, including in another section,
-fails both modes with `invalid-configuration`. A complete CLI pair bypasses
-configuration loading for these commands.
+An incomplete pair, a relative profile, a `nix_profile` path containing `..`,
+or an empty name fails without mutation.
+`updates.bundle_prefix`, also unset, selects an existing absolute installer-owned
+Linux prefix instead of the Nix pair. A CLI `--prefix ABS` or complete profile
+pair replaces the entire configured target. `updates.allowed_signers` is unset
+until independent signer setup supplies an absolute OpenSSH allowed-signers
+file outside the managed prefix; direct Install refuses without one. Eon never
+supplies or fetches a key.
+Relative paths, parent traversal and mixed targets fail. A CLI Nix pair bypasses
+configuration loading. Other calls, including `--check --prefix`, read
+configuration and the signer setting; parse errors fail with
+`invalid-configuration`. A CLI prefix bypasses
+configured target validation while retaining the signer setting.
 
 ```toml
 [updates]
@@ -690,6 +701,15 @@ nix_profile = "/home/me/.local/state/nix/profiles/profile"
 nix_entry = "eon"
 ```
 
+For a managed prefix:
+
+```toml
+[updates]
+bundle_prefix = "/home/me/.local/share/eon/install"
+allowed_signers = "/home/me/.config/eon/allowed_signers"
+```
+
+See [independent signer setup](INSTALLER.md#inspect-and-install).
 Checks run only when requested. Install requires consent; in JSON or without
 a terminal, pass `--yes` and set an explicit or configured target. Channel,
 automatic installation/restart and custom manager commands are fixed by the

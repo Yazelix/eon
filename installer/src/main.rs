@@ -4,9 +4,16 @@ use std::{
     env, fs,
     fs::{File, OpenOptions},
     io::{self, Read, Write},
-    os::unix::fs::{DirBuilderExt, MetadataExt, OpenOptionsExt, PermissionsExt, symlink},
+    os::{
+        fd::OwnedFd,
+        unix::{
+            fs::{DirBuilderExt, MetadataExt, OpenOptionsExt, PermissionsExt, symlink},
+            net::UnixStream,
+        },
+    },
     path::{Component, Path, PathBuf},
     process::{Command, Stdio},
+    time::{Duration, Instant},
 };
 
 const MARKER: &str = "eon-install-v1\n";
@@ -25,6 +32,26 @@ All version payloads remain in place, including after remove, to preserve live w
 
 fn invalid(message: impl Into<String>) -> io::Error {
     io::Error::other(message.into())
+}
+
+#[derive(Debug)]
+struct Failure {
+    status: i32,
+    error: io::Error,
+}
+impl std::fmt::Display for Failure {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        self.error.fmt(f)
+    }
+}
+impl std::error::Error for Failure {}
+
+fn failure(status: i32, error: io::Error) -> io::Error {
+    if error.get_ref().is_some_and(|error| error.is::<Failure>()) {
+        error
+    } else {
+        io::Error::other(Failure { status, error })
+    }
 }
 
 fn digest_valid(value: &str) -> bool {
@@ -131,7 +158,7 @@ fn prefix_lock(prefix: &Path, create: bool) -> io::Result<File> {
     }
     let lock = OpenOptions::new().read(true).write(true).open(marker)?;
     lock.try_lock()
-        .map_err(|error| invalid(format!("prefix is busy: {error}")))?;
+        .map_err(|error| failure(12, invalid(format!("prefix is busy: {error}"))))?;
     for name in ["versions", "bin"] {
         let path = prefix.join(name);
         match fs::DirBuilder::new().mode(0o700).create(&path) {
@@ -203,28 +230,68 @@ fn version(prefix: &Path, hash: &str) -> io::Result<PathBuf> {
     Ok(path)
 }
 
-fn smoke(root: &Path) -> io::Result<()> {
+fn smoke(root: &Path, expected: Option<&str>) -> io::Result<()> {
     // timeout owns a separate group so a hung wrapper cannot leave its child running.
-    let status = Command::new("timeout")
+    let mut command = Command::new("timeout");
+    // The update helper owns cancellation of this entire group, including preflight.
+    if env::var_os("EON_INSTALLER_FOREGROUND_CHECK").as_deref() == Some(std::ffi::OsStr::new("1")) {
+        command.arg("--foreground");
+    }
+    let (mut output, writer) = UnixStream::pair().map_err(|error| failure(11, error))?;
+    let deadline = Instant::now() + Duration::from_secs(30);
+    let mut child = command
         .args(["--signal=KILL", "30s"])
         .arg(root.join("eon"))
         .arg("versions")
         .stdin(Stdio::null())
-        .stdout(Stdio::null())
-        .status()?;
-    if status.success() {
-        Ok(())
-    } else {
-        Err(invalid(
-            "packaged eon versions failed or timed out; current unchanged",
-        ))
+        .stdout(Stdio::from(OwnedFd::from(writer)))
+        .stderr(Stdio::inherit())
+        .spawn()
+        .map_err(|error| failure(11, error))?;
+    // A descendant may retain stdout after the checked process exits.
+    let line = (|| -> io::Result<Vec<u8>> {
+        let mut line = Vec::new();
+        while line.len() < 1024 && !line.contains(&b'\n') {
+            let remaining = deadline
+                .checked_duration_since(Instant::now())
+                .filter(|remaining| !remaining.is_zero())
+                .ok_or_else(|| invalid("packaged eon versions output timed out"))?;
+            output.set_read_timeout(Some(remaining))?;
+            let mut buffer = [0; 128];
+            let limit = buffer.len().min(1024 - line.len());
+            let count = output.read(&mut buffer[..limit])?;
+            if count == 0 {
+                break;
+            }
+            line.extend_from_slice(&buffer[..count]);
+        }
+        Ok(line)
+    })();
+    let status = child.wait().map_err(|error| failure(11, error))?;
+    if !status.success() {
+        return Err(failure(
+            11,
+            invalid("packaged eon versions failed or timed out; current unchanged"),
+        ));
     }
+    let line = line.map_err(|error| failure(11, error))?;
+    if let Some(expected) = expected {
+        let text = String::from_utf8_lossy(&line);
+        let mut words = text.lines().next().unwrap_or_default().split_whitespace();
+        if words.next() != Some("eon") || words.next() != Some(expected) {
+            return Err(failure(
+                10,
+                invalid("packaged eon version differs from the archive URL; current unchanged"),
+            ));
+        }
+    }
+    Ok(())
 }
 
-fn select(prefix: &Path, hash: &str) -> io::Result<()> {
+fn select(prefix: &Path, hash: &str, expected: Option<&str>) -> io::Result<()> {
     selected(prefix)?;
     let has_bin = bin_owned(prefix)?;
-    smoke(&version(prefix, hash)?)?;
+    smoke(&version(prefix, hash)?, expected)?;
     let temporary = tempfile::Builder::new()
         .prefix(".eon-select-")
         .tempdir_in(prefix)?;
@@ -281,7 +348,7 @@ fn download(url: &str, destination: &Path) -> io::Result<()> {
     if status.success() {
         Ok(())
     } else {
-        Err(invalid(format!("download failed: {url}")))
+        Err(failure(13, invalid(format!("download failed: {url}"))))
     }
 }
 
@@ -324,10 +391,13 @@ fn checksum(text: &str, filename: &str) -> io::Result<String> {
 fn install(prefix: &Path, url: &str, signers: &Path, dry_run: bool) -> io::Result<()> {
     let (base, filename, root) = release(url)?;
     let invalid_signers = || {
-        invalid(format!(
-            "signer record is missing, unreadable or invalid for eon-release ({}); {SIGNERS_REQUIRED}",
-            signers.display()
-        ))
+        failure(
+            14,
+            invalid(format!(
+                "signer record is missing, unreadable or invalid for eon-release ({}); {SIGNERS_REQUIRED}",
+                signers.display()
+            )),
+        )
     };
     if !fs::metadata(signers).is_ok_and(|metadata| metadata.is_file()) {
         return Err(invalid_signers());
@@ -353,39 +423,43 @@ fn install(prefix: &Path, url: &str, signers: &Path, dry_run: bool) -> io::Resul
     for name in ["SHA256SUMS", "SHA256SUMS.sig"] {
         download(&format!("{base}/{name}"), &downloads.path().join(name))?;
     }
-    let sums = downloads.path().join("SHA256SUMS");
-    let status = Command::new("ssh-keygen")
-        .args(["-Y", "verify", "-f"])
-        .arg(signers)
-        .args(["-I", "eon-release", "-n", "eon-bundle", "-s"])
-        .arg(downloads.path().join("SHA256SUMS.sig"))
-        .stdin(File::open(&sums)?)
-        .status()?;
-    if !status.success() {
-        return Err(invalid("release signature verification failed"));
-    }
-    let hash = checksum(&fs::read_to_string(sums)?, filename)?;
-    let archive = downloads.path().join(filename);
-    download(url, &archive)?;
-    let mut digest = Sha256::new();
-    let mut input = File::open(&archive)?;
-    let mut buffer = [0; 65536];
-    loop {
-        let count = input.read(&mut buffer)?;
-        if count == 0 {
-            break;
+    let hash = (|| {
+        let sums = downloads.path().join("SHA256SUMS");
+        let status = Command::new("ssh-keygen")
+            .args(["-Y", "verify", "-f"])
+            .arg(signers)
+            .args(["-I", "eon-release", "-n", "eon-bundle", "-s"])
+            .arg(downloads.path().join("SHA256SUMS.sig"))
+            .stdin(File::open(&sums)?)
+            .status()?;
+        if !status.success() {
+            return Err(invalid("release signature verification failed"));
         }
-        digest.update(&buffer[..count]);
-    }
-    if digest
-        .finalize()
-        .iter()
-        .map(|byte| format!("{byte:02x}"))
-        .collect::<String>()
-        != hash
-    {
-        return Err(invalid("archive SHA-256 mismatch"));
-    }
+        let hash = checksum(&fs::read_to_string(sums)?, filename)?;
+        let archive = downloads.path().join(filename);
+        download(url, &archive)?;
+        let mut digest = Sha256::new();
+        let mut input = File::open(&archive)?;
+        let mut buffer = [0; 65536];
+        loop {
+            let count = input.read(&mut buffer)?;
+            if count == 0 {
+                break;
+            }
+            digest.update(&buffer[..count]);
+        }
+        if digest
+            .finalize()
+            .iter()
+            .map(|byte| format!("{byte:02x}"))
+            .collect::<String>()
+            != hash
+        {
+            return Err(invalid("archive SHA-256 mismatch"));
+        }
+        Ok(hash)
+    })()
+    .map_err(|error| failure(10, error))?;
     if dry_run {
         println!(
             "Verified {hash}; would install and select under {}",
@@ -402,18 +476,24 @@ fn install(prefix: &Path, url: &str, signers: &Path, dry_run: bool) -> io::Resul
         Err(error) if error.kind() == io::ErrorKind::NotFound => false,
         Err(error) => return Err(error),
     };
+    let expected = root
+        .strip_prefix("eon-")
+        .unwrap()
+        .strip_suffix("-x86_64-linux")
+        .unwrap();
     if !present {
         let staging = tempfile::Builder::new()
             .prefix(".eon-stage-")
             .tempdir_in(prefix)?;
         extract(
-            zstd::stream::read::Decoder::new(File::open(archive)?)?,
+            zstd::stream::read::Decoder::new(File::open(downloads.path().join(filename))?)?,
             staging.path(),
             root,
-        )?;
+        )
+        .map_err(|error| failure(10, error))?;
         let payload = staging.path().join(root);
         entrypoint(&payload)?;
-        smoke(&payload)?;
+        smoke(&payload, Some(expected))?;
         let mut receipt = OpenOptions::new()
             .write(true)
             .create_new(true)
@@ -422,7 +502,7 @@ fn install(prefix: &Path, url: &str, signers: &Path, dry_run: bool) -> io::Resul
         writeln!(receipt, "{MARKER}{hash}\n{url}")?;
         fs::rename(payload, &target)?;
     }
-    select(prefix, &hash)?;
+    select(prefix, &hash, Some(expected))?;
     println!(
         "Selected {hash}\nRun {}/bin/eon; previous payloads are retained.",
         prefix.display()
@@ -543,7 +623,7 @@ fn run() -> io::Result<()> {
     }
     let _lock = prefix_lock(&options.prefix, false)?;
     if options.command == "rollback" {
-        select(&options.prefix, options.value.as_deref().unwrap())?;
+        select(&options.prefix, options.value.as_deref().unwrap(), None)?;
         println!("Selected {}", options.value.unwrap());
     } else {
         remove(&options.prefix)?;
@@ -558,7 +638,12 @@ fn run() -> io::Result<()> {
 fn main() {
     if let Err(error) = run() {
         eprintln!("eon-install: {error}");
-        std::process::exit(1);
+        std::process::exit(
+            error
+                .get_ref()
+                .and_then(|error| error.downcast_ref::<Failure>())
+                .map_or(1, |failure| failure.status),
+        );
     }
 }
 

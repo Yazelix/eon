@@ -12,7 +12,8 @@ supporting `-Y match-principals` and `-Y verify`.
 Missing or older `ssh-keygen` gets its own prerequisite error before downloads.
 Install and rollback use host GNU coreutils `timeout` to bound the packaged
 check and kill its entire process group if it hangs. Rust, Nix, tar and zstd
-commands are unnecessary on the target machine.
+commands are unnecessary on the target machine. `ssh-keygen`, `curl` and
+`timeout` are found through PATH and execute as the same user as the installer.
 
 ## Inspect and install
 
@@ -104,18 +105,35 @@ to the packaged CA certificates, including after relocation, unless
 other programs inherit no certificate setting from this helper. Release pagination
 shares one 30-second network deadline across at most ten pages.
 
-Automatic direct installation remains planned in `eon-update-button-f10d1.7`.
-Its `updates.allowed_signers` setting will take the same absolute signer file
-path shown above; Runtime will resolve it and the product helper will pass it
-to this installer as `--signers`, with the exact URL and validated prefix.
-That setting, `updates.bundle_prefix` and `eon update --install --prefix` are
-not supported yet. Checks report `trust-unconfigured` when a bundled helper
-belongs to the running payload, or `installer-unavailable` otherwise. An unset
-signer must refuse automatic installation with setup instructions. The helper
-must validate the owned prefix/selector/receipt chain before using its bundled
-installer; the environment locator alone grants no ownership, even when inherited
-from a bundled supervisor by a Nix executable. Payloads without
-the bundled helper remain manual, with no PATH fallback or bootstrap download.
+`eon update --install [--yes] [--json] [--prefix /ABS/PREFIX]` checks afresh,
+asks the same `[y/N]` question as a Nix update when a change is available,
+and invokes that running payload's validated installer with the exact HTTPS archive, signer file and
+prefix. Configure Runtime's `updates.bundle_prefix` and `updates.allowed_signers`
+with the absolute paths above; the signer record must live outside the managed
+prefix and its payloads. All update keys are unset by default. A CLI
+selector replaces the configured target. JSON/nonterminal callers must pass
+`--yes` and an explicit or configured target; interactive stdin must be the
+controlling terminal. Commands and the Window menu use this same path.
+
+An unset, missing or unreadable signer refuses with independent setup
+instructions. Eon never supplies or fetches a signer. The helper validates the
+owned prefix/selector/receipt chain before using its bundled installer; an
+inherited environment locator grants no ownership. Payloads without the helper
+remain manual, with no PATH fallback or bootstrap download. Selection is
+rechecked after every result, including interruption; JSON reports its actual
+digest/build separately from the running and previously installed builds.
+
+The installer checks that the verified payload's `eon versions` reports the
+archive URL's version before selection, including a retained payload. Its
+failure exits are 10 for verification/version mismatch, 11 for preflight,
+12 for prefix lock contention, 13 for download and 14 for signer setup; other
+failures exit 1.
+The product helper maps these to EON-C41 results and preserves diagnostics on
+stderr. An update invocation keeps preflight in its helper-owned process group
+(`EON_INSTALLER_FOREGROUND_CHECK=1`) so cancellation cleans up that group with
+the existing five-second grace. A failed or interrupted install can leave
+staging residue or an unselected complete version; it never prunes retained
+payloads or promises rollback. Use the explicit installer rollback below.
 
 ## Release assets
 

@@ -103,8 +103,8 @@ replacing inherited values without a PATH lookup. The packaged Eon's `share`
 directory carries the schema-1 `eon-source-receipt.json` (EON-C41), with the
 producer's repository/revision/build/platform and a null direct-channel
 `attribute`. The [installer guide](INSTALLER.md#installer-inside-a-payload)
-describes independent signer setup, read-only managed-prefix update checks and
-the planned automatic-installation consumer.
+describes independent signer setup, managed-prefix update checks and explicit
+installation through that same trusted helper.
 
 ## Retained development proof
 

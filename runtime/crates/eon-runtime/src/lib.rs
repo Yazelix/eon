@@ -26,7 +26,7 @@ pub use control::Error;
 pub use generation::current_generation as build_identity;
 pub use managed_environment::{
     BarLoad, Defaults, ManagedPrograms, PaddingColor, PopupCatalog, PopupCommand, PopupDefinition,
-    ShellConfig, StartupAnimation, TerminalAccess, TerminalConfig, update_target,
+    ShellConfig, StartupAnimation, TerminalAccess, TerminalConfig, UpdateSettings, update_target,
 };
 
 #[cfg(test)]

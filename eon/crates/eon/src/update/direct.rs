@@ -1,6 +1,16 @@
-//! Read-only discovery for installer-owned payloads. Metadata never authorizes bytes.
+//! Discovery and installer invocation for owned payloads. Metadata never authorizes bytes.
 use super::*;
 use std::os::unix::fs::MetadataExt;
+
+#[derive(Clone, Debug, PartialEq)]
+pub(super) struct Snapshot {
+    prefix: PathBuf,
+    root: PathBuf,
+    helper: Option<PathBuf>,
+    identity: Vec<(u64, u64)>,
+    source: Source,
+    build: Build,
+}
 
 #[derive(Debug, PartialEq)]
 pub(super) struct Release {
@@ -214,11 +224,57 @@ pub(super) fn inspect(
                 && path.starts_with(&root)
                 && fs::metadata(path).is_ok_and(|meta| meta.is_file() && meta.mode() & 0o111 != 0)
         });
-    if helper.is_some() {
+    let Ok(prefix) = fs::canonicalize(&prefix) else {
+        return Some(report);
+    };
+    let mut identities = vec![
+        prefix.clone(),
+        prefix.join("versions"),
+        prefix.join("bin"),
+        prefix.join(".eon-install"),
+        root.clone(),
+    ];
+    if let Some(helper) = &helper {
+        identities.push(helper.clone());
+    }
+    let Ok(identity) = identities
+        .iter()
+        .map(|path| fs::metadata(path).map(|meta| (meta.dev(), meta.ino())))
+        .collect::<Result<_, _>>()
+    else {
+        return Some(report);
+    };
+    report.direct = Some(Snapshot {
+        prefix,
+        root,
+        helper: helper.clone(),
+        identity,
+        source: report.source.clone().unwrap(),
+        build: report.installed.clone().unwrap(),
+    });
+    let prefix = &report.direct.as_ref().unwrap().prefix;
+    let signer_ready = places.signers.as_ref().is_some_and(|path| {
+        let outside =
+            |path: &Path| fs::canonicalize(path).is_ok_and(|path| !path.starts_with(prefix));
+        if !path.ancestors().all(outside) {
+            return false;
+        }
+        fs::OpenOptions::new()
+            .read(true)
+            .custom_flags(libc::O_NONBLOCK | libc::O_CLOEXEC)
+            .open(path)
+            .is_ok_and(|file| {
+                file.metadata()
+                    .is_ok_and(|meta| meta.is_file() && meta.len() > 0)
+            })
+    });
+    if helper.is_some() && signer_ready {
+        report.capability = Capability { install: true, reason: None, next_step: Some("Run eon update --install for this prefix; the installed helper verifies signed checksums with your independently trusted signer.".into()) };
+    } else if helper.is_some() {
         unavailable(
             &mut report,
             "trust-unconfigured",
-            "Discovery has not verified any signature or archive. Provision an independently trusted allowed_signers file as docs/INSTALLER.md describes; direct Install is pending.",
+            "Provision an independently trusted allowed_signers file outside the managed prefix as docs/INSTALLER.md describes and set updates.allowed_signers to its absolute path. Eon never supplies or fetches a signer.",
         );
     } else {
         unavailable(
@@ -228,6 +284,289 @@ pub(super) fn inspect(
         );
     }
     Some(report)
+}
+
+pub(super) fn install(
+    request: &Request,
+    mut report: Report,
+    invoked: Build,
+    places: &Places,
+    system: &System,
+) -> Report {
+    report.operation = Some("install");
+    let before = report.direct.clone();
+    transact(request, &mut report, &invoked, places, system);
+    let interrupted = INTERRUPTED.swap(false, Ordering::Relaxed);
+    if let Some(prefix) = report.prefix.clone() {
+        let after = inspect(Some(&prefix), invoked, places, SystemTime::now()).unwrap();
+        let state = match (&before, &after.direct) {
+            (Some(before), Some(after))
+                if before.prefix == after.prefix
+                    && before.identity.first() == after.identity.first() =>
+            {
+                if before.root == after.root
+                    && before.source == after.source
+                    && before.build == after.build
+                {
+                    "unchanged"
+                } else {
+                    "changed"
+                }
+            }
+            _ => "unknown",
+        };
+        report.launcher = after.launcher;
+        report.selection = Some(Selection {
+            state,
+            selected: after.installed,
+            source: after.source,
+        });
+    }
+    if report.selection.is_none() {
+        report.selection = Some(Selection {
+            state: "unknown",
+            selected: None,
+            source: None,
+        });
+    }
+    if report.error.is_none() && report.outcome != "cancelled" {
+        let selected = report.selection.as_ref().unwrap();
+        if selected.state == "unknown" || selected.selected.is_none() {
+            report.fail(
+                "selection-failed",
+                "inspect-result",
+                "Cannot verify the selected payload after Install".into(),
+            );
+        } else if report.candidate_release.as_ref().is_none_or(|candidate| {
+            selected.source.as_ref().is_none_or(|source| {
+                source.archive_url.as_deref() != Some(&candidate.archive_url)
+                    || source.archive_sha256.as_deref() != Some(&candidate.sha256)
+            })
+        }) {
+            report.fail("selection-failed", "inspect-result", "The observed selection differs from the requested release; reporting its actual digest".into());
+        } else {
+            report.outcome = if selected.state == "changed" {
+                "installed"
+            } else {
+                "unchanged"
+            };
+        }
+    }
+    if interrupted {
+        let stage = report
+            .error
+            .as_ref()
+            .map_or("fetch-build", |error| error.stage);
+        report.fail(
+            "interrupted",
+            stage,
+            "Install interrupted; reporting the actual selection, cancellation does not roll back"
+                .into(),
+        );
+    }
+    report
+}
+
+fn transact(
+    request: &Request,
+    report: &mut Report,
+    invoked: &Build,
+    places: &Places,
+    system: &System,
+) {
+    if report.error.is_some() {
+        return;
+    }
+    if request.prefix.is_none() && (request.json || request.yes || !std::io::stdin().is_terminal())
+    {
+        report.refuse(
+            "install-ambiguous",
+            "confirm",
+            "--yes and noninteractive Install require an explicit or configured prefix".into(),
+        );
+        return;
+    }
+    if let Some(reason) = report.capability.reason {
+        report.refuse(
+            reason,
+            "resolve",
+            report
+                .capability
+                .next_step
+                .clone()
+                .unwrap_or_else(|| reason.into()),
+        );
+        return;
+    }
+    let before = report.direct.clone().unwrap();
+    let writable = [
+        &before.prefix,
+        &before.prefix.join("bin"),
+        &before.prefix.join("versions"),
+    ]
+    .iter()
+    .all(|path| {
+        CString::new(path.as_os_str().as_bytes())
+            .is_ok_and(|path| unsafe { libc::access(path.as_ptr(), libc::W_OK) } == 0)
+    });
+    if !writable {
+        report.refuse(
+            "target-unwritable",
+            "resolve",
+            "The managed prefix is not writable".into(),
+        );
+        return;
+    }
+    let lock = fs::OpenOptions::new()
+        .create(true)
+        .truncate(false)
+        .read(true)
+        .write(true)
+        .mode(0o600)
+        .custom_flags(libc::O_NOFOLLOW | libc::O_CLOEXEC)
+        .open(before.prefix.join(".eon-update.lock"));
+    let _lock = match lock {
+        Ok(lock) => {
+            if unsafe { libc::flock(lock.as_raw_fd(), libc::LOCK_EX | libc::LOCK_NB) } != 0 {
+                let error = std::io::Error::last_os_error();
+                if error.kind() == std::io::ErrorKind::WouldBlock {
+                    report.refuse(
+                        "operation-busy",
+                        "resolve",
+                        "Another Eon update owns this prefix".into(),
+                    );
+                } else {
+                    report.fail(
+                        "selection-failed",
+                        "resolve",
+                        format!("Cannot lock prefix: {error}"),
+                    );
+                }
+                return;
+            }
+            lock
+        }
+        Err(error) => {
+            report.fail(
+                "selection-failed",
+                "resolve",
+                format!("Cannot open prefix update lock: {error}"),
+            );
+            return;
+        }
+    };
+    // Metadata discovers the pinned URL; only the installed helper verifies its bytes.
+    refresh(report, system);
+    if report.error.is_some() {
+        return;
+    }
+    if let Some(reason) = report.capability.reason {
+        report.refuse(
+            reason,
+            "check",
+            report
+                .capability
+                .next_step
+                .clone()
+                .unwrap_or_else(|| reason.into()),
+        );
+        return;
+    }
+    let candidate = report.candidate_release.as_ref().unwrap();
+    eprintln!(
+        "eon update: install under {} from {} using signer {}",
+        before.prefix.display(),
+        candidate.archive_url,
+        places.signers.as_ref().unwrap().display()
+    );
+    let already_current = report.availability.state == "current";
+    let needs_consent = !already_current || request.json || !std::io::stdin().is_terminal();
+    if needs_consent && !consent(request, report) {
+        return;
+    }
+    if inspect(
+        report.prefix.as_deref(),
+        invoked.clone(),
+        places,
+        SystemTime::now(),
+    )
+    .and_then(|after| after.direct)
+    .as_ref()
+        != Some(&before)
+    {
+        report.refuse(
+            "target-changed",
+            "select",
+            "Prefix identity, selection, receipts or installer changed since consent was displayed"
+                .into(),
+        );
+        return;
+    }
+    if INTERRUPTED.load(Ordering::Relaxed) {
+        return;
+    }
+    if already_current {
+        return;
+    }
+    eprintln!(
+        "eon update: downloading, verifying and selecting with the installed helper; Ctrl+C cancels"
+    );
+    let mut command = Command::new(before.helper.as_ref().unwrap());
+    let child = owned_child(&mut command)
+        .env("EON_INSTALLER_FOREGROUND_CHECK", "1")
+        .arg("install")
+        .arg(&report.candidate_release.as_ref().unwrap().archive_url)
+        .arg("--signers")
+        .arg(places.signers.as_ref().unwrap())
+        .arg("--prefix")
+        .arg(&before.prefix)
+        .stdin(Stdio::null())
+        .stdout(Stdio::from(std::io::stderr()))
+        .stderr(Stdio::inherit())
+        .spawn();
+    let result = child
+        .map_err(Bounded::Spawn)
+        .and_then(|mut child| wait_child(&mut child, None, true));
+    match result {
+        Ok(status) if status.success() => (),
+        Ok(status) => match status.code() {
+            Some(10) => report.fail(
+                "verification-failed",
+                "verify",
+                "Installer signature, archive or URL/version verification failed; see diagnostics"
+                    .into(),
+            ),
+            Some(11) => report.fail(
+                "preflight-failed",
+                "verify",
+                "Packaged eon preflight failed; see diagnostics".into(),
+            ),
+            Some(12) => report.refuse(
+                "operation-busy",
+                "select",
+                "The installer prefix is busy; retry after its owner exits".into(),
+            ),
+            Some(13) => report.fail(
+                "remote-unavailable",
+                "fetch-build",
+                "Installer download failed; see diagnostics".into(),
+            ),
+            Some(14) => report.refuse(
+                "trust-unconfigured",
+                "verify",
+                "Provision an independently trusted allowed_signers file as docs/INSTALLER.md describes; see installer diagnostics".into(),
+            ),
+            _ => report.fail(
+                "selection-failed",
+                "select",
+                format!("Installer exited {status}; see diagnostics"),
+            ),
+        },
+        Err(error) => {
+            let (code, message) = error.trouble(["selection-failed"; 3], "eon-install");
+            report.fail(code, "fetch-build", message);
+        }
+    }
 }
 
 fn metadata(message: &str) -> Trouble {
@@ -359,8 +698,13 @@ fn releases(host: &dyn Host, deadline: Instant) -> Result<Option<Release>, Troub
 }
 
 pub(super) fn check_remote(mut report: Report, host: &dyn Host) -> Report {
+    refresh(&mut report, host);
+    report
+}
+
+fn refresh(report: &mut Report, host: &dyn Host) {
     if !report.proved || report.capability.reason == Some("unsupported-platform") {
-        return report;
+        return;
     }
     match releases(host, Instant::now() + Duration::from_secs(30)) {
         Err((reason, message)) => {
@@ -368,7 +712,7 @@ pub(super) fn check_remote(mut report: Report, host: &dyn Host) -> Report {
             report.fail("remote-unavailable", "check", message);
         }
         Ok(None) => unavailable(
-            &mut report,
+            report,
             "release-unavailable",
             "No published numbered Linux release with its archive, signed-checksum companions and digest metadata is available; check again later.",
         ),
@@ -393,7 +737,7 @@ pub(super) fn check_remote(mut report: Report, host: &dyn Host) -> Report {
                     }
                 }
                 std::cmp::Ordering::Less => unavailable(
-                    &mut report,
+                    report,
                     "no-newer-release",
                     "The official release is older than this installation; no downgrade is offered.",
                 ),
@@ -409,7 +753,7 @@ pub(super) fn check_remote(mut report: Report, host: &dyn Host) -> Report {
                     };
                 }
                 _ => unavailable(
-                    &mut report,
+                    report,
                     "source-unverified",
                     "The same release version names different archive bytes; verify the source manually.",
                 ),
@@ -417,7 +761,6 @@ pub(super) fn check_remote(mut report: Report, host: &dyn Host) -> Report {
             report.candidate_release = Some(candidate);
         }
     }
-    report
 }
 
 #[cfg(all(test, target_os = "linux", target_arch = "x86_64"))]
@@ -427,6 +770,41 @@ mod tests {
     use std::os::unix::fs::{PermissionsExt, symlink};
 
     const HASH: &str = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
+
+    #[test]
+    fn human_install_reports_the_actual_archive_after_interruption() {
+        let tree = Tree::new();
+        let (prefix, places) = payload(&tree);
+        let mut report = inspect(Some(&prefix), invoked(), &places, at(0)).unwrap();
+        report.operation = Some("install");
+        report.fail(
+            "interrupted",
+            "select",
+            "interrupted after selection".into(),
+        );
+        let mut source = report.source.clone().unwrap();
+        source.archive_url = Some(format!(
+            "{REPOSITORY}/releases/download/v0.1.22/eon-0.1.22-x86_64-linux.tar.zst"
+        ));
+        source.archive_sha256 = Some("b".repeat(64));
+        let mut selected = report.installed.clone().unwrap();
+        selected.version = Some("0.1.22".into());
+        selected.build = Some("g1-bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb".into());
+        report.selection = Some(Selection {
+            state: "changed",
+            selected: Some(selected),
+            source: Some(source.clone()),
+        });
+        let human = report.human();
+        assert!(
+            human.contains(&format!("Selected source: {}", source.archive_url.unwrap())),
+            "{human}"
+        );
+        assert!(
+            human.contains(&format!("Selected archive SHA-256: {}", "b".repeat(64))),
+            "{human}"
+        );
+    }
 
     fn payload(tree: &Tree) -> (PathBuf, Places) {
         let prefix = tree.0.join("install with ' spaces");
@@ -552,6 +930,53 @@ mod tests {
         let report = inspect(None, invoked(), &places, at(0)).unwrap();
         assert_eq!(report.capability.reason, Some("install-ambiguous"));
         assert!(report.source.is_none());
+    }
+
+    #[test]
+    fn signers_must_be_nonempty_files_outside_the_managed_prefix() {
+        let tree = Tree::new();
+        let (prefix, mut places) = payload(&tree);
+        let helper = prefix.join("current/nix/store/product/bin/eon-install");
+        fs::write(&helper, "").unwrap();
+        fs::set_permissions(&helper, fs::Permissions::from_mode(0o755)).unwrap();
+        places.installer = Some(helper);
+        let empty = tree.0.join("empty-signers");
+        fs::write(&empty, "").unwrap();
+        let inside = prefix.join("signers");
+        fs::write(&inside, "fixture independently provisioned signer").unwrap();
+        let outside = tree.0.join("signers");
+        fs::write(&outside, "fixture independently provisioned signer").unwrap();
+        let outside_link = tree.0.join("link-into-prefix");
+        symlink(&inside, &outside_link).unwrap();
+        let inside_link = prefix.join("link-outside");
+        symlink(&outside, &inside_link).unwrap();
+        let through_prefix = prefix.join("directory-outside");
+        symlink(&tree.0, &through_prefix).unwrap();
+        for path in [
+            tree.0.join("missing-signers"),
+            empty,
+            inside,
+            outside_link,
+            inside_link,
+            through_prefix.join("signers"),
+        ] {
+            places.signers = Some(path.clone());
+            let report = inspect(Some(&prefix), invoked(), &places, at(0)).unwrap();
+            assert_eq!(
+                report.capability.reason,
+                Some("trust-unconfigured"),
+                "{}",
+                path.display()
+            );
+            assert!(!report.capability.install);
+        }
+        places.signers = Some(outside);
+        assert!(
+            inspect(Some(&prefix), invoked(), &places, at(0))
+                .unwrap()
+                .capability
+                .install
+        );
     }
 
     #[test]

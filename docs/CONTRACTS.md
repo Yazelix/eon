@@ -5130,7 +5130,8 @@ names its socket. CLI JSON names a session `session` and a terminal
   Nix-profile `--install` and `updates.nix_profile`/`updates.nix_entry` are
   implemented (`eon-update-button-f10d1.3`); managed-prefix `--check` and
   `--prefix` for Check are implemented (`eon-update-button-f10d1.6`);
-  direct `--install` and direct-backend configuration keys remain planned.
+  direct `--install`, `updates.bundle_prefix` and `updates.allowed_signers`
+  are implemented (`eon-update-button-f10d1.7`).
 - **Consumer:** A person or local agent acting as that person, using full
   Eon's product CLI or its future Commands/menu action to inspect or update
   one installation. eonbase is outside this scope.
@@ -5360,7 +5361,7 @@ names its socket. CLI JSON names a session `session` and a terminal
 
   Invalid configuration also gives exit 1 as specified below. No raw backend
   exit replaces this mapping.
-- **Configuration:** Keys, all unset by default (direct-backend keys remain planned):
+- **Configuration:** Keys, all unset by default:
   `updates.nix_profile` and `updates.nix_entry` select one profile/entry
   pair; `updates.bundle_prefix` selects an existing managed prefix and
   excludes that pair; `updates.allowed_signers` names an absolute,

@@ -107,10 +107,10 @@ fn selection_and_removal_preserve_payloads_and_unrelated_files() {
     fixture_version(&prefix, &b);
     let inode = fs::metadata(&old).unwrap().ino();
     fs::write(temp.path().join("user-config"), "keep").unwrap();
-    select(&prefix, &a).unwrap();
-    select(&prefix, &b).unwrap();
+    select(&prefix, &a, None).unwrap();
+    select(&prefix, &b, None).unwrap();
     assert_eq!(selected(&prefix).unwrap().as_deref(), Some(b.as_str()));
-    select(&prefix, &a).unwrap();
+    select(&prefix, &a, None).unwrap();
     assert_eq!(fs::metadata(&old).unwrap().ino(), inode);
     fs::remove_file(prefix.join("bin/eon")).unwrap();
     symlink("/unrelated/eon", prefix.join("bin/eon")).unwrap();
@@ -139,17 +139,17 @@ fn failed_selection_and_locking_leave_current_usable() {
     let b = "b".repeat(64);
     fixture_version(&prefix, &a);
     let bad = fixture_version(&prefix, &b);
-    select(&prefix, &a).unwrap();
+    select(&prefix, &a, None).unwrap();
     fs::write(bad.join("eon"), "invalid executable").unwrap();
-    assert!(select(&prefix, &b).is_err());
+    assert!(select(&prefix, &b, None).is_err());
     // A working executable is not an entrypoint unless it is the link into the tree.
     fs::remove_file(bad.join("eon")).unwrap();
     fs::copy(env::current_exe().unwrap(), bad.join("eon")).unwrap();
-    assert!(select(&prefix, &b).is_err());
+    assert!(select(&prefix, &b, None).is_err());
     assert_eq!(selected(&prefix).unwrap().as_deref(), Some(a.as_str()));
     fs::remove_file(prefix.join("bin/eon")).unwrap();
     fs::write(prefix.join("bin/eon"), "user command").unwrap();
-    assert!(select(&prefix, &a).is_err());
+    assert!(select(&prefix, &a, None).is_err());
     assert_eq!(selected(&prefix).unwrap().as_deref(), Some(a.as_str()));
     assert_eq!(
         fs::read_to_string(prefix.join("bin/eon")).unwrap(),
@@ -294,7 +294,7 @@ fn smoke_timeout_stops_wrapper_and_child() {
     );
     fs::set_permissions(&program, fs::Permissions::from_mode(0o700)).unwrap();
     std::thread::scope(|scope| {
-        let check = scope.spawn(|| smoke(root.path()));
+        let check = scope.spawn(|| smoke(root.path(), None));
         let receipt = root.path().join("eon.pid");
         let deadline = Instant::now() + Duration::from_secs(5);
         while fs::read_to_string(&receipt)
@@ -334,4 +334,79 @@ fn smoke_timeout_stops_wrapper_and_child() {
         }
         assert!(!leaked, "timed-out preflight left its child running");
     });
+}
+
+#[test]
+fn smoke_reads_the_version_without_waiting_for_inherited_stdout_to_close() {
+    use std::time::{Duration, Instant};
+
+    let root = tempfile::tempdir().unwrap();
+    let shell = Command::new("sh")
+        .args(["-c", "command -v sh"])
+        .output()
+        .unwrap();
+    let program = root.path().join("eon");
+    child_writes(
+        Command::new("sh")
+            .args(["-c", "printf '%s' \"$1\" > \"$0\""])
+            .arg(&program)
+            .arg(format!(
+                "#!{}\nsleep 60 &\necho $! > \"$0.pid\"\nprintf 'eon 0.1.21 g1-test\\n'\n",
+                String::from_utf8(shell.stdout).unwrap().trim()
+            )),
+    );
+    fs::set_permissions(&program, fs::Permissions::from_mode(0o700)).unwrap();
+    std::thread::scope(|scope| {
+        let (sender, receiver) = std::sync::mpsc::channel();
+        let root_path = root.path();
+        scope.spawn(move || sender.send(smoke(root_path, Some("0.1.21"))).unwrap());
+        let result = receiver.recv_timeout(Duration::from_secs(5));
+        let pid_file = root.path().join("eon.pid");
+        let deadline = Instant::now() + Duration::from_secs(5);
+        while !pid_file.exists() && Instant::now() < deadline {
+            std::thread::sleep(Duration::from_millis(10));
+        }
+        let pid = fs::read_to_string(pid_file).unwrap();
+        Command::new("sh")
+            .args(["-c", "kill -KILL \"$1\"", "--", pid.trim()])
+            .status()
+            .unwrap();
+        assert!(result.expect("inherited stdout kept smoke waiting").is_ok());
+    });
+}
+
+#[test]
+fn url_version_mismatch_refuses_before_selection_including_retained_payloads() {
+    let temp = tempfile::tempdir().unwrap();
+    let prefix = temp.path().join("prefix");
+    let _lock = prefix_lock(&prefix, true).unwrap();
+    let a = "a".repeat(64);
+    let root = fixture_version(&prefix, &a);
+    let shell = Command::new("sh")
+        .args(["-c", "command -v sh"])
+        .output()
+        .unwrap();
+    child_writes(
+        Command::new("sh")
+            .args(["-c", "printf '%s' \"$1\" > \"$0\""])
+            .arg(root.join("nix/eon"))
+            .arg(format!(
+                "#!{}\nprintf 'eon 0.1.21 g1-test\\n'\n",
+                String::from_utf8(shell.stdout).unwrap().trim()
+            )),
+    );
+    fs::set_permissions(root.join("nix/eon"), fs::Permissions::from_mode(0o700)).unwrap();
+    select(&prefix, &a, Some("0.1.21")).unwrap();
+    let error = select(&prefix, &a, Some("0.1.22")).unwrap_err();
+    assert_eq!(
+        error
+            .get_ref()
+            .unwrap()
+            .downcast_ref::<Failure>()
+            .unwrap()
+            .status,
+        10
+    );
+    assert_eq!(selected(&prefix).unwrap().as_deref(), Some(a.as_str()));
+    assert!(smoke(&root, Some("0.1.22")).is_err());
 }

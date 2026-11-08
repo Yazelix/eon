@@ -1043,8 +1043,16 @@ const HELP_SECTIONS: &[(&str, &[(&str, &str)])] = &[
                 "Check that profile entry",
             ),
             (
+                "update --check --prefix ABS",
+                "Check that managed Linux prefix",
+            ),
+            (
+                "update --install --prefix ABS [--yes]",
+                "Install a signed Linux release",
+            ),
+            (
                 "update --install [--yes] [--json]",
-                "Upgrade one Nix profile entry",
+                "Update one profile entry or prefix",
             ),
             ("config path", "Create the config root and print"),
             ("", "its config.toml path"),

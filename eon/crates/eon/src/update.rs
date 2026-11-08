@@ -61,15 +61,25 @@ pub(crate) fn wanted(arguments: &[OsString]) -> bool {
 pub(crate) fn run(arguments: &[OsString], invoked: Build, defaults: &eon_runtime::Defaults) -> u8 {
     let mut request = parse(&arguments[2..]);
     let mut config_error = None;
-    if request.prefix.is_none() && matches!(request.selection, Ok(None)) {
-        match eon_runtime::update_target(defaults) {
+    let mut signers = None;
+    if matches!(request.selection, Ok(None)) {
+        let explicit = request.prefix.is_some();
+        match eon_runtime::update_target(defaults, explicit) {
             Ok(target) => {
-                request.selection = Ok(target.map(|(profile, entry)| Selector { profile, entry }))
+                if !explicit {
+                    request.prefix = target.bundle_prefix;
+                    request.selection = Ok(target
+                        .nix_profile
+                        .zip(target.nix_entry)
+                        .map(|(profile, entry)| Selector { profile, entry }));
+                }
+                signers = target.allowed_signers;
             }
             Err(message) => config_error = Some(message),
         }
     }
-    let places = Places::of_this_process(&arguments[0]);
+    let mut places = Places::of_this_process(&arguments[0]);
+    places.signers = signers;
     let system = System {
         version: env!("CARGO_PKG_VERSION"),
         curl: env::var_os("EON_CURL")
@@ -255,9 +265,6 @@ fn selection(
         {
             return Err("--prefix needs an absolute path without ..".into());
         }
-        if modes == ["install"] {
-            return Err("eon update --install --prefix is not available in this build".into());
-        }
     }
     match (profile, entry) {
         (None, None) => Ok(None),
@@ -293,6 +300,7 @@ struct Places {
     /// not, since `nix run` and a profile can run the same one.
     launcher: Option<PathBuf>,
     installer: Option<PathBuf>,
+    signers: Option<PathBuf>,
     /// HOME is unset or relative, so the default profile is unknown.
     homeless: bool,
     /// The user's default profile, as Nix names it with and without XDG
@@ -344,6 +352,7 @@ impl Places {
                 .and_then(|path| path.parent().map(Path::to_path_buf)),
             launcher,
             installer: absolute("EON_INSTALLER"),
+            signers: None,
             homeless: home.is_none(),
             user_profiles: home
                 .map(|home| home.join(".nix-profile"))
@@ -520,7 +529,7 @@ fn bounded(mut command: Command, limit: Duration) -> Result<Output, Bounded> {
     };
     let stdout = collect(child.stdout.take().map(|pipe| Box::new(pipe) as _));
     let stderr = collect(child.stderr.take().map(|pipe| Box::new(pipe) as _));
-    let status = wait_child(&mut child, Some(limit))?;
+    let status = wait_child(&mut child, Some(limit), false)?;
     Ok(Output {
         status,
         stdout: stdout.join().unwrap_or_default(),
@@ -547,16 +556,45 @@ fn owned_child(command: &mut Command) -> &mut Command {
     command
 }
 
-fn wait_child(child: &mut Child, limit: Option<Duration>) -> Result<ExitStatus, Bounded> {
+/// Observe exit without releasing the process-group leader's PID.
+fn child_exited(child: &Child) -> std::io::Result<bool> {
+    loop {
+        let mut info: libc::siginfo_t = unsafe { std::mem::zeroed() };
+        if unsafe {
+            libc::waitid(
+                libc::P_PID,
+                child.id() as libc::id_t,
+                &mut info,
+                libc::WEXITED | libc::WNOHANG | libc::WNOWAIT,
+            )
+        } != 0
+        {
+            let error = std::io::Error::last_os_error();
+            if error.kind() == std::io::ErrorKind::Interrupted {
+                continue;
+            }
+            return Err(error);
+        }
+        #[cfg(target_os = "linux")]
+        let pid = unsafe { info.si_pid() };
+        #[cfg(target_os = "macos")]
+        let pid = info.si_pid;
+        return Ok(pid != 0);
+    }
+}
+
+fn wait_child(
+    child: &mut Child,
+    limit: Option<Duration>,
+    cleanup_group: bool,
+) -> Result<ExitStatus, Bounded> {
     let started = Instant::now();
     loop {
-        let result = child.try_wait();
+        let exited = child_exited(child).map_err(Bounded::Wait)?;
         let failure = if INTERRUPTED.load(Ordering::Relaxed) {
             Some(Bounded::Interrupted)
         } else if limit.is_some_and(|limit| started.elapsed() >= limit) {
             Some(Bounded::TimedOut(limit.unwrap()))
-        } else if let Err(error) = result.as_ref() {
-            Some(Bounded::Wait(std::io::Error::other(error.to_string())))
         } else {
             None
         };
@@ -568,7 +606,7 @@ fn wait_child(child: &mut Child, limit: Option<Duration>) -> Result<ExitStatus, 
             }
             let deadline = Instant::now() + TERMINATION_GRACE;
             while Instant::now() < deadline {
-                if child.try_wait().ok().flatten().is_some() {
+                if child_exited(child).map_err(Bounded::Wait)? {
                     break;
                 }
                 thread::sleep(Duration::from_millis(20));
@@ -579,8 +617,13 @@ fn wait_child(child: &mut Child, limit: Option<Duration>) -> Result<ExitStatus, 
             let _ = child.wait();
             return Err(failure);
         }
-        if let Ok(Some(status)) = result {
-            return Ok(status);
+        if exited {
+            if cleanup_group {
+                unsafe {
+                    libc::kill(-(child.id() as i32), libc::SIGKILL);
+                }
+            }
+            return child.wait().map_err(Bounded::Wait);
         }
         thread::sleep(Duration::from_millis(20));
     }
@@ -1023,6 +1066,7 @@ struct Report {
     target: Option<Selector>,
     prefix: Option<PathBuf>,
     candidate_release: Option<direct::Release>,
+    direct: Option<direct::Snapshot>,
     launcher: Option<PathBuf>,
     source: Option<Source>,
     /// Whether this backend's local source and build receipts form a validated chain.
@@ -1047,6 +1091,7 @@ impl Report {
             target: None,
             prefix: None,
             candidate_release: None,
+            direct: None,
             launcher: None,
             source: None,
             proved: false,
@@ -1070,6 +1115,7 @@ impl Report {
             target: None,
             prefix: None,
             candidate_release: None,
+            direct: None,
             launcher: None,
             source: None,
             proved: false,
@@ -1271,6 +1317,9 @@ impl Report {
             .as_deref()
             .map_or(String::new(), |step| format!("; {step}"));
         lines.push(match self.capability.reason {
+            None if self.capability.install && self.install_kind == "eon-install" => {
+                format!("Install: Eon may update this installation{next}")
+            }
             None if self.capability.install => format!("Install: Eon may update this entry{next}"),
             None => format!("Install: undecided{next}"),
             Some(reason) => format!("Install: refused, {reason}{next}"),
@@ -1290,8 +1339,15 @@ impl Report {
                 if let Some(source) = &selection.source {
                     lines.push(format!(
                         "Selected source: {}",
-                        source.locked_ref.as_deref().unwrap_or("unknown")
+                        source
+                            .archive_url
+                            .as_deref()
+                            .or(source.locked_ref.as_deref())
+                            .unwrap_or("unknown")
                     ));
+                    if let Some(digest) = &source.archive_sha256 {
+                        lines.push(format!("Selected archive SHA-256: {digest}"));
+                    }
                 }
             }
             lines.push("Running windows keep their build and terminals. Use the reported launcher for fresh launches.".into());
@@ -1664,6 +1720,16 @@ fn externally_managed() -> String {
 }
 
 fn install(request: &Request, invoked: Build, places: &Places, system: &System) -> Report {
+    if request.selection.as_ref().unwrap().is_none()
+        && let Some(report) = direct::inspect(
+            request.prefix.as_deref(),
+            invoked.clone(),
+            places,
+            SystemTime::now(),
+        )
+    {
+        return direct::install(request, report, invoked, places, system);
+    }
     let mut report = install_inner(request, invoked.clone(), places, system);
     let interrupted = INTERRUPTED.swap(false, Ordering::Relaxed);
     if report.selection.is_none() || interrupted {
@@ -1797,44 +1863,9 @@ fn install_inner(request: &Request, invoked: Build, places: &Places, system: &Sy
             .and_then(|source| source.attribute.as_deref())
             .unwrap_or("unknown")
     );
-    if !request.yes {
-        if !interactive {
-            report.fail(
-                "not-confirmed",
-                "confirm",
-                "Install requires --yes outside an interactive terminal".into(),
-            );
-            return report;
-        }
-        let terminal = match confirmation_terminal() {
-            Ok(terminal) => terminal,
-            Err(error) => {
-                report.fail("not-confirmed", "confirm", format!("Install requires a controlling terminal: {error}; use --yes with an explicit or configured target"));
-                return report;
-            }
-        };
-        eprint!("Upgrade this entry for fresh launches? [y/N] ");
-        let _ = std::io::stderr().flush();
-        match confirmation(terminal.as_raw_fd()) {
-            Err(error) => {
-                report.fail(
-                    if error.kind() == std::io::ErrorKind::Interrupted {
-                        "interrupted"
-                    } else {
-                        "selection-failed"
-                    },
-                    "confirm",
-                    error.to_string(),
-                );
-                return report;
-            }
-            Ok(false) => {
-                report.outcome = "cancelled";
-                observe(&mut report, &before, &target, &invoked, places, system);
-                return report;
-            }
-            Ok(true) => {}
-        }
+    if !consent(request, &mut report) {
+        observe(&mut report, &before, &target, &invoked, places, system);
+        return report;
     }
     let mut ran_nix = false;
     let result = (|| {
@@ -1886,7 +1917,7 @@ fn install_inner(request: &Request, invoked: Build, places: &Places, system: &Sy
             .spawn()
             .map_err(|error| ("selection-failed", "fetch-build", error.to_string()))?;
         ran_nix = true;
-        let status = wait_child(&mut child, None).map_err(|error| {
+        let status = wait_child(&mut child, None, false).map_err(|error| {
             let (code, message) = error.trouble(["selection-failed"; 3], "nix profile upgrade");
             (code, "fetch-build", message)
         })?;
@@ -1992,6 +2023,55 @@ fn exact_entry(entry: &str) -> bool {
     let digits = entry.strip_prefix(['+', '-']).unwrap_or(entry);
     !Path::new(entry).is_absolute()
         && (digits.is_empty() || !digits.bytes().all(|byte| byte.is_ascii_digit()))
+}
+
+fn consent(request: &Request, report: &mut Report) -> bool {
+    if request.yes {
+        return true;
+    }
+    if request.json || !std::io::stdin().is_terminal() {
+        report.fail(
+            "not-confirmed",
+            "confirm",
+            "Install requires --yes outside an interactive terminal".into(),
+        );
+        return false;
+    }
+    let terminal = match confirmation_terminal() {
+        Ok(terminal) => terminal,
+        Err(error) => {
+            report.fail("not-confirmed", "confirm", format!("Install requires a controlling terminal: {error}; use --yes with an explicit or configured target"));
+            return false;
+        }
+    };
+    eprint!(
+        "Upgrade this {} for fresh launches? [y/N] ",
+        if report.install_kind == "eon-install" {
+            "installation"
+        } else {
+            "entry"
+        }
+    );
+    let _ = std::io::stderr().flush();
+    match confirmation(terminal.as_raw_fd()) {
+        Ok(true) => true,
+        Ok(false) => {
+            report.outcome = "cancelled";
+            false
+        }
+        Err(error) => {
+            report.fail(
+                if error.kind() == std::io::ErrorKind::Interrupted {
+                    "interrupted"
+                } else {
+                    "selection-failed"
+                },
+                "confirm",
+                error.to_string(),
+            );
+            false
+        }
+    }
 }
 
 fn confirmation_terminal() -> std::io::Result<fs::File> {
@@ -2374,6 +2454,7 @@ mod tests {
                     .and_then(|path| path.parent().map(Path::to_path_buf)),
                 launcher: Some(launcher.to_path_buf()),
                 installer: None,
+                signers: None,
                 homeless: false,
                 user_profiles: vec![
                     self.0.join("home/.nix-profile"),
@@ -2579,13 +2660,17 @@ mod tests {
         let direct = parse(&words(&["--check", "--prefix", "/x"]));
         assert_eq!(direct.selection, Ok(None));
         assert_eq!(direct.prefix, Some("/x".into()));
+        assert!(
+            parse(&words(&["--install", "--prefix", "/x"]))
+                .selection
+                .is_ok()
+        );
         for line in [
             &["--profile", "/p", "--entry", "e"][..],
             &["--check", "--install"],
             &["--check", "--yes"],
             &["--check", "--prefix", "relative"],
             &["--check", "--prefix", "/x/../y"],
-            &["--install", "--prefix", "/x"],
             &[
                 "--check",
                 "--prefix",
