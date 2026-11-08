@@ -1345,16 +1345,17 @@ re-proved when that platform or feature is next touched.
   fit one padded terminal cell below that line, the popup's top edge rises just
   enough to keep that cell. Shared Eon-supplied logical
   margins inset the popup terminal content within that stable shell. The popup
-  uses the border width and carries its catalog label, such as "Files", in its
-  rounded top edge in the pane-title style, using the shared chrome title
-  metric. It keeps a small top gutter before terminal padding. Scene owns
-  both rectangles: chrome drives the outline, while terminal drives resize,
-  clipping, pointer input, IME and accessibility. Margins and the title gutter
-  shrink to preserve a usable cell grid; tiny surfaces omit the label. The popup's
-  fill starts at its rounded top edge; inside it, its exposed margins share the
-  terminal default background and opacity, with the existing best-effort surface-wide
-  compositor blur request, and its title sits on the boundary. Pane-frame
-  configuration has no effect on the popup outline. While the agent sidebar is visible, the
+  uses the border width and carries its catalog label, such as "Files",
+  using the shared chrome title metric. When the title and its clearance fit, a
+  rounded tab rises from the card's left border over the label and returns
+  smoothly into its top edge. The tab's fill and the exposed popup margins share
+  the terminal default background and opacity, with the existing best-effort
+  surface-wide compositor blur request. If only the original border-gap title
+  fits, the popup retains that title; tiny surfaces omit the label. It keeps a
+  small top gutter before terminal padding. Scene owns both rectangles: chrome
+  drives the outline, while terminal drives resize, clipping, pointer input, IME
+  and accessibility. Margins and the title gutter shrink to preserve a usable
+  cell grid. Pane-frame configuration has no effect on the popup outline. While the agent sidebar is visible, the
   card area is the content area to its right (VEN-C30), so popups never cover
   the sidebar.
 - **Important failures:** Hidden or replaced endpoints retain no active

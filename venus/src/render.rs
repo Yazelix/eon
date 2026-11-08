@@ -566,6 +566,107 @@ fn push_card_backdrop(
     }
 }
 
+struct PopupTitle {
+    label: String,
+    width: f32,
+}
+
+struct PopupTitleTab {
+    top: f32,
+    right: f32,
+    left_radius: f32,
+    right_radius: f32,
+    join_radius: f32,
+    title: PopupTitle,
+}
+
+// Fill and stroke share the contour, including the tangent return into the top rule.
+fn popup_tab_bands(card: CardFill, tab: &PopupTitleTab, inset: f32) -> Vec<SceneRect> {
+    let bounds = SceneRect {
+        left: card.bounds.left + inset,
+        top: card.bounds.top + inset,
+        width: (card.bounds.width - inset * 2.0).max(0.0),
+        height: (card.bounds.height - inset * 2.0).max(0.0),
+    };
+    let radius = (rounded_radius(card.bounds, card.radius) - inset).max(0.0);
+    let left_radius = (tab.left_radius - inset).max(0.0);
+    let right_radius = (tab.right_radius - inset).max(0.0);
+    let join = tab.join_radius + inset;
+    let top = tab.top + inset;
+    let right = tab.right - inset;
+    let cut = bounds.top + radius;
+    let circle =
+        |radius: f32, distance: f32| (radius * radius - distance * distance).max(0.0).sqrt();
+    let mut bands = Vec::new();
+    for row in top.floor() as i32..cut.ceil() as i32 {
+        let y = row as f32 + 0.5;
+        let left = if y < top + left_radius {
+            bounds.left + left_radius - circle(left_radius, top + left_radius - y)
+        } else {
+            bounds.left
+        };
+        let end = if y >= bounds.top {
+            bounds.right() - radius + circle(radius, bounds.top + radius - y)
+        } else if y < top + right_radius {
+            right - right_radius + circle(right_radius, top + right_radius - y)
+        } else if y >= bounds.top - join {
+            right + join - circle(join, y - (bounds.top - join))
+        } else {
+            right
+        };
+        bands.push(SceneRect {
+            left,
+            top: row as f32,
+            width: (end - left).max(0.0),
+            height: 1.0,
+        });
+    }
+    bands.extend(
+        CardFill { bounds, radius }
+            .bands()
+            .filter(|band| band.top >= cut),
+    );
+    bands
+}
+
+// Partition once so the terminal background under the title never double-blends.
+fn push_popup_tab_backdrop(
+    rectangles: &mut RectangleBatch,
+    frame: SceneRect,
+    cards: &[(CardFill, SceneColor)],
+    opacity: f32,
+    tab: &PopupTitleTab,
+) {
+    let bands = cards
+        .iter()
+        .enumerate()
+        .flat_map(|(index, (card, background))| {
+            let fill = if index == 0 {
+                popup_tab_bands(*card, tab, 0.0)
+            } else {
+                card.bands().collect()
+            };
+            fill.into_iter()
+                .map(|band| (band, *background, opacity))
+                .collect::<Vec<_>>()
+        })
+        .collect::<Vec<_>>();
+    let covered = bands.iter().map(|(rect, _, _)| *rect).collect::<Vec<_>>();
+    for rect in uncovered(frame, &covered) {
+        rectangles.push(
+            rect.left,
+            rect.top,
+            rect.width,
+            rect.height,
+            palette::BAR_BACKGROUND,
+            1.0,
+        );
+    }
+    for (rect, color, alpha) in bands {
+        rectangles.push(rect.left, rect.top, rect.width, rect.height, color, alpha);
+    }
+}
+
 fn terminal_paint_clip(
     workspace: &WorkspaceScene,
     allocated: SceneRect,
@@ -1554,7 +1655,22 @@ impl Renderer {
                     width: self.config.width as f32,
                     height: self.config.height as f32 - workspace.tab_viewport.bottom(),
                 };
-                push_card_backdrop(&mut rectangles, frame, &cards, self.background_opacity);
+                if let Some(tab) = PopupTitleTab::new(
+                    &mut self.fonts.font_system,
+                    self.metrics,
+                    workspace,
+                    physical_outline_width(self.border_width, self.metrics.scale),
+                ) {
+                    push_popup_tab_backdrop(
+                        &mut rectangles,
+                        frame,
+                        &cards,
+                        self.background_opacity,
+                        &tab,
+                    );
+                } else {
+                    push_card_backdrop(&mut rectangles, frame, &cards, self.background_opacity);
+                }
             } else {
                 // Each column's strip takes its own terminal's background; strips meet in the
                 // middle of the gaps between columns and reach the window's sides, so the first
@@ -2693,6 +2809,27 @@ struct RectangleBatch {
 }
 
 impl RectangleBatch {
+    fn push_popup_tab_outline(
+        &mut self,
+        card: CardFill,
+        tab: &PopupTitleTab,
+        width: f32,
+        color: SceneColor,
+    ) {
+        let inner = popup_tab_bands(card, tab, width);
+        let cut = card.bounds.top + rounded_radius(card.bounds, card.radius);
+        for band in popup_tab_bands(card, tab, 0.0)
+            .into_iter()
+            .filter(|band| band.top < cut)
+        {
+            for piece in uncovered(band, &inner) {
+                for (rect, alpha) in span_rects(piece.left, piece.right(), piece.top) {
+                    self.push(rect.left, rect.top, rect.width, rect.height, color, alpha);
+                }
+            }
+        }
+    }
+
     fn push_pane_outlines(
         &mut self,
         fill: CardFill,

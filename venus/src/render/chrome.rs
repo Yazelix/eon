@@ -2,7 +2,8 @@
 //! header tooltip and the native dialog, plus the pointer state that highlights them.
 
 use super::{
-    CellMetrics, CursorPoint, DrawStyleKind, PlacedText, RectangleBatch, Renderer, SceneColor,
+    CellMetrics, CursorPoint, DrawStyleKind, PlacedText, PopupTitle, PopupTitleTab, RectangleBatch,
+    Renderer, SceneColor,
     cells::{NERD_FONT_FAMILY, blend_to_contrast},
     palette, physical_outline_width, shaping,
 };
@@ -1112,6 +1113,113 @@ fn push_dots(
                 if (lit >> bit) & 1 == 1 { alpha } else { 0.0 },
             );
         }
+    }
+}
+
+pub(super) fn popup_title_row(
+    workspace: &WorkspaceScene,
+    metrics: CellMetrics,
+    stroke: f32,
+) -> Option<SceneRect> {
+    workspace.popup_label()?;
+    let terminal = workspace.visible_terminal()?;
+    let row = SceneRect {
+        height: chrome_title_metrics(metrics).text_height,
+        ..workspace.chrome
+    };
+    let card = workspace.card_fill(workspace.chrome, metrics, stroke);
+    if terminal.top + metrics.padding < row.bottom()
+        || terminal.height < metrics.padding * 2.0 + metrics.height
+        || terminal.width < metrics.padding * 2.0 + metrics.width * 4.0
+        || card.bounds.top != crate::scene::title_rule_y(row.top, row.height)
+    {
+        return None;
+    }
+    Some(row)
+}
+
+impl PopupTitle {
+    pub(super) fn fit(
+        fonts: &mut FontSystem,
+        metrics: CellMetrics,
+        label: &str,
+        available: f32,
+    ) -> Self {
+        let (label, width) = fit_header_text(fonts, metrics, label, available);
+        Self { label, width }
+    }
+
+    pub(super) fn ink_width(&self, metrics: CellMetrics, stroke: f32) -> f32 {
+        self.width + (metrics.padding / 2.0 - stroke).max(0.0)
+    }
+
+    pub(super) fn border_gap(&self, row: SceneRect, metrics: CellMetrics) -> SceneRect {
+        SceneRect {
+            left: row.left + metrics.padding / 2.0,
+            top: row.top + 1.0,
+            width: self.width + metrics.padding,
+            height: (row.height - 2.0).max(0.0),
+        }
+    }
+}
+
+impl PopupTitleTab {
+    pub(super) fn new(
+        fonts: &mut FontSystem,
+        metrics: CellMetrics,
+        workspace: &WorkspaceScene,
+        stroke: f32,
+    ) -> Option<Self> {
+        let label = workspace.popup_label()?;
+        let row = popup_title_row(workspace, metrics, stroke)?;
+        let card = workspace.card_fill(workspace.chrome, metrics, stroke);
+        // A clear raster row separates the cap from both the bar and the title box.
+        let frame_top = workspace
+            .tab_viewport
+            .bottom()
+            .max(workspace.header.bottom());
+        let extra = (metrics.padding / 3.0).max(stroke + 1.0);
+        let top = (row.top - extra).floor().max(frame_top.ceil() + 1.0);
+        if top + stroke + 1.0 > row.top {
+            return None;
+        }
+        let rise = card.bounds.top - top;
+        let join_radius = (card.radius / 2.0).min(rise / 2.0);
+        let right_padding = metrics.padding / 2.0;
+        if right_padding < stroke + 1.0 {
+            return None;
+        }
+        let available = card.bounds.width
+            - super::rounded_radius(card.bounds, card.radius)
+            - join_radius
+            - stroke
+            - metrics.padding
+            - right_padding
+            - (right_padding - stroke);
+        let title = PopupTitle::fit(fonts, metrics, label, available.max(0.0));
+        if title.label.is_empty() {
+            return None;
+        }
+        // Keep antialiased corner pixels outside the title box, including at large fonts.
+        let corner_limit = |padding: f32| {
+            let clearance = (padding - stroke - 1.0).max(0.0);
+            let extra = (row.top - top - stroke).max(0.0);
+            stroke + clearance + extra + (2.0 * clearance * extra).sqrt()
+        };
+        let left_radius = rise.min(corner_limit(metrics.padding));
+        Some(Self {
+            top,
+            right: card.bounds.left
+                + metrics.padding
+                + title.ink_width(metrics, stroke)
+                + right_padding,
+            left_radius,
+            right_radius: left_radius
+                .min(rise - join_radius)
+                .min(corner_limit(right_padding)),
+            join_radius,
+            title,
+        })
     }
 }
 
@@ -2372,37 +2480,50 @@ impl Renderer {
             );
         }
         if let Some(label) = workspace.popup_label()
-            && let Some(terminal) = workspace.visible_terminal()
+            && workspace.visible_terminal().is_some()
         {
-            let card = workspace
-                .card_fill(workspace.chrome, self.metrics, self.card_stroke_width())
-                .bounds;
-            let title = chrome_title_metrics(self.metrics);
-            let row = SceneRect {
-                height: title.text_height,
-                ..workspace.chrome
-            };
-            let gaps = if terminal.top + self.metrics.padding >= row.bottom()
-                && terminal.height >= self.metrics.padding * 2.0 + self.metrics.height
-                && terminal.width >= self.metrics.padding * 2.0 + self.metrics.width * 4.0
-                && card.top == crate::scene::title_rule_y(row.top, row.height)
-            {
-                vec![self.build_border_title(
-                    label,
-                    row,
-                    workspace.chrome,
-                    (row.width - self.metrics.padding * 2.0).max(0.0),
+            let stroke = physical_outline_width(self.border_width, self.metrics.scale);
+            let card =
+                workspace.card_fill(workspace.chrome, self.metrics, self.card_stroke_width());
+            let mut clip = workspace.chrome;
+            let mut gaps = Vec::new();
+            if let Some(row) = popup_title_row(workspace, self.metrics, stroke) {
+                let title = if let Some(tab) =
+                    PopupTitleTab::new(&mut self.fonts.font_system, self.metrics, workspace, stroke)
+                {
+                    rectangles.push_popup_tab_outline(card, &tab, stroke, palette::CARD_OUTLINE);
+                    let cut = card.bounds.top + super::rounded_radius(card.bounds, card.radius);
+                    clip.top = cut;
+                    clip.height = (workspace.chrome.bottom() - cut).max(0.0);
+                    tab.title
+                } else {
+                    let title = PopupTitle::fit(
+                        &mut self.fonts.font_system,
+                        self.metrics,
+                        label,
+                        (row.width - self.metrics.padding * 2.0).max(0.0),
+                    );
+                    gaps.push(title.border_gap(row, self.metrics));
+                    title
+                };
+                self.push_text_clipped(
+                    &title.label,
+                    row.left + self.metrics.padding,
+                    row.top,
+                    title.width,
+                    title.ink_width(self.metrics, stroke),
+                    row.height,
                     palette::PRIMARY_TEXT,
-                )]
-            } else {
-                Vec::new()
-            };
-            rectangles.clip = Some(workspace.chrome);
+                    DrawStyleKind::Status(Wrap::None),
+                    workspace.chrome,
+                );
+            }
+            rectangles.clip = Some(clip);
             rectangles.push_card_outline(
-                card,
-                workspace.card_radius(),
+                card.bounds,
+                card.radius,
                 &gaps,
-                physical_outline_width(self.border_width, self.metrics.scale),
+                stroke,
                 palette::CARD_OUTLINE,
             );
             rectangles.clip = None;
@@ -2556,7 +2677,7 @@ impl Renderer {
         }
     }
 
-    /// Pane, popup and sidebar titles share shaping, placement and their measured border gap.
+    /// Pane and sidebar titles share shaping, placement and their measured border gap.
     pub(super) fn build_border_title(
         &mut self,
         label: &str,

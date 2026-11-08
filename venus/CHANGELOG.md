@@ -2,6 +2,11 @@
 
 ## Unreleased
 
+- VEN-C18: a popup's catalog label sits in a rounded tab continuous with its
+  left and top frame edges, on the terminal background and opacity. The original
+  border-gap title remains when the tab's clearance cannot fit
+  (`eon-popup-name-tab-89wv5`). No wire or terminal geometry change.
+
 - CPU, RAM and disk chips use common yellow/orange/red percentage grades,
   with descriptive hover and accessibility text; CPU use can also turn red
   and keeps the stronger utilization or temperature colour

@@ -3,6 +3,537 @@ use crate::DrawCursor;
 use orbit_protocol::CursorShape;
 
 #[test]
+fn popup_tab_joins_the_left_border_and_returns_into_the_top_edge() {
+    let card = CardFill {
+        bounds: SceneRect {
+            left: 10.0,
+            top: 40.0,
+            width: 300.0,
+            height: 200.0,
+        },
+        radius: 8.0,
+    };
+    let tab = PopupTitleTab {
+        top: 26.0,
+        right: 110.0,
+        left_radius: 14.0,
+        right_radius: 10.0,
+        join_radius: 4.0,
+        title: PopupTitle {
+            label: "Agent".into(),
+            width: 82.0,
+        },
+    };
+    for width in [1.0, 2.0, 3.0] {
+        let mut batch = RectangleBatch::new(400, 300);
+        batch.push_popup_tab_outline(card, &tab, width, palette::CARD_OUTLINE);
+        let ink = painted_rects(&batch).collect::<Vec<_>>();
+        for y in [39.5, 40.5, 41.5, 47.5] {
+            assert!(ink.iter().any(|r| r.contains(10.5, y)), "left seam at {y}");
+        }
+        assert!(
+            !ink.iter().any(|r| r.contains(17.0, 40.5)),
+            "old corner remains"
+        );
+        assert!(
+            ink.iter().any(|r| r.contains(116.0, 40.5)),
+            "right return is missing"
+        );
+        assert!(
+            !ink.iter().any(|r| r.contains(50.0, 40.5)),
+            "stroke crosses title"
+        );
+        let fill = popup_tab_bands(card, &tab, 0.0);
+        assert!(
+            fill.iter().any(|r| r.contains(10.5, 40.5)),
+            "old corner cuts fill"
+        );
+    }
+}
+
+fn popup_title_workspace(
+    metrics: CellMetrics,
+    size: PhysicalSize<u32>,
+    label: &str,
+    vertical_margin: f32,
+) -> WorkspaceScene {
+    use eon_workspace_protocol::v37::{
+        Popup, PopupEntry, PopupGeometry, PopupKey, Sidebar, Snapshot, Tab,
+    };
+    let snapshot = Snapshot {
+        workspace: "s1".into(),
+        active_workspace: "s1".into(),
+        workspaces: vec![eon_workspace_protocol::v37::WorkspaceInfo {
+            id: "s1".into(),
+            name: None,
+            tab_count: 1,
+            attention: None,
+            recency: 0,
+        }],
+        active_tab: "t1".into(),
+        tabs: vec![Tab {
+            id: "t1".into(),
+            directory: b"/tmp".to_vec(),
+            pending: false,
+            selected_pane: None,
+            selected_popup: Some("u1".into()),
+            columns: vec![],
+            popups: vec![Popup {
+                id: "u1".into(),
+                entry: "agent".into(),
+                session: "popup".into(),
+                endpoint: b"/tmp/popup.sock".to_vec(),
+                attention: None,
+            }],
+            attention_rollup: None,
+        }],
+        geometry: PopupGeometry {
+            side_margin: 8.0,
+            vertical_margin,
+        },
+        entries: vec![PopupEntry {
+            id: "agent".into(),
+            label: label.into(),
+            shortcut: PopupKey::Unbound,
+        }],
+        codex_quota: None,
+        claude_quota: None,
+        codex_quota_failure: None,
+        claude_quota_failure: None,
+        running: None,
+        busy: None,
+        sidebar: Sidebar::Closed,
+        attention_queue: vec![],
+    };
+    WorkspaceScene::from_snapshot(&snapshot, size, metrics, 0.0, 0.0, |_, text| {
+        (text.into(), text.len() as f32 * metrics.width)
+    })
+}
+
+fn roomy_popup_title_workspace(
+    metrics: CellMetrics,
+    size: PhysicalSize<u32>,
+    label: &str,
+) -> WorkspaceScene {
+    let mut workspace = popup_title_workspace(
+        metrics,
+        size,
+        label,
+        chrome_title_metrics(metrics).text_height / metrics.scale,
+    );
+    // Keep a full padding band above the title even when large fonts consume the normal bar gap.
+    workspace.header.height = workspace
+        .header
+        .height
+        .min(workspace.chrome.top - metrics.padding);
+    workspace.tab_viewport.height = workspace.header.height;
+    workspace
+}
+
+#[test]
+fn popup_tabs_fit_labels_and_partition_translucent_backgrounds() {
+    for size in [6.0, 16.0, 96.0] {
+        let mut fonts = FontSetup::new(&FontSettings {
+            family: Some("DejaVu Sans Mono".into()),
+            size,
+            ..FontSettings::default()
+        })
+        .unwrap();
+        for scale in [1.0, 1.3, 2.0] {
+            let metrics = fonts.metrics(scale);
+            for width in [80, 400, 2400] {
+                for label in [
+                    "Claude",
+                    "Beadseer",
+                    "A very long popup name ".repeat(30).as_str(),
+                    "שלום",
+                ] {
+                    let workspace =
+                        roomy_popup_title_workspace(metrics, PhysicalSize::new(width, 1800), label);
+                    for border in [1, 2, 3] {
+                        let stroke = physical_outline_width(border, metrics.scale);
+                        let Some(tab) =
+                            PopupTitleTab::new(&mut fonts.font_system, metrics, &workspace, stroke)
+                        else {
+                            assert!(
+                                width < 400 || (width == 400 && size == 96.0),
+                                "unexpected omission: {label}, {width}, {size}, {scale}"
+                            );
+                            continue;
+                        };
+                        let card = workspace.card_fill(workspace.chrome, metrics, stroke);
+                        assert!(
+                            tab.right + tab.join_radius + stroke
+                                <= card.bounds.right() - card.radius
+                        );
+                        assert_eq!(workspace.popup_label(), Some(label));
+                        let mut batch = RectangleBatch::new(width, 1800);
+                        push_popup_tab_backdrop(
+                            &mut batch,
+                            SceneRect {
+                                left: 0.0,
+                                top: workspace.header.bottom(),
+                                width: width as f32,
+                                height: 1800.0 - workspace.header.bottom(),
+                            },
+                            &[(card, palette::TERMINAL_FALLBACK)],
+                            0.8,
+                            &tab,
+                        );
+                        let text_x = card.bounds.left + metrics.padding;
+                        for y in [
+                            (workspace.chrome.top + stroke).ceil() + 0.5,
+                            card.bounds.top + 0.5,
+                        ] {
+                            // The title's two halves each receive exactly one terminal fill.
+                            let pixels = painted_rects(&batch)
+                                .zip(batch.bytes.chunks_exact(VERTEX_SIZE as usize * 6))
+                                .filter(|(rect, _)| rect.contains(text_x + 0.25, y))
+                                .collect::<Vec<_>>();
+                            assert_eq!(
+                                pixels.len(),
+                                1,
+                                "{label}, {width}, {size}, {scale}, {border}, {y}"
+                            );
+                            let alpha = f32::from_ne_bytes(pixels[0].1[20..24].try_into().unwrap());
+                            assert_eq!(alpha, 0.8);
+                        }
+                        let outer = popup_tab_bands(card, &tab, 0.0);
+                        for (index, band) in outer.iter().enumerate() {
+                            assert!(
+                                outer[index + 1..]
+                                    .iter()
+                                    .all(|other| band.intersection(*other).is_none()),
+                                "fill overlaps at {scale}"
+                            );
+                        }
+                        for y in [
+                            (tab.top + tab.right_radius / 2.0).floor() + 0.5,
+                            card.bounds.top - 0.5,
+                        ] {
+                            let band = outer
+                                .iter()
+                                .find(|band| band.top <= y && band.bottom() > y)
+                                .unwrap();
+                            for (x, alpha) in
+                                [(band.right() - 0.25, 0.8), (band.right() + 0.25, 1.0)]
+                            {
+                                let pixels = painted_rects(&batch)
+                                    .zip(batch.bytes.chunks_exact(VERTEX_SIZE as usize * 6))
+                                    .filter(|(rect, _)| rect.contains(x, y))
+                                    .collect::<Vec<_>>();
+                                assert_eq!(
+                                    pixels.len(),
+                                    1,
+                                    "right curve/return at {x},{y}: {size}, {scale}"
+                                );
+                                assert_eq!(
+                                    f32::from_ne_bytes(pixels[0].1[20..24].try_into().unwrap()),
+                                    alpha
+                                );
+                            }
+                        }
+                        let cut = card.bounds.top + rounded_radius(card.bounds, card.radius);
+                        let mut outline = RectangleBatch::new(width, 1800);
+                        outline.push_popup_tab_outline(card, &tab, stroke, palette::CARD_OUTLINE);
+                        outline.clip = Some(SceneRect {
+                            top: cut,
+                            height: workspace.chrome.bottom() - cut,
+                            ..workspace.chrome
+                        });
+                        outline.push_card_outline(
+                            card.bounds,
+                            card.radius,
+                            &[],
+                            stroke,
+                            palette::CARD_OUTLINE,
+                        );
+                        let ink = painted_rects(&outline).collect::<Vec<_>>();
+                        for x in [card.bounds.left + 0.5, card.bounds.right() - 0.5] {
+                            for y in [cut - 0.5, cut + 0.5] {
+                                assert!(
+                                    ink.iter().any(|r| r.contains(x, y)),
+                                    "cut seam at {x},{y}: {size}, {scale}, {border}"
+                                );
+                            }
+                        }
+                        let text = SceneRect {
+                            left: text_x,
+                            top: workspace.chrome.top,
+                            width: tab.title.ink_width(metrics, stroke),
+                            height: chrome_title_metrics(metrics).text_height,
+                        };
+                        assert!(
+                            ink.iter()
+                                .all(|r| r.intersection(text).is_none_or(|overlap| {
+                                    let pixels = text_clip_bounds(overlap);
+                                    pixels.left >= pixels.right || pixels.top >= pixels.bottom
+                                })),
+                            "stroke crosses text box: {size}, {scale}, {border}"
+                        );
+                    }
+                }
+            }
+        }
+    }
+    let metrics = CellMetrics::for_scale(1.0);
+    let (workspace, _) = retained_frame_text_clip(PhysicalSize::new(1280, 800));
+    assert!(
+        PopupTitleTab::new(
+            &mut clipping_test_fonts().font_system,
+            metrics,
+            &workspace,
+            1.0
+        )
+        .is_none()
+    );
+}
+
+#[test]
+fn popup_tabs_clear_the_bar_and_text_or_keep_the_border_gap_title() {
+    let mut fonts = clipping_test_fonts();
+    let default_metrics = CellMetrics::for_scale(1.0);
+    let default_workspace =
+        popup_title_workspace(default_metrics, PhysicalSize::new(1280, 800), "Claude", 4.0);
+    assert!(
+        PopupTitleTab::new(
+            &mut fonts.font_system,
+            default_metrics,
+            &default_workspace,
+            1.0
+        )
+        .is_some(),
+        "the approved default contour must remain visible"
+    );
+    for scale in [1.3, 2.0] {
+        let metrics = CellMetrics::for_scale(scale);
+        let stroke = physical_outline_width(1, metrics.scale);
+        let mut workspace =
+            popup_title_workspace(metrics, PhysicalSize::new(2400, 1800), "Claude", 4.0);
+        let bar_bottom = workspace.chrome.top - stroke - 3.25;
+        workspace.header.height = bar_bottom;
+        workspace.tab_viewport.height = bar_bottom;
+        let tab = PopupTitleTab::new(&mut fonts.font_system, metrics, &workspace, stroke)
+            .expect("fractional bar leaves room for the cap");
+        assert!(tab.top >= bar_bottom.ceil() + 1.0);
+        assert!(tab.top + stroke + 1.0 <= workspace.chrome.top);
+        let card = workspace.card_fill(workspace.chrome, metrics, stroke);
+        let mut batch = RectangleBatch::new(2400, 1800);
+        push_popup_tab_backdrop(
+            &mut batch,
+            SceneRect {
+                left: 0.0,
+                top: bar_bottom,
+                width: 2400.0,
+                height: 1800.0 - bar_bottom,
+            },
+            &[(card, palette::TERMINAL_FALLBACK)],
+            0.8,
+            &tab,
+        );
+        for (rect, quad) in
+            painted_rects(&batch).zip(batch.bytes.chunks_exact(VERTEX_SIZE as usize * 6))
+        {
+            if f32::from_ne_bytes(quad[20..24].try_into().unwrap()) == 0.8 {
+                assert!(
+                    rect.top >= bar_bottom,
+                    "translucent fill over fractional bar: {rect:?}"
+                );
+            }
+        }
+        workspace.header.height = workspace.chrome.top;
+        workspace.tab_viewport.height = workspace.chrome.top;
+        assert!(PopupTitleTab::new(&mut fonts.font_system, metrics, &workspace, stroke).is_none());
+        assert!(
+            chrome::popup_title_row(&workspace, metrics, stroke).is_some(),
+            "zero-gap popup must keep its existing title"
+        );
+    }
+    let metrics = CellMetrics {
+        padding: 12.0,
+        ..CellMetrics::for_scale(2.0)
+    };
+    let stroke = physical_outline_width(3, metrics.scale);
+    assert!(metrics.padding / 3.0 < stroke);
+    let workspace = roomy_popup_title_workspace(metrics, PhysicalSize::new(2400, 1800), "Claude");
+    assert!(
+        PopupTitleTab::new(&mut fonts.font_system, metrics, &workspace, stroke).is_none(),
+        "narrow padding cannot clear the thick stroke"
+    );
+    assert!(
+        chrome::popup_title_row(&workspace, metrics, stroke).is_some(),
+        "thick-stroke fallback must retain the existing title"
+    );
+}
+
+#[test]
+fn popup_title_ink_can_overhang_its_advance_without_touching_the_stroke() {
+    let mut fonts = FontSetup::new(&FontSettings {
+        size: 96.0,
+        ..FontSettings::default()
+    })
+    .unwrap();
+    fonts
+        .font_system
+        .db_mut()
+        .set_sans_serif_family("DejaVu Sans");
+    let mut swash = SwashCache::new();
+    for scale in [1.0, 1.3, 2.0] {
+        let metrics = fonts.metrics(scale);
+        let workspace = roomy_popup_title_workspace(metrics, PhysicalSize::new(2400, 1800), "f");
+        for border in [1, 2, 3] {
+            let stroke = physical_outline_width(border, metrics.scale);
+            let tab =
+                PopupTitleTab::new(&mut fonts.font_system, metrics, &workspace, stroke).unwrap();
+            let title = chrome_title_metrics(metrics);
+            let cell_font = fitted_cell_font(&mut fonts.font_system, metrics, fonts.family, false);
+            let buffer = shape_styled_text(
+                &mut fonts.font_system,
+                metrics,
+                cell_font,
+                &tab.title.label,
+                tab.title.width,
+                title.text_height,
+                DrawStyleKind::Status(glyphon::Wrap::None),
+            );
+            let left = workspace.chrome.left + metrics.padding;
+            let clip = text_clip_bounds(SceneRect {
+                left,
+                top: workspace.chrome.top,
+                width: tab.title.ink_width(metrics, stroke),
+                height: title.text_height,
+            });
+            let card = workspace.card_fill(workspace.chrome, metrics, stroke);
+            let mut outline = RectangleBatch::new(2400, 1800);
+            outline.push_popup_tab_outline(card, &tab, stroke, palette::CARD_OUTLINE);
+            let stroke_pixels = painted_rects(&outline).collect::<Vec<_>>();
+            let mut overhang = 0;
+            for run in buffer.layout_runs() {
+                for glyph in run.glyphs {
+                    let physical = glyph.physical((left, workspace.chrome.top), 1.0);
+                    let ink = swash
+                        .get_image_uncached(&mut fonts.font_system, physical.cache_key)
+                        .unwrap();
+                    assert_eq!(ink.content, glyphon::SwashContent::Mask);
+                    for (index, alpha) in ink.data.iter().enumerate() {
+                        if *alpha == 0 {
+                            continue;
+                        }
+                        let x = physical.x
+                            + ink.placement.left
+                            + (index as u32 % ink.placement.width) as i32;
+                        let y = run.line_y.round() as i32 + physical.y - ink.placement.top
+                            + (index as u32 / ink.placement.width) as i32;
+                        if x as f32 + 0.5 >= left + tab.title.width {
+                            overhang += 1;
+                        }
+                        assert!(
+                            x < clip.right,
+                            "glyph ink clipped: {scale}, {border}, x={x}, clip={clip:?}"
+                        );
+                        assert!(
+                            !stroke_pixels
+                                .iter()
+                                .any(|r| r.contains(x as f32 + 0.5, y as f32 + 0.5)),
+                            "glyph ink touches the curve: {scale}, {border}, {x},{y}"
+                        );
+                    }
+                }
+            }
+            assert!(
+                overhang > 0,
+                "the regression must rasterize ink beyond the 'f' advance"
+            );
+        }
+    }
+}
+
+#[test]
+fn popup_fallback_keeps_rtl_ink_inside_its_measured_border_gap() {
+    let mut fonts = clipping_test_fonts();
+    fonts
+        .font_system
+        .db_mut()
+        .set_sans_serif_family("DejaVu Sans");
+    let mut swash = SwashCache::new();
+    for scale in [1.0, 1.3, 2.0] {
+        let metrics = fonts.metrics(scale);
+        let mut workspace =
+            roomy_popup_title_workspace(metrics, PhysicalSize::new(2400, 1800), "שלום");
+        workspace.header.height = workspace.chrome.top;
+        workspace.tab_viewport.height = workspace.chrome.top;
+        let stroke = physical_outline_width(3, metrics.scale);
+        assert!(PopupTitleTab::new(&mut fonts.font_system, metrics, &workspace, stroke).is_none());
+        let row = chrome::popup_title_row(&workspace, metrics, stroke).unwrap();
+        let available = row.width - metrics.padding * 2.0;
+        let title = PopupTitle::fit(
+            &mut fonts.font_system,
+            metrics,
+            workspace.popup_label().unwrap(),
+            available,
+        );
+        assert_eq!(title.label, "שלום");
+        assert!(
+            title.width < available / 2.0,
+            "layout must use the measured advance, not the full row"
+        );
+        let gap = title.border_gap(row, metrics);
+        let cell_font = fitted_cell_font(&mut fonts.font_system, metrics, fonts.family, false);
+        let buffer = shape_styled_text(
+            &mut fonts.font_system,
+            metrics,
+            cell_font,
+            &title.label,
+            title.width,
+            row.height,
+            DrawStyleKind::Status(glyphon::Wrap::None),
+        );
+        let card = workspace.card_fill(workspace.chrome, metrics, stroke);
+        let mut outline = RectangleBatch::new(2400, 1800);
+        outline.clip = Some(workspace.chrome);
+        outline.push_card_outline(
+            card.bounds,
+            card.radius,
+            &[gap],
+            stroke,
+            palette::CARD_OUTLINE,
+        );
+        let stroke_pixels = painted_rects(&outline).collect::<Vec<_>>();
+        let mut pixels = 0;
+        for run in buffer.layout_runs() {
+            for glyph in run.glyphs {
+                let physical = glyph.physical((row.left + metrics.padding, row.top), 1.0);
+                let ink = swash
+                    .get_image_uncached(&mut fonts.font_system, physical.cache_key)
+                    .unwrap();
+                assert_eq!(ink.content, glyphon::SwashContent::Mask);
+                for (index, alpha) in ink.data.iter().enumerate() {
+                    if *alpha == 0 {
+                        continue;
+                    }
+                    let x = physical.x
+                        + ink.placement.left
+                        + (index as u32 % ink.placement.width) as i32;
+                    let y = run.line_y.round() as i32 + physical.y - ink.placement.top
+                        + (index as u32 / ink.placement.width) as i32;
+                    let (x, y) = (x as f32 + 0.5, y as f32 + 0.5);
+                    assert!(
+                        gap.contains(x, y),
+                        "RTL ink shifted outside its gap: {scale}, {x},{y}, {gap:?}"
+                    );
+                    assert!(
+                        !stroke_pixels.iter().any(|r| r.contains(x, y)),
+                        "fallback RTL ink crosses the frame"
+                    );
+                    pixels += 1;
+                }
+            }
+        }
+        assert!(pixels > 0, "fallback test must rasterize RTL glyphs");
+    }
+}
+
+#[test]
 fn zero_cursor_trail_duration_draws_only_the_unchanged_cursor() {
     let mut scene = padding_scene();
     scene.cursor = Some(DrawCursor {

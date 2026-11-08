@@ -5,6 +5,11 @@ installation, and proven contract changes.
 
 ## Unreleased
 
+- Popup names sit in rounded tabs that join the frame's left and top edges
+  smoothly, with the terminal background and opacity behind the whole name.
+  Tight surfaces retain the original border-gap title (VEN-C18,
+  `eon-popup-name-tab-89wv5`).
+
 - CPU, RAM and disk chips share three configurable use levels: yellow from
   60%, orange from 75% and red from 90%. Each chip has notice, warning and
   critical percentage settings; omitted levels adjust around explicit ones.
