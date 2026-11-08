@@ -565,7 +565,13 @@ end are fixed for safety and by Orbit's history contract (ORB-C17).
 `eon pane history TARGET --edit` opens Scrollback on TARGET from the CLI (see
 [Reading a terminal](USAGE.md#reading-a-terminal)); with Scrollback disabled
 it exits 3 with `unknown-popup`.
-Commands searches and runs Eon commands.
+Commands searches and runs Eon commands, including **Check for updates** and
+**Install update** (search `update`). These run `eon update --check` and
+`eon update --install`, retaining results until Enter and using `[updates]`
+target settings and the CLI's own target/source confirmation. With Commands
+enabled, the Window menu offers **Updates** to open this popup. Its description
+uses Commands' configured `label`. These fixed action names identify the
+documented CLI operations; they add no shortcut or automatic check.
 Sessions lists this window's sessions most recently shown first, the shown
 one last, marking one that needs input: Enter shows the highlighted one, and
 Enter on a name that matches none creates a session with that name.

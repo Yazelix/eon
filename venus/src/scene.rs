@@ -787,6 +787,7 @@ pub struct ShortcutRow {
 pub enum WindowMenuAction {
     Detach,
     Quit,
+    Updates,
     QuitOther { id: String, generation: String },
 }
 
@@ -1418,6 +1419,7 @@ impl DialogScene {
     #[must_use]
     pub fn window_menu(
         running: &eon_workspace_protocol::v37::RunningWindows,
+        entries: &[PopupEntry],
         highlighted: Option<&WindowMenuAction>,
         size: PhysicalSize<u32>,
         metrics: CellMetrics,
@@ -1440,6 +1442,13 @@ impl DialogScene {
                 row("Quit", "Close this window".into(), WindowMenuAction::Quit),
             ],
         )];
+        if let Some(commands) = entries.iter().find(|entry| entry.id == "commands") {
+            groups[0].rows.push(row(
+                "Updates",
+                format!("Search update in {}", commands.label),
+                WindowMenuAction::Updates,
+            ));
+        }
         let mut others = match &running.others {
             None => vec![ShortcutRow::new("", "Loading other windows…")],
             Some(windows) if windows.is_empty() => vec![ShortcutRow::new("", "No other windows")],

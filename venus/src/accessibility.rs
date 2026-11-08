@@ -1266,7 +1266,7 @@ mod tests {
         );
         let action = WindowMenuAction::peer(&b);
         let dialog = |running: &RunningWindows| {
-            DialogScene::window_menu(running, Some(&action), size, metrics, 0.0)
+            DialogScene::window_menu(running, &[], Some(&action), size, metrics, 0.0)
         };
         snapshot.set_dialog(Some(&dialog(&running)));
         let id = snapshot.menu_ids[&action];
@@ -1297,6 +1297,30 @@ mod tests {
         assert_eq!(snapshot.action_target(id, Action::Click), None);
         snapshot.set_dialog(None);
         assert_eq!(snapshot.tree().focus, WINDOW_MENU);
+        let entries = [PopupEntry {
+            id: "commands".into(),
+            label: "Commands".into(),
+            shortcut: PopupKey::Unbound,
+        }];
+        snapshot.set_dialog(Some(&DialogScene::window_menu(
+            &running,
+            &entries,
+            Some(&WindowMenuAction::Updates),
+            size,
+            metrics,
+            0.0,
+        )));
+        let updates = snapshot.menu_ids[&WindowMenuAction::Updates];
+        assert_eq!(snapshot.tree().focus, updates);
+        assert_eq!(
+            snapshot.action_target(updates, Action::Click),
+            Some(AccessibilityTarget::WindowMenu {
+                action: WindowMenuAction::Updates,
+                activate: true,
+            })
+        );
+        snapshot.set_dialog(Some(&dialog(&running)));
+        assert_eq!(snapshot.action_target(updates, Action::Click), None);
     }
 
     use super::*;

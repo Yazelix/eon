@@ -1588,6 +1588,7 @@ impl Application {
             let state = self.window.as_ref()?;
             return Some(DialogScene::window_menu(
                 self.workspace_model.snapshot()?.running.as_ref()?,
+                self.popup_entries(),
                 self.window_menu.highlighted.as_ref(),
                 state.renderer.size(),
                 state.renderer.metrics(),
@@ -1724,6 +1725,17 @@ impl Application {
             WindowMenuAction::Quit => {
                 self.set_window_menu(false);
                 self.begin_quit();
+            }
+            WindowMenuAction::Updates => {
+                self.set_window_menu(false);
+                if let Some(action) = self
+                    .workspace_model
+                    .snapshot()
+                    .and_then(|snapshot| invoke_popup(snapshot, "commands", false))
+                    && self.request_workspace(action)
+                {
+                    self.set_workspace_focus(WorkspaceFocus::Terminal);
+                }
             }
             action @ WindowMenuAction::QuitOther { .. } => {
                 if self

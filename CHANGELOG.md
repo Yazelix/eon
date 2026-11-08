@@ -5,6 +5,11 @@ installation, and proven contract changes.
 
 ## Unreleased
 
+- Commands offers **Check for updates** and **Install update**, with the CLI's
+  target/source confirmation and readable results until Enter. The Window
+  menu's **Updates** entry opens Commands; search `update` to choose an action.
+  Installing affects fresh launches and preserves running work (`eon-update-button-f10d1.4`).
+
 - `eon update --install [--yes] [--json]` upgrades one validated official
   `main`/`edge` Nix profile entry on its own ref and attribute, with target
   confirmation, revalidation and actual selected-build reporting after failure

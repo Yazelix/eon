@@ -36,6 +36,9 @@ order, selection, and popups; Venus draws the visible scene.
   menu stays available with shortcut hints and the sidebar off. Its icon keeps
   the minimum-width rule above. The session pill still opens the Sessions picker;
   the hints-bar version stays read-only.
+  With Commands enabled, **Updates** opens that configured popup; search
+  `update` to check or install through the product CLI's target and consent
+  flow. It shares pointer, keyboard and accessible menu activation.
   Pointer activation waits for release over the pressed row; hover never scrolls.
   Arrow keys or Tab/Shift+Tab choose an action; Enter or Space activates it.
   Escape or a press outside closes the menu without activating what is behind

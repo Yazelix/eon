@@ -472,16 +472,26 @@ way, the same Yazi stays as the tab's Files.
 Commands lists Eon commands you can search and run: new tab, pane or
 window, close or move the tab, quit this window, switch, create, rename or
 close a session, show the session, windows, versions or config
-path, stop old-version windows, and command help. Each line shows the `eon`
+path, stop old-version windows, check for updates, install an update, and
+command help. Each line shows the `eon`
 command it runs. Enter runs it from the popup
 for that tab, with the command's own checks and confirmations. New pane
 closes the popup first, as Alt+M does, and the pane joins the tab's selected
 column. Other actions close the popup when they succeed, except a close from
-the session list, which lists again; listings, stopping old-version windows
-and failures stay until you press Enter. Esc closes it
+the session list, which lists again; listings, stopping old-version windows,
+update results and failures stay until you press Enter. Esc closes it
 without running anything. Stop old-version windows stops every window that
 another build started, so in a window of an older build it also stops the
 windows of newer ones.
+
+Search `update` for **Check for updates** (`eon update --check`) and
+**Install update** (`eon update --install`). Install displays the target and
+source and asks its own `[y/N]` question in the popup's terminal. Both actions
+use the same configured target or safe discovery and refusal guidance as the
+CLI (see [Update](#update)). The Window menu's **Updates** entry opens Commands;
+search `update` there. It is available when Commands is enabled. Installation
+affects fresh launches through the reported launcher; running windows keep
+their builds and terminals.
 
 Sessions (Alt+Shift+S, or Commands > Switch session) lists this window's
 sessions most recently shown first, each by name or ID with its tab count and

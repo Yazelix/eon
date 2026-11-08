@@ -1567,14 +1567,18 @@ names its socket. CLI JSON names a session `session` and a terminal
   `eon` commands: tab, pane and window creation, closing or moving the popup's
   own tab, quitting this window, switching, creating, renaming or closing a
   session (EON-C33), the session and window
-  listings, `window stop previous`, `versions`, `config path` and `--help`. Each
+  listings, `window stop previous`, `versions`, `config path`, `--help`, and
+  EON-C41's `update --check` and `update --install`. Each
   line names the command it runs. Enter runs it in the popup's terminal, with
   that terminal's `EON_TERMINAL` and `EON_TAB`: pane creation and tab moves act
   for the popup's tab under the caller rules above, closing names `EON_TAB`, and
   every command keeps the CLI's own validation, targets and Stop and
-  final-close confirmations; it adds no EONW action. A successful action
+  final-close confirmations; it adds no EONW action. Update modes run
+  the product CLI with the popup's terminal inherited, keeping EON-C41's target
+  and consent flow. A successful action
   ends the popup, except a close from the session list, which shows the
-  list again; a listing, `window stop previous`, or a failure reported while the
+  list again; a listing, `window stop previous`, either update mode, or a
+  failure reported while the
   popup is still open, waits for Enter. "Quit this window" runs `eon quit`
   (EON-C11) as the popup's terminal, so it stops only the popup's own window,
   in an independent window too (EON-C23), with `eon quit`'s confirmation; it

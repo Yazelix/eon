@@ -52,7 +52,7 @@ fn eon_icon_opens_window_controls_without_hints_or_sidebar() {
 
 #[test]
 fn window_menu_projects_summary_and_clips_actions_to_its_scroll_area() {
-    use eon_workspace_protocol::v37::{RunningWindows, WindowEntry, WindowState};
+    use eon_workspace_protocol::v37::{PopupKey, RunningWindows, WindowEntry, WindowState};
     let window = |id: &str, count| WindowEntry {
         window: Some(id.into()),
         generation: format!("g1-{id}"),
@@ -69,6 +69,7 @@ fn window_menu_projects_summary_and_clips_actions_to_its_scroll_area() {
     let project = |running: &RunningWindows, scroll| {
         DialogScene::window_menu(
             running,
+            &[],
             Some(&WindowMenuAction::Detach),
             PhysicalSize::new(800, 500),
             CellMetrics::for_scale(1.0),
@@ -83,6 +84,27 @@ fn window_menu_projects_summary_and_clips_actions_to_its_scroll_area() {
     );
     assert_eq!(empty.menu_rows().count(), 2);
     assert_eq!(empty.groups[1].rows[0].action, "No other windows");
+    let updates = DialogScene::window_menu(
+        &running,
+        &[PopupEntry {
+            id: "commands".into(),
+            label: "Actions".into(),
+            shortcut: PopupKey::Unbound,
+        }],
+        Some(&WindowMenuAction::Updates),
+        PhysicalSize::new(800, 500),
+        CellMetrics::for_scale(1.0),
+        0.0,
+    );
+    let row = updates.menu_rows().last().unwrap();
+    assert_eq!(row.menu_action, Some(WindowMenuAction::Updates));
+    assert_eq!(row.shortcut, "Updates");
+    assert_eq!(row.action, "Search update in Actions");
+    assert!(row.focused);
+    assert_eq!(
+        updates.menu_target_at(row.rect.left + 1.0, row.rect.top + row.rect.height / 2.0),
+        Some(&WindowMenuAction::Updates)
+    );
     running.others = Some(
         (0..32)
             .map(|i| window(&format!("{i:08x}"), Some(i)))

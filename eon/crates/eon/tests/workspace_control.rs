@@ -3672,6 +3672,164 @@ esac
             install_a.to_string()
         );
     }
+    // Commands must reach the product dispatcher and leave stdin in the same
+    // controlling-terminal session for Install's own consent, then retain its result.
+    let commands = root.join("eon-commands");
+    symlink(binary, &commands).unwrap();
+    symlink(binary, stubs.join("eon")).unwrap();
+    let config = root.join("popup-config");
+    fs::create_dir(&config).unwrap();
+    fs::write(
+        config.join("config.toml"),
+        format!(
+            "[updates]\nnix_profile = {:?}\nnix_entry = \"eon+x\"\n",
+            profile.to_str().unwrap()
+        ),
+    )
+    .unwrap();
+    for (mode, answer, manager, interrupt, result, status) in [
+        ("--check", None, "success", None, "checked", 0),
+        ("--install", Some("n\n"), "success", None, "cancelled", 0),
+        ("--install", Some(""), "success", Some(3), "failed", 130),
+        ("--install", Some(""), "success", Some(28), "failed", 130),
+        (
+            "--install",
+            Some("y\n"),
+            "hard-kill",
+            Some(3),
+            "failed",
+            130,
+        ),
+        (
+            "--install",
+            Some("y\n"),
+            "hard-kill",
+            Some(28),
+            "failed",
+            130,
+        ),
+        ("--install", Some("y\n"), "fail", None, "failed", 1),
+        ("--install", Some("y\n"), "success", None, "installed", 0),
+    ] {
+        executable(
+            &stubs.join("fzf"),
+            format!(
+                "#!/bin/sh\nwhile IFS=\"$(printf '\\t')\" read -r index rest; do\n\
+                 case \"$rest\" in *'eon update {mode}') printf '%s\\tchosen\\n' \"$index\";; esac\ndone\n"
+            ),
+        );
+        fs::write(root.join("mode"), manager).unwrap();
+        let (mut leader, device) = pseudo_terminal();
+        let flags = unsafe { libc::fcntl(device.as_raw_fd(), libc::F_GETFL) };
+        let mut command = eon_command(&commands);
+        command
+            .env("PATH", std::env::join_paths(&path).unwrap())
+            .env("HOME", root.join("home"))
+            .env("EON_CONFIG_HOME", &config)
+            .env("EON_CURL", &curl)
+            .env("EON_TAB", "t1")
+            .stdin(Stdio::from(device.try_clone().unwrap()))
+            .stdout(Stdio::from(device.try_clone().unwrap()))
+            .stderr(Stdio::from(device.try_clone().unwrap()));
+        // SAFETY: only the child acquires this fresh private controlling terminal.
+        unsafe {
+            command.pre_exec(|| {
+                if libc::setsid() == -1 || libc::ioctl(libc::STDIN_FILENO, libc::TIOCSCTTY, 0) == -1
+                {
+                    return Err(std::io::Error::last_os_error());
+                }
+                Ok(())
+            });
+        }
+        let mut child = ManagedChild(command.spawn().unwrap());
+        let read_until = |leader: &mut fs::File, marker: &[u8]| {
+            let deadline = Instant::now() + Duration::from_secs(10);
+            let mut text = Vec::new();
+            while !text.windows(marker.len()).any(|word| word == marker) {
+                assert!(
+                    Instant::now() < deadline,
+                    "{mode}: no output marker: {text:?}"
+                );
+                let mut polled = libc::pollfd {
+                    fd: leader.as_raw_fd(),
+                    events: libc::POLLIN,
+                    revents: 0,
+                };
+                if unsafe { libc::poll(&mut polled, 1, 100) } > 0 {
+                    let mut bytes = [0; 4096];
+                    let count = leader.read(&mut bytes).unwrap();
+                    assert!(count > 0, "{mode}: popup ended: {text:?}");
+                    text.extend_from_slice(&bytes[..count]);
+                }
+            }
+            String::from_utf8(text).unwrap()
+        };
+        if let Some(answer) = answer {
+            let prompt = read_until(&mut leader, b"[y/N] ");
+            assert!(prompt.contains(profile.to_str().unwrap()), "{prompt}");
+            assert!(prompt.contains("eon+x"), "{prompt}");
+            assert!(!root.join("upgrade-argv").exists());
+            leader.write_all(answer.as_bytes()).unwrap();
+        }
+        if let Some(interrupt) = interrupt {
+            if manager == "hard-kill" {
+                wait_for(&root.join("manager-pid"));
+            }
+            // Terminal ISIG sends Ctrl+C/Ctrl+\ to the whole foreground group.
+            leader.write_all(&[interrupt]).unwrap();
+        }
+        let output = read_until(&mut leader, b"Press Enter to close");
+        let expected = if mode == "--check" {
+            "Update: available".into()
+        } else {
+            format!("Result: {result}")
+        };
+        assert!(output.contains(&expected), "{output}");
+        if interrupt.is_some() {
+            assert!(output.contains("Selection: unchanged"), "{output}");
+            assert!(output.contains("interrupted"), "{output}");
+        }
+        assert!(
+            child.0.try_wait().unwrap().is_none(),
+            "result was not retained"
+        );
+        assert_eq!(
+            unsafe { libc::fcntl(device.as_raw_fd(), libc::F_GETFL) },
+            flags
+        );
+        leader.write_all(b"\n").unwrap();
+        assert_eq!(wait_for_exit(&mut child.0).code(), Some(status));
+        if answer == Some("y\n") {
+            assert_eq!(
+                fs::read_to_string(root.join("upgrade-argv")).unwrap(),
+                format!(
+                    "profile\nupgrade\n--profile\n{}\n--refresh\n--\neon+x\n",
+                    profile.display()
+                )
+            );
+            fs::remove_file(root.join("upgrade-argv")).unwrap();
+        } else {
+            assert!(!root.join("upgrade-argv").exists());
+        }
+        if manager == "hard-kill" {
+            let pid = fs::read_to_string(root.join("manager-pid")).unwrap();
+            assert!(!process::exists(pid.trim().parse().unwrap()));
+            fs::remove_file(root.join("manager-pid")).unwrap();
+        }
+        let selected: serde_json::Value =
+            serde_json::from_slice(&fs::read(root.join("listing.json")).unwrap()).unwrap();
+        assert_eq!(
+            &selected,
+            if result == "installed" {
+                &install_b
+            } else {
+                &install_a
+            }
+        );
+        fs::write(root.join("listing.json"), install_a.to_string()).unwrap();
+        fs::remove_file(&profile).unwrap();
+        symlink("profile-1-link", &profile).unwrap();
+    }
     let output = check(
         &root.join("home/.nix-profile/bin/eon"),
         &["--install".as_ref(), "--yes".as_ref(), "--json".as_ref()],
