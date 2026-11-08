@@ -5,6 +5,13 @@ installation, and proven contract changes.
 
 ## Unreleased
 
+- `eon-bench memory` measures display-free server, empty/filled terminal and
+  native reference-client PSS for Eon, Nix-pinned tmux and Zellij, with
+  isolated processes, raw PSS/RSS/anonymous-PSS evidence and median/p05–p95
+  tables. Venus client memory remains unmeasured; Eon codec-client attribution
+  is a separate diagnostic
+  (`eon-benchmarks-xl2bp.5`).
+
 - Commands offers **Check for updates** and **Install update**, with the CLI's
   target/source confirmation and readable results until Enter. The Window
   menu's **Updates** entry opens Commands; search `update` to choose an action.

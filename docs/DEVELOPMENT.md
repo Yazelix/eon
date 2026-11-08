@@ -290,6 +290,73 @@ Below 20 samples the p95 is the slowest sample.
 Samples are the data; the summaries are recomputed from them. The `pty` layer
 counts `pty_bytes` and `pty_reads`.
 
+### Display-free memory
+
+`nix run .#bench -- memory --out DIR` measures Linux PSS, with RSS and
+anonymous PSS alongside it, at 80×24. Eon, tmux and Zellij are interleaved
+by round: two warmup rounds, then ten samples per cell. `--quick` is smoke
+only. `--subject eon|tmux|zellij` selects subjects; the wrapper supplies
+Nix-pinned tools. Absolute `--orbit`, `--eonbase`, `--tmux` and `--zellij`
+paths override them. `--eonbase` names the unwrapped executable so the harness
+can supply its private Orbit and diagnostic presentation.
+
+Each subject/round has fresh empty and filled launches, private HOME/XDG
+roots and sockets, and bubblewrap PID/network namespaces with
+`--die-with-parent`. Root is read-only; output and private tmp/HOMEs are
+writable. Spawned commands also use parent-death guards. Namespace teardown
+contains daemonized servers after failure, interruption or harness death.
+No ambient runtime, profile or desktop is used.
+
+| Measure | Included process set / calculation |
+|---|---|
+| `server-start` | Server plus one empty terminal. Eon includes its real terminal-mode eonbase supervisor, its Orbit host and Bend worker; reference engines live inside their servers. |
+| `empty-terminal`, `filled-terminal` | For every subject, `(total at 50 − total at 1) / 49`, with server and terminal engines included. Eon has one supervisor/first terminal plus 49 independent Orbit host/worker pairs; it measures a terminal-engine cohort, not 50 Eon workspace records. |
+| `client-50-filled` | After `(server + native frontend)` minus before `(server)`, with 50 filled terminals, for tmux and Zellij on private PTYs. **Eon's real Venus client is not yet measured**; `eon-benchmarks-xl2bp.18` owns that row. |
+| `diagnostic-supervisor-alone` | Eon supervisor only, separate from the startup comparison. |
+| `diagnostic-codec-server-attach` | Eon server/engine PSS change for a diagnostic canonical-codec client attached to all 50 hosts. It excludes the diagnostic frontend, verifies every reader and connection around sampling, and is separate from native-client comparisons. |
+
+Eon trails tmux in the recorded startup, empty-terminal and filled-terminal
+PSS comparisons. `eon-ypy0a` owns reducing those gaps; published results retain
+the losses and name that fix bead.
+
+Every workload child is excluded. The filled payload is exactly 10,000
+numbered 72-column ASCII lines, CRLF-separated without a final newline. The
+completion writer obtains a DSR reply before sampling; children verify their
+PTY grid and hold the session open. The codec diagnostic checks all Orbit
+viewports against the last 24 lines and records history counts. Native
+clients are checked through client listings and the focused-viewport dump.
+Tmux and Zellij use 10,000 history rows and no status/plugin panes; Orbit uses
+its runtime byte budget. Equal emitted bytes do not guarantee equal retained
+history. GUI/GPU memory and leak bounds are outside this suite.
+
+Zellij is background-created with a layout. Its pinned background mode starts
+at 50×50, so a temporary native client establishes 80×24 and detaches before
+output. Setup allocations may remain; this is not a never-attached server.
+Eon similarly uses its excluded diagnostic presentation to establish its first
+grid, then detaches it before output.
+
+`--settle-ms` defaults to 1000; `--deadline` bounds each subject launch at
+300 s. Shared `--max-load`, `--load-wait` and `--cpus` controls apply. No quiet
+window is reserved, and actual load is recorded beside each sample/snapshot.
+Before isolation, `live-artifacts.json` records observed live executable-path
+and backing-inode matches for the candidate Orbit/eonbase binaries (Nix may
+hardlink identical executables under different store paths). Other mappings and background
+applications remain uncontrolled. RSS sums double-count shared pages; PSS is
+the primary comparison and anonymous PSS gives a second view.
+
+`result.json` uses suite schema 1. For each metric (`pss_bytes`, `rss_bytes`,
+`pss_anon_bytes`), sample counters `<metric>_before`, `<metric>_after` and
+`denominator` define `(after − before) / denominator`; absolute measures use
+zero before. Signed deltas are preserved. Seconds are collection time, not
+throughput. `summary.md` reports MiB median and nearest-rank p05–p95 (with ten
+samples, min–max), separating diagnostics and the unmeasured Venus row.
+`evidence/` retains exact commands/configuration, completion reports, oracle
+records, PID/start-time/parent identities, process sets, and every raw
+`smaps_rollup`. Empty sets, missing/reused processes, missing fields and
+failed/disconnected diagnostic readers fail the run. Incomplete runs retain
+evidence and remove result/summary. These Linux measures follow the four
+axes of Superlogical Rex's comparison, not its macOS `phys_footprint` values.
+
 ### Native idle input response
 
 `eon-bench response --eon PATH --out DIR` is an on-demand Linux/Wayland test,

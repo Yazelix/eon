@@ -7,6 +7,7 @@ mod environment;
 pub mod floor;
 mod json;
 mod kitten;
+pub mod memory;
 pub mod orbit;
 pub mod pty;
 pub mod response;

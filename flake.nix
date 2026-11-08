@@ -1070,8 +1070,8 @@
           };
           # The benchmark harness (docs/DEVELOPMENT.md), a development tool
           # outside Eon's closure. eon-test runs its tests. Its wrapper names
-          # what the orbit suite runs: the release Orbit, vtebench's scripts
-          # and the tools they call, and kitty's kitten (only that output).
+          # the release Orbit, vtebench's scripts and their tools, kitty's
+          # kitten, and memory's supervisor, reference servers and isolation.
           benchPackage = pkgs.rustPlatform.buildRustPackage {
             pname = "eon-bench";
             inherit ((builtins.fromTOML (builtins.readFile ./eon/tools/eon-bench/Cargo.toml)).package) version;
@@ -1088,6 +1088,10 @@
             postFixup = ''
               wrapProgram "$out/bin/eon-bench" \
                 --set-default EON_BENCH_ORBIT ${orbitPackage}/bin/yazelix-orbit \
+                --set-default EON_BENCH_EONBASE ${eonbasePackage}/bin/.eonbase-wrapped \
+                --set-default EON_BENCH_TMUX ${pkgs.tmux}/bin/tmux \
+                --set-default EON_BENCH_ZELLIJ ${pkgs.zellij}/bin/zellij \
+                ${lib.optionalString pkgs.stdenv.isLinux "--set-default EON_BENCH_BWRAP ${pkgs.bubblewrap}/bin/bwrap"} \
                 --set-default EON_BENCH_VTEBENCH ${vtebenchSource}/benchmarks \
                 --set-default EON_BENCH_VTEBENCH_PATH ${
                   lib.makeBinPath (

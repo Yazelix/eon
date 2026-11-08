@@ -796,13 +796,13 @@ fn writer_report(path: &Path) -> Result<(f64, u64, u64), String> {
 }
 
 /// The harness's client: reads whole ORBS messages with the shared codec.
-struct Client {
+pub(crate) struct Client {
     stream: UnixStream,
     reader: BufReader<UnixStream>,
 }
 
 impl Client {
-    fn new(stream: UnixStream) -> Result<Self, String> {
+    pub(crate) fn new(stream: UnixStream) -> Result<Self, String> {
         stream
             .set_read_timeout(Some(READ_POLL))
             .map_err(|error| format!("socket: {error}"))?;
@@ -824,7 +824,11 @@ impl Client {
 
     /// Hello, then a resize to the grid; done at the first frame of the grid,
     /// within `SETUP_WAIT`.
-    fn attach(&mut self, rows: u16, cols: u16) -> Result<(), String> {
+    pub(crate) fn attach(
+        &mut self,
+        rows: u16,
+        cols: u16,
+    ) -> Result<Box<orbit_protocol::Frame>, String> {
         let start = Instant::now();
         let mut waiting = || {
             suite::interrupt::check()?;
@@ -866,7 +870,7 @@ impl Client {
                 (ServerMessage::Frame(frame), _)
                     if (frame.dimensions.rows, frame.dimensions.cols) == (rows, cols) =>
                 {
-                    return Ok(());
+                    return Ok(frame);
                 }
                 (ServerMessage::Failure(failure), _) => {
                     return Err(format!("Orbit refused the resize: {failure:?}"));
@@ -876,7 +880,7 @@ impl Client {
         }
     }
 
-    fn discard_in_background(self) -> Result<Reader, String> {
+    pub(crate) fn discard_in_background(self) -> Result<Reader, String> {
         let Self { stream, mut reader } = self;
         stream
             .set_read_timeout(None)
@@ -1057,7 +1061,7 @@ impl Received {
 }
 
 /// The client's reader thread.
-struct Reader {
+pub(crate) struct Reader {
     /// Holds the connection open until the reader is done.
     _stream: UnixStream,
     state: Arc<Mutex<Received>>,
@@ -1065,6 +1069,17 @@ struct Reader {
 }
 
 impl Reader {
+    pub(crate) fn ensure_connected(&self) -> Result<(), String> {
+        let state = self.state.lock().expect("received");
+        if let Some(error) = &state.error {
+            return Err(format!("client decoder: {error}"));
+        }
+        if state.exited.is_some() || self.handle.is_finished() {
+            return Err("client disconnected".into());
+        }
+        Ok(())
+    }
+
     fn cpu_ns(&self) -> Option<u64> {
         procfs::thread_cpu_ns(self.state.lock().expect("received").thread?)
     }
@@ -1072,12 +1087,15 @@ impl Reader {
     /// Waits until no message has arrived for `QUIET`, so frames still
     /// queued when the setup or the workload ends are read; false when
     /// messages still arrive after `QUIET_WAIT`.
-    fn wait_quiet(&self) -> bool {
+    pub(crate) fn wait_quiet(&self) -> bool {
         let start = Instant::now();
         while start.elapsed() < QUIET_WAIT {
+            if self.ensure_connected().is_err() {
+                return false;
+            }
             let last = self.state.lock().expect("received").last_message_ns;
             if monotonic_ns().saturating_sub(last) >= QUIET.as_nanos() as u64 {
-                return true;
+                return self.ensure_connected().is_ok();
             }
             std::thread::sleep(Duration::from_millis(5));
         }
@@ -1085,7 +1103,7 @@ impl Reader {
     }
 
     /// Closes the connection and ends the reader, discarding its counts.
-    fn close(self) -> Result<(), String> {
+    pub(crate) fn close(self) -> Result<(), String> {
         let _ = self._stream.shutdown(Shutdown::Both);
         let start = Instant::now();
         while !self.handle.is_finished() {
@@ -1224,7 +1242,7 @@ fn table(result: &RunResult) -> String {
 }
 
 /// Orbit's processes and this harness's threads, read from `/proc` (Linux).
-mod procfs {
+pub(crate) mod procfs {
     use std::path::Path;
 
     /// Orbit's host and its Bend worker.
@@ -1365,6 +1383,98 @@ mod tests {
     use orbit_protocol::session::ServerMessage;
 
     use super::Received;
+
+    #[test]
+    fn a_frame_followed_by_eof_or_decode_failure_is_not_a_live_client() {
+        use orbit_protocol::{
+            Capabilities, Cell, CellStyle, CellWidth, Colors, Cursor, CursorShape, Dimensions,
+            Frame, PALETTE_LEN, Rgb, Row, Screen, ScrollPosition, StyleColor, Underline,
+        };
+        use std::{
+            io::Write,
+            os::unix::net::UnixStream,
+            time::{Duration, Instant},
+        };
+        let frame = Frame {
+            revision: 1,
+            dimensions: Dimensions { cols: 1, rows: 1 },
+            screen: Screen::Primary,
+            scroll_position: ScrollPosition::default(),
+            title: String::new(),
+            working_directory: String::new(),
+            capabilities: Capabilities { hyperlinks: true },
+            colors: Colors {
+                background: Rgb::BLACK,
+                foreground: Rgb::BLACK,
+                cursor: None,
+                palette: [Rgb::BLACK; PALETTE_LEN],
+            },
+            cursor: Cursor {
+                visible: false,
+                blinking: false,
+                password_input: false,
+                shape: CursorShape::Bar,
+                viewport: None,
+            },
+            rows: vec![Row {
+                wrapped: false,
+                wrap_continuation: false,
+                cells: vec![Cell {
+                    width: CellWidth::Narrow,
+                    text: "x".into(),
+                    hyperlink: String::new(),
+                    style: CellStyle {
+                        foreground: StyleColor::None,
+                        background: StyleColor::None,
+                        underline_color: StyleColor::None,
+                        bold: false,
+                        italic: false,
+                        faint: false,
+                        blink: false,
+                        inverse: false,
+                        invisible: false,
+                        strikethrough: false,
+                        overline: false,
+                        selected: false,
+                        protected: false,
+                        underline: Underline::None,
+                    },
+                }],
+            }],
+            graphics: None,
+        };
+        let bytes =
+            orbit_protocol::session::encode_server_message(&ServerMessage::Frame(Box::new(frame)))
+                .unwrap();
+        for corrupt in [false, true] {
+            let (mut server, stream) = UnixStream::pair().unwrap();
+            let reader = super::Client::new(stream)
+                .unwrap()
+                .discard_in_background()
+                .unwrap();
+            server.write_all(&bytes).unwrap();
+            let start = Instant::now();
+            while reader.state.lock().unwrap().frames == 0 {
+                assert!(start.elapsed() < Duration::from_secs(2));
+                std::thread::sleep(Duration::from_millis(5));
+            }
+            assert!(reader.wait_quiet());
+            if corrupt {
+                server
+                    .write_all(&[0; orbit_protocol::session::HEADER_BYTES])
+                    .unwrap();
+            } else {
+                drop(server);
+            }
+            let start = Instant::now();
+            while reader.ensure_connected().is_ok() {
+                assert!(start.elapsed() < Duration::from_secs(2));
+                std::thread::sleep(Duration::from_millis(5));
+            }
+            assert!(!reader.wait_quiet());
+            reader.close().unwrap();
+        }
+    }
 
     /// Revisions that skip count as gaps and repeats as repeats; the frame
     /// times place the last frame against the reply.

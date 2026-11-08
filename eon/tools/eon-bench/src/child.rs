@@ -18,7 +18,7 @@ use std::{
     time::{Duration, Instant},
 };
 
-pub const USAGE: &str = "usage: eon-bench child DIR --rows R --cols C [--setup FILE] \
+pub const USAGE: &str = "usage: eon-bench child DIR --rows R --cols C [--setup FILE] [--release-wait SECONDS] \
                          [--stdout FILE] -- PROGRAM [ARGS...]";
 
 /// How long the child waits for the grid, the go and the release.
@@ -32,6 +32,7 @@ pub struct Options {
     cols: u16,
     setup: Option<PathBuf>,
     stdout: Option<PathBuf>,
+    release_wait: Duration,
     program: Vec<String>,
 }
 
@@ -45,6 +46,7 @@ pub fn options(arguments: &[String]) -> Result<Options, String> {
         return Err(USAGE.into());
     };
     let (mut rows, mut cols, mut setup, mut stdout) = (None, None, None, None);
+    let mut release_wait = None;
     for pair in rest.chunks(2) {
         let [flag, value] = pair else {
             return Err(USAGE.into());
@@ -61,6 +63,9 @@ pub fn options(arguments: &[String]) -> Result<Options, String> {
             "--cols" => cols.replace(size()?).is_some(),
             "--setup" => setup.replace(PathBuf::from(value)).is_some(),
             "--stdout" => stdout.replace(PathBuf::from(value)).is_some(),
+            "--release-wait" => release_wait
+                .replace(Duration::from_secs(crate::suite::number(flag, value)?))
+                .is_some(),
             _ => return Err(USAGE.into()),
         };
         if taken {
@@ -76,6 +81,7 @@ pub fn options(arguments: &[String]) -> Result<Options, String> {
         cols: cols.ok_or(USAGE)?,
         setup,
         stdout,
+        release_wait: release_wait.unwrap_or(RELEASE_WAIT),
         program: program.to_vec(),
     })
 }
@@ -117,7 +123,7 @@ pub fn run(options: &Options) -> Result<u8, String> {
     publish(&options.dir.join("done"), &code.to_string())?;
     let release = options.dir.join("release");
     // Past the wait the harness is gone; exit anyway.
-    let _ = wait_until(RELEASE_WAIT, "the release", || release.exists());
+    let _ = wait_until(options.release_wait, "the release", || release.exists());
     Ok(code)
 }
 

@@ -9863,7 +9863,7 @@ fn quit_reports_unknown_counts_and_preserves_unavailable_discovery() {
     let listener = generation_listener(&runtime, &id);
     // An older supervisor rejects inspections in its own framing, as in the lifecycle harness.
     let server = thread::spawn(move || {
-        for _ in 0..3 {
+        for _ in 0..4 {
             let (mut stream, _) = listener.accept().unwrap();
             assert!(matches!(
                 decode_request(&read_request(&mut stream)).unwrap().action,
@@ -9878,6 +9878,20 @@ fn quit_reports_unknown_counts_and_preserves_unavailable_discovery() {
             stream.write_all(&failure).unwrap();
         }
     });
+    let output = quit_command(&root)
+        .args(["window", "ls", "--json"])
+        .output()
+        .unwrap();
+    assert!(output.status.success(), "{output:?}");
+    let listed: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
+    let short = listed["windows"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|window| window["generation"] == id)
+        .unwrap()["short_id"]
+        .as_str()
+        .unwrap();
     for json in [false, true] {
         let mut command = quit_command(&root);
         command.arg("quit");
@@ -9895,8 +9909,7 @@ fn quit_reports_unknown_counts_and_preserves_unavailable_discovery() {
         };
         assert!(
             detail.contains(&format!(
-                "window {} name=- state=incompatible terminals=unknown",
-                &id[3..7]
+                "window {short} name=- state=incompatible terminals=unknown"
             )),
             "{detail}"
         );
@@ -12933,7 +12946,10 @@ fn window_attach_runs_the_build_that_started_its_generation() {
     );
     assert_eq!(unrecorded.status.code(), Some(1));
     let error = String::from_utf8_lossy(&unrecorded.stderr);
-    assert!(error.starts_with("eon: Eon window 0000 "), "{error}");
+    assert!(
+        error.starts_with(&format!("eon: Eon window {short} ")),
+        "{error}"
+    );
     assert!(!error.contains(&id), "{error}");
     assert!(error.contains("EONW 11"), "{error}");
     assert!(
