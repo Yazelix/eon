@@ -407,6 +407,7 @@ impl Orbit {
             match self.master.write(bytes) {
                 Ok(0) => writes.clear(),
                 Ok(written) => {
+                    crate::host::bench_trace("pty_write", written);
                     drop(writes.drain(..written));
                     // The typing's last byte reached the PTY now (ORB-C5).
                     if self.typed_queued > 0 && self.typed_queued <= written {
@@ -734,6 +735,7 @@ impl Orbit {
             self.resize(size)?;
             return Ok(Effect::Resize);
         }
+        crate::host::bench_trace("input_encode", "");
         let key = matches!(request, ClientMessage::Key(_));
         let typing = match &request {
             ClientMessage::Key(event) => event.action != session::KeyAction::Release,
@@ -742,11 +744,14 @@ impl Orbit {
         };
         let bytes = encode_input(&self.terminal, self.surface, request)?;
         if bytes.is_empty() {
+            crate::host::bench_trace("input_quiet", "");
             return Ok(Effect::Quiet);
         }
         if !self.writes.push(&bytes) {
+            crate::host::bench_trace("input_rejected", "pty-full");
             return Ok(Effect::Full);
         }
+        crate::host::bench_trace("input_encoded", bytes.len());
         if typing {
             self.typed_queued = self.writes.0.borrow().len();
         }
@@ -871,6 +876,7 @@ fn spawn_pty_child(command: &[OsString], cols: u16, rows: u16) -> io::Result<(Fi
         .stdin(Stdio::from(stdin))
         .stdout(Stdio::from(stdout))
         .stderr(Stdio::from(slave))
+        .env_remove("EON_BENCH_TRACE")
         .env("TERM", "eon")
         .env("COLORTERM", "truecolor");
     // SAFETY: Only async-signal-safe syscalls execute between fork and exec.

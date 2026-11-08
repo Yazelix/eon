@@ -9,6 +9,7 @@ mod json;
 mod kitten;
 pub mod orbit;
 pub mod pty;
+pub mod response;
 mod result;
 mod sha256;
 mod stats;

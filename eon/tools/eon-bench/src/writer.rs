@@ -121,13 +121,13 @@ fn wait_for_reply(input: &mut (impl Read + AsRawFd), timeout: Duration) -> Resul
 /// The terminal's input without line editing or echo, so the reply arrives
 /// unbuffered and is not echoed into the output being measured; output
 /// processing, such as ONLCR, stays as it was. Dropping it restores the mode.
-struct RawInput {
+pub(crate) struct RawInput {
     fd: std::os::fd::RawFd,
     saved: libc::termios,
 }
 
 impl RawInput {
-    fn enter(input: &File) -> std::io::Result<Self> {
+    pub(crate) fn enter(input: &File) -> std::io::Result<Self> {
         let fd = input.as_raw_fd();
         // SAFETY: termios is plain data that tcgetattr fills on success.
         let mut saved = unsafe { std::mem::zeroed::<libc::termios>() };

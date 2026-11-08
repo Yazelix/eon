@@ -46,6 +46,9 @@ installation, and proven contract changes.
   build to its revision; builds without one never report an update as
   available.
   (`eon-update-button-f10d1.2`, EON-C41).
+- `eon-bench response` runs an isolated, on-demand idle input-response test,
+  with native clicks/keys, visible-response checks and stage diagnostics
+  (`eon-stress-responsive-ap1j6`).
 - Agents sidebar rows use a pane's pinned name ahead of the agent's own name,
   keeping the app icon. The attention inbox does the same for panes in the shown
   session (`eon-sidebar-pinned-name-asubh`).

@@ -290,6 +290,120 @@ Below 20 samples the p95 is the slowest sample.
 Samples are the data; the summaries are recomputed from them. The `pty` layer
 counts `pty_bytes` and `pty_reads`.
 
+### Native idle input response
+
+`eon-bench response --eon PATH --out DIR` is an on-demand Linux/Wayland test,
+outside the default `eon-test` run. It starts its own headless Sway, virtual
+keyboard/pointer primer, D-Bus, HOME, configuration, state and two short runtime
+roots. It never uses the calling desktop's display, seat, D-Bus or Eon root.
+The candidate must be a Nix store executable; build it with an out-link so GC
+cannot remove it between build and observation. The probe does not build,
+install, refresh a profile or create machine stress.
+
+For example, from the candidate checkout, with an existing private artifact
+directory in `response_root`:
+
+```sh
+nix build .#default --out-link "$response_root/candidate"
+nix build .#bench --out-link "$response_root/bench"
+nix shell --inputs-from . nixpkgs#sway nixpkgs#wdotool nixpkgs#grim nixpkgs#dbus nixpkgs#coreutils \
+  --command "$response_root/bench/bin/eon-bench" response \
+  --eon "$response_root/candidate/bin/eon" --out "$response_root/idle" --samples 3
+```
+
+Follow the active machine coordinator's load gate and heavy-command wrapper for
+the builds. `--out` must not exist. The probe creates private directories below
+`/run/user/<uid>`; the Eon root must fit the existing 19-byte limit. No seed from
+the person's Zoxide database is needed: the probe dismisses its startup picker
+with the documented Escape action after the surface is presented. All terminals
+run the benchmark's raw-input fixture, including its configured Git popup.
+
+Cases cover tab clicks and Ctrl+Tab, pane clicks and Alt+J, column-terminal
+clicks and Alt+L, popup opening, the Shortcuts header button and Alt+/,
+an attention-inbox filter click, typing and an eight-key burst. A control
+checks separate native ingress and consumption for the Shortcuts dialog key
+and inside click, without leaking either into a terminal. Each tab, pane, popup
+and column switch is followed by Escape (return keyboard focus from chrome,
+without selecting or reattaching a terminal), then a typed key: only that fixture may
+receive it, and its visible counter must increment.
+The fixture draws its identity and response counter as high-contrast terminal
+cells, beside the received key and count. The compositor capture must contain
+the expected identity/counter; a model update or GPU submission alone cannot
+pass. Local dialogs and expanded-column focus use image regions calibrated
+against the opposite state.
+Warm measurements capture only the response region to reduce copy and file I/O;
+each sample records its screen rectangle. Calibration and the cold popup use
+full-frame captures. The probe keeps setup inputs separate from measured inputs and never retries a
+failed measured action. It continues collecting after a correlated visible
+response with late or uncertain timing, and exits unsuccessfully at the end.
+Missing, rejected or uncorrelated responses stop the run to keep later samples
+from inheriting an unsettled action. Sway uses headless pixman rendering; Venus
+selects its Vulkan adapter normally. The actual adapter and software flag are
+recorded in result.json environment.gpu_adapters. A software-adapter run does
+not establish hardware GPU, physical scanout, IME or stress performance.
+
+The default is 100 repetitions per warm case and a 250 ms warm response budget,
+overridable with `--samples` and `--bound-ms`. This is a test performance budget,
+not a product latency guarantee or a runtime configuration default. Captures
+bracket visible response time: an upper bound within budget passes, a lower
+bound beyond budget is late, and an interval crossing the budget is inconclusive.
+A cold popup observation runs once with a separate six-second budget. Each
+burst records all eight send times and their common final cumulative response;
+its upper bound covers every key in that burst. A missing response gets a
+ten-second observation and thirty-second drain, then
+fails with its last observed stages; absence alone does not prove permanent loss.
+
+`DIR/result.json` uses the separate `eon-bench-response` schema 1. It records
+settings, environment and artifact identities, every attempted sample and its
+stage/capture timestamps, outcomes and median/nearest-rank p95/min/max visible
+upper bounds. Absolute monotonic nanoseconds are strings to preserve precision.
+`trace.tsv` retains the raw opt-in diagnostics; logs, reference images and failed
+before/after PPM captures stay beside it. Fewer than twenty samples make p95 the
+maximum. A failed or incomplete run exits 1 and retains its result; exit 2 is a
+usage error. Compare cases separately; aggregate numbers mix different actions.
+
+Four sensitivity runs must fail, detecting distinct causes:
+
+```sh
+eon-bench response --eon "$response_root/candidate/bin/eon" \
+  --out "$response_root/drop" --samples 1 --sensitivity drop
+eon-bench response --eon "$response_root/candidate/bin/eon" \
+  --out "$response_root/missing" --samples 1 --sensitivity missing
+eon-bench response --eon "$response_root/candidate/bin/eon" \
+  --out "$response_root/delay" --samples 1 --sensitivity delay
+eon-bench response --eon "$response_root/candidate/bin/eon" \
+  --out "$response_root/invalid" --samples 1 --sensitivity invalid
+```
+
+`drop` records an explicit fixture discard (`fixture-dropped`). `missing`
+records receipt but omits the visible effect without refusal (`missing-response`).
+`delay` holds the response for twice the budget (`late`, or `inconclusive` if
+capture timing straddles the budget). These faults arm only for the measured
+typing case and change only the private fixture. `invalid` suppresses one driver send; it must report unobserved ingress
+as a harness failure, without claiming a product drop. Production input routing
+has no fault-injection switch. The retained
+stages distinguish missing native ingress, explicit refusal, a received key with
+no effect, and a late visible response. No trace, ambiguous visibility or a
+trace sequence gap/loss is a failure, never proof that an input was dropped.
+
+Venus, Runtime and Orbit emit diagnostics only when `EON_BENCH_TRACE` names the
+probe's private nonblocking Unix datagram socket. The probe enables this only
+for its own product processes. Orbit strips the variable at the PTY child
+boundary; the private fixture receives its collector explicitly as an argument.
+Input records contain coarse key/modifier/pointer classes and press/release
+states, without key codes, typed characters or pointer coordinates. Other
+records contain stage names, identities, counts, geometry and adapter metadata;
+the fixture records its test counter. Captures include the private fixture's
+visible test text and dialogs. Per-process sequences and ending/loss records
+detect incomplete traces. Before Stop, every fixture must acknowledge a bounded
+shutdown handshake carrying its final sequence and loss count; the collector
+must have every record including its end. An
+explicit exec handoff ends a producer before its replacement starts; lifecycle
+validation keeps those sequences separate even when the PID stays the same.
+Disabled hooks retain ordinary behavior. Instrumented idle measurements do not
+establish tracing overhead or a performance improvement; stress profiles and
+mitigations need separate scheduled proof.
+
 ## Sources of truth
 
 - [`docs/ARCHITECTURE.md`](ARCHITECTURE.md) — naming, ownership, and sequencing;

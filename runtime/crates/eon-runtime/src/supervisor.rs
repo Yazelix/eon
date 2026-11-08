@@ -2369,23 +2369,29 @@ fn dispatch(
     runtime: &Path,
     generation: &str,
 ) -> Dispatched {
+    super::diagnostics::bench_trace("dispatch_begin", "");
     let request = match incoming {
         Incoming::Stop(target) => {
             let reply = stop_window(&target, state, runtime, generation);
+            super::diagnostics::bench_trace("dispatch_end", "");
             state.serve_subscribers(Instant::now());
             return reply;
         }
         Incoming::Request(request) => request,
     };
     if matches!(request.action, Action::Subscribe { .. }) && !state.stopping {
-        return match subscribe(state, inputs, config, &request, generation) {
+        let reply = match subscribe(state, inputs, config, &request, generation) {
             Ok(subscriber) => Dispatched::Subscribe(Box::new(subscriber)),
             Err(error) => {
                 Dispatched::Reply(ControlResponse::Workspace(Response::Failure(error)), false)
             }
         };
+        super::diagnostics::bench_trace("dispatch_end", "");
+        return reply;
     }
+    super::diagnostics::bench_trace("request", &request.id);
     let reply = dispatch_control_request(request, state, inputs, config, runtime, generation);
+    super::diagnostics::bench_trace("dispatch_end", "");
     state.serve_subscribers(Instant::now());
     reply.into()
 }

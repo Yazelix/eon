@@ -161,6 +161,7 @@ fn route(root: &Path, generation: &str, command: &[OsString]) -> Option<String> 
             eon.display()
         ));
     }
+    super::diagnostics::bench_trace("exec", "generation-route");
     let error = Command::new(&eon)
         .args(command)
         .env(ROUTE_MARKER, generation)
@@ -1315,6 +1316,7 @@ pub(super) fn attach_generation(
     if let Some(eon) = &record.launcher
         && env::var_os(DELEGATION_MARKER).is_none_or(|delegated| delegated != target)
     {
+        super::diagnostics::bench_trace("exec", "window-delegation");
         let error = delegation(root, target).command(eon).exec();
         return Err(format!("cannot run {}: {error}", eon.display()).into());
     }

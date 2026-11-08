@@ -370,7 +370,17 @@ fn exchange_until_dropped(
     loop {
         let begun = subscription.presented().hides;
         watch.begin(waits.slow);
+        if bench_tracing() {
+            bench_trace(
+                "workspace_begin",
+                format_args!(
+                    "ticket={ticket:?} id=venus-{}-{nonce}-{counter}",
+                    std::process::id()
+                ),
+            );
+        }
         let result = workspace_exchange(socket, nonce, counter, action, &waits);
+        bench_trace("workspace_answer", counter);
         // Ended before the answer is delivered, so a slow report always precedes it.
         watch.end();
         let event = result.map_or_else(ExchangeError::into_event, WorkspaceEvent::Response);
@@ -926,6 +936,7 @@ fn workspace_exchange(
         .map_err(|error| {
             ExchangeError::NotAnswering(format!("Cannot bound Eon workspace I/O: {error}"))
         })?;
+    bench_trace("workspace_write", counter);
     stream.write_all(&encoded).map_err(|error| {
         ExchangeError::NotAnswering(format!("Cannot send Eon workspace action: {error}"))
     })?;
@@ -1256,6 +1267,10 @@ fn run(
     loop {
         match read_message(&mut stream) {
             Ok(Some((message, framed_bytes))) => {
+                bench_trace("terminal_read", framed_bytes);
+                if let ServerMessage::Frame(frame) = &message {
+                    bench_trace("frame_read", frame.revision);
+                }
                 notify(TransportEvent::Server(message), framed_bytes)
             }
             Ok(None) => {
@@ -1279,6 +1294,7 @@ fn write_loop(
     notify: Arc<dyn Fn(TransportEvent, usize) + Send + Sync>,
 ) {
     while let Ok(message) = receiver.recv() {
+        bench_trace("terminal_dequeue", "");
         if let Err(error) = write_message(&mut stream, &message) {
             if error.kind() != ErrorKind::InvalidInput {
                 // The reader owns peer completion so buffered terminal output wins.
@@ -1294,7 +1310,10 @@ fn write_loop(
 fn write_message(stream: &mut UnixStream, message: &ClientMessage) -> io::Result<()> {
     let encoded = session::encode_client_message(message)
         .map_err(|error| io::Error::new(ErrorKind::InvalidInput, error))?;
-    stream.write_all(&encoded)
+    bench_trace("terminal_write_begin", "");
+    let result = stream.write_all(&encoded);
+    bench_trace("terminal_write_end", result.is_ok());
+    result
 }
 
 fn read_message(stream: &mut impl Read) -> Result<Option<(ServerMessage, usize)>, TransportEvent> {
@@ -1351,6 +1370,63 @@ fn protocol_loss(error: session::Error) -> TransportEvent {
             "Orbit sent an invalid local-session message: {error}"
         )),
     }
+}
+
+/// Opt-in benchmark diagnostics; never waits for a reader or writes the pressured disk.
+// The Runtime and Orbit copies mirror this format at their own ownership boundaries.
+#[doc(hidden)]
+pub fn bench_trace(stage: &str, detail: impl std::fmt::Display) {
+    if !bench_tracing() {
+        return;
+    }
+    use std::sync::{
+        OnceLock,
+        atomic::{AtomicU64, Ordering},
+    };
+    static SOCKET: OnceLock<Option<std::os::unix::net::UnixDatagram>> = OnceLock::new();
+    static NEXT: AtomicU64 = AtomicU64::new(0);
+    static LOST: AtomicU64 = AtomicU64::new(0);
+    let socket = SOCKET.get_or_init(|| {
+        let path = std::env::var_os("EON_BENCH_TRACE")?;
+        let socket = std::os::unix::net::UnixDatagram::unbound().ok()?;
+        socket.set_nonblocking(true).ok()?;
+        socket.connect(path).ok()?;
+        Some(socket)
+    });
+    let Some(socket) = socket else { return };
+    let time = rustix::time::clock_gettime(rustix::time::ClockId::Monotonic);
+    let nanos = time.tv_sec as u64 * 1_000_000_000 + time.tv_nsec as u64;
+    let sequence = NEXT.fetch_add(1, Ordering::Relaxed);
+    let packet = format!(
+        "venus\t{}\t{sequence}\t{nanos}\t{}\t{stage}\t{detail}",
+        std::process::id(),
+        LOST.load(Ordering::Relaxed)
+    );
+    if packet.len() > 4096 || socket.send(packet.as_bytes()).is_err() {
+        LOST.fetch_add(1, Ordering::Relaxed);
+    }
+}
+
+/// The final event lets the benchmark reject incomplete diagnostics.
+#[doc(hidden)]
+pub struct BenchTrace;
+impl BenchTrace {
+    #[doc(hidden)]
+    pub fn start() -> Self {
+        bench_trace("start", "");
+        Self
+    }
+}
+impl Drop for BenchTrace {
+    fn drop(&mut self) {
+        bench_trace("end", "");
+    }
+}
+
+#[doc(hidden)]
+pub fn bench_tracing() -> bool {
+    static ENABLED: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
+    *ENABLED.get_or_init(|| std::env::var_os("EON_BENCH_TRACE").is_some())
 }
 
 #[cfg(test)]

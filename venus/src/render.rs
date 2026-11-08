@@ -1079,6 +1079,13 @@ impl Renderer {
             .await
             .map_err(display_error("no compatible Venus GPU adapter"))?;
         let adapter_info = adapter.get_info();
+        crate::transport::bench_trace(
+            "gpu",
+            format_args!(
+                "software={} {adapter_info:?}",
+                adapter_info.device_type == wgpu::DeviceType::Cpu
+            ),
+        );
         let spinners_turn = spinners_turn(adapter_info.device_type, animate_working_badge);
         let (device, queue) = adapter
             .request_device(&DeviceDescriptor::default())
@@ -1393,6 +1400,7 @@ impl Renderer {
             .filter(|workspace| self.pane_frames || workspace.popup_label().is_some())
             .map(|workspace| workspace_paint(workspace, scene, columns, self.metrics));
         let workspace = paint.as_deref().or(workspace);
+        crate::transport::bench_trace("rebuild_begin", "");
         let content_changed = self.rebuild_if_needed(
             scene,
             scroll_preview,
@@ -1406,6 +1414,7 @@ impl Renderer {
             preedit,
             generation,
         );
+        crate::transport::bench_trace("rebuild_end", content_changed);
         if scroll_offset == 0.0 && dialog.is_none() {
             self.rebuild_dynamic_cursor(scene, workspace, blink_visible);
         } else {
@@ -1450,7 +1459,9 @@ impl Renderer {
             }
         }
 
+        crate::transport::bench_trace("texture_begin", "");
         let current_texture = self.surface.get_current_texture();
+        crate::transport::bench_trace("texture_end", "");
         ensure_device_available(&self.device_lost)?;
         let frame = match current_texture {
             CurrentSurfaceTexture::Success(frame) => frame,
@@ -1536,6 +1547,7 @@ impl Renderer {
                 .render(&self.atlas, &self.viewport, &mut pass)
                 .map_err(display_error("cannot render the Venus glyph atlas"))?;
         }
+        crate::transport::bench_trace("submit", "");
         self.queue.submit(Some(encoder.finish()));
         ensure_device_available(&self.device_lost)?;
         self.window.pre_present_notify();
@@ -1543,6 +1555,45 @@ impl Renderer {
         ensure_device_available(&self.device_lost)?;
         self.atlas.trim();
         self.terminal.presented_scrollback_rect = self.terminal.scrollback_rect;
+        if crate::transport::bench_tracing() {
+            let target = |name: &str, rect: SceneRect| {
+                crate::transport::bench_trace(
+                    "target",
+                    format_args!(
+                        "{name} {} {} {} {}",
+                        rect.left, rect.top, rect.width, rect.height
+                    ),
+                );
+            };
+            if let Some(workspace) = workspace {
+                target("terminal", workspace.terminal);
+                crate::transport::bench_trace(
+                    "grid",
+                    format_args!(
+                        "{} {} {}",
+                        self.metrics.width, self.metrics.height, self.metrics.padding
+                    ),
+                );
+                for tab in &workspace.tabs {
+                    target(&format!("tab-{}", tab.id), tab.rect);
+                }
+                for pane in &workspace.panes {
+                    target(&format!("pane-{}", pane.id), pane.rect);
+                }
+                for column in &workspace.other_columns {
+                    target(&format!("column-{}", column.index), column.terminal);
+                }
+                for control in workspace.controls {
+                    target(&format!("control-{:?}", control.kind), control.rect);
+                }
+            }
+            if let Some(dialog) = dialog {
+                target("dialog", dialog.bounds);
+                for chip in &dialog.filters {
+                    target(&format!("filter-{:?}", chip.filter), chip.rect);
+                }
+            }
+        }
         Ok(PresentOutcome::Presented)
     }
 

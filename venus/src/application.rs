@@ -37,15 +37,16 @@ use winit::{
     window::{CursorIcon, UserAttentionType, Window, WindowAttributes, WindowId},
 };
 use yazelix_venus::{
-    Accessibility, AccessibilityTarget, AttentionFilter, BarItem, CellMetrics, ClipboardEffect,
-    Color, ConnectionState, CpuReadings, CpuTimes, CpuUse, DialogKind, DialogScene, DiskUse,
-    EonBar, FontSettings, FontSetup, HeaderText, Hyperlink, ImageKey, ImageResync, InputState,
-    LoadLevels, LocalClock, LocalNoticeSource, MAX_LINK_BYTES, ModelEffect, ModelError, Outgoing,
-    PaddingColor, PresentOutcome, RamUse, Renderer, Scene, SceneRect, SessionModel,
-    ShortcutHintsScene, SidebarView, Transport, TransportEvent, WindowMenuAction, WorkspaceEvent,
-    WorkspaceFocus, WorkspaceHeaderControl, WorkspaceHit, WorkspaceModel, WorkspaceScene,
-    WorkspaceTransport, active_popup, attention_only_change, focused_terminal, labels_only_change,
-    read_eon_icon, shown_workspace, validate_copy_uri, validate_open_uri,
+    Accessibility, AccessibilityTarget, AttentionFilter, BarItem, BenchTrace, CellMetrics,
+    ClipboardEffect, Color, ConnectionState, CpuReadings, CpuTimes, CpuUse, DialogKind,
+    DialogScene, DiskUse, EonBar, FontSettings, FontSetup, HeaderText, Hyperlink, ImageKey,
+    ImageResync, InputState, LoadLevels, LocalClock, LocalNoticeSource, MAX_LINK_BYTES,
+    ModelEffect, ModelError, Outgoing, PaddingColor, PresentOutcome, RamUse, Renderer, Scene,
+    SceneRect, SessionModel, ShortcutHintsScene, SidebarView, Transport, TransportEvent,
+    WindowMenuAction, WorkspaceEvent, WorkspaceFocus, WorkspaceHeaderControl, WorkspaceHit,
+    WorkspaceModel, WorkspaceScene, WorkspaceTransport, active_popup, attention_only_change,
+    bench_trace, bench_tracing, focused_terminal, labels_only_change, read_eon_icon,
+    shown_workspace, validate_copy_uri, validate_open_uri,
 };
 
 mod geometry;
@@ -78,6 +79,47 @@ const ANIMATION_FRAME_INTERVAL: Duration = Duration::from_millis(16);
 const INITIAL_RETRY_DELAY: Duration = Duration::from_millis(250);
 const MAX_RETRY_DELAY: Duration = Duration::from_secs(5);
 const MAX_DEFERRED_SELECTION_MESSAGES: usize = 256;
+
+struct BenchInput;
+impl BenchInput {
+    fn start(event: &WindowEvent) -> Option<Self> {
+        if !bench_tracing() {
+            return None;
+        }
+        match event {
+            WindowEvent::KeyboardInput { event, .. } => {
+                let class = if matches!(
+                    event.physical_key,
+                    PhysicalKey::Code(
+                        KeyCode::ControlLeft
+                            | KeyCode::ControlRight
+                            | KeyCode::ShiftLeft
+                            | KeyCode::ShiftRight
+                            | KeyCode::AltLeft
+                            | KeyCode::AltRight
+                            | KeyCode::SuperLeft
+                            | KeyCode::SuperRight
+                    )
+                ) {
+                    "modifier"
+                } else {
+                    "key"
+                };
+                bench_trace("input", format_args!("{class} {:?}", event.state));
+            }
+            WindowEvent::MouseInput { state, .. } => {
+                bench_trace("input", format_args!("pointer {state:?}"));
+            }
+            _ => return None,
+        }
+        Some(Self)
+    }
+}
+impl Drop for BenchInput {
+    fn drop(&mut self) {
+        bench_trace("input_end", "");
+    }
+}
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 enum NativePlatform {
@@ -3003,6 +3045,7 @@ impl Application {
     }
 
     fn handle_workspace(&mut self, event: WorkspaceEvent) {
+        bench_trace("workspace_apply", "");
         if event == WorkspaceEvent::Slow {
             // Only the notice changes; a pending quit or jump waits for the answer (VEN-C8).
             // As below, the view waits for the window and its initial scale.
@@ -3225,8 +3268,11 @@ impl Application {
     }
 
     fn send_workspace(&mut self, action: CommonAction) -> bool {
-        self.presentation.has_presented_geometry()
-            && self.queue_workspace(WorkspaceAction::Workspace(action))
+        if !self.presentation.has_presented_geometry() {
+            bench_trace("input_rejected", "unpublished-workspace-geometry");
+            return false;
+        }
+        self.queue_workspace(WorkspaceAction::Workspace(action))
     }
 
     fn activate_workspace_header(&mut self, control: WorkspaceHeaderControl) {
@@ -3283,6 +3329,7 @@ impl Application {
     /// on: then the close prompt holds it, and nothing is queued yet.
     fn request_workspace(&mut self, action: WorkspaceAction) -> bool {
         if !self.presentation.has_presented_geometry() {
+            bench_trace("input_rejected", "unpublished-request-geometry");
             return false;
         }
         if self.warning_close_last_tab
@@ -3309,8 +3356,12 @@ impl Application {
     /// Queues `action`, returning the ticket its answer carries.
     fn queue_workspace_ticket(&mut self, action: impl Into<Outgoing>) -> Option<u64> {
         let transport = self.workspace_transport.as_ref()?;
+        bench_trace("workspace_queue", "attempt");
         match transport.send(action) {
-            Ok(ticket) => Some(ticket),
+            Ok(ticket) => {
+                bench_trace("workspace_queued", ticket);
+                Some(ticket)
+            }
             Err(error) => {
                 let quota_expired = self.workspace_model.snapshot().is_some_and(|snapshot| {
                     snapshot.codex_quota.is_some() || snapshot.claude_quota.is_some()
@@ -3658,6 +3709,7 @@ impl Application {
     }
 
     fn handle_transport(&mut self, event: TransportEvent) {
+        bench_trace("model_begin", "");
         let retryable_busy = managed_busy_is_retryable(self.supervised, &event);
         let retryable_event = retryable_busy || matches!(&event, TransportEvent::RetryableLoss(_));
         let image_attachment = self.terminal.model.image_attachment();
@@ -4296,6 +4348,7 @@ impl Application {
         };
         let dismisses_clipboard = dismisses_clipboard_notice(notice_source, &message);
         if !self.terminal.model.is_attached() {
+            bench_trace("input_rejected", "not-attached");
             return false;
         }
         let Some(transport) = &self.terminal.transport else {
@@ -4305,13 +4358,16 @@ impl Application {
             self.terminal.pending_return_to_live = true;
             return true;
         }
+        bench_trace("terminal_queue", "attempt");
         if let Err(error) = transport.send(message) {
+            bench_trace("input_rejected", error);
             self.terminal
                 .model
                 .set_venus_notice(LocalNoticeSource::Queue, error.to_string());
             self.refresh_client_view();
             return false;
         }
+        bench_trace("terminal_queued", "");
         if let Some(pending) = pending {
             self.terminal.pending_viewport = Some(pending);
         }
@@ -4565,6 +4621,7 @@ impl Application {
     }
 
     fn render(&mut self) {
+        bench_trace("render_begin", "");
         self.sync_images();
         if self.window_focused && !self.window_occluded {
             self.terminal.terminal_scroll.advance(Instant::now());
@@ -4756,6 +4813,34 @@ impl Application {
             self.refresh_client_view();
         }
         if presented {
+            bench_trace(
+                "present_revision",
+                format_args!("{} {:?}", candidate.generation, candidate.revision),
+            );
+            if bench_tracing()
+                && let Some(snapshot) = self.workspace_model.snapshot()
+            {
+                let selected = snapshot
+                    .tabs
+                    .iter()
+                    .find(|tab| tab.id == snapshot.active_tab);
+                bench_trace(
+                    "present",
+                    format_args!(
+                        "tab={} pane={} popup={} viewer={} inbox={} filter={:?}",
+                        snapshot.active_tab,
+                        selected
+                            .and_then(|tab| tab.selected_pane.as_deref())
+                            .unwrap_or("-"),
+                        selected
+                            .and_then(|tab| tab.selected_popup.as_deref())
+                            .unwrap_or("-"),
+                        self.shortcut_viewer.open,
+                        self.attention_inbox.open,
+                        self.attention_inbox.filter
+                    ),
+                );
+            }
             self.inspect_pointer_link();
         }
     }
@@ -4805,6 +4890,7 @@ impl ApplicationHandler<UserEvent> for Application {
         window_id: WindowId,
         event: WindowEvent,
     ) {
+        let _bench_input = BenchInput::start(&event);
         let workspace = self.workspace_scene();
         let workspace_focus = self.workspace_focus;
         let dialog_open = self.dialog_open();
@@ -4935,6 +5021,7 @@ impl ApplicationHandler<UserEvent> for Application {
                 }
                 self.cancel_terminal_scroll();
                 let Some(event) = self.input.resolve_key(event) else {
+                    bench_trace("input_consumed", "retired-key");
                     return;
                 };
                 let modifiers = self.input.modifiers();
@@ -4943,6 +5030,7 @@ impl ApplicationHandler<UserEvent> for Application {
                     native_key_shortcut(event.physical_key, modifiers, self.popup_entries())
                         .is_some_and(|shortcut| shortcut.action == NativeShortcutAction::Copy);
                 if self.handle_shortcut_key(event_loop, &ShortcutKey::of(&event)) {
+                    bench_trace("input_consumed", "shortcut");
                 } else if self.input.consumes_shortcut(
                     event.physical_key,
                     event.state,
@@ -5159,10 +5247,14 @@ impl ApplicationHandler<UserEvent> for Application {
                         self.set_shortcut_viewer(false);
                         return;
                     }
-                    ViewerButton::Capture => return,
+                    ViewerButton::Capture => {
+                        bench_trace("input_consumed", "viewer-pointer");
+                        return;
+                    }
                     ViewerButton::Pass => {}
                 }
                 if dialog_open {
+                    bench_trace("input_consumed", "dialog-pointer");
                     if self.attention_inbox.open
                         && presentation_current
                         && button == MouseButton::Left
@@ -5233,6 +5325,10 @@ impl ApplicationHandler<UserEvent> for Application {
                     self.links.notice = None;
                     self.refresh_client_view();
                 }
+                bench_trace(
+                    "hit",
+                    format_args!("geometry={presentation_current} dialog={dialog_open}"),
+                );
                 let hit = workspace.as_ref().and_then(|workspace| {
                     workspace.hit_test(self.cursor.x as f32, self.cursor.y as f32)
                 });
@@ -5303,6 +5399,7 @@ impl ApplicationHandler<UserEvent> for Application {
                         None => None,
                     };
                     if let Some((focus, id)) = target {
+                        bench_trace("focus", &id);
                         if self.send_workspace(CommonAction::FocusId(id)) {
                             self.set_workspace_focus(focus);
                         }
@@ -5316,6 +5413,9 @@ impl ApplicationHandler<UserEvent> for Application {
                     presentation_current
                         || button == MouseButton::Left && candidate.revision.is_some(),
                 ) {
+                    if button_state == ElementState::Pressed {
+                        bench_trace("input_rejected", "non-terminal-or-unpublished-geometry");
+                    }
                     return;
                 }
                 let _ = move_terminal_pointer(&mut self.input, self.cursor, workspace.as_ref());
@@ -6691,6 +6791,7 @@ fn native_clipboard_for(platform: NativePlatform, effect: &ClipboardEffect) -> N
 }
 
 pub(super) fn run(arguments: LaunchArguments) -> Result {
+    let _trace = BenchTrace::start();
     let event_loop = EventLoop::<UserEvent>::with_user_event()
         .build()
         .map_err(|_| io::Error::other("Venus requires a native display"))?;

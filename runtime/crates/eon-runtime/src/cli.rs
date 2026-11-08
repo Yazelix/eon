@@ -72,6 +72,7 @@ impl Inputs {
 pub(crate) const WORKSPACE_PICKER: &str = "eon-sessions";
 
 pub fn run(inputs: Inputs) -> (&'static str, Result<i32, Error>) {
+    let _trace = super::diagnostics::BenchTrace::start();
     let mut arguments = env::args_os();
     let invocation = arguments.next().unwrap_or_default();
     let arguments: Vec<OsString> = arguments.collect();
@@ -580,6 +581,7 @@ fn launch_managed(
         command.env(managed_environment::FILES_NOTICE_VARIABLE, notice);
     }
     let program = command.get_program().to_string_lossy().into_owned();
+    super::diagnostics::bench_trace("exec", "managed-tool");
     let error = command.exec();
     Err(format!("cannot launch {program}: {error}"))
 }
@@ -672,6 +674,7 @@ fn execute(inputs: &Inputs, arguments: Vec<OsString>) -> Result<i32, Error> {
             Ok(windows::stop_window(inputs, id, true)?)
         }
         [command, child @ ..] if command == "anima" => {
+            super::diagnostics::bench_trace("exec", "anima");
             let error = Command::new(&inputs.anima)
                 .args(child)
                 .env("YAZELIX_SCREEN_COMMAND_NAME", "eon anima")

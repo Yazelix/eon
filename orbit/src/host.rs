@@ -586,7 +586,10 @@ impl Host {
                 break;
             }
             match self.orbit.read_into(&mut data)? {
-                PtyRead::Bytes(_) => read = true,
+                PtyRead::Bytes(bytes) => {
+                    bench_trace("pty_read", bytes);
+                    read = true;
+                }
                 PtyRead::Closed => {
                     closed = true;
                     break;
@@ -1052,6 +1055,7 @@ impl Host {
                 version: matches!(refusal, Refusal::Version),
             }));
         }
+        bench_trace("request", "");
         match client.request.take().ok_or_else(protocol)? {
             ClientMessage::Hello | ClientMessage::ObserveMetadata => Ok(Some(Fact::RoleRepeated)),
             // Once the PTY closes, no request is applied.
@@ -1406,6 +1410,7 @@ impl Host {
                 Decision::Bounds { .. } => return Err(protocol()),
                 Decision::Attach => self.attach()?,
                 Decision::Frame { revision } => {
+                    bench_trace("frame", revision);
                     self.send(|orbit| Ok(ServerMessage::Frame(Box::new(orbit.frame(revision)?))))?
                 }
                 Decision::Accepted => self.send(|_| Ok(ServerMessage::Accepted))?,
@@ -1756,6 +1761,7 @@ fn wait_worker(worker: &mut Child, deadline: Instant) -> io::Result<Option<ExitS
 /// orderly stop on a termination signal that reaped the child or came before
 /// it started, or a dead worker's status.
 pub fn run(worker: &Path, arguments: &[OsString]) -> io::Result<u32> {
+    let _trace = BenchTrace::start();
     let serve = cli::parse(arguments)
         .map_err(|message| io::Error::new(io::ErrorKind::InvalidInput, message))?;
     let run = run_name(&serve);
@@ -1850,6 +1856,70 @@ pub(crate) fn built_worker_output_bound() -> usize {
     bend.worker.kill().unwrap();
     bend.worker.wait().unwrap();
     bounds.unwrap().output_bytes as usize
+}
+
+/// Opt-in benchmark diagnostics; never waits for a reader or writes the pressured disk.
+// The Venus and Runtime copies mirror this format at their own ownership boundaries.
+#[doc(hidden)]
+pub fn bench_trace(stage: &str, detail: impl std::fmt::Display) {
+    if !bench_tracing() {
+        return;
+    }
+    use std::sync::{
+        OnceLock,
+        atomic::{AtomicU64, Ordering},
+    };
+    static SOCKET: OnceLock<Option<std::os::unix::net::UnixDatagram>> = OnceLock::new();
+    static NEXT: AtomicU64 = AtomicU64::new(0);
+    static LOST: AtomicU64 = AtomicU64::new(0);
+    let socket = SOCKET.get_or_init(|| {
+        let path = std::env::var_os("EON_BENCH_TRACE")?;
+        let socket = std::os::unix::net::UnixDatagram::unbound().ok()?;
+        socket.set_nonblocking(true).ok()?;
+        socket.connect(path).ok()?;
+        Some(socket)
+    });
+    let Some(socket) = socket else { return };
+    let mut time = libc::timespec {
+        tv_sec: 0,
+        tv_nsec: 0,
+    };
+    // SAFETY: time is a valid timespec and CLOCK_MONOTONIC has no input state.
+    if unsafe { libc::clock_gettime(libc::CLOCK_MONOTONIC, &raw mut time) } != 0 {
+        return;
+    }
+    let nanos = time.tv_sec as u64 * 1_000_000_000 + time.tv_nsec as u64;
+    let sequence = NEXT.fetch_add(1, Ordering::Relaxed);
+    let packet = format!(
+        "orbit\t{}\t{sequence}\t{nanos}\t{}\t{stage}\t{detail}",
+        std::process::id(),
+        LOST.load(Ordering::Relaxed)
+    );
+    if packet.len() > 4096 || socket.send(packet.as_bytes()).is_err() {
+        LOST.fetch_add(1, Ordering::Relaxed);
+    }
+}
+
+/// The final event lets the benchmark reject incomplete diagnostics.
+#[doc(hidden)]
+pub struct BenchTrace;
+impl BenchTrace {
+    #[doc(hidden)]
+    pub fn start() -> Self {
+        bench_trace("start", "");
+        Self
+    }
+}
+impl Drop for BenchTrace {
+    fn drop(&mut self) {
+        bench_trace("end", "");
+    }
+}
+
+#[doc(hidden)]
+pub fn bench_tracing() -> bool {
+    static ENABLED: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
+    *ENABLED.get_or_init(|| std::env::var_os("EON_BENCH_TRACE").is_some())
 }
 
 #[cfg(test)]

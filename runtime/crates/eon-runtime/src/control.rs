@@ -645,7 +645,10 @@ impl ControlListener {
         dispatch: impl FnOnce(Incoming) -> D,
     ) -> Result<Accepted, String> {
         match self.listener.accept() {
-            Ok((stream, _)) => Ok(handle_client(stream, dispatch)),
+            Ok((stream, _)) => {
+                super::diagnostics::bench_trace("accept", "");
+                Ok(handle_client(stream, dispatch))
+            }
             Err(error) if error.kind() == std::io::ErrorKind::WouldBlock => Ok(Accepted::None),
             Err(error) => Err(format!("cannot accept Eon control client: {error}")),
         }
@@ -713,8 +716,10 @@ fn handle_client<D: Into<Dispatched>>(
         Dispatched::Subscribe(subscriber) => return Accepted::Subscribed(stream, subscriber),
     };
     if let Some(encoded) = encoded {
+        super::diagnostics::bench_trace("reply_begin", encoded.len());
         write_reply(&mut stream, &encoded, Instant::now() + REPLY_DEADLINE);
     }
+    super::diagnostics::bench_trace("reply_end", "");
     Accepted::Replied { shutdown }
 }
 

@@ -2,12 +2,13 @@
 
 use std::{path::PathBuf, process::ExitCode};
 
-use eon_bench::{child, corpus, floor, orbit, writer};
+use eon_bench::{child, corpus, floor, orbit, response, writer};
 
 const USAGE: &str = "\
 usage: eon-bench corpus --out DIR [--only ID]...
        eon-bench floor --layer pty --out DIR [OPTIONS]
        eon-bench orbit --out DIR [OPTIONS]
+       eon-bench response --eon PATH --out DIR [OPTIONS]
        eon-bench write FILE --report REPORT
        eon-bench COMMAND --help";
 
@@ -29,6 +30,8 @@ enum Command {
     Orbit(orbit::Options),
     Child(child::Options),
     Write(PathBuf, PathBuf),
+    Response(response::Options),
+    Fixture(Vec<String>),
 }
 
 fn corpus_help() -> String {
@@ -66,6 +69,8 @@ fn main() -> ExitCode {
         Some("floor") => floor::options(rest).map(Command::Floor),
         Some("orbit") => orbit::options(rest).map(Command::Orbit),
         Some("child") => child::options(rest).map(Command::Child),
+        Some("response") => response::options(rest).map(Command::Response),
+        Some("response-fixture") if rest.len() == 4 => Ok(Command::Fixture(rest.to_vec())),
         Some("write") => write_options(rest).map(|(file, report)| Command::Write(file, report)),
         Some("--help" | "-h") => {
             println!("{USAGE}");
@@ -90,6 +95,8 @@ fn main() -> ExitCode {
             Err(error) => Err(error),
         },
         Command::Write(file, report) => writer::run(&file, &report),
+        Command::Response(options) => response::run(&options),
+        Command::Fixture(arguments) => response::fixture(&arguments),
     };
     match outcome {
         Ok(()) => ExitCode::SUCCESS,
