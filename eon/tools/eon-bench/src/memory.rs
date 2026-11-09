@@ -22,19 +22,23 @@ use crate::{
     suite::{self, Settings},
 };
 
+mod venus;
+
 type Result<T = ()> = std::result::Result<T, String>;
 const COUNT: usize = 50;
-const USAGE: &str = "usage: eon-bench memory --out DIR [--subject eon|tmux|zellij]... [--orbit PATH] [--eonbase PATH] [--tmux PATH] [--zellij PATH] [--settle-ms N] [--deadline SECONDS] [shared suite options]";
+const USAGE: &str = "usage: eon-bench memory --out DIR [--subject eon|tmux|zellij]... [--eon PATH] [--renderer lavapipe|/dev/dri/renderD<N>] [--orbit PATH] [--eonbase PATH] [--tmux PATH] [--zellij PATH] [--settle-ms N] [--deadline SECONDS] [shared suite options]";
 
 pub fn help() -> String {
     format!(
         r#"{USAGE}
 
-Linux /proc/smaps_rollup memory; no desktop. Requires bubblewrap on PATH
+Linux /proc/smaps_rollup memory; private headless display for Venus. Requires bubblewrap on PATH
 (or EON_BENCH_BWRAP). Root is read-only; only --out and private tmp/HOMEs
 are writable. PID/network namespaces contain even daemonized reference servers.
 
   --subject NAME   eon, tmux or zellij; repeat (default all three)
+  --eon PATH       Nix out-link candidate, required for Eon native client
+  --renderer NAME  lavapipe (default) or /dev/dri/renderD<N>
   --orbit PATH     default $EON_BENCH_ORBIT
   --eonbase PATH   unwrapped supervisor executable; default $EON_BENCH_EONBASE
   --tmux PATH      default $EON_BENCH_TMUX
@@ -43,7 +47,8 @@ are writable. PID/network namespaces contain even daemonized reference servers.
   --deadline N     seconds per subject launch (default 300)
 {}
 
-Two fresh launches per subject/round: empty and filled, 80x24. Workload
+Two fresh engine launches per subject/round: empty and filled, 80x24.
+Eon also launches one fresh native workspace per round for the Venus row. Workload
 children are excluded. Startup includes the server plus one empty terminal;
 Eon includes supervisor, Orbit host and Bend worker. Terminal cost for ALL
 subjects is (total at 50 - total at 1)/49, with the server and engines included.
@@ -54,12 +59,14 @@ history rows; Orbit retains its runtime byte budget.
 
 Native client cost is after(server + frontend) minus before(server), with
 50 filled terminals. Tmux and zellij use native clients on private PTYs.
-Eon's real Venus client is NOT YET MEASURED. Its 50-socket codec client is
-only a separate server-attribution diagnostic, with every reader and
+Eon uses a fresh actual 50-tab workspace for its native Venus client;
+its independent-engine 50-socket codec client remains a separate
+server-attribution diagnostic, with every reader and
 connection checked around sampling. Supervisor-alone is also diagnostic.
 Zellij is background-created, then a temporary PTY client establishes 80x24
 (its background default is 50x50); it detaches before output. Setup allocations
-may remain. This measures no GUI/GPU memory and establishes no leak bound.
+may remain. Venus process memory includes mapped graphics allocations, not total GPU memory;
+this establishes no leak bound.
 
 result.json uses suite schema 1: before/after PSS, RSS and Pss_Anon byte
 counters and a denominator. Seconds are collection time, not throughput.
@@ -79,6 +86,8 @@ A failed/interrupted run retains evidence and removes result.json/summary.md.
 pub struct Options {
     settings: Settings,
     subjects: Vec<String>,
+    eon: PathBuf,
+    renderer: crate::launcher::Renderer,
     orbit: PathBuf,
     eonbase: PathBuf,
     tmux: PathBuf,
@@ -94,6 +103,8 @@ pub fn options(args: &[String]) -> Result<Options> {
         help,
         &[
             "--subject",
+            "--eon",
+            "--renderer",
             "--orbit",
             "--eonbase",
             "--tmux",
@@ -132,6 +143,13 @@ pub fn options(args: &[String]) -> Result<Options> {
             .map_or(Ok(default), |s| suite::number(flag, s))
     };
     let result = Options {
+        eon: values.get("--eon").map(PathBuf::from).unwrap_or_default(),
+        renderer: crate::launcher::Renderer(
+            values
+                .get("--renderer")
+                .cloned()
+                .unwrap_or_else(|| "lavapipe".into()),
+        ),
         orbit: path("--orbit", "EON_BENCH_ORBIT"),
         eonbase: path("--eonbase", "EON_BENCH_EONBASE"),
         tmux: path("--tmux", "EON_BENCH_TMUX"),
@@ -141,6 +159,10 @@ pub fn options(args: &[String]) -> Result<Options> {
         settings,
         subjects,
     };
+    result.renderer.render_node()?;
+    if result.subjects.iter().any(|s| s == "eon") {
+        crate::launcher::candidate(&result.eon)?;
+    }
     for subject in &result.subjects {
         let paths = match subject.as_str() {
             "eon" => vec![(&result.orbit, "--orbit"), (&result.eonbase, "--eonbase")],
@@ -179,6 +201,16 @@ pub fn run(args: &[String], options: &Options) -> Result {
             &options.zellij,
         ],
     );
+    if options.subjects.iter().any(|s| s == "eon") {
+        crate::isolation::display(&mut command, options.renderer.render_node()?);
+        let index = arguments
+            .iter()
+            .position(|s| s == "--eon")
+            .ok_or("--eon is required for Eon")?;
+        arguments[index + 1] = crate::launcher::candidate(&options.eon)?
+            .display()
+            .to_string();
+    }
     command
         .arg("--")
         .arg(exe)
@@ -379,6 +411,7 @@ struct Session<'a> {
     client: Option<Process>,
     worker_sets: Vec<Vec<Process>>,
     serial: usize,
+    native: bool,
 }
 
 impl Drop for Session<'_> {
@@ -457,6 +490,7 @@ impl<'a> Session<'a> {
             client: None,
             worker_sets: Vec::new(),
             serial: 0,
+            native: false,
         })
     }
     fn command(&self, path: &Path) -> Command {
@@ -614,27 +648,7 @@ impl<'a> Session<'a> {
         c
     }
     fn child_args(&self, dir: &Path) -> Vec<String> {
-        vec![
-            self.exe.display().to_string(),
-            "child".into(),
-            dir.display().to_string(),
-            "--rows".into(),
-            "24".into(),
-            "--cols".into(),
-            "80".into(),
-            "--release-wait".into(),
-            self.options
-                .deadline
-                .as_secs()
-                .saturating_add(10)
-                .to_string(),
-            "--".into(),
-            self.exe.display().to_string(),
-            "write".into(),
-            self.dir.join("payload.vt").display().to_string(),
-            "--report".into(),
-            dir.join("report.json").display().to_string(),
-        ]
+        child_args(&self.exe, dir, &self.dir, self.options.deadline)
     }
     fn layout(&self, dir: &Path) -> Result<PathBuf> {
         let args = self.child_args(dir);
@@ -859,7 +873,7 @@ impl<'a> Session<'a> {
             } else if self.server.as_ref().is_some_and(|p| p.pid == process.pid) {
                 "supervisor-server"
             } else if self.client.as_ref().is_some_and(|p| p.pid == process.pid) {
-                if self.subject == "eon" {
+                if self.subject == "eon" && !self.native {
                     "diagnostic-codec-client"
                 } else {
                     "native-client"
@@ -1151,10 +1165,11 @@ pub fn run_inner(options: &Options) -> Result {
     let started_at = utc_timestamp(SystemTime::now());
     let load_start = environment::load()?;
     let build = environment::build()?;
-    let mut tools = vec![("method".into(), "Linux smaps_rollup PSS/RSS/Pss_Anon bytes; child excluded; common 1-to-50 slope; native client=server+frontend delta; Venus not measured; codec server attribution separate".into()),
+    let mut tools = vec![("method".into(), "Linux smaps_rollup PSS/RSS/Pss_Anon bytes; child excluded; common 1-to-50 slope; native client=server+frontend delta; Venus native workspace delta; codec server attribution separate".into()),
         ("grid".into(), "80x24".into()), ("history".into(), "Orbit runtime byte budget; tmux/zellij 10000 rows; retention not independently counted".into()),
         ("settle_ms".into(), options.settle.as_millis().to_string()), ("terminals".into(), COUNT.to_string())];
     for (name, path) in [
+        ("eon", &options.eon),
         ("orbit", &options.orbit),
         ("eonbase", &options.eonbase),
         ("tmux", &options.tmux),
@@ -1171,6 +1186,10 @@ pub fn run_inner(options: &Options) -> Result {
             ));
         }
     }
+    tools.push((
+        "venus-requested-renderer".into(),
+        options.renderer.0.clone(),
+    ));
     let filled = payload();
     fs::write(out.join("filled.vt"), &filled).map_err(error)?;
     let mut cells: Vec<Cell> = options
@@ -1182,6 +1201,7 @@ pub fn run_inner(options: &Options) -> Result {
                     "server-start",
                     "empty-terminal",
                     "filled-terminal",
+                    "client-50-filled",
                     "diagnostic-supervisor-alone",
                     "diagnostic-codec-server-attach",
                 ]
@@ -1337,6 +1357,44 @@ pub fn run_inner(options: &Options) -> Result {
                     }
                 }
             }
+            if subject == "eon" {
+                let load = suite::wait_for_load("memory Venus", settings)?;
+                id += 1;
+                eprintln!(
+                    "memory: {kind} {number}/{of} eon Venus {}",
+                    options.renderer.0
+                );
+                let start = Instant::now();
+                let mut s = Session::new(options, subject, id)?;
+                s.native = true;
+                fs::write(s.dir.join("payload.vt"), &filled).map_err(error)?;
+                let (before, after, gpu) = s.venus()?;
+                tools.push((format!("venus-{id}-gpu"), gpu));
+                if kind == "sample" {
+                    let mut counters = vec![
+                        ("denominator".into(), 1),
+                        ("launch".into(), id as u64),
+                        (
+                            "load_end_milli".into(),
+                            (environment::load()? * 1000.0).round() as u64,
+                        ),
+                    ];
+                    for (index, (name, _)) in METRICS.iter().enumerate() {
+                        counters.push((format!("{name}_before"), before[index]));
+                        counters.push((format!("{name}_after"), after[index]));
+                    }
+                    cells
+                        .iter_mut()
+                        .find(|c| c.subject == *subject && c.workload == "client-50-filled")
+                        .unwrap()
+                        .samples
+                        .push(Sample {
+                            seconds: start.elapsed().as_secs_f64(),
+                            load,
+                            counters,
+                        });
+                }
+            }
         }
     }
     let result = RunResult {
@@ -1397,11 +1455,13 @@ pub fn run_inner(options: &Options) -> Result {
             }
             table.push('\n');
         }
-        if !diagnostic && options.subjects.iter().any(|s| s == "eon") {
-            table.push_str("| eon | client-50-filled (Venus) | — | not yet measured | not yet measured | not yet measured |\n");
-        }
     }
-    table.push_str("\nEon is one eonbase supervisor/first terminal plus 49 independent Orbit hosts and workers: a terminal-engine cohort, not 50 Eon workspace records. Its codec diagnostic attaches all 50; native references display one tab. Zellij background creation starts at 50x50, so a temporary native client establishes 80x24 and detaches before output; setup allocations may remain. live-artifacts.json records whether candidate executable paths/backing inodes were live-mapped at run start; other shared mappings remain uncontrolled.\n");
+    if result.cells.iter().any(|cell| {
+        cell.subject == "eon" && cell.workload == "client-50-filled" && !cell.samples.is_empty()
+    }) {
+        table.push_str(&format!("\nVenus client: actual 50-tab Eon workspace, one visible tab, {}. GPU and ICD per launch in evidence; GPU allocations outside smaps are not counted.\n", options.renderer.0));
+    }
+    table.push_str("\nEon engine rows: one eonbase supervisor/first terminal plus 49 independent Orbit hosts and workers: a terminal-engine cohort, not 50 Eon workspace records. Its codec diagnostic attaches all 50; native references display one tab. Zellij background creation starts at 50x50, so a temporary native client establishes 80x24 and detaches before output; setup allocations may remain. live-artifacts.json records whether candidate executable paths/backing inodes were live-mapped at run start; other shared mappings remain uncontrolled.\n");
     fs::write(out.join("summary.md"), &table).map_err(error)?;
     println!("{table}\nresult: {}", out.join("result.json").display());
     Ok(())
@@ -1504,6 +1564,54 @@ impl Session<'_> {
         )
         .map_err(error)?;
         Ok(())
+    }
+}
+
+fn child_args(exe: &Path, dir: &Path, root: &Path, deadline: Duration) -> Vec<String> {
+    vec![
+        exe.display().to_string(),
+        "child".into(),
+        dir.display().to_string(),
+        "--rows".into(),
+        "24".into(),
+        "--cols".into(),
+        "80".into(),
+        "--release-wait".into(),
+        deadline.as_secs().saturating_add(10).to_string(),
+        "--".into(),
+        exe.display().to_string(),
+        "write".into(),
+        root.join("payload.vt").display().to_string(),
+        "--report".into(),
+        dir.join("report.json").display().to_string(),
+    ]
+}
+
+/// Internal configured shell: one existing completion child per workspace terminal.
+pub fn workspace_workload() -> Result {
+    let root = PathBuf::from(std::env::args_os().nth(1).ok_or("missing workload root")?);
+    let deadline = Duration::from_secs(
+        std::env::args()
+            .nth(2)
+            .ok_or("missing deadline")?
+            .parse()
+            .map_err(error)?,
+    );
+    let terminal = std::env::var("EON_TERMINAL").map_err(error)?;
+    let dir = root.join(hash(terminal.as_bytes()));
+    fs::create_dir(&dir).map_err(error)?;
+    fs::write(dir.join("identity"), terminal).map_err(error)?;
+    let args = child_args(
+        &std::env::current_exe().map_err(error)?,
+        &dir,
+        &root,
+        deadline,
+    );
+    let code = crate::child::run(&crate::child::options(&args[2..])?)?;
+    if code == 0 {
+        Ok(())
+    } else {
+        Err(format!("workload exited {code}"))
     }
 }
 

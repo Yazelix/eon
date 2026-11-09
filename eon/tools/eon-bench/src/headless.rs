@@ -2,7 +2,7 @@
 use crate::{
     environment, isolation,
     json::Value,
-    launcher::{BusPolicy, Headless, Renderer},
+    launcher::{BusPolicy, Headless, Renderer, WindowMode},
     suite,
 };
 use std::{
@@ -120,7 +120,7 @@ fn call(launch: &Headless, program: &str, args: &[&str]) -> Result<String> {
 }
 
 pub fn run_inner(options: &Options) -> Result {
-    let mut launch = Headless::new(&options.out, &options.eon)?;
+    let mut launch = Headless::new(&options.out, &options.eon, WindowMode::Fullscreen)?;
     options.renderer.apply(&mut launch)?;
     let trace_path = PathBuf::from(&launch.env["XDG_RUNTIME_DIR"]).join("trace");
     let trace = UnixDatagram::bind(&trace_path).map_err(error)?;

@@ -5,6 +5,11 @@ installation, and proven contract changes.
 
 ## Unreleased
 
+- `eon-bench memory --eon PATH` measures Venus as Eon's native client
+  with 50 filled workspace tabs on the shared private Sway launcher. Process
+  PSS, RSS and anonymous PSS retain the existing estimator, with separately
+  labelled software/hardware adapters and codec attribution diagnostics.
+
 - Orbit uses upstream libghostty on the Ghostty vt-1.0.0 core, pinned by
   exact Git revision (`eon-9rtt.9`).
 - `eon update --install [--yes] [--json] [--prefix ABS]` installs a discovered

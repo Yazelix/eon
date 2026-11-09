@@ -192,6 +192,11 @@ pub(crate) enum BusPolicy {
     Private,
 }
 
+pub(crate) enum WindowMode {
+    Fullscreen,
+    Floating,
+}
+
 /// Suites supply their own config, trace consumer and workloads. The launcher owns
 /// only the private display and process lifetime, including failure cleanup.
 pub(crate) struct Headless {
@@ -203,7 +208,7 @@ pub(crate) struct Headless {
     pub(crate) out: PathBuf,
 }
 impl Headless {
-    pub(crate) fn new(out: &Path, eon: &Path) -> Result<Self> {
+    pub(crate) fn new(out: &Path, eon: &Path, window_mode: WindowMode) -> Result<Self> {
         let eon = candidate(eon)?;
         let roots = Roots::create()?;
         let out = fs::canonicalize(out).map_err(failure)?;
@@ -213,7 +218,11 @@ impl Headless {
             fs::create_dir(out.join(directory)).map_err(failure)?;
         }
         let sway_config = out.join("sway.conf");
-        fs::write(&sway_config, "output * mode 1280x800\noutput * bg #202020 solid_color\nseat seat0 fallback true\nxwayland disable\ndefault_border none\nfocus_follows_mouse no\nfor_window [app_id=\"eon\"] fullscreen enable\n").map_err(failure)?;
+        let window_rule = match window_mode {
+            WindowMode::Fullscreen => "fullscreen enable",
+            WindowMode::Floating => "floating enable",
+        };
+        fs::write(&sway_config, format!("output * mode 1280x800\noutput * bg #202020 solid_color\nseat seat0 fallback true\nxwayland disable\ndefault_border none\nfocus_follows_mouse no\nfor_window [app_id=\"eon\"] {window_rule}\n")).map_err(failure)?;
         let env = BTreeMap::from([
             ("PATH".into(), std::env::var("PATH").map_err(failure)?),
             ("HOME".into(), out.join("home").display().to_string()),

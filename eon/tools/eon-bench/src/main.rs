@@ -66,6 +66,19 @@ Corpora:",
 }
 
 fn main() -> ExitCode {
+    if std::env::args_os().next().is_some_and(|arg| {
+        std::path::Path::new(&arg)
+            .file_name()
+            .is_some_and(|n| n == "memory-workload")
+    }) {
+        return match memory::workspace_workload() {
+            Ok(()) => ExitCode::SUCCESS,
+            Err(error) => {
+                eprintln!("memory workload: {error}");
+                ExitCode::FAILURE
+            }
+        };
+    }
     if std::env::args().next().is_some_and(|arg| {
         std::path::Path::new(&arg)
             .file_name()

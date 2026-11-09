@@ -19,7 +19,7 @@ use std::{
 use crate::{
     environment,
     json::Value,
-    launcher::{BusPolicy, Headless, live_identity},
+    launcher::{BusPolicy, Headless, WindowMode, live_identity},
     result::utc_timestamp,
     sha256::Sha256,
     stats::Summary,
@@ -772,7 +772,7 @@ impl Session {
 }
 
 fn start(options: &Options) -> Result<Session> {
-    let mut launch = Headless::new(&options.out, &options.eon)?;
+    let mut launch = Headless::new(&options.out, &options.eon, WindowMode::Fullscreen)?;
     let out = launch.out.clone();
     let runtime = PathBuf::from(&launch.env["XDG_RUNTIME_DIR"]);
     let bench = std::env::current_exe().map_err(failure)?;

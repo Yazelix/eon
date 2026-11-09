@@ -290,15 +290,19 @@ Below 20 samples the p95 is the slowest sample.
 Samples are the data; the summaries are recomputed from them. The `pty` layer
 counts `pty_bytes` and `pty_reads`.
 
-### Display-free memory
+### Memory
 
-`nix run .#bench -- memory --out DIR` measures Linux PSS, with RSS and
+`nix run .#bench -- memory --eon CANDIDATE/bin/eon --out DIR` measures Linux PSS, with RSS and
 anonymous PSS alongside it, at 80×24. Eon, tmux and Zellij are interleaved
 by round: two warmup rounds, then ten samples per cell. `--quick` is smoke
 only. `--subject eon|tmux|zellij` selects subjects; the wrapper supplies
 Nix-pinned tools. Absolute `--orbit`, `--eonbase`, `--tmux` and `--zellij`
 paths override them. `--eonbase` names the unwrapped executable so the harness
-can supply its private Orbit and diagnostic presentation.
+can supply its private Orbit and diagnostic presentation. `--eon` is required
+when Eon is selected and names a candidate built with `nix build --out-link`;
+no installed profile is used. `--renderer lavapipe` selects software Vulkan;
+`--renderer /dev/dri/renderD128` selects a hardware render node through the
+shared headless launcher, rejecting software fallback.
 
 Each subject/round has fresh empty and filled launches, private HOME/XDG
 roots and sockets, and bubblewrap PID/network namespaces with
@@ -311,13 +315,17 @@ No ambient runtime, profile or desktop is used.
 |---|---|
 | `server-start` | Server plus one empty terminal. Eon includes its real terminal-mode eonbase supervisor, its Orbit host and Bend worker; reference engines live inside their servers. |
 | `empty-terminal`, `filled-terminal` | For every subject, `(total at 50 − total at 1) / 49`, with server and terminal engines included. Eon has one supervisor/first terminal plus 49 independent Orbit host/worker pairs; it measures a terminal-engine cohort, not 50 Eon workspace records. |
-| `client-50-filled` | After `(server + native frontend)` minus before `(server)`, with 50 filled terminals, for tmux and Zellij on private PTYs. **Eon's real Venus client is not yet measured**; `eon-benchmarks-xl2bp.18` owns that row. |
+| `client-50-filled` | After `(server + native frontend)` minus before `(server)`, with 50 filled terminals, for tmux and Zellij on private PTYs. Eon uses the actual Venus workspace client on private Sway, with 50 filled tabs and one visible tab. Its native-client cohort has 50 real workspace records; the engine slopes above use independent hosts. The same supervisor and 50 Orbit host/worker pairs are included before/after, plus Venus after; workload, Sway, D-Bus and harness processes are excluded. |
 | `diagnostic-supervisor-alone` | Eon supervisor only, separate from the startup comparison. |
 | `diagnostic-codec-server-attach` | Eon server/engine PSS change for a diagnostic canonical-codec client attached to all 50 hosts. It excludes the diagnostic frontend, verifies every reader and connection around sampling, and is separate from native-client comparisons. |
 
 Eon trails tmux in the recorded startup, empty-terminal and filled-terminal
 PSS comparisons. `eon-ypy0a` owns reducing those gaps; published results retain
 the losses and name that fix bead.
+
+[Recorded Venus client rows](benchmarks/venus-client-memory-2026-11-08.md)
+show software and Intel hardware beside the earlier tmux/Zellij cohort,
+with raw result JSON and native process evidence.
 
 Every workload child is excluded. The filled payload is exactly 10,000
 numbered 72-column ASCII lines, CRLF-separated without a final newline. The
@@ -327,7 +335,11 @@ viewports against the last 24 lines and records history counts. Native
 clients are checked through client listings and the focused-viewport dump.
 Tmux and Zellij use 10,000 history rows and no status/plugin panes; Orbit uses
 its runtime byte budget. Equal emitted bytes do not guarantee equal retained
-history. GUI/GPU memory and leak bounds are outside this suite.
+history. Venus process memory includes graphics allocations mapped into
+`smaps_rollup`; GPU allocations outside those mappings and leak bounds are
+outside this suite. Each native-client launch records its actual adapter, ICD,
+compositor, private environment, process sets and raw trace. Publish software
+and hardware cohorts separately whenever both are available.
 
 Zellij is background-created with a layout. Its pinned background mode starts
 at 50×50, so a temporary native client establishes 80×24 and detaches before
@@ -349,7 +361,7 @@ the primary comparison and anonymous PSS gives a second view.
 `denominator` define `(after − before) / denominator`; absolute measures use
 zero before. Signed deltas are preserved. Seconds are collection time, not
 throughput. `summary.md` reports MiB median and nearest-rank p05–p95 (with ten
-samples, min–max), separating diagnostics and the unmeasured Venus row.
+samples, min–max), separating diagnostics from native-client comparisons.
 `evidence/` retains exact commands/configuration, completion reports, oracle
 records, PID/start-time/parent identities, process sets, and every raw
 `smaps_rollup`. Empty sets, missing/reused processes, missing fields and
@@ -364,8 +376,8 @@ an isolated Linux headless Sway at 1280×800. Build the candidate with an
 out-link, never an installed profile. The shared `launcher.rs` owns Sway,
 D-Bus, a cleared subject environment, HOME, configuration, state, short
 runtime roots and process identity checks. The response suite uses the same
-launcher; terminal comparisons and Venus memory remain separate beads
-(`eon-benchmarks-xl2bp.6`, `.18`).
+launcher, as does the memory suite for Venus. Terminal comparisons remain
+a separate bead (`eon-benchmarks-xl2bp.6`).
 
 The `headless` check reuses the memory suite's bubblewrap containment: private
 PID/network namespaces, read-only host root, writable evidence and private
