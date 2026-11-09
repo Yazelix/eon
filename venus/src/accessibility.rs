@@ -771,7 +771,7 @@ impl Snapshot {
                 node.set_label(pane.label());
                 node.set_selected(pane.selected && selected_column);
                 node.set_expanded(pane.selected);
-                if let Some(bounds) = pane.rect.intersection(workspace.pane_viewport) {
+                if let Some(bounds) = pane.rect.intersection(workspace.header_viewport) {
                     node.set_bounds(rect(bounds));
                 }
                 node.add_action(Action::Click);
@@ -3693,14 +3693,14 @@ mod tests {
                 node(&update, pane).bounds(),
                 workspace.panes[0]
                     .rect
-                    .intersection(workspace.pane_viewport)
+                    .intersection(workspace.header_viewport)
                     .map(rect)
             );
             for pane in &workspace.panes {
                 let button = node(&update, snapshot.pane_ids[&pane.id]);
                 assert_eq!(
                     button.bounds(),
-                    pane.rect.intersection(workspace.pane_viewport).map(rect)
+                    pane.rect.intersection(workspace.header_viewport).map(rect)
                 );
                 assert_eq!(button.role(), Role::Button);
                 assert!(button.supports_action(Action::Click));

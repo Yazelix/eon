@@ -659,6 +659,9 @@ re-proved when that platform or feature is next touched.
   by `eon-30skm` (S3): its prose says session for the product concept.
   Amended on 2026-11-07 (approved by eon-overseer under Lucca's standing
   rule) by `eon-7cf0y.17`: Quit sends EON-C11's Reserved Stop.
+  Amended on 2026-11-09 by `eon-whjhd`, approved by Lucca (delegated:
+  'auto-decide'): a Stack tab above each column and plain titles on every
+  pane.
 - **Consumer:** One Venus surface controlled by an Eon workspace.
 - **Trigger:** Outside visible `VEN-C18` popup presentation, Eon supplies
   durable topology, a workspace action changes tab, pane, focus, order,
@@ -700,8 +703,8 @@ re-proved when that platform or feature is next touched.
     them.
   - Alt+Shift+Z toggles window-local zoom of the active tab's selected pane
     once per press and sends no workspace action. While zoomed, Scene lays out
-    only that pane, as one rounded card with its label in the top edge spanning
-    the area all of the tab's columns cover; the other panes' attachments stay
+    only that pane, as one rounded card under its column's Stack tab with its label
+    in its top edge, spanning the area all of the tab's columns cover; the other panes' attachments stay
     open at their last size and are not resized, drawn, hit-tested or listed to
     accessibility. An accepted snapshot that changes the active tab, its panes
     or columns, or its selected pane ends the zoom, and unzooming sizes
@@ -732,11 +735,20 @@ re-proved when that platform or feature is next touched.
     label takes that position and the first pill follows it. Pill height follows VEN-C21; the gap between pills and
     header button width stay as before; on a short window the extra inset
     yields before the pills do. On a window too small for the gaps they
-    yield before a terminal cell does. Below the first pane, each stacked title edge keeps its compact
-    border-gap title and rounded corners. The first pane's fitted tab uses the
-    shared contour. At the unscrolled top, each column's first pane, the popup card and
+    yield before a terminal cell does. Every pane title, the first pane's
+    included, is a compact border-gap title in its rounded edge. Each column
+    card's top line carries VEN-C18's shared framed-title tab, labelled `Stack`
+    when the tab has one column and `Stack 1`, `Stack 2`, ... from left to right
+    when it has several (the panes' one-based `column` in `eon session --json`);
+    without pane frames the label shows plain. The first pane's top edge sits one
+    stack band below that line: one chrome title row plus the tab's rise, a third
+    of the title padding (24 logical pixels at default typography). The column's
+    sides run from that line down to where the first pane's rounded top corners
+    turn into them, as stacked cards meet; that segment and its tab keep the
+    neutral border colour and width. Headers scroll below the stack band. At the
+    unscrolled top, each column's top line, the popup card and
     the agent sidebar card share one snapped top line, subject to VEN-C18's
-    tiny-window popup exception. Each column's fill starts at its first pane's shared title
+    tiny-window popup exception. Each column's fill starts at its Stack tab's
     contour and follows it down to the column's rounded
     bottom; inside it, title rows and the space between stacked pane cards share the
     expanded terminal's background color/opacity under the surface-wide blur request,
@@ -746,9 +758,8 @@ re-proved when that platform or feature is next touched.
     [Configuration behavior](../../docs/CONFIGURATION.md#configuration-behavior))
     instead of the shared title-row background; title text, cutouts and outlines
     stay above it, while collapsed rows, popups, zoom and frameless headers retain
-    their existing backgrounds. A fitted tab keeps its uniform column background
-    and opacity; the extended top-padding band continues outside its title area.
-    Compact titles keep the existing header-band treatment. Outside the shared
+    their existing backgrounds. The Stack tab and the stack band keep the
+    uniform column background and opacity. Outside the shared
     title contour and those outer corners, everything below the tab bar that the
     column fills do not cover, including the gaps and footer band, takes the
     header's opaque color, so header, gaps and footer form one frame. The selected pane in the selected column has a
@@ -1447,6 +1458,9 @@ re-proved when that platform or feature is next touched.
 ## VEN-C18 — Shared popup and picker-first presentation
 
 - **Status:** Partially proved; the pre-Bend baseline is candidate evidence.
+  Amended on 2026-11-09 by `eon-whjhd`, approved by Lucca (delegated:
+  'auto-decide'): Stack tabs share the framed-title treatment and the tabs'
+  gap below the bar.
 - **Consumer:** One person using a Venus workspace supplied through EONW v5.
 - **Trigger:** The active tab selects a popup, its selection changes, or the
   person invokes an Eon-supplied catalog shortcut.
@@ -1480,16 +1494,18 @@ re-proved when that platform or feature is next touched.
   uses the border width and carries its catalog label, such as "Files",
   using the shared chrome title metric. Popup labels use Venus's shared
   framed-title treatment: the same rounded tab, shaping, fitting, padding and
-  outline policy as each column's top pane, including a lone or zoomed pane,
-  the Agents sidebar and native titled dialogs. The outline rises seamlessly
+  outline policy as each column's Stack tab (VEN-C8), the Agents sidebar and
+  native titled dialogs. The outline rises seamlessly
   from the left border over the label and returns tangentially into the top
   edge with an S curve spanning 1.5 times its rise, starting beside the fitted
-  visible text. The tab uses its surface's background and opacity. It occupies
-  existing chrome clearance and adds no height or terminal rows. Where its
+  visible text. The tab uses its surface's background and opacity. Popup,
+  Agents and Stack tab tops sit one card gap below the Eon Bar's pills
+  (VEN-C21). A popup, Agents or dialog tab adds no height or terminal rows
+  inside its card; a Stack tab has its own stack band (VEN-C8). Where its
   stroke cannot clear the label or neighbouring chrome, retain the compact
-  border-gap title; omit a label only when it cannot fit. Lower panes in a stack
-  retain their compact titles. Terminal layout, hover/click targets and
-  accessibility names and bounds stay unchanged. Native dialog title ink stays
+  border-gap title; omit a label only when it cannot fit. Pane titles stay
+  compact border-gap titles (VEN-C8). Hover/click targets and
+  accessibility names stay unchanged. Native dialog title ink stays
   inside existing dismissal bounds. Exposed popup margins share the terminal
   default background and opacity, with the existing best-effort surface-wide
   compositor blur request. It keeps a
@@ -1538,7 +1554,8 @@ re-proved when that platform or feature is next touched.
   startup and reopen. Native fractional
   scale, other compositors and screen-reader interaction remain unproved.
   Re-proof of VEN-C18 on the beta candidate is pending under eon-igae.7.5;
-  eon-27deg owns the shared-title amendment and its focused proof.
+  eon-27deg owns the shared-title amendment and its focused proof;
+  eon-whjhd owns the Stack-tab amendment and its focused proof.
 
 ## VEN-C20 — Native shortcut viewer
 
@@ -1673,6 +1690,8 @@ re-proved when that platform or feature is next touched.
   Amended on 2026-11-07 (approved by eon-overseer under Lucca's standing rule)
   by `eon-30skm` (S3): the heading and label say session, and the label's
   accessible name, needs-input suffix and tooltip quote the session strings.
+  Amended on 2026-11-09 by `eon-whjhd`, approved by Lucca (delegated:
+  'auto-decide'): title tabs sit one card gap below the pills.
   Amended on 2026-11-07 (approved by eon-overseer under Lucca's standing rule)
   by `eon-7cf0y.6`: the icon opens the Window menu; proven with an isolated
   installed x86_64 Linux Wayland candidate on 2026-11-07.
@@ -1684,8 +1703,8 @@ re-proved when that platform or feature is next touched.
 - **Result:** The existing session tab strip remains one row at its existing
   height. Tabs keep their filled pills. Tab pills and the quota, CPU, RAM and disk widgets share
   one height and centre line, starting half the card title height below the window's top edge; the
-  allocated card areas start below them so that the space between the pills and the tops of the card
-  titles' capital letters equals the space above the pills. The widgets draw no fill: each is a
+  allocated card areas start below them so that the tops of the card title tabs (VEN-C18) sit one
+  card gap (VEN-C8) below the pills. The widgets draw no fill: each is a
   rounded outline at the pane cards' neutral border width and outline color, with its text and icons on the opaque bar
   background. The clock and the version label are plain text in one colour.
   Keyboard shortcuts is a round outlined button as tall as the tab pills, with
@@ -2133,7 +2152,9 @@ re-proved when that platform or feature is next touched.
   eon-overseer the same day; `eon-sidebar-you-are-here-3743` replaces the
   header marker with the current row, approved by Lucca through eon-overseer
   on 2026-10-23; after installed dogfood the same day, Lucca replaced its
-  first tint with an outline.
+  first tint with an outline. Amended on 2026-11-09 by `eon-whjhd`, approved by
+  Lucca (delegated: 'auto-decide'): Agents shares its tab clearance with the
+  Stack tabs.
 - **Consumer:** One person using a Venus window attached to a full Eon
   workspace. The sidebar itself needs `sidebar` other than `Off`. Alt+G and
   Alt+Shift+G work under `Off` too.
@@ -2152,7 +2173,7 @@ re-proved when that platform or feature is next touched.
       full width, its controls and its drag region.
     - Its card uses the border width and the pane cards' corner radius, with
       "Agents" in VEN-C18's shared framed-title tab, using the same component,
-      chrome title metric and existing clearance as top-pane and popup titles,
+      chrome title metric and clearance as the Stack and popup tabs,
       without changing sidebar or list bounds. Behind rows, its fill, from its
       shared title contour down, takes the background of the terminal in the
       leftmost visible column at the terminal-background opacity ([Window

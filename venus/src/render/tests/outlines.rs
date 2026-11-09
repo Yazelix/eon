@@ -184,68 +184,171 @@ fn popup_title_workspace(
 }
 
 #[test]
-fn shared_title_tabs_fit_lone_and_top_panes_and_leave_lower_rows_compact() {
+fn scrolled_terminals_paint_below_the_stack_band() {
+    use eon_workspace_protocol::v38::{Column, Pane};
+    let metrics = CellMetrics::for_scale(1.0);
+    let stroke = physical_outline_width(1, metrics.scale);
+    let mut snapshot = popup_title_snapshot("Popup", 4.0);
+    let tab = &mut snapshot.tabs[0];
+    tab.selected_popup = None;
+    tab.popups.clear();
+    tab.selected_pane = Some("p0".into());
+    tab.columns = vec![Column {
+        panes: (0..30)
+            .map(|pane| Pane {
+                id: format!("p{pane}"),
+                label: format!("p{pane}  Codex"),
+                session: format!("s{pane}"),
+                endpoint: format!("/tmp/{pane}.sock").into_bytes(),
+                pinned_name: None,
+                live: true,
+                attention: None,
+            })
+            .collect(),
+        expanded: "p0".into(),
+    }];
+    let project = |scroll| {
+        WorkspaceScene::from_snapshot(
+            &snapshot,
+            PhysicalSize::new(1280, 400),
+            metrics,
+            0.0,
+            scroll,
+            |_, label| (label.into(), label.len() as f32 * metrics.width),
+        )
+    };
+    let header = project(0.0).panes[0].rect.height;
+    // A few pixels past the expanded pane's header, its terminal reaches into the band.
+    let workspace = project(header + 5.0);
+    assert!(workspace.terminal.top < workspace.header_viewport.top);
+    for frames in [true, false] {
+        let (clip, _) = terminal_paint_clip(
+            &workspace,
+            workspace.chrome,
+            workspace.terminal,
+            metrics,
+            frames,
+            stroke,
+        )
+        .unwrap();
+        assert!(clip.top >= workspace.header_viewport.top, "frames {frames}");
+    }
+}
+
+#[test]
+fn every_column_card_carries_a_stack_tab_one_card_gap_below_the_bar() {
     use eon_workspace_protocol::v38::{Column, Pane};
     let mut fonts = FontSetup::new(&FontSettings::default()).unwrap();
     for scale in [1.0, 1.3, 2.0] {
         let metrics = fonts.metrics(scale);
-        for count in [1, 3] {
-            for expanded in 0..count {
+        let stroke = physical_outline_width(1, metrics.scale);
+        for (columns, panes) in [(1, 1), (1, 3), (2, 1), (2, 3), (4, 2)] {
+            for expanded in 0..panes {
                 let mut snapshot = popup_title_snapshot("Popup", 4.0);
                 let tab = &mut snapshot.tabs[0];
                 tab.selected_popup = None;
                 tab.popups.clear();
-                tab.selected_pane = Some(format!("p{expanded}"));
-                tab.columns = vec![Column {
-                    panes: (0..count)
-                        .map(|index| Pane {
-                            id: format!("p{index}"),
-                            label: format!("p{index}  Codex"),
-                            session: format!("s{index}"),
-                            endpoint: format!("/tmp/p{index}.sock").into_bytes(),
-                            pinned_name: None,
-                            live: true,
-                            attention: None,
-                        })
-                        .collect(),
-                    expanded: format!("p{expanded}"),
-                }];
-                for width in [400, 1280] {
-                    let workspace = WorkspaceScene::from_snapshot(
+                let id = |column: usize, pane: usize| format!("p{}", column * panes + pane);
+                tab.selected_pane = Some(id(columns - 1, expanded));
+                tab.columns = (0..columns)
+                    .map(|column| Column {
+                        panes: (0..panes)
+                            .map(|pane| Pane {
+                                id: id(column, pane),
+                                label: format!("{}  Codex", id(column, pane)),
+                                session: format!("s{column}-{pane}"),
+                                endpoint: format!("/tmp/{column}-{pane}.sock").into_bytes(),
+                                pinned_name: None,
+                                live: true,
+                                attention: None,
+                            })
+                            .collect(),
+                        expanded: id(column, expanded),
+                    })
+                    .collect();
+                // Four columns fit their numbered labels from 1280 pixels.
+                let widths = if columns == 4 {
+                    &[(1280, false), (1280, true)][..]
+                } else {
+                    &[(400, false), (1280, false), (1280, true)]
+                };
+                for &(width, zoom) in widths {
+                    let workspace = WorkspaceScene::from_snapshot_with_zoom(
                         &snapshot,
+                        crate::EonBar::default(),
                         PhysicalSize::new(width, 800),
                         metrics,
                         0.0,
                         0.0,
                         |_, label| (label.into(), label.len() as f32 * metrics.width),
+                        None,
+                        zoom,
+                        crate::SidebarView::default(),
                     );
-                    let stroke = physical_outline_width(1, metrics.scale);
-                    let title = FrameTitleTab::pane(
+                    let tabs = FrameTitleTab::workspace(
                         &mut fonts.font_system,
                         metrics,
                         &workspace,
-                        &workspace.panes,
-                        stroke,
-                        stroke,
-                        None,
-                    )
-                    .expect("the top pane has existing chrome clearance");
-                    assert_eq!(title.title.label, "p0  Codex");
-                    assert!(title.top > workspace.header.bottom());
-                    assert!(title.top + stroke + 1.0 <= workspace.panes[0].rect.top);
-                    if count > 1 {
+                        true,
+                        (stroke, stroke),
+                    );
+                    let shown = if workspace.zoomed_pane().is_some() {
+                        1
+                    } else {
+                        columns
+                    };
+                    assert_eq!(tabs.len(), shown);
+                    let pills = workspace.bar_pill_rect(SceneRect::default(), metrics);
+                    for (tab, (chrome, label, panes)) in tabs.iter().zip(workspace.column_cards()) {
+                        let index = if chrome == workspace.chrome {
+                            workspace.selected_column
+                        } else {
+                            workspace
+                                .other_columns
+                                .iter()
+                                .find(|column| column.chrome == chrome)
+                                .unwrap()
+                                .index
+                        };
+                        let expected = if columns == 1 {
+                            "Stack".to_string()
+                        } else {
+                            format!("Stack {}", index + 1)
+                        };
+                        assert_eq!(label, Some(expected.as_str()));
+                        let tab = tab.as_ref().expect("the Stack tab fits");
+                        if width == 1280 || scale == 1.0 {
+                            assert_eq!(tab.title.label, expected);
+                        }
+                        assert_eq!(tab.row.top, workspace.pane_viewport.top);
+                        // The cap clears the bar's pills by one card gap.
+                        let gap = tab.top - pills.bottom();
                         assert!(
-                            FrameTitleTab::pane(
-                                &mut fonts.font_system,
-                                metrics,
-                                &workspace,
-                                &workspace.panes[1..],
-                                stroke,
-                                stroke,
-                                None,
-                            )
-                            .is_none(),
-                            "an interior stack row must not acquire a tab"
+                            (gap - crate::scene::card_gap(metrics)).abs() <= 1.0,
+                            "scale={scale}, gap={gap}"
+                        );
+                        // The first pane's title row sits one Stack band lower, plain.
+                        let first = &panes[0];
+                        assert_eq!(
+                            first.rect.top,
+                            workspace.pane_viewport.top
+                                + chrome_title_metrics(metrics).text_height
+                                + metrics.padding / 3.0
+                        );
+                        assert!(tab.row.bottom() < first.rect.top);
+                    }
+                    if !zoom {
+                        let lower = workspace
+                            .panes
+                            .iter()
+                            .skip(1)
+                            .map(|pane| pane.rect.top - workspace.header_viewport.top)
+                            .collect::<Vec<_>>();
+                        assert!(
+                            lower
+                                .iter()
+                                .all(|top| *top >= workspace.panes[0].rect.height),
+                            "lower rows stay below the first"
                         );
                     }
                 }
@@ -1282,6 +1385,28 @@ fn selected_pane_outline_uses_scaled_widths_without_overlap_or_gaps() {
                                         (outline, gaps)
                                     })
                                     .collect::<Vec<_>>();
+                                // The first pane's top edge sits one Stack band below the
+                                // card's top line, and the Stack segment closes the gap.
+                                let band = chrome_title_metrics(metrics).text_height
+                                    + metrics.padding / 3.0;
+                                assert!(
+                                    (workspace.header_viewport.top
+                                        - workspace.pane_viewport.top
+                                        - band)
+                                        .abs()
+                                        < 0.001
+                                );
+                                assert_eq!(
+                                    rules[0].0.title_y,
+                                    Some(crate::scene::title_rule_y(
+                                        workspace.header_viewport.top,
+                                        panes[0].rect.height
+                                    ))
+                                );
+                                let stack = workspace.stack_outline(&rules[0].0, fill);
+                                assert_eq!(stack.title_y, Some(fill.bounds.top));
+                                let mut rules = rules;
+                                rules.push((stack, [SceneRect::default(); 2]));
                                 if frames && selected + 1 < panes.len() {
                                     let next = &panes[selected + 1];
                                     let next_line =
@@ -1421,6 +1546,18 @@ fn selected_pane_outline_uses_scaled_widths_without_overlap_or_gaps() {
                                                 "stack strokes must paint once: {overlap:?}, scale={scale}, selected={selected}"
                                             );
                                         }
+                                    }
+                                }
+                                for offset in (0..border_width as u32).map(|n| n as f32 + 0.5) {
+                                    for (x, y) in [
+                                        (card.left + offset, rules[0].0.bounds.top - 0.5),
+                                        (card.left + card.width / 2.0, fill.bounds.top + offset),
+                                    ] {
+                                        assert_eq!(
+                                            color_at(&quads, x, y),
+                                            frames.then_some(neutral),
+                                            "the Stack segment stays neutral: scale={scale}, selected={selected}, x={x}, y={y}"
+                                        );
                                     }
                                 }
                                 for y in ((fill.bounds.top + workspace.card_radius()).ceil() as u32
@@ -1574,9 +1711,9 @@ fn selected_pane_outline_uses_scaled_widths_without_overlap_or_gaps() {
                                     }
                                 }
                                 if frames && current_column {
+                                    let top = workspace.header_viewport.top;
                                     for delta in [-workspace.card_radius(), -1.0, 1.0] {
-                                        let scroll =
-                                            rules[selected].0.bounds.top - card.top - delta;
+                                        let scroll = rules[selected].0.bounds.top - top - delta;
                                         let mut scrolled_panes = panes.to_vec();
                                         for pane in &mut scrolled_panes {
                                             pane.rect.top -= scroll;
@@ -1619,7 +1756,7 @@ fn selected_pane_outline_uses_scaled_widths_without_overlap_or_gaps() {
                                             color_at(
                                                 &quads,
                                                 frame.left + frame.width / 2.0,
-                                                card.top + delta.max(0.0) + 0.5
+                                                top + delta.max(0.0) + 0.5
                                             ),
                                             (delta >= 0.0 || delta + focus_width > 0.5)
                                                 .then_some(focus),
@@ -1629,9 +1766,7 @@ fn selected_pane_outline_uses_scaled_widths_without_overlap_or_gaps() {
                                             color_at(
                                                 &quads,
                                                 frame.left + 0.5,
-                                                frame.top.max(card.top)
-                                                    + workspace.card_radius()
-                                                    + 0.5
+                                                frame.top.max(top) + workspace.card_radius() + 0.5
                                             ),
                                             Some(focus),
                                             "clipped selected sides remain visible"
@@ -1719,10 +1854,11 @@ fn retained_resize_keeps_strokes_clear_of_displayed_rows() {
         for (before_zoom, after_zoom) in [(false, false), (false, true), (true, false)] {
             let old = workspace(740, before_zoom);
             let current = workspace(720, after_zoom);
-            assert_eq!(current.pane_viewport.top, 46.0);
-            assert_eq!(current.panes[0].rect.top, current.pane_viewport.top);
+            assert_eq!(current.pane_viewport.top, 52.0);
+            assert_eq!(current.header_viewport.top, 76.0);
+            assert_eq!(current.panes[0].rect.top, current.header_viewport.top);
             let shared_top = current.card_rect(current.chrome, metrics, 1.0).top;
-            assert_eq!(shared_top, 56.0);
+            assert_eq!(shared_top, 62.0);
             assert_eq!(current.sidebar().unwrap().top, shared_top);
             let size = metrics.surface_size(old.terminal.screen_size()).unwrap();
             let retained = Scene {
@@ -1744,9 +1880,9 @@ fn retained_resize_keeps_strokes_clear_of_displayed_rows() {
                 .intersection(current.pane_viewport)
                 .unwrap();
             if pane_count == 4 && expanded == 1 && !before_zoom && !after_zoom {
-                assert_eq!(retained.rows, 32);
-                assert_eq!(displayed.bottom() - metrics.height, 634.0);
-                assert_eq!(displayed.bottom(), 652.0);
+                assert_eq!(retained.rows, 30);
+                assert_eq!(displayed.bottom() - metrics.height, 630.0);
+                assert_eq!(displayed.bottom(), 648.0);
             }
             let paint = workspace_paint(&current, Some(&retained), &[], metrics);
             let cards = card_backdrops(&paint, Some(&retained), &[], metrics, 1.0);
@@ -1775,7 +1911,7 @@ fn retained_resize_keeps_strokes_clear_of_displayed_rows() {
             let settled = workspace_paint(&current, Some(&resized), &[], metrics);
             assert!(matches!(settled, Cow::Borrowed(_)));
             if pane_count == 4 && expanded == 1 && !before_zoom && !after_zoom {
-                assert_eq!(rules[0].0.bounds.bottom(), 653.0);
+                assert_eq!(rules[0].0.bounds.bottom(), 649.0);
                 let settled_fill = settled.card_fill(settled.chrome, metrics, 1.0);
                 assert_eq!(
                     settled.pane_outlines(
@@ -2087,8 +2223,9 @@ fn shared_bottom_preserves_grid_and_bounds_short_scene_paint() {
                             ) else {
                                 continue;
                             };
-                            if let Some(visible) =
-                                grid.intersection(workspace.pane_viewport).and_then(|grid| {
+                            if let Some(visible) = grid
+                                .intersection(workspace.header_viewport)
+                                .and_then(|grid| {
                                     grid.intersection(
                                         workspace.card_fill(allocated, metrics, stroke).bounds,
                                     )
@@ -2101,7 +2238,10 @@ fn shared_bottom_preserves_grid_and_bounds_short_scene_paint() {
                                 );
                             }
                         }
-                        if height >= 800 {
+                        // A stack that overflows (the 96 px font) keeps its terminal below the
+                        // fold until it is scrolled to its end.
+                        if height >= 800 && workspace.pane_scroll() == workspace.pane_scroll_limit()
+                        {
                             let size = metrics
                                 .surface_size(workspace.terminal.screen_size())
                                 .unwrap();
@@ -3030,7 +3170,7 @@ fn card_backdrop_keeps_cards_like_the_agent_sidebar_at_terminal_opacity() {
                                     assert_eq!(
                                         clip_with(false),
                                         terminal
-                                            .intersection(workspace.pane_viewport)
+                                            .intersection(workspace.header_viewport)
                                             .map(|clip| (clip, None))
                                     );
                                 }
@@ -3316,97 +3456,6 @@ fn all_native_dialog_titles_fit_inside_existing_dismissal_bounds() {
 }
 
 #[test]
-fn top_pane_title_reserves_the_scrollback_pill_and_its_background() {
-    use eon_workspace_protocol::v38::{Column, Pane};
-    let mut fonts = FontSetup::new(&FontSettings::default()).unwrap();
-    let metrics = fonts.metrics(1.0);
-    let mut snapshot = popup_title_snapshot("Popup", 4.0);
-    let tab = &mut snapshot.tabs[0];
-    tab.selected_popup = None;
-    tab.popups.clear();
-    tab.selected_pane = Some("p1".into());
-    tab.columns = vec![Column {
-        expanded: "p1".into(),
-        panes: vec![Pane {
-            id: "p1".into(),
-            label: "p1  very long Codex title that has to fit beside scrollback".into(),
-            session: "s1".into(),
-            endpoint: b"/tmp/p1.sock".to_vec(),
-            pinned_name: None,
-            live: true,
-            attention: None,
-        }],
-    }];
-    for width in [400, 1280] {
-        let workspace = WorkspaceScene::from_snapshot(
-            &snapshot,
-            PhysicalSize::new(width, 800),
-            metrics,
-            0.0,
-            0.0,
-            |_, text| (text.into(), text.len() as f32 * metrics.width),
-        );
-        let stroke = physical_outline_width(1, metrics.scale);
-        let limit = workspace.panes[0].rect.right() - 130.0;
-        let title = FrameTitleTab::pane(
-            &mut fonts.font_system,
-            metrics,
-            &workspace,
-            &workspace.panes,
-            stroke,
-            stroke,
-            Some(limit),
-        )
-        .unwrap();
-        assert!(title.start + title.return_run + stroke <= limit);
-        let mut scene = padding_scene();
-        scene.screen = orbit_protocol::Screen::Alternate;
-        let mut plain = RectangleBatch::new(width, 800);
-        build_workspace_padding(
-            &mut plain,
-            &workspace,
-            Some(&scene),
-            &[],
-            metrics,
-            PaddingColor::ExtendAlways,
-            true,
-            stroke,
-            (None, 0.0),
-            &[],
-        );
-        let mut notched = RectangleBatch::new(width, 800);
-        build_workspace_padding(
-            &mut notched,
-            &workspace,
-            Some(&scene),
-            &[],
-            metrics,
-            PaddingColor::ExtendAlways,
-            true,
-            stroke,
-            (None, 0.0),
-            &[Some(title.clone())],
-        );
-        let x = workspace.panes[0].rect.left + metrics.padding + 1.0;
-        let y = workspace
-            .card_fill(workspace.chrome, metrics, stroke)
-            .bounds
-            .top
-            + 1.5;
-        assert!(
-            padding_pixel(&plain, x, y).is_some(),
-            "explicit terminal background reaches the old title band"
-        );
-        assert_eq!(
-            padding_pixel(&notched, x, y),
-            None,
-            "the notched title retains one uniform background"
-        );
-        assert!(notched.bytes.len() < plain.bytes.len());
-    }
-}
-
-#[test]
 fn short_dialogs_fall_back_before_their_title_contour_leaves_dismissal_bounds() {
     use crate::{DialogKind, DialogScene};
     let mut fonts = FontSetup::new(&FontSettings::default()).unwrap();
@@ -3499,7 +3548,6 @@ fn empty_columns_keep_title_and_backdrop_slots_aligned() {
             &workspace,
             true,
             (1.0, 1.0),
-            None,
         );
         let cards = card_backdrops(&workspace, None, &[None, None], metrics, 1.0);
         assert_eq!(titles.len(), 3);
@@ -3511,7 +3559,7 @@ fn empty_columns_keep_title_and_backdrop_slots_aligned() {
             } else {
                 let title = title.as_ref().unwrap();
                 let card = card.unwrap();
-                assert_eq!(title.title.label, format!("Pane {index}"));
+                assert_eq!(title.title.label, format!("Stack {}", index + 1));
                 assert_eq!(title.row.left, card.bounds.left);
             }
         }

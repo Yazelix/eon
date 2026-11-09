@@ -220,6 +220,26 @@ fn contrast(a: SceneColor, b: SceneColor) -> f32 {
     (a.max(b) + 0.05) / (a.min(b) + 0.05)
 }
 
+/// `fill` at `opacity` over a white desktop: a translucent card's lightest case, the one that
+/// bounds light text on it.
+fn over_bright_desktop(fill: SceneColor, opacity: f32) -> SceneColor {
+    let resolved = |value: u8| (f32::from(value) * opacity + 255.0 * (1.0 - opacity)).round() as u8;
+    SceneColor {
+        r: resolved(fill.r),
+        g: resolved(fill.g),
+        b: resolved(fill.b),
+    }
+}
+
+/// A Stack label's colour on its column's terminal background `fill`: primary text, blended
+/// toward black only as far as 4.5:1 needs when that background is itself light. Like the
+/// terminal's own text, it is judged against the terminal's colour, not the translucent result:
+/// what shows through depends on the desktop, and assuming a bright one would darken labels on a
+/// dark terminal over a dark desktop.
+fn stack_label_color(fill: SceneColor) -> SceneColor {
+    super::cells::blend_to_contrast(palette::PRIMARY_TEXT, fill, 4.5)
+}
+
 fn pane_id_color(
     name: SceneColor,
     selected: bool,
@@ -237,12 +257,7 @@ fn pane_id_color(
         palette::PANE_ID
     };
     // A bright desktop bounds the translucent fill; frame and hover remain opaque.
-    let resolved = |value: u8| (f32::from(value) * opacity + 255.0 * (1.0 - opacity)).round() as u8;
-    let resolved = SceneColor {
-        r: resolved(fill.r),
-        g: resolved(fill.g),
-        b: resolved(fill.b),
-    };
+    let resolved = over_bright_desktop(fill, opacity);
     // An extended header band is opaque and sits under the label's lower half.
     if contrast(dim, resolved) >= 4.5
         && contrast(dim, palette::BAR_BACKGROUND) >= 4.5
@@ -1190,7 +1205,7 @@ impl FrameTitleTab {
         frame_top: f32,
         stroke: f32,
     ) -> Option<Self> {
-        let extra = (metrics.padding / 3.0).max(stroke + 1.0);
+        let extra = crate::scene::title_tab_rise(metrics).max(stroke + 1.0);
         let top = (row.top - extra).floor().max(frame_top.ceil() + 1.0);
         if top + stroke + 1.0 > row.top {
             return None;
@@ -1237,58 +1252,16 @@ impl FrameTitleTab {
         })
     }
 
-    pub(super) fn pane(
+    /// The tab on the top line of a card allocated `area`, labelled `label`.
+    fn card(
         fonts: &mut FontSystem,
         metrics: CellMetrics,
         workspace: &WorkspaceScene,
-        panes: &[crate::scene::WorkspacePane],
-        stroke: f32,
-        card_stroke: f32,
-        right_limit: Option<f32>,
-    ) -> Option<Self> {
-        let pane = panes.first()?;
-        let height = chrome_title_metrics(metrics).text_height;
-        let mut row = SceneRect {
-            top: pane.rect.top + (pane.rect.height - height) / 2.0,
-            height,
-            ..pane.rect
-        };
-        let card = workspace.card_fill(
-            SceneRect {
-                left: pane.rect.left,
-                width: pane.rect.width,
-                ..workspace.pane_viewport
-            },
-            metrics,
-            card_stroke,
-        );
-        if card.bounds.top != crate::scene::title_rule_y(row.top, row.height) {
-            return None;
-        }
-        if let Some(right) = right_limit {
-            row.width = (right - row.left).max(0.0);
-        }
-        Self::new(
-            fonts,
-            metrics,
-            pane.label(),
-            row,
-            card,
-            workspace
-                .header
-                .bottom()
-                .max(workspace.tab_viewport.bottom()),
-            stroke,
-        )
-    }
-    pub(super) fn sidebar(
-        fonts: &mut FontSystem,
-        metrics: CellMetrics,
-        workspace: &WorkspaceScene,
+        area: SceneRect,
+        label: &str,
         stroke: f32,
         card_stroke: f32,
     ) -> Option<Self> {
-        let area = workspace.sidebar_area()?;
         let row = SceneRect {
             height: chrome_title_metrics(metrics).text_height,
             ..area
@@ -1303,7 +1276,7 @@ impl FrameTitleTab {
         Self::new(
             fonts,
             metrics,
-            SIDEBAR_TITLE,
+            label,
             row,
             card,
             workspace
@@ -1311,6 +1284,25 @@ impl FrameTitleTab {
                 .bottom()
                 .max(workspace.tab_viewport.bottom()),
             stroke,
+        )
+    }
+
+    pub(super) fn sidebar(
+        fonts: &mut FontSystem,
+        metrics: CellMetrics,
+        workspace: &WorkspaceScene,
+        stroke: f32,
+        card_stroke: f32,
+    ) -> Option<Self> {
+        let area = workspace.sidebar_area()?;
+        Self::card(
+            fonts,
+            metrics,
+            workspace,
+            area,
+            SIDEBAR_TITLE,
+            stroke,
+            card_stroke,
         )
     }
 
@@ -1350,63 +1342,38 @@ impl FrameTitleTab {
         )
         .map(|tab| (card, tab))
     }
+    /// Each column's Stack tab, the selected column's first, or the popup's; then the sidebar's.
     pub(super) fn workspace(
         fonts: &mut FontSystem,
         metrics: CellMetrics,
         workspace: &WorkspaceScene,
         pane_frames: bool,
         widths: (f32, f32),
-        right_limit: Option<f32>,
     ) -> Vec<Option<Self>> {
         let (border, focus) = widths;
         let card_stroke = border.max(focus);
-        if workspace.popup_label().is_some() {
-            let mut tabs = vec![FrameTitleTab::popup(fonts, metrics, workspace, border)];
-            if workspace.sidebar().is_some() {
-                tabs.push(
-                    pane_frames
-                        .then(|| {
-                            FrameTitleTab::sidebar(fonts, metrics, workspace, border, card_stroke)
-                        })
-                        .flatten(),
-                );
-            }
-            return tabs;
-        }
-        let mut tabs = Vec::new();
-        for (panes, selected) in std::iter::once((workspace.panes.as_slice(), true)).chain(
+        let mut tabs = if workspace.popup_label().is_some() {
+            vec![FrameTitleTab::popup(fonts, metrics, workspace, border)]
+        } else {
             workspace
-                .other_columns
-                .iter()
-                .map(|column| (column.panes.as_slice(), false)),
-        ) {
-            let Some(first) = panes.first() else {
-                tabs.push(None);
-                continue;
-            };
-            let stroke = if selected && first.selected {
-                focus
-            } else {
-                border
-            };
-            let right_limit = (selected && first.selected)
-                .then_some(right_limit)
-                .flatten();
-            let tab = if pane_frames {
-                FrameTitleTab::pane(
-                    fonts,
-                    metrics,
-                    workspace,
-                    panes,
-                    stroke,
-                    card_stroke,
-                    right_limit,
-                )
-            } else {
-                None
-            };
-            tabs.push(tab);
-        }
+                .column_cards()
+                .map(|(chrome, label, panes)| {
+                    label
+                        .filter(|_| pane_frames && !panes.is_empty())
+                        .and_then(|label| {
+                            Self::card(
+                                fonts,
+                                metrics,
+                                workspace,
+                                chrome,
+                                label,
+                                border,
+                                card_stroke,
+                            )
+                        })
+                })
+                .collect()
+        };
         if workspace.sidebar().is_some() {
             tabs.push(
                 pane_frames
@@ -1423,23 +1390,6 @@ impl Renderer {
         &mut self,
         workspace: &WorkspaceScene,
     ) -> Vec<Option<FrameTitleTab>> {
-        let right_limit = workspace
-            .panes
-            .first()
-            .filter(|pane| pane.selected)
-            .and_then(|pane| {
-                self.scrollback_geometry(
-                    SceneRect {
-                        left: pane.rect.left + self.metrics.width * 4.0,
-                        width: (pane.rect.width - self.metrics.width * 4.0).max(0.0),
-                        ..pane.rect
-                    },
-                    workspace.pane_viewport,
-                    true,
-                    None,
-                )
-                .map(|(pill, _)| pill.left - self.metrics.padding / 2.0)
-            });
         FrameTitleTab::workspace(
             &mut self.fonts.font_system,
             self.metrics,
@@ -1449,7 +1399,6 @@ impl Renderer {
                 physical_outline_width(self.border_width, self.metrics.scale),
                 physical_outline_width(self.focus_border_width, self.metrics.scale),
             ),
-            right_limit,
         )
     }
 
@@ -2771,22 +2720,15 @@ impl Renderer {
             );
             rectangles.clip = None;
         }
-        for (column_index, (panes, terminal, selected_column)) in
-            std::iter::once((workspace.panes.as_slice(), workspace.terminal, true))
-                .chain(
-                    workspace
-                        .other_columns
-                        .iter()
-                        .map(|column| (column.panes.as_slice(), column.terminal, false)),
-                )
-                .enumerate()
+        let terminals = std::iter::once(workspace.terminal)
+            .chain(workspace.other_columns.iter().map(|column| column.terminal));
+        for (column_index, ((card, stack_label, panes), terminal)) in
+            workspace.column_cards().zip(terminals).enumerate()
         {
-            let Some(first) = panes.first() else { continue };
-            let card = SceneRect {
-                left: first.rect.left,
-                width: first.rect.width,
-                ..workspace.pane_viewport
-            };
+            let selected_column = column_index == 0;
+            if panes.is_empty() {
+                continue;
+            }
             let empty_gap = SceneRect {
                 left: card.right(),
                 ..SceneRect::default()
@@ -2807,7 +2749,7 @@ impl Renderer {
             for (index, (pane, (outline, rule_gaps))) in panes.iter().zip(&mut rules).enumerate() {
                 // Only the selected column's expanded header shows selection and scrollback.
                 let current = pane.selected && selected_column;
-                let Some(rect) = pane.rect.intersection(workspace.pane_viewport) else {
+                let Some(rect) = pane.rect.intersection(workspace.header_viewport) else {
                     continue;
                 };
                 let scrollback_width = if current {
@@ -2817,7 +2759,7 @@ impl Renderer {
                             width: (pane.rect.width - self.metrics.width * 4.0).max(0.0),
                             ..pane.rect
                         },
-                        workspace.pane_viewport,
+                        workspace.header_viewport,
                         true,
                         None,
                         rectangles,
@@ -2845,26 +2787,7 @@ impl Renderer {
                     pane.rect
                 };
                 let first_text = self.text.len();
-                let pill = if index == 0
-                    && let Some(Some(tab)) = title_tabs.get(column_index)
-                {
-                    self.build_frame_title(
-                        &tab.title,
-                        row,
-                        rect,
-                        color,
-                        physical_outline_width(
-                            if current {
-                                self.focus_border_width
-                            } else {
-                                self.border_width
-                            },
-                            self.metrics.scale,
-                        ),
-                    )
-                } else {
-                    self.build_border_title(pane.label(), row, rect, width, color)
-                };
+                let pill = self.build_border_title(pane.label(), row, rect, width, color);
                 let id_color = pane_id_color(
                     color,
                     current,
@@ -2876,11 +2799,7 @@ impl Renderer {
                     self.background_opacity,
                     bands
                         .get(column_index)
-                        .filter(|_| {
-                            outline.expanded
-                                && !(index == 0
-                                    && title_tabs.get(column_index).is_some_and(Option::is_some))
-                        })
+                        .filter(|_| outline.expanded)
                         .map_or(&[], Vec::as_slice),
                 );
                 if id_color != color
@@ -2921,26 +2840,39 @@ impl Renderer {
                 }
                 rectangles.clip = None;
             }
-            if let Some(Some(tab)) = title_tabs.get(column_index) {
-                let expanded = rules[0].0.expanded;
-                let stroke = physical_outline_width(
-                    if expanded && selected_column {
-                        self.focus_border_width
-                    } else {
-                        self.border_width
-                    },
-                    self.metrics.scale,
+            // The Stack tab, or a compact title on the card's top line, always neutral.
+            if let Some(stack_label) = stack_label
+                && let Some((first, _)) = rules.first()
+            {
+                let mut stack = workspace.stack_outline(first, fill);
+                let stroke = physical_outline_width(self.border_width, self.metrics.scale);
+                let color = stack_label_color(
+                    backgrounds
+                        .get(column_index)
+                        .copied()
+                        .unwrap_or(palette::TERMINAL_FALLBACK),
                 );
-                let color = if expanded && selected_column {
-                    self.focus_color
-                } else {
-                    palette::CARD_OUTLINE
+                let row = SceneRect {
+                    height: chrome_title_metrics(self.metrics).text_height,
+                    ..card
                 };
-                rectangles.push_title_tab_outline(fill, tab, stroke, color);
-                let cut = fill.bounds.top + super::rounded_radius(fill.bounds, fill.radius);
-                let old_bottom = rules[0].0.clip.bottom();
-                rules[0].0.clip.top = cut;
-                rules[0].0.clip.height = (old_bottom - cut).max(0.0);
+                let gap = if let Some(tab) = title_tabs.get(column_index).and_then(Option::as_ref) {
+                    rectangles.push_title_tab_outline(fill, tab, stroke, palette::CARD_OUTLINE);
+                    let cut = fill.bounds.top + super::rounded_radius(fill.bounds, fill.radius);
+                    let bottom = stack.clip.bottom();
+                    stack.clip.top = cut;
+                    stack.clip.height = (bottom - cut).max(0.0);
+                    self.build_frame_title(&tab.title, row, card, color, stroke)
+                } else {
+                    self.build_border_title(
+                        stack_label,
+                        row,
+                        card,
+                        (card.width - self.metrics.padding * 2.0).max(0.0),
+                        color,
+                    )
+                };
+                rules.push((stack, [gap, empty_gap]));
             }
             rectangles.push_pane_outlines(
                 fill,
@@ -3705,6 +3637,31 @@ mod tests {
                     glyph.start
                 );
             }
+        }
+    }
+
+    #[test]
+    fn stack_labels_keep_primary_text_unless_a_light_background_needs_contrast() {
+        let gray = |value| SceneColor {
+            r: value,
+            g: value,
+            b: value,
+        };
+        // Dark terminals keep primary text at any `background_opacity`: the label is judged
+        // against the terminal's own colour, so a black terminal at 0.5, or the default at 0.3,
+        // over a dark desktop never darkens it.
+        for fill in [palette::TERMINAL_FALLBACK, gray(0), gray(40)] {
+            assert_eq!(stack_label_color(fill), palette::PRIMARY_TEXT);
+        }
+        // Light ones darken the label just enough to read at 4.5:1.
+        for fill in [gray(255), gray(244), gray(170)] {
+            let color = stack_label_color(fill);
+            assert_ne!(color, palette::PRIMARY_TEXT);
+            assert!(contrast_ratio(color, fill) >= 4.5, "{fill:?}");
+            assert!(
+                contrast_ratio(color, fill) < 4.7,
+                "{fill:?} darkens no further than needed"
+            );
         }
     }
 

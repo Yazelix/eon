@@ -58,13 +58,11 @@ const VERTEX_SIZE: u64 = 24;
 #[cfg(test)]
 const VERTICES_PER_QUAD: u32 = 6;
 const DEVICE_LOST: &str = "the Venus GPU device was lost";
-pub(crate) const FALLBACK_CAP_HEIGHT_EM: f32 = 0.7;
 const DEFAULT_METRICS: CellMetrics = CellMetrics {
     scale: 1.0,
     width: 10.0,
     height: 18.0,
     font_size: 16.0,
-    title_cap_top_em: None,
     padding: 12.0,
 };
 
@@ -112,8 +110,6 @@ pub struct CellMetrics {
     pub width: f32,
     pub height: f32,
     pub font_size: f32,
-    /// Capital top relative to the title line's centre, in em; absent before fonts resolve.
-    pub title_cap_top_em: Option<f32>,
     pub padding: f32,
 }
 
@@ -176,7 +172,6 @@ impl CellMetrics {
             width: (self.width * scale).round().max(1.0),
             height: (self.height * scale).round().max(1.0),
             font_size: (self.font_size * scale).max(1.0),
-            title_cap_top_em: self.title_cap_top_em,
             padding: (self.padding * scale).round(),
         }
     }
@@ -685,10 +680,11 @@ fn terminal_paint_clip(
     // The popup card is outlined in both frame modes, so it always bounds its paint.
     let card = (pane_frames || workspace.popup_label().is_some())
         .then(|| workspace.card_fill(allocated, metrics, stroke_width));
-    let viewport = card.map_or(workspace.pane_viewport, |card| card.bounds);
+    let viewport = card.map_or(workspace.header_viewport, |card| card.bounds);
+    // Terminals scroll below the columns' Stack band.
     Some((
         terminal
-            .intersection(workspace.pane_viewport)?
+            .intersection(workspace.header_viewport)?
             .intersection(viewport)?,
         card,
     ))
@@ -705,7 +701,6 @@ fn build_workspace_padding(
     pane_frames: bool,
     stroke_width: f32,
     scroll: (Option<&ScenePreview>, f32),
-    titles: &[Option<FrameTitleTab>],
 ) -> Vec<Vec<SceneColor>> {
     if padding_color == PaddingColor::Background {
         return Vec::new();
@@ -741,14 +736,15 @@ fn build_workspace_padding(
         rectangles.width as f32,
     );
     let popup = workspace.popup_label().is_some();
+    // Padding stays below the columns' Stack band, where their headers scroll.
     let viewport = if pane_frames || popup {
-        workspace.pane_viewport
+        workspace.header_viewport
     } else {
         let left = workspace.sidebar().map_or(0.0, SceneRect::right);
         SceneRect {
             left,
             width: rectangles.width as f32 - left,
-            ..workspace.pane_viewport
+            ..workspace.header_viewport
         }
     };
     // The colours each column's top padding paints into its expanded pane's header band.
@@ -811,33 +807,22 @@ fn build_workspace_padding(
             else {
                 continue;
             };
-            let title = titles
-                .get(index)
-                .and_then(Option::as_ref)
-                .map(|tab| SceneRect {
-                    left: tab.row.left,
-                    top: tab.top,
-                    width: tab.start + tab.return_run - tab.row.left,
-                    height: tab.row.bottom() - tab.top,
-                });
-            for clip in uncovered(clip, &title.into_iter().collect::<Vec<_>>()) {
-                rectangles.clip = Some(clip);
-                let top_colors = build_padding_rectangles(
-                    rectangles,
-                    scene,
-                    metrics,
-                    terminal,
-                    bounds,
-                    padding_color,
-                    if terminal == workspace.terminal {
-                        scroll
-                    } else {
-                        (None, 0.0)
-                    },
-                );
-                if header_band {
-                    header_bands[index] = top_colors;
-                }
+            rectangles.clip = Some(clip);
+            let top_colors = build_padding_rectangles(
+                rectangles,
+                scene,
+                metrics,
+                terminal,
+                bounds,
+                padding_color,
+                if terminal == workspace.terminal {
+                    scroll
+                } else {
+                    (None, 0.0)
+                },
+            );
+            if header_band {
+                header_bands[index] = top_colors;
             }
         }
     }
@@ -1787,7 +1772,6 @@ impl Renderer {
                 self.pane_frames,
                 self.card_stroke_width(),
                 (scroll_preview, scroll_offset),
-                &title_tabs,
             );
             let backgrounds = card_backdrops(
                 workspace,

@@ -184,7 +184,7 @@ fn peer_quit_keeps_id_and_count_apart_from_a_long_name() {
 }
 
 #[test]
-fn eon_bar_pill_band_leaves_equal_title_cap_gap() {
+fn eon_bar_pill_band_keeps_title_tabs_one_card_gap_below() {
     for (scale, line_height, expected) in [
         (1.0, 1.125, (10.0, 30.0)),
         (1.3, 1.125, (13.0, 38.333332)),
@@ -196,60 +196,20 @@ fn eon_bar_pill_band_leaves_equal_title_cap_gap() {
         let header = header_heights(metrics).0;
         let cards = card_area(0.0, 1600.0, 1, header, 900.0, false, 0.0, metrics);
         let band = bar_pill_band(metrics, header, cards.top);
-        let offset = if scale == 1.0 { 6.0 } else { 7.0 };
-        assert!((cards.top - header - offset).abs() < 0.001);
         assert!(
             (band.start - expected.0).abs() < 0.001,
             "{scale}/{line_height}"
         );
         assert!((band.end - band.start - expected.1).abs() < 0.001);
-        let shared_top = title_rule_y(
-            cards.top,
-            chrome_title_metrics(metrics).text_height.min(cards.height),
-        );
-        let cap_top = shared_top - metrics.font_size * FALLBACK_CAP_HEIGHT_EM / 2.0;
-        assert!((band.start - (cap_top - band.end)).abs() < 1.0);
         assert!((band.end - header).abs() < 0.001);
-        println!(
-            "scale={scale}, line_height={line_height}: top={}, pill_height={}, card_top={}, shared_line={shared_top}, cap_top={cap_top}, cap_gap={}, offset={offset}",
-            band.start,
-            band.end - band.start,
-            cards.top,
-            cap_top - band.end
+        // A title tab's cap rises above the card area's top title row.
+        let tab_top = cards.top - title_tab_rise(metrics);
+        assert!(
+            (tab_top - band.end - card_gap(metrics)).abs() < 0.001,
+            "{scale}/{line_height}: tab top {tab_top}, pills end {}",
+            band.end
         );
         assert!(band.end - band.start >= metrics.height);
-    }
-}
-
-#[test]
-fn eon_bar_title_gap_uses_the_loaded_font_baseline_and_cap_height() {
-    use crate::render::{FontSettings, FontSetup};
-
-    for line_height in [1.125, 2.0] {
-        let fonts = FontSetup::new(&FontSettings {
-            line_height,
-            ..FontSettings::default()
-        })
-        .unwrap();
-        for scale in [1.0, 1.3] {
-            let metrics = fonts.metrics(scale);
-            assert!(metrics.title_cap_top_em.is_some());
-            let header = header_heights(metrics).0;
-            let cards = card_area(0.0, 1600.0, 1, header, 900.0, false, 0.0, metrics);
-            let band = bar_pill_band(metrics, header, cards.top);
-            let cap_top = cards.top + chrome_title_metrics(metrics).cap_top;
-            assert!((cap_top - band.end - band.start).abs() <= 0.501);
-            assert!((band.end - header).abs() < 0.001);
-            println!(
-                "loaded title: scale={scale}, line_height={line_height}, cap_offset_em={:?}, top_gap={}, pill_height={}, card_top={}, cap_top={cap_top}, cap_gap={}, offset={}",
-                metrics.title_cap_top_em,
-                band.start,
-                band.end - band.start,
-                cards.top,
-                cap_top - band.end,
-                cards.top - header
-            );
-        }
     }
 }
 
@@ -1213,14 +1173,15 @@ fn eon_bar_keeps_tabs_controls_and_drag_hits_disjoint_under_pressure() {
         let pill = scene.bar_pill_rect(scene.tabs[0].rect, metrics);
         assert_eq!(pill.top..pill.bottom(), expected, "window height {height}");
     }
-    // The new title margin yields before the previous layout loses any space.
+    // The bar-to-card margin yields before the previous layout loses any space.
     for (height, offset) in [
         (102, 0.0),
         (108, 0.0),
         (110, 0.0),
         (112, 2.0),
-        (114, 4.0),
         (116, 6.0),
+        (122, 12.0),
+        (130, 12.0),
     ] {
         let scene = project(height, metrics, false);
         assert_eq!(

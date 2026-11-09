@@ -5,6 +5,14 @@ installation, and proven contract changes.
 
 ## Unreleased
 
+- Each column card's top line carries a Stack tab, labelled `Stack`, or
+  `Stack 1`, `Stack 2`, ... left to right when a tab has several columns
+  (Stack N is `column` N in `eon session --json`). Every pane title, the top
+  pane's included, is now the plain border-gap title. Stack, popup and Agents
+  tab tops sit one card gap below the bar's pills. The Stack band (24 px) and
+  the wider bar gap (6 px) make the top pane about 30 px shorter
+  (`eon-whjhd`).
+
 - `eon-bench terminals` measures tmux and Zellij inside foot against a
   same-cohort bare-foot baseline, plus fresh-window PSS/RSS/anonymous PSS for
   Eon, foot and Ghostty with separate Venus attribution, using its existing

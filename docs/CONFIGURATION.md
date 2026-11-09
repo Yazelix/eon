@@ -326,35 +326,54 @@ reopens. Eon owns this setting for both products; no Venus or Orbit
 configuration is needed.
 
 With pane frames on, each column has one continuous terminal-background fill,
-from its first pane's shared title contour down to the column's rounded bottom.
-Stacked title rows and the space between cards share the expanded terminal's
-background colour and opacity. Extended top padding fills an unzoomed expanded
-pane's band below its title (`padding_color`), outside a fitted tab's uniform
-title area. Outside the shared title contour and outer corners, the gaps and
+from its Stack tab's contour down to the column's rounded bottom.
+The Stack band, stacked title rows and the space between cards share the
+expanded terminal's background colour and opacity. Extended top padding fills
+an unzoomed expanded pane's band below its title (`padding_color`). Outside the shared title contour and outer corners, the gaps and
 footer stay the opaque bar colour. The Agents fill follows the same contour.
 Header scrolling keeps the fill's top fixed. Frameless mode keeps terminal
 background strips across the window below the bar, including the sidebar and
 footer.
 
-Popups, each column's top pane (including a lone or zoomed pane), Agents and
-native titled dialogs use one shared title style. The outline rises seamlessly
-from the left border over the fitted name, then returns into the top edge with
-a tangent S curve spanning 1.5 times its rise. The curve begins beside the
-visible text, including after truncation. Lower stacked panes keep their compact
-border-gap titles. The tab uses existing chrome clearance and adds no height or
-terminal rows. It keeps its stroke clear of text and neighbouring chrome; where
-that clearance cannot fit, the title keeps a compact gap in the top frame line.
-A title is omitted only when it cannot fit. Full accessibility names and input
-bounds stay unchanged. Popup tabs keep their outline with pane frames off;
-pane and sidebar titles stay plain then. Dialog tabs stay inside their existing
-dismissal bounds and use the dialog's opaque background; other tabs inherit
-their terminal background colour and opacity.
+Each column card's top line carries a Stack tab, labelled `Stack` when the tab
+has one column and `Stack 1`, `Stack 2`, ... from left to right when it has
+several; Stack N holds the panes whose `column` is N in `eon session --json`.
+The first pane's top edge sits one stack band lower: one title row plus the
+tab's rise, a third of the title padding (24 px at the default font). Every
+pane title, the first, a lone and a zoomed pane's included, is a compact
+border-gap title in its rounded edge. The column's sides run from the Stack line
+down to the first pane's rounded top corners in the neutral border colour and
+width, even while that pane is selected. Headers scroll below the band. On a
+window too short for the band, a first header and one padded terminal row, the
+band yields whole and the label goes.
+
+Stack tabs, popups, Agents and native titled dialogs use one shared title
+style. The outline rises seamlessly from the left border over the fitted name,
+then returns into the top edge with a tangent S curve spanning 1.5 times its
+rise. The curve begins beside the visible text, including after truncation.
+Stack, popup and Agents tab tops sit one card gap (8 px) below the bar's pills.
+A popup, Agents or dialog tab adds no height or terminal rows inside its card.
+A tab keeps its stroke clear of text and neighbouring chrome; where that
+clearance cannot fit, the title keeps a compact gap in the top frame line.
+A title is omitted only when it cannot fit. A tab keeps full accessibility
+names and adds no input targets; the Stack label is a visual heading only.
+Popup tabs keep their outline with pane frames off; Stack and Agents labels show
+plain then, and the Stack band stays reserved. On a light terminal background a
+Stack label darkens only as far as 4.5:1 contrast needs. Dialog tabs stay inside
+their existing dismissal bounds and use the dialog's opaque background; other
+tabs inherit their terminal background colour and opacity.
 
 The shared tab shape is fixed and follows the configured font size and line
 height (defaults: 16 px and 1.125), existing title padding, and `border_width`
 (default: 1). A selected pane retains its `focus_border_width` and focus colour.
 Terminal-backed fills use `background_opacity` (default: 0.8). The fixed policy
-and its support-cost rationale are recorded in `eon-27deg`.
+and its support-cost rationale are recorded in `eon-27deg`. The Stack tabs are
+fixed the same way: their labels (`Stack`, `Stack N`), the stack band (one title
+row plus a third of the title padding: 24 px at the defaults) and the card gap
+between the bar's pills and the tab tops (default: 8 px) derive from the font
+size, line height, title padding and card gap. A setting would add a second
+geometry policy whose only purpose is undoing one consistent look; `eon-whjhd`
+records the reason.
 
 `padding_color` controls terminal padding in panes, popups and eonbase.
 `extend` uses the nearest edge cell's background on each side and
@@ -367,8 +386,7 @@ Default backgrounds retain the configured opacity; explicit backgrounds paint
 as they do in cells. Padding stays inside the rounded card and below outlines.
 In an expanded pane with frames on and no zoom, the band below the title line
 follows the top padding's colour and opacity instead of the shared title-row
-background outside the fitted tab's title area; compact titles keep the existing
-header-band treatment. Collapsed title rows, popups,
+background. Collapsed title rows, the Stack band, popups,
 zoom and frameless mode keep their existing backgrounds. The setting applies
 when a window opens or reopens.
 

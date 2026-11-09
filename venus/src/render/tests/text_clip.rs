@@ -7,7 +7,6 @@ fn bounded_preview_rows_cover_multi_row_fractional_offsets() {
         width: 10.0,
         height: 20.0,
         font_size: 16.0,
-        title_cap_top_em: None,
         padding: 5.0,
     };
     let scene = Scene {
@@ -84,9 +83,9 @@ fn retained_frame_text_preserves_padding_after_resize() {
         fill.bounds,
         SceneRect {
             left: 8.0,
-            top: 56.0,
+            top: 62.0,
             width: 998.0,
-            height: 826.0,
+            height: 820.0,
         }
     );
     let mut fonts = clipping_test_fonts();
@@ -95,7 +94,8 @@ fn retained_frame_text_preserves_padding_after_resize() {
     for column in [96, 98] {
         let cell = SceneRect {
             left: workspace.terminal.left + metrics.padding + column as f32 * metrics.width,
-            top: workspace.terminal.top + metrics.padding + 44.0 * metrics.height,
+            // The row whose last pixel row meets the fill's bottom-right corner.
+            top: workspace.terminal.top + metrics.padding + 42.0 * metrics.height,
             width: metrics.width,
             height: metrics.height,
         };
@@ -122,7 +122,7 @@ fn retained_frame_text_preserves_padding_after_resize() {
         );
         buffer.shape_until_scroll(&mut fonts.font_system, false);
         if column == 98 {
-            assert_eq!((cell.left, cell.top), (1000.0, 870.0));
+            assert_eq!((cell.left, cell.top), (1000.0, 864.0));
             let run = buffer.layout_runs().next().unwrap();
             let physical = run.glyphs[0].physical((cell.left, cell.top), 1.0);
             let image = SwashCache::new()
@@ -219,7 +219,7 @@ fn fractional_card_text_has_no_exterior_ink_with_hints_and_header_scroll() {
     let mut fonts = clipping_test_fonts();
     let mut swash = SwashCache::new();
     let mut exterior_ink = Vec::new();
-    for (scale, bottom_scroll) in [(1.25, 247.5), (1.3, 300.0)] {
+    for (scale, bottom_scroll) in [(1.25, 285.5), (1.3, 340.666_7)] {
         let metrics = CellMetrics::for_scale(scale);
         let workspace = fractional_card_workspace(scale, bottom_scroll);
         let fill = workspace
@@ -232,8 +232,11 @@ fn fractional_card_text_has_no_exterior_ink_with_hints_and_header_scroll() {
         if scale == 1.25 {
             assert_eq!(fill.bottom(), 857.5);
         }
+        // Terminal text scrolls under the Stack band, so its top edge is the header viewport's.
+        let top_edge = workspace.header_viewport.top;
+        assert!(top_edge > fill.top);
         let top_scroll = bottom_scroll + workspace.terminal.top + metrics.padding
-            - (fill.top - metrics.height / 2.0);
+            - (top_edge - metrics.height / 2.0);
         for (scroll, at_bottom) in [(bottom_scroll, true), (top_scroll, false)] {
             let workspace = fractional_card_workspace(scale, scroll);
             let (clip, _) = terminal_paint_clip(
@@ -308,7 +311,7 @@ fn fractional_card_text_has_no_exterior_ink_with_hints_and_header_scroll() {
                             let y = top + (index as u32 / image.placement.width) as i32;
                             let center_y = y as f32 + 0.5;
                             if (at_bottom && center_y >= fill.bottom())
-                                || (!at_bottom && center_y < fill.top)
+                                || (!at_bottom && center_y < top_edge)
                             {
                                 unclipped_exterior_ink += 1;
                             }
@@ -317,7 +320,7 @@ fn fractional_card_text_has_no_exterior_ink_with_hints_and_header_scroll() {
                                 && y >= area.bounds.top
                                 && y < area.bounds.bottom
                             {
-                                if fill.contains(x as f32 + 0.5, center_y) {
+                                if fill.contains(x as f32 + 0.5, center_y) && center_y >= top_edge {
                                     interior_ink += 1;
                                 } else {
                                     exterior_ink.push((scale, scroll, x, y));
@@ -353,8 +356,9 @@ fn fractional_card_text_survives_glyphon_preparation_with_hints_and_header_scrol
     let mut renderer = TextRenderer::new(&mut atlas, &device, MultisampleState::default(), None);
     let mut fonts = clipping_test_fonts();
     let mut swash = SwashCache::new();
-    // Shift scroll with the new title margin to keep the original y=844 glyph-edge repro.
-    for (scale, scroll) in [(1.25, 275.0), (1.25, 266.5), (1.3, 320.0)] {
+    // Shift scroll with the bar-to-card margin and Stack band to keep the original y=844 glyph-edge
+    // repro.
+    for (scale, scroll) in [(1.25, 313.0), (1.25, 304.5), (1.3, 360.666_7)] {
         let metrics = CellMetrics::for_scale(scale);
         let workspace = fractional_card_workspace(scale, scroll);
         let (clip, card) = terminal_paint_clip(
@@ -371,13 +375,13 @@ fn fractional_card_text_survives_glyphon_preparation_with_hints_and_header_scrol
         if scale == 1.25 {
             assert_eq!(
                 card.bounds.bottom(),
-                if scroll == 275.0 { 848.0 } else { 857.0 }
+                if scroll == 313.0 { 848.0 } else { 857.0 }
             );
         }
         let cell_font = fitted_cell_font(&mut fonts.font_system, metrics, fonts.family, false);
         let left = workspace.terminal.left + metrics.padding;
         let top = workspace.terminal.top + metrics.padding;
-        if scale == 1.25 && scroll == 275.0 {
+        if scale == 1.25 && scroll == 313.0 {
             assert_eq!(top, 822.0);
             assert_eq!(top - cell_font.top_offset, 820.0);
             assert_eq!(metrics.height, 23.0);
@@ -392,7 +396,7 @@ fn fractional_card_text_survives_glyphon_preparation_with_hints_and_header_scrol
         buffer.set_text("g\u{323}", &cell_font.attrs(), Shaping::Advanced, None);
         buffer.shape_until_scroll(&mut fonts.font_system, false);
         assert!(buffer.layout_runs().any(|run| !run.glyphs.is_empty()));
-        if scale == 1.25 && scroll == 275.0 {
+        if scale == 1.25 && scroll == 313.0 {
             let run = buffer.layout_runs().next().unwrap();
             assert!(
                 run.glyphs.iter().any(|glyph| {
@@ -467,7 +471,7 @@ fn fractional_card_text_survives_glyphon_preparation_with_hints_and_header_scrol
         };
         let expected = prepare(vec![reference]);
         assert!(expected > 0);
-        if scale == 1.25 && scroll == 275.0 {
+        if scale == 1.25 && scroll == 313.0 {
             assert_eq!(expected, 2, "both g and its combining dot must be prepared");
         }
         let areas: Vec<_> = text_areas(&text, None).collect();

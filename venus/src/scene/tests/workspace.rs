@@ -81,18 +81,27 @@ fn compact_pane_headers_share_title_height_and_full_row_targets() {
                 scene.pane_viewport,
                 SceneRect {
                     left: 296.0,
-                    top: 46.0,
+                    top: 52.0,
                     width: 1296.0,
-                    height: 846.0
+                    height: 840.0
+                }
+            );
+            // The Stack band, one title row and four rise pixels, sits above the headers.
+            assert_eq!(
+                scene.header_viewport,
+                SceneRect {
+                    top: 76.0,
+                    height: 816.0,
+                    ..scene.pane_viewport
                 }
             );
             assert_eq!(
                 scene.terminal,
                 SceneRect {
                     left: 296.0,
-                    top: 86.0,
+                    top: 116.0,
                     width: 1296.0,
-                    height: 766.0
+                    height: 736.0
                 }
             );
         }
@@ -220,7 +229,7 @@ fn compact_pane_headers_share_title_height_and_full_row_targets() {
     }
     let metrics = CellMetrics::for_scale(1.0);
     let size = PhysicalSize::new(1280, 720);
-    for (count, before, after) in [(1, 32, 33), (3, 29, 30), (4, 28, 29)] {
+    for (count, before, after) in [(1, 31, 31), (3, 28, 29), (4, 26, 28)] {
         let mut snapshot = snapshot.clone();
         snapshot.tabs[0].columns[0].panes.truncate(count);
         snapshot.tabs[0].selected_pane = Some("p1".into());
@@ -236,28 +245,33 @@ fn compact_pane_headers_share_title_height_and_full_row_targets() {
             |_, text| (text.into(), text.len() as f32 * metrics.width),
             Some(hints),
         );
+        let stack = scene.header_viewport.top - scene.pane_viewport.top;
         let rows = |header: f32| {
-            ((scene.chrome.height - count as f32 * header - metrics.padding * 2.0) / metrics.height)
+            ((scene.chrome.height - stack - count as f32 * header - metrics.padding * 2.0)
+                / metrics.height)
                 .floor() as u16
         };
-        assert_eq!(rows((metrics.height * 1.5).round()), before);
         let actual_rows =
             ((scene.terminal.height - metrics.padding * 2.0) / metrics.height).floor() as u16;
-        assert_eq!(actual_rows, after);
-        assert_eq!(rows(scene.panes[0].rect.height), after);
         println!(
-            "1280x720, {count} panes: {before} -> {after} rows, allocated height {}",
+            "1280x720, {count} panes: {} -> {actual_rows} rows, allocated height {}",
+            rows((metrics.height * 1.5).round()),
             scene.chrome.height
         );
+        assert_eq!(rows((metrics.height * 1.5).round()), before);
+        assert_eq!(actual_rows, after);
+        assert_eq!(rows(scene.panes[0].rect.height), after);
         let painted = scene.card_rect(
             scene.chrome,
             metrics,
             crate::render::physical_outline_width(2, metrics.scale),
         );
+        // The card's top line carries the Stack tab; the first header sits one band lower.
         assert_eq!(
             painted.top,
-            (scene.panes[0].rect.top + scene.panes[0].rect.height / 2.0).floor()
+            (scene.pane_viewport.top + scene.panes[0].rect.height / 2.0).floor()
         );
+        assert_eq!(scene.panes[0].rect.top, scene.header_viewport.top);
         assert_eq!(
             painted.bottom(),
             (scene.chrome.bottom() - chrome_title_metrics(metrics).text_height / 2.0).floor()
@@ -414,10 +428,12 @@ fn popup_outer_chrome_reuses_the_pane_stack_rectangle() {
 
     assert_eq!(popup.chrome, stack.chrome);
     let painted = stack.card_rect(stack.chrome, CellMetrics::for_scale(1.0), 2.0);
+    // The column card's top line carries its Stack tab; the first pane sits one Stack band lower.
     assert_eq!(
         painted.top,
-        stack.panes[0].rect.top + stack.panes[0].rect.height / 2.0
+        stack.pane_viewport.top + stack.panes[0].rect.height / 2.0
     );
+    assert_eq!(stack.panes[0].rect.top, stack.header_viewport.top);
     // The popup ends on the edge the column card and the sidebar card share.
     let popup_card = popup
         .card_fill(popup.chrome, CellMetrics::for_scale(1.0), 2.0)
@@ -561,12 +577,18 @@ fn popup_outer_chrome_reuses_the_pane_stack_rectangle() {
                     metrics,
                     crate::render::physical_outline_width(2, metrics.scale),
                 );
+                // Each column's first header sits below its Stack band.
+                assert_eq!(
+                    title_rule_y(
+                        panes.pane_viewport.top,
+                        chrome_title_metrics(metrics)
+                            .text_height
+                            .min(panes.chrome.height)
+                    ),
+                    pane_card.top
+                );
                 for (headers, _) in panes.column_panes() {
-                    let first = &headers[0];
-                    assert_eq!(
-                        title_rule_y(first.rect.top, first.rect.height),
-                        pane_card.top
-                    );
+                    assert_eq!(headers[0].rect.top, panes.header_viewport.top);
                 }
                 if count > 0 {
                     assert!(panes.terminal.top >= pane_card.top);
@@ -675,14 +697,14 @@ fn popup_outer_chrome_reuses_the_pane_stack_rectangle() {
         (gap, 960.0 - gap)
     );
     assert_ne!(popup.terminal, popup.chrome);
-    // Tab hit rectangles keep their original inset; the card area adds the title margin.
+    // Tab hit rectangles keep their original inset; the card area adds the bar-to-card margin.
     let small = CellMetrics {
         width: 5.0,
         height: 9.0,
         font_size: 8.0,
         ..metrics
     };
-    for (metrics, title_margin) in [(metrics, 6.0), (small, 3.0)] {
+    for (metrics, title_margin) in [(metrics, 12.0), (small, 12.0)] {
         let scene = WorkspaceScene::from_snapshot(&snapshot, size, metrics, 0.0, 0.0, |_, text| {
             (text.into(), text.len() as f32 * 10.0)
         });
@@ -1025,4 +1047,193 @@ fn quit_prompt_words_counts_and_lists_busy_terminals() {
         prompt(None, Some(&one), None).kind.subtitle(),
         "This stops every terminal of this window."
     );
+}
+
+#[test]
+fn stack_bands_label_columns_yield_whole_and_clip_scrolled_headers() {
+    use eon_workspace_protocol::v38::{Column, PopupGeometry};
+
+    let column = |first: usize, count: usize| Column {
+        panes: (first..first + count)
+            .map(|n| Pane {
+                label: format!("p{n}"),
+                pinned_name: None,
+                id: format!("p{n}"),
+                session: format!("s{n}"),
+                endpoint: format!("/tmp/p{n}.sock").into_bytes(),
+                live: true,
+                attention: None,
+            })
+            .collect(),
+        expanded: format!("p{first}"),
+    };
+    let snapshot = |columns: Vec<Column>| Snapshot {
+        workspace: "s1".into(),
+        active_workspace: "s1".into(),
+        workspaces: vec![eon_workspace_protocol::v38::WorkspaceInfo {
+            id: "s1".into(),
+            persistent_id: Some("s1".into()),
+            registration_error: None,
+            name: None,
+            tab_count: 1,
+            attention: None,
+            recency: 0,
+        }],
+        active_tab: "t1".into(),
+        tabs: vec![Tab {
+            id: "t1".into(),
+            directory: b"/tmp/eon".to_vec(),
+            pending: false,
+            selected_pane: Some(columns[0].expanded.clone()),
+            selected_popup: None,
+            columns,
+            popups: Vec::new(),
+            attention_rollup: None,
+        }],
+        geometry: PopupGeometry {
+            side_margin: 8.0,
+            vertical_margin: 4.0,
+        },
+        entries: Vec::new(),
+        codex_quota: None,
+        claude_quota: None,
+        codex_quota_failure: None,
+        claude_quota_failure: None,
+        running: None,
+        busy: None,
+        sidebar: Sidebar::Closed,
+        attention_queue: Vec::new(),
+    };
+    let project = |snapshot: &Snapshot, height: u32, metrics: CellMetrics, scroll: f32| {
+        WorkspaceScene::from_snapshot(
+            snapshot,
+            PhysicalSize::new(1600, height),
+            metrics,
+            0.0,
+            scroll,
+            |_, text| (text.into(), text.len() as f32 * metrics.width),
+        )
+    };
+    let labels = |scene: &WorkspaceScene| {
+        scene
+            .column_cards()
+            .map(|(_, label, _)| label.map(str::to_owned))
+            .collect::<Vec<_>>()
+    };
+    for scale in [1.0, 1.3, 2.0] {
+        let metrics = CellMetrics::for_scale(scale);
+        let band = chrome_title_metrics(metrics).text_height + metrics.padding / 3.0;
+        // One column reads "Stack"; several are numbered left to right, the selected one first.
+        let lone = project(&snapshot(vec![column(1, 1)]), 900, metrics, 0.0);
+        assert_eq!(labels(&lone), [Some("Stack".to_owned())]);
+        assert!((lone.header_viewport.top - lone.pane_viewport.top - band).abs() < 0.001);
+        assert_eq!(lone.header_viewport.bottom(), lone.pane_viewport.bottom());
+        assert_eq!(lone.terminal.bottom(), lone.pane_viewport.bottom());
+        let mut columns = snapshot(vec![column(1, 2), column(3, 1), column(4, 3)]);
+        columns.tabs[0].selected_pane = Some("p3".into());
+        let three = project(&columns, 900, metrics, 0.0);
+        assert_eq!(
+            labels(&three),
+            [
+                Some("Stack 2".to_owned()),
+                Some("Stack 1".to_owned()),
+                Some("Stack 3".to_owned())
+            ]
+        );
+        assert!(
+            three
+                .column_panes()
+                .all(|(panes, _)| panes[0].rect.top == three.header_viewport.top)
+        );
+        // A popup covers the columns with its own card and no Stack band.
+        let mut popup = snapshot(vec![column(1, 1)]);
+        popup.tabs[0].selected_popup = Some("u1".into());
+        popup.tabs[0].popups = vec![eon_workspace_protocol::v38::Popup {
+            id: "u1".into(),
+            entry: "files".into(),
+            session: "popup".into(),
+            endpoint: b"/tmp/popup.sock".to_vec(),
+            attention: None,
+        }];
+        popup.entries = vec![eon_workspace_protocol::v38::PopupEntry {
+            id: "files".into(),
+            label: "Files".into(),
+            shortcut: eon_workspace_protocol::v38::PopupKey::Unbound,
+        }];
+        let covered = project(&popup, 900, metrics, 0.0);
+        assert_eq!(labels(&covered), [None]);
+        assert_eq!(covered.header_viewport, covered.pane_viewport);
+        assert_eq!(covered.pane_viewport, lone.pane_viewport);
+    }
+    // On a short window the band yields whole, before the first header's padded cell.
+    let metrics = CellMetrics::for_scale(1.0);
+    let short = project(&snapshot(vec![column(1, 1)]), 112, metrics, 0.0);
+    assert_eq!(labels(&short), [None]);
+    assert_eq!(short.header_viewport, short.pane_viewport);
+    assert!(short.terminal.height >= minimum_terminal(metrics, metrics.height));
+    // Scrolled headers pass under the band: neither drawn there nor hit there.
+    let tall = snapshot(vec![column(1, 30)]);
+    let scrolled = project(&tall, 400, metrics, 200.0);
+    assert!(scrolled.pane_scroll() > 0.0);
+    assert_eq!(labels(&scrolled), [Some("Stack".to_owned())]);
+    assert!(
+        scrolled
+            .panes
+            .iter()
+            .any(|pane| pane.rect.bottom() <= scrolled.header_viewport.top),
+        "a header scrolled under the Stack band"
+    );
+    let band_point = (
+        scrolled.chrome.left + 20.0,
+        scrolled.pane_viewport.top + 2.0,
+    );
+    assert!(!matches!(
+        scrolled.hit_test(band_point.0, band_point.1),
+        Some(WorkspaceHit::Pane(_))
+    ));
+    let fill = scrolled.card_fill(scrolled.chrome, metrics, 1.0);
+    let outlines =
+        scrolled.pane_outlines(&scrolled.panes, scrolled.terminal, fill, 1.0, metrics, 1.0);
+    assert!(
+        outlines.iter().all(|outline| outline.clip.height == 0.0
+            || outline.clip.top >= scrolled.header_viewport.top)
+    );
+    // The Stack segment reaches down to the header viewport while its first pane is scrolled away.
+    let stack = scrolled.stack_outline(&outlines[0], fill);
+    assert_eq!(stack.clip.top, fill.bounds.top);
+    assert_eq!(stack.clip.bottom(), scrolled.header_viewport.top);
+    // Scrolled a few pixels past the expanded pane's header, terminals pass under the band too:
+    // nothing in it takes a click, and the visible terminal starts below it.
+    let mut two = snapshot(vec![column(1, 30), column(31, 30)]);
+    two.tabs[0].selected_pane = Some("p1".into());
+    let header = project(&two, 400, metrics, 0.0).panes[0].rect.height;
+    let scrolled = project(&two, 400, metrics, header + 5.0);
+    // Other columns reveal their expanded pane, so only the selected terminal reaches the band.
+    assert!(scrolled.terminal.top < scrolled.header_viewport.top);
+    let visible = scrolled.visible_terminal().unwrap();
+    assert!(visible.top >= scrolled.header_viewport.top);
+    for card in std::iter::once(scrolled.chrome)
+        .chain(scrolled.other_columns.iter().map(|column| column.chrome))
+    {
+        let mut y = scrolled.pane_viewport.top;
+        while y < scrolled.header_viewport.top {
+            for x in [
+                card.left + 1.0,
+                card.left + card.width / 2.0,
+                card.right() - 1.0,
+            ] {
+                assert_eq!(
+                    scrolled.hit_test(x, y),
+                    None,
+                    "({x}, {y}) in the Stack band"
+                );
+            }
+            y += 1.0;
+        }
+    }
+    let shifted = scrolled.with_displayed_grids(
+        metrics,
+        std::iter::once((scrolled.terminal, scrolled.terminal)),
+    );
+    assert_eq!(shifted.visible_terminal(), Some(visible));
 }

@@ -1755,10 +1755,13 @@ fn columns_sit_side_by_side_and_zoom_only_the_selected_pane() {
     assert_eq!(zoom.selected_column, 1);
     assert!(zoom.other_columns.is_empty());
     assert_eq!(zoom.pane_viewport, scene.pane_viewport);
-    assert_eq!(zoom.pane_viewport.top, 46.0);
-    assert_eq!(zoom.panes[0].rect.top, zoom.pane_viewport.top);
+    assert_eq!(zoom.pane_viewport.top, 52.0);
+    // Zoom keeps the column card's Stack band above the pane.
+    assert_eq!(zoom.header_viewport, scene.header_viewport);
+    assert_eq!(zoom.header_viewport.top, 76.0);
+    assert_eq!(zoom.panes[0].rect.top, zoom.header_viewport.top);
     for column in &scene.other_columns {
-        assert_eq!(column.panes[0].rect.top, zoom.pane_viewport.top);
+        assert_eq!(column.panes[0].rect.top, zoom.header_viewport.top);
     }
     assert_eq!(zoom.terminal.left, 8.0);
     assert_eq!(zoom.terminal.right(), size.width as f32 - 8.0);

@@ -179,7 +179,7 @@ fn retained_frame_text_clip(size: PhysicalSize<u32>) -> (WorkspaceScene, SceneRe
         cursor: None,
         content: vec![],
     };
-    assert_eq!((scene.columns, scene.rows), (196, 50));
+    assert_eq!((scene.columns, scene.rows), (196, 48));
     let current = workspace(size);
     let (terminal, _) = terminal_paint_clip(
         &current,

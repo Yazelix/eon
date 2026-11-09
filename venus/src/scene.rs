@@ -1,7 +1,7 @@
 use crate::{
     CpuUse, DiskUse, Load, MAX_LINK_BYTES, RamUse,
     model::{active_popup, focused_terminal, presented_panes},
-    render::{CellMetrics, FALLBACK_CAP_HEIGHT_EM},
+    render::CellMetrics,
 };
 use eon_workspace_protocol::v38::{
     ALT, Attention, AttentionKind, AttentionState, BusyTerminals, ClaudeQuotaState,
@@ -165,7 +165,13 @@ impl WorkspaceScene {
             };
             outlines.push(PaneOutline {
                 bounds,
-                clip,
+                // Scrolled headers pass under the Stack band.
+                clip: clip
+                    .intersection(self.header_viewport)
+                    .unwrap_or(SceneRect {
+                        height: 0.0,
+                        ..clip
+                    }),
                 radius,
                 title_y: Some(if index + 1 == panes.len() && !pane.selected {
                     frame.top - border_width
@@ -176,6 +182,36 @@ impl WorkspaceScene {
             });
         }
         outlines
+    }
+
+    /// The column card's segment above `first`, its first pane's outline: the Stack tab's top
+    /// line and the sides down to where that pane's top corners turn into them, or to the header
+    /// viewport's top while that pane is scrolled under the Stack band.
+    pub(crate) fn stack_outline(&self, first: &PaneOutline, fill: CardFill) -> PaneOutline {
+        let top = fill.bounds.top;
+        let join = (first.bounds.top + first.radius)
+            .max(self.header_viewport.top)
+            .max(top);
+        let radius = rounded_radius(
+            SceneRect {
+                height: join - top + fill.radius,
+                ..fill.bounds
+            },
+            fill.radius,
+        );
+        PaneOutline {
+            bounds: SceneRect {
+                height: join - top + radius,
+                ..fill.bounds
+            },
+            clip: SceneRect {
+                height: join - top,
+                ..fill.bounds
+            },
+            radius,
+            title_y: Some(top),
+            expanded: false,
+        }
     }
 }
 
@@ -403,6 +439,8 @@ pub struct WorkspaceColumn {
     pub panes: Vec<WorkspacePane>,
     pub terminal: SceneRect,
     pub(crate) chrome: SceneRect,
+    /// The label of its Stack tab, while its Stack band shows.
+    pub(crate) stack_label: Option<String>,
 }
 
 impl WorkspacePane {
@@ -1921,9 +1959,15 @@ pub struct WorkspaceScene {
     pub panes: Vec<WorkspacePane>,
     pub terminal: SceneRect,
     pub selected_column: usize,
+    /// The selected column's Stack tab label, while its Stack band shows.
+    pub(crate) stack_label: Option<String>,
     pub other_columns: Vec<WorkspaceColumn>,
     pub tab_viewport: SceneRect,
+    /// The area every card shares: the columns', the popup's and the agent sidebar's.
     pub pane_viewport: SceneRect,
+    /// The part of `pane_viewport` that pane headers and terminals scroll within: below the
+    /// column cards' Stack band.
+    pub header_viewport: SceneRect,
     /// Current paint only: retained rows beyond the newly requested grid.
     displayed_grid_bottoms: Vec<(SceneRect, f32)>,
     /// The selected column's card, or the popup's; `other_columns` hold their own.
@@ -2024,13 +2068,31 @@ fn bar_edge(metrics: CellMetrics, tab_height: f32, card_top: f32) -> f32 {
     (band.start + band.end) / 2.0
 }
 
-/// Leave the bar's top gap before the title capitals, using the renderer's title placement.
-fn bar_title_margin(metrics: CellMetrics) -> f32 {
-    let title = chrome_title_metrics(metrics);
-    let header = header_heights(metrics).0;
-    (bar_pill_band(metrics, header, header).start - title.cap_top)
-        .round()
-        .max(0.0)
+/// How far a title tab's cap rises above its title row: a third of the title padding.
+pub(crate) fn title_tab_rise(metrics: CellMetrics) -> f32 {
+    metrics.padding / 3.0
+}
+
+/// The space between the bar's pills and the card areas, which puts the title tabs' caps one card
+/// gap below the pills.
+fn bar_card_margin(metrics: CellMetrics) -> f32 {
+    card_gap(metrics) + title_tab_rise(metrics)
+}
+
+/// The band at the top of each column card that carries its Stack tab: one title row plus a tab's
+/// rise, so the first pane's title row clears the Stack tab's row as the tab's cap clears its
+/// label.
+fn stack_band(metrics: CellMetrics) -> f32 {
+    chrome_title_metrics(metrics).text_height + title_tab_rise(metrics)
+}
+
+/// The label of a column's Stack tab: numbered from 1, left to right, unless it is the only one.
+fn stack_label(index: usize, count: usize) -> String {
+    if count == 1 {
+        "Stack".into()
+    } else {
+        format!("Stack {}", index + 1)
+    }
 }
 
 /// The even gap around and between pane cards, which is also their corner radius: 8 logical
@@ -2067,7 +2129,6 @@ pub(crate) struct ChromeTitleMetrics {
     pub font_size: f32,
     pub line_height: f32,
     pub text_height: f32,
-    pub cap_top: f32,
 }
 
 pub(crate) fn chrome_title_metrics(metrics: CellMetrics) -> ChromeTitleMetrics {
@@ -2076,10 +2137,6 @@ pub(crate) fn chrome_title_metrics(metrics: CellMetrics) -> ChromeTitleMetrics {
         font_size: metrics.font_size,
         line_height: metrics.height,
         text_height,
-        cap_top: metrics.title_cap_top_em.map_or_else(
-            || (text_height - metrics.font_size * FALLBACK_CAP_HEIGHT_EM) / 2.0,
-            |cap| metrics.height / 2.0 + metrics.font_size * cap,
-        ),
     }
 }
 
@@ -2437,7 +2494,7 @@ fn card_area(
     spare -= below;
     let inset = (gap - tab_inset(metrics, tab_height)).max(0.0).min(spare);
     spare -= inset;
-    let top = (tab_height + inset + bar_title_margin(metrics).min(spare)).min(content_height);
+    let top = (tab_height + inset + bar_card_margin(metrics).min(spare)).min(content_height);
     SceneRect {
         left: left + side,
         top,
@@ -2886,7 +2943,7 @@ impl WorkspaceScene {
         let above = ShortcutHintsScene::reserved_height(metrics)
             + tab_height
             + (gap - tab_inset(metrics, tab_height)).max(0.0)
-            + bar_title_margin(metrics);
+            + bar_card_margin(metrics);
         if active_popup(snapshot).is_some() {
             (
                 snapshot.geometry.side_margin * metrics.scale * 2.0 + sides,
@@ -2901,10 +2958,9 @@ impl WorkspaceScene {
                 .iter()
                 .find(|tab| tab.id == snapshot.active_tab)
                 .expect("EONW validates the active tab");
-            (
-                sides,
-                above + pane_height * presented_panes(tab).len() as f32,
-            )
+            let panes = presented_panes(tab).len();
+            let stack = if panes == 0 { 0.0 } else { stack_band(metrics) };
+            (sides, above + stack + pane_height * panes as f32)
         }
     }
     #[must_use]
@@ -3561,6 +3617,8 @@ impl WorkspaceScene {
                 },
                 tab_viewport,
                 pane_viewport,
+                header_viewport: pane_viewport,
+                stack_label: None,
                 chrome: pane_viewport,
                 displayed_grid_bottoms: Vec::new(),
                 sidebar,
@@ -3588,7 +3646,19 @@ impl WorkspaceScene {
         }
 
         let active = &snapshot.tabs[active_tab];
-        let pane_height = pane_height.min(pane_viewport.height);
+        // Each column card's Stack tab takes the band at its top; headers scroll below it. On a
+        // short window the band yields, whole, before the bar's inset and gaps do.
+        let stack = Some(stack_band(metrics)).filter(|stack| {
+            stack + pane_height + minimum_terminal(metrics, metrics.height) <= pane_viewport.height
+        });
+        let label = |index| stack.map(|_| stack_label(index, active.columns.len()));
+        let stack = stack.unwrap_or(0.0);
+        let header_viewport = SceneRect {
+            top: pane_viewport.top + stack,
+            height: pane_viewport.height - stack,
+            ..pane_viewport
+        };
+        let pane_height = pane_height.min(header_viewport.height);
         let selected = active
             .selected_pane
             .as_ref()
@@ -3602,7 +3672,7 @@ impl WorkspaceScene {
         let content_width = width - sidebar.map_or(0.0, SceneRect::right);
         let column_gap = side_gap(content_width, count, metrics);
         let column_width = workspace_column_width(content_width, count, metrics);
-        let maximum_terminal_height = (pane_viewport.height - pane_height).max(0.0);
+        let maximum_terminal_height = (header_viewport.height - pane_height).max(0.0);
         let minimum_terminal_height =
             minimum_terminal(metrics, metrics.height).min(maximum_terminal_height);
         let mut selected_layout = None;
@@ -3634,10 +3704,10 @@ impl WorkspaceScene {
             };
             let pane_headers_height =
                 if zoomed { 1 } else { column.panes.len() } as f32 * pane_height;
-            let terminal_height = (pane_viewport.height - pane_headers_height)
+            let terminal_height = (header_viewport.height - pane_headers_height)
                 .clamp(minimum_terminal_height, maximum_terminal_height);
             let pane_scroll_limit =
-                (pane_headers_height + terminal_height - pane_viewport.height).max(0.0);
+                (pane_headers_height + terminal_height - header_viewport.height).max(0.0);
             let expanded_scroll = (expanded as f32 * pane_height).clamp(0.0, pane_scroll_limit);
             // Only the selected column follows the user's header scroll; others reveal
             // their expanded pane.
@@ -3661,7 +3731,7 @@ impl WorkspaceScene {
                         selected: position == expanded,
                         rect: SceneRect {
                             left,
-                            top: pane_viewport.top
+                            top: header_viewport.top
                                 + position as f32 * pane_height
                                 + if position > expanded {
                                     terminal_height
@@ -3678,7 +3748,7 @@ impl WorkspaceScene {
                 .collect::<Vec<_>>();
             let terminal = SceneRect {
                 left,
-                top: pane_viewport.top + (expanded + 1) as f32 * pane_height - column_scroll,
+                top: header_viewport.top + (expanded + 1) as f32 * pane_height - column_scroll,
                 width: column_width,
                 height: terminal_height,
             };
@@ -3702,11 +3772,13 @@ impl WorkspaceScene {
                     panes,
                     terminal,
                     chrome,
+                    stack_label: label(index),
                 });
             }
         }
         let (panes, terminal, chrome, pane_scroll, pane_scroll_limit, selected_pane_scroll) =
             selected_layout.expect("the selected column is laid out");
+        let stack_label = label(selected_column);
 
         Self {
             tabs,
@@ -3728,9 +3800,11 @@ impl WorkspaceScene {
             panes,
             terminal,
             selected_column,
+            stack_label,
             other_columns,
             tab_viewport,
             pane_viewport,
+            header_viewport,
             chrome,
             displayed_grid_bottoms: Vec::new(),
             sidebar,
@@ -3807,6 +3881,26 @@ impl WorkspaceScene {
     #[must_use]
     pub fn zoomed_pane(&self) -> Option<&WorkspacePane> {
         self.panes.first().filter(|_| self.zoomed)
+    }
+
+    /// Each column card's allocated area, Stack label while its band shows, and headers: the
+    /// selected column's first, then the others in order, as card backdrops and title tabs list
+    /// them. Without columns the selected slot is empty.
+    pub(crate) fn column_cards(
+        &self,
+    ) -> impl Iterator<Item = (SceneRect, Option<&str>, &[WorkspacePane])> + '_ {
+        std::iter::once((
+            self.chrome,
+            self.stack_label.as_deref(),
+            self.panes.as_slice(),
+        ))
+        .chain(self.other_columns.iter().map(|column| {
+            (
+                column.chrome,
+                column.stack_label.as_deref(),
+                column.panes.as_slice(),
+            )
+        }))
     }
 
     /// Every laid-out column's headers left to right, each flagged when it is the selected
@@ -3921,7 +4015,7 @@ impl WorkspaceScene {
             for pane in panes {
                 if pane
                     .rect
-                    .intersection(self.pane_viewport)
+                    .intersection(self.header_viewport)
                     .is_some_and(|rect| rect.contains(x, y))
                 {
                     return Some(WorkspaceHit::Pane(&pane.id));
@@ -3931,7 +4025,7 @@ impl WorkspaceScene {
         for column in &self.other_columns {
             if column
                 .terminal
-                .intersection(self.pane_viewport)
+                .intersection(self.header_viewport)
                 .is_some_and(|rect| rect.contains(x, y))
                 && let Some(pane) = column.panes.iter().find(|pane| pane.selected)
             {
@@ -3975,7 +4069,7 @@ impl WorkspaceScene {
                 // Layout clipping bounds visible retained cells; card clipping must not hide a collision.
                 let grid = grid
                     .intersection(terminal)?
-                    .intersection(self.pane_viewport)?;
+                    .intersection(self.header_viewport)?;
                 self.grid_bottom(terminal, metrics)
                     .is_none_or(|requested| grid.bottom() > requested)
                     .then_some((terminal, grid.bottom()))
@@ -4019,7 +4113,7 @@ impl WorkspaceScene {
             .min(allocated.bottom());
         let grid_bottom = std::iter::once(self.terminal)
             .chain(self.other_columns.iter().map(|column| column.terminal))
-            .filter(|terminal| terminal.intersection(self.pane_viewport).is_some())
+            .filter(|terminal| terminal.intersection(self.header_viewport).is_some())
             .filter_map(|terminal| self.grid_bottom(terminal, metrics))
             .reduce(f32::max);
         let bottom = painted_bottom(allocated.bottom(), metrics, stroke_width, grid_bottom)
@@ -4058,9 +4152,10 @@ impl WorkspaceScene {
         }
     }
 
+    /// The selected terminal's on-screen part: terminals scroll below the columns' Stack band.
     #[must_use]
     pub fn visible_terminal(&self) -> Option<SceneRect> {
-        self.terminal.intersection(self.pane_viewport)
+        self.terminal.intersection(self.header_viewport)
     }
 
     #[must_use]
