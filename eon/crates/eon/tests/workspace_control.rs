@@ -4864,7 +4864,7 @@ fn events_cli_streams_resumes_interrupts_and_exits_on_closed_stdout() {
     // A terminal that is not the stream's controlling terminal sends it no
     // SIGHUP when it closes; Linux reports the hangup to poll instead. The
     // guard lives to the end, as dropping it stops the supervisor.
-    let _hung_up = cfg!(target_os = "linux").then(|| {
+    let hung_up = cfg!(target_os = "linux").then(|| {
         let (mut leader, device) = pseudo_terminal();
         let mut hung_up = TestProcess {
             child: stream_command()
@@ -4935,7 +4935,7 @@ fn events_cli_streams_resumes_interrupts_and_exits_on_closed_stdout() {
     wait_for_successful_exit(&mut supervisor.child);
     // Prevent the guards from recreating stop markers after removing the root.
     wait_for_successful_exit(&mut filtered.child);
-    drop((reader, resumed, closed, filtered, supervisor));
+    drop((reader, resumed, closed, hung_up, filtered, supervisor));
     fs::remove_dir_all(root).unwrap();
 }
 

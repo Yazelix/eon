@@ -191,12 +191,22 @@ fn stream_result(result: std::io::Result<i32>) -> Result<i32, Error> {
     }
 }
 
+/// How often a half-closed socket output is asked whether its reader is gone,
+/// as Orbit probes a half-closed client.
+const PROBE_INTERVAL: Duration = Duration::from_millis(100);
+
 /// Standard output, watched for a reader that goes away while the stream waits.
 #[derive(Default)]
 struct Output {
-    /// The descriptor while it is watched.
-    fd: std::cell::Cell<Option<i32>>,
+    /// The descriptor when it is watched.
+    fd: Option<i32>,
     socket: bool,
+    /// When the output is next probed. Darwin reports a socket output that is
+    /// readable, or hung up while its reader still reads (the reader shut down
+    /// only its writing), and would then wake poll at once every time. Such an
+    /// output leaves poll's set and is probed on this fixed schedule instead,
+    /// which reads and messages do not move.
+    probe_at: std::cell::Cell<Option<Instant>>,
 }
 
 impl Output {
@@ -213,8 +223,9 @@ impl Output {
         let socket = kind == libc::S_IFSOCK;
         let watched = !cfg!(target_vendor = "apple") || socket || kind == libc::S_IFIFO;
         Ok(Self {
-            fd: std::cell::Cell::new(watched.then_some(fd)),
+            fd: watched.then_some(fd),
             socket,
+            probe_at: Default::default(),
         })
     }
 
@@ -224,40 +235,67 @@ impl Output {
     /// reader as a hangup. Linux never sets read-band on an output.
     fn poll(&self) -> libc::pollfd {
         libc::pollfd {
-            fd: self.fd.get().unwrap_or(-1),
+            fd: self
+                .fd
+                .filter(|_| self.probe_at.get().is_none())
+                .unwrap_or(-1),
             events: libc::POLLRDBAND,
             revents: 0,
         }
     }
 
+    /// How long poll may wait before the output is due a probe.
+    fn probe_after(&self) -> Option<Duration> {
+        self.probe_at
+            .get()
+            .map(|due| due.saturating_duration_since(Instant::now()))
+    }
+
     /// Whether what poll reported means the reader is gone.
     fn gone(&self, revents: libc::c_short) -> std::io::Result<bool> {
-        let Some(fd) = self.fd.get().filter(|_| revents != 0) else {
+        let Some(fd) = self.fd.filter(|_| revents != 0) else {
             return Ok(false);
         };
-        // Darwin also reports a socket's receive EOF as a hangup, and a peer
-        // that shut down only its writing still reads. A zero-length send fails
-        // only once the peer cannot read. Until then the EOF would wake every
-        // poll, so the output is no longer watched and a later close shows at
-        // the next write.
         if cfg!(target_vendor = "apple") && self.socket && revents & libc::POLLERR == 0 {
-            // SAFETY: a zero-length send reads nothing from the buffer.
-            if unsafe { libc::send(fd, [0u8; 1].as_ptr().cast(), 0, 0) } == 0 {
-                self.fd.set(None);
-                return Ok(false);
+            if Self::unread(fd)? {
+                return Ok(true);
             }
-            let error = std::io::Error::last_os_error();
-            if !matches!(
-                error.raw_os_error(),
-                Some(libc::EPIPE | libc::ECONNRESET | libc::ENOTCONN)
-            ) {
-                return Err(error);
-            }
+            self.probe_at.set(Some(Instant::now() + PROBE_INTERVAL));
+            return Ok(false);
         }
         Ok(true)
     }
 
+    /// Whether a probed output, once its probe is due, has lost its reader.
+    fn probe(&self) -> std::io::Result<bool> {
+        match (self.fd, self.probe_at.get()) {
+            (Some(fd), Some(due)) if Instant::now() >= due => {
+                self.probe_at.set(Some(Instant::now() + PROBE_INTERVAL));
+                Self::unread(fd)
+            }
+            _ => Ok(false),
+        }
+    }
+
+    /// A zero-length send fails only once the peer cannot read. A send that
+    /// would block or was interrupted proves nothing; the next probe asks again.
+    fn unread(fd: i32) -> std::io::Result<bool> {
+        // SAFETY: a zero-length send reads nothing from the buffer.
+        if unsafe { libc::send(fd, [0u8; 1].as_ptr().cast(), 0, 0) } == 0 {
+            return Ok(false);
+        }
+        let error = std::io::Error::last_os_error();
+        match error.raw_os_error() {
+            Some(libc::EPIPE | libc::ECONNRESET | libc::ENOTCONN) => Ok(true),
+            Some(libc::EAGAIN | libc::EINTR) => Ok(false),
+            _ => Err(error),
+        }
+    }
+
     fn closed(&self) -> std::io::Result<bool> {
+        if let (Some(fd), Some(_)) = (self.fd, self.probe_at.get()) {
+            return Self::unread(fd);
+        }
         let mut poll = self.poll();
         loop {
             if unsafe { libc::poll(&mut poll, 1, 0) } >= 0 {
@@ -331,15 +369,15 @@ fn read_message(
             },
             stdout.poll(),
         ];
-        let timeout = match deadline {
-            Some(deadline) => i32::try_from(
-                deadline
-                    .saturating_duration_since(Instant::now())
-                    .as_millis(),
-            )
-            .unwrap_or(i32::MAX),
-            None => -1,
-        };
+        let wait = deadline
+            .map(|deadline| deadline.saturating_duration_since(Instant::now()))
+            .into_iter()
+            .chain(stdout.probe_after())
+            .min();
+        // Rounded up, so a wait that times out has reached its deadline.
+        let timeout = wait.map_or(-1, |wait| {
+            i32::try_from(wait.as_nanos().div_ceil(1_000_000)).unwrap_or(i32::MAX)
+        });
         let result = unsafe { libc::poll(fds.as_mut_ptr(), fds.len() as libc::nfds_t, timeout) };
         if result < 0 {
             let error = std::io::Error::last_os_error();
@@ -348,7 +386,14 @@ fn read_message(
             }
             return Err(error);
         }
+        // Due even while input keeps arriving.
+        if stdout.probe()? {
+            return Err(std::io::Error::from(std::io::ErrorKind::BrokenPipe));
+        }
         if result == 0 {
+            if deadline.is_none_or(|deadline| Instant::now() < deadline) {
+                continue;
+            }
             return Err(std::io::Error::new(
                 std::io::ErrorKind::TimedOut,
                 "subscription handshake timed out",
@@ -1109,7 +1154,7 @@ mod tests {
         let root = super::super::super::supervisor::temporary_directory();
         let file = std::fs::File::create(root.join("output")).unwrap();
         let output = Output::watch(file.as_raw_fd()).unwrap();
-        assert_eq!(output.fd.get().is_none(), cfg!(target_vendor = "apple"));
+        assert_eq!(output.fd.is_none(), cfg!(target_vendor = "apple"));
         assert!(!output.closed().unwrap());
         std::fs::remove_dir_all(root).unwrap();
         let (reader, writer) = std::io::pipe().unwrap();
@@ -1117,7 +1162,7 @@ mod tests {
         let outputs =
             [writer.as_raw_fd(), socket.as_raw_fd()].map(|fd| (fd, Output::watch(fd).unwrap()));
         for (fd, output) in &outputs {
-            assert_eq!(output.fd.get(), Some(*fd));
+            assert_eq!(output.fd, Some(*fd));
             assert!(!output.closed().unwrap());
         }
         drop((reader, peer));
@@ -1147,6 +1192,64 @@ mod tests {
         peer.read_to_string(&mut received).unwrap();
         assert_eq!(received.lines().count(), 2, "{received}");
         assert!(received.ends_with("\"reason\":\"too-slow\"}\n"));
+    }
+    #[test]
+    fn a_reader_that_stops_writing_and_then_closes_ends_the_stream() {
+        use std::io::Read;
+        use std::os::fd::AsRawFd;
+        use std::sync::atomic::{AtomicBool, Ordering};
+        // A frame far longer than what arrives of it in the test.
+        let frame = wire::encode_subscription_message(&wire::SubscriptionMessage::Failure(
+            failure("unavailable", "x".repeat(4000)),
+        ))
+        .unwrap();
+        for dribbling in [false, true] {
+            let (mut peer, socket) = std::os::unix::net::UnixStream::pair().unwrap();
+            let output = Output::watch(socket.as_raw_fd()).unwrap();
+            peer.shutdown(std::net::Shutdown::Write).unwrap();
+            // As Darwin's hangup for that half-close leaves it, so Linux, which
+            // would report the full close itself, proves the probe too.
+            output.probe_at.set(Some(Instant::now()));
+            let (mut reader, mut writer) = std::os::unix::net::UnixStream::pair().unwrap();
+            writer
+                .write_all(&wire::encode_subscription_message(&subscribed(None)).unwrap())
+                .unwrap();
+            let (done, finished) = std::sync::mpsc::channel();
+            let stream = thread::spawn(move || {
+                let result = consume(&mut reader, &mut &socket, &mut Vec::new(), &output, true);
+                done.send(stream_result(result).map_err(|error| error.status))
+                    .unwrap();
+            });
+            peer.set_read_timeout(Some(Duration::from_secs(2))).unwrap();
+            let mut snapshot = Vec::new();
+            let mut byte = [0];
+            while !snapshot.ends_with(b"\n") {
+                peer.read_exact(&mut byte).unwrap();
+                snapshot.push(byte[0]);
+            }
+            assert!(snapshot.starts_with(b"{\"type\":\"snapshot\""));
+            drop(peer);
+            // The event socket stays open, quiet or dribbling a frame faster
+            // than the probe interval: only the closed reader can end it.
+            let stop = std::sync::Arc::new(AtomicBool::new(false));
+            let dribble = thread::spawn({
+                let (frame, stop) = (frame.clone(), stop.clone());
+                move || {
+                    for byte in frame.iter().filter(|_| dribbling) {
+                        if stop.load(Ordering::Relaxed) || writer.write_all(&[*byte]).is_err() {
+                            break;
+                        }
+                        thread::sleep(Duration::from_millis(20));
+                    }
+                    writer
+                }
+            });
+            let ended = finished.recv_timeout(Duration::from_secs(2));
+            stop.store(true, Ordering::Relaxed);
+            drop(dribble.join().unwrap());
+            assert_eq!(ended.unwrap(), Ok(0), "dribbling={dribbling}");
+            stream.join().unwrap();
+        }
     }
     #[test]
     fn refusals_use_stderr_and_truncated_ends_are_connection_loss() {
