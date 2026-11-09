@@ -22,6 +22,10 @@ use crate::{
     },
     visible,
 };
+use libghostty_vt::{
+    Terminal,
+    terminal::{CompressionActivity, CompressionMode, CompressionResult},
+};
 use orbit_protocol::management::{
     self as management_protocol, FailureCode as ManagementFailure, Refusal as LeaseRefusal,
     TerminationReason,
@@ -398,6 +402,72 @@ fn terminated() -> io::Result<()> {
     }
 }
 
+/// Fixed maintenance budgets: keep page work away from active I/O and yield
+/// to the poll loop between libghostty's candidate-bounded steps.
+const COMPRESSION_IDLE: Duration = Duration::from_millis(250);
+const COMPRESSION_STEP: Duration = Duration::from_millis(10);
+
+#[derive(Default)]
+struct HistoryCompression {
+    activity: Option<CompressionActivity>,
+    at: Option<Instant>,
+    disabled: bool,
+}
+
+impl HistoryCompression {
+    fn postpone(&mut self, now: Instant) {
+        if !self.disabled {
+            self.at = Some(now + COMPRESSION_IDLE);
+        }
+    }
+
+    fn deadline(&mut self, terminal: &Terminal<'_, '_>, now: Instant) -> Option<Instant> {
+        // Once scheduled, output growth cannot postpone a pass indefinitely.
+        if !self.disabled && self.at.is_none() {
+            match terminal.compression_activity() {
+                Ok(activity) => {
+                    if self.activity != Some(activity) {
+                        self.activity = Some(activity);
+                        self.postpone(now);
+                    }
+                }
+                Err(error) => self.disable(error),
+            }
+        }
+        self.at
+    }
+
+    /// Called only after polling finds no ready I/O or ordinary timer.
+    fn step(&mut self, terminal: &mut Terminal<'_, '_>, now: Instant) {
+        if self.at.is_none_or(|at| now < at) {
+            return;
+        }
+        self.after_step(terminal.compress(CompressionMode::Incremental));
+        if !self.disabled && self.at.is_none() {
+            match terminal.compression_activity() {
+                Ok(activity) => self.activity = Some(activity),
+                Err(error) => self.disable(error),
+            }
+        }
+    }
+
+    fn after_step(&mut self, result: Result<CompressionResult, libghostty_vt::Error>) {
+        self.at = None;
+        match result {
+            Ok(CompressionResult::Pending) => self.at = Some(Instant::now() + COMPRESSION_STEP),
+            Ok(CompressionResult::Complete) => {}
+            Ok(CompressionResult::Unsupported) => self.disabled = true,
+            Err(error) => self.disable(error),
+        }
+    }
+
+    fn disable(&mut self, error: libghostty_vt::Error) {
+        self.disabled = true;
+        self.at = None;
+        eprintln!("orbit: history compression disabled: {error}");
+    }
+}
+
 struct Host {
     bounds: Bounds,
     listener: Listener,
@@ -434,6 +504,7 @@ struct Host {
     pty_open: bool,
     /// Bend has heard that the direct child exited.
     child_exited: bool,
+    compression: HistoryCompression,
 }
 
 /// A descriptor the host's wait watches.
@@ -492,6 +563,7 @@ impl Host {
             closing: Vec::new(),
             pty_open: true,
             child_exited: false,
+            compression: HistoryCompression::default(),
         })
     }
 
@@ -826,6 +898,10 @@ impl Host {
             .iter()
             .map(|&(_, at)| at)
             .fold(child_poll, Instant::min);
+        let deadline = self
+            .compression
+            .deadline(&self.orbit.terminal, Instant::now())
+            .map_or(deadline, |at| deadline.min(at));
         let mut revents = poll_fds(&fds, Some(deadline))?;
         let now = Instant::now();
         for &(source, at) in &armed {
@@ -833,6 +909,8 @@ impl Host {
             revents.push(if now >= at { platform::POLLIN } else { 0 });
         }
         let Some(index) = next_ready(&revents, self.turn) else {
+            terminated()?;
+            self.compression.step(&mut self.orbit.terminal, now);
             return Ok(None);
         };
         self.turn = index + 1;
@@ -1049,6 +1127,7 @@ impl Host {
     /// Classifies the client's request; plain input and resizes are applied
     /// before Bend answers.
     fn request(&mut self) -> io::Result<Option<Fact>> {
+        self.compression.postpone(Instant::now());
         let client = self.client.as_mut().ok_or_else(protocol)?;
         if let Some(refusal) = &client.refused {
             return Ok(Some(Fact::Refused {
@@ -1350,12 +1429,24 @@ impl Host {
     ) -> io::Result<()> {
         let client = self.client.as_mut().ok_or_else(protocol)?;
         let orbit = &mut self.orbit;
+        let mut history_read = false;
         let frame = client.send_serial(|| {
             let message = message(orbit)?;
+            history_read = matches!(
+                &message,
+                ServerMessage::VerticalPreview(_)
+                    | ServerMessage::ScrollOutcome(_)
+                    | ServerMessage::WheelOutcome(_)
+                    | ServerMessage::CopiedText { .. }
+            );
             Ok((message, orbit.extractor.serial()))
         })?;
         if frame {
             orbit.extractor.queued();
+        }
+        // Deferred history reads can restore pages without changing the token.
+        if history_read {
+            self.compression.postpone(Instant::now());
         }
         Ok(())
     }
@@ -1498,6 +1589,8 @@ impl Host {
                         }
                         TextRead::History => {
                             let history = history::read(&self.orbit.terminal, revision);
+                            // Formatter reads can restore pages without changing the token.
+                            self.compression.postpone(Instant::now());
                             self.managed()?.history(history)?
                         }
                     }
@@ -1510,6 +1603,7 @@ impl Host {
                     } else {
                         Err(LeaseRefusal::Closed)
                     };
+                    self.compression.postpone(Instant::now());
                     self.managed()?.input(outcome)?
                 }
                 Decision::ManageAllow => self.managed()?.allow()?,
@@ -1928,6 +2022,120 @@ mod tests {
     use crate::boundary::{
         FirstMessage, Foreground, ManagementEvent, Selected, SelectionKind, TickState,
     };
+
+    #[cfg(target_os = "linux")]
+    fn finish_compression(compression: &mut HistoryCompression, terminal: &mut Terminal<'_, '_>) {
+        let mut longest = Duration::ZERO;
+        for steps in 0..1000 {
+            let Some(at) = compression.at else {
+                assert!(!compression.disabled);
+                assert!(terminal.memory_usage().unwrap().primary_compressed_pages > 0);
+                eprintln!("history compression: {steps} steps, longest step {longest:?}");
+                return;
+            };
+            let started = Instant::now();
+            compression.step(terminal, at);
+            longest = longest.max(started.elapsed());
+        }
+        panic!("compression did not finish");
+    }
+
+    #[test]
+    fn compression_unsupported_and_api_errors_disable_maintenance() {
+        for result in [
+            Ok(CompressionResult::Unsupported),
+            Err(libghostty_vt::Error::OutOfMemory),
+        ] {
+            let mut terminal = Terminal::new(80, 24).unwrap();
+            let mut compression = HistoryCompression::default();
+            compression.postpone(Instant::now());
+            compression.after_step(result);
+            assert!(compression.disabled);
+            assert_eq!(compression.at, None);
+            compression.postpone(Instant::now());
+            assert_eq!(compression.deadline(&terminal, Instant::now()), None);
+            compression.step(&mut terminal, Instant::now() + COMPRESSION_IDLE);
+            terminal.vt_write(b"alive");
+            assert!(
+                history::read(&terminal, 0)
+                    .unwrap()
+                    .text
+                    .starts_with("alive")
+            );
+        }
+    }
+
+    /// Compression yields before its quiet deadline, stops after completion,
+    /// and restarts after output, a Formatter read and resize/reflow.
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn cold_history_recompresses_only_after_the_idle_deadline() {
+        let mut terminal = Terminal::new(80, 24).unwrap();
+        terminal
+            .set_scrollback_max_bytes(Some(crate::frame::SCROLLBACK_BUDGET_BYTES))
+            .unwrap();
+        let mut compression = HistoryCompression::default();
+        let start = Instant::now();
+        compression.deadline(&terminal, start);
+        for line in 0..10_000 {
+            terminal.vt_write(format!("{line:05} {}\r\n", "x".repeat(66)).as_bytes());
+        }
+        compression.postpone(start);
+        let at = compression.deadline(&terminal, start).unwrap();
+        assert_eq!(at, start + COMPRESSION_IDLE);
+        assert_eq!(compression.deadline(&terminal, at), Some(at));
+        compression.step(&mut terminal, at - Duration::from_millis(1));
+        assert_eq!(terminal.memory_usage().unwrap().primary_compressed_pages, 0);
+        compression.postpone(at);
+        assert_eq!(compression.at, Some(at + COMPRESSION_IDLE));
+        finish_compression(&mut compression, &mut terminal);
+        let retained = terminal.scrollback_rows().unwrap();
+        assert_eq!(retained, 9977);
+        assert_eq!(compression.deadline(&terminal, Instant::now()), None);
+        compression.step(&mut terminal, Instant::now() + Duration::from_secs(60));
+        assert_eq!(compression.at, None);
+
+        let token = terminal.compression_activity().unwrap();
+        let text = history::read(&terminal, 0).unwrap().text;
+        assert_eq!(terminal.compression_activity().unwrap(), token);
+        assert_eq!(terminal.memory_usage().unwrap().primary_compressed_pages, 0);
+        compression.postpone(Instant::now());
+        finish_compression(&mut compression, &mut terminal);
+        assert_eq!(terminal.scrollback_rows().unwrap(), retained);
+        assert_eq!(history::read(&terminal, 0).unwrap().text, text);
+        compression.postpone(Instant::now());
+        finish_compression(&mut compression, &mut terminal);
+
+        terminal.resize(40, 24, 10, 18).unwrap();
+        assert!(compression.deadline(&terminal, Instant::now()).is_some());
+        finish_compression(&mut compression, &mut terminal);
+        assert_eq!(history::read(&terminal, 0).unwrap().text, text);
+    }
+
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn compressed_history_evicts_oldest_lines_under_the_byte_budget() {
+        let mut terminal = Terminal::new(80, 24).unwrap();
+        terminal
+            .set_scrollback_max_bytes(Some(crate::frame::SCROLLBACK_BUDGET_BYTES))
+            .unwrap();
+        let lines: Vec<_> = (0..50_000)
+            .map(|line| format!("{line:05} {}", "x".repeat(66)))
+            .collect();
+        terminal.vt_write(lines[..10_000].join("\r\n").as_bytes());
+        let mut compression = HistoryCompression::default();
+        compression.postpone(Instant::now());
+        finish_compression(&mut compression, &mut terminal);
+        terminal.vt_write(b"\r\n");
+        terminal.vt_write(lines[10_000..].join("\r\n").as_bytes());
+        let text = history::read(&terminal, 0).unwrap().text;
+        let first = lines.len() - text.lines().count();
+        assert!(first > 10_000, "compressed history was not evicted");
+        assert_eq!(text, lines[first..].join("\n"));
+        compression.postpone(Instant::now());
+        finish_compression(&mut compression, &mut terminal);
+        assert_eq!(history::read(&terminal, 0).unwrap().text, text);
+    }
 
     /// The deadline judges only an incomplete answer: one the worker already
     /// wrote, or whose lines were already read, is accepted after it, as when

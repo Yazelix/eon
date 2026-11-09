@@ -68,6 +68,8 @@ pub fn run() {
     a_full_history_is_read_whole_and_in_time();
     a_holder_that_stops_reading_history_loses_the_lease();
     echo_elsewhere_goes_on_during_full_reads();
+    #[cfg(target_os = "linux")]
+    cold_history_recompresses_after_reads_and_output();
 }
 
 /// A history read returns the retained history and then the live area,
@@ -237,23 +239,29 @@ fn a_holder_that_stops_reading_history_loses_the_lease() {
 /// read, and no read takes 2 s, the time a lease holder waits. Separate Orbit
 /// runs share only the machine, so this bounds their contention. The check
 /// prints the idle and loaded echo times and the read times, which bound how
-/// long a read holds its own terminal's owner loop.
+/// long a read holds its own terminal's owner loop. The echo terminal also
+/// holds history, and its first key arrives during idle compression.
 fn echo_elsewhere_goes_on_during_full_reads() {
     let mut run = Driven::start();
     run.fill_history("\u{1d11e}");
     let directory = TempDir::new();
+    let echo_history = directory.join("echo-history");
+    fs::write(&echo_history, "history text\r\n".repeat(10_000)).unwrap();
     let shell = executable(
         &directory,
         "echo.sh",
         &format!(
-            "#!{}\nstty raw -echo\nn=0\n\
-             while IFS= read -r -n1 _; do n=$((n+1)); printf '\\033]0;echo %d\\007' $n; done\n",
-            bash().display()
+            "#!{}\nstty raw -echo\ncat '{}'\nprintf '\\033]0;echo ready\\007'\nn=0\n\
+             while IFS= read -r -n1 _; do n=$((n+1)); \
+             printf '\\033]0;echo %d\\007' $n; done\n",
+            bash().display(),
+            echo_history.display()
         ),
     );
     let echo = Server::start(&directory, &shell, &[]);
     let mut client = Peer::attach(&echo.path, 4.0);
-    client.frame();
+    client.frame_titled("echo ready");
+    sleep(0.3);
     let mut typed = 0;
     let mut echoes = |count: usize| -> Vec<Duration> {
         (0..count)
@@ -308,6 +316,11 @@ fn echo_elsewhere_goes_on_during_full_reads() {
         slowest(&loaded),
         fs::read_to_string("/proc/loadavg").unwrap_or_default().trim(),
     );
+    assert!(
+        slowest(&idle) < seconds(0.1),
+        "idle echo stalled for {:?}",
+        slowest(&idle)
+    );
     assert!(reads.len() >= 2, "only {} reads ran", reads.len());
     assert!(
         slowest(&reads) < seconds(2.0),
@@ -321,4 +334,110 @@ fn echo_elsewhere_goes_on_during_full_reads() {
         slowest(&reads)
     );
     drop(client);
+}
+
+/// Observe the real host's resident history, without reading another terminal.
+/// A completed pass rearms after a management history read and fresh output.
+#[cfg(target_os = "linux")]
+fn cold_history_recompresses_after_reads_and_output() {
+    fn anonymous(run: &Driven) -> u64 {
+        let rollup = fs::read_to_string(format!(
+            "/proc/{}/smaps_rollup",
+            run.server.pid()
+        ))
+        .unwrap();
+        rollup
+            .lines()
+            .find_map(|line| {
+                line.strip_prefix("Anonymous:")?
+                    .split_whitespace()
+                    .next()?
+                    .parse::<u64>()
+                    .ok()
+            })
+            .expect("Anonymous in smaps_rollup")
+            * 1024
+    }
+    fn cold(run: &Driven, hot: u64) -> u64 {
+        let deadline = Instant::now() + seconds(10.0);
+        loop {
+            let bytes = anonymous(run);
+            if bytes + 4 * 1024 * 1024 < hot {
+                // Let the remaining incremental steps finish before testing a restart.
+                sleep(1.0);
+                return anonymous(run);
+            }
+            assert!(
+                Instant::now() < deadline,
+                "history stayed resident: hot={hot}, now={bytes}"
+            );
+            sleep(0.02);
+        }
+    }
+    let mut run = Driven::start();
+    let lines: Vec<_> = (1..=20_000)
+        .map(|i| format!("{i:05} {}", "x".repeat(66)))
+        .collect();
+    let file = run.directory.join("compression-history");
+    fs::write(&file, lines[..10_000].join("\r\n")).unwrap();
+    run.command(&format!(
+        "cat '{}'; printf '\\033]0;compression-first\\007'",
+        file.display()
+    ));
+    run.until_titled("compression-first");
+    let hot = anonymous(&run);
+    let first_cold = cold(&run, hot);
+    assert_eq!(run.history().text, lines[..10_000].join("\n"));
+    let restored = anonymous(&run);
+    assert!(
+        restored > first_cold + 4 * 1024 * 1024,
+        "history read did not restore pages"
+    );
+    let recompressed = cold(&run, restored);
+
+    assert_eq!(run.history().text, lines[..10_000].join("\n"));
+    let spinner_hot = anonymous(&run);
+    let mut client = run.attach();
+    let stop = run.directory.join("stop-spinner");
+    run.command(&format!(
+        "printf '\\033[?1049h'; n=0; while [ ! -e '{}' ]; do \
+         printf '\\rspinner %d\\033]0;spinner-%d\\007' $n $n; \
+         n=$((n+1)); sleep 0.1; done; \
+         printf '\\033[?1049l\\033]0;spinner-stopped\\007'",
+        stop.display()
+    ));
+    client.frame_titled("spinner-0");
+    eprintln!("spinner compression: hot={spinner_hot}");
+    let spinner_cold = cold(&run, spinner_hot);
+    assert!(
+        spinner_cold < recompressed + 1024 * 1024,
+        "spinner prevented a compressed plateau: {spinner_cold} vs {recompressed}"
+    );
+    fs::write(stop, "stop").unwrap();
+    client.frame_titled("spinner-stopped");
+    assert_eq!(run.history().text, lines[..10_000].join("\n"));
+    drop(client);
+
+    fs::write(&file, lines[10_000..].join("\r\n")).unwrap();
+    run.command(&format!(
+        "printf '\\r\\n'; cat '{}'; printf '\\033]0;compression-second\\007'",
+        file.display()
+    ));
+    run.until_titled("compression-second");
+    let output_hot = anonymous(&run);
+    let output_cold = cold(&run, output_hot);
+    eprintln!(
+        "history compression anonymous bytes: hot={hot}, cold={first_cold}, \
+         read={restored}, recompressed={recompressed}, \
+         spinner={spinner_hot}->{spinner_cold}, \
+         output={output_hot}, idle={output_cold}"
+    );
+    assert_eq!(run.history().text, lines.join("\n"));
+    let mut client = run.attach();
+    client.send(&size(80, 24, 10, 18));
+    client.expect(session::ServerMessage::Accepted);
+    assert_eq!(client.frame().scroll_position.history_rows, 19_976);
+    drop(client);
+    assert!(run.input().is_empty(), "compression sent PTY input");
+    run.stop();
 }

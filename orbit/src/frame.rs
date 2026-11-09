@@ -1058,6 +1058,172 @@ mod tests {
         assert!(kept.text.starts_with(PLACEHOLDER) && kept.hyperlink == "https://example.test");
     }
 
+    /// Cold compressed pages keep rich rows, tracked selection, Kitty storage
+    /// and exact history text through reads and resize/reflow.
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn compression_preserves_rich_history_selection_and_images() {
+        use libghostty_vt::{
+            fmt::Formatter,
+            terminal::{CompressionMode, CompressionResult, Mode},
+        };
+
+        fn compress(terminal: &mut Terminal<'_, '_>) {
+            for _ in 0..1000 {
+                match terminal.compress(CompressionMode::Incremental).unwrap() {
+                    CompressionResult::Pending => {}
+                    CompressionResult::Complete => {
+                        assert!(terminal.memory_usage().unwrap().primary_compressed_pages > 0);
+                        return;
+                    }
+                    CompressionResult::Unsupported => panic!("Linux compression is unsupported"),
+                }
+            }
+            panic!("compression did not finish");
+        }
+
+        let mut terminal = Terminal::new(80, 24).unwrap();
+        terminal
+            .set_default_mode(Mode::GRAPHEME_CLUSTER, true)
+            .unwrap();
+        terminal
+            .set_scrollback_max_bytes(Some(SCROLLBACK_BUDGET_BYTES))
+            .unwrap();
+        terminal.resize(80, 24, 10, 18).unwrap();
+        transmit(&mut terminal, 7, 2, 1, "a=T,U=1,c=2,r=1");
+        let mut rich_rows = Vec::new();
+        for line in 0..2000 {
+            if line % 256 == 0 {
+                rich_rows.extend([line + line / 256, line + line / 256 + 1]);
+                terminal.vt_write(format!("\x1b[38;5;7m\u{10EEEE}\u{305}\u{305}\u{10EEEE}\x1b[0m\x1b]8;;https://example.test\x1b\\\x1b[1\"q\x1b[1;3;4;38;2;12;34;56;48;5;17m{line:04} e\u{301}界👩‍💻 {}\x1b[0m\x1b[0\"q\x1b]8;;\x1b\\\r\n", "soft-wrap ".repeat(8)).as_bytes());
+            } else {
+                terminal.vt_write(format!("{line:04} {}\r\n", "x".repeat(66)).as_bytes());
+            }
+        }
+        let retained = terminal.scrollback_rows().unwrap();
+        let mut extractor = FrameExtractor::new(true).unwrap();
+        let rows: Vec<_> = rich_rows
+            .into_iter()
+            .map(|y| (y, extractor.row(&terminal, y as u32, 80).unwrap()))
+            .collect();
+        let text = crate::history::read(&terminal, 0).unwrap().text;
+        terminal.scroll_viewport(ScrollViewport::Top);
+        let top = extractor.frame(0, &terminal).unwrap();
+        assert!(!graphics(&top).placements.is_empty());
+        assert!(
+            top.rows
+                .iter()
+                .flat_map(|row| &row.cells)
+                .any(|cell| cell.text == "e\u{301}")
+        );
+        assert!(
+            top.rows
+                .iter()
+                .flat_map(|row| &row.cells)
+                .any(|cell| cell.style.protected)
+        );
+
+        // Select rich text at the top, then make those anchored pages cold.
+        let mut pointer = crate::pointer::Pointer::default();
+        let size = session::SurfaceSize {
+            cols: 80,
+            rows: 24,
+            screen_width: 800,
+            screen_height: 432,
+            cell_width: 10,
+            cell_height: 18,
+            padding_top: 0,
+            padding_bottom: 0,
+            padding_left: 0,
+            padding_right: 0,
+        };
+        let begin = session::SelectionPosition { x: 25.0, y: 9.0 };
+        let end = session::SelectionPosition { x: 175.0, y: 9.0 };
+        pointer
+            .host_phase(
+                session::SelectionAction::Begin {
+                    frame_revision: 0,
+                    position: begin,
+                    time_ns: 1_000_000_000,
+                    modifiers: session::Modifiers::empty(),
+                },
+                &terminal,
+                size,
+            )
+            .unwrap();
+        pointer
+            .host_phase(
+                session::SelectionAction::Update {
+                    position: end,
+                    modifiers: session::Modifiers::empty(),
+                },
+                &terminal,
+                size,
+            )
+            .unwrap();
+        let selected = Formatter::new_selection(&terminal)
+            .unwrap()
+            .unwrap()
+            .format_alloc(None)
+            .unwrap()
+            .to_vec();
+        assert!(!selected.is_empty());
+        let selected_frame = extractor.frame(0, &terminal).unwrap();
+        terminal.scroll_viewport(ScrollViewport::Bottom);
+        compress(&mut terminal);
+        assert_eq!(
+            Formatter::new_selection(&terminal)
+                .unwrap()
+                .unwrap()
+                .format_alloc(None)
+                .unwrap()
+                .as_ref(),
+            selected
+        );
+        terminal.scroll_viewport(ScrollViewport::Top);
+        assert_eq!(extractor.frame(0, &terminal).unwrap(), selected_frame);
+        pointer
+            .host_phase(
+                session::SelectionAction::Finish {
+                    position: end,
+                    modifiers: session::Modifiers::empty(),
+                },
+                &terminal,
+                size,
+            )
+            .unwrap();
+        let frozen = pointer.copied.clone();
+        pointer.clear(&terminal).unwrap();
+        terminal.scroll_viewport(ScrollViewport::Bottom);
+        compress(&mut terminal);
+        for (y, row) in &rows {
+            assert_eq!(
+                extractor.row(&terminal, *y as u32, 80).unwrap(),
+                *row,
+                "row {y}"
+            );
+        }
+        assert_eq!(terminal.scrollback_rows().unwrap(), retained);
+        assert_eq!(crate::history::read(&terminal, 0).unwrap().text, text);
+        terminal.scroll_viewport(ScrollViewport::Top);
+        assert_eq!(extractor.frame(0, &terminal).unwrap(), top);
+        extractor.queued();
+        let (announce, pixels) = extractor.start(&terminal, 0).unwrap().unwrap();
+        assert_eq!((announce.width, announce.height), (2, 1));
+        assert_eq!(pixels, [255; 6]);
+
+        // Resize restores compressed storage; logical text and the frozen copy survive.
+        terminal.scroll_viewport(ScrollViewport::Bottom);
+        compress(&mut terminal);
+        terminal.resize(60, 24, 10, 18).unwrap();
+        assert_eq!(crate::history::read(&terminal, 0).unwrap().text, text);
+        terminal.resize(80, 24, 10, 18).unwrap();
+        compress(&mut terminal);
+        assert_eq!(crate::history::read(&terminal, 0).unwrap().text, text);
+        assert!(!frozen.is_empty());
+        assert_eq!(pointer.copied, frozen);
+    }
+
     /// Fixed placements are listed by layer, z-index and image id, and an
     /// image past the resource limits is unavailable. Past 256 resources or
     /// 4,096 entries the list stops and says so, and the terminal goes on

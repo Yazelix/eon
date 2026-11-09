@@ -988,6 +988,36 @@ alternate screen and back, a reflow to fewer columns, eviction under a small
 byte budget with the viewport held at the oldest row, `CSI 3 J` and reset
 (ORB-C8); counting `rows_from_live` from the top instead made it fail.
 
+The host schedules libghostty's lossless compression of cold history 250 ms
+after observing history activity or access. Further output and ordinary frames
+do not postpone a scheduled pass, so periodic redraws leave cold history
+compressible. Ready input, output and ordinary timers take precedence. Each
+idle turn performs at most one incremental step, with 10 ms between
+continuations; a completed pass sleeps until activity returns. History reads
+and previews rearm the delay even when restoring pages does not change
+libghostty's activity token. Input, scroll, selection and resize also rearm it.
+The library keeps visible and active pages resident and retains the same
+logical history budget. Unsupported compression disables this maintenance;
+an API error disables it with a diagnostic. The unit test
+`compression_unsupported_and_api_errors_disable_maintenance` checks both
+returned results disarm maintenance while the terminal remains usable. This
+does not cover a libghostty decode failure while restoring a page: the pinned
+PageList's `Node.restore` panics on that failure and the host aborts.
+The fixed delays are internal performance budgets (`eon-ypy0a.1`).
+`cold_history_recompresses_only_after_the_idle_deadline` checks scheduling,
+completion, history-read recompression and resize.
+`compressed_history_evicts_oldest_lines_under_the_byte_budget` compresses
+history, writes beyond the unchanged 16 MiB budget, and checks the exact
+surviving lines after eviction and recompression.
+`compression_preserves_rich_history_selection_and_images` checks exact rich
+rows, Unicode graphemes, tracked selection, Kitty pixels and history text
+through compression, reads and reflow on Linux. Darwin savings remain unproved.
+The real-PTY `history-text` check also observes the host's anonymous resident
+memory fall by more than 4 MiB after 10,000 lines, after a history read restores
+the pages, during an attached alternate-screen spinner redrawing every 100 ms,
+and after 10,000 further lines go idle; all 20,000 lines remain exact. Its
+post-idle input echoes must each complete within a 100 ms regression bound.
+
 Rows read directly from libghostty's screen, as previews and history reads
 do, equal the canonical frame's rows (ORB-C6). The host unit test
 `direct_rows_match_rich_canonical_frame_rows` writes protected, styled,

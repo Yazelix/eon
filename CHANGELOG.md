@@ -19,6 +19,9 @@ installation, and proven contract changes.
   interaction bounds unchanged (`eon-27deg`). Native dialog titles
   use the chrome title style in place of the bold heading style.
 
+- Orbit compresses cold terminal history losslessly, including during periodic
+  redraws, and recompresses it after reads and scrolling, retaining the same
+  history budget and content (`eon-ypy0a.1`).
 - Orbit uses upstream libghostty on the Ghostty vt-1.0.0 core, pinned by
   exact Git revision (`eon-9rtt.9`).
 - `eon update --install [--yes] [--json] [--prefix ABS]` installs a discovered
