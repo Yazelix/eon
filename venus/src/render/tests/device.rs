@@ -1,6 +1,27 @@
 use super::*;
 
 #[test]
+fn allocation_hints_favor_memory_only_on_non_cpu_adapters() {
+    use wgpu::{DeviceType, MemoryHints};
+
+    for device_type in [
+        DeviceType::Other,
+        DeviceType::IntegratedGpu,
+        DeviceType::DiscreteGpu,
+        DeviceType::VirtualGpu,
+    ] {
+        assert!(matches!(
+            device_memory_hints(device_type),
+            MemoryHints::MemoryUsage
+        ));
+    }
+    assert!(matches!(
+        device_memory_hints(DeviceType::Cpu),
+        MemoryHints::Performance
+    ));
+}
+
+#[test]
 fn device_loss_blocks_surface_recovery_but_destroy_does_not() {
     let lost = AtomicBool::new(false);
 

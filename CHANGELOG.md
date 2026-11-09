@@ -5,6 +5,10 @@ installation, and proven contract changes.
 
 ## Unreleased
 
+- Venus favors smaller GPU allocations on non-CPU adapters, reducing measured
+  Intel Vulkan allocation and residency by about 180 MiB. CPU adapters such
+  as lavapipe retain wgpu's default allocation policy (`eon-ypy0a.2`).
+
 - `eon-bench memory --eon PATH` measures Venus as Eon's native client
   with 50 filled workspace tabs on the shared private Sway launcher. Process
   PSS, RSS and anonymous PSS retain the existing estimator, with separately

@@ -1109,7 +1109,10 @@ impl Renderer {
         );
         let spinners_turn = spinners_turn(adapter_info.device_type, animate_working_badge);
         let (device, queue) = adapter
-            .request_device(&DeviceDescriptor::default())
+            .request_device(&DeviceDescriptor {
+                memory_hints: device_memory_hints(adapter_info.device_type),
+                ..Default::default()
+            })
             .await
             .map_err(display_error("cannot create the Venus GPU device"))?;
         let device_lost = Arc::new(AtomicBool::new(false));
@@ -3249,6 +3252,15 @@ impl RectangleBatch {
 
 fn nonzero(size: PhysicalSize<u32>) -> PhysicalSize<u32> {
     PhysicalSize::new(size.width.max(1), size.height.max(1))
+}
+
+fn device_memory_hints(device_type: wgpu::DeviceType) -> wgpu::MemoryHints {
+    // Intel saved 180 MiB; lavapipe input timing did not pass the comparison gate.
+    if device_type == wgpu::DeviceType::Cpu {
+        wgpu::MemoryHints::Performance
+    } else {
+        wgpu::MemoryHints::MemoryUsage
+    }
 }
 
 fn surface_alpha_mode(
