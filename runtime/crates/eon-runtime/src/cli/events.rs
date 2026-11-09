@@ -1,4 +1,6 @@
-use super::super::{control as endpoint, supervisor::request_id, workspace as projection};
+use super::super::{
+    control as endpoint, sessions::bound_io, supervisor::request_id, workspace as projection,
+};
 use super::*;
 use eon_workspace_protocol::v38::{self as wire, EventKind, Filter, Resume};
 
@@ -115,26 +117,26 @@ pub(super) fn execute(inputs: &Inputs, arguments: &[OsString]) -> Result<i32, Er
     if previous == libc::SIG_ERR {
         return Err(lost(std::io::Error::last_os_error()));
     }
-    let result = if stdout_closed(libc::STDOUT_FILENO).map_err(lost)? {
+    let stdout = Output::watch(libc::STDOUT_FILENO).map_err(lost)?;
+    let result = if stdout.closed().map_err(lost)? {
         Ok(0)
     } else {
-        execute_inner(inputs, arguments)
+        execute_inner(inputs, arguments, &stdout)
     };
     unsafe {
         libc::signal(libc::SIGINT, previous);
     }
-    if stdout_closed(libc::STDOUT_FILENO).map_err(lost)? {
+    if stdout.closed().map_err(lost)? {
         Ok(0)
     } else {
         result
     }
 }
 
-fn execute_inner(inputs: &Inputs, arguments: &[OsString]) -> Result<i32, Error> {
+fn execute_inner(inputs: &Inputs, arguments: &[OsString], stdout: &Output) -> Result<i32, Error> {
     let options = parse(arguments)?;
     let mut output = std::io::stdout().lock();
     let mut errors = std::io::stderr().lock();
-    let stdout = Some(libc::STDOUT_FILENO);
     let caller = match calling_terminal() {
         Ok(caller) => caller,
         Err(error) => {
@@ -189,19 +191,82 @@ fn stream_result(result: std::io::Result<i32>) -> Result<i32, Error> {
     }
 }
 
-fn stdout_closed(fd: i32) -> std::io::Result<bool> {
-    let mut poll = libc::pollfd {
-        fd,
-        events: 0,
-        revents: 0,
-    };
-    loop {
-        if unsafe { libc::poll(&mut poll, 1, 0) } >= 0 {
-            return Ok(poll.revents != 0);
+/// Standard output, watched for a reader that goes away while the stream waits.
+#[derive(Default)]
+struct Output {
+    /// The descriptor while it is watched.
+    fd: std::cell::Cell<Option<i32>>,
+    socket: bool,
+}
+
+impl Output {
+    /// Linux reports a gone reader on any output. Darwin watches only a pipe or
+    /// socket: its poll would wake for a file's or a terminal's readable data.
+    fn watch(fd: i32) -> std::io::Result<Self> {
+        let mut status = std::mem::MaybeUninit::<libc::stat>::uninit();
+        // SAFETY: fstat writes one stat into the buffer it is given.
+        if unsafe { libc::fstat(fd, status.as_mut_ptr()) } < 0 {
+            return Err(std::io::Error::last_os_error());
         }
-        let error = std::io::Error::last_os_error();
-        if error.kind() != std::io::ErrorKind::Interrupted {
-            return Err(error);
+        // SAFETY: fstat succeeded, so it initialized the stat.
+        let kind = unsafe { status.assume_init() }.st_mode & libc::S_IFMT;
+        let socket = kind == libc::S_IFSOCK;
+        let watched = !cfg!(target_vendor = "apple") || socket || kind == libc::S_IFIFO;
+        Ok(Self {
+            fd: std::cell::Cell::new(watched.then_some(fd)),
+            socket,
+        })
+    }
+
+    /// What poll asks of the output. Linux reports a gone reader whatever is
+    /// asked. Darwin's kqueue-backed poll registers nothing for no events; a
+    /// read-band request registers the read filter, which reports a gone
+    /// reader as a hangup. Linux never sets read-band on an output.
+    fn poll(&self) -> libc::pollfd {
+        libc::pollfd {
+            fd: self.fd.get().unwrap_or(-1),
+            events: libc::POLLRDBAND,
+            revents: 0,
+        }
+    }
+
+    /// Whether what poll reported means the reader is gone.
+    fn gone(&self, revents: libc::c_short) -> std::io::Result<bool> {
+        let Some(fd) = self.fd.get().filter(|_| revents != 0) else {
+            return Ok(false);
+        };
+        // Darwin also reports a socket's receive EOF as a hangup, and a peer
+        // that shut down only its writing still reads. A zero-length send fails
+        // only once the peer cannot read. Until then the EOF would wake every
+        // poll, so the output is no longer watched and a later close shows at
+        // the next write.
+        if cfg!(target_vendor = "apple") && self.socket && revents & libc::POLLERR == 0 {
+            // SAFETY: a zero-length send reads nothing from the buffer.
+            if unsafe { libc::send(fd, [0u8; 1].as_ptr().cast(), 0, 0) } == 0 {
+                self.fd.set(None);
+                return Ok(false);
+            }
+            let error = std::io::Error::last_os_error();
+            if !matches!(
+                error.raw_os_error(),
+                Some(libc::EPIPE | libc::ECONNRESET | libc::ENOTCONN)
+            ) {
+                return Err(error);
+            }
+        }
+        Ok(true)
+    }
+
+    fn closed(&self) -> std::io::Result<bool> {
+        let mut poll = self.poll();
+        loop {
+            if unsafe { libc::poll(&mut poll, 1, 0) } >= 0 {
+                return self.gone(poll.revents);
+            }
+            let error = std::io::Error::last_os_error();
+            if error.kind() != std::io::ErrorKind::Interrupted {
+                return Err(error);
+            }
         }
     }
 }
@@ -209,13 +274,11 @@ fn stdout_closed(fd: i32) -> std::io::Result<bool> {
 fn refuse(
     output: &mut impl Write,
     errors: &mut impl Write,
-    stdout: Option<i32>,
+    stdout: &Output,
     failure: &Failure,
     json: bool,
 ) -> std::io::Result<i32> {
-    if let Some(fd) = stdout
-        && stdout_closed(fd)?
-    {
+    if stdout.closed()? {
         return Ok(0);
     }
     if json {
@@ -242,7 +305,7 @@ fn invalid(detail: &str) -> std::io::Error {
 
 fn read_message(
     stream: &mut std::os::unix::net::UnixStream,
-    stdout: Option<i32>,
+    stdout: &Output,
     deadline: Option<Instant>,
 ) -> std::io::Result<wire::SubscriptionMessage> {
     use std::os::fd::AsRawFd;
@@ -266,11 +329,7 @@ fn read_message(
                 events: libc::POLLIN,
                 revents: 0,
             },
-            libc::pollfd {
-                fd: stdout.unwrap_or(-1),
-                events: 0,
-                revents: 0,
-            },
+            stdout.poll(),
         ];
         let timeout = match deadline {
             Some(deadline) => i32::try_from(
@@ -295,8 +354,11 @@ fn read_message(
                 "subscription handshake timed out",
             ));
         }
-        if fds[1].revents != 0 {
+        if stdout.gone(fds[1].revents)? {
             return Err(std::io::Error::from(std::io::ErrorKind::BrokenPipe));
+        }
+        if fds[0].revents == 0 {
+            continue;
         }
         match stream.read(&mut bytes[filled..]) {
             Ok(0) => {
@@ -317,7 +379,7 @@ fn consume(
     stream: &mut std::os::unix::net::UnixStream,
     output: &mut impl Write,
     errors: &mut impl Write,
-    stdout: Option<i32>,
+    stdout: &Output,
     json: bool,
 ) -> std::io::Result<i32> {
     use wire::SubscriptionMessage as Message;
@@ -327,7 +389,7 @@ fn consume(
         Message::Failure(error) => return refuse(output, errors, stdout, &error, json),
         _ => return Err(invalid("expected SUBSCRIBED")),
     };
-    stream.set_read_timeout(None)?;
+    bound_io(stream, stream.set_read_timeout(None))?;
     let mut seq = subscribed.seq;
     let tabs = match read_tabs(stream, stdout, subscribed.snapshot.as_ref())? {
         TabRead::Complete(tabs) => tabs,
@@ -428,7 +490,7 @@ enum TabRead {
 
 fn read_tabs(
     stream: &mut std::os::unix::net::UnixStream,
-    stdout: Option<i32>,
+    stdout: &Output,
     snapshot: Option<&wire::WindowSnapshot>,
 ) -> std::io::Result<TabRead> {
     let mut groups: Vec<wire::Tabs> = Vec::new();
@@ -838,7 +900,13 @@ mod tests {
             }
         });
         let mut output = Vec::new();
-        let result = consume(&mut reader, &mut output, &mut Vec::new(), None, json);
+        let result = consume(
+            &mut reader,
+            &mut output,
+            &mut Vec::new(),
+            &Output::default(),
+            json,
+        );
         drop(reader);
         sender.join().unwrap();
         result.map(|status| (status, String::from_utf8(output).unwrap()))
@@ -1036,6 +1104,51 @@ mod tests {
         assert!(!human.contains("question?"));
     }
     #[test]
+    fn outputs_are_watched_per_platform_and_a_gone_reader_closes_them() {
+        use std::os::fd::AsRawFd;
+        let root = super::super::super::supervisor::temporary_directory();
+        let file = std::fs::File::create(root.join("output")).unwrap();
+        let output = Output::watch(file.as_raw_fd()).unwrap();
+        assert_eq!(output.fd.get().is_none(), cfg!(target_vendor = "apple"));
+        assert!(!output.closed().unwrap());
+        std::fs::remove_dir_all(root).unwrap();
+        let (reader, writer) = std::io::pipe().unwrap();
+        let (peer, socket) = std::os::unix::net::UnixStream::pair().unwrap();
+        let outputs =
+            [writer.as_raw_fd(), socket.as_raw_fd()].map(|fd| (fd, Output::watch(fd).unwrap()));
+        for (fd, output) in &outputs {
+            assert_eq!(output.fd.get(), Some(*fd));
+            assert!(!output.closed().unwrap());
+        }
+        drop((reader, peer));
+        for (_, output) in &outputs {
+            assert!(output.closed().unwrap());
+        }
+    }
+    #[test]
+    fn a_reader_that_only_stops_writing_still_receives_the_stream() {
+        use std::io::Read;
+        use std::os::fd::AsRawFd;
+        use wire::SubscriptionMessage as M;
+        let (mut peer, socket) = std::os::unix::net::UnixStream::pair().unwrap();
+        let output = Output::watch(socket.as_raw_fd()).unwrap();
+        peer.shutdown(std::net::Shutdown::Write).unwrap();
+        assert!(!output.closed().unwrap());
+        let (mut reader, mut writer) = std::os::unix::net::UnixStream::pair().unwrap();
+        for message in [subscribed(None), M::End(wire::End::TooSlow)] {
+            writer
+                .write_all(&wire::encode_subscription_message(&message).unwrap())
+                .unwrap();
+        }
+        let status = consume(&mut reader, &mut &socket, &mut Vec::new(), &output, true).unwrap();
+        assert_eq!(status, 1);
+        drop(socket);
+        let mut received = String::new();
+        peer.read_to_string(&mut received).unwrap();
+        assert_eq!(received.lines().count(), 2, "{received}");
+        assert!(received.ends_with("\"reason\":\"too-slow\"}\n"));
+    }
+    #[test]
     fn refusals_use_stderr_and_truncated_ends_are_connection_loss() {
         use wire::SubscriptionMessage as M;
         let (mut reader, mut writer) = std::os::unix::net::UnixStream::pair().unwrap();
@@ -1050,7 +1163,14 @@ mod tests {
             .unwrap();
         let (mut output, mut errors) = (Vec::new(), Vec::new());
         assert_eq!(
-            consume(&mut reader, &mut output, &mut errors, None, false).unwrap(),
+            consume(
+                &mut reader,
+                &mut output,
+                &mut errors,
+                &Output::default(),
+                false
+            )
+            .unwrap(),
             1
         );
         assert!(output.is_empty());
@@ -1071,7 +1191,7 @@ mod tests {
                 &mut reader,
                 &mut Vec::new(),
                 &mut Vec::new(),
-                None,
+                &Output::default(),
                 true,
             ));
             if cut == end.len() {

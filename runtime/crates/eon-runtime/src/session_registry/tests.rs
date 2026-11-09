@@ -322,13 +322,19 @@ fn c38_invalid_ids_names_and_filenames_are_preserved() {
                 fs::rename(&path, registry.root.join("123.json")).unwrap();
             }
             "non-utf8-file" => {
-                fs::rename(
+                match fs::rename(
                     &path,
                     registry
                         .root
                         .join(std::ffi::OsStr::from_bytes(b"\xff.json")),
-                )
-                .unwrap();
+                ) {
+                    // A filesystem that refuses the name (APFS) cannot hold this defect.
+                    Err(error) if error.raw_os_error() == Some(libc::EILSEQ) => {
+                        eprintln!("skipped non-utf8-file: the filesystem refuses the name");
+                        continue;
+                    }
+                    result => result.unwrap(),
+                }
             }
             "foreign-namespace" => {
                 value["id"] = "f".repeat(48).into();

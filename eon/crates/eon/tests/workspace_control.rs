@@ -3793,7 +3793,7 @@ esac
                     return Err(std::io::Error::last_os_error());
                 }
                 if ending != "no-controlling-terminal"
-                    && libc::ioctl(controlling, libc::TIOCSCTTY, 0) == -1
+                    && libc::ioctl(controlling, libc::TIOCSCTTY as _, 0) == -1
                 {
                     return Err(std::io::Error::last_os_error());
                 }
@@ -3963,7 +3963,8 @@ esac
         // SAFETY: only the child acquires this fresh private controlling terminal.
         unsafe {
             command.pre_exec(|| {
-                if libc::setsid() == -1 || libc::ioctl(libc::STDIN_FILENO, libc::TIOCSCTTY, 0) == -1
+                if libc::setsid() == -1
+                    || libc::ioctl(libc::STDIN_FILENO, libc::TIOCSCTTY as _, 0) == -1
                 {
                     return Err(std::io::Error::last_os_error());
                 }
@@ -4860,6 +4861,23 @@ fn events_cli_streams_resumes_interrupts_and_exits_on_closed_stdout() {
     pipe.read_exact(&mut [0]).unwrap();
     drop(pipe);
     wait_for_successful_exit(&mut closed.child);
+    // A terminal that is not the stream's controlling terminal sends it no
+    // SIGHUP when it closes; Linux reports the hangup to poll instead. The
+    // guard lives to the end, as dropping it stops the supervisor.
+    let _hung_up = cfg!(target_os = "linux").then(|| {
+        let (mut leader, device) = pseudo_terminal();
+        let mut hung_up = TestProcess {
+            child: stream_command()
+                .stdout(Stdio::from(device))
+                .spawn()
+                .unwrap(),
+            stop: stop.clone(),
+        };
+        leader.read_exact(&mut [0]).unwrap();
+        drop(leader);
+        wait_for_successful_exit(&mut hung_up.child);
+        hung_up
+    });
     let refused = stream_command()
         .env("EON_TERMINAL", "terminal-99999")
         .output()
