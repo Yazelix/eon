@@ -966,6 +966,26 @@ esac
         }
     }
 
+    fn evidence_logs(evidence: &Path) -> String {
+        let mut paths = vec![evidence.join("calls")];
+        let mut logs = String::new();
+        match fs::read_dir(evidence.join("steps")).and_then(|entries| {
+            entries
+                .map(|entry| entry.map(|entry| entry.path()))
+                .collect::<std::io::Result<Vec<_>>>()
+        }) {
+            Ok(steps) => paths.extend(steps),
+            Err(error) => logs.push_str(&format!("reading step logs: {error}\n")),
+        }
+        paths.sort();
+        for path in paths {
+            let text = fs::read_to_string(&path)
+                .unwrap_or_else(|error| format!("could not read: {error}"));
+            logs.push_str(&format!("\n{}:\n{text}\n", path.display()));
+        }
+        logs
+    }
+
     #[test]
     fn failed_shared_inputs_skip_only_the_checks_that_need_them() {
         let evidence =
@@ -982,26 +1002,46 @@ esac
             serde_json::from_slice(&fs::read(evidence.join("summary.json")).unwrap()).unwrap();
         let steps = summary["steps"].as_array().unwrap();
         let step = |name: &str| steps.iter().find(|step| step["name"] == name).unwrap();
-        let calls = fs::read_to_string(evidence.join("calls")).unwrap();
         for name in ["check:a", "check:b"] {
-            assert_eq!(step(name)["status"], "skipped", "{calls}");
+            assert_eq!(
+                step(name)["status"],
+                "skipped",
+                "{}",
+                evidence_logs(&evidence)
+            );
             assert_eq!(
                 step(name)["first_failure"],
                 "needs check-inputs, which did not pass"
             );
         }
-        assert_eq!(step("check:c")["status"], "pass");
-        assert_eq!(step("check:d")["status"], "fail");
+        assert_eq!(
+            step("check:c")["status"],
+            "pass",
+            "{}",
+            evidence_logs(&evidence)
+        );
+        assert_eq!(
+            step("check:d")["status"],
+            "fail",
+            "{}",
+            evidence_logs(&evidence)
+        );
         assert_eq!(
             step("check:d")["first_failure"],
             "error: check d does not evaluate"
         );
-        assert_eq!(step("check-inputs")["status"], "fail");
+        assert_eq!(
+            step("check-inputs")["status"],
+            "fail",
+            "{}",
+            evidence_logs(&evidence)
+        );
         assert_eq!(
             step("check-inputs")["first_failure"],
             "error: shared input failed"
         );
         assert_eq!(summary["result"], "fail");
+        let calls = fs::read_to_string(evidence.join("calls")).unwrap();
         assert_eq!(
             calls
                 .lines()
@@ -1041,12 +1081,32 @@ esac
             .unwrap();
         checks(&mut runner, &mut context).unwrap();
         assert!(!runner.write(true).unwrap());
-        assert_eq!(runner.status("check-list"), Some("pass"));
-        assert_eq!(runner.status("check-inputs"), Some("fail"));
+        assert_eq!(
+            runner.status("check-list"),
+            Some("pass"),
+            "{}",
+            evidence_logs(&evidence)
+        );
+        assert_eq!(
+            runner.status("check-inputs"),
+            Some("fail"),
+            "{}",
+            evidence_logs(&evidence)
+        );
         for name in ["a", "b", "c"] {
-            assert_eq!(runner.status(&format!("check:{name}")), Some("skipped"));
+            assert_eq!(
+                runner.status(&format!("check:{name}")),
+                Some("skipped"),
+                "{}",
+                evidence_logs(&evidence)
+            );
         }
-        assert_eq!(runner.status("check:d"), Some("fail"));
+        assert_eq!(
+            runner.status("check:d"),
+            Some("fail"),
+            "{}",
+            evidence_logs(&evidence)
+        );
         let calls = fs::read_to_string(evidence.join("calls")).unwrap();
         let shared_builds: Vec<_> = calls
             .lines()
