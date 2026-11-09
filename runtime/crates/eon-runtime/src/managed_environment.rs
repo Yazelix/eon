@@ -616,6 +616,7 @@ pub struct TerminalConfig {
     pub background_blur: bool,
     pub padding_color: PaddingColor,
     pub pane_frames: bool,
+    pub detect_local_hosts: bool,
     pub focus_color: Option<String>,
     pub border_width: Option<u8>,
     pub focus_border_width: Option<u8>,
@@ -636,6 +637,7 @@ struct TerminalSettings {
     background_blur: Option<bool>,
     padding_color: Option<PaddingColor>,
     pane_frames: Option<bool>,
+    detect_local_hosts: Option<bool>,
     focus_color: Option<String>,
     border_width: Option<u8>,
     focus_border_width: Option<u8>,
@@ -809,6 +811,9 @@ fn defaults_table(
             "background_blur" => "Request compositor background blur.",
             "padding_color" => "How terminal padding takes its background colour.",
             "pane_frames" => "Draw rounded pane frames.",
+            "detect_local_hosts" => {
+                "Treat plain-text localhost, 127.0.0.1 and [::1] with a port as links."
+            }
             "focus_color" => "Use Venus's focus colour when omitted.",
             "border_width" => "Use Venus's neutral outline width when omitted.",
             "focus_border_width" => "Use Venus's focus outline width when omitted.",
@@ -1067,6 +1072,9 @@ pub(crate) fn terminal_presentation(
         background_blur: settings.background_blur.unwrap_or(base.background_blur),
         padding_color: settings.padding_color.unwrap_or(base.padding_color),
         pane_frames: settings.pane_frames.unwrap_or(base.pane_frames),
+        detect_local_hosts: settings
+            .detect_local_hosts
+            .unwrap_or(base.detect_local_hosts),
         focus_color: settings.focus_color.or_else(|| base.focus_color.clone()),
         border_width: settings.border_width.or(base.border_width),
         focus_border_width: settings.focus_border_width.or(base.focus_border_width),

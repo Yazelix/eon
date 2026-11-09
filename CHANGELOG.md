@@ -17,6 +17,10 @@ installation, and proven contract changes.
   the animation, for that launch. Both also work on `eon run` and
   `eon window new`. `eon tab create --directory DIRECTORY` is now
   `eon tab create --dir DIR`; `--directory` no longer works (`eon-fv1j0`).
+- Plain-text `localhost:PORT`, `127.0.0.1:PORT` and `[::1]:PORT`, with an
+  optional path, are links in Eon and eonbase: hover highlights them, and
+  Ctrl+click opens and Ctrl+Shift+C copies `http://` followed by the text.
+  `[terminal] detect_local_hosts = false` turns this off (`eon-onvk0`).
 
 - Venus favors smaller GPU allocations on non-CPU adapters, reducing measured
   Intel Vulkan allocation and residency by about 180 MiB. CPU adapters such

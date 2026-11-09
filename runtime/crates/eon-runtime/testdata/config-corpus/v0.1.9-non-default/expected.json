@@ -81,6 +81,7 @@
       "columns": 120,
       "cursor_trail_color": "custom:#ff8800",
       "cursor_trail_duration": 2.5,
+      "detect_local_hosts": true,
       "focus_border_width": 3,
       "focus_color": "custom:#00ff88",
       "font_fallbacks": [

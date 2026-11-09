@@ -1014,6 +1014,7 @@ pub struct Renderer {
     background_opacity: f32,
     padding_color: PaddingColor,
     pane_frames: bool,
+    detect_local_hosts: bool,
     focus_color: SceneColor,
     border_width: u8,
     focus_border_width: u8,
@@ -1078,6 +1079,7 @@ impl Renderer {
         padding_color: PaddingColor,
         cursor_tail: Option<(SceneColor, f32)>,
         pane_frames: bool,
+        detect_local_hosts: bool,
         focus_color: SceneColor,
         border_width: u8,
         focus_border_width: u8,
@@ -1283,6 +1285,7 @@ impl Renderer {
             background_opacity,
             padding_color,
             pane_frames,
+            detect_local_hosts,
             focus_color,
             border_width,
             focus_border_width,
@@ -2140,7 +2143,7 @@ impl Renderer {
 
     fn build_hyperlink(&self, scene: &Scene, rectangles: &mut RectangleBatch, origin: SceneRect) {
         if let Some((row, column)) = self.terminal.hyperlink
-            && let Some(link) = scene.hyperlink_at(row, column)
+            && let Some(link) = scene.hyperlink_at(row, column, self.detect_local_hosts)
         {
             let rect = link.rect(origin, self.metrics);
             rectangles.push_hollow(

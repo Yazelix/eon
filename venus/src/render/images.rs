@@ -1747,6 +1747,7 @@ mod tests {
                     PaddingColor::Extend,
                     None,
                     true,
+                    true,
                     SceneColor {
                         r: 178,
                         g: 7,

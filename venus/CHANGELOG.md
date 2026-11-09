@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+- VEN-C5: plain-text loopback hosts with a port (`localhost`, `127.0.0.1`,
+  `[::1]`) are detected as links targeting `http://` and the text, unless
+  `--detect-local-hosts false` (`eon-onvk0`). New launch flag, no wire change.
+
 - VEN-C8/C18/C30: top panes, popups, Agents and native titled dialogs share
   one fitted tab with a tangent S return spanning 1.5 times its rise. Lower
   stacked panes retain compact titles; title clearance, terminal rows, actions

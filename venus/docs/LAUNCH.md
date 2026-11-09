@@ -279,6 +279,14 @@ Venus rejects unknown presets, malformed custom colors, duplicate choices,
 conflicting color/effect options, incomplete profiles, non-finite
 durations, and out-of-range durations before opening a window.
 
+### Links
+
+Pass `--detect-local-hosts false` to stop detecting plain-text loopback hosts
+with a port, such as `localhost:3000`, as links; URLs with a scheme are still
+detected ([Hyperlinks](INTERACTION.md#hyperlinks)). The default is `true` in
+both modes. Missing, duplicate or invalid boolean values fail before window
+creation. Eon passes its `[terminal] detect_local_hosts`.
+
 ### Supervised startup
 
 In Eon's supervised mode, `EON_VENUS_PRESENTATION_CONTROL` names one of two

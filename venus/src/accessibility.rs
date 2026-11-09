@@ -86,6 +86,8 @@ struct Snapshot {
     links: Vec<AccessibleLink>,
     link_identity: Option<(u64, u64)>,
     next_link_id: u64,
+    /// Whether bare loopback hosts and ports are links (VEN-C5).
+    detect_local_hosts: bool,
 }
 
 impl Snapshot {
@@ -111,6 +113,7 @@ impl Snapshot {
             links: Vec::new(),
             link_identity: None,
             next_link_id: LINK_NODE_START,
+            detect_local_hosts: true,
         }
     }
 
@@ -228,7 +231,7 @@ impl Snapshot {
             .map_or(Some(terminal), WorkspaceScene::visible_terminal);
         self.links = visible.map_or_else(Vec::new, |visible| {
             scene
-                .hyperlinks()
+                .hyperlinks(self.detect_local_hosts)
                 .filter_map(|link| {
                     let bounds = link.rect(terminal, self.metrics).intersection(visible)?;
                     let open = NodeId(self.next_link_id);
@@ -953,9 +956,12 @@ pub struct Accessibility {
 
 impl Accessibility {
     #[must_use]
-    pub fn new(size: PhysicalSize<u32>) -> Self {
+    pub fn new(size: PhysicalSize<u32>, detect_local_hosts: bool) -> Self {
         Self {
-            snapshot: Arc::new(Mutex::new(Snapshot::new(size))),
+            snapshot: Arc::new(Mutex::new(Snapshot {
+                detect_local_hosts,
+                ..Snapshot::new(size)
+            })),
         }
     }
 
@@ -4770,7 +4776,7 @@ mod tests {
 
     #[test]
     fn workspace_nodes_keep_identity_and_retire_removed_actions() {
-        let accessibility = Accessibility::new(PhysicalSize::new(800, 600));
+        let accessibility = Accessibility::new(PhysicalSize::new(800, 600), true);
         let mut activation = accessibility.activation();
         set_workspace(
             &accessibility,

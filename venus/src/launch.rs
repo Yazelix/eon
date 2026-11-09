@@ -23,7 +23,7 @@ const CURSOR_COLOR_PRESETS: [(&str, Color); 8] = [
     ("nebula", rgb(0xa970ff)),
     ("bubblegum", rgb(0xff5da2)),
 ];
-const USAGE: &str = "usage: yazelix-venus [--application-id ID] [--no-decorations] [--pane-frames true|false] [--focus-color preset:NAME|custom:#RRGGBB] [--border-width 1..3] [--focus-border-width 1..3] [--warning-close-last-tab true|false] [--animate-working-badge true|false] [--number-keys true|false] [--eon-version VERSION] [--eon-icon ABSOLUTE_PATH] [--bar-items ITEM,...] [--ram-notice-percent 1..100] [--ram-warning-percent 1..100] [--ram-critical-percent 1..100] [--cpu-notice-percent 1..100] [--cpu-warning-percent 1..100] [--cpu-critical-percent 1..100] [--cpu-average-seconds 2..600] [--cpu-temperature-warning-celsius 30..120] [--cpu-temperature-critical-celsius 30..120] [--disk-notice-percent 1..100] [--disk-warning-percent 1..100] [--disk-critical-percent 1..100] [--disk-path ABSOLUTE_PATH] [--background-opacity VALUE] [--background-blur] [--padding-color extend|extend-always|background] [--cursor-trail-color random|preset:NAME|custom:#RRGGBB] [--cursor-effect-v1 none|tail] [--cursor-trail-color-v1 #RRGGBB] [--cursor-trail-duration-v1 0|0.25..4.0] [--font-family FAMILY] [--font-fallback FAMILY] [--font-size 6..96] [--line-height 1..3] [--columns N] [--rows N] [ORBIT_SOCKET | --workspace EON_WORKSPACE_SOCKET]";
+const USAGE: &str = "usage: yazelix-venus [--application-id ID] [--no-decorations] [--pane-frames true|false] [--focus-color preset:NAME|custom:#RRGGBB] [--border-width 1..3] [--focus-border-width 1..3] [--warning-close-last-tab true|false] [--animate-working-badge true|false] [--number-keys true|false] [--eon-version VERSION] [--eon-icon ABSOLUTE_PATH] [--bar-items ITEM,...] [--ram-notice-percent 1..100] [--ram-warning-percent 1..100] [--ram-critical-percent 1..100] [--cpu-notice-percent 1..100] [--cpu-warning-percent 1..100] [--cpu-critical-percent 1..100] [--cpu-average-seconds 2..600] [--cpu-temperature-warning-celsius 30..120] [--cpu-temperature-critical-celsius 30..120] [--disk-notice-percent 1..100] [--disk-warning-percent 1..100] [--disk-critical-percent 1..100] [--disk-path ABSOLUTE_PATH] [--background-opacity VALUE] [--background-blur] [--padding-color extend|extend-always|background] [--detect-local-hosts true|false] [--cursor-trail-color random|preset:NAME|custom:#RRGGBB] [--cursor-effect-v1 none|tail] [--cursor-trail-color-v1 #RRGGBB] [--cursor-trail-duration-v1 0|0.25..4.0] [--font-family FAMILY] [--font-fallback FAMILY] [--font-size 6..96] [--line-height 1..3] [--columns N] [--rows N] [ORBIT_SOCKET | --workspace EON_WORKSPACE_SOCKET]";
 
 #[derive(Debug)]
 pub(super) struct LaunchArguments {
@@ -34,6 +34,8 @@ pub(super) struct LaunchArguments {
     pub(super) startup_admission: bool,
     pub(super) decorations: bool,
     pub(super) pane_frames: bool,
+    /// Whether bare loopback hosts and ports are links (VEN-C5).
+    pub(super) detect_local_hosts: bool,
     pub(super) focus_color: Color,
     pub(super) border_width: u8,
     pub(super) focus_border_width: u8,
@@ -68,6 +70,7 @@ pub(super) fn launch_arguments(
     let mut workspace_socket = None;
     let mut decorations = true;
     let mut pane_frames = None;
+    let mut detect_local_hosts = None;
     let mut focus_color = None;
     let mut border_width = None;
     let mut focus_border_width = None;
@@ -213,6 +216,8 @@ pub(super) fn launch_arguments(
             }
         } else if argument == "--pane-frames" {
             option_value(&mut pane_frames, arguments.next())?;
+        } else if argument == "--detect-local-hosts" {
+            option_value(&mut detect_local_hosts, arguments.next())?;
         } else if argument == "--border-width" || argument == "--focus-border-width" {
             let width = if argument == "--border-width" {
                 &mut border_width
@@ -505,6 +510,7 @@ pub(super) fn launch_arguments(
         startup_admission,
         decorations,
         pane_frames: pane_frames.unwrap_or(true),
+        detect_local_hosts: detect_local_hosts.unwrap_or(true),
         focus_color: focus_color.unwrap_or_else(|| rgb(0xb207fb)),
         border_width: border_width.unwrap_or(1),
         focus_border_width: focus_border_width.unwrap_or(1),
@@ -1063,29 +1069,43 @@ mod tests {
                 arguments.warning_close_last_tab,
                 arguments.animate_working_badge,
                 arguments.number_keys,
+                arguments.detect_local_hosts,
             )
         };
         assert_eq!(
             read(parse(&["--workspace", "eon.sock"]).unwrap()),
-            (true, true, true, true)
+            (true, true, true, true, true)
         );
         for (flag, value, expected) in [
-            ("--pane-frames", "false", (false, true, true, true)),
-            ("--pane-frames", "true", (true, true, true, true)),
+            ("--pane-frames", "false", (false, true, true, true, true)),
+            ("--pane-frames", "true", (true, true, true, true, true)),
             (
                 "--warning-close-last-tab",
                 "false",
-                (true, false, true, true),
+                (true, false, true, true, true),
             ),
-            ("--warning-close-last-tab", "true", (true, true, true, true)),
+            (
+                "--warning-close-last-tab",
+                "true",
+                (true, true, true, true, true),
+            ),
             (
                 "--animate-working-badge",
                 "false",
-                (true, true, false, true),
+                (true, true, false, true, true),
             ),
-            ("--animate-working-badge", "true", (true, true, true, true)),
-            ("--number-keys", "false", (true, true, true, false)),
-            ("--number-keys", "true", (true, true, true, true)),
+            (
+                "--animate-working-badge",
+                "true",
+                (true, true, true, true, true),
+            ),
+            ("--number-keys", "false", (true, true, true, false, true)),
+            ("--number-keys", "true", (true, true, true, true, true)),
+            (
+                "--detect-local-hosts",
+                "false",
+                (true, true, true, true, false),
+            ),
         ] {
             assert_eq!(
                 read(parse(&[flag, value, "--workspace", "eon.sock"]).unwrap()),
@@ -1097,6 +1117,7 @@ mod tests {
             "--warning-close-last-tab",
             "--animate-working-badge",
             "--number-keys",
+            "--detect-local-hosts",
         ] {
             for args in [
                 vec![flag],

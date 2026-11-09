@@ -91,6 +91,7 @@
       "background_opacity": 0.6,
       "cursor_trail_color": "custom:#ff8800",
       "cursor_trail_duration": 0.0,
+      "detect_local_hosts": true,
       "font_fallbacks": [],
       "padding_color": "extend",
       "pane_frames": true

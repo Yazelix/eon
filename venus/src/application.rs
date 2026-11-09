@@ -294,12 +294,15 @@ struct LinkFocus {
 }
 
 impl LinkFocus {
-    fn find<'a>(&self, scene: &'a Scene, epoch: u64) -> Option<Hyperlink<'a>> {
-        scene.hyperlink_at(self.row, self.column).filter(|link| {
-            epoch == self.epoch
-                && (link.row, link.column, link.columns) == (self.row, self.column, self.columns)
-                && link.uri == self.uri
-        })
+    fn find<'a>(&self, scene: &'a Scene, epoch: u64, local_hosts: bool) -> Option<Hyperlink<'a>> {
+        scene
+            .hyperlink_at(self.row, self.column, local_hosts)
+            .filter(|link| {
+                epoch == self.epoch
+                    && (link.row, link.column, link.columns)
+                        == (self.row, self.column, self.columns)
+                    && link.uri == self.uri
+            })
     }
 }
 
@@ -1085,6 +1088,8 @@ struct Application {
     startup_admission: bool,
     decorations: bool,
     pane_frames: bool,
+    /// Whether bare loopback hosts and ports are links; Eon's `--detect-local-hosts` (VEN-C5).
+    detect_local_hosts: bool,
     focus_color: Color,
     border_width: u8,
     focus_border_width: u8,
@@ -1187,6 +1192,7 @@ impl Application {
             startup_admission,
             decorations,
             pane_frames,
+            detect_local_hosts,
             focus_color,
             border_width,
             focus_border_width,
@@ -1230,6 +1236,7 @@ impl Application {
             startup_admission,
             decorations,
             pane_frames,
+            detect_local_hosts,
             focus_color,
             border_width,
             focus_border_width,
@@ -1331,7 +1338,7 @@ impl Application {
             )?;
             let _ = window.request_inner_size(initial);
         }
-        let accessibility = Accessibility::new(window.inner_size());
+        let accessibility = Accessibility::new(window.inner_size(), self.detect_local_hosts);
         let adapter = accesskit_winit::Adapter::with_mixed_handlers(
             event_loop,
             &window,
@@ -1345,6 +1352,7 @@ impl Application {
             self.padding_color,
             self.cursor_tail,
             self.pane_frames,
+            self.detect_local_hosts,
             self.focus_color,
             self.border_width,
             self.focus_border_width,
@@ -3998,7 +4006,7 @@ impl Application {
         self.links
             .focus
             .as_ref()?
-            .find(scene, self.presentation.epoch)
+            .find(scene, self.presentation.epoch, self.detect_local_hosts)
     }
 
     fn focused_link(&self) -> Option<Hyperlink<'_>> {
@@ -4064,7 +4072,7 @@ impl Application {
         {
             return None;
         }
-        let link = scene.hyperlink_at(row as u16, column as u16)?;
+        let link = scene.hyperlink_at(row as u16, column as u16, self.detect_local_hosts)?;
         Some(LinkFocus {
             epoch: self.presentation.epoch,
             row: link.row,
@@ -4147,7 +4155,7 @@ impl Application {
     fn activate_accessible_link(&mut self, row: u16, column: u16, copy: bool) {
         let Some(uri) = self
             .link_scene()
-            .and_then(|(scene, _)| scene.hyperlink_at(row, column))
+            .and_then(|(scene, _)| scene.hyperlink_at(row, column, self.detect_local_hosts))
             .map(|link| link.uri.into_owned())
         else {
             return;
@@ -4242,7 +4250,9 @@ impl Application {
         if let Some(LinkPress::Live(target)) = &self.links.pressed
             && self
                 .visible_link_scene(self.links.unshifted)
-                .and_then(|scene| target.find(scene, self.presentation.epoch))
+                .and_then(|scene| {
+                    target.find(scene, self.presentation.epoch, self.detect_local_hosts)
+                })
                 .is_none()
         {
             self.links.pressed = Some(LinkPress::Retired);

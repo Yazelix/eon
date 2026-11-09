@@ -54,6 +54,7 @@ pub(crate) fn inputs() -> Inputs {
                 background_blur: true,
                 padding_color: PaddingColor::Extend,
                 pane_frames: true,
+                detect_local_hosts: true,
                 focus_color: None,
                 border_width: None,
                 focus_border_width: None,

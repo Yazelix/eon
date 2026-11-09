@@ -92,6 +92,7 @@
       "columns": 100,
       "cursor_trail_color": "preset:ice",
       "cursor_trail_duration": 1.5,
+      "detect_local_hosts": true,
       "font_fallbacks": [],
       "font_family": "Iosevka",
       "font_size": 16.0,

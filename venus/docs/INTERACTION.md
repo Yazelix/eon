@@ -14,8 +14,12 @@ in this repository (`VEN-C16`).
 Ordinary clicks retain terminal mouse reporting and selection behavior.
 Plain-text detection joins soft-wrapped rows, drops trailing sentence
 punctuation and unmatched closing brackets, and keeps only targets the opener
-accepts; an explicit link on any of its cells wins. Other schemes, bare hosts
-such as `localhost:3000`, and file paths are not detected. A URL that a program
+accepts; an explicit link on any of its cells wins. A loopback host with a
+port, `localhost:3000`, `127.0.0.1:8080` or `[::1]:5173`, optionally followed
+by a path, is detected too, and its target is `http://` followed by the text;
+Eon's `[terminal] detect_local_hosts = false` (`--detect-local-hosts false`)
+turns that off. Other schemes, other bare hosts, and file paths are not
+detected. A URL that a program
 breaks onto a new line itself, instead of letting the terminal wrap it, is
 detected only up to that line end, so check the preview before opening it. The
 accessibility tree exposes each current visible target as an Open link followed

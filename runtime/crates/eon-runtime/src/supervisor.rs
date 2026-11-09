@@ -472,6 +472,9 @@ fn venus_command(
     if terminal.background_blur {
         command.arg("--background-blur");
     }
+    command
+        .arg("--detect-local-hosts")
+        .arg(terminal.detect_local_hosts.to_string());
     if let Some(color) = &terminal.cursor_trail_color {
         command.arg("--cursor-trail-color").arg(color);
     }
@@ -7122,6 +7125,54 @@ rows = 30
     }
 
     #[test]
+    fn configured_local_host_detection_reaches_every_launch() {
+        let inputs = crate::fixtures::inputs();
+        let root = temporary_directory();
+        for (source, expected) in [
+            ("", "true"),
+            ("[terminal]\ndetect_local_hosts = false\n", "false"),
+        ] {
+            fs::write(root.join("config.toml"), source).unwrap();
+            let terminal =
+                crate::managed_environment::terminal_presentation(&root, &inputs.defaults, None)
+                    .unwrap();
+            for mode in [LaunchMode::Workspace, LaunchMode::Terminal] {
+                let command = venus_command(
+                    &inputs,
+                    &root,
+                    Path::new("/runtime.sock"),
+                    mode,
+                    &terminal,
+                    &inputs.defaults.bar(),
+                    "eon",
+                    true,
+                    true,
+                    true,
+                    true,
+                );
+                let args = command.get_args().collect::<Vec<_>>();
+                let values = args
+                    .windows(2)
+                    .filter(|pair| pair[0] == "--detect-local-hosts")
+                    .map(|pair| pair[1])
+                    .collect::<Vec<_>>();
+                assert_eq!(values, [expected], "{source}");
+            }
+        }
+        fs::write(
+            root.join("config.toml"),
+            "[terminal]\ndetect_local_hosts = \"false\"\n",
+        )
+        .unwrap();
+        assert!(
+            crate::managed_environment::terminal_presentation(&root, &inputs.defaults, None)
+                .unwrap_err()
+                .contains("detect_local_hosts")
+        );
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
     fn venus_receives_workspace_endpoint_only_in_workspace_mode() {
         let mut inputs = crate::fixtures::inputs();
         inputs.orbit = "/managed/orbit".into();
@@ -7154,6 +7205,8 @@ rows = 30
                 "--padding-color",
                 "extend",
                 "--background-blur",
+                "--detect-local-hosts",
+                "true",
                 "--cpu-notice-percent",
                 "60",
                 "--cpu-warning-percent",
@@ -7218,6 +7271,8 @@ rows = 30
                 "1",
                 "--padding-color",
                 "extend",
+                "--detect-local-hosts",
+                "true",
                 "/runtime/orbit.sock",
             ]
             .map(OsString::from)
@@ -7250,6 +7305,8 @@ rows = 30
                 "--padding-color",
                 "extend",
                 "--background-blur",
+                "--detect-local-hosts",
+                "true",
                 "/runtime/orbit.sock",
             ]
             .map(OsString::from)

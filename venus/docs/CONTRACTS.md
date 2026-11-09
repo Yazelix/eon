@@ -128,14 +128,26 @@ re-proved when that platform or feature is next touched.
   evidence, and the remaining native Linux hyperlink observations are
   pending. Apple Silicon hover, Command+C, and Command+click are observed
   natively under `VEN-C16`.
+  Amended on 2026-11-09 (approved by eon-overseer under Lucca's standing
+  delegation) by `eon-onvk0`: plain-text loopback hosts with a port
+  (`localhost`, `127.0.0.1`, `[::1]`) are detected and targeted as `http://`,
+  controlled by `[terminal] detect_local_hosts`.
 - **Consumer/trigger:** A Venus user hovers an Orbit-authored OSC 8 link or a
-  plain-text HTTP/HTTPS URL in visible terminal text, or explicitly activates
-  one.
+  plain-text HTTP/HTTPS URL or loopback host and port in visible terminal text,
+  or explicitly activates one.
 - **Result:** Scene detects plain-text targets in each frame's visible rows: an
   `http://` or `https://` start, in any case, at a line start or after a byte
   that is not an ASCII letter or digit, extended over the opener's URI bytes and
   joined across soft-wrapped rows. A trailing `.`, `,`, `:`, `;`, `!`, `?` or
-  `'` is trimmed, as is a closing `)` or `]` the target does not open. Only
+  `'` is trimmed, as is a closing `)` or `]` the target does not open. Unless
+  `[terminal] detect_local_hosts` is false, Scene also detects a loopback host
+  and port: `localhost` (any case), `127.0.0.1` or `[::1]`, then `:` and a port
+  from 1 to 65535 without a leading zero, optionally followed by a path that
+  starts with `/`, at a line start or after a byte that is not an ASCII letter
+  or digit, `.`, `-`, `_`, `@`, `:` or `/`, and not followed after the port by an
+  ASCII letter or digit, or by `.` and an ASCII letter or digit. Its target is `http://`
+  followed by the matched text, after the same trimming; Open, Copy and
+  AccessKit use that target. Only
   targets the opener accepts are detected, and a target touching any OSC 8 cell
   is not, so the explicit link wins. Each row segment of a wrapped target is one
   target with the full URI. The hovered link is highlighted and its escaped
@@ -173,9 +185,10 @@ re-proved when that platform or feature is next touched.
   PATH dispatches the exact URI as one argument to the desktop's registered
   handler. One launch runs at a time with a ten-second dispatcher deadline.
 - **Consumes:** Orbit `ORB-C6` through ORBF v2 / ORBS v13.
-- **Boundary:** No detection of other schemes, bare hosts, file paths, or a URL
-  whose start is above the visible rows; no file/custom-scheme opening, URI
-  rewrite, browser embedding, new crate, or protocol change. Host GIO and a
+- **Boundary:** No detection of other schemes, other bare hosts, file paths, or
+  a URL whose start is above the visible rows; no file/custom-scheme opening,
+  URI rewrite beyond the `http://` prefix of a loopback target, browser
+  embedding, new crate, or protocol change. Host GIO and a
   registered handler are required for Linux opening; copy remains available
   without them. macOS uses fixed `/usr/bin/open -u` and the general pasteboard.
   Product-path accessibility activation remains unaccepted on macOS.

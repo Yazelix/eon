@@ -88,6 +88,7 @@
       "columns": 120,
       "cursor_trail_color": "custom:#ff8800",
       "cursor_trail_duration": 2.5,
+      "detect_local_hosts": true,
       "font_fallbacks": [
         "Noto Sans Mono",
         "Symbols Nerd Font Mono"

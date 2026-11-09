@@ -4268,15 +4268,49 @@ pub fn validate_open_uri(uri: &str) -> std::result::Result<(), &'static str> {
     Ok(())
 }
 
-/// The next `http://` or `https://` at or after `from` that does not continue a word.
-fn uri_start(text: &[u8], from: usize) -> Option<usize> {
-    (from..text.len()).find(|&i| {
-        (i == 0 || !text[i - 1].is_ascii_alphanumeric())
-            && [&b"http://"[..], b"https://"].iter().any(|scheme| {
-                text.get(i..i + scheme.len())
-                    .is_some_and(|candidate| candidate.eq_ignore_ascii_case(scheme))
-            })
-    })
+/// Whether an `http://` or `https://` that does not continue a word starts at `i`.
+fn uri_starts_at(text: &[u8], i: usize) -> bool {
+    (i == 0 || !text[i - 1].is_ascii_alphanumeric())
+        && [&b"http://"[..], b"https://"].iter().any(|scheme| {
+            text.get(i..i + scheme.len())
+                .is_some_and(|candidate| candidate.eq_ignore_ascii_case(scheme))
+        })
+}
+
+/// The length of a bare loopback host and port starting at `i`: `localhost` in any case,
+/// `127.0.0.1` or `[::1]`, then `:` and a port from 1 to 65535 without a leading zero, neither
+/// continuing a word, host, address or URL nor running on into one.
+fn local_host_len(text: &[u8], i: usize) -> Option<usize> {
+    if i > 0 && (text[i - 1].is_ascii_alphanumeric() || b".-_@:/".contains(&text[i - 1])) {
+        return None;
+    }
+    let host = [&b"localhost"[..], b"127.0.0.1", b"[::1]"]
+        .into_iter()
+        .find(|host| {
+            text.get(i..i + host.len())
+                .is_some_and(|candidate| candidate.eq_ignore_ascii_case(host))
+        })?;
+    let port = i + host.len() + 1;
+    if text.get(port - 1) != Some(&b':') {
+        return None;
+    }
+    let digits = text[port..]
+        .iter()
+        .take_while(|byte| byte.is_ascii_digit())
+        .count();
+    if !(1..=5).contains(&digits) || text[port] == b'0' {
+        return None;
+    }
+    let end = port + digits;
+    let value = text[port..end]
+        .iter()
+        .fold(0_u32, |value, byte| value * 10 + u32::from(byte - b'0'));
+    // A sentence-final `.` may follow the port; `.` and a letter or digit continue it.
+    let continues = |at: usize| text.get(at).is_some_and(u8::is_ascii_alphanumeric);
+    (value <= u32::from(u16::MAX)
+        && !continues(end)
+        && !(text.get(end) == Some(&b'.') && continues(end + 1)))
+    .then_some(end - i)
 }
 
 /// Drop trailing sentence punctuation and closing brackets that the URI does not open.
@@ -4486,8 +4520,9 @@ impl AccessibleText {
 }
 
 impl Scene {
-    /// Explicit and detected link segments in row-major order.
-    pub fn hyperlinks(&self) -> impl Iterator<Item = Hyperlink<'_>> {
+    /// Explicit and detected link segments in row-major order; `local_hosts` also detects bare
+    /// loopback hosts and ports.
+    pub fn hyperlinks(&self, local_hosts: bool) -> impl Iterator<Item = Hyperlink<'_>> {
         let mut links = Vec::new();
         let mut row = 0;
         while row < self.content.len() {
@@ -4496,20 +4531,20 @@ impl Scene {
             for row in line.clone() {
                 links.extend(self.content[row].hyperlinks(row as u16));
             }
-            links.extend(self.detected_links(line));
+            links.extend(self.detected_links(line, local_hosts));
         }
         links.sort_by_key(|link| (link.row, link.column));
         links.into_iter()
     }
 
     #[must_use]
-    pub fn hyperlink_at(&self, row: u16, column: u16) -> Option<Hyperlink<'_>> {
+    pub fn hyperlink_at(&self, row: u16, column: u16, local_hosts: bool) -> Option<Hyperlink<'_>> {
         self.content
             .get(usize::from(row))?
             .hyperlinks(row)
             .find(|link| link.contains(row, column))
             .or_else(|| {
-                self.detected_links(self.logical_line(usize::from(row)))
+                self.detected_links(self.logical_line(usize::from(row)), local_hosts)
                     .into_iter()
                     .find(|link| link.contains(row, column))
             })
@@ -4533,10 +4568,11 @@ impl Scene {
         first..=last
     }
 
-    /// Plain-text HTTP/HTTPS targets on one logical line, one segment per row.
+    /// Plain-text HTTP/HTTPS targets on one logical line, one segment per row; with
+    /// `local_hosts`, a bare loopback host and port too, targeted as `http://` and its text.
     /// Only targets the opener accepts are detected, and an explicit link on
     /// any of a target's cells wins over the whole target.
-    fn detected_links(&self, line: RangeInclusive<usize>) -> Vec<Hyperlink<'_>> {
+    fn detected_links(&self, line: RangeInclusive<usize>, local_hosts: bool) -> Vec<Hyperlink<'_>> {
         // One byte per narrow cell; a cell no URI can contain becomes a space.
         let mut text = Vec::new();
         let mut cells = Vec::new();
@@ -4560,13 +4596,29 @@ impl Scene {
         }
         let mut links = Vec::new();
         let mut next = 0;
-        while let Some(start) = uri_start(&text, next) {
-            let end = (start..text.len())
-                .find(|&i| !is_uri_byte(text[i]))
-                .unwrap_or(text.len());
+        while let Some((start, host)) = (next..text.len()).find_map(|i| {
+            if uri_starts_at(&text, i) {
+                Some((i, None))
+            } else if local_hosts {
+                local_host_len(&text, i).map(|len| (i, Some(len)))
+            } else {
+                None
+            }
+        }) {
+            // A loopback host and port extends only over a path that starts with `/`.
+            let end = match host {
+                Some(len) if text.get(start + len) != Some(&b'/') => start + len,
+                _ => (start..text.len())
+                    .find(|&i| !is_uri_byte(text[i]))
+                    .unwrap_or(text.len()),
+            };
             next = end;
             let span = start..start + trim_uri_end(&text[start..end]).len();
-            let uri: String = text[span.clone()].iter().copied().map(char::from).collect();
+            let scheme = if host.is_some() { "http://" } else { "" };
+            let uri: String = scheme
+                .chars()
+                .chain(text[span.clone()].iter().copied().map(char::from))
+                .collect();
             let cells = &cells[span];
             if validate_open_uri(&uri).is_err() || cells.iter().any(|&(_, _, explicit)| explicit) {
                 continue;

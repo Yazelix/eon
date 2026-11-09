@@ -89,6 +89,7 @@ background_opacity = 0.8 # Opacity of the terminal's default background.
 # columns: unset. Let the window choose initial columns when omitted.
 # cursor_trail_color: unset. Omission retains the session's random cursor colour.
 cursor_trail_duration = 1.5 # Cursor tail duration multiplier; 0 turns the trail off.
+detect_local_hosts = true # Treat plain-text localhost, 127.0.0.1 and [::1] with a port as links.
 # focus_border_width: unset. Use Venus's focus outline width when omitted.
 # focus_color: unset. Use Venus's focus colour when omitted.
 font_fallbacks = ["Symbols Nerd Font Mono", "Accelerando Terminal"] # Ordered fallback font families.
@@ -384,6 +385,12 @@ blur what shows through. It is independent of opacity, so a fully opaque
 background hides it, and a compositor without blur ignores it. See [Window
 background and
 decorations](../venus/docs/PRESENTATION.md#window-background-and-decorations).
+
+`detect_local_hosts`, in Eon and eonbase alike, makes plain-text
+`localhost:3000`, `127.0.0.1:8080` and `[::1]:5173`, with an optional path, a
+link like a printed `http://` URL: Ctrl+click opens and Ctrl+Shift+C copies
+`http://` followed by the text. Set it to `false` to link only URLs with a
+scheme. See [Hyperlinks](../venus/docs/INTERACTION.md#hyperlinks).
 
 Opacity accepts `0.0` through `1.0`. Blur and pane frames are booleans. Font size
 accepts 6–96 logical pixels, line height accepts 1–3, and a supplied columns and
