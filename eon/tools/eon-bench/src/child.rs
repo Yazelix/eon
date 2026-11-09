@@ -19,7 +19,7 @@ use std::{
 };
 
 pub const USAGE: &str = "usage: eon-bench child DIR --rows R --cols C [--setup FILE] [--release-wait SECONDS] \
-                         [--stdout FILE] -- PROGRAM [ARGS...]";
+                         [--stdout FILE] [--grid-report FILE] -- PROGRAM [ARGS...]";
 
 /// How long the child waits for the grid, the go and the release.
 const GRID_WAIT: Duration = Duration::from_secs(30);
@@ -32,6 +32,7 @@ pub struct Options {
     cols: u16,
     setup: Option<PathBuf>,
     stdout: Option<PathBuf>,
+    grid_report: Option<PathBuf>,
     release_wait: Duration,
     program: Vec<String>,
 }
@@ -47,6 +48,7 @@ pub fn options(arguments: &[String]) -> Result<Options, String> {
     };
     let (mut rows, mut cols, mut setup, mut stdout) = (None, None, None, None);
     let mut release_wait = None;
+    let mut grid_report = None;
     for pair in rest.chunks(2) {
         let [flag, value] = pair else {
             return Err(USAGE.into());
@@ -63,6 +65,7 @@ pub fn options(arguments: &[String]) -> Result<Options, String> {
             "--cols" => cols.replace(size()?).is_some(),
             "--setup" => setup.replace(PathBuf::from(value)).is_some(),
             "--stdout" => stdout.replace(PathBuf::from(value)).is_some(),
+            "--grid-report" => grid_report.replace(PathBuf::from(value)).is_some(),
             "--release-wait" => release_wait
                 .replace(Duration::from_secs(crate::suite::number(flag, value)?))
                 .is_some(),
@@ -81,15 +84,27 @@ pub fn options(arguments: &[String]) -> Result<Options, String> {
         cols: cols.ok_or(USAGE)?,
         setup,
         stdout,
+        grid_report,
         release_wait: release_wait.unwrap_or(RELEASE_WAIT),
         program: program.to_vec(),
     })
 }
 
 pub fn run(options: &Options) -> Result<u8, String> {
-    wait_until(GRID_WAIT, "the terminal's grid", || {
-        grid() == Some((options.rows, options.cols))
-    })?;
+    let start = Instant::now();
+    loop {
+        let actual = grid();
+        if let Some(path) = &options.grid_report {
+            publish(path, &format!("{actual:?}"))?;
+        }
+        if actual == Some((options.rows, options.cols)) {
+            break;
+        }
+        if start.elapsed() >= GRID_WAIT {
+            return Err("no matching terminal grid within 30s".into());
+        }
+        std::thread::sleep(Duration::from_millis(10));
+    }
     if let Some(setup) = &options.setup {
         let exe = std::env::current_exe().map_err(|error| format!("eon-bench's path: {error}"))?;
         let status = Command::new(exe)
@@ -105,7 +120,29 @@ pub fn run(options: &Options) -> Result<u8, String> {
     }
     publish(&options.dir.join("ready"), &std::process::id().to_string())?;
     let go = options.dir.join("go");
-    wait_until(GO_WAIT, "the go", || go.exists())?;
+    let start = Instant::now();
+    let mut previous = grid();
+    while !go.exists() {
+        let actual = grid();
+        if let Some(path) = &options.grid_report
+            && actual != previous
+        {
+            publish(path, &format!("{actual:?}"))?;
+        }
+        previous = actual;
+        if start.elapsed() >= GO_WAIT {
+            return Err("no go within 600s".into());
+        }
+        std::thread::sleep(Duration::from_millis(10));
+    }
+    if let Some(path) = &options.grid_report {
+        let actual = grid();
+        publish(&path.with_extension("go"), &format!("{actual:?}"))?;
+        if actual != Some((options.rows, options.cols)) {
+            publish(&options.dir.join("done"), "1")?;
+            return Err(format!("the terminal's grid changed before go: {actual:?}"));
+        }
+    }
     let mut command = Command::new(&options.program[0]);
     command.args(&options.program[1..]);
     if let Some(path) = &options.stdout {
@@ -116,6 +153,16 @@ pub fn run(options: &Options) -> Result<u8, String> {
     let status = command
         .status()
         .map_err(|error| format!("{}: {error}", options.program[0]))?;
+    if let Some(path) = &options.grid_report {
+        let actual = grid();
+        publish(&path.with_extension("after"), &format!("{actual:?}"))?;
+        if actual != Some((options.rows, options.cols)) {
+            publish(&options.dir.join("done"), "1")?;
+            return Err(format!(
+                "the terminal's grid changed during the workload: {actual:?}"
+            ));
+        }
+    }
     // A signal counts as a failure.
     let code = status
         .code()

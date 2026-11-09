@@ -1082,6 +1082,7 @@
           # outside Eon's closure. eon-test runs its tests. Its wrapper names
           # the release Orbit, vtebench's scripts and their tools, kitty's
           # kitten, and memory's supervisor, reference servers and isolation.
+          benchTerminals = import ./nix/bench-terminals.nix { inherit pkgs venusFonts venusFontsConf; };
           benchPackage = rustPlatform.buildRustPackage {
             pname = "eon-bench";
             inherit ((builtins.fromTOML (builtins.readFile ./eon/tools/eon-bench/Cargo.toml)).package) version;
@@ -1102,6 +1103,7 @@
                 --set-default EON_BENCH_TMUX ${pkgs.tmux}/bin/tmux \
                 --set-default EON_BENCH_ZELLIJ ${pkgs.zellij}/bin/zellij \
                 ${lib.optionalString pkgs.stdenv.isLinux "--set-default EON_BENCH_BWRAP ${pkgs.bubblewrap}/bin/bwrap"} \
+                ${lib.optionalString pkgs.stdenv.isLinux "--set-default EON_BENCH_DBUS_SESSION_CONFIG ${pkgs.dbus}/share/dbus-1/session.conf"} \
                 --set-default EON_BENCH_VTEBENCH ${vtebenchSource}/benchmarks \
                 --set-default EON_BENCH_VTEBENCH_PATH ${
                   lib.makeBinPath (
@@ -1125,6 +1127,7 @@
                   --set-default EON_BENCH_DRI ${pkgs.mesa}/lib/dri \
                   --set-default EON_BENCH_EGL ${pkgs.mesa}/share/glvnd/egl_vendor.d/50_mesa.json \
                   --set-default EON_BENCH_LAVAPIPE ${pkgs.mesa}/share/vulkan/icd.d/lvp_icd.x86_64.json \
+                  ${lib.concatStringsSep " " (lib.mapAttrsToList (name: value: "--set-default ${name} ${lib.escapeShellArg value}") benchTerminals.environment)} \
                 ''} \
                 --set-default EON_BENCH_KITTEN ${pkgs.kitty.kitten}/bin/kitten
             '';

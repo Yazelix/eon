@@ -29,58 +29,22 @@ whose header gives its usage.
 
 Beads contain the dependency-ordered plan.
 
-### Orbit–Venus performance baseline
+### Throughput benchmarks
 
-[`tools/perf/orbit-venus-baseline.sh`](../tools/perf/orbit-venus-baseline.sh)
-repeats the manual Linux baseline without vendoring a benchmark corpus or
-adding a product mode. It consumes exact caller-supplied Orbit and Venus
-binaries. Throughput mode also consumes an exact upstream
-[vtebench](https://github.com/alacritty/vtebench) checkout whose release binary
-and existing `benchmarks/` corpus have already been built.
+From the repository root, `nix run .#bench -- orbit --out DIR` measures
+release Orbit throughput detached and with a discarding client, including
+frame and CPU counters. `nix run .#bench -- terminals --eon CANDIDATE/bin/eon
+--source-tree STAGED_TREE_HASH --out DIR` compares Eon and Nix-pinned reference terminals with rendering
+enabled on the shared isolated headless Sway launcher. The candidate is built
+with an out-link; neither suite uses the live desktop or installed profile.
 
-Run the local checks first. This remaining desktop throughput script opens
-native Venus windows, so it can change focus and tiling temporarily; it must
-not run on the active desktop. Evidence includes local paths, machine and
-display details, and process logs; review it before sharing.
-
-```sh
-orbit/tools/perf/orbit-venus-baseline.sh --self-check
-
-export ORB_BASELINE_CPUS=9-15
-export ORB_BASELINE_GRID='58 93'
-
-orbit/tools/perf/orbit-venus-baseline.sh throughput \
-  /exact/orbit/bin/yazelix-orbit \
-  /exact/venus/bin/yazelix-venus \
-  /exact/vtebench-checkout \
-  /tmp/eon-performance
-```
-
-The harness requires native Wayland plus `pidstat`, `taskset`, `ss`, and
-standard GNU command-line tools and Git. It validates required commands and
-host load before launching Orbit, then rejects any grid mismatch before the
-measured workload starts.
-Each attempt creates a unique evidence directory beneath the supplied
-parent and records the exact harness, hashes, revisions, environment, process
-samples, and summaries; throughput also retains raw vtebench DAT files. This
-output is an internal, intentionally unstable evidence artifact rather than a
-product trace format.
-
-Without a desktop, Eon's benchmark harness measures Orbit's throughput to
-completion: `nix run .#bench -- orbit --out DIR` from the repository root
-runs the eon-bench corpora, vtebench's benchmarks and kitty's kitten in a
-release Orbit, detached and with a client that decodes and discards every
-message, with frame and CPU counters. The repository's
-[DEVELOPMENT.md](../../docs/DEVELOPMENT.md#benchmark-harness) describes it,
-`eon-bench orbit --help` gives its flags, and
-[BEHAVIOR.md](BEHAVIOR.md#throughput) records its measurements.
-
-vtebench measures blocking PTY consumption, not frame rate or visual latency.
-The script's lifecycle mode is removed. Display suites use the shared private
-Sway launcher in [Eon's benchmark harness](../../docs/DEVELOPMENT.md#headless-display-launcher).
-The old CPU/RSS thresholds and desktop resize/reattachment workloads are not
-part of that launcher. Native input-to-visible response remains the separate
-`eon-bench response` diagnostic.
+[Eon's development guide](../../docs/DEVELOPMENT.md#benchmark-harness)
+describes the methods and `eon-bench COMMAND --help` lists their controls.
+[BEHAVIOR.md](BEHAVIOR.md#throughput) preserves the earlier measurements.
+The former `orbit-venus-baseline.sh` is retired: `headless` replaces its
+lifecycle mode and `terminals` replaces its throughput mode. The old CPU/RSS
+thresholds and desktop resize/reattachment workloads are not carried forward.
+Native input-to-visible response remains `eon-bench response`.
 
 ## CI
 

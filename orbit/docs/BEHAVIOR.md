@@ -2068,9 +2068,8 @@ libghostty-vt 0.2.2 nor the host's later restructuring explains that
 difference, and bend-orbit did not pursue it. The client does not
 render, so this does not replace the harness run with Venus.
 
-[tools/perf/orbit-venus-baseline.sh](../tools/perf/orbit-venus-baseline.sh)
-runs any server that takes Orbit's command line, the old Orbit included, under
-Venus on a desktop. The Venus harness ran unchanged with native Venus (Eon a14a90cc) on the same
+The historical `orbit-venus-baseline.sh` desktop harness ran unchanged with
+native Venus (Eon a14a90cc) on the same
 CPUs, at Venus's 54x90 grid, for the old Orbit and for bend-orbit at
 f096691c, each starting below the harness's load limit (1.77 and 1.27) and
 under its compositor CPU limit. Medians of 15 samples:
@@ -2095,15 +2094,12 @@ Bend is 10% slower on `unicode` and 4 ms slower on `sync_medium_cells`, the latt
 in the headless runs, and 4 to 14% faster on the top-region scrolling ones;
 detached, it matches the old Orbit and is up to 13% faster on scrolling. Each
 server ran once, not interleaved, so drift between the two runs stays in
-these numbers. To repeat it on an idle desktop, inside `nix develop` from the
-repository root, where a cargo-built host runs the worker its build made:
-
-```sh
-cargo build --release --locked -p yazelix-orbit
-ORB_BASELINE_CPUS=6-11 ORB_BASELINE_GRID="54 90" \
-  orbit/tools/perf/orbit-venus-baseline.sh throughput \
-  "$PWD/target/release/yazelix-orbit" VENUS_BIN ../vtebench EVIDENCE_DIR
-```
+these numbers. The retired desktop harness is no longer the reproduction path.
+`eon-bench terminals` compares rendered terminals on isolated headless Sway;
+`eon-bench orbit` measures attached and detached Orbit. Their corpora,
+completion timing and environments differ from this historical vtebench table;
+[Eon's development guide](../../docs/DEVELOPMENT.md#benchmark-harness)
+documents the current methods.
 
 ## Check
 

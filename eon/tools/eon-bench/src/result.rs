@@ -250,7 +250,7 @@ impl Cell {
     /// the throughput at the p95 time, the slow tail; `counters` summarizes
     /// each counter. Each summary carries its sample count `n`; below 20
     /// samples its p95 is the slowest sample.
-    fn to_json(&self) -> Value {
+    pub(crate) fn to_json(&self) -> Value {
         let seconds: Vec<f64> = self.samples.iter().map(|sample| sample.seconds).collect();
         let stats = Summary::of(&seconds).map_or(Value::Null, |time| {
             let rate = |seconds: f64| Value::from(self.input_bytes as f64 / 1e6 / seconds);

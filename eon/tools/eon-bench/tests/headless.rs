@@ -1,5 +1,6 @@
 //! Startup evidence and ambient-session isolation need no real display.
 #![cfg(target_os = "linux")]
+mod support;
 use std::{
     fs,
     os::unix::fs::{PermissionsExt, symlink},
@@ -30,6 +31,7 @@ impl Fixture {
     }
     fn command(&self, suite: &str, out: &Path) -> Command {
         let mut command = Command::new(env!("CARGO_BIN_EXE_eon-bench"));
+        support::bind_fixture(&mut command, &self.0[0]);
         command
             .arg(suite)
             .arg("--out")
@@ -43,6 +45,10 @@ impl Fixture {
                 ),
             )
             .env("EON_BENCH_LAVAPIPE", executable("sh"));
+        command.env(
+            "EON_BENCH_DBUS_SESSION_CONFIG",
+            fs::canonicalize(executable("sh")).unwrap(),
+        );
         command
     }
 }
@@ -170,7 +176,10 @@ exec {} "$@""#, executable("timeout").display()));
     assert!(!captured.contains("parent-"), "{captured}");
     let bus_args = fs::read_to_string(fixture.0[0].join("tools/bus.args")).unwrap();
     assert!(
-        bus_args.starts_with("--session\n--nofork\n--address=unix:path="),
+        bus_args.starts_with(&format!(
+            "--config-file={}\n--nofork\n--address=unix:path=",
+            fs::canonicalize(executable("sh")).unwrap().display()
+        )),
         "{bus_args}"
     );
     assert!(!out.join("dbus.conf").exists());

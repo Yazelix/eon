@@ -33,9 +33,9 @@ Exit 0: presented terminal, expected renderer/output and private Stop succeeded;
 1: startup/validation/stop failed; 2: invalid arguments. No timing claim.";
 
 pub struct Options {
-    eon: PathBuf,
-    out: PathBuf,
-    renderer: Renderer,
+    pub(crate) eon: PathBuf,
+    pub(crate) out: PathBuf,
+    pub(crate) renderer: Renderer,
 }
 pub fn options(args: &[String]) -> Result<Options> {
     let mut values = BTreeMap::new();
@@ -89,11 +89,12 @@ pub fn run(args: &[String], options: &Options) -> Result {
         .position(|s| s == "--eon")
         .ok_or("missing --eon")?;
     arguments[index + 1] = eon.to_str().ok_or("non-UTF8 candidate path")?.into();
-    let mut command = isolation::command(&out, &[]);
+    let exe = std::env::current_exe().map_err(error)?;
+    let mut command = isolation::command(&out, &[&exe]);
     isolation::display(&mut command, options.renderer.render_node()?);
     command
         .arg("--")
-        .arg(std::env::current_exe().map_err(error)?)
+        .arg(exe)
         .arg("headless-inner")
         .args(arguments);
     let result = isolation::run(&mut command);

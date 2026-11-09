@@ -375,9 +375,12 @@ axes of Superlogical Rex's comparison, not its macOS `phys_footprint` values.
 an isolated Linux headless Sway at 1280×800. Build the candidate with an
 out-link, never an installed profile. The shared `launcher.rs` owns Sway,
 D-Bus, a cleared subject environment, HOME, configuration, state, short
-runtime roots and process identity checks. The response suite uses the same
-launcher, as does the memory suite for Venus. Terminal comparisons remain
-a separate bead (`eon-benchmarks-xl2bp.6`).
+runtime roots and process identity checks. The response, Venus memory and
+terminal comparison suites use the same launcher.
+
+Socket files alone do not admit clients: startup waits for a successful Sway
+IPC output query within its existing deadline. `sway-ipc.log` retains the
+last probe's status and reply.
 
 The `headless` check reuses the memory suite's bubblewrap containment: private
 PID/network namespaces, read-only host root, writable evidence and private
@@ -417,6 +420,94 @@ load and startup/stop result. A presented terminal and the expected renderer
 must be observed before Stop succeeds. Trace and process logs stay beside it.
 This is a startup/cleanup check, without throughput, memory or latency claims.
 
+### Terminal comparison
+
+The recorded comparison uses these explicit flags (replace `STAGED_TREE_HASH`
+with `git write-tree` after staging the source used to build both packages):
+
+```sh
+nix run .#bench -- terminals --eon CANDIDATE/bin/eon --out NEW_DIR \
+  --source-tree STAGED_TREE_HASH --renderer lavapipe \
+  --samples 10 --warmups 2 --kitten-repetitions 10 \
+  --cpus 2,4,6,8 --max-load 8 --load-wait 10 --deadline 180
+```
+
+The hardware cohort uses `--renderer /dev/dri/renderD128`; use a fresh output
+directory for each cohort and the coordinator's granted quiet window.
+This compares Eon, foot, Alacritty, kitty, Ghostty and WezTerm on the shared
+headless launcher. The bench closure pins reference binaries through the
+flake's nixpkgs lock, and Herdr's official app/core binary archives by version
+URL and SHA-256. References stay outside the product closure. Herdr uses its
+existing `space.new` CLI to open the workload after its native window and
+status are ready. One owned asynchronous request allows grid calibration
+while its reply is pending; creation is never retried. An optional subject's
+failure is a gap, with incomplete cells excluded from statistics and the
+run marked incomplete. Partial observations remain as evidence. Load-gate
+timeouts abort as environment failures. One deadline covers sample setup,
+startup, waits and workload; bounded cleanup still runs after failure.
+Historical availability observations dated 2026-11-08 found no downloadable
+Linux Tern build (closed beta) and no cheap existing pinned Termua package.
+Their recorded check date is data; refresh availability before a future
+comparison. Zed is out of scope for this comparison.
+
+Each fresh subject reports an 80×24 grid from its PTY; native window and
+actual grid settle for one second before go, then it checks at go and after
+the workload. Private Sway floating-window calibration
+accounts for differing chrome and cell metrics. All subjects select the same
+pinned DejaVu Sans Mono regular font at 16 logical pixels (12 points at
+96 DPI), with the same Nix-pinned fallback font directories. Build the
+candidate and bench from the same flake tree: the private namespace mounts
+the bench's font-only configuration over the product wrapper's fontconfig
+file, excluding host fonts without changing the installed package. The
+candidate's Venus wrapper must name that exact fontconfig file. Host home
+and per-user profile paths are masked; only explicit run inputs are bound
+back. Each sample records its native Sway window dimensions and distinguishes
+positive adapter identity from a check that merely saw no software renderer.
+Reference configuration and logs stay beside every sample.
+Scrollback limits are recorded by subject: Eon uses Orbit's fixed 16 MiB
+budget; Ghostty uses a byte budget; line-based references use 10,000 lines.
+They are distinct limits, so these are configured application comparisons,
+not isolated renderer measurements.
+
+Workloads are the shared 64 MiB `cat64` corpus and each pinned
+`kitten __benchmark__ --render` workload. The writer's status reply or
+kitten's own reply timer measures parser/PTY completion while rendering is
+enabled, not delivery of the last pixel. Kitten reports rounded durations
+and rates; its byte count is inferred, as in the Orbit suite. A final untimed
+marker/status reply, Eon's visible-text CLI check and retained `final.png`
+provide completion evidence. The images case times protocol consumption;
+image-display support is not validated, so it is not an image-rendering rate.
+Captures require visual inspection before
+publishing a new terminal/version's results. No keystroke-latency claim.
+
+Runs rotate subject order within each workload and interleave the default
+two warmups and ten timed rounds. The shared load gate applies before each
+sample; natural load immediately before/after its workload stays in the
+sample evidence. `--quick` reduces kitten repetitions to one and selects the
+shared one warmup/three samples; `cat64` keeps its pinned corpus. `--only`,
+`--subject`, `--kitten-repetitions`, `--deadline`, and the shared suite flags
+allow focused runs. A sample deadline covers blocked output writes as well
+as terminal startup. Failures remain in `result.json` with no invented timing;
+required-subject failures make the command fail. The output directory must
+not exist and cannot be reused.
+
+`result.json` keeps the common schema-1 cells/statistics plus `observations`,
+`gaps`, `failures`, font identity and requested renderer. Per-run directories
+retain actual grid, native config, logs, adapter evidence, input hashes,
+load, completion reports and screenshots. `summary.tsv` is a convenience
+projection. Run lavapipe and any explicit hardware render node separately;
+keep their labels and actual adapter evidence with every published table.
+The suite runs the shared `headless` check once as an untimed Eon adapter
+preflight and retains `adapter/result.json` and its trace. Timed subjects do
+not enable EON_BENCH_TRACE; their Eon adapter identity explicitly cites this
+preflight of the same candidate and requested renderer. GL references use
+the pinned Mesa software stack in lavapipe mode; foot renders on the CPU.
+Hardware samples exclude lavapipe from the Vulkan ICD list; detected
+software fallback is an error. Native adapter logs are retained where the
+reference exposes them. Use the
+coordinator's heavy wrapper for builds and measured runs, and never the
+active display, installed profile or a live Eon root.
+
 ### Native idle input response
 
 `eon-bench response --eon PATH --out DIR` is an on-demand Linux/Wayland test,
@@ -427,6 +518,8 @@ The candidate must be a Nix store executable; build it with an out-link so GC
 cannot remove it between build and observation. The probe does not build,
 install, refresh a profile or create machine stress.
 
+The bench wrapper supplies the Nix-pinned D-Bus session configuration;
+the private response bus uses it without depending on `/etc/dbus-1/session.conf`.
 Provide `wdotool` on PATH (it is not in the pinned nixpkgs). For example,
 from the candidate checkout, with an existing private artifact directory in
 `response_root`:

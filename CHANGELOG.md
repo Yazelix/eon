@@ -22,6 +22,15 @@ installation, and proven contract changes.
 - Orbit compresses cold terminal history losslessly, including during periodic
   redraws, and recompresses it after reads and scrolling, retaining the same
   history budget and content (`eon-ypy0a.1`).
+- `eon-bench terminals` compares Eon and pinned reference terminals on the
+  private headless Sway launcher, with verified PTY grids, interleaved
+  completion-throughput samples and recorded renderer/load evidence. It
+  records the declared source tree and native window dimensions; incomplete
+  cells retain observations without published rates. The shared namespace
+  masks host homes and per-user profiles, Herdr cleanup covers errors, and
+  response startup uses its pinned D-Bus session configuration. It
+  replaces the former Orbit/Venus throughput script. Shared headless startup
+  waits for Sway IPC replies before admitting clients (`eon-benchmarks-xl2bp.6`).
 - Orbit uses upstream libghostty on the Ghostty vt-1.0.0 core, pinned by
   exact Git revision (`eon-9rtt.9`).
 - `eon update --install [--yes] [--json] [--prefix ABS]` installs a discovered

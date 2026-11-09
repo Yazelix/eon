@@ -18,5 +18,6 @@ mod result;
 mod sha256;
 mod stats;
 mod suite;
+pub mod terminals;
 mod vtebench;
 pub mod writer;

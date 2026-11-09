@@ -132,7 +132,18 @@ pub fn number(flag: &str, value: &str) -> Result<u64, String> {
 /// The 1-minute load once it is at most the settings' maximum, waiting up to
 /// their `load_wait` for it to drop.
 pub fn wait_for_load(suite: &str, settings: &Settings) -> Result<f64, String> {
-    let (max, limit) = (settings.max_load, settings.load_wait);
+    wait_for_load_until(suite, settings, Instant::now() + settings.load_wait)
+}
+
+pub(crate) fn wait_for_load_until(
+    suite: &str,
+    settings: &Settings,
+    deadline: Instant,
+) -> Result<f64, String> {
+    let max = settings.max_load;
+    let limit = settings
+        .load_wait
+        .min(deadline.saturating_duration_since(Instant::now()));
     let start = Instant::now();
     let mut said = false;
     loop {
@@ -151,9 +162,9 @@ pub fn wait_for_load(suite: &str, settings: &Settings) -> Result<f64, String> {
             said = true;
         }
         let poll = Instant::now();
-        while poll.elapsed() < LOAD_POLL {
+        while poll.elapsed() < LOAD_POLL && start.elapsed() < limit {
             interrupt::check()?;
-            std::thread::sleep(INTERRUPT_POLL);
+            std::thread::sleep(INTERRUPT_POLL.min(limit.saturating_sub(start.elapsed())));
         }
     }
 }

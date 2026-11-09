@@ -195,6 +195,7 @@ pub fn run(args: &[String], options: &Options) -> Result {
     let mut command = crate::isolation::command(
         &out,
         &[
+            &exe,
             &options.orbit,
             &options.eonbase,
             &options.tmux,

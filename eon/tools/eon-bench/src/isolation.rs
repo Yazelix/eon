@@ -35,6 +35,16 @@ pub(crate) fn command(out: &Path, tools: &[&Path]) -> Command {
         "--chdir",
         "/",
     ]);
+    for path in [
+        "/home",
+        "/root",
+        "/nix/var/nix/profiles/per-user",
+        "/etc/profiles/per-user",
+    ] {
+        if Path::new(path).exists() {
+            command.arg("--tmpfs").arg(path);
+        }
+    }
     command.arg("--bind").arg(out).arg(out);
     for tool in tools {
         if !tool.as_os_str().is_empty() {
@@ -115,8 +125,9 @@ mod tests {
             set -eu
             test ! -e "$1"
             test ! -e "$4"
-            test -f "$2"
-            if (echo changed > "$2") 2>/dev/null; then exit 1; fi
+            if test -e "$2"; then
+                if (echo changed > "$2") 2>/dev/null; then exit 1; fi
+            fi
             test -z "${DISPLAY+x}${WAYLAND_DISPLAY+x}${DBUS_SESSION_BUS_ADDRESS+x}"
             readlink /proc/self/ns/pid > "$3/pid-namespace"
             readlink /proc/self/ns/net > "$3/net-namespace"
@@ -155,5 +166,61 @@ mod tests {
                     .unwrap()
             );
         }
+    }
+
+    #[test]
+    fn home_files_and_filesystem_sockets_are_unreachable() {
+        const PROBE: &str = "EON_BENCH_HOME_PROBE";
+        if let Some(home) = std::env::var_os(PROBE) {
+            let home = std::path::PathBuf::from(home);
+            assert!(fs::read(home.join("host-file")).is_err());
+            assert!(std::os::unix::net::UnixStream::connect(home.join("ambient.sock")).is_err());
+            return;
+        }
+        let nonce = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_nanos();
+        let root = std::env::temp_dir().join(format!("home-isolation-{nonce}"));
+        fs::create_dir(&root).unwrap();
+        fs::write(root.join("host-file"), "private").unwrap();
+        let socket = root.join("ambient.sock");
+        let listener = std::os::unix::net::UnixListener::bind(&socket).unwrap();
+        assert!(std::os::unix::net::UnixStream::connect(&socket).is_ok());
+        let out = root.join("out");
+        fs::create_dir(&out).unwrap();
+        let exe = std::env::current_exe().unwrap();
+        let mut inner = command(&out, &[&exe]);
+        inner.arg("--").arg(&exe).args([
+            "--exact",
+            "isolation::tests::home_files_and_filesystem_sockets_are_unreachable",
+            "--nocapture",
+        ]);
+        // A controlled host home also exercises checkouts outside /home.
+        let output = Command::new(inner.get_program())
+            .args([
+                "--ro-bind",
+                "/",
+                "/",
+                "--proc",
+                "/proc",
+                "--tmpfs",
+                "/home",
+                "--bind",
+            ])
+            .arg(&root)
+            .arg("/home/bench-fixture")
+            .arg("--ro-bind")
+            .arg(&exe)
+            .arg(&exe)
+            .arg("--")
+            .arg(inner.get_program())
+            .args(inner.get_args())
+            .env(PROBE, "/home/bench-fixture")
+            .output()
+            .unwrap();
+        drop(listener);
+        fs::remove_dir_all(&root).unwrap();
+        assert!(output.status.success(), "{output:?}");
     }
 }

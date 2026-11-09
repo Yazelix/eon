@@ -265,11 +265,28 @@ impl Headless {
     }
     pub(crate) fn spawn(&mut self, program: &str, args: &[&str], log: &str) -> Result {
         let output = File::create(self.out.join(log)).map_err(failure)?;
+        self.spawn_logged(program, args, output.try_clone().map_err(failure)?, output)
+    }
+    pub(crate) fn spawn_separate(
+        &mut self,
+        program: &str,
+        args: &[&str],
+        log: &str,
+        stderr: &str,
+    ) -> Result {
+        self.spawn_logged(
+            program,
+            args,
+            File::create(self.out.join(log)).map_err(failure)?,
+            File::create(self.out.join(stderr)).map_err(failure)?,
+        )
+    }
+    fn spawn_logged(&mut self, program: &str, args: &[&str], output: File, stderr: File) -> Result {
         let child = self
             .command(program)
             .args(args)
-            .stdout(output.try_clone().map_err(failure)?)
-            .stderr(output)
+            .stdout(output)
+            .stderr(stderr)
             .spawn()
             .map_err(failure)?;
         self.processes.remember(child.id());
@@ -277,15 +294,31 @@ impl Headless {
         Ok(())
     }
     pub(crate) fn start_compositor(&mut self, bus: BusPolicy) -> Result {
+        self.start_compositor_until(bus, Instant::now() + Duration::from_secs(15))
+    }
+    pub(crate) fn start_compositor_until(&mut self, bus: BusPolicy, deadline: Instant) -> Result {
+        let deadline = deadline.min(Instant::now() + Duration::from_secs(15));
         let runtime = PathBuf::from(&self.env["XDG_RUNTIME_DIR"]);
         let sway_config = self.out.join("sway.conf");
         let address = self.env["DBUS_SESSION_BUS_ADDRESS"].clone();
         match bus {
-            BusPolicy::Session => self.spawn(
-                "dbus-daemon",
-                &["--session", "--nofork", &format!("--address={address}")],
-                "dbus.log",
-            )?,
+            BusPolicy::Session => {
+                let config = std::env::var_os("EON_BENCH_DBUS_SESSION_CONFIG")
+                    .ok_or("missing EON_BENCH_DBUS_SESSION_CONFIG; use the Nix bench package")?;
+                let config = fs::canonicalize(config).map_err(failure)?;
+                if !config.starts_with("/nix/store") || !config.is_file() {
+                    return Err("D-Bus session configuration must be a Nix store file".into());
+                }
+                self.spawn(
+                    "dbus-daemon",
+                    &[
+                        &format!("--config-file={}", config.display()),
+                        "--nofork",
+                        &format!("--address={address}"),
+                    ],
+                    "dbus.log",
+                )?;
+            }
             BusPolicy::Private => {
                 let bus_config = self.out.join("dbus.conf");
                 // No host service directories: the private bus must not activate desktop daemons.
@@ -322,6 +355,7 @@ impl Headless {
                         .last_mut()
                         .ok_or("missing D-Bus child")?,
                     &runtime.join("bus"),
+                    deadline,
                 )?;
             }
         }
@@ -334,7 +368,6 @@ impl Headless {
             ],
             "sway.log",
         )?;
-        let deadline = Instant::now() + Duration::from_secs(15);
         loop {
             if self
                 .processes
@@ -366,7 +399,33 @@ impl Headless {
                 );
                 self.env
                     .insert("SWAYSOCK".into(), ipc.path().display().to_string());
-                break;
+                // Socket creation can precede the IPC event loop becoming responsive.
+                let reply = self
+                    .command("timeout")
+                    .arg(format!(
+                        "{}s",
+                        deadline
+                            .checked_duration_since(Instant::now())
+                            .ok_or("private Sway readiness deadline elapsed")?
+                            .min(Duration::from_secs(1))
+                            .as_secs_f64()
+                    ))
+                    .args(["swaymsg", "-t", "get_outputs", "-r"])
+                    .output()
+                    .map_err(failure)?;
+                fs::write(
+                    self.out.join("sway-ipc.log"),
+                    format!(
+                        "{}\n{}{}",
+                        reply.status,
+                        String::from_utf8_lossy(&reply.stdout),
+                        String::from_utf8_lossy(&reply.stderr)
+                    ),
+                )
+                .map_err(failure)?;
+                if reply.status.success() {
+                    break;
+                }
             }
             if Instant::now() >= deadline {
                 return Err("private Sway did not become ready; see sway.log".into());
@@ -376,6 +435,9 @@ impl Headless {
         Ok(())
     }
     pub(crate) fn start_eon(&mut self) -> Result {
+        self.start_eon_with(&[])
+    }
+    pub(crate) fn start_eon_with(&mut self, args: &[&str]) -> Result {
         if self.eon_child.is_some() {
             return Err("private Eon already started".into());
         }
@@ -384,7 +446,7 @@ impl Headless {
             .to_str()
             .ok_or("non-UTF8 candidate path")?
             .to_owned();
-        self.spawn(&eon, &[], "eon.log")?;
+        self.spawn(&eon, args, "eon.log")?;
         self.eon_child = Some(self.processes.children.len() - 1);
         Ok(())
     }
@@ -443,8 +505,7 @@ pub(crate) fn candidate(path: &Path) -> Result<PathBuf> {
     }
     Ok(path)
 }
-fn wait_for_bus(child: &mut Child, path: &Path) -> Result {
-    let deadline = Instant::now() + Duration::from_secs(15);
+fn wait_for_bus(child: &mut Child, path: &Path, deadline: Instant) -> Result {
     loop {
         if child.try_wait().map_err(failure)?.is_some() {
             return Err("private D-Bus exited; see dbus.log".into());
@@ -531,9 +592,13 @@ mod tests {
         let mut child = Command::new("sh").args(["-c", "exit 1"]).spawn().unwrap();
         child.wait().unwrap();
         assert!(
-            wait_for_bus(&mut child, Path::new("/missing-private-bus"))
-                .unwrap_err()
-                .contains("D-Bus exited")
+            wait_for_bus(
+                &mut child,
+                Path::new("/missing-private-bus"),
+                Instant::now() + Duration::from_secs(1)
+            )
+            .unwrap_err()
+            .contains("D-Bus exited")
         );
     }
     #[cfg(target_os = "linux")]

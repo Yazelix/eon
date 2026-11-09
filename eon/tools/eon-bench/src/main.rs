@@ -2,7 +2,7 @@
 
 use std::{path::PathBuf, process::ExitCode};
 
-use eon_bench::{child, corpus, floor, headless, memory, orbit, response, writer};
+use eon_bench::{child, corpus, floor, headless, memory, orbit, response, terminals, writer};
 
 const USAGE: &str = "\
 usage: eon-bench corpus --out DIR [--only ID]...
@@ -10,6 +10,7 @@ usage: eon-bench corpus --out DIR [--only ID]...
        eon-bench orbit --out DIR [OPTIONS]
        eon-bench memory --out DIR [OPTIONS]
        eon-bench headless --eon PATH --out DIR [OPTIONS]
+       eon-bench terminals --eon PATH --source-tree HASH --out DIR [OPTIONS]
        eon-bench response --eon PATH --out DIR [OPTIONS]
        eon-bench write FILE --report REPORT
        eon-bench COMMAND --help";
@@ -36,6 +37,8 @@ enum Command {
     Response(response::Options),
     Fixture(Vec<String>),
     Headless(headless::Options, bool),
+    Terminals(terminals::Options, bool),
+    TerminalWorkload(Vec<String>),
 }
 
 fn corpus_help() -> String {
@@ -104,6 +107,9 @@ fn main() -> ExitCode {
         Some("headless" | "headless-inner") => headless::options(rest)
             .map(|options| Command::Headless(options, arguments[0] == "headless-inner")),
         Some("response") => response::options(rest).map(Command::Response),
+        Some("terminals" | "terminals-inner") => terminals::options(rest)
+            .map(|options| Command::Terminals(options, arguments[0] == "terminals-inner")),
+        Some("terminal-workload") => Ok(Command::TerminalWorkload(rest.to_vec())),
         Some("response-fixture") if rest.len() == 4 => Ok(Command::Fixture(rest.to_vec())),
         Some("write") => write_options(rest).map(|(file, report)| Command::Write(file, report)),
         Some("--help" | "-h") => {
@@ -135,6 +141,9 @@ fn main() -> ExitCode {
         Command::Headless(options, false) => headless::run(rest, &options),
         Command::Headless(options, true) => headless::run_inner(&options),
         Command::Fixture(arguments) => response::fixture(&arguments),
+        Command::Terminals(options, false) => terminals::run(rest, &options),
+        Command::Terminals(options, true) => terminals::run_inner(&options),
+        Command::TerminalWorkload(arguments) => terminals::workload(&arguments),
     };
     match outcome {
         Ok(()) => ExitCode::SUCCESS,
