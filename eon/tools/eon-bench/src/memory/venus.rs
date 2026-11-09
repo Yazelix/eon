@@ -338,7 +338,7 @@ impl Session<'_> {
             .and_then(Value::as_str)
             .ok_or("no startup tab")?;
         let first = Value::parse(
-            &self.display_call(&launch, &["tab", "create", "--json", "--directory", "/tmp"])?,
+            &self.display_call(&launch, &["tab", "create", "--json", "--dir", "/tmp"])?,
         )?;
         let pane = first
             .get("created")
@@ -366,7 +366,7 @@ impl Session<'_> {
         for _ in 1..COUNT {
             trace.pump()?;
             let reply = Value::parse(
-                &self.display_call(&launch, &["tab", "create", "--json", "--directory", "/tmp"])?,
+                &self.display_call(&launch, &["tab", "create", "--json", "--dir", "/tmp"])?,
             )?;
             panes.push(
                 reply

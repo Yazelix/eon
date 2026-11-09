@@ -13,7 +13,7 @@ use super::{
     running::running_notice,
     sessions::{TAB_VARIABLE, TERMINAL_VARIABLE, terminal_session},
     supervisor::{
-        LaunchMode, configuration_directory, launch_current, prepare_configuration,
+        LaunchMode, LaunchOptions, configuration_directory, launch_current, prepare_configuration,
         runtime_directory,
     },
     windows,
@@ -617,6 +617,35 @@ fn launch_managed(
     Err(format!("cannot launch {program}: {error}"))
 }
 
+/// Splits a full-Eon launch's leading `--dir DIR` and `--no-anima`, in
+/// either order and each at most once, from what follows them (EON-C18). DIR
+/// is neither empty nor `--`, as for `tab create --dir`.
+fn parse_launch_options(arguments: &[OsString]) -> Result<(LaunchOptions, &[OsString]), Error> {
+    let mut options = LaunchOptions::default();
+    let mut rest = arguments;
+    loop {
+        match rest {
+            [flag, ..] if flag == "--dir" && options.directory.is_none() => {
+                let [_, directory, tail @ ..] = rest else {
+                    return Err(Error::usage(EON_USAGE));
+                };
+                if directory.is_empty() || directory == "--" {
+                    return Err(Error::usage(EON_USAGE));
+                }
+                options.directory = Some(std::path::absolute(directory).map_err(|error| {
+                    Error::from(format!("cannot resolve {directory:?}: {error}"))
+                })?);
+                rest = tail;
+            }
+            [flag, tail @ ..] if flag == "--no-anima" && !options.no_anima => {
+                options.no_anima = true;
+                rest = tail;
+            }
+            _ => return Ok((options, rest)),
+        }
+    }
+}
+
 fn parse_quit_arguments(arguments: &[OsString]) -> Result<Option<(bool, bool)>, Error> {
     let [command, flags @ ..] = arguments else {
         return Ok(None);
@@ -673,8 +702,35 @@ fn execute(inputs: &Inputs, arguments: Vec<OsString>) -> Result<i32, Error> {
         };
     }
     let result = match arguments.as_slice() {
-        [] => launch_current(inputs, LaunchMode::Workspace, &[], true, false, "eon"),
-        [command, action] if command == "window" && action == "new" => windows::new_window(inputs),
+        [] => launch_current(
+            inputs,
+            LaunchMode::Workspace,
+            &[],
+            true,
+            false,
+            "eon",
+            &LaunchOptions::default(),
+        ),
+        [flag, ..] if flag == "--dir" || flag == "--no-anima" => {
+            let (options, []) = parse_launch_options(&arguments)? else {
+                return Err(Error::usage(EON_USAGE));
+            };
+            launch_current(
+                inputs,
+                LaunchMode::Workspace,
+                &[],
+                true,
+                false,
+                "eon",
+                &options,
+            )
+        }
+        [command, action, rest @ ..] if command == "window" && action == "new" => {
+            let (options, []) = parse_launch_options(rest)? else {
+                return Err(Error::usage(EON_USAGE));
+            };
+            windows::new_window(inputs, &options)
+        }
         [command, action] if command == "window" && action == "ls" => {
             windows::list_windows(inputs, false)
         }
@@ -718,13 +774,23 @@ fn execute(inputs: &Inputs, arguments: Vec<OsString>) -> Result<i32, Error> {
                 .exec();
             Err(format!("cannot launch Anima: {error}"))
         }
-        [command] if command == "run" => {
-            launch_current(inputs, LaunchMode::Workspace, &[], false, false, "eon")
-        }
-        [command, separator, child @ ..]
-            if command == "run" && separator == "--" && !child.is_empty() =>
-        {
-            launch_current(inputs, LaunchMode::Workspace, child, false, false, "eon")
+        [command, rest @ ..] if command == "run" => {
+            let (options, child) = match parse_launch_options(rest)? {
+                (options, []) => (options, &[][..]),
+                (options, [separator, child @ ..]) if separator == "--" && !child.is_empty() => {
+                    (options, child)
+                }
+                _ => return Err(Error::usage(EON_USAGE)),
+            };
+            launch_current(
+                inputs,
+                LaunchMode::Workspace,
+                child,
+                false,
+                false,
+                "eon",
+                &options,
+            )
         }
         [command, ..] if control_command(command) => {
             let (arguments, target) = parse_workspace_target_arguments(&arguments)?;
@@ -905,8 +971,12 @@ const HELP_SECTIONS: &[(&str, &[(&str, &str)])] = &[
     (
         "Start",
         &[
-            ("eon", "Open or present the window"),
-            ("run [-- COMMAND...]", "Start a fresh window"),
+            ("eon [--dir DIR] [--no-anima]", "Open or present the window"),
+            ("run [--dir DIR] [--no-anima]", "Start a fresh window"),
+            ("  [-- COMMAND...]", "with an exact first command"),
+            ("  --dir DIR", "First tab in DIR: no quick search,"),
+            ("", "no startup animation"),
+            ("  --no-anima", "Skip the startup animation"),
         ],
     ),
     (
@@ -916,7 +986,10 @@ const HELP_SECTIONS: &[(&str, &[(&str, &str)])] = &[
             ("window ls [--json]", "Every running window: ID, name,"),
             ("", "version, started, terminals,"),
             ("", "compatible or not"),
-            ("window new", "Open an independent window"),
+            (
+                "window new [--dir DIR] [--no-anima]",
+                "Open an independent window",
+            ),
             ("window attach [ID]", "Reopen a window (no ID: default)"),
             (
                 "window stop ID|previous|all [--json]",
@@ -961,10 +1034,7 @@ const HELP_SECTIONS: &[(&str, &[(&str, &str)])] = &[
         "Tabs & panes",
         &[
             ("tab create [--json]", "Choose a directory for a new tab"),
-            (
-                "tab create --directory DIRECTORY",
-                "Start a tab without quick search",
-            ),
+            ("tab create --dir DIR", "Start a tab without quick search"),
             (
                 "  [--json] [--no-focus] [-- COMMAND...]",
                 "COMMAND needs an Eon terminal",
@@ -1219,13 +1289,27 @@ fn execute_eonbase(inputs: &Inputs, arguments: Vec<OsString>) -> Result<i32, Err
         return Ok(code);
     }
     let result = match arguments.as_slice() {
-        [separator, child @ ..] if separator == "--" && !child.is_empty() => {
-            launch_current(inputs, LaunchMode::Terminal, child, true, true, "eonbase")
-        }
+        [separator, child @ ..] if separator == "--" && !child.is_empty() => launch_current(
+            inputs,
+            LaunchMode::Terminal,
+            child,
+            true,
+            true,
+            "eonbase",
+            &LaunchOptions::default(),
+        ),
         [flag, separator, child @ ..]
             if flag == "--no-decorations" && separator == "--" && !child.is_empty() =>
         {
-            launch_current(inputs, LaunchMode::Terminal, child, true, false, "eonbase")
+            launch_current(
+                inputs,
+                LaunchMode::Terminal,
+                child,
+                true,
+                false,
+                "eonbase",
+                &LaunchOptions::default(),
+            )
         }
         [flag, application_id, separator, child @ ..]
             if flag == "--application-id" && separator == "--" && !child.is_empty() =>
@@ -1237,6 +1321,7 @@ fn execute_eonbase(inputs: &Inputs, arguments: Vec<OsString>) -> Result<i32, Err
                 true,
                 true,
                 application_id_argument(application_id)?,
+                &LaunchOptions::default(),
             )
         }
         [decorations, flag, application_id, separator, child @ ..]
@@ -1252,6 +1337,7 @@ fn execute_eonbase(inputs: &Inputs, arguments: Vec<OsString>) -> Result<i32, Err
                 true,
                 false,
                 application_id_argument(application_id)?,
+                &LaunchOptions::default(),
             )
         }
         _ => return Err(Error::usage(EONBASE_USAGE)),
@@ -2195,7 +2281,7 @@ fn parse_workspace_target_arguments(
             break;
         }
         // Named operands stay literal, even `--window`.
-        if argument == "--name" || argument == "--directory" {
+        if argument == "--name" || argument == "--dir" {
             values.push(argument.clone());
             values.extend(arguments.next().cloned());
             continue;
@@ -2644,7 +2730,7 @@ fn parse_tab_create_arguments(arguments: &[OsString]) -> Result<Option<(Action, 
         match flag.to_str() {
             Some("--json") if !json => json = true,
             Some("--no-focus") if focus => focus = false,
-            Some("--directory") if directory.is_none() => {
+            Some("--dir") if directory.is_none() => {
                 directory = Some(
                     flags
                         .next()
@@ -3097,19 +3183,19 @@ mod tests {
             parse_control_arguments(&arguments.iter().map(OsString::from).collect::<Vec<_>>())
         };
         for (flags, focus, json) in [
-            (vec!["--directory", "project"], true, false),
+            (vec!["--dir", "project"], true, false),
             (
-                vec!["--json", "--directory", "project", "--no-focus"],
+                vec!["--json", "--dir", "project", "--no-focus"],
                 false,
                 true,
             ),
             (
-                vec!["--no-focus", "--json", "--directory", "project"],
+                vec!["--no-focus", "--json", "--dir", "project"],
                 false,
                 true,
             ),
             (
-                vec!["--directory", "project", "--no-focus", "--json"],
+                vec!["--dir", "project", "--no-focus", "--json"],
                 false,
                 true,
             ),
@@ -3136,7 +3222,7 @@ mod tests {
             parse_control_arguments(&[
                 "tab".into(),
                 "create".into(),
-                "--directory".into(),
+                "--dir".into(),
                 OsString::from_vec(b"/tmp/\xff".to_vec()),
                 "--".into(),
                 "hx".into(),
@@ -3155,15 +3241,7 @@ mod tests {
         );
         let (args, target) = parse_workspace_target_arguments(
             &[
-                "tab",
-                "create",
-                "--window",
-                "0000abcd",
-                "--directory",
-                "/",
-                "--",
-                "hx",
-                "--window",
+                "tab", "create", "--window", "0000abcd", "--dir", "/", "--", "hx", "--window",
             ]
             .map(OsString::from),
         )
@@ -3181,7 +3259,7 @@ mod tests {
             )
         );
         let (args, target) = parse_workspace_target_arguments(
-            &["tab", "create", "--directory", "--window"].map(OsString::from),
+            &["tab", "create", "--dir", "--window"].map(OsString::from),
         )
         .unwrap();
         assert_eq!(target.window, None);
@@ -3198,14 +3276,14 @@ mod tests {
         for args in [
             vec!["--no-focus"],
             vec!["--", "hx"],
-            vec!["--directory"],
-            vec!["--directory", ""],
-            vec!["--directory", "--", "hx"],
-            vec!["--directory", "/", "--directory", "/"],
-            vec!["--json", "--json", "--directory", "/"],
-            vec!["--no-focus", "--no-focus", "--directory", "/"],
+            vec!["--dir"],
+            vec!["--dir", ""],
+            vec!["--dir", "--", "hx"],
+            vec!["--dir", "/", "--dir", "/"],
+            vec!["--json", "--json", "--dir", "/"],
+            vec!["--no-focus", "--no-focus", "--dir", "/"],
             vec!["--unknown"],
-            vec!["--workspace", "s1", "--directory", "/"],
+            vec!["--workspace", "s1", "--dir", "/"],
         ] {
             let mut command = vec!["tab", "create"];
             command.extend(args);
@@ -3214,8 +3292,8 @@ mod tests {
         for args in [
             vec!["tab", "create", "--"],
             vec!["tab", "create", "--", ""],
-            vec!["tab", "create", "--directory", "/", "--"],
-            vec!["tab", "create", "--directory", "/", "--", ""],
+            vec!["tab", "create", "--dir", "/", "--"],
+            vec!["tab", "create", "--dir", "/", "--", ""],
         ] {
             let error = parse(&args).unwrap_err();
             assert_eq!(error.status, 2, "{args:?}");
@@ -3303,6 +3381,67 @@ mod tests {
             &["session", "--no-focus"],
         ] {
             assert!(parse(arguments).is_err(), "{arguments:?}");
+        }
+    }
+
+    /// Each launch flag reaches the fresh window once, in either order, and
+    /// anything else is invalid before a window starts (EON-C18).
+    #[test]
+    fn launch_flags_parse_once_in_either_order_and_fail_before_starting() {
+        let arguments = |words: &[&str]| words.iter().map(OsString::from).collect::<Vec<_>>();
+        let parsed = arguments(&["--no-anima", "--dir", "a b", "--", "x"]);
+        let (options, rest) = parse_launch_options(&parsed).unwrap();
+        assert_eq!(
+            options.directory,
+            Some(env::current_dir().unwrap().join("a b"))
+        );
+        assert!(options.no_anima);
+        assert_eq!(rest, arguments(&["--", "x"]));
+        let parsed = arguments(&["--dir", "/d", "--no-anima", "--dir", "/e"]);
+        let (options, rest) = parse_launch_options(&parsed).unwrap();
+        assert_eq!(options.directory.as_deref(), Some(Path::new("/d")));
+        assert_eq!(rest, arguments(&["--dir", "/e"]));
+        let (options, rest) = parse_launch_options(&[]).unwrap();
+        assert!(options.directory.is_none() && !options.no_anima && rest.is_empty());
+
+        let inputs = crate::fixtures::inputs();
+        for words in [
+            &["--dir"][..],
+            &["--dir", "--"],
+            &["--dir", ""],
+            &["--no-anima", "--dir", "--", "x"],
+            &["run", "--dir", "--", "x"],
+            &["run", "--dir", ""],
+            &["window", "new", "--dir", "--"],
+            &["window", "new", "--no-anima", "--dir", ""],
+            &["--no-anima", "--no-anima"],
+            &["--dir", "/", "--dir", "/"],
+            &["--dir", "/", "extra"],
+            &["--no-anima", "run"],
+            &["run", "--no-anima", "--"],
+            &["run", "--dir", "/", "x"],
+            &["window", "new", "--json"],
+            &["window", "new", "--no-anima", "--", "x"],
+        ] {
+            let error = execute(&inputs, arguments(words)).unwrap_err();
+            assert_eq!(error.status, 2, "{words:?}: {}", error.message);
+        }
+        let missing = env::temp_dir().join(format!("eon-missing-launch-{}", std::process::id()));
+        let missing = missing.to_str().unwrap();
+        for words in [
+            &["--dir", missing][..],
+            &["run", "--dir", missing],
+            &["window", "new", "--no-anima", "--dir", missing],
+        ] {
+            let error = execute(&inputs, arguments(words)).unwrap_err();
+            assert_eq!(error.status, 1, "{words:?}");
+            assert!(
+                error
+                    .message
+                    .contains("cannot inspect Eon launch directory"),
+                "{words:?}: {}",
+                error.message
+            );
         }
     }
 

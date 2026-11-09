@@ -10,10 +10,10 @@ use super::{
     },
     platform::socket_path_fits,
     supervisor::{
-        LaunchMode, SESSION_START_TIMEOUT, base_runtime_directory, prepare_runtime,
+        LaunchMode, LaunchOptions, SESSION_START_TIMEOUT, base_runtime_directory, prepare_runtime,
         probe_supervisor, request_id, runtime_directory, validate_private_directory,
     },
-    workspace::{failure_json, json_escape, terminal_text},
+    workspace::{failure_json, json_escape, terminal_text, validate_initial_directory},
 };
 use eon_workspace_protocol::v38::Failure;
 use std::{
@@ -581,7 +581,10 @@ pub(super) fn quit(inputs: &Inputs, json: bool, arguments: &[OsString]) -> Resul
     }
 }
 
-pub(super) fn new_window(inputs: &Inputs) -> Result<i32, String> {
+pub(super) fn new_window(inputs: &Inputs, options: &LaunchOptions) -> Result<i32, String> {
+    if let Some(directory) = &options.directory {
+        validate_initial_directory(directory)?;
+    }
     let generation = current_generation(inputs)?;
     let base = base_runtime_directory("eon");
     prepare_runtime(&base)?;
@@ -612,8 +615,14 @@ pub(super) fn new_window(inputs: &Inputs) -> Result<i32, String> {
         .open(&log)
         .map_err(|error| format!("cannot create {}: {error}", log.display()))?;
     let mut command = window_command(&root)?;
+    command.arg("run");
+    if let Some(directory) = &options.directory {
+        command.arg("--dir").arg(directory);
+    }
+    if options.no_anima {
+        command.arg("--no-anima");
+    }
     command
-        .arg("run")
         .stdin(Stdio::null())
         .stdout(Stdio::null())
         .stderr(stderr);

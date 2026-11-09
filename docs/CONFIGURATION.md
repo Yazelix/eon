@@ -401,11 +401,13 @@ a failed replacement leaves existing terminals and commands alive.
 
 On a fresh full-Eon window, Anima plays after the desktop is ready and before
 the first tab's quick search. Press any key other than its previous/next style
-keys to dismiss it immediately. `enabled = false` skips startup playback;
-`style` is passed to the pinned Anima executable, and `duration_seconds` accepts
-1–30. Anima owns its style names; run `eon anima --help` to see them. A failed
-animation continues to quick search. Attachment, recovery, later tabs, and
-eonbase do not play the startup animation.
+keys to dismiss it immediately. `enabled = false` skips startup playback, and
+`eon --no-anima` (also on `eon run` and `eon window new`) skips it for one
+launch; `style` is passed to the pinned Anima executable, and
+`duration_seconds` accepts 1–30. Anima owns its style names; run
+`eon anima --help` to see them. A failed animation continues to quick search.
+Attachment, recovery, later tabs, eonbase, and a launch with `--dir` do not play
+the startup animation.
 
 Closing the last tab quits its window and stops its terminals. While the
 window holds other sessions, it closes only that session.

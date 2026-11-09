@@ -1098,6 +1098,205 @@ fn anima_waits_for_native_readiness_then_hands_off_to_the_pair_and_popup_stops_o
     fs::remove_dir_all(root).unwrap();
 }
 
+/// Launch flags (EON-C18): `--no-anima` keeps the pair but plays no startup
+/// Anima, yet still validates `[anima]`; `--dir` starts t1's first pane, or
+/// `run`'s COMMAND, at its directory with neither the pair nor Anima;
+/// `window new` forwards both; and `eon --dir` refuses a running window.
+#[test]
+fn launch_flags_skip_the_startup_anima_and_the_pair() {
+    // Independent windows need a short runtime root for their sockets.
+    let root = (0_u32..)
+        .map(|n| std::env::temp_dir().join(format!("el{n:x}")))
+        .find(|path| match fs::create_dir(path) {
+            Ok(()) => true,
+            Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => false,
+            Err(error) => panic!("{}: {error}", path.display()),
+        })
+        .unwrap();
+    let session_bin = root.join("bin");
+    let config = root.join("config");
+    let orbit = root.join("orbit");
+    let venus = root.join("venus");
+    let anima = root.join("anima");
+    let yazi = root.join("yazi");
+    let first_command = root.join("command");
+    let launch = root.join("launch dir");
+    let stop = root.join("stop");
+    fs::create_dir(&session_bin).unwrap();
+    fs::create_dir(&config).unwrap();
+    fs::create_dir(&launch).unwrap();
+    let launched = fs::canonicalize(&launch).unwrap();
+    managed_orbit_executable(&orbit);
+    executable(&venus, "#!/bin/sh\nprintf ready-v1\ncat >/dev/null\n");
+    executable(
+        &anima,
+        "#!/bin/sh\nprintf anima > \"$EON_TEST_ANIMA_STARTED\"\n",
+    );
+    symlink(&anima, session_bin.join("anima")).unwrap();
+    executable(
+        &yazi,
+        "#!/bin/sh\nprintf files > \"$EON_TEST_FILES_STARTED\"\nwhile [ ! -e \"$EON_TEST_STOP\" ]; do sleep 0.01; done\n",
+    );
+    let binary = PathBuf::from(env!("CARGO_BIN_EXE_eon"));
+    symlink(&binary, session_bin.join("eon-files")).unwrap();
+    executable(
+        &session_bin.join("eon-nu"),
+        "#!/bin/sh\npwd -P > \"$EON_TEST_SHELL_STARTED\"\nwhile [ ! -e \"$EON_TEST_STOP\" ]; do sleep 0.01; done\n",
+    );
+    executable(
+        &first_command,
+        "#!/bin/sh\nprintf '%s|%s' \"$(pwd -P)\" \"$*\" > \"$EON_TEST_COMMAND_STARTED\"\nwhile [ ! -e \"$EON_TEST_STOP\" ]; do sleep 0.01; done\n",
+    );
+    // Each invocation names its own observation files, which the window it
+    // starts inherits.
+    let observed = |name: &str, kind: &str| root.join(format!("{name}-{kind}"));
+    let command = |runtime: &str, name: &str| {
+        let mut command = eon_command(&binary);
+        command
+            .current_dir(&root)
+            .env("EON_RUNTIME_DIR", root.join(runtime))
+            .env("EON_CONFIG_HOME", &config)
+            .env("EON_ORBIT", &orbit)
+            .env("EON_VENUS", &venus)
+            .env("EON_ANIMA", &anima)
+            .env("EON_YAZI", &yazi)
+            .env("EON_FILES_CONFIG", &root)
+            .env("EON_SESSION_BIN", &session_bin)
+            .env("EON_TEST_RUN_CHILD", "1")
+            .env("EON_TEST_ANIMA_STARTED", observed(name, "anima"))
+            .env("EON_TEST_FILES_STARTED", observed(name, "files"))
+            .env("EON_TEST_SHELL_STARTED", observed(name, "shell"))
+            .env("EON_TEST_COMMAND_STARTED", observed(name, "command"))
+            .env("EON_TEST_STOP", &stop)
+            .env_remove("EON_WINDOW_RUNTIME_DIR")
+            .env_remove("EON_TERMINAL");
+        command
+    };
+    let spawn = |command: &mut Command| TestProcess {
+        child: command
+            .stdout(Stdio::null())
+            .stderr(Stdio::null())
+            .spawn()
+            .unwrap(),
+        stop: stop.clone(),
+    };
+    let inspect = |control: &Path, id: &str| {
+        let Response::Snapshot(snapshot) = workspace_action(control, id, Action::Inspect) else {
+            panic!("{id}: snapshot missing");
+        };
+        snapshot
+    };
+    let assert_started_in_launch = |snapshot: &Snapshot| {
+        let [tab] = snapshot.tabs.as_slice() else {
+            panic!("one tab");
+        };
+        assert!(!tab.pending && tab.popups.is_empty());
+        assert_eq!(tab.directory, launch.as_os_str().as_bytes());
+        assert_eq!(tab.panes().count(), 1);
+    };
+
+    // `--no-anima` still validates `[anima]` and starts nothing.
+    fs::write(
+        config.join("config.toml"),
+        "[anima]\nduration_seconds = 31\n",
+    )
+    .unwrap();
+    let invalid = command("r", "invalid")
+        .args(["run", "--no-anima"])
+        .output()
+        .unwrap();
+    assert_eq!(invalid.status.code(), Some(1), "{invalid:?}");
+    assert!(
+        String::from_utf8_lossy(&invalid.stderr).contains("anima.duration_seconds"),
+        "{invalid:?}"
+    );
+    assert!(!observed("invalid", "files").exists());
+    fs::remove_file(config.join("config.toml")).unwrap();
+
+    // `run --no-anima`: the pair without Anima.
+    let mut default = spawn(command("r", "a").args(["run", "--no-anima"]));
+    wait_for(&observed("a", "files"));
+    assert!(!observed("a", "anima").exists());
+    let control = generation_runtime(&root.join("r")).join("eon.sock");
+    assert!(pending_pair(&inspect(&control, "no-anima")).is_some());
+
+    // `eon --dir` refuses the running window and presents nothing.
+    let refused = command("r", "refused")
+        .arg("--dir")
+        .arg(&launch)
+        .output()
+        .unwrap();
+    assert_eq!(refused.status.code(), Some(1), "{refused:?}");
+    assert!(
+        String::from_utf8_lossy(&refused.stderr)
+            .contains("this Eon window is already running, so --dir has no fresh first tab"),
+        "{refused:?}"
+    );
+
+    // `window new` forwards `--no-anima`, then `--dir`.
+    let window = |name: &str, flags: &[&OsStr]| {
+        let output = command("r", name)
+            .args(["window", "new"])
+            .args(flags)
+            .output()
+            .unwrap();
+        assert!(output.status.success(), "{output:?}");
+        let id = stdout(&output).trim().to_owned();
+        let control = generation_runtime(&root.join("r").join("w").join(&id)).join("eon.sock");
+        (id, control)
+    };
+    let (quick, quick_control) = window("b", &[OsStr::new("--no-anima")]);
+    wait_for(&observed("b", "files"));
+    assert!(!observed("b", "anima").exists());
+    assert!(pending_pair(&inspect(&quick_control, "window-no-anima")).is_some());
+    let (started, started_control) = window("c", &[OsStr::new("--dir"), launch.as_os_str()]);
+    wait_for(&observed("c", "shell"));
+    assert_eq!(
+        Path::new(
+            fs::read_to_string(observed("c", "shell"))
+                .unwrap()
+                .trim_end()
+        ),
+        launched
+    );
+    assert_started_in_launch(&inspect(&started_control, "window-dir"));
+    assert!(!observed("c", "files").exists() && !observed("c", "anima").exists());
+
+    // `run --dir D -- COMMAND` runs COMMAND at once in D.
+    let mut commanded = spawn(
+        command("s", "d")
+            .args(["run", "--dir"])
+            .arg(&launch)
+            .arg("--")
+            .arg(&first_command)
+            .arg("first argument"),
+    );
+    wait_for(&observed("d", "command"));
+    assert_eq!(
+        fs::read_to_string(observed("d", "command")).unwrap(),
+        format!("{}|first argument", launched.display())
+    );
+    let commanded_control = generation_runtime(&root.join("s")).join("eon.sock");
+    assert_started_in_launch(&inspect(&commanded_control, "run-dir-command"));
+    assert!(
+        !observed("d", "files").exists()
+            && !observed("d", "anima").exists()
+            && !observed("d", "shell").exists()
+    );
+
+    for id in [&quick, &started] {
+        let stopped = command("r", "stop")
+            .args(["window", "stop", id, "--json"])
+            .output()
+            .unwrap();
+        assert!(stopped.status.success(), "{stopped:?}");
+    }
+    fs::write(&stop, "stop").unwrap();
+    wait_for_successful_exit(&mut default.child);
+    wait_for_successful_exit(&mut commanded.child);
+    fs::remove_dir_all(root).unwrap();
+}
+
 #[test]
 fn failed_or_stuck_startup_anima_reports_and_continues_to_quick_search() {
     let root = temporary_directory();
@@ -4584,7 +4783,7 @@ fn events_cli_streams_resumes_interrupts_and_exits_on_closed_stdout() {
                 "create",
                 "--no-focus",
                 "--json",
-                "--directory",
+                "--dir",
                 root.to_str().unwrap()
             ]
         )
@@ -7654,7 +7853,7 @@ fn commands_from_a_terminal_target_its_column_and_stale_callers_change_nothing()
         "create",
         "--no-focus",
         "--json",
-        "--directory",
+        "--dir",
         directory.to_str().unwrap(),
         "--",
         "hx",
@@ -7700,7 +7899,7 @@ fn commands_from_a_terminal_target_its_column_and_stale_callers_change_nothing()
             "tab",
             "create",
             "--json",
-            "--directory",
+            "--dir",
             "/nonexistent",
             "--",
             "hx",
@@ -15741,7 +15940,7 @@ fn cli_closes_background_ids_and_preserves_the_presented_workspace() {
     };
     let focused = parsed(&run(
         Some(&caller),
-        &["tab", "create", "--directory", &directory, "--json"],
+        &["tab", "create", "--dir", &directory, "--json"],
     ));
     let tab = focused["tabs"].as_array().unwrap().last().unwrap();
     assert_eq!(tab["id"], "t2");
@@ -15751,14 +15950,7 @@ fn cli_closes_background_ids_and_preserves_the_presented_workspace() {
     for _ in 0..2 {
         let created = parsed(&run(
             Some(&caller),
-            &[
-                "tab",
-                "create",
-                "--no-focus",
-                "--directory",
-                &directory,
-                "--json",
-            ],
+            &["tab", "create", "--no-focus", "--dir", &directory, "--json"],
         ));
         let tab = created["tabs"].as_array().unwrap().last().unwrap();
         names(&created, &tab["id"], &tab["panes"][0]["id"]);
@@ -15867,14 +16059,7 @@ fn cli_closes_background_ids_and_preserves_the_presented_workspace() {
     // A replayed close is a duplicate and stops nothing more.
     let created = parsed(&run(
         Some(&caller),
-        &[
-            "tab",
-            "create",
-            "--no-focus",
-            "--directory",
-            &directory,
-            "--json",
-        ],
+        &["tab", "create", "--no-focus", "--dir", &directory, "--json"],
     ));
     let t5 = created["tabs"].as_array().unwrap().last().unwrap()["id"]
         .as_str()
@@ -15927,7 +16112,7 @@ fn cli_busy_background_close_confirms_refuses_and_cancels_without_focus() {
             "tab",
             "create",
             "--no-focus",
-            "--directory",
+            "--dir",
             root.to_str().unwrap(),
             "--json",
             "--",
@@ -15946,15 +16131,9 @@ fn cli_busy_background_close_confirms_refuses_and_cancels_without_focus() {
     };
 
     // The active t2 shows its Agent popup throughout.
-    let created_t2 = run_caller(&[
-        "tab",
-        "create",
-        "--directory",
-        root.to_str().unwrap(),
-        "--json",
-    ])
-    .output()
-    .unwrap();
+    let created_t2 = run_caller(&["tab", "create", "--dir", root.to_str().unwrap(), "--json"])
+        .output()
+        .unwrap();
     assert!(created_t2.status.success(), "{created_t2:?}");
     show_agent(&control, "t2-agent", "t2");
 
@@ -16230,7 +16409,7 @@ fn cli_idle_background_close_ignores_other_busy_tabs() {
             "tab",
             "create",
             "--no-focus",
-            "--directory",
+            "--dir",
             directory,
             "--json",
             "--",
@@ -16244,14 +16423,7 @@ fn cli_idle_background_close_ignores_other_busy_tabs() {
         .to_owned();
     let idle = parsed(&run(
         &caller,
-        &[
-            "tab",
-            "create",
-            "--no-focus",
-            "--directory",
-            directory,
-            "--json",
-        ],
+        &["tab", "create", "--no-focus", "--dir", directory, "--json"],
     ));
     let idle_tab = idle["tabs"][2]["id"].as_str().unwrap().to_owned();
     let first = quit_terminal_caller(Path::new(
@@ -16351,7 +16523,7 @@ fn cli_close_preserves_workspace_scope_and_final_close_results() {
             "tab",
             "create",
             "--no-focus",
-            "--directory",
+            "--dir",
             root.to_str().unwrap(),
             "--json",
         ],

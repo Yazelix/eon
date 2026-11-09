@@ -1309,6 +1309,9 @@ names its socket. CLI JSON names a session `session` and a terminal
   member's local handle after verifying that the supervisor endpoint and local
   member are unchanged. Confirmation accepts a null-to-confirmed ID transition
   on that same member and uses its confirmed ID when available.
+  Amended on 2026-11-09 (approved by Lucca on 2026-11-09, relayed by
+  eon-overseer) by `eon-fv1j0`: `tab create --directory DIRECTORY` becomes
+  `tab create --dir DIR`, with no alias.
 - **Consumer:** One local CLI or approved composition controlling a live Eon
   supervisor.
 - **Trigger:** The client submits one versioned session or supervisor-lifecycle
@@ -1407,7 +1410,7 @@ names its socket. CLI JSON names a session `session` and a terminal
     32 KiB each, within the shared frame ceiling. A bare COMMAND resolves
     through the terminal PATH and a relative one against the tab directory, as
     popup executables do. When COMMAND exits, the pane ends like any ended
-    terminal. This and `tab create --directory DIRECTORY -- COMMAND` are the
+    terminal. This and `tab create --dir DIR -- COMMAND` are the
     only requests that carry a command over EONW, and the runtime accepts them
     only from a caller naming a live terminal of the addressed supervisor.
     That check states intent, not security: the socket is private to the user,
@@ -1419,19 +1422,19 @@ names its socket. CLI JSON names a session `session` and a terminal
     becomes the tab's only, selected pane, and a shown popup still stays shown.
     Without `--no-focus`, `pane create` selects the new pane and dismisses the
     tab's popup, as above.
-  - `eon tab create [--json] [--no-focus] --directory DIRECTORY [-- COMMAND [ARGS...]]`
-    adds a new tab to the addressed session with DIRECTORY as its directory
+  - `eon tab create [--json] [--no-focus] --dir DIR [-- COMMAND [ARGS...]]`
+    adds a new tab to the addressed session with DIR as its directory
     and no picker, and starts its one pane there. That pane is the default pane
     a picker's accepted choice would start or, with `-- COMMAND`, COMMAND run as
     `pane create -- COMMAND` runs it: exact argv, no shell, the same bounds, a
-    relative COMMAND resolved against DIRECTORY, and accepted only from a
-    calling terminal. A relative DIRECTORY resolves against the caller's working
+    relative COMMAND resolved against DIR, and accepted only from a
+    calling terminal. A relative DIR resolves against the caller's working
     directory. Without `--no-focus` the new tab becomes the active tab, as a
     bare `tab create` does. With `--no-focus`, the active tab, every tab's
     selected pane, any shown popup and desktop focus stay as they are. The
-    reply's tab list ends with the new tab. An unavailable DIRECTORY, the tab
+    reply's tab list ends with the new tab. An unavailable DIR, the tab
     limit, or a command that cannot start refuses the command with exit 1 and
-    changes nothing. `--no-focus` and `-- COMMAND` require `--directory`.
+    changes nothing. `--no-focus` and `-- COMMAND` require `--dir`.
   - The JSON reply of `pane create`, `edit` and `tab create`, in every form
     above, names what it started in `created`: `{"tab": "tN", "pane": "pN"}`,
     the new pane and its tab, or the new tab and its one pane, with `pane`
@@ -1752,7 +1755,7 @@ names its socket. CLI JSON names a session `session` and a terminal
   does. Its command is not part of the popup catalog. It does
   not install providers, cache selection, interpret shell strings, or expose
   commands over EONW beyond a calling terminal's `pane create -- COMMAND` and
-  `tab create --directory DIRECTORY -- COMMAND`. Bare executables resolve
+  `tab create --dir DIR -- COMMAND`. Bare executables resolve
   through the terminal PATH; relative executable paths resolve against the
   owning tab's launch directory.
   `[editor] command` is a direct argv, by default `["hx"]`, the packaged
@@ -2616,14 +2619,17 @@ names its socket. CLI JSON names a session `session` and a terminal
   `SetTabDirectory` on a pending tab is a pick of EON-C18's pair.
   Amended on 2026-11-07 (approved by eon-overseer under Lucca's standing rule)
   by `eon-30skm` (S3): its prose says session for the product concept.
+  Amended on 2026-11-09 (approved by Lucca on 2026-11-09, relayed by
+  eon-overseer) by `eon-fv1j0`: a launch's `--dir` is t1's launch directory.
 - **Consumer:** One local Eon session user creating tabs and panes.
 - **Trigger:** Eon creates or recovers a session, creates a tab or pane, or an
   approved same-user client explicitly retargets one live tab.
 - **Result:**
   - Every live tab has one stable `tN` identity and one authoritative absolute
     launch directory. Panes retain `pN` identities.
-  - Fresh `t1` validates the supervisor's absolute launch directory before any
-    terminal recovery or startup. Later new tabs start at the current user's
+  - Fresh `t1` validates the supervisor's absolute launch directory (the
+    caller's working directory, or the absolute form of a launch's `--dir`,
+    EON-C18) before any terminal recovery or startup. Later new tabs start at the current user's
     home directory, resolved by the native home-directory API and validated before creating the tab. EON-C18's
     pending pair commits the selected first-pane directory or starts a pane
     at the tab's starting directory when dismissed.
@@ -2684,6 +2690,9 @@ names its socket. CLI JSON names a session `session` and a terminal
   by `eon-30skm` (S1): EONW v36.
   Amended on 2026-11-07 (approved by eon-overseer under Lucca's standing rule)
   by `eon-30skm` (S3): its prose says session for the product concept.
+  Amended on 2026-11-09 (approved by Lucca on 2026-11-09, relayed by
+  eon-overseer) by `eon-fv1j0`: launch flags `--dir` and `--no-anima`, and
+  `tab create --dir` in place of `--directory`.
 - **Consumer:** One person starting or using full Eon.
 - **Trigger:** Eon needs the first pane for a new tab, or the person presses
   Alt+Z or Alt+Shift+Y.
@@ -2694,10 +2703,12 @@ names its socket. CLI JSON names a session `session` and a terminal
     a random native style, and three seconds; `[anima].enabled = false` skips it.
     Any key other than Anima's style-browsing keys dismisses playback without
     becoming quick-search input. This step does not run for later tabs,
-    attachment, reconnection, same-boot recovery, or eonbase.
+    attachment, reconnection, same-boot recovery, or eonbase. `--no-anima` on
+    `eon`, `eon run` or `eon window new` skips this playback for the window
+    that launch starts; `[anima]` is still validated.
   - A fresh session and every later new tab not created with a directory
-    (EON-C10's `tab create --directory`) begin as one active pending tab
-    with no durable pane. Eon starts the tab's pair: the exact packaged Files
+    (EON-C10's `tab create --dir`, or a launch's `--dir` below) begin as one
+    active pending tab with no durable pane. Eon starts the tab's pair: the exact packaged Files
     Yazi in one Orbit popup terminal at that tab's starting directory (the
     initial launch directory for t1, the user's home for later tabs), showing
     quick search first. The same terminal stays the tab's Files popup after the
@@ -2738,9 +2749,18 @@ names its socket. CLI JSON names a session `session` and a terminal
     state. Explicitly closing a pending tab stops its pair and removes that tab
     without starting a pane; when it is the final tab, the close acts as
     EON-C8's final-tab close.
-  - `eon tab create --directory DIRECTORY` skips the pending pair: its tab is
-    never pending and its first pane starts at DIRECTORY (EON-C10). A bare `eon
+  - `eon tab create --dir DIR` skips the pending pair: its tab is
+    never pending and its first pane starts at DIR (EON-C10). A bare `eon
     tab create` and Venus's new-tab action keep the pending pair.
+  - `--dir DIR` on `eon`, `eon run` or `eon window new` starts a fresh window
+    whose t1 is never pending: there is no pair and so no startup Anima, and
+    its first pane starts at DIR. A relative DIR is made absolute against the
+    caller's working directory without canonicalization; an invalid one fails
+    before any window starts. When bare `eon` would present an already running
+    window instead, `--dir` exits 1, starts and presents nothing, and names
+    `eon tab create --dir` and `eon window new --dir`; `--no-anima` alone
+    presents the window as bare `eon` does. Each flag appears at most once;
+    `eon window attach` and eonbase take neither.
   - EONW v37 exposes the pair as the tab's `files` popup endpoint, never as a
     normal `pN` pane; a pending tab holds exactly that one selected popup and
     no pane. The pair tab may remain live while another durable tab is active.
@@ -3130,11 +3150,14 @@ names its socket. CLI JSON names a session `session` and a terminal
   by `eon-30skm` (S1): terminal IDs `terminal-N`; EONW v36.
   Amended on 2026-11-07 (approved by eon-overseer under Lucca's standing rule)
   by `eon-30skm` (S3): its prose says session for the product concept.
+  Amended on 2026-11-09 (approved by Lucca on 2026-11-09, relayed by
+  eon-overseer) by `eon-fv1j0`: `window new` takes EON-C18's launch flags.
 - **Consumer:** A full-Eon user on native x86_64 Linux Wayland.
-- **Trigger:** `eon window new`, the desktop launcher's New Eon Window action,
-  or Venus's Alt+Shift+N shortcut.
-- **Result:** A fresh directory picker opens in a second native window with its
-  own Eon supervisor, tabs, focus, and durable Orbit terminals. The original
+- **Trigger:** `eon window new [--dir DIR] [--no-anima]`, the desktop
+  launcher's New Eon Window action, or Venus's Alt+Shift+N shortcut.
+- **Result:** A fresh directory picker (or, with `--dir`, a first pane there,
+  EON-C18) opens in a second native window with its own Eon supervisor, tabs,
+  focus, and durable Orbit terminals. The original
   window and its terminals remain unchanged. `window new` reports a stable ID;
   `eon window ls` lists it and `eon window stop ID` stops only its
   terminals. `eon window attach ID` presents the window's live generation,

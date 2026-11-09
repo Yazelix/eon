@@ -2351,7 +2351,7 @@ fn admission(scenario: &mut Scenario, log: &mut Log, deadline: Instant) -> Outco
     )?;
     let work = quote(&scenario.work().to_string_lossy());
     let shown = scenario.new_pane(
-        &format!("{eon} tab create --json --directory {work} -- /bin/sh"),
+        &format!("{eon} tab create --json --dir {work} -- /bin/sh"),
         log,
         deadline,
     )?;

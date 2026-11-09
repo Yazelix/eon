@@ -49,8 +49,10 @@ report `workspace`, the Cargo workspace they are built in.
 
 Fresh sessions first show a three-second random Anima animation after the
 window is ready. Press any key other than the style-browsing keys to dismiss it;
-set `[anima].enabled = false` in `config.toml` to skip it. Quick search then
-opens over the first tab's Files. When other Eon windows still run, a new
+set `[anima].enabled = false` in `config.toml` to skip it, or start with
+`eon --no-anima` to skip it once. Quick search then opens over the first tab's
+Files. `eon --dir DIR` skips both the animation and quick search: the first tab
+opens a terminal in DIR. When other Eon windows still run, a new
 window's first quick search says how many in its header, names up to three,
 and says how to see and quit them; `eon window ls` lists them, and
 `eon session --json` carries them as `running.others`. Press Enter to use a
@@ -690,9 +692,10 @@ line points agents to `eon --skill`.
 | Command | Result |
 |---|---|
 | `eon` | Present the current window or start its first tab on quick search |
+| `eon [--dir DIR] [--no-anima]` | Start the window with its first tab's terminal in DIR, with no quick search and no startup animation, or start it on quick search without the animation. `--dir` fails (exit 1) when the window already runs; use `eon tab create --dir DIR` or `eon window new --dir DIR` then |
 | `eon anima [STYLE] [CHILD OPTIONS...]` | Run pinned Anima in the caller's terminal without starting a session; `--help` lists styles and options |
-| `eon run [-- COMMAND...]` | Start a fresh window on quick search, optionally for an exact first command |
-| `eon window new` | Open an independent Eon window and print its window ID |
+| `eon run [--dir DIR] [--no-anima] [-- COMMAND...]` | Start a fresh window on quick search, optionally for an exact first command; `--dir` and `--no-anima` as for `eon` |
+| `eon window new [--dir DIR] [--no-anima]` | Open an independent Eon window and print its window ID; `--dir` and `--no-anima` as for `eon` |
 | `eon window ls [--json]` | List every running window, the default window first: its ID (shortest unique prefix in text), name, Eon version, start time, live terminals and whether this `eon` controls it directly. Each window this `eon` cannot stop gets a line saying why. JSON adds the full `id`, `current`, `generation`, `state`, `busy`, `attach`, `stop` and `executable` |
 | `eon window attach [ID]` | Present a window after detach (no ID: `default`), through the Eon build that started it when needed |
 | `eon window stop ID [--json]` | Stop only the selected window's terminals; `--json` prints `[{"window": ID, "results": [...]}]` |
@@ -709,7 +712,7 @@ line points agents to `eon --skill`.
 | `eon session rename [SESSION] NAME [--json]` | Name session SESSION, or the caller's session; an empty NAME clears the name |
 | `eon session close SESSION [--json]` | Stop every terminal of SESSION and remove it, asking first without `--json`; closing the last session quits the window |
 | `eon tab create [--json]` | Create a distinct pending tab on quick search, even while another tab waits for its directory. The JSON reply names the new tab in `created` as `{"tab": "tN", "pane": null}`: it has no pane until its directory is picked, and the pick's reply (`tab directory`, or `popup hide` of its quick search) does not name that pane |
-| `eon tab create [--json] [--no-focus] --directory DIRECTORY [-- COMMAND [ARGS...]]` | Create a tab at DIRECTORY without quick search, optionally running an exact command from a calling terminal; `--no-focus` preserves the active tab, selection and popup. The JSON reply names the new tab and its pane in `created`, as `{"tab": "tN", "pane": "pN"}` |
+| `eon tab create [--json] [--no-focus] --dir DIR [-- COMMAND [ARGS...]]` | Create a tab at DIR without quick search, optionally running an exact command from a calling terminal; `--no-focus` preserves the active tab, selection and popup. The JSON reply names the new tab and its pane in `created`, as `{"tab": "tN", "pane": "pN"}` |
 | `eon tab close TAB [--yes] [--json]` | Close any tab of the addressed session without changing the active tab, selection or shown popup; busy closes ask first, as described after this table. The final tab quits the window, or closes the session while others remain, asking first from a terminal |
 | `eon tab directory TAB [--json] -- DIRECTORY` | Set a tab's directory for future terminals; on a pending tab, use DIRECTORY as quick search would: start its first terminal there and hide its Files |
 | `eon tab move left\|right [--json]` | Move the active tab, or the calling terminal's tab, one position |

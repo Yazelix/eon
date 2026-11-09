@@ -161,7 +161,7 @@ fn cli_path(action: &Action) -> CliPath {
         } => [
             words(&["tab", "create"]),
             flag(!focus, "--no-focus"),
-            words(&["--directory"]),
+            words(&["--dir"]),
             vec![bytes(directory)],
             flag(!argv.is_empty(), "--"),
             argv.iter().map(bytes).collect(),

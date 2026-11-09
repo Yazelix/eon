@@ -12,6 +12,11 @@ installation, and proven contract changes.
 - The Agent popup's `auto` command starts Codex as `codex resume --no-daemon`,
   so its `eon` commands act for the popup's own terminal rather than for the
   terminal that started Codex's shared daemon (`eon-7jzwd`).
+- `eon --dir DIR` starts the window with its first tab's terminal in DIR,
+  skipping quick search and the startup animation; `eon --no-anima` skips only
+  the animation, for that launch. Both also work on `eon run` and
+  `eon window new`. `eon tab create --directory DIRECTORY` is now
+  `eon tab create --dir DIR`; `--directory` no longer works (`eon-fv1j0`).
 
 - Venus favors smaller GPU allocations on non-CPU adapters, reducing measured
   Intel Vulkan allocation and residency by about 180 MiB. CPU adapters such

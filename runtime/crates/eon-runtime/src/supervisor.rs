@@ -156,6 +156,20 @@ impl LaunchMode {
     }
 }
 
+/// What one full-Eon launch asks of the fresh window it starts (EON-C18).
+#[derive(Default)]
+pub(super) struct LaunchOptions {
+    /// `--dir`: t1's absolute launch directory, where it starts its
+    /// first pane instead of its pair.
+    pub(super) directory: Option<PathBuf>,
+    /// `--no-anima`: skip the startup Anima.
+    pub(super) no_anima: bool,
+}
+
+/// Why bare `eon --dir` presents nothing: it names a fresh window's
+/// first tab, and this window already runs (EON-C18).
+const RUNNING_WINDOW_DIRECTORY: &str = "this Eon window is already running, so --dir has no fresh first tab to start; use `eon tab create --dir DIR` for a tab there or `eon window new --dir DIR` for a new window";
+
 pub(super) fn launch_current(
     inputs: &Inputs,
     mode: LaunchMode,
@@ -163,7 +177,11 @@ pub(super) fn launch_current(
     attach_existing: bool,
     decorations: bool,
     application_id: &str,
+    options: &LaunchOptions,
 ) -> Result<i32, String> {
+    if let Some(directory) = &options.directory {
+        workspace::validate_initial_directory(directory)?;
+    }
     let generation = current_generation(inputs)?;
     let root = runtime_directory(if mode == LaunchMode::Terminal {
         "eonbase"
@@ -190,6 +208,9 @@ pub(super) fn launch_current(
                     return Err(format!(
                         "generation {generation} already has a live Eon supervisor"
                     ));
+                }
+                if options.directory.is_some() {
+                    return Err(RUNNING_WINDOW_DIRECTORY.into());
                 }
                 let presentation_error =
                     match present_at(inputs, &runtime, &generation, mode, supervisor) {
@@ -266,7 +287,8 @@ pub(super) fn launch_current(
         let startup_animation = (mode == LaunchMode::Workspace)
             .then(|| managed_environment::startup_animation(&config, &inputs.defaults, Some(&log)))
             .transpose()?
-            .flatten();
+            .flatten()
+            .filter(|_| !options.no_anima && options.directory.is_none());
         prepare_generation_runtime(&root, &generation)?;
         if mode == LaunchMode::Workspace
             && let Err(error) = record_launcher(inputs, &runtime)
@@ -284,6 +306,7 @@ pub(super) fn launch_current(
             lifecycle_lock,
             &runtime,
             child,
+            options.directory.clone(),
             &generation,
             mode,
             application_id,
@@ -297,6 +320,9 @@ pub(super) fn launch_current(
     });
     result.or_else(|error| {
         if attach_existing && fs::symlink_metadata(&socket).is_ok() {
+            if options.directory.is_some() {
+                return Err(format!("{error}; {RUNNING_WINDOW_DIRECTORY}"));
+            }
             attach_competing_supervisor(inputs, &socket, &runtime, &generation, mode, &error)
         } else {
             Err(error)
@@ -932,6 +958,7 @@ fn supervise(
     lifecycle_lock: fs::File,
     runtime: &Path,
     child: &[OsString],
+    directory: Option<PathBuf>,
     generation: &str,
     mode: LaunchMode,
     application_id: &str,
@@ -960,8 +987,13 @@ fn supervise(
         })
         .transpose()?;
     let _lifecycle_lock = lifecycle_lock;
-    let launch_directory = env::current_dir()
-        .map_err(|error| format!("cannot resolve Eon launch directory: {error}"))?;
+    // A launch `--dir` gives t1 no pair (EON-C18).
+    let pair = directory.is_none();
+    let launch_directory = match directory {
+        Some(directory) => directory,
+        None => env::current_dir()
+            .map_err(|error| format!("cannot resolve Eon launch directory: {error}"))?,
+    };
     if mode == LaunchMode::Workspace {
         workspace::validate_initial_directory(&launch_directory)?;
     }
@@ -1096,6 +1128,7 @@ fn supervise(
                     launch_directory.clone(),
                     env::home_dir(),
                     popup_catalog.clone(),
+                    pair,
                     |_, _| Ok(Vec::new()),
                     |_| Ok(()),
                 )
@@ -1211,6 +1244,7 @@ fn supervise(
                 launch_directory.clone(),
                 env::home_dir(),
                 popup_catalog.clone(),
+                pair,
                 |command, directory| {
                     managed_environment::prepare_popup_command(
                         command,
@@ -3844,6 +3878,7 @@ mod tests {
             lock,
             &root.join("a/b"),
             &[],
+            None,
             &generation,
             mode,
             "",
@@ -4317,6 +4352,7 @@ mod tests {
                 root.clone(),
                 Some(root.clone()),
                 inputs.defaults.popups.clone(),
+                true,
                 |_, _| Ok(Vec::new()),
                 |_| Ok(()),
             )

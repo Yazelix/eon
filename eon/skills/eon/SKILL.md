@@ -61,7 +61,7 @@ When asked to open a file for the person, run `eon edit --json -- FILE` to open
 the person's configured editor in a new pane, selecting the new pane in your
 tab and dismissing that tab's popup.
 For a work tab, read `eon session --json` first, then run
-`eon tab create --no-focus --json --directory DIR`. This starts a tab at DIR
+`eon tab create --no-focus --json --dir DIR`. This starts a tab at DIR
 without quick search and leaves the person's view alone. Append `-- COMMAND ARGS...`
 to run an exact command from a calling Eon terminal; without a caller this form
 exits 1. Omit the command to open a shell pane. The reply names the new tab

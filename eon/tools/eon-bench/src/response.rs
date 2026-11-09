@@ -1230,7 +1230,7 @@ fn cases(session: &mut Session, options: &Options, samples: &mut Vec<Value>) -> 
         .to_str()
         .ok_or("non-UTF8 output path")?
         .to_owned();
-    session.eon(&["tab", "create", "--directory", &directory, "--json"])?;
+    session.eon(&["tab", "create", "--dir", &directory, "--json"])?;
     session.focus("p1")?;
     let p1 = terminal_pid(session, Some("p1"))?;
     let r1 = *session.targets.get("terminal").ok_or("missing p1 region")?;

@@ -220,6 +220,7 @@ impl WorkspaceSet {
             directory,
             home,
             catalog,
+            true,
             prepare,
             operate,
         )
@@ -235,7 +236,15 @@ impl WorkspaceSet {
         operate: impl FnMut(SessionOperation) -> Result<(), String>,
     ) -> Result<(), String> {
         let registration = self.registry.as_ref().unwrap().create(None).unwrap();
-        self.insert_registered_pending(registration, directory, home, catalog, prepare, operate)
+        self.insert_registered_pending(
+            registration,
+            directory,
+            home,
+            catalog,
+            true,
+            prepare,
+            operate,
+        )
     }
 
     #[cfg(test)]
@@ -268,6 +277,7 @@ impl WorkspaceSet {
         directory: PathBuf,
         home: Option<PathBuf>,
         catalog: PopupCatalog,
+        pair: bool,
         prepare: impl FnMut(&PopupCommand, &Path) -> Result<Vec<OsString>, String>,
         operate: impl FnMut(SessionOperation) -> Result<(), String>,
     ) -> Result<Self, String> {
@@ -281,7 +291,15 @@ impl WorkspaceSet {
             recent_mutations: VecDeque::new(),
             in_flight: None,
         };
-        set.insert_registered_pending(registration, directory, home, catalog, prepare, operate)?;
+        set.insert_registered_pending(
+            registration,
+            directory,
+            home,
+            catalog,
+            pair,
+            prepare,
+            operate,
+        )?;
         Ok(set)
     }
 
@@ -319,12 +337,14 @@ impl WorkspaceSet {
         Ok(allowance)
     }
 
+    #[allow(clippy::too_many_arguments)]
     fn insert_registered_pending(
         &mut self,
         registration: Registration,
         directory: PathBuf,
         home: Option<PathBuf>,
         catalog: PopupCatalog,
+        pair: bool,
         prepare: impl FnMut(&PopupCommand, &Path) -> Result<Vec<OsString>, String>,
         operate: impl FnMut(SessionOperation) -> Result<(), String>,
     ) -> Result<(), String> {
@@ -336,6 +356,7 @@ impl WorkspaceSet {
             directory,
             home,
             catalog,
+            pair,
             prepare,
             operate,
         )?;
@@ -905,6 +926,7 @@ impl WorkspaceSet {
                     directory,
                     Some(home),
                     catalog,
+                    true,
                     prepare,
                     operate,
                 )
@@ -1246,6 +1268,7 @@ impl Workspace {
         directory: PathBuf,
         home: Option<PathBuf>,
         catalog: PopupCatalog,
+        pair: bool,
         mut prepare: impl FnMut(&PopupCommand, &Path) -> Result<Vec<OsString>, String>,
         mut operate: impl FnMut(SessionOperation) -> Result<(), String>,
     ) -> Result<Self, String> {
@@ -1268,17 +1291,20 @@ impl Workspace {
             }],
             active: 0,
         };
-        if workspace
-            .open_popup(
-                ids,
-                allowance,
-                0,
-                FILES_ENTRY,
-                &mut prepare,
-                &mut operate,
-                true,
-            )
-            .is_err()
+        // Without its pair, as for a launch `--dir` (EON-C18), t1
+        // starts its first pane at once.
+        if !pair
+            || workspace
+                .open_popup(
+                    ids,
+                    allowance,
+                    0,
+                    FILES_ENTRY,
+                    &mut prepare,
+                    &mut operate,
+                    true,
+                )
+                .is_err()
         {
             workspace.tabs[0].pending = false;
             workspace.start_pane(ids, allowance, 0, &mut operate)?;
@@ -3870,6 +3896,7 @@ mod tests {
             root.into(),
             Some(root.into()),
             catalog(),
+            true,
             prepared,
             |_| Ok(()),
         )
@@ -4177,6 +4204,57 @@ mod tests {
         );
         assert_eq!(registry.list().unwrap(), records);
         fs::remove_dir_all(root).unwrap();
+    }
+
+    /// A launch `--dir` starts t1's first pane at once, with no pair
+    /// (EON-C18).
+    #[test]
+    fn a_launch_directory_starts_t1_with_its_first_pane_and_no_pair() {
+        let registry = Registry::in_test_directory(
+            super::super::supervisor::temporary_directory().join("sessions"),
+        );
+        let registration = registry.create(None).unwrap();
+        let mut started = Vec::new();
+        let set = WorkspaceSet::registered_pending(
+            Some(registry),
+            registration,
+            "/runtime".into(),
+            "/launch".into(),
+            Some("/".into()),
+            catalog(),
+            false,
+            prepared,
+            |operation| {
+                if let SessionOperation::Start {
+                    session,
+                    directory,
+                    command,
+                    tab,
+                } = operation
+                {
+                    started.push((session.id, directory, command, tab));
+                }
+                Ok(())
+            },
+        )
+        .unwrap();
+        assert_eq!(
+            started,
+            [(
+                "terminal-1".to_owned(),
+                PathBuf::from("/launch"),
+                LaunchCommand::Pane,
+                None
+            )]
+        );
+        let snapshot = set.snapshot();
+        let [tab] = snapshot.tabs.as_slice() else {
+            panic!("one tab");
+        };
+        assert!(!tab.pending && tab.popups.is_empty() && tab.selected_popup.is_none());
+        assert_eq!(tab.directory, b"/launch");
+        assert_eq!(tab.selected_pane.as_deref(), Some("p1"));
+        assert_eq!(tab.panes().count(), 1);
     }
 
     fn two_workspace_set(
