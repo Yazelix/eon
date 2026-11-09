@@ -980,32 +980,32 @@
               ${lib.escapeShellArg (builtins.toJSON (self.rev or null))} "$build" ${system} \
               packages.${system}.default > "$out/share/eon-source-receipt.json"
           '';
+          # eonbase is Eon's executable under its own name, which selects the eonbase
+          # command line. It copies eonPackage's built executable rather than compiling
+          # and testing the eon crate again, and copies rather than links so its closure
+          # stays free of eonPackage (the eonbase-closure check).
           eonbasePackage =
             assert manifest.composition.services == [ orbitIdentity.id ];
             assert manifest.composition.clients == [ venusIdentity.id ];
-            eonPackage.overrideAttrs (_: {
-              pname = "eonbase";
-              desktopItems = [ ];
-              postInstall = ''
-                mv "$out/bin/eon" "$out/bin/eonbase"
-                install -Dm444 ${./LICENSE} "$out/share/licenses/eonbase/LICENSE"
-                install -Dm444 ${./runtime/LICENSE} "$out/share/licenses/eonbase/eon-runtime/LICENSE"
-                install -Dm444 ${./runtime/NOTICE} "$out/share/licenses/eonbase/eon-runtime/NOTICE"
-              '';
-              postFixup = ''
-                wrapProgram "$out/bin/eonbase" \
-                  --set EON_ORBIT "${orbitPackage}/bin/yazelix-orbit" \
-                  --set EON_VENUS "${venusPackage}/bin/yazelix-venus" \
-                  --unset EON_SESSION_BIN \
-                  --prefix TERMINFO_DIRS : "${orbitPackage}/share/terminfo"
-              '';
+            pkgs.runCommand "eonbase-${eonCargo.package.version}" {
+              nativeBuildInputs = [ pkgs.makeWrapper ];
               meta = {
                 description = "Reusable Eon terminal product";
                 license = lib.licenses.asl20;
                 mainProgram = "eonbase";
                 platforms = [ system ];
               };
-            });
+            } ''
+              install -Dm755 ${eonPackage}/bin/.eon-wrapped "$out/bin/eonbase"
+              install -Dm444 ${./LICENSE} "$out/share/licenses/eonbase/LICENSE"
+              install -Dm444 ${./runtime/LICENSE} "$out/share/licenses/eonbase/eon-runtime/LICENSE"
+              install -Dm444 ${./runtime/NOTICE} "$out/share/licenses/eonbase/eon-runtime/NOTICE"
+              wrapProgram "$out/bin/eonbase" \
+                --set EON_ORBIT "${orbitPackage}/bin/yazelix-orbit" \
+                --set EON_VENUS "${venusPackage}/bin/yazelix-venus" \
+                --unset EON_SESSION_BIN \
+                --prefix TERMINFO_DIRS : "${orbitPackage}/share/terminfo"
+            '';
           eonbaseClosure = pkgs.closureInfo { rootPaths = [ eonbasePackage ]; };
           coinstalledProducts = pkgs.buildEnv {
             name = "eon-products-profile-check";

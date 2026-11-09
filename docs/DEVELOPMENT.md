@@ -743,6 +743,8 @@ compares each launcher's environment with makeWrapper's. It needs unprivileged
 user namespaces inside the Nix build sandbox.
 
 Build both installed products with `nix build --no-link .#default .#eonbase`.
+eonbase installs Eon's built executable under its own name, so the eon crate
+compiles and its package tests run once for both.
 
 Linux package checks use the sandbox's executable `/dev/shm` for ephemeral test
 state, keeping lifecycle records and sockets off the builder's disk journal.
