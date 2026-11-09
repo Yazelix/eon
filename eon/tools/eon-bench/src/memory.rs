@@ -23,6 +23,7 @@ use crate::{
 };
 
 mod venus;
+pub(crate) mod window;
 
 type Result<T = ()> = std::result::Result<T, String>;
 const COUNT: usize = 50;
@@ -232,7 +233,7 @@ fn remove_results(out: &Path) {
     }
 }
 
-fn payload() -> Vec<u8> {
+pub(crate) fn payload() -> Vec<u8> {
     (1..=10_000)
         .map(|i| {
             format!(
@@ -243,6 +244,19 @@ fn payload() -> Vec<u8> {
         })
         .collect::<String>()
         .into_bytes()
+}
+
+pub(crate) fn zellij_layout(args: &[String]) -> String {
+    let quote = |s: &str| Value::from(s).to_pretty().trim().to_owned();
+    format!(
+        "layout {{\n pane command={} {{\n args {};\n }}\n}}\n",
+        quote(&args[0]),
+        args[1..]
+            .iter()
+            .map(|s| quote(s))
+            .collect::<Vec<_>>()
+            .join(" ")
+    )
 }
 
 fn hash(bytes: &[u8]) -> String {
@@ -653,17 +667,7 @@ impl<'a> Session<'a> {
     }
     fn layout(&self, dir: &Path) -> Result<PathBuf> {
         let args = self.child_args(dir);
-        // JSON string escaping is also valid for these KDL basic strings.
-        let quote = |s: &str| Value::from(s).to_pretty().trim().to_owned();
-        let text = format!(
-            "layout {{\n pane command={} {{\n args {};\n }}\n}}\n",
-            quote(&args[0]),
-            args[1..]
-                .iter()
-                .map(|s| quote(s))
-                .collect::<Vec<_>>()
-                .join(" ")
-        );
+        let text = zellij_layout(&args);
         let path = dir.join("layout.kdl");
         fs::write(&path, text).map_err(error)?;
         fs::copy(
@@ -1044,7 +1048,7 @@ fn sample_metric(sample: &Sample, metric: &str) -> Result<f64> {
     )
 }
 
-fn verify_screen(screen: &str) -> Result {
+pub(crate) fn verify_screen(screen: &str) -> Result {
     let expected = String::from_utf8(payload()).map_err(error)?;
     let actual: Vec<_> = screen
         .lines()

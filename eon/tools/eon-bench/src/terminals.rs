@@ -4,6 +4,7 @@ use crate::{
     json::Value,
     kitten,
     launcher::{BusPolicy, Headless, Renderer, WindowMode},
+    memory,
     result::{Cell, Grid, RunResult, Sample, utc_timestamp},
     sha256::Sha256,
     stats::Summary,
@@ -48,13 +49,17 @@ pub struct Options {
 }
 fn help() -> String {
     format!(
-        "{USAGE}\n\nCompare parser/PTY completion with rendering enabled; no pixel-latency claim.\n\
+        "{USAGE}\n\nCompare native-VT status-reply completion or one-window process memory.\n\
+Memory seconds are rollup collection time; byte counters/window-memory.md hold memory.\n\
+No pixel-latency claim.\n\
   --eon PATH       out-link-built Nix Eon candidate from this bench's tree (required)\n\
   --source-tree HASH  exact git write-tree used for candidate and bench builds (required)\n\
   --renderer MODE  lavapipe (default) or /dev/dri/renderD<N>\n\
   --subject NAME   eon, foot, alacritty, kitty, ghostty, wezterm, herdr-app; repeat\n\
+                   opt-in: foot-tmux, foot-zellij (one pane inside foot)\n\
   --only WORKLOAD  cat64 or kitten-<ascii|unicode|csi|images|long_escape_codes>\n\
                    repeat; default cat64 and all five kitten workloads\n\
+                   opt-in: memory-empty, memory-filled (eon/foot/ghostty only)\n\
   --kitten-repetitions N  default 100 (1 with --quick)\n\
   --deadline SECONDS      per sample, including startup/writes (default 180)\n\n\
 Private Sway/HOME/runtime/D-Bus and PID/network namespace; never the desktop.\n\
@@ -100,11 +105,19 @@ pub fn options(args: &[String]) -> Result<Options> {
                 source_tree.replace(value.to_lowercase()).is_some()
             }
             "--subject" => {
-                add(&mut subjects, value, &SUBJECTS)?;
+                add(
+                    &mut subjects,
+                    value,
+                    &[&SUBJECTS[..], &["foot-tmux", "foot-zellij"]].concat(),
+                )?;
                 false
             }
             "--only" => {
-                let mut names = vec!["cat64".to_owned()];
+                let mut names = vec![
+                    "cat64".to_owned(),
+                    "memory-empty".into(),
+                    "memory-filled".into(),
+                ];
                 names.extend(kitten::BENCHMARKS.iter().map(|n| format!("kitten-{n}")));
                 add(
                     &mut workloads,
@@ -136,6 +149,13 @@ pub fn options(args: &[String]) -> Result<Options> {
     if workloads.is_empty() {
         workloads.push("cat64".into());
         workloads.extend(kitten::BENCHMARKS.iter().map(|s| format!("kitten-{s}")));
+    }
+    if workloads.iter().any(|w| w.starts_with("memory-"))
+        && subjects
+            .iter()
+            .any(|s| !["eon", "foot", "ghostty"].contains(&s.as_str()))
+    {
+        return Err("window memory subjects are eon, foot and ghostty".into());
     }
     Ok(Options {
         settings,
@@ -316,7 +336,7 @@ fn start_once(issued: &mut bool, ready: bool) -> bool {
 }
 
 fn adapter_evidence(name: &str, gpu: Option<&str>, log: &str) -> &'static str {
-    if name == "foot" {
+    if name == "foot" || name.starts_with("foot-") {
         return "cpu";
     }
     if let Some(gpu) = gpu {
@@ -390,7 +410,7 @@ fn comparison_status(has_failures: bool, complete: bool) -> &'static str {
 
 fn summary(cells: &[Cell]) -> String {
     let mut table = String::from("subject\tworkload\tn\tp50_seconds\tp95_seconds\tp50_MB/s\n");
-    for cell in cells {
+    for cell in cells.iter().filter(|c| !c.workload.starts_with("memory-")) {
         let times = cell.samples.iter().map(|s| s.seconds).collect::<Vec<_>>();
         if let Some(s) = Summary::of(&times) {
             table.push_str(&format!(
@@ -407,6 +427,90 @@ fn summary(cells: &[Cell]) -> String {
     table
 }
 
+fn sample_counters(detail: &Value, bytes: u64) -> Result<Vec<(String, u64)>> {
+    let mut counters = vec![("input_bytes".into(), bytes)];
+    if let Some(memory) = detail.get("memory").filter(|m| **m != Value::Null) {
+        for prefix in ["", "venus_"] {
+            for metric in ["pss_bytes", "rss_bytes", "pss_anon_bytes"] {
+                let key = format!("{prefix}{metric}");
+                if let Some(value) = memory.get(&key) {
+                    counters.push((key, value.as_u64().ok_or("invalid memory byte counter")?));
+                } else if prefix.is_empty() {
+                    return Err("missing window memory metric".into());
+                }
+            }
+        }
+    }
+    Ok(counters)
+}
+
+fn multiplexer_summary(cells: &[Cell]) -> String {
+    let mut table =
+        "subject\tworkload\ttime_ratio_to_foot\toverhead_percent\tcompletion_rate_ratio_to_foot\n"
+            .to_owned();
+    for cell in cells.iter().filter(|c| !c.workload.starts_with("memory-")) {
+        let median = |c: &Cell| {
+            Summary::of(&c.samples.iter().map(|s| s.seconds).collect::<Vec<_>>()).map(|s| s.median)
+        };
+        if let Some(base) = cells
+            .iter()
+            .find(|c| c.subject == "foot" && c.workload == cell.workload)
+            && let (Some(base), Some(subject)) = (median(base), median(cell))
+        {
+            let ratio = subject / base;
+            table.push_str(&format!(
+                "{}\t{}\t{ratio:.6}\t{:.3}\t{:.6}\n",
+                cell.subject,
+                cell.workload,
+                100.0 * (ratio - 1.0),
+                1.0 / ratio
+            ));
+        }
+    }
+    table
+}
+
+fn memory_summary(cells: &[Cell]) -> Result<String> {
+    let mut table = "MiB per fresh window, median (nearest-rank p05–p95); held workload excluded. Venus is attribution, not the full Eon total.\n\n| Subject | Workload | n | PSS | RSS | Pss_Anon |\n| --- | --- | ---: | ---: | ---: | ---: |\n".to_owned();
+    for cell in cells
+        .iter()
+        .filter(|c| c.workload.starts_with("memory-") && !c.samples.is_empty())
+    {
+        for prefix in ["", "venus_"] {
+            if prefix == "venus_" && cell.subject != "eon" {
+                continue;
+            }
+            table.push_str(&format!(
+                "| {}{} | {} | {} |",
+                cell.subject,
+                if prefix.is_empty() { "" } else { "/Venus only" },
+                cell.workload,
+                cell.samples.len()
+            ));
+            for metric in ["pss_bytes", "rss_bytes", "pss_anon_bytes"] {
+                let key = format!("{prefix}{metric}");
+                let mut values = cell
+                    .samples
+                    .iter()
+                    .map(|s| {
+                        s.counters
+                            .iter()
+                            .find(|(k, _)| k == &key)
+                            .map(|(_, v)| *v as f64 / 1048576.0)
+                            .ok_or_else(|| "missing memory counter".to_owned())
+                    })
+                    .collect::<Result<Vec<_>>>()?;
+                values.sort_by(f64::total_cmp);
+                let s = Summary::of(&values).ok_or("missing memory samples")?;
+                let p05 = values[(values.len() * 5).div_ceil(100) - 1];
+                table.push_str(&format!(" {:.3} ({p05:.3}–{:.3}) |", s.median, s.p95));
+            }
+            table.push('\n');
+        }
+    }
+    Ok(table)
+}
+
 pub fn run_inner(options: &Options) -> Result {
     let settings = &options.settings;
     if let Some(cpus) = &settings.cpus {
@@ -420,6 +524,18 @@ pub fn run_inner(options: &Options) -> Result {
     let corpus_dir = settings.out.join("corpus");
     if options.workloads.iter().any(|s| s == "cat64") {
         corpus::write_files(&corpus_dir, &[corpus::find("cat64").unwrap()])?;
+    }
+    for workload in options
+        .workloads
+        .iter()
+        .filter(|w| w.starts_with("memory-"))
+    {
+        let payload = if workload == "memory-filled" {
+            memory::payload()
+        } else {
+            b"\x1b[0m\x1b[2J\x1b[H".to_vec()
+        };
+        fs::write(settings.out.join(format!("{workload}.vt")), payload).map_err(error)?;
     }
     let mut tools = vec![
         (
@@ -446,13 +562,24 @@ pub fn run_inner(options: &Options) -> Result {
         let path = if name == "eon" {
             Ok(options.eon.clone())
         } else {
-            tool(name)
+            tool(if name.starts_with("foot-") {
+                "foot"
+            } else {
+                name
+            })
         };
         match path {
             Ok(path) => {
                 let identity = format!("{} sha256:{}", path.display(), hash(&path)?);
                 tools.push((name.clone(), identity.clone()));
                 subjects.push((name.clone(), path, identity));
+                if let Some(mux) = name.strip_prefix("foot-") {
+                    let mux = tool(mux)?;
+                    tools.push((
+                        name.clone() + "-mux",
+                        format!("{} sha256:{}", mux.display(), hash(&mux)?),
+                    ));
+                }
             }
             Err(e) => {
                 unavailable.insert(name.clone());
@@ -474,9 +601,18 @@ pub fn run_inner(options: &Options) -> Result {
             let corpus = corpus::find(workload);
             cells.push(Cell {
                 workload: workload.clone(),
-                corpus_sha256: corpus.map_or(String::new(), |c| c.sha256.into()),
+                corpus_sha256: if workload.starts_with("memory-") {
+                    hash(&settings.out.join(format!("{workload}.vt")))?
+                } else {
+                    corpus.map_or(String::new(), |c| c.sha256.into())
+                },
                 input_bytes: corpus.map_or(0, |c| c.length),
-                layer: "render-enabled-completion".into(),
+                layer: if workload.starts_with("memory-") {
+                    "one-window-process-memory"
+                } else {
+                    "render-enabled-completion"
+                }
+                .into(),
                 subject: name.clone(),
                 subject_version: identity.clone(),
                 samples: Vec::new(),
@@ -538,7 +674,7 @@ pub fn run_inner(options: &Options) -> Result {
                                     .get("load_start")
                                     .and_then(Value::as_f64)
                                     .ok_or("missing sample load")?,
-                                counters: vec![("input_bytes".into(), bytes)],
+                                counters: sample_counters(&detail, bytes)?,
                             },
                         );
                         (detail, None)
@@ -622,7 +758,7 @@ pub fn run_inner(options: &Options) -> Result {
             ("font_family".into(), "DejaVu Sans Mono".into()),
             ("fontconfig".into(), tool("fontconfig")?.display().to_string().into()),
             ("product_fontconfig_mount".into(), tool("product_fontconfig")?.display().to_string().into()),
-            ("measurement".into(), "Status-reply completion with rendering enabled; image-display support is not validated, so images is protocol-consumption timing, not an image-rendering rate".into()),
+            ("measurement".into(), "memory-* cells store rollup collection duration in seconds and memory in byte counters. Other workloads store native-VT status-reply completion with rendering enabled; outer foot redraw work is mostly outside the mux timer. Image-display support is not validated, so images is protocol-consumption timing, not an image-rendering rate".into()),
             ("gaps".into(), Value::Array(gaps)),
             ("failures".into(), Value::Array(failures.clone())),
             ("incomplete_cells".into(), Value::Array(incomplete)),
@@ -649,6 +785,16 @@ pub fn run_inner(options: &Options) -> Result {
     fs::write(settings.out.join("result.json"), json.to_pretty()).map_err(error)?;
     let table = summary(&result.cells);
     fs::write(settings.out.join("summary.tsv"), &table).map_err(error)?;
+    fs::write(
+        settings.out.join("multiplexer.tsv"),
+        multiplexer_summary(&result.cells),
+    )
+    .map_err(error)?;
+    fs::write(
+        settings.out.join("window-memory.md"),
+        memory_summary(&result.cells)?,
+    )
+    .map_err(error)?;
     println!("{table}");
     if failures.is_empty() && complete {
         Ok(())
@@ -744,7 +890,45 @@ fn sample(
 ) -> std::result::Result<(f64, u64, Value), SampleFailure> {
     let deadline = Instant::now() + options.deadline;
     let mut launch = Headless::new(dir, &options.eon, WindowMode::Floating)?;
-    options.renderer.apply(&mut launch)?;
+    let outcome = sample_run(
+        options,
+        &mut launch,
+        name,
+        program,
+        workload,
+        (font, kitten_path),
+        deadline,
+    );
+    // Mux servers can daemonize; remember this sample's marked processes even on errors.
+    for entry in fs::read_dir("/proc").map_err(error)? {
+        if let Some(pid) = entry
+            .ok()
+            .and_then(|e| e.file_name().to_str()?.parse().ok())
+        {
+            launch.processes.remember(pid);
+        }
+    }
+    if !launch.processes.cleanup() {
+        return Err(SampleFailure::Environment(
+            "private processes still live".into(),
+        ));
+    }
+    outcome
+}
+
+fn sample_run(
+    options: &Options,
+    launch: &mut Headless,
+    name: &str,
+    program: &Path,
+    workload: &str,
+    paths: (&Path, &Path),
+    deadline: Instant,
+) -> std::result::Result<(f64, u64, Value), SampleFailure> {
+    let dir = launch.out.clone();
+    let dir = dir.as_path();
+    let (font, kitten_path) = paths;
+    options.renderer.apply(launch)?;
     if options.renderer.0 != "lavapipe" {
         let directory = PathBuf::from(&launch.env["VK_DRIVER_FILES"]);
         let mut manifests = fs::read_dir(directory)
@@ -845,7 +1029,11 @@ fn sample(
         child_args.insert(index + 1, dir.join("setup.vt").display().to_string());
     }
     let config = dir.join("terminal.conf");
-    let args: Vec<String> = match name {
+    let mut args: Vec<String> = match if name.starts_with("foot-") {
+        "foot"
+    } else {
+        name
+    } {
         "eon" => {
             fs::write(dir.join("config/config.toml"), "[anima]\nenabled = false\n[terminal]\nfont_family = \"DejaVu Sans Mono\"\nfont_size = 16\ncolumns = 80\nrows = 24\nbackground_opacity = 1.0\n").map_err(error)?;
             [vec!["run".into(), "--".into()], child_args.clone()].concat()
@@ -954,9 +1142,68 @@ fn sample(
         }
         _ => unreachable!(),
     };
+    let mux_version = if let Some(mux) = name.strip_prefix("foot-") {
+        let mux_path = tool(mux)?;
+        let version = call(
+            launch,
+            deadline,
+            &mux_path,
+            &[if mux == "tmux" { "-V" } else { "--version" }],
+        )?;
+        let mux_args = if mux == "tmux" {
+            let conf = dir.join("tmux.conf");
+            fs::write(
+                &conf,
+                "set -g status off\nset -g history-limit 10000\nset -g default-size 80x24\n",
+            )
+            .map_err(error)?;
+            [
+                vec![
+                    mux_path.display().to_string(),
+                    "-f".into(),
+                    conf.display().to_string(),
+                    "-S".into(),
+                    Path::new(&launch.env["XDG_RUNTIME_DIR"])
+                        .join("tmux.sock")
+                        .display()
+                        .to_string(),
+                    "new-session".into(),
+                    "-s".into(),
+                    "bench".into(),
+                    "--".into(),
+                ],
+                child_args.clone(),
+            ]
+            .concat()
+        } else {
+            let conf = dir.join("zellij.kdl");
+            fs::write(&conf, "pane_frames false\nscroll_buffer_size 10000\nsession_serialization false\nshow_release_notes false\nshow_startup_tips false\nweb_server false\n").map_err(error)?;
+            let sockets = Path::new(&launch.env["XDG_RUNTIME_DIR"]).join("zellij");
+            fs::create_dir(&sockets).map_err(error)?;
+            launch
+                .env
+                .insert("ZELLIJ_SOCKET_DIR".into(), sockets.display().to_string());
+            // Start the workload only inside foot, so its grid wait excludes compositor setup.
+            vec![
+                mux_path.display().to_string(),
+                "--config".into(),
+                conf.display().to_string(),
+                "--layout-string".into(),
+                memory::zellij_layout(&child_args),
+                "attach".into(),
+                "--create".into(),
+                "bench".into(),
+            ]
+        };
+        args.truncate(2); // Keep foot's config arguments; replace only its child argv.
+        args.extend(mux_args);
+        Some(version)
+    } else {
+        None
+    };
     let mut core_stop = if name == "herdr-app" {
         Some(CoreStop::new(
-            &launch,
+            launch,
             &program
                 .parent()
                 .ok_or("missing Herdr core directory")?
@@ -967,7 +1214,7 @@ fn sample(
         None
     };
     let mut version = call(
-        &launch,
+        launch,
         deadline,
         program,
         &[if name == "eon" {
@@ -991,7 +1238,7 @@ fn sample(
         )
         .map_err(error)?;
         version.push_str(&call(
-            &launch,
+            launch,
             deadline,
             &program
                 .parent()
@@ -1001,8 +1248,12 @@ fn sample(
         )?);
     }
     fs::write(dir.join("version.txt"), &version).map_err(error)?;
+    if let Some(mux) = mux_version {
+        version.push_str(&format!("\n{mux}"));
+        fs::write(dir.join("version.txt"), &version).map_err(error)?;
+    }
     launch.start_compositor_until(BusPolicy::Private, deadline)?;
-    let outputs = sway(&launch, deadline, &["-t", "get_outputs", "-r"])?;
+    let outputs = sway(launch, deadline, &["-t", "get_outputs", "-r"])?;
     let active = outputs
         .as_array()
         .ok_or("missing compositor outputs")?
@@ -1019,7 +1270,7 @@ fn sample(
         return Err("private compositor is not one 1280x800 output at scale 1".into());
     }
     let matched_font = call(
-        &launch,
+        launch,
         deadline,
         &tool("fc_match")?,
         &["-f", "%{file}", "DejaVu Sans Mono:style=Book"],
@@ -1082,8 +1333,8 @@ fn sample(
             && !herdr_issued
             && start_once(
                 &mut herdr_issued,
-                window(&sway(&launch, deadline, &["-t", "get_tree", "-r"])?).is_some()
-                    && call(&launch, deadline, program, &["status"]).is_ok(),
+                window(&sway(launch, deadline, &["-t", "get_tree", "-r"])?).is_some()
+                    && call(launch, deadline, program, &["status"]).is_ok(),
             )
         {
             let arguments = object([
@@ -1123,7 +1374,7 @@ fn sample(
         }
         if name == "eon" && !dismissed {
             match call(
-                &launch,
+                launch,
                 deadline,
                 &launch.eon,
                 &[
@@ -1143,7 +1394,7 @@ fn sample(
             }
         }
         if last_resize.elapsed() > Duration::from_millis(150) {
-            let native = window(&sway(&launch, deadline, &["-t", "get_tree", "-r"])?);
+            let native = window(&sway(launch, deadline, &["-t", "get_tree", "-r"])?);
             let actual = fs::read_to_string(dir.join("grid"))
                 .ok()
                 .and_then(|s| grid(&s).ok());
@@ -1169,7 +1420,7 @@ fn sample(
                 let width = (width + (COLS as i64 - cols) * 10).clamp(100, 1260);
                 let height = (height + (ROWS as i64 - rows) * 19).clamp(100, 780);
                 sway(
-                    &launch,
+                    launch,
                     deadline,
                     &[&format!(
                         "[con_id={id}] resize set width {width} px height {height} px, move position center"
@@ -1200,19 +1451,48 @@ fn sample(
         return Err("workload failed; see terminal.log/eon.log".into());
     }
     let report = read(&dir.join("report.json"))?;
-    let (seconds, bytes) = measurement(&report)?;
+    let (mut seconds, mut bytes) = measurement(&report)?;
     let load = read(&dir.join("load.json"))?;
     if name == "eon" {
-        let text = call(&launch, deadline, &launch.eon, &["pane", "read", "p1"])?;
+        let text = call(launch, deadline, &launch.eon, &["pane", "read", "p1"])?;
         fs::write(dir.join("visible.txt"), &text).map_err(error)?;
-        if !text.contains(MARKER) {
+        if workload == "memory-filled" {
+            memory::verify_screen(&text)?;
+        } else if workload == "memory-empty" {
+            if !text.trim().is_empty() {
+                return Err("empty window contains unexpected text".into());
+            }
+        } else if !text.contains(MARKER) {
             return Err("Eon visible text does not contain the final marker".into());
         }
     }
+    let memory = if workload.starts_with("memory-") {
+        std::thread::sleep(Duration::from_secs(1).min(remaining(deadline)?));
+        remaining(deadline)?;
+        let held = fs::read_to_string(dir.join("ready"))
+            .map_err(error)?
+            .trim()
+            .parse()
+            .map_err(error)?;
+        let memory = memory::window::measure(
+            launch.processes.children[app_index].id(),
+            held,
+            name == "eon",
+            dir,
+        )?;
+        seconds = memory
+            .get("collection_seconds")
+            .and_then(Value::as_f64)
+            .ok_or("missing memory collection time")?;
+        bytes = 0;
+        memory
+    } else {
+        Value::Null
+    };
     // Retain an image of the final marker without putting screencopy in the timed region.
     std::thread::sleep(Duration::from_millis(200).min(remaining(deadline)?));
     call(
-        &launch,
+        launch,
         deadline,
         Path::new("grim"),
         &[dir.join("final.png").to_str().ok_or("non-UTF8 output")?],
@@ -1243,6 +1523,7 @@ fn sample(
     let detail = object([
         ("seconds", seconds.into()),
         ("input_bytes", bytes.into()),
+        ("memory", memory),
         (
             "load_start",
             load.get("start").cloned().ok_or("missing start load")?,
@@ -1299,7 +1580,12 @@ fn sample(
         ("matched_font", matched_font.into()),
         (
             "oracle",
-            "DSR after final marker; final.png retained (not a pixel-latency measurement)".into(),
+            if workload.starts_with("memory-") {
+                "DSR after memory payload; history preserved; final.png retained"
+            } else {
+                "DSR after final marker; final.png retained (not a pixel-latency measurement)"
+            }
+            .into(),
         ),
     ]);
     child::publish(&dir.join("release"), "")?;
@@ -1307,9 +1593,6 @@ fn sample(
         launch.stop_eon()?;
     } else if let Some(stop) = &mut core_stop {
         stop.stop()?;
-    }
-    if !launch.processes.cleanup() {
-        return Err("private processes still live".into());
     }
     Ok((seconds, bytes, detail))
 }
@@ -1336,7 +1619,13 @@ pub fn workload(args: &[String]) -> Result {
     let dir = Path::new(dir);
     writer::run(&dir.join("setup.vt"), &dir.join("setup-final.json"))?;
     let start_load = environment::load()?;
-    if name == "cat64" {
+    if name.starts_with("memory-") {
+        let payload = dir
+            .parent()
+            .ok_or("missing suite directory")?
+            .join(format!("{name}.vt"));
+        writer::run(&payload, &dir.join("report.json"))?;
+    } else if name == "cat64" {
         writer::run(Path::new(cat64), &dir.join("report.json"))?;
     } else {
         let name = name
@@ -1378,6 +1667,9 @@ pub fn workload(args: &[String]) -> Result {
         .to_pretty(),
     )
     .map_err(error)?;
+    if name.starts_with("memory-") {
+        return Ok(());
+    }
     let marker = dir.join("marker.vt");
     fs::write(
         &marker,
@@ -1390,6 +1682,54 @@ pub fn workload(args: &[String]) -> Result {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn derived_tables_use_memory_bytes_and_complete_same_cohort_foot_times() {
+        let mut foot = cell();
+        foot.subject = "foot".into();
+        foot.samples = vec![sample_value(1.0), sample_value(3.0)];
+        let mut mux = foot.clone();
+        mux.subject = "foot-tmux".into();
+        mux.samples = vec![sample_value(2.0), sample_value(6.0)];
+        let table = multiplexer_summary(&[foot.clone(), mux.clone()]);
+        assert!(table.contains("foot-tmux\tcat64\t2.000000\t100.000\t0.500000"));
+        mux.samples.pop();
+        let mut incomplete = vec![foot, mux];
+        incomplete_cells(&mut incomplete, 2, &[]);
+        assert!(!multiplexer_summary(&incomplete).contains("foot-tmux\t"));
+        let mut memory = cell();
+        memory.subject = "foot".into();
+        memory.workload = "memory-empty".into();
+        memory.samples = vec![Sample {
+            seconds: 0.001,
+            load: 1.0,
+            counters: ["pss_bytes", "rss_bytes", "pss_anon_bytes"]
+                .map(|k| (k.into(), 2 * 1048576))
+                .to_vec(),
+        }];
+        assert!(
+            memory_summary(&[memory.clone()])
+                .unwrap()
+                .contains("2.000 (2.000–2.000)")
+        );
+        assert!(!summary(&[memory]).contains("memory-empty"));
+    }
+    #[test]
+    fn mux_and_window_memory_use_the_terminal_rig_selections() {
+        let args = "--eon /candidate --out /evidence --source-tree 0000000000000000000000000000000000000000 --subject foot-tmux --subject foot-zellij --only cat64"
+            .split_whitespace().map(str::to_owned).collect::<Vec<_>>();
+        let selected = options(&args).unwrap();
+        assert_eq!(selected.subjects, ["foot-tmux", "foot-zellij"]);
+        assert_eq!(selected.workloads, ["cat64"]);
+        let args = "--eon /candidate --out /evidence --source-tree 0000000000000000000000000000000000000000 --subject eon --subject foot --subject ghostty --only memory-empty --only memory-filled"
+            .split_whitespace().map(str::to_owned).collect::<Vec<_>>();
+        assert_eq!(
+            options(&args).unwrap().workloads,
+            ["memory-empty", "memory-filled"]
+        );
+        let mut bad = args.clone();
+        bad.extend(["--subject".into(), "foot-tmux".into()]);
+        assert!(options(&bad).is_err());
+    }
     #[test]
     fn selections_and_measurements_reject_invalid_or_empty_samples() {
         let args = |s: &str| s.split_whitespace().map(str::to_owned).collect::<Vec<_>>();

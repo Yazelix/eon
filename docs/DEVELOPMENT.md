@@ -508,6 +508,54 @@ reference exposes them. Use the
 coordinator's heavy wrapper for builds and measured runs, and never the
 active display, installed profile or a live Eon root.
 
+#### Multiplexer overhead and one-window memory
+
+The same `terminals` rig accepts opt-in `--subject foot-tmux` and
+`--subject foot-zellij`. These run one pane inside the pinned foot, with
+private mux configuration and sockets, status/pane chrome disabled, and the
+same inner 80×24 PTY checks. Select bare foot in the same cohort to compute
+`multiplexer.tsv`: the median native-VT status-reply time ratio to foot,
+`100 * (ratio - 1)` percent overhead, and reciprocal completion-rate ratio.
+The clock stops when foot answers for bare foot, tmux or Zellij answers for
+the respective mux row, or Orbit answers for Eon. Foot's work on the mux's
+redraws is mostly outside this timer, so the reported mux overhead may
+understate the cost of the mux and foot together. Eon's row is an application
+comparison; it does not isolate a renderer or mux cause.
+
+```sh
+nix run .#bench -- terminals --eon CANDIDATE/bin/eon --out NEW_DIR \
+  --source-tree STAGED_TREE_HASH --renderer lavapipe \
+  --subject foot --subject foot-tmux --subject foot-zellij --subject eon \
+  --samples 10 --warmups 2 --kitten-repetitions 10 \
+  --cpus 2,4,6,8 --max-load 8 --load-wait 10 --deadline 180
+```
+
+For per-window memory select `--only memory-empty --only memory-filled`
+and explicitly select `--subject eon --subject foot --subject ghostty`.
+`memory-filled` reuses memory's 10,000 numbered 72-column lines. Output
+completion is followed by one second of settling, without clearing loaded
+history. Empty clears the earlier setup text to leave a blank viewport.
+Only Eon's screen content is checked in code, through an untimed `eon pane
+read` before the one-second settle; foot/Ghostty have no programmatic content
+oracle and their representative retained captures are inspected visually.
+`window-memory.md` reports MiB PSS, RSS and anonymous PSS, median
+and nearest-rank p05–p95, for each complete cell; `memory.json` retains raw
+rollups and process identities. With ten samples this range is min–max.
+Memory cells' `seconds` is collection duration, not output throughput;
+their byte counters are the measures, and they are omitted from the
+throughput TSV. The default comparison workloads and subjects are unchanged.
+
+One fresh application's process tree counts as one window: Eon's supervisor,
+Venus, Orbit hosts/Bend workers and support processes, or foot/Ghostty's
+application processes. The held workload subtree, driver, compositor and
+D-Bus are excluded. A separate Venus-only row is attribution. PID/start-time
+and process-set checks reject churn during collection. This measures a
+fresh window total, not the marginal cost of adding a second window or the
+memory suite's native-client attachment delta. PSS depends on shared mappings
+on the warm host, includes mapped graphics allocations and excludes GPU memory
+outside process mappings; fresh launches establish no leak bound. Record both
+requested renderer and available adapter evidence, as for throughput.
+
 ### Native idle input response
 
 `eon-bench response --eon PATH --out DIR` is an on-demand Linux/Wayland test,

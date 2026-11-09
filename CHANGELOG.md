@@ -5,6 +5,11 @@ installation, and proven contract changes.
 
 ## Unreleased
 
+- `eon-bench terminals` measures tmux and Zellij inside foot against a
+  same-cohort bare-foot baseline, plus fresh-window PSS/RSS/anonymous PSS for
+  Eon, foot and Ghostty with separate Venus attribution, using its existing
+  isolated display, font and verified-grid controls (`eon-benchmarks-xl2bp.17`).
+
 - Venus favors smaller GPU allocations on non-CPU adapters, reducing measured
   Intel Vulkan allocation and residency by about 180 MiB. CPU adapters such
   as lavapipe retain wgpu's default allocation policy (`eon-ypy0a.2`).
