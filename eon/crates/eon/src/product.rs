@@ -173,7 +173,8 @@ pub(crate) fn inputs() -> Inputs {
             // The packaged Helix on Eon's terminal PATH.
             editor: &["hx"],
             agent_commands: &[
-                &["codex", "resume"],
+                // Codex's shared daemon would run this terminal's eon commands as another terminal.
+                &["codex", "resume", "--no-daemon"],
                 &["grok"],
                 &["opencode"],
                 &["pi"],
@@ -220,7 +221,21 @@ fn nonempty_environment_path(name: &str) -> Option<std::path::PathBuf> {
 
 #[cfg(test)]
 mod tests {
-    use super::eon_icon;
+    use super::{eon_icon, inputs};
+
+    #[test]
+    fn agent_popup_starts_codex_without_its_shared_daemon() {
+        let codex = inputs()
+            .defaults
+            .agent_commands
+            .iter()
+            .filter(|argv| argv[0] == "codex")
+            .collect::<Vec<_>>();
+        assert!(!codex.is_empty());
+        for argv in codex {
+            assert!(argv.contains(&"--no-daemon"), "{argv:?}");
+        }
+    }
 
     #[test]
     fn eon_icon_takes_only_an_absolute_path() {

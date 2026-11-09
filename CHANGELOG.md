@@ -9,6 +9,9 @@ installation, and proven contract changes.
   same-cohort bare-foot baseline, plus fresh-window PSS/RSS/anonymous PSS for
   Eon, foot and Ghostty with separate Venus attribution, using its existing
   isolated display, font and verified-grid controls (`eon-benchmarks-xl2bp.17`).
+- The Agent popup's `auto` command starts Codex as `codex resume --no-daemon`,
+  so its `eon` commands act for the popup's own terminal rather than for the
+  terminal that started Codex's shared daemon (`eon-7jzwd`).
 
 - Venus favors smaller GPU allocations on non-CPU adapters, reducing measured
   Intel Vulkan allocation and residency by about 180 MiB. CPU adapters such

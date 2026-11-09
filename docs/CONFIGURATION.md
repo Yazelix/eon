@@ -554,8 +554,11 @@ search is already shown. It rejects `command`, `enabled = false` and
 `keep_alive = true`, since it is required. A
 custom popup needs `command` and `keybinding`; its `label` defaults to its ID
 and its `keep_alive` to `true`.
-Agent's `auto` command runs the first of `codex resume`, `grok`, `opencode`,
-`pi` and `claude --resume` whose executable is on the terminal PATH.
+Agent's `auto` command runs the first of `codex resume --no-daemon`, `grok`,
+`opencode`, `pi` and `claude --resume` whose executable is on the terminal
+PATH. Codex runs without its shared daemon, so its `eon` commands act for the
+Agent popup's own terminal (see
+[Codex's shared daemon](USAGE.md#sending-to-a-terminal)).
 Files opens Yazi with Eon's own popup keys on Alt+Shift+Y and reads no Yazi
 configuration of yours. It is the tab's directory pair, so it is required: Eon
 ignores `command`, `enabled = false` and `keep_alive = false` there, with a

@@ -1017,7 +1017,7 @@ that terminal, or for the shown session, not for the pane Codex runs in.
 Once that terminal has ended they fail under the caller-discovery rules above.
 An agent's `eon quit --json` through a daemon started in Eon quits the window
 of the terminal that started the daemon, without asking. Start Codex in Eon
-with `codex --no-daemon`.
+with `codex --no-daemon`; the Agent popup's `auto` command already does.
 
 ### Exit status
 
