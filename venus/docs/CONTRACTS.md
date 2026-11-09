@@ -22,10 +22,16 @@ in-tree version. VEN-C31 entered with ORBF v3 in ORBS v14.
   on x86_64 Linux, through the `eon-monorepo-2oko.6` dogfood checklist and its
   recorded results.
 
+The `795d735a8f61ef439c56d68e1cc4d3929af0dfcf` tiers predate the Bend Orbit
+import at `6818aee17b131b4156515c0cf3f0067020558b0f`. They are historical
+candidate evidence for the current product, not a current installed or
+automated proof. Later proof records retain their own exact scope.
+
 ## VEN-C19 — Startup typography and terminal geometry
 
-- **Status:** Proved by the automated tier; installed configured typography and
-  geometry are pending re-proof in this repository. Amended on 2026-11-06
+- **Status:** Candidate; the pre-Bend baseline is candidate evidence, and
+  installed configured typography and geometry remain pending.
+  Amended on 2026-11-06
   (approved by eon-overseer, MINOR D2 on `eon-2kvr`) by `eon-2kvr`: the
   admission mode is named `stdin-ready-focus-v1`; the old name is gone.
 - **Consumer:** One direct or caller-launched Venus surface.
@@ -80,6 +86,11 @@ in-tree version. VEN-C31 entered with ORBF v3 in ORBS v14.
 - **Boundary:** The pinned winit destroys text input when a seat capability
   disappears; that hot-unplug limitation is outside this contract.
 - **Proof:** `795d735a8f61ef439c56d68e1cc4d3929af0dfcf`
+  - **Qualification:** The evidence at
+    `795d735a8f61ef439c56d68e1cc4d3929af0dfcf` predates the Bend Orbit import
+    (`6818aee17b131b4156515c0cf3f0067020558b0f`). It is pre-Bend candidate
+    evidence, not proof of the current component set. Later evidence below
+    applies only to its named revision, platform, artifact and surface.
   - **Environment:** Automated and installed.
   - **Evidence:** `typography_options_are_bounded_and_composable`,
     `startup_admission_keeps_presentation_control_enabled`,
@@ -94,6 +105,7 @@ in-tree version. VEN-C31 entered with ORBF v3 in ORBS v14.
   and real PTY grids at fractional scales, configured typography and
   missing-font rejection in installed products, native IME and AT-SPI geometry,
   and installed Accelerando playback and its performance.
+  Re-proof of VEN-C19 on the beta candidate is pending under eon-igae.7.1.
 
 ## Status
 
@@ -112,9 +124,10 @@ re-proved when that platform or feature is next touched.
 
 ## VEN-C5 — Native hyperlinks
 
-- **Status:** Proved on x86_64 Linux by the automated tier; native Linux
-  hyperlink interaction is pending re-proof in this repository. Apple Silicon
-  hover, Command+C, and Command+click are observed natively under `VEN-C16`.
+- **Status:** Partially proved; the pre-Bend Linux baseline is candidate
+  evidence, and the remaining native Linux hyperlink observations are
+  pending. Apple Silicon hover, Command+C, and Command+click are observed
+  natively under `VEN-C16`.
 - **Consumer/trigger:** A Venus user hovers an Orbit-authored OSC 8 link or a
   plain-text HTTP/HTTPS URL in visible terminal text, or explicitly activates
   one.
@@ -167,6 +180,11 @@ re-proved when that platform or feature is next touched.
   without them. macOS uses fixed `/usr/bin/open -u` and the general pasteboard.
   Product-path accessibility activation remains unaccepted on macOS.
 - **Proof:** `795d735a8f61ef439c56d68e1cc4d3929af0dfcf`
+  - **Qualification:** The evidence at
+    `795d735a8f61ef439c56d68e1cc4d3929af0dfcf` predates the Bend Orbit import
+    (`6818aee17b131b4156515c0cf3f0067020558b0f`). It is pre-Bend candidate
+    evidence, not proof of the current component set. Later evidence below
+    applies only to its named revision, platform, artifact and surface.
   - **Environment:** Automated.
   - **Evidence:** `hyperlink_actions_require_current_presentation_and_safe_exact_uri`,
     `stalled_link_dispatcher_is_bounded_and_reaped`,
@@ -192,10 +210,14 @@ re-proved when that platform or feature is next touched.
   and copy (dogfood item 9 was not exercised), AT-SPI Open/Copy
   activation, and native missing-handler failure. Fractional scale and other
   compositors remain unproved.
+  Re-proof of VEN-C5's installed Linux hyperlink slice on the beta candidate
+  is pending under eon-igae.7.5; the eon-ctrl-click-links-n8uar regression
+  proof retains its recorded scope.
 
 ## VEN-C1 — Authoritative native presentation
 
-- **Status:** Proven on x86_64 Linux; broader native quality remains unproved.
+- **Status:** Partially proved; the pre-Bend Linux baseline is candidate
+  evidence, and broader native quality remains unproved.
 - **Consumer:** One Venus native surface consuming canonical Orbit frames and an
   optional cursor-tail color choice.
 - **Trigger:** Venus accepts an initial frame, an ordered later revision, or a
@@ -246,6 +268,11 @@ re-proved when that platform or feature is next touched.
   and the in-tree `orbit-protocol` 0.1.0.
 - **Boundary:** Fractional/HiDPI native quality remains outside the proof.
 - **Proof:** `795d735a8f61ef439c56d68e1cc4d3929af0dfcf`
+  - **Qualification:** The evidence at
+    `795d735a8f61ef439c56d68e1cc4d3929af0dfcf` predates the Bend Orbit import
+    (`6818aee17b131b4156515c0cf3f0067020558b0f`). It is pre-Bend candidate
+    evidence, not proof of the current component set. Later evidence below
+    applies only to its named revision, platform, artifact and surface.
   - **Environment:** Automated and installed.
   - **Evidence:** `canonical_orbit_frame_becomes_one_deterministic_scene`,
     `ordered_frames_reject_stale_revisions_without_replacing_state`,
@@ -271,12 +298,16 @@ re-proved when that platform or feature is next touched.
   preset (`eon-cursor-color-after-attach-lbbo`) is covered by
   `random_cursor_preset_is_stable_per_live_endpoint` and that bead's installed
   full-Eon reattach dogfood; eonbase reopens are not dogfooded.
+  Re-proof of VEN-C1's installed Linux presentation slice on the beta
+  candidate is pending under eon-igae.7.5; broader quality and reader gaps
+  remain open.
 
 ## VEN-C2 — Native semantic interaction
 
-- **Status:** Proved on x86_64 Linux; Apple Silicon ordinary typing and
-  selection are observed natively under `VEN-C16`, and the rest of its macOS
-  proof is pending re-proof in this repository.
+- **Status:** Partially proved. The x86_64 Linux pre-Bend baseline is
+  candidate evidence; Apple Silicon ordinary typing and selection are
+  observed natively under `VEN-C16`, and the rest of its macOS proof is
+  pending re-proof in this repository.
 - **Consumer:** One focused Venus terminal surface.
 - **Trigger:** Native key, mouse, focus, paste, input-method, or resize activity.
 - **Result:** Venus maps native activity to canonical Orbit semantic input and
@@ -311,6 +342,11 @@ re-proved when that platform or feature is next touched.
 - **Proof:** `795d735a8f61ef439c56d68e1cc4d3929af0dfcf`, with the
   `eon-venus-keysym-named-keys-chnh` commit for named-key resolution and the
   `eon-e2vl` commit for Linux dead keys and the Shift-consumed rule
+  - **Qualification:** The evidence at
+    `795d735a8f61ef439c56d68e1cc4d3929af0dfcf` predates the Bend Orbit import
+    (`6818aee17b131b4156515c0cf3f0067020558b0f`). It is pre-Bend candidate
+    evidence, not proof of the current component set. Later evidence below
+    applies only to its named revision, platform, artifact and surface.
   - **Environment:** Automated and installed.
   - **Evidence:** `maps_layout_independent_physical_keys`,
     `ime_distinguishes_committed_rejected_and_state_only_text`,
@@ -348,10 +384,13 @@ re-proved when that platform or feature is next touched.
   after return to live, and the Apple Silicon Option/Control modifier mapping,
   focus, and Kotoeri observations (ordinary typing and selection are observed
   under `VEN-C16`).
+  Re-proof of VEN-C2's Linux semantic-input slice on the beta candidate is
+  pending under eon-igae.7.5; the separately listed Mac and input-method
+  gaps remain open.
 
 ## VEN-C3 — Transient client recovery
 
-- **Status:** Proved
+- **Status:** Partially proved; the pre-Bend baseline is candidate evidence.
 - **Consumer:** Standalone or Eon-supervised Venus attached to one selected live
   Orbit endpoint.
 - **Trigger:** Client close or crash, retryable connection loss, control-stream
@@ -379,6 +418,11 @@ re-proved when that platform or feature is next touched.
 - **Boundary:** Broader Linux compositor coverage remains unproved.
 - **Proof:** `795d735a8f61ef439c56d68e1cc4d3929af0dfcf`, with the `eon-10qt`
   commit for output-burst backpressure
+  - **Qualification:** The evidence at
+    `795d735a8f61ef439c56d68e1cc4d3929af0dfcf` predates the Bend Orbit import
+    (`6818aee17b131b4156515c0cf3f0067020558b0f`). It is pre-Bend candidate
+    evidence, not proof of the current component set. Later evidence below
+    applies only to its named revision, platform, artifact and surface.
   - **Environment:** Automated and installed.
   - **Evidence:** `orbit_retry_schedule_is_bounded_and_resettable`,
     `workspace_recovery_requires_the_same_selected_live_endpoint`,
@@ -391,11 +435,13 @@ re-proved when that platform or feature is next touched.
     `full_event_queue_holds_the_reader_until_drained_or_dropped` in the
     workspace suite; dogfood checklist items 2 and 11; the `eon-10qt`
     installed burst-while-scrolling observation.
+- **Open proof:** Re-proof of VEN-C3 on the beta candidate is pending under
+  eon-igae.7.5, after the remote transport and disconnected-state changes.
 
 ## VEN-C4 — Bounded explicit failure UX
 
-- **Status:** Proved by the automated tier; native failure observations are
-  pending re-proof in this repository.
+- **Status:** Candidate; the pre-Bend baseline is candidate evidence, and
+  native failure observations remain pending.
 - **Consumer:** A Venus user observing connection, protocol, model, renderer, or
   Orbit failure.
 - **Trigger:** Attachment rejection, incompatibility, invalid frame, Orbit loss,
@@ -414,6 +460,11 @@ re-proved when that platform or feature is next touched.
 - **Boundary:** Compositor title-bar visibility and broader Linux compositor
   proof remain outside the accepted slice.
 - **Proof:** `795d735a8f61ef439c56d68e1cc4d3929af0dfcf`
+  - **Qualification:** The evidence at
+    `795d735a8f61ef439c56d68e1cc4d3929af0dfcf` predates the Bend Orbit import
+    (`6818aee17b131b4156515c0cf3f0067020558b0f`). It is pre-Bend candidate
+    evidence, not proof of the current component set. Later evidence below
+    applies only to its named revision, platform, artifact and surface.
   - **Environment:** Automated.
   - **Evidence:** `renderer_failure_uses_non_gpu_diagnostics_until_success`,
     `uncaptured_errors_remain_fatal_until_device_loss`,
@@ -427,6 +478,9 @@ re-proved when that platform or feature is next touched.
 - **Open proof:** Pending re-proof in this repository: native quiet-workspace
   and offline-failure observation, native title, and reader announcement of
   workspace action failures.
+  Re-proof of VEN-C4's installed Linux failure-reporting slice on the beta
+  candidate is pending under eon-igae.7.5; renderer-recreation and
+  remote-state amendments retain their own approval and proof.
 
 ## VEN-C6 — Structured accessibility
 
@@ -439,10 +493,10 @@ re-proved when that platform or feature is next touched.
 
 ## VEN-C7 — Authoritative history and selection interaction
 
-- **Status:** Proved on x86_64 Linux by the automated tier; native Linux
-  pointer interaction is pending re-proof in this repository. Apple Silicon
-  drag selection, Command+C copy, and wheel history are observed natively under
-  `VEN-C16`.
+- **Status:** Partially proved; the pre-Bend Linux baseline is candidate
+  evidence, and the remaining native Linux pointer observations are pending.
+  Apple Silicon drag selection, Command+C copy, and wheel history are
+  observed natively under `VEN-C16`.
 - **Consumer:** One presented Venus terminal surface.
 - **Trigger:** Native wheel or touchpad movement, one left-pointer sequence
   including a held drag in or above the top visible row, explicit copy, or
@@ -529,6 +583,11 @@ re-proved when that platform or feature is next touched.
   Apple Silicon physical trackpad gesture quality remains unaccepted.
 - **Proof:** `795d735a8f61ef439c56d68e1cc4d3929af0dfcf`, with the `eon-5uw0`
   commit for held drags in or above the top visible row
+  - **Qualification:** The evidence at
+    `795d735a8f61ef439c56d68e1cc4d3929af0dfcf` predates the Bend Orbit import
+    (`6818aee17b131b4156515c0cf3f0067020558b0f`). It is pre-Bend candidate
+    evidence, not proof of the current component set. Later evidence below
+    applies only to its named revision, platform, artifact and surface.
   - **Environment:** Automated and installed.
   - **Evidence:** `terminal_scroll_keeps_fractional_input_and_elapsed_time_physics`,
     `terminal_scroll_coalesces_one_signed_batch_without_losing_distance`,
@@ -563,10 +622,15 @@ re-proved when that platform or feature is next touched.
   primary-selection delivery, kinetic flings under continuous output. A held
   drag outside the window remains unproved on macOS. Screen-reader acceptance
   remains separate. Apple Silicon trackpad gesture quality stays open.
+  Re-proof of VEN-C7's installed Linux history and selection slice on the
+  beta candidate is pending under eon-igae.7.5, after
+  eon-remote-workspaces-52i4.9; reader and physical-trackpad acceptance
+  remain separate.
 
 ## VEN-C8 — Eon workspace presentation
 
-- **Status:** Partially proved. Amended on 2026-11-04 under Lucca's standing
+- **Status:** Partially proved; the pre-Bend baseline is candidate evidence.
+  Amended on 2026-11-04 under Lucca's standing
   approval rule, relayed by eon-overseer: by `eon-8wh7h`, the slow notice and
   product text for unavailable notices; by `eon-hbpkq`, Alt+Shift+1..9 and
   Alt+Shift+0 show workspace positions. Amended on 2026-11-05 (approved by
@@ -827,6 +891,11 @@ re-proved when that platform or feature is next touched.
 - **Boundary:** Other Linux Wayland compositors remain outside the current
   proof.
 - **Proof:** `795d735a8f61ef439c56d68e1cc4d3929af0dfcf`
+  - **Qualification:** The evidence at
+    `795d735a8f61ef439c56d68e1cc4d3929af0dfcf` predates the Bend Orbit import
+    (`6818aee17b131b4156515c0cf3f0067020558b0f`). It is pre-Bend candidate
+    evidence, not proof of the current component set. Later evidence below
+    applies only to its named revision, platform, artifact and surface.
   - **Environment:** Automated and installed.
   - **Evidence:** `eon_workspace_becomes_one_bounded_native_accordion`,
     `tab_directory_labels_use_current_position_and_bounded_path_context`,
@@ -992,6 +1061,8 @@ re-proved when that platform or feature is next touched.
   then Return quits; with an idle shell, Command+Q quits without asking. Pending
   re-proof in this repository: the ignored native long-label header regression and reader
   announcement of a workspace failure notice.
+  Re-proof of VEN-C8 on the beta candidate is pending under eon-igae.7.5;
+  its separately recorded Mac and reader gaps remain open.
 
 ## VEN-C9 — Optional native decorations
 
@@ -1005,7 +1076,9 @@ re-proved when that platform or feature is next touched.
 
 ## VEN-C10 — Native paste
 
-- **Status:** Partially proved
+- **Status:** Partially proved; the pre-Bend baseline is candidate evidence,
+  and the separately recorded Apple Silicon paste observation retains its
+  scope.
 - **Consumer:** One attached focused Venus terminal surface.
 - **Trigger:** Native Paste, Linux Ctrl+Shift+V, or macOS Command+V.
 - **Result:** Venus reads ordinary native clipboard text once, admits at most
@@ -1022,6 +1095,11 @@ re-proved when that platform or feature is next touched.
   remain unproved. A macOS host-access failure notice and overlap behavior
   remain unaccepted.
 - **Proof:** `795d735a8f61ef439c56d68e1cc4d3929af0dfcf`
+  - **Qualification:** The evidence at
+    `795d735a8f61ef439c56d68e1cc4d3929af0dfcf` predates the Bend Orbit import
+    (`6818aee17b131b4156515c0cf3f0067020558b0f`). It is pre-Bend candidate
+    evidence, not proof of the current component set. Later evidence below
+    applies only to its named revision, platform, artifact and surface.
   - **Environment:** Automated.
   - **Evidence:** `native_clipboard_text_becomes_one_bounded_semantic_paste`,
     `key_release_does_not_dismiss_clipboard_result`,
@@ -1033,6 +1111,9 @@ re-proved when that platform or feature is next touched.
   9), native bracketed-mode and overlapping-shortcut observation, and the
   Apple Silicon PNG-only and oversize-pasteboard notices (Command+V and the
   empty or non-text pasteboard notice are observed under `VEN-C16`).
+  Re-proof of VEN-C10's installed Linux paste slice on the beta candidate is
+  pending under eon-igae.7.5; user-assigned application acceptance and Mac
+  notice gaps remain separate.
 
 ## VEN-C11 — Terminal-background opacity
 
@@ -1056,7 +1137,8 @@ re-proved when that platform or feature is next touched.
 
 ## VEN-C13 — Terminal-authored clipboard delivery
 
-- **Status:** Partially proved
+- **Status:** Candidate; the pre-Bend baseline is candidate evidence, and
+  native clipboard delivery remains pending.
 - **Consumer:** One attached Venus client and its native clipboard owner.
 - **Trigger:** Orbit emits one canonical terminal clipboard-write effect.
 - **Result:** Venus delivers it once without storing, replaying, parsing, or
@@ -1074,15 +1156,24 @@ re-proved when that platform or feature is next touched.
   broader Linux compositor coverage remain unproved. macOS primary-selection
   emulation stays outside scope, and native write-failure UX remains unaccepted.
 - **Proof:** `795d735a8f61ef439c56d68e1cc4d3929af0dfcf`
+  - **Qualification:** The evidence at
+    `795d735a8f61ef439c56d68e1cc4d3929af0dfcf` predates the Bend Orbit import
+    (`6818aee17b131b4156515c0cf3f0067020558b0f`). It is pre-Bend candidate
+    evidence, not proof of the current component set. Later evidence below
+    applies only to its named revision, platform, artifact and surface.
   - **Environment:** Automated.
   - **Evidence:** `clipboard_text_is_an_attached_one_shot_effect_not_presentation_state`
     and `clipboard_effects_preserve_native_targets` in the workspace suite.
 - **Open proof:** Pending re-proof in this repository: native primary-selection
   delivery through installed Eon and the Apple Silicon OSC 52 pasteboard write.
+  Re-proof of VEN-C13's installed Linux clipboard-delivery slice on the beta
+  candidate is pending under eon-igae.7.5; Apple Silicon OSC 52 remains
+  separate.
 
 ## VEN-C14 — Supervised native presentation lifecycle
 
-- **Status:** Proved. Amended on 2026-11-06 (approved by eon-overseer, MINOR
+- **Status:** Partially proved; the pre-Bend baseline is candidate evidence.
+  Amended on 2026-11-06 (approved by eon-overseer, MINOR
   D2 under Lucca's 2026-11-06 decisions on `eon-2kvr`) by `eon-2kvr`: native
   window focus reports.
 - **Consumer:** One Eon-supervised Venus process.
@@ -1115,6 +1206,11 @@ re-proved when that platform or feature is next touched.
 - **Boundary:** Direct focus and unminimize are unavailable through winit;
   xdg activation remains compositor-controlled.
 - **Proof:** `795d735a8f61ef439c56d68e1cc4d3929af0dfcf`
+  - **Qualification:** The evidence at
+    `795d735a8f61ef439c56d68e1cc4d3929af0dfcf` predates the Bend Orbit import
+    (`6818aee17b131b4156515c0cf3f0067020558b0f`). It is pre-Bend candidate
+    evidence, not proof of the current component set. Later evidence below
+    applies only to its named revision, platform, artifact and surface.
   - **Environment:** Automated and installed.
   - **Evidence:** `presentation_control_emits_complete_commands_then_exit`,
     `startup_admission_keeps_presentation_control_enabled`,
@@ -1149,6 +1245,9 @@ re-proved when that platform or feature is next touched.
 - **Open proof:** Pending re-proof in this repository: native Present of an
   existing window that preserves its process and terminal attachment. Focus
   reports are not proved on Darwin.
+  Re-proof of VEN-C14 on the beta candidate is pending under eon-igae.7.5,
+  after the remote lifecycle amendments in eon-remote-workspaces-52i4.2 and
+  eon-remote-workspaces-52i4.3.
 
 ## VEN-C15 — Compositor-owned background blur
 
@@ -1163,9 +1262,10 @@ re-proved when that platform or feature is next touched.
 
 ## VEN-C16 — Native Linux Wayland and Apple Silicon macOS platforms
 
-- **Status:** Proved for x86_64 Linux native Wayland; the Apple Silicon macOS
-  foundation and interaction slices are partially re-proved natively in this
-  repository, and macOS remains unsupported.
+- **Status:** Partially proved. The x86_64 Linux pre-Bend baseline is
+  candidate evidence; the Apple Silicon macOS foundation and interaction
+  slices are partially re-proved natively in this repository, and macOS
+  remains unsupported.
 - **Consumer:** Every packaged Venus application launch.
 - **Trigger:** Build or launch the native application on an approved target.
 - **Result:** Venus uses native Wayland with Vulkan on Linux and the native
@@ -1191,11 +1291,20 @@ re-proved when that platform or feature is next touched.
   accessibility, lifecycle identity, effects, and Eon composition remain
   unaccepted.
 - **Proof:** `795d735a8f61ef439c56d68e1cc4d3929af0dfcf` (x86_64 Linux)
+  - **Qualification:** The evidence at
+    `795d735a8f61ef439c56d68e1cc4d3929af0dfcf` predates the Bend Orbit import
+    (`6818aee17b131b4156515c0cf3f0067020558b0f`). It is pre-Bend candidate
+    evidence, not proof of the current component set. Later evidence below
+    applies only to its named revision, platform, artifact and surface.
   - **Environment:** Automated and installed.
   - **Evidence:** The workspace suite with exact dependency features from the
     locked graph; dogfood checklist items 1 and 11 launch the native Wayland
     and Vulkan event loop through installed Eon and eonbase.
 - **Proof:** `e0aa47e7186dc3e2a88f826d3ed0feb171a1b0cb` (Apple Silicon, partial)
+  - **Qualification:** This 2026-10-18 Apple Silicon slice also predates
+    the Bend Orbit import and is candidate evidence for the current
+    component set. The separate `0e47d26df690c7ff4b2f1a000e174b307a17e656`
+    proof is post-Bend and retains its recorded partial scope.
   - **Environment:** Apple M2, macOS 26.7.1 (25G241), one 1920x1080 scale-1
     display, `aarch64-apple-darwin`; native
     `cargo build --locked -p yazelix-venus -p yazelix-orbit --all-targets` and
@@ -1285,10 +1394,13 @@ re-proved when that platform or feature is next touched.
   `ven-prove-venus-apple-silicon-macos-nm7` owns these and the
   rest of the macOS proof: accessibility acceptance, lifecycle identity,
   transparency/blur, exact Orbit dogfood, and the support claim.
+  Re-proof of VEN-C16's Linux half on the beta candidate is pending under
+  eon-igae.7.5; ven-prove-venus-apple-silicon-macos-nm7 retains the
+  remaining Apple Silicon proof.
 
 ## VEN-C17 — Caller-owned native application identity
 
-- **Status:** Proved
+- **Status:** Candidate; the pre-Bend baseline is candidate evidence.
 - **Consumer:** Eon, eonbase, or one approved eonbase composition.
 - **Trigger:** The caller supplies one optional validated application ID before
   Venus creates its window.
@@ -1304,6 +1416,11 @@ re-proved when that platform or feature is next touched.
   value.
 - **Boundary:** Native mapping only; no branding framework or mutable identity.
 - **Proof:** `795d735a8f61ef439c56d68e1cc4d3929af0dfcf`
+  - **Qualification:** The evidence at
+    `795d735a8f61ef439c56d68e1cc4d3929af0dfcf` predates the Bend Orbit import
+    (`6818aee17b131b4156515c0cf3f0067020558b0f`). It is pre-Bend candidate
+    evidence, not proof of the current component set. Later evidence below
+    applies only to its named revision, platform, artifact and surface.
   - **Environment:** Automated and installed.
   - **Evidence:** `arguments_are_complete_bounded_and_defaulted` and
     `launch_values_project_to_native_window_attributes` in the workspace suite;
@@ -1311,10 +1428,11 @@ re-proved when that platform or feature is next touched.
     native app ID `eon` that Eon supplies through `--application-id`.
 - **Open proof:** Pending re-proof in this repository: native xdg-toplevel
   grouping for a caller-supplied application ID.
+  Re-proof of VEN-C17 on the beta candidate is pending under eon-igae.7.5.
 
 ## VEN-C18 — Shared popup and picker-first presentation
 
-- **Status:** Proven on x86_64 Linux Wayland
+- **Status:** Partially proved; the pre-Bend baseline is candidate evidence.
 - **Consumer:** One person using a Venus workspace supplied through EONW v5.
 - **Trigger:** The active tab selects a popup, its selection changes, or the
   person invokes an Eon-supplied catalog shortcut.
@@ -1375,6 +1493,11 @@ re-proved when that platform or feature is next touched.
   dismissal policy, second schema, simultaneous terminals, compatibility
   negotiation, Eon runtime activation, or additional platform.
 - **Proof:** `795d735a8f61ef439c56d68e1cc4d3929af0dfcf`
+  - **Qualification:** The evidence at
+    `795d735a8f61ef439c56d68e1cc4d3929af0dfcf` predates the Bend Orbit import
+    (`6818aee17b131b4156515c0cf3f0067020558b0f`). It is pre-Bend candidate
+    evidence, not proof of the current component set. Later evidence below
+    applies only to its named revision, platform, artifact and surface.
   - **Environment:** Automated and installed.
   - **Evidence:** `shared_popup_projection_keeps_hidden_work_and_one_input_surface`,
     `popup_outer_chrome_reuses_the_pane_stack_rectangle`,
@@ -1391,10 +1514,12 @@ re-proved when that platform or feature is next touched.
   multi-pending tabs, narrow and tiny popup geometry, and supervised empty-body
   startup and reopen. Native fractional
   scale, other compositors and screen-reader interaction remain unproved.
+  Re-proof of VEN-C18 on the beta candidate is pending under eon-igae.7.5;
+  eon-27deg owns the shared-title amendment and its focused proof.
 
 ## VEN-C20 — Native shortcut viewer
 
-- **Status:** Proved.
+- **Status:** Partially proved; the pre-Bend baseline is candidate evidence.
   Amended on 2026-11-04 (approved by eon-overseer under Lucca's standing
   rule) by `eon-hbpkq`: a popup on one workspace position key takes only that
   key. Amended on 2026-11-04 (approved by eon-overseer under Lucca's standing
@@ -1446,6 +1571,11 @@ re-proved when that platform or feature is next touched.
   tutorial, telemetry, persistence, momentary timer, second renderer, generic
   modal framework, dependency, or platform-support expansion.
 - **Proof:** `795d735a8f61ef439c56d68e1cc4d3929af0dfcf`
+  - **Qualification:** The evidence at
+    `795d735a8f61ef439c56d68e1cc4d3929af0dfcf` predates the Bend Orbit import
+    (`6818aee17b131b4156515c0cf3f0067020558b0f`). It is pre-Bend candidate
+    evidence, not proof of the current component set. Later evidence below
+    applies only to its named revision, platform, artifact and surface.
   - **Environment:** Automated and installed.
   - **Evidence:** `shortcut_viewer_uses_live_rows_and_captures_its_local_sequence`,
     `shortcut_viewer_clamps_scroll_and_keeps_fixed_dismissal_space`, and
@@ -1501,10 +1631,13 @@ re-proved when that platform or feature is next touched.
     `^[[<0;120;21M^[[<0;120;21m`.
 - **Open proof:** Pending re-proof in this repository: AT-SPI dialog traversal
   and tiny-surface clipping.
+  Re-proof of VEN-C20 on the beta candidate is pending under eon-igae.7.5;
+  later keymap amendments retain their own approval and proof.
 
 ## VEN-C21 — Native Eon Bar session header
 
-- **Status:** Proven. Amended on 2026-11-06 (approved by Lucca, "B", relayed by
+- **Status:** Partially proved; the pre-Bend baseline is candidate evidence.
+  Amended on 2026-11-06 (approved by Lucca, "B", relayed by
   eon-overseer) by `eon-e3a1z.1`: the version label moves to the bottom hints bar's right
   end. Amended on 2026-11-06 (approved by Lucca, "lets do it", relayed by eon-overseer)
   by `eon-e3a1z.2`: the clock moves to the bottom hints bar's left end. Amended on
@@ -1633,6 +1766,11 @@ re-proved when that platform or feature is next touched.
   and its badge from its `workspace` and `workspaces`, and the
   `--animate-working-badge` launch argument.
 - **Proof:** `795d735a8f61ef439c56d68e1cc4d3929af0dfcf`
+  - **Qualification:** The evidence at
+    `795d735a8f61ef439c56d68e1cc4d3929af0dfcf` predates the Bend Orbit import
+    (`6818aee17b131b4156515c0cf3f0067020558b0f`). It is pre-Bend candidate
+    evidence, not proof of the current component set. Later evidence below
+    applies only to its named revision, platform, artifact and surface.
   - **Window menu (`eon-7cf0y.6`):**
     `eon_icon_opens_window_controls_without_hints_or_sidebar`,
     `window_menu_projects_summary_and_clips_actions_to_its_scroll_area`,
@@ -1820,6 +1958,8 @@ re-proved when that platform or feature is next touched.
     The accessible names were not read.
 - **Open proof:** Pending re-proof in this repository: compositor window drag
   from the empty header region, narrow-width captures, and AT-SPI header order.
+  Re-proof of VEN-C21 on the beta candidate is pending under eon-igae.7.4,
+  after the host-label amendment in eon-remote-workspaces-52i4.3.
 
 ## VEN-C22 — Codex quota fact chip
 
@@ -1831,7 +1971,9 @@ re-proved when that platform or feature is next touched.
 
 ## VEN-C23 — New Eon window shortcut
 
-- **Status:** Proved on x86_64 Linux Wayland. Amended on 2026-11-07 (approved
+- **Status:** Partially proved; the pre-Bend Linux baseline is candidate
+  evidence.
+  Amended on 2026-11-07 (approved
   by eon-overseer under Lucca's standing rule) by `eon-30skm` (S3): it names
   Orbit's terminals and the new Eon window instead of Sessions and a workspace.
 - **Consumer:** A Venus window supervised by full Eon on x86_64 Linux Wayland.
@@ -1853,6 +1995,11 @@ re-proved when that platform or feature is next touched.
   second view of an Orbit terminal or a multi-window Venus event loop. The
   composed macOS product remains unproved.
 - **Proof:** `795d735a8f61ef439c56d68e1cc4d3929af0dfcf`
+  - **Qualification:** The evidence at
+    `795d735a8f61ef439c56d68e1cc4d3929af0dfcf` predates the Bend Orbit import
+    (`6818aee17b131b4156515c0cf3f0067020558b0f`). It is pre-Bend candidate
+    evidence, not proof of the current component set. Later evidence below
+    applies only to its named revision, platform, artifact and surface.
   - **Environment:** Automated and installed.
   - **Evidence:** `new_window_shortcut_invokes_the_supplied_eon_command` in the
     workspace suite; dogfood checklist item 10.
@@ -1862,6 +2009,8 @@ re-proved when that platform or feature is next touched.
     Files popup configured on Alt+Shift+N: the key opened and hid the popup
     without a second window, and Alt+/ listed `Open new Eon window (overridden
     by Files)`.
+- **Open proof:** Re-proof of VEN-C23 on the beta candidate is pending under
+  eon-igae.7.5 alongside EON-C23.
 
 ## VEN-C24 — Contextual bottom shortcut hints
 

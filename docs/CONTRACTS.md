@@ -35,6 +35,11 @@ and `/nix/store/hk9v6q6c42x4sagpzrk20q32znw9sal1-eonterm-0.1.0`, driven
 headlessly by a Kinestra recipe on a private headless Sway (wlroots, pixman) on
 x86_64 Linux, following that bead's numbered checklist and recorded results.
 
+The `795d735a8f61ef439c56d68e1cc4d3929af0dfcf` tiers predate the Bend Orbit
+import at `6818aee17b131b4156515c0cf3f0067020558b0f`. They are historical
+candidate evidence for the current product, not a current installed or
+automated proof. Later proof records retain their own exact scope.
+
 `eon-rename-eonterm-eonbase-jpbm` renamed EonTerm to eonbase, with its command,
 package, closure check and tests; contracts below use the new names. Records of
 earlier revisions keep the artifacts and check names they ran.
@@ -73,7 +78,8 @@ names its socket. CLI JSON names a session `session` and a terminal
 
 ## EON-C1 — Exact compatible component launch
 
-- **Status:** Proven. Amended on 2026-11-03 (approved by Lucca, relayed by
+- **Status:** Partially proved; the pre-Bend baseline is candidate evidence.
+  Amended on 2026-11-03 (approved by Lucca, relayed by
   eon-overseer) by `eon-369s`: Nix derives the Eon Bar's icon image. Amended
   on 2026-11-06 (approved by Lucca, relayed by eon-overseer) by `eon-7cf0y.22`
   (S3): `eon window attach` reopens a window. Amended on 2026-11-06 (approved
@@ -160,6 +166,11 @@ names its socket. CLI JSON names a session `session` and a terminal
   [runtime input contract](ARCHITECTURE.md#ownership-and-invocation).
 - **Proof:** `795d735a8f61ef439c56d68e1cc4d3929af0dfcf`, `eon-monorepo-2oko.6`;
   `eon --skill`: `eon-ivge0`, whose commit is its revision.
+  - **Qualification:** The evidence at
+    `795d735a8f61ef439c56d68e1cc4d3929af0dfcf` predates the Bend Orbit import
+    (`6818aee17b131b4156515c0cf3f0067020558b0f`). It is pre-Bend candidate
+    evidence, not proof of the current component set. Later evidence below
+    applies only to its named revision, platform, artifact and surface.
   - **Environment:** Automated tier; installed tier.
   - **Evidence:** Graph validation and version report
     (`canonical_manifest_is_valid`, `invalid_graphs_are_rejected`,
@@ -186,10 +197,11 @@ names its socket. CLI JSON names a session `session` and a terminal
   installed `eon --skill` and `eon --help` from a refreshed `eon` profile
   (`eon-ivge0`), and COSMIC sessions. Fractional scale, broader compositors
   and screen-reader use remain unproved.
+  Re-proof of EON-C1 on the beta candidate is pending under eon-igae.7.5.
 
 ## EON-C2 — One component compatibility graph
 
-- **Status:** Candidate
+- **Status:** Candidate; the pre-Bend baseline is candidate evidence.
 - **Consumer:** Every Eon distribution and runtime launch path.
 - **Trigger:** A product generation resolves or validates its component set.
 - **Result:** One versioned manifest defines component identity, compatibility,
@@ -209,15 +221,23 @@ names its socket. CLI JSON names a session `session` and a terminal
   interface proofs remain on their components.
 - **Proof:** Candidate; mechanically verified at
   `795d735a8f61ef439c56d68e1cc4d3929af0dfcf`, `eon-monorepo-2oko.6`.
+  - **Qualification:** The evidence at
+    `795d735a8f61ef439c56d68e1cc4d3929af0dfcf` predates the Bend Orbit import
+    (`6818aee17b131b4156515c0cf3f0067020558b0f`). It is pre-Bend candidate
+    evidence, not proof of the current component set. Later evidence below
+    applies only to its named revision, platform, artifact and surface.
   - **Environment:** Automated tier on x86_64 Linux.
   - **Evidence:** `canonical_manifest_is_valid`,
     `removed_graph_fields_are_rejected`, `invalid_graphs_are_rejected` and
     `version_report_contains_identity_without_resolved_paths`; both Nix
     products build from the one graph.
+- **Open proof:** Re-proof of EON-C2 on the beta candidate is pending under
+  eon-igae.7.5.
 
 ## EON-C3 — Distribution-neutral runtime inputs
 
-- **Status:** Candidate. Amended on 2026-11-03 (approved by Lucca, relayed by
+- **Status:** Candidate; the pre-Bend baseline is candidate evidence.
+  Amended on 2026-11-03 (approved by Lucca, relayed by
   eon-overseer) by `eon-369s`: the Eon icon's image is an opaque input.
 - **Consumer:** Eon launch and every distribution channel.
 - **Trigger:** A channel supplies exact component artifacts to Eon.
@@ -240,6 +260,11 @@ names its socket. CLI JSON names a session `session` and a terminal
   store or profile paths.
 - **Proof:** Candidate; mechanically verified at
   `795d735a8f61ef439c56d68e1cc4d3929af0dfcf`, `eon-monorepo-2oko.6`.
+  - **Qualification:** The evidence at
+    `795d735a8f61ef439c56d68e1cc4d3929af0dfcf` predates the Bend Orbit import
+    (`6818aee17b131b4156515c0cf3f0067020558b0f`). It is pre-Bend candidate
+    evidence, not proof of the current component set. Later evidence below
+    applies only to its named revision, platform, artifact and surface.
   - **Environment:** Automated tier on x86_64 Linux.
   - **Evidence:** `generation_identity_is_stable_bounded_and_namespaced` and
     `current_generation_consumes_supplied_assembly`; the `default` and
@@ -247,10 +272,12 @@ names its socket. CLI JSON names a session `session` and a terminal
     in-tree crates. For the icon image (`eon-369s`), the `default` check's
     image size assertion and the extended
     `version_badge_uses_supervising_product_and_visibility_at_each_launch`.
+- **Open proof:** Re-proof of EON-C3 on the beta candidate is pending under
+  eon-igae.7.5.
 
 ## EON-C4 — Thin orchestrator ownership
 
-- **Status:** Proven
+- **Status:** Candidate; the pre-Bend baseline is candidate evidence.
 - **Consumer:** Eon, Orbit, Venus, Helix, Yazi, and Ratconfig integrations.
 - **Trigger:** Eon composes or controls a product surface.
 - **Result:** Eon owns product launch/topology policy, component selection,
@@ -275,6 +302,11 @@ names its socket. CLI JSON names a session `session` and a terminal
   [runtime boundary](ARCHITECTURE.md#runtime-library-boundary) records the
   runtime seam and in-tree package selection.
 - **Proof:** `795d735a8f61ef439c56d68e1cc4d3929af0dfcf`, `eon-monorepo-2oko.6`.
+  - **Qualification:** The evidence at
+    `795d735a8f61ef439c56d68e1cc4d3929af0dfcf` predates the Bend Orbit import
+    (`6818aee17b131b4156515c0cf3f0067020558b0f`). It is pre-Bend candidate
+    evidence, not proof of the current component set. Later evidence below
+    applies only to its named revision, platform, artifact and surface.
   - **Environment:** Automated tier; installed tier.
   - **Evidence:** The workspace suites run with in-tree Orbit, Venus, Eon
     Runtime and EONW; `orbit-governance`'s
@@ -287,6 +319,7 @@ names its socket. CLI JSON names a session `session` and a terminal
   store, host XDG handler preservation for desktop launches, memory
   measurements. Physical Ryzen, native macOS and performance remain
   unqualified.
+  Re-proof of EON-C4 on the beta candidate is pending under eon-igae.7.5.
 
 ## EON-C5 — Direct bundle lifecycle
 
@@ -319,8 +352,16 @@ names its socket. CLI JSON names a session `session` and a terminal
     `cargo test --locked --offline --manifest-path installer/Cargo.toml`
     passes the installer's extraction, checksum, selection, removal and locking
     tests; bundle delivery is not repeated.
+  - **Qualification:** The evidence at
+    `795d735a8f61ef439c56d68e1cc4d3929af0dfcf` predates the Bend Orbit import
+    (`6818aee17b131b4156515c0cf3f0067020558b0f`). It is pre-Bend candidate
+    evidence, not proof of the current component set. Later evidence below
+    applies only to its named revision, platform, artifact and surface.
 - **Open gates:** Publication, release trust, exact redistribution obligations
   and qualification of the Nix-free install remain separate.
+- **Open proof:** The pre-Bend bundle evidence remains candidate evidence;
+  eon-igae.7.3 owns its exact-revision assessment or beta-candidate
+  re-proof.
 
 ## EON-C6 — Shared graph across distribution channels
 
@@ -350,10 +391,15 @@ names its socket. CLI JSON names a session `session` and a terminal
     diagnostics as the Nix product; see
     [manual proof limits](MANUAL-BUNDLE.md#retained-development-proof). The
     Nix channel's use of the one graph is EON-C2's automated evidence.
+- **Open proof:** The pre-consolidation channel-parity evidence remains
+  candidate evidence; eon-igae.7.3 owns its exact-revision assessment or
+  beta-candidate re-proof.
 
 ## EON-C7 — Native Linux Wayland and Apple Silicon macOS
 
-- **Status:** Partially proved. Amended on 2026-11-06 (tier approved by Lucca
+- **Status:** Partially proved. The Linux pre-Bend baseline is candidate
+  evidence; the Apple Silicon proof remains limited to its recorded slice.
+  Amended on 2026-11-06 (tier approved by Lucca
   2026-10-27, relayed by eon-overseer; `EON-C37` scope answered by Lucca
   2026-11-06; exact text approved by eon-overseer under Lucca's 2026-11-04
   auto-approve rule) by `eon-igae.5`: the Apple Silicon macOS preview tier.
@@ -402,6 +448,11 @@ names its socket. CLI JSON names a session `session` and a terminal
   Apple Silicon, partial, full Eon:
   `0e47d26df690c7ff4b2f1a000e174b307a17e656`, `eon-mac-launch-kz4p.12`; the
   combined Linux/macOS contract is not proved.
+  - **Qualification:** The evidence at
+    `795d735a8f61ef439c56d68e1cc4d3929af0dfcf` predates the Bend Orbit import
+    (`6818aee17b131b4156515c0cf3f0067020558b0f`). It is pre-Bend candidate
+    evidence, not proof of the current component set. Later evidence below
+    applies only to its named revision, platform, artifact and surface.
   - **Environment:** Automated tier; installed tier. Apple Silicon: Apple M2
     Mac mini (Mac14,3, 16 GiB) rented from Scaleway, macOS 27.2 (26B123),
     `aarch64-apple-darwin`, one 1920x1080 scale-1 display offering HiDPI
@@ -470,10 +521,14 @@ names its socket. CLI JSON names a session `session` and a terminal
   The no-argument Finder/Dock launch and a click while Eon runs are unproved;
   `eon-mac-launch-kz4p.59` owns native reopen/Quit, and
   `eon-mac-launch-kz4p.60` owns the dispatcher and bundled Venus presenter.
+  Re-proof of EON-C7's Linux half on the beta candidate is pending under
+  eon-igae.7.5; eon-prove-full-eon-apple-silicon-macos-t8o retains the
+  full-Eon Apple Silicon proof.
 
 ## EON-C8 — Durable tab and pane workspace
 
-- **Status:** Partially proved. Amended on 2026-11-05 (approved by Lucca,
+- **Status:** Partially proved; the pre-Bend baseline is candidate evidence.
+  Amended on 2026-11-05 (approved by Lucca,
   relayed by eon-overseer) by `eon-agent-parity-a9g0.3`: tabs and panes in any
   tab of the addressed workspace close by ID without moving focus, CLI closes
   use target-scoped busy confirmation, and a native confirmed close sends its
@@ -769,6 +824,11 @@ names its socket. CLI JSON names a session `session` and a terminal
   surface, remote access, reconstructed terminal state, or notifications other
   than the detach notice.
 - **Proof:** `795d735a8f61ef439c56d68e1cc4d3929af0dfcf`, `eon-monorepo-2oko.6`.
+  - **Qualification:** The evidence at
+    `795d735a8f61ef439c56d68e1cc4d3929af0dfcf` predates the Bend Orbit import
+    (`6818aee17b131b4156515c0cf3f0067020558b0f`). It is pre-Bend candidate
+    evidence, not proof of the current component set. Later evidence below
+    applies only to its named revision, platform, artifact and surface.
   - **Environment:** Automated tier; installed tier.
   - **Evidence:** Topology and pruning
     (`delayed_second_cli_receives_committed_workspace_and_controls_three_sessions`,
@@ -956,10 +1016,14 @@ names its socket. CLI JSON names a session `session` and a terminal
   first would have left t2 active. Escape on the prompt kept the tab, and
   Enter on the last tab ended only the private window. No automated test
   drives Venus's `send_close`.
+  Re-proof of EON-C8 on the beta candidate is pending under eon-igae.7.5;
+  eon-igae.7.1 retains crash-continuation and rejected-action observations,
+  and eon-igae.8.2 retains bounded reader qualification.
 
 ## EON-C9 — Managed shell environment
 
-- **Status:** Proven. Amended on 2026-11-06 (approved by Lucca, relayed by
+- **Status:** Partially proved; the pre-Bend baseline is candidate evidence.
+  Amended on 2026-11-06 (approved by Lucca, relayed by
   eon-overseer) by `eon-7cf0y.22` (S4): `eon config path` and `eon config dir`
   replace `config-path` and `config-dir`.
 - **Consumer:** People and agents inspecting Eon configuration defaults and
@@ -1076,6 +1140,11 @@ names its socket. CLI JSON names a session `session` and a terminal
   agent-session and tool-runner removal above, arbitrary argv remains
   unmanaged and `eon run -- COMMAND...` remains the explicit escape hatch.
 - **Proof:** `795d735a8f61ef439c56d68e1cc4d3929af0dfcf`, `eon-monorepo-2oko.6`.
+  - **Qualification:** The evidence at
+    `795d735a8f61ef439c56d68e1cc4d3929af0dfcf` predates the Bend Orbit import
+    (`6818aee17b131b4156515c0cf3f0067020558b0f`). It is pre-Bend candidate
+    evidence, not proof of the current component set. Later evidence below
+    applies only to its named revision, platform, artifact and surface.
   - **Environment:** Automated tier on x86_64 Linux.
   - **Evidence:** The `shell-environment` and `managed-command-path` Nix checks
     (version output from all four managed shells, Zsh and Fish Carapace
@@ -1143,10 +1212,13 @@ names its socket. CLI JSON names a session `session` and a terminal
   `clip copy`, the aliases and `wl-paste`. Agent session (`eon-geigu`): a
   Claude Code started in such a terminal shows no transcript-saving warning.
   Steel trust (`eon-2yj90`): no real Helix run on macOS.
+  Re-proof of EON-C9 on the beta candidate is pending under eon-igae.7.5;
+  retired shell evidence does not cover the current managed shells.
 
 ## EON-C10 — Typed workspace control
 
-- **Status:** Proven. Amended on 2026-11-03 (approved by Lucca, relayed by
+- **Status:** Partially proved; the pre-Bend baseline is candidate evidence.
+  Amended on 2026-11-03 (approved by Lucca, relayed by
   eon-overseer) by `eon-ciwn.1`: EON-C39's event subscription is the
   one connection that carries more than one response. Amended on 2026-11-03
   (approved by Lucca, relayed by eon-overseer) by
@@ -1732,6 +1804,11 @@ names its socket. CLI JSON names a session `session` and a terminal
   `eon-prove-close-and-detach-batch-bf8t` (installed tier); EONW v19 attention
   fields `eon-agent-sidebar-yx8.9` (installed tier); `eon workspace` `caller`
   `eon-ed9d.1` (automated and installed tiers).
+  - **Qualification:** The evidence at
+    `795d735a8f61ef439c56d68e1cc4d3929af0dfcf` predates the Bend Orbit import
+    (`6818aee17b131b4156515c0cf3f0067020558b0f`). It is pre-Bend candidate
+    evidence, not proof of the current component set. Later evidence below
+    applies only to its named revision, platform, artifact and surface.
   - **Environment:** Automated tier; installed tier.
   - **Evidence:** EONW codecs (`request_actions_have_stable_v2_wire_bytes`,
     `round_trips_v2_bounds_and_rejects_invalid_inputs`,
@@ -1937,10 +2014,13 @@ names its socket. CLI JSON names a session `session` and a terminal
 
     In the first two, t2, its popup and the compositor focus stayed. Each
     close ended exactly its target's processes.
+- **Open proof:** Re-proof of EON-C10 on the beta candidate is pending under
+  eon-igae.7.5, after the remote-chain amendments.
 
 ## EON-C11 — Runtime generations and presentation
 
-- **Status:** Proven on x86_64 Linux native Wayland. Amended on 2026-10-30
+- **Status:** Partially proved; the pre-Bend baseline is candidate evidence.
+  Amended on 2026-10-30
   (approved by Lucca, relayed by eon-overseer) by
   `eon-agent-parity-a9g0.15`: only the Venus a supervisor starts attaches to
   its window's terminals, proven by its amendment proof below. Amended on
@@ -2187,6 +2267,11 @@ names its socket. CLI JSON names a session `session` and a terminal
   reattach incompatible old work. See
   [generation inputs](ARCHITECTURE.md#defaults-overrides-and-generation).
 - **Proof:** `795d735a8f61ef439c56d68e1cc4d3929af0dfcf`, `eon-monorepo-2oko.6`.
+  - **Qualification:** The evidence at
+    `795d735a8f61ef439c56d68e1cc4d3929af0dfcf` predates the Bend Orbit import
+    (`6818aee17b131b4156515c0cf3f0067020558b0f`). It is pre-Bend candidate
+    evidence, not proof of the current component set. Later evidence below
+    applies only to its named revision, platform, artifact and surface.
   - **Environment:** Automated tier; installed tier.
   - **Evidence:** `generation_identity_is_stable_bounded_and_namespaced`,
     `discovery_bounds_dead_cleanup_and_rejects_unsafe_metadata`,
@@ -2276,10 +2361,12 @@ names its socket. CLI JSON names a session `session` and a terminal
     test, which now sends it.
 - **Open proof:** Pending re-proof in this repository: native Present of a live
   surface and launch with `/sys/fs/cgroup` hidden.
+  Re-proof of EON-C11 on the beta candidate is pending under eon-igae.7.5,
+  after the remote launch/attach amendment in eon-remote-workspaces-52i4.2.
 
 ## EON-C12 — Standalone exact-command terminal
 
-- **Status:** Proven
+- **Status:** Partially proved; the pre-Bend baseline is candidate evidence.
   Amended on 2026-11-07 (approved by eon-overseer under Lucca's standing rule)
   by `eon-30skm` (S1): `session-unavailable`.
   Amended on 2026-11-07 (approved by eon-overseer under Lucca's standing rule)
@@ -2310,6 +2397,11 @@ names its socket. CLI JSON names a session `session` and a terminal
   managed-tool/default-shell command, remote access, focus guarantee, or Zellij
   policy. Bare `eon` and `eon run` retain session meanings.
 - **Proof:** `795d735a8f61ef439c56d68e1cc4d3929af0dfcf`, `eon-monorepo-2oko.6`.
+  - **Qualification:** The evidence at
+    `795d735a8f61ef439c56d68e1cc4d3929af0dfcf` predates the Bend Orbit import
+    (`6818aee17b131b4156515c0cf3f0067020558b0f`). It is pre-Bend candidate
+    evidence, not proof of the current component set. Later evidence below
+    applies only to its named revision, platform, artifact and surface.
   - **Environment:** Automated tier; installed tier.
   - **Evidence:** `eonbase_reopens_without_workspace_or_a_second_session`,
     `eonbase_replaces_exact_residue_after_its_supervisor_and_session_die` and
@@ -2328,6 +2420,8 @@ names its socket. CLI JSON names a session `session` and a terminal
 - **Open proof:** Pending re-proof in this repository: native supervisor-loss
   recovery of the same eonbase terminal, and `--no-decorations` rendering
   under a decorating compositor.
+  Re-proof of EON-C12 on the beta candidate is pending under eon-igae.7.5
+  through the installed eonbase artifact.
 
 ## EON-C13 — Terminal-background opacity policy
 
@@ -2349,8 +2443,8 @@ names its socket. CLI JSON names a session `session` and a terminal
 
 ## EON-C15 — Same-boot Orbit recovery
 
-- **Status:** Proven on x86_64 Linux by the automated tier; installed
-  supervisor-loss adoption is pending re-proof in this repository.
+- **Status:** Partially proved; the pre-Bend Linux baseline is candidate
+  evidence, and installed Linux supervisor-loss adoption remains pending.
   Amended on 2026-11-07 (approved by eon-overseer under Lucca's standing rule)
   by `eon-30skm` (S1): terminal IDs `terminal-N`.
   Amended on 2026-11-07 (approved by eon-overseer under Lucca's standing rule)
@@ -2430,6 +2524,14 @@ names its socket. CLI JSON names a session `session` and a terminal
   `795d735a8f61ef439c56d68e1cc4d3929af0dfcf` and
   `/nix/store/vscla3lxvsn3mm5hv51lpcqjn1w97fvp-eon-0.1.0` of
   `a3cc5e0d687c73bb482dd6f7887a49c9c9c23c0a`, `eon-upgrade-continuity-kgba`.
+  - **Qualification:** The evidence at
+    `795d735a8f61ef439c56d68e1cc4d3929af0dfcf` predates the Bend Orbit import
+    (`6818aee17b131b4156515c0cf3f0067020558b0f`). It is pre-Bend candidate
+    evidence, not proof of the current component set. Later evidence below
+    applies only to its named revision, platform, artifact and surface.
+  The upgrade/rollback pair at 795d735a8f61ef439c56d68e1cc4d3929af0dfcf and
+  a3cc5e0d687c73bb482dd6f7887a49c9c9c23c0a is also pre-Bend candidate
+  evidence; it does not prove continuity across the Orbit replacement.
   - **Environment:** Automated tier; installed tier. Upgrade and rollback: a
     throwaway Nix profile on private headless Sway 1.12 (wlroots, pixman) in
     bubblewrap, x86_64 Linux.
@@ -2465,10 +2567,13 @@ names its socket. CLI JSON names a session `session` and a terminal
   several full-Eon terminals, and upgrade and rollback that change the Orbit or
   Venus build or the EONW version. No logout, Orbit-restart or machine-restart
   recovery is proved.
+  Re-proof of EON-C15 on the beta candidate is pending under eon-igae.7.1,
+  after eon-remote-workspaces-52i4.6 and eon-remote-ssh-x7dr.2; the Apple
+  Silicon observation under EON-C7 retains only its recorded scope.
 
 ## EON-C16 — Caller-owned application identity
 
-- **Status:** Proven
+- **Status:** Candidate; the pre-Bend baseline is candidate evidence.
 - **Consumer:** Full Eon, standalone eonbase, or one approved eonbase composition.
 - **Trigger:** The caller launches a new Venus surface with its selected validated
   desktop application ID.
@@ -2486,6 +2591,11 @@ names its socket. CLI JSON names a session `session` and a terminal
 - **Boundary:** Immutable launch metadata only; no runtime protocol, branding
   provider, desktop discovery, child inspection, or wider platform promise.
 - **Proof:** `795d735a8f61ef439c56d68e1cc4d3929af0dfcf`, `eon-monorepo-2oko.6`.
+  - **Qualification:** The evidence at
+    `795d735a8f61ef439c56d68e1cc4d3929af0dfcf` predates the Bend Orbit import
+    (`6818aee17b131b4156515c0cf3f0067020558b0f`). It is pre-Bend candidate
+    evidence, not proof of the current component set. Later evidence below
+    applies only to its named revision, platform, artifact and surface.
   - **Environment:** Automated tier; installed tier.
   - **Evidence:** `venus_receives_workspace_endpoint_only_in_workspace_mode`
     checks the projected `--application-id` for both products. Installed
@@ -2494,10 +2604,12 @@ names its socket. CLI JSON names a session `session` and a terminal
 - **Open proof:** Pending re-proof in this repository: installed rejection of
   invalid eonbase identities, distinct launcher grouping, and an approved
   embedding's caller-owned identity.
+  Re-proof of EON-C16 on the beta candidate is pending under eon-igae.7.5.
 
 ## EON-C17 — Tab launch directory
 
-- **Status:** Partially proved. Amended on 2026-11-03 (approved by Lucca,
+- **Status:** Candidate; the pre-Bend baseline is candidate evidence.
+  Amended on 2026-11-03 (approved by Lucca,
   relayed by eon-overseer) by `eon-quick-search-parity-23y9.3`: the Zoxide
   visit of an accepted `SetTabDirectory`. Amended on 2026-11-03 (approved by
   Lucca, relayed by eon-overseer) by `eon-quick-search-parity-23y9.2`:
@@ -2543,6 +2655,11 @@ names its socket. CLI JSON names a session `session` and a terminal
   retargeting of existing processes, persistence, picker UI, or compatibility
   service accepting EONW v1 and v2.
 - **Proof:** `795d735a8f61ef439c56d68e1cc4d3929af0dfcf`, `eon-monorepo-2oko.6`.
+  - **Qualification:** The evidence at
+    `795d735a8f61ef439c56d68e1cc4d3929af0dfcf` predates the Bend Orbit import
+    (`6818aee17b131b4156515c0cf3f0067020558b0f`). It is pre-Bend candidate
+    evidence, not proof of the current component set. Later evidence below
+    applies only to its named revision, platform, artifact and surface.
   - **Environment:** Automated tier; installed tier.
   - **Evidence:** `launch_directory_can_disappear_after_the_initial_session_starts`,
     `tab_directory_retargets_future_sessions_without_crossing_tabs`,
@@ -2554,12 +2671,13 @@ names its socket. CLI JSON names a session `session` and a terminal
     Installed checklist items 3 and 4.
 - **Open proof:** AT-SPI launch-path context on the current build remains
   unproved; prior focused path-context checks are not a screen-reader workflow.
+  Re-proof of EON-C17 on the beta candidate is pending under eon-igae.7.1,
+  including the amended directory-pair behavior.
 
 ## EON-C18 — Picker-first tab directories
 
-- **Status:** Proven for home-directory tabs, picker dismissal and shared popups
-  on x86_64 Linux native Wayland; v7 multi-pending tabs are proven by the
-  automated tier. Amended on 2026-11-03 (approved by Lucca, relayed by
+- **Status:** Candidate; the pre-Bend baseline is candidate evidence.
+  Amended on 2026-11-03 (approved by Lucca, relayed by
   eon-overseer) by `eon-quick-search-parity-23y9.2`: the Project chooser and
   Files become one directory pair. Re-proof is pending at v31 under this bead.
   Amended on 2026-11-07 (approved by eon-overseer under Lucca's standing rule)
@@ -2684,6 +2802,11 @@ names its socket. CLI JSON names a session `session` and a terminal
   current-process `cd`, persisted pending tab, eonbase action, or additional
   platform.
 - **Proof:** `795d735a8f61ef439c56d68e1cc4d3929af0dfcf`, `eon-monorepo-2oko.6`.
+  - **Qualification:** The evidence at
+    `795d735a8f61ef439c56d68e1cc4d3929af0dfcf` predates the Bend Orbit import
+    (`6818aee17b131b4156515c0cf3f0067020558b0f`). It is pre-Bend candidate
+    evidence, not proof of the current component set. Later evidence below
+    applies only to its named revision, platform, artifact and surface.
   - **Environment:** Automated tier; installed tier.
   - **Evidence:** Picker lifecycle
     (`directory_picker_browse_preserves_raw_directory_and_cancellation`,
@@ -2708,11 +2831,13 @@ names its socket. CLI JSON names a session `session` and a terminal
   broader compositors, actual blur, current AT-SPI/screen-reader use and broad
   user environments remain unqualified. No capture stability or latency bound
   is claimed.
+  Re-proof of EON-C18 on the beta candidate is pending under eon-igae.7.5,
+  including the amended directory-pair behavior.
 
 ## EON-C19 — Terminal typography and initial geometry configuration
 
-- **Status:** Proven by the automated tier; installed configured typography and
-  geometry are pending re-proof in this repository.
+- **Status:** Candidate; the pre-Bend baseline is candidate evidence, and
+  installed configured typography and geometry remain pending.
   Amended on 2026-11-07 (approved by eon-overseer under Lucca's standing rule)
   by `eon-30skm` (S3): its prose says session for the product concept.
 - **Consumer:** Eon and eonbase users opening a native surface.
@@ -2758,6 +2883,11 @@ names its socket. CLI JSON names a session `session` and a terminal
 - **Boundary:** Native Linux Wayland; no system-wide font installation, live
   reload, Eon renderer, second schema or primary-font default change.
 - **Proof:** `795d735a8f61ef439c56d68e1cc4d3929af0dfcf`, `eon-monorepo-2oko.6`.
+  - **Qualification:** The evidence at
+    `795d735a8f61ef439c56d68e1cc4d3929af0dfcf` predates the Bend Orbit import
+    (`6818aee17b131b4156515c0cf3f0067020558b0f`). It is pre-Bend candidate
+    evidence, not proof of the current component set. Later evidence below
+    applies only to its named revision, platform, artifact and surface.
   - **Environment:** Automated tier; installed tier.
   - **Evidence:** `terminal_presentation_is_strict_and_bounded`,
     `configured_typography_reaches_both_product_launches`,
@@ -2777,10 +2907,11 @@ names its socket. CLI JSON names a session `session` and a terminal
   font fallback with ambient fonts hidden. Screen-reader use on the current
   build, full fractional/HiDPI coverage, stable-seat IME, broader compositors
   and installed non-systemd support remain unproved.
+  Re-proof of EON-C19 on the beta candidate is pending under eon-igae.7.1.
 
 ## EON-C20 — Discoverable native shortcuts
 
-- **Status:** Proven.
+- **Status:** Partially proved; the pre-Bend baseline is candidate evidence.
   Amended on 2026-11-04 (approved by eon-overseer under Lucca's standing
   rule) by `eon-hbpkq`: a popup on one workspace position key takes only that
   key.
@@ -2836,6 +2967,11 @@ names its socket. CLI JSON names a session `session` and a terminal
   EONW. Exceptions: the viewer reads `sidebar` and each popup entry's override
   from EONW v37.
 - **Proof:** `795d735a8f61ef439c56d68e1cc4d3929af0dfcf`, `eon-monorepo-2oko.6`.
+  - **Qualification:** The evidence at
+    `795d735a8f61ef439c56d68e1cc4d3929af0dfcf` predates the Bend Orbit import
+    (`6818aee17b131b4156515c0cf3f0067020558b0f`). It is pre-Bend candidate
+    evidence, not proof of the current component set. Later evidence below
+    applies only to its named revision, platform, artifact and surface.
   - **Environment:** Automated tier; installed tier.
   - **Evidence:** `popup_configuration_owns_defaults_overrides_and_collisions`;
     Venus `shortcut_viewer_clamps_scroll_and_keeps_fixed_dismissal_space`,
@@ -2891,10 +3027,12 @@ names its socket. CLI JSON names a session `session` and a terminal
   compact sizes, rebound and disabled popup rows, and AT-SPI projection on an
   installed surface. No eonbase, fractional-scale, screen-reader workflow,
   wider compositor, non-systemd, macOS or direct-distribution proof is added.
+  Re-proof of EON-C20 on the beta candidate is pending under eon-igae.7.5;
+  later keymap amendments retain their own approval and proof.
 
 ## EON-C21 — Native workspace header
 
-- **Status:** Proven
+- **Status:** Partially proved; the pre-Bend baseline is candidate evidence.
   Amended on 2026-11-07 (approved by eon-overseer under Lucca's standing rule)
   by `eon-30skm` (S1): EONW v36.
   Amended on 2026-11-07 (approved by eon-overseer under Lucca's standing rule)
@@ -2933,6 +3071,11 @@ names its socket. CLI JSON names a session `session` and a terminal
   EON-C31 tab attention marker, which Venus reads from the EONW v37 snapshot it
   already polls.
 - **Proof:** `795d735a8f61ef439c56d68e1cc4d3929af0dfcf`, `eon-monorepo-2oko.6`.
+  - **Qualification:** The evidence at
+    `795d735a8f61ef439c56d68e1cc4d3929af0dfcf` predates the Bend Orbit import
+    (`6818aee17b131b4156515c0cf3f0067020558b0f`). It is pre-Bend candidate
+    evidence, not proof of the current component set. Later evidence below
+    applies only to its named revision, platform, artifact and surface.
   - **Environment:** Automated tier; installed tier.
   - **Evidence:** Venus
     `eon_bar_keeps_tabs_controls_and_drag_hits_disjoint_under_pressure`,
@@ -2959,6 +3102,8 @@ names its socket. CLI JSON names a session `session` and a terminal
   dragging, eight-tab overflow, narrow widths and AT-SPI order on an installed
   surface. AT-SPI tree order is not a screen-reader workflow; macOS and wider
   platform coverage remain open.
+  Re-proof of EON-C21 on the beta candidate is pending under eon-igae.7.4,
+  after the host-label amendment in eon-remote-workspaces-52i4.3.
 
 ## EON-C22 — Trustworthy Codex quota in the Eon Bar
 
@@ -2970,7 +3115,8 @@ names its socket. CLI JSON names a session `session` and a terminal
 
 ## EON-C23 — Independent Eon windows
 
-- **Status:** Proven. Amended on 2026-11-06 (approved by Lucca, relayed by
+- **Status:** Partially proved; the pre-Bend baseline is candidate evidence.
+  Amended on 2026-11-06 (approved by Lucca, relayed by
   eon-overseer) by `eon-7cf0y.22` (S1): window IDs, prefixes and `eon window
   ls`. Amended on 2026-11-06 (approved by Lucca, relayed by eon-overseer) by
   `eon-7cf0y.22` (S2): `eon window stop previous|all` over every window,
@@ -3102,6 +3248,11 @@ names its socket. CLI JSON names a session `session` and a terminal
   A window ID prefix is a convenience for typing, not an identity: scripts
   keep the full `id` from `eon window ls --json`.
 - **Proof:** `795d735a8f61ef439c56d68e1cc4d3929af0dfcf`, `eon-monorepo-2oko.6`.
+  - **Qualification:** The evidence at
+    `795d735a8f61ef439c56d68e1cc4d3929af0dfcf` predates the Bend Orbit import
+    (`6818aee17b131b4156515c0cf3f0067020558b0f`). It is pre-Bend candidate
+    evidence, not proof of the current component set. Later evidence below
+    applies only to its named revision, platform, artifact and surface.
   - **Environment:** Automated tier; installed tier.
   - **Evidence:** `new_windows_keep_independent_supervisors_and_stop_by_window_id`
     and Venus `new_window_shortcut_invokes_the_supplied_eon_command`. Installed
@@ -3131,6 +3282,7 @@ names its socket. CLI JSON names a session `session` and a terminal
 - **Open proof:** Pending re-proof in this repository: the launcher's New Eon
   Window action, and native `eon window stop all` with piped confirmations
   stopping the caller's window last.
+  Re-proof of EON-C23 on the beta candidate is pending under eon-igae.7.5.
 
 ## EON-C24 — Bottom shortcut hints
 
@@ -3161,8 +3313,8 @@ names its socket. CLI JSON names a session `session` and a terminal
 
 ## EON-C27 — CodexBar quota collection
 
-- **Status:** Proven on x86_64 Linux by the automated tier; installed quota
-  observation is pending re-proof in this repository.
+- **Status:** Partially proved; the pre-Bend baseline is candidate evidence,
+  and the installed quota observation remains pending.
   Amended on 2026-11-07 (approved by eon-overseer under Lucca's standing rule)
   by `eon-30skm` (S1): EONW v36.
 - **Consumer, trigger and result:** Full Eon reads quota through independent,
@@ -3245,6 +3397,11 @@ names its socket. CLI JSON names a session `session` and a terminal
   acceptance. User approval supersedes that evaluation's retain-current decision.
 
 - **Proof:** `795d735a8f61ef439c56d68e1cc4d3929af0dfcf`, `eon-monorepo-2oko.6`.
+  - **Qualification:** The evidence at
+    `795d735a8f61ef439c56d68e1cc4d3929af0dfcf` predates the Bend Orbit import
+    (`6818aee17b131b4156515c0cf3f0067020558b0f`). It is pre-Bend candidate
+    evidence, not proof of the current component set. Later evidence below
+    applies only to its named revision, platform, artifact and surface.
   - **Environment:** Automated tier.
   - **Evidence:** CodexBar-backed workers
     (`actual_periods_optional_resets_and_missing_quota_are_preserved`,
@@ -3299,6 +3456,7 @@ names its socket. CLI JSON names a session `session` and a terminal
   reading turning `old` after one hour; installed Claude reads at least five
   minutes apart; and optional chips hiding at narrow widths. No hardware GPU,
   reader workflow or macOS proof is claimed.
+  Re-proof of EON-C27 on the beta candidate is pending under eon-igae.7.1.
 - **Claude icon:** Venus shows Claude's splat in its original orange
   (`#D97757`) within the existing quota chip bounds and owns the immutable mask
   and tint. Quota facts, layout, hover, accessibility and provider mechanisms
