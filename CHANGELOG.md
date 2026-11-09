@@ -9,6 +9,11 @@ installation, and proven contract changes.
   with 50 filled workspace tabs on the shared private Sway launcher. Process
   PSS, RSS and anonymous PSS retain the existing estimator, with separately
   labelled software/hardware adapters and codec attribution diagnostics.
+- Pane, popup, Agents and native dialog titles use one shared notched tab with
+  a smooth S return beside the fitted label. Only the top pane in each column
+  receives the tab; lower stacked titles stay compact, with terminal rows and
+  interaction bounds unchanged (`eon-27deg`). Native dialog titles
+  use the chrome title style in place of the bold heading style.
 
 - Orbit uses upstream libghostty on the Ghostty vt-1.0.0 core, pinned by
   exact Git revision (`eon-9rtt.9`).

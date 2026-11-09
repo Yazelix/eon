@@ -2,7 +2,7 @@
 //! header tooltip and the native dialog, plus the pointer state that highlights them.
 
 use super::{
-    CellMetrics, CursorPoint, DrawStyleKind, PlacedText, PopupTitle, PopupTitleTab, RectangleBatch,
+    CellMetrics, CursorPoint, DrawStyleKind, FrameTitle, FrameTitleTab, PlacedText, RectangleBatch,
     Renderer, SceneColor,
     cells::{NERD_FONT_FAMILY, blend_to_contrast},
     palette, physical_outline_width, shaping,
@@ -1138,7 +1138,7 @@ pub(super) fn popup_title_row(
     Some(row)
 }
 
-impl PopupTitle {
+impl FrameTitle {
     pub(super) fn fit(
         fonts: &mut FontSystem,
         metrics: CellMetrics,
@@ -1163,8 +1163,8 @@ impl PopupTitle {
     }
 }
 
-impl PopupTitleTab {
-    pub(super) fn new(
+impl FrameTitleTab {
+    pub(super) fn popup(
         fonts: &mut FontSystem,
         metrics: CellMetrics,
         workspace: &WorkspaceScene,
@@ -1178,6 +1178,18 @@ impl PopupTitleTab {
             .tab_viewport
             .bottom()
             .max(workspace.header.bottom());
+        Self::new(fonts, metrics, label, row, card, frame_top, stroke)
+    }
+
+    fn new(
+        fonts: &mut FontSystem,
+        metrics: CellMetrics,
+        label: &str,
+        row: SceneRect,
+        card: crate::scene::CardFill,
+        frame_top: f32,
+        stroke: f32,
+    ) -> Option<Self> {
         let extra = (metrics.padding / 3.0).max(stroke + 1.0);
         let top = (row.top - extra).floor().max(frame_top.ceil() + 1.0);
         if top + stroke + 1.0 > row.top {
@@ -1185,19 +1197,9 @@ impl PopupTitleTab {
         }
         let rise = card.bounds.top - top;
         let join_radius = (card.radius / 2.0).min(rise / 2.0);
+        let return_run = rise * 1.5;
         let right_padding = metrics.padding / 2.0;
         if right_padding < stroke + 1.0 {
-            return None;
-        }
-        let available = card.bounds.width
-            - super::rounded_radius(card.bounds, card.radius)
-            - join_radius
-            - stroke
-            - metrics.padding
-            - right_padding
-            - (right_padding - stroke);
-        let title = PopupTitle::fit(fonts, metrics, label, available.max(0.0));
-        if title.label.is_empty() {
             return None;
         }
         // Keep antialiased corner pixels outside the title box, including at large fonts.
@@ -1207,23 +1209,250 @@ impl PopupTitleTab {
             stroke + clearance + extra + (2.0 * clearance * extra).sqrt()
         };
         let left_radius = rise.min(corner_limit(metrics.padding));
+        let right_radius = left_radius
+            .min(rise - join_radius)
+            .min(corner_limit(right_padding));
+        let available = row
+            .right()
+            .min(card.bounds.right() - super::rounded_radius(card.bounds, card.radius))
+            - card.bounds.left
+            - (return_run - right_radius)
+            - stroke
+            - metrics.padding
+            - right_padding
+            - (right_padding - stroke);
+        let title = FrameTitle::fit(fonts, metrics, label, available.max(0.0));
+        let right =
+            card.bounds.left + metrics.padding + title.ink_width(metrics, stroke) + right_padding;
+        if title.label.is_empty() {
+            return None;
+        }
         Some(Self {
             top,
-            right: card.bounds.left
-                + metrics.padding
-                + title.ink_width(metrics, stroke)
-                + right_padding,
+            start: right - right_radius,
             left_radius,
-            right_radius: left_radius
-                .min(rise - join_radius)
-                .min(corner_limit(right_padding)),
-            join_radius,
+            row,
+            return_run,
             title,
         })
+    }
+
+    pub(super) fn pane(
+        fonts: &mut FontSystem,
+        metrics: CellMetrics,
+        workspace: &WorkspaceScene,
+        panes: &[crate::scene::WorkspacePane],
+        stroke: f32,
+        card_stroke: f32,
+        right_limit: Option<f32>,
+    ) -> Option<Self> {
+        let pane = panes.first()?;
+        let height = chrome_title_metrics(metrics).text_height;
+        let mut row = SceneRect {
+            top: pane.rect.top + (pane.rect.height - height) / 2.0,
+            height,
+            ..pane.rect
+        };
+        let card = workspace.card_fill(
+            SceneRect {
+                left: pane.rect.left,
+                width: pane.rect.width,
+                ..workspace.pane_viewport
+            },
+            metrics,
+            card_stroke,
+        );
+        if card.bounds.top != crate::scene::title_rule_y(row.top, row.height) {
+            return None;
+        }
+        if let Some(right) = right_limit {
+            row.width = (right - row.left).max(0.0);
+        }
+        Self::new(
+            fonts,
+            metrics,
+            pane.label(),
+            row,
+            card,
+            workspace
+                .header
+                .bottom()
+                .max(workspace.tab_viewport.bottom()),
+            stroke,
+        )
+    }
+    pub(super) fn sidebar(
+        fonts: &mut FontSystem,
+        metrics: CellMetrics,
+        workspace: &WorkspaceScene,
+        stroke: f32,
+        card_stroke: f32,
+    ) -> Option<Self> {
+        let area = workspace.sidebar_area()?;
+        let row = SceneRect {
+            height: chrome_title_metrics(metrics).text_height,
+            ..area
+        };
+        let card = crate::scene::CardFill {
+            bounds: workspace.card_rect(area, metrics, card_stroke),
+            radius: workspace.card_radius(),
+        };
+        if card.bounds.top != crate::scene::title_rule_y(row.top, row.height) {
+            return None;
+        }
+        Self::new(
+            fonts,
+            metrics,
+            SIDEBAR_TITLE,
+            row,
+            card,
+            workspace
+                .header
+                .bottom()
+                .max(workspace.tab_viewport.bottom()),
+            stroke,
+        )
+    }
+
+    pub(super) fn dialog(
+        fonts: &mut FontSystem,
+        metrics: CellMetrics,
+        viewer: &DialogScene,
+        stroke: f32,
+    ) -> Option<(crate::scene::CardFill, Self)> {
+        let height = chrome_title_metrics(metrics).text_height;
+        let row = SceneRect {
+            // Keep the lower chrome title inside the existing heading band, clear of bar chips.
+            top: (viewer.title.bottom() - height).ceil(),
+            height,
+            ..viewer.bounds
+        };
+        let top = crate::scene::title_rule_y(row.top, row.height);
+        if top >= viewer.bounds.bottom() {
+            return None;
+        }
+        let card = crate::scene::CardFill {
+            bounds: SceneRect {
+                top,
+                height: (viewer.bounds.bottom() - top).max(0.0),
+                ..viewer.bounds
+            },
+            radius: crate::scene::card_gap(metrics),
+        };
+        Self::new(
+            fonts,
+            metrics,
+            viewer.kind.title(),
+            row,
+            card,
+            viewer.bounds.top,
+            stroke,
+        )
+        .map(|tab| (card, tab))
+    }
+    pub(super) fn workspace(
+        fonts: &mut FontSystem,
+        metrics: CellMetrics,
+        workspace: &WorkspaceScene,
+        pane_frames: bool,
+        widths: (f32, f32),
+        right_limit: Option<f32>,
+    ) -> Vec<Option<Self>> {
+        let (border, focus) = widths;
+        let card_stroke = border.max(focus);
+        if workspace.popup_label().is_some() {
+            let mut tabs = vec![FrameTitleTab::popup(fonts, metrics, workspace, border)];
+            if workspace.sidebar().is_some() {
+                tabs.push(
+                    pane_frames
+                        .then(|| {
+                            FrameTitleTab::sidebar(fonts, metrics, workspace, border, card_stroke)
+                        })
+                        .flatten(),
+                );
+            }
+            return tabs;
+        }
+        let mut tabs = Vec::new();
+        for (panes, selected) in std::iter::once((workspace.panes.as_slice(), true)).chain(
+            workspace
+                .other_columns
+                .iter()
+                .map(|column| (column.panes.as_slice(), false)),
+        ) {
+            let Some(first) = panes.first() else {
+                tabs.push(None);
+                continue;
+            };
+            let stroke = if selected && first.selected {
+                focus
+            } else {
+                border
+            };
+            let right_limit = (selected && first.selected)
+                .then_some(right_limit)
+                .flatten();
+            let tab = if pane_frames {
+                FrameTitleTab::pane(
+                    fonts,
+                    metrics,
+                    workspace,
+                    panes,
+                    stroke,
+                    card_stroke,
+                    right_limit,
+                )
+            } else {
+                None
+            };
+            tabs.push(tab);
+        }
+        if workspace.sidebar().is_some() {
+            tabs.push(
+                pane_frames
+                    .then(|| FrameTitleTab::sidebar(fonts, metrics, workspace, border, card_stroke))
+                    .flatten(),
+            );
+        }
+        tabs
     }
 }
 
 impl Renderer {
+    pub(super) fn workspace_title_tabs(
+        &mut self,
+        workspace: &WorkspaceScene,
+    ) -> Vec<Option<FrameTitleTab>> {
+        let right_limit = workspace
+            .panes
+            .first()
+            .filter(|pane| pane.selected)
+            .and_then(|pane| {
+                self.scrollback_geometry(
+                    SceneRect {
+                        left: pane.rect.left + self.metrics.width * 4.0,
+                        width: (pane.rect.width - self.metrics.width * 4.0).max(0.0),
+                        ..pane.rect
+                    },
+                    workspace.pane_viewport,
+                    true,
+                    None,
+                )
+                .map(|(pill, _)| pill.left - self.metrics.padding / 2.0)
+            });
+        FrameTitleTab::workspace(
+            &mut self.fonts.font_system,
+            self.metrics,
+            workspace,
+            self.pane_frames,
+            (
+                physical_outline_width(self.border_width, self.metrics.scale),
+                physical_outline_width(self.focus_border_width, self.metrics.scale),
+            ),
+            right_limit,
+        )
+    }
+
     /// Steps every drawn working badge one frame by rewriting only its own uploaded vertices,
     /// so the scene, text and terminal layers stay cached.
     pub fn turn_spinners(&mut self) {
@@ -1848,10 +2077,10 @@ impl Renderer {
         // One cover over both boxes, which share their left edge and width.
         self.text_overlay = Some((
             first,
-            text_bounds(SceneRect {
+            vec![text_bounds(SceneRect {
                 height: popup.bottom() - rect.top,
                 ..rect
-            }),
+            })],
         ));
     }
 
@@ -1876,7 +2105,7 @@ impl Renderer {
             edge,
         );
         self.place_box(first, tooltip, rectangles);
-        self.text_overlay = Some((first, text_bounds(tooltip)));
+        self.text_overlay = Some((first, vec![text_bounds(tooltip)]));
         tooltip
     }
 
@@ -1912,29 +2141,32 @@ impl Renderer {
         let first = self.text.len();
         let padding = self.metrics.padding.min(viewer.bounds.width / 8.0);
         rectangles.clip = None;
-        rectangles.push_rounded(viewer.bounds, padding / 2.0, palette::DIALOG_BACKGROUND);
-        rectangles.push_rounded_outline(viewer.bounds, padding / 2.0, palette::CARD_OUTLINE);
-        self.text_overlay = Some((
-            first,
-            TextBounds {
-                left: viewer.bounds.left.floor() as i32,
-                top: viewer.bounds.top.floor() as i32,
-                right: viewer.bounds.right().ceil() as i32,
-                bottom: viewer.bounds.bottom().ceil() as i32,
-            },
-        ));
+        let stroke = physical_outline_width(self.border_width, self.metrics.scale);
+        let tab = FrameTitleTab::dialog(&mut self.fonts.font_system, self.metrics, viewer, stroke);
+        let occlusion = rectangles.push_dialog_frame(viewer.bounds, padding, tab.as_ref(), stroke);
+        self.text_overlay = Some((first, occlusion));
 
-        self.push_text_clipped(
-            viewer.kind.title(),
-            viewer.title.left,
-            viewer.title.top,
-            viewer.title.width,
-            viewer.title.width,
-            viewer.title.height,
-            palette::PRIMARY_TEXT,
-            DrawStyleKind::Heading,
-            viewer.bounds,
-        );
+        if let Some((_, tab)) = &tab {
+            self.build_frame_title(
+                &tab.title,
+                tab.row,
+                viewer.bounds,
+                palette::PRIMARY_TEXT,
+                stroke,
+            );
+        } else {
+            self.build_border_title(
+                viewer.kind.title(),
+                SceneRect {
+                    left: viewer.bounds.left,
+                    width: viewer.bounds.width,
+                    ..viewer.title
+                },
+                viewer.bounds,
+                (viewer.bounds.width - self.metrics.padding * 2.0).max(0.0),
+                palette::PRIMARY_TEXT,
+            );
+        }
         self.push_text_clipped(
             &viewer.kind.subtitle(),
             viewer.subtitle.left,
@@ -2095,6 +2327,7 @@ impl Renderer {
         rectangles: &mut RectangleBatch,
         backgrounds: &[SceneColor],
         bands: &[Vec<SceneColor>],
+        title_tabs: &[Option<FrameTitleTab>],
     ) {
         rectangles.push(
             workspace.header.left,
@@ -2110,23 +2343,34 @@ impl Renderer {
             let text_height = chrome_title_metrics(self.metrics).text_height;
             let width = (sidebar.width - padding * 2.0).max(0.0);
             let area = workspace.sidebar_area().unwrap();
-            let gap = self.build_border_title(
-                SIDEBAR_TITLE,
-                SceneRect {
-                    height: text_height,
-                    ..area
-                },
-                area,
-                width,
-                palette::PRIMARY_TEXT,
-            );
+            let row = SceneRect {
+                height: text_height,
+                ..area
+            };
+            let stroke = physical_outline_width(self.border_width, self.metrics.scale);
+            let tab = title_tabs.last().and_then(Option::as_ref);
+            let gap = if let Some(tab) = tab {
+                self.build_frame_title(&tab.title, row, area, palette::PRIMARY_TEXT, stroke)
+            } else {
+                self.build_border_title(SIDEBAR_TITLE, row, area, width, palette::PRIMARY_TEXT)
+            };
             if self.pane_frames {
-                rectangles.clip = Some(area);
+                let card = crate::scene::CardFill {
+                    bounds: workspace.card_rect(area, self.metrics, self.card_stroke_width()),
+                    radius: workspace.card_radius(),
+                };
+                let mut clip = area;
+                if let Some(tab) = tab {
+                    rectangles.push_title_tab_outline(card, tab, stroke, palette::CARD_OUTLINE);
+                    clip.top = card.bounds.top + super::rounded_radius(card.bounds, card.radius);
+                    clip.height = (area.bottom() - clip.top).max(0.0);
+                }
+                rectangles.clip = Some(clip);
                 rectangles.push_card_outline(
-                    workspace.card_rect(area, self.metrics, self.card_stroke_width()),
-                    workspace.card_radius(),
+                    card.bounds,
+                    card.radius,
                     &[gap],
-                    physical_outline_width(self.border_width, self.metrics.scale),
+                    stroke,
                     palette::CARD_OUTLINE,
                 );
                 rectangles.clip = None;
@@ -2488,16 +2732,19 @@ impl Renderer {
             let mut clip = workspace.chrome;
             let mut gaps = Vec::new();
             if let Some(row) = popup_title_row(workspace, self.metrics, stroke) {
-                let title = if let Some(tab) =
-                    PopupTitleTab::new(&mut self.fonts.font_system, self.metrics, workspace, stroke)
-                {
-                    rectangles.push_popup_tab_outline(card, &tab, stroke, palette::CARD_OUTLINE);
+                let title = if let Some(tab) = FrameTitleTab::popup(
+                    &mut self.fonts.font_system,
+                    self.metrics,
+                    workspace,
+                    stroke,
+                ) {
+                    rectangles.push_title_tab_outline(card, &tab, stroke, palette::CARD_OUTLINE);
                     let cut = card.bounds.top + super::rounded_radius(card.bounds, card.radius);
                     clip.top = cut;
                     clip.height = (workspace.chrome.bottom() - cut).max(0.0);
                     tab.title
                 } else {
-                    let title = PopupTitle::fit(
+                    let title = FrameTitle::fit(
                         &mut self.fonts.font_system,
                         self.metrics,
                         label,
@@ -2506,16 +2753,12 @@ impl Renderer {
                     gaps.push(title.border_gap(row, self.metrics));
                     title
                 };
-                self.push_text_clipped(
-                    &title.label,
-                    row.left + self.metrics.padding,
-                    row.top,
-                    title.width,
-                    title.ink_width(self.metrics, stroke),
-                    row.height,
-                    palette::PRIMARY_TEXT,
-                    DrawStyleKind::Status(Wrap::None),
+                self.build_frame_title(
+                    &title,
+                    row,
                     workspace.chrome,
+                    palette::PRIMARY_TEXT,
+                    stroke,
                 );
             }
             rectangles.clip = Some(clip);
@@ -2602,7 +2845,26 @@ impl Renderer {
                     pane.rect
                 };
                 let first_text = self.text.len();
-                let pill = self.build_border_title(pane.label(), row, rect, width, color);
+                let pill = if index == 0
+                    && let Some(Some(tab)) = title_tabs.get(column_index)
+                {
+                    self.build_frame_title(
+                        &tab.title,
+                        row,
+                        rect,
+                        color,
+                        physical_outline_width(
+                            if current {
+                                self.focus_border_width
+                            } else {
+                                self.border_width
+                            },
+                            self.metrics.scale,
+                        ),
+                    )
+                } else {
+                    self.build_border_title(pane.label(), row, rect, width, color)
+                };
                 let id_color = pane_id_color(
                     color,
                     current,
@@ -2614,7 +2876,11 @@ impl Renderer {
                     self.background_opacity,
                     bands
                         .get(column_index)
-                        .filter(|_| outline.expanded)
+                        .filter(|_| {
+                            outline.expanded
+                                && !(index == 0
+                                    && title_tabs.get(column_index).is_some_and(Option::is_some))
+                        })
                         .map_or(&[], Vec::as_slice),
                 );
                 if id_color != color
@@ -2655,6 +2921,27 @@ impl Renderer {
                 }
                 rectangles.clip = None;
             }
+            if let Some(Some(tab)) = title_tabs.get(column_index) {
+                let expanded = rules[0].0.expanded;
+                let stroke = physical_outline_width(
+                    if expanded && selected_column {
+                        self.focus_border_width
+                    } else {
+                        self.border_width
+                    },
+                    self.metrics.scale,
+                );
+                let color = if expanded && selected_column {
+                    self.focus_color
+                } else {
+                    palette::CARD_OUTLINE
+                };
+                rectangles.push_title_tab_outline(fill, tab, stroke, color);
+                let cut = fill.bounds.top + super::rounded_radius(fill.bounds, fill.radius);
+                let old_bottom = rules[0].0.clip.bottom();
+                rules[0].0.clip.top = cut;
+                rules[0].0.clip.height = (old_bottom - cut).max(0.0);
+            }
             rectangles.push_pane_outlines(
                 fill,
                 workspace.pane_viewport,
@@ -2686,26 +2973,31 @@ impl Renderer {
         width: f32,
         color: SceneColor,
     ) -> SceneRect {
-        let (label, measured) =
-            fit_header_text(&mut self.fonts.font_system, self.metrics, label, width);
-        let title = chrome_title_metrics(self.metrics);
+        let title = FrameTitle::fit(&mut self.fonts.font_system, self.metrics, label, width);
+        self.build_frame_title(&title, row, clip, color, 1.0)
+    }
+
+    fn build_frame_title(
+        &mut self,
+        title: &FrameTitle,
+        row: SceneRect,
+        clip: SceneRect,
+        color: SceneColor,
+        stroke: f32,
+    ) -> SceneRect {
+        let metrics = chrome_title_metrics(self.metrics);
         self.push_text_clipped(
-            &label,
+            &title.label,
             row.left + self.metrics.padding,
-            row.top + (row.height - title.text_height) / 2.0,
-            width,
-            width,
-            title.text_height,
+            row.top + (row.height - metrics.text_height) / 2.0,
+            title.width,
+            title.ink_width(self.metrics, stroke),
+            metrics.text_height,
             color,
             DrawStyleKind::Status(Wrap::None),
             clip,
         );
-        SceneRect {
-            left: row.left + self.metrics.padding / 2.0,
-            top: row.top + 1.0,
-            width: measured + self.metrics.padding,
-            height: (row.height - 2.0).max(0.0),
-        }
+        title.border_gap(row, self.metrics)
     }
 
     /// Draws a provider icon in `rect`, cut to `clip` when one is given.
@@ -2753,6 +3045,44 @@ impl Renderer {
             bound_top: bounds.top.floor() as i32,
             color: Color::rgb(color.r, color.g, color.b),
         });
+    }
+}
+
+impl RectangleBatch {
+    pub(super) fn push_dialog_frame(
+        &mut self,
+        bounds: SceneRect,
+        padding: f32,
+        tab: Option<&(crate::scene::CardFill, FrameTitleTab)>,
+        stroke: f32,
+    ) -> Vec<TextBounds> {
+        if let Some((card, tab)) = tab {
+            let fill = super::title_tab_bands(*card, tab, 0.0);
+            for band in &fill {
+                self.push(
+                    band.left,
+                    band.top,
+                    band.width,
+                    band.height,
+                    palette::DIALOG_BACKGROUND,
+                    1.0,
+                );
+            }
+            self.push_title_tab_outline(*card, tab, stroke, palette::CARD_OUTLINE);
+            let cut = card.bounds.top + super::rounded_radius(card.bounds, card.radius);
+            self.clip = Some(SceneRect {
+                top: cut,
+                height: (bounds.bottom() - cut).max(0.0),
+                ..bounds
+            });
+            self.push_card_outline(card.bounds, card.radius, &[], stroke, palette::CARD_OUTLINE);
+            self.clip = None;
+            fill.into_iter().map(super::text_clip_bounds).collect()
+        } else {
+            self.push_rounded(bounds, padding / 2.0, palette::DIALOG_BACKGROUND);
+            self.push_rounded_outline_width(bounds, padding / 2.0, stroke, palette::CARD_OUTLINE);
+            vec![text_bounds(bounds)]
+        }
     }
 }
 
@@ -4621,12 +4951,14 @@ mod tests {
                     0.0,
                     |_, label| renderer.fit_tab_text(label, false),
                 );
+                let title_tabs = renderer.workspace_title_tabs(&workspace);
                 renderer.build_workspace(
                     &workspace,
                     WorkspaceFocus::Terminal,
                     &mut RectangleBatch::new(900, 600),
                     &[],
                     &[],
+                    &title_tabs,
                 );
                 let label = &renderer.text[1];
                 let line = label.buffer.layout_runs().next().unwrap();
@@ -4656,9 +4988,11 @@ mod tests {
                 );
                 renderer.set_hovered_header(Some((WorkspaceFocus::Tabs, "t2".into())));
                 renderer.build_header_tooltip(&workspace, &mut RectangleBatch::new(900, 600));
-                let (first, overlay) = renderer.text_overlay.unwrap();
+                let (first, masks) = renderer.text_overlay.as_ref().unwrap();
+                let first = *first;
+                let overlay = masks[0];
                 let areas: Vec<_> =
-                    text_areas(&renderer.text[..first], renderer.text_overlay).collect();
+                    text_areas(&renderer.text[..first], renderer.text_overlay.as_ref()).collect();
                 assert!(
                     areas.iter().all(|area| {
                         let b = area.bounds;
@@ -4755,12 +5089,14 @@ mod tests {
                     renderer.text.clear();
                     renderer.set_hovered_header(Some((WorkspaceFocus::Panes, "p3".into())));
                     let mut batch = RectangleBatch::new(900, 600);
+                    let title_tabs = renderer.workspace_title_tabs(&workspace);
                     renderer.build_workspace(
                         &workspace,
                         WorkspaceFocus::Panes,
                         &mut batch,
                         &[],
                         &[],
+                        &title_tabs,
                     );
                     let pane = &workspace.panes[0];
                     let label = renderer
@@ -4917,19 +5253,23 @@ mod tests {
                     renderer.build_scrollback(viewport, viewport, false, None, &mut rectangles)
                         > 0.0
                 );
-                let (first, overlay) = renderer.text_overlay.unwrap();
+                let (first, masks) = renderer.text_overlay.as_ref().unwrap();
+                let first = *first;
+                let overlay = masks[0];
                 assert_eq!(
                     renderer.text[first].buffer.lines[0].text(),
                     "↓ 18446744073709551615 rows"
                 );
                 assert!(
-                    text_areas(&renderer.text[..first], renderer.text_overlay).all(|area| {
-                        let b = area.bounds;
-                        b.right <= overlay.left
-                            || b.left >= overlay.right
-                            || b.bottom <= overlay.top
-                            || b.top >= overlay.bottom
-                    })
+                    text_areas(&renderer.text[..first], renderer.text_overlay.as_ref()).all(
+                        |area| {
+                            let b = area.bounds;
+                            b.right <= overlay.left
+                                || b.left >= overlay.right
+                                || b.bottom <= overlay.top
+                                || b.top >= overlay.bottom
+                        }
+                    )
                 );
                 assert_eq!(
                     renderer.build_scrollback(
@@ -4994,12 +5334,14 @@ mod tests {
                     );
                     renderer.text.clear();
                     let mut batch = RectangleBatch::new(1600, 900);
+                    let title_tabs = renderer.workspace_title_tabs(&workspace);
                     renderer.build_workspace(
                         &workspace,
                         WorkspaceFocus::Terminal,
                         &mut batch,
                         &[],
                         &[],
+                        &title_tabs,
                     );
                     let title = chrome_title_metrics(renderer.metrics);
                     for (name, card) in [

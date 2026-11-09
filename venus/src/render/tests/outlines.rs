@@ -13,20 +13,20 @@ fn popup_tab_joins_the_left_border_and_returns_into_the_top_edge() {
         },
         radius: 8.0,
     };
-    let tab = PopupTitleTab {
+    let tab = FrameTitleTab {
         top: 26.0,
-        right: 110.0,
+        start: 100.0,
         left_radius: 14.0,
-        right_radius: 10.0,
-        join_radius: 4.0,
-        title: PopupTitle {
+        row: SceneRect::default(),
+        return_run: 21.0,
+        title: FrameTitle {
             label: "Agent".into(),
             width: 82.0,
         },
     };
     for width in [1.0, 2.0, 3.0] {
         let mut batch = RectangleBatch::new(400, 300);
-        batch.push_popup_tab_outline(card, &tab, width, palette::CARD_OUTLINE);
+        batch.push_title_tab_outline(card, &tab, width, palette::CARD_OUTLINE);
         let ink = painted_rects(&batch).collect::<Vec<_>>();
         for y in [39.5, 40.5, 41.5, 47.5] {
             assert!(ink.iter().any(|r| r.contains(10.5, y)), "left seam at {y}");
@@ -36,14 +36,14 @@ fn popup_tab_joins_the_left_border_and_returns_into_the_top_edge() {
             "old corner remains"
         );
         assert!(
-            ink.iter().any(|r| r.contains(116.0, 40.5)),
+            ink.iter().any(|r| r.contains(123.0, 40.5)),
             "right return is missing"
         );
         assert!(
             !ink.iter().any(|r| r.contains(50.0, 40.5)),
             "stroke crosses title"
         );
-        let fill = popup_tab_bands(card, &tab, 0.0);
+        let fill = title_tab_bands(card, &tab, 0.0);
         assert!(
             fill.iter().any(|r| r.contains(10.5, 40.5)),
             "old corner cuts fill"
@@ -51,16 +51,78 @@ fn popup_tab_joins_the_left_border_and_returns_into_the_top_edge() {
     }
 }
 
-fn popup_title_workspace(
-    metrics: CellMetrics,
-    size: PhysicalSize<u32>,
+#[test]
+fn title_return_arcs_keep_normal_stroke_width_at_their_tangent_join() {
+    let card = CardFill {
+        bounds: SceneRect {
+            left: 10.0,
+            top: 40.0,
+            width: 300.0,
+            height: 200.0,
+        },
+        radius: 8.0,
+    };
+    let tab = FrameTitleTab {
+        top: 26.0,
+        start: 100.0,
+        left_radius: 14.0,
+        row: SceneRect::default(),
+        return_run: 21.0,
+        title: FrameTitle {
+            label: "Agent".into(),
+            width: 82.0,
+        },
+    };
+    // Reference circles for the chosen 21-by-14 return, independent of band tessellation.
+    let radius = 11.375;
+    let start = tab.start;
+    for inset in [0.0, 1.0, 2.0, 3.0] {
+        let join = 33.0 + inset * (5.0 / 13.0);
+        let mut checked = 0;
+        for band in title_tab_bands(card, &tab, inset) {
+            let y = band.top + 0.5;
+            if y < tab.top + inset || y >= card.bounds.top + inset {
+                continue;
+            }
+            let (x, cy, offset_radius) = if y < join {
+                (start, tab.top + radius, radius - inset)
+            } else {
+                (
+                    start + tab.return_run,
+                    card.bounds.top - radius,
+                    radius + inset,
+                )
+            };
+            assert!(
+                ((band.right() - x).hypot(y - cy) - offset_radius).abs() < 0.001,
+                "chosen return is not a normal stroke offset at {y}, inset {inset}"
+            );
+            assert!(band.left.is_finite() && band.width > 0.0);
+            checked += 1;
+        }
+        assert!(checked >= 10);
+    }
+    let mut batch = RectangleBatch::new(400, 300);
+    batch.push_title_tab_outline(card, &tab, 3.0, palette::CARD_OUTLINE);
+    let ink = painted_rects(&batch).collect::<Vec<_>>();
+    assert!(
+        ink.iter().any(|rect| rect.contains(10.5, 40.5)),
+        "left seam broke"
+    );
+    assert!(
+        !ink.iter().any(|rect| rect.contains(50.0, 40.5)),
+        "stroke crossed the title"
+    );
+}
+
+fn popup_title_snapshot(
     label: &str,
     vertical_margin: f32,
-) -> WorkspaceScene {
+) -> eon_workspace_protocol::v38::Snapshot {
     use eon_workspace_protocol::v38::{
         Popup, PopupEntry, PopupGeometry, PopupKey, Sidebar, Snapshot, Tab,
     };
-    let snapshot = Snapshot {
+    Snapshot {
         workspace: "s1".into(),
         active_workspace: "s1".into(),
         workspaces: vec![eon_workspace_protocol::v38::WorkspaceInfo {
@@ -106,10 +168,90 @@ fn popup_title_workspace(
         busy: None,
         sidebar: Sidebar::Closed,
         attention_queue: vec![],
-    };
+    }
+}
+
+fn popup_title_workspace(
+    metrics: CellMetrics,
+    size: PhysicalSize<u32>,
+    label: &str,
+    vertical_margin: f32,
+) -> WorkspaceScene {
+    let snapshot = popup_title_snapshot(label, vertical_margin);
     WorkspaceScene::from_snapshot(&snapshot, size, metrics, 0.0, 0.0, |_, text| {
         (text.into(), text.len() as f32 * metrics.width)
     })
+}
+
+#[test]
+fn shared_title_tabs_fit_lone_and_top_panes_and_leave_lower_rows_compact() {
+    use eon_workspace_protocol::v38::{Column, Pane};
+    let mut fonts = FontSetup::new(&FontSettings::default()).unwrap();
+    for scale in [1.0, 1.3, 2.0] {
+        let metrics = fonts.metrics(scale);
+        for count in [1, 3] {
+            for expanded in 0..count {
+                let mut snapshot = popup_title_snapshot("Popup", 4.0);
+                let tab = &mut snapshot.tabs[0];
+                tab.selected_popup = None;
+                tab.popups.clear();
+                tab.selected_pane = Some(format!("p{expanded}"));
+                tab.columns = vec![Column {
+                    panes: (0..count)
+                        .map(|index| Pane {
+                            id: format!("p{index}"),
+                            label: format!("p{index}  Codex"),
+                            session: format!("s{index}"),
+                            endpoint: format!("/tmp/p{index}.sock").into_bytes(),
+                            pinned_name: None,
+                            live: true,
+                            attention: None,
+                        })
+                        .collect(),
+                    expanded: format!("p{expanded}"),
+                }];
+                for width in [400, 1280] {
+                    let workspace = WorkspaceScene::from_snapshot(
+                        &snapshot,
+                        PhysicalSize::new(width, 800),
+                        metrics,
+                        0.0,
+                        0.0,
+                        |_, label| (label.into(), label.len() as f32 * metrics.width),
+                    );
+                    let stroke = physical_outline_width(1, metrics.scale);
+                    let title = FrameTitleTab::pane(
+                        &mut fonts.font_system,
+                        metrics,
+                        &workspace,
+                        &workspace.panes,
+                        stroke,
+                        stroke,
+                        None,
+                    )
+                    .expect("the top pane has existing chrome clearance");
+                    assert_eq!(title.title.label, "p0  Codex");
+                    assert!(title.top > workspace.header.bottom());
+                    assert!(title.top + stroke + 1.0 <= workspace.panes[0].rect.top);
+                    if count > 1 {
+                        assert!(
+                            FrameTitleTab::pane(
+                                &mut fonts.font_system,
+                                metrics,
+                                &workspace,
+                                &workspace.panes[1..],
+                                stroke,
+                                stroke,
+                                None,
+                            )
+                            .is_none(),
+                            "an interior stack row must not acquire a tab"
+                        );
+                    }
+                }
+            }
+        }
+    }
 }
 
 fn roomy_popup_title_workspace(
@@ -154,9 +296,12 @@ fn popup_tabs_fit_labels_and_partition_translucent_backgrounds() {
                         roomy_popup_title_workspace(metrics, PhysicalSize::new(width, 1800), label);
                     for border in [1, 2, 3] {
                         let stroke = physical_outline_width(border, metrics.scale);
-                        let Some(tab) =
-                            PopupTitleTab::new(&mut fonts.font_system, metrics, &workspace, stroke)
-                        else {
+                        let Some(tab) = FrameTitleTab::popup(
+                            &mut fonts.font_system,
+                            metrics,
+                            &workspace,
+                            stroke,
+                        ) else {
                             assert!(
                                 width < 400 || (width == 400 && size == 96.0),
                                 "unexpected omission: {label}, {width}, {size}, {scale}"
@@ -165,12 +310,12 @@ fn popup_tabs_fit_labels_and_partition_translucent_backgrounds() {
                         };
                         let card = workspace.card_fill(workspace.chrome, metrics, stroke);
                         assert!(
-                            tab.right + tab.join_radius + stroke
+                            tab.start + tab.return_run + stroke
                                 <= card.bounds.right() - card.radius
                         );
                         assert_eq!(workspace.popup_label(), Some(label));
                         let mut batch = RectangleBatch::new(width, 1800);
-                        push_popup_tab_backdrop(
+                        push_title_tab_backdrop(
                             &mut batch,
                             SceneRect {
                                 left: 0.0,
@@ -178,9 +323,9 @@ fn popup_tabs_fit_labels_and_partition_translucent_backgrounds() {
                                 width: width as f32,
                                 height: 1800.0 - workspace.header.bottom(),
                             },
-                            &[(card, palette::TERMINAL_FALLBACK)],
+                            &[(Some(card), palette::TERMINAL_FALLBACK)],
                             0.8,
-                            &tab,
+                            &[Some(tab.clone())],
                         );
                         let text_x = card.bounds.left + metrics.padding;
                         for y in [
@@ -200,7 +345,7 @@ fn popup_tabs_fit_labels_and_partition_translucent_backgrounds() {
                             let alpha = f32::from_ne_bytes(pixels[0].1[20..24].try_into().unwrap());
                             assert_eq!(alpha, 0.8);
                         }
-                        let outer = popup_tab_bands(card, &tab, 0.0);
+                        let outer = title_tab_bands(card, &tab, 0.0);
                         for (index, band) in outer.iter().enumerate() {
                             assert!(
                                 outer[index + 1..]
@@ -210,7 +355,7 @@ fn popup_tabs_fit_labels_and_partition_translucent_backgrounds() {
                             );
                         }
                         for y in [
-                            (tab.top + tab.right_radius / 2.0).floor() + 0.5,
+                            ((tab.top + card.bounds.top) / 2.0).floor() + 0.5,
                             card.bounds.top - 0.5,
                         ] {
                             let band = outer
@@ -237,7 +382,7 @@ fn popup_tabs_fit_labels_and_partition_translucent_backgrounds() {
                         }
                         let cut = card.bounds.top + rounded_radius(card.bounds, card.radius);
                         let mut outline = RectangleBatch::new(width, 1800);
-                        outline.push_popup_tab_outline(card, &tab, stroke, palette::CARD_OUTLINE);
+                        outline.push_title_tab_outline(card, &tab, stroke, palette::CARD_OUTLINE);
                         outline.clip = Some(SceneRect {
                             top: cut,
                             height: workspace.chrome.bottom() - cut,
@@ -281,7 +426,7 @@ fn popup_tabs_fit_labels_and_partition_translucent_backgrounds() {
     let metrics = CellMetrics::for_scale(1.0);
     let (workspace, _) = retained_frame_text_clip(PhysicalSize::new(1280, 800));
     assert!(
-        PopupTitleTab::new(
+        FrameTitleTab::popup(
             &mut clipping_test_fonts().font_system,
             metrics,
             &workspace,
@@ -298,7 +443,7 @@ fn popup_tabs_clear_the_bar_and_text_or_keep_the_border_gap_title() {
     let default_workspace =
         popup_title_workspace(default_metrics, PhysicalSize::new(1280, 800), "Claude", 4.0);
     assert!(
-        PopupTitleTab::new(
+        FrameTitleTab::popup(
             &mut fonts.font_system,
             default_metrics,
             &default_workspace,
@@ -315,13 +460,13 @@ fn popup_tabs_clear_the_bar_and_text_or_keep_the_border_gap_title() {
         let bar_bottom = workspace.chrome.top - stroke - 3.25;
         workspace.header.height = bar_bottom;
         workspace.tab_viewport.height = bar_bottom;
-        let tab = PopupTitleTab::new(&mut fonts.font_system, metrics, &workspace, stroke)
+        let tab = FrameTitleTab::popup(&mut fonts.font_system, metrics, &workspace, stroke)
             .expect("fractional bar leaves room for the cap");
         assert!(tab.top >= bar_bottom.ceil() + 1.0);
         assert!(tab.top + stroke + 1.0 <= workspace.chrome.top);
         let card = workspace.card_fill(workspace.chrome, metrics, stroke);
         let mut batch = RectangleBatch::new(2400, 1800);
-        push_popup_tab_backdrop(
+        push_title_tab_backdrop(
             &mut batch,
             SceneRect {
                 left: 0.0,
@@ -329,9 +474,9 @@ fn popup_tabs_clear_the_bar_and_text_or_keep_the_border_gap_title() {
                 width: 2400.0,
                 height: 1800.0 - bar_bottom,
             },
-            &[(card, palette::TERMINAL_FALLBACK)],
+            &[(Some(card), palette::TERMINAL_FALLBACK)],
             0.8,
-            &tab,
+            &[Some(tab.clone())],
         );
         for (rect, quad) in
             painted_rects(&batch).zip(batch.bytes.chunks_exact(VERTEX_SIZE as usize * 6))
@@ -345,7 +490,9 @@ fn popup_tabs_clear_the_bar_and_text_or_keep_the_border_gap_title() {
         }
         workspace.header.height = workspace.chrome.top;
         workspace.tab_viewport.height = workspace.chrome.top;
-        assert!(PopupTitleTab::new(&mut fonts.font_system, metrics, &workspace, stroke).is_none());
+        assert!(
+            FrameTitleTab::popup(&mut fonts.font_system, metrics, &workspace, stroke).is_none()
+        );
         assert!(
             chrome::popup_title_row(&workspace, metrics, stroke).is_some(),
             "zero-gap popup must keep its existing title"
@@ -359,7 +506,7 @@ fn popup_tabs_clear_the_bar_and_text_or_keep_the_border_gap_title() {
     assert!(metrics.padding / 3.0 < stroke);
     let workspace = roomy_popup_title_workspace(metrics, PhysicalSize::new(2400, 1800), "Claude");
     assert!(
-        PopupTitleTab::new(&mut fonts.font_system, metrics, &workspace, stroke).is_none(),
+        FrameTitleTab::popup(&mut fonts.font_system, metrics, &workspace, stroke).is_none(),
         "narrow padding cannot clear the thick stroke"
     );
     assert!(
@@ -386,7 +533,7 @@ fn popup_title_ink_can_overhang_its_advance_without_touching_the_stroke() {
         for border in [1, 2, 3] {
             let stroke = physical_outline_width(border, metrics.scale);
             let tab =
-                PopupTitleTab::new(&mut fonts.font_system, metrics, &workspace, stroke).unwrap();
+                FrameTitleTab::popup(&mut fonts.font_system, metrics, &workspace, stroke).unwrap();
             let title = chrome_title_metrics(metrics);
             let cell_font = fitted_cell_font(&mut fonts.font_system, metrics, fonts.family, false);
             let buffer = shape_styled_text(
@@ -407,7 +554,7 @@ fn popup_title_ink_can_overhang_its_advance_without_touching_the_stroke() {
             });
             let card = workspace.card_fill(workspace.chrome, metrics, stroke);
             let mut outline = RectangleBatch::new(2400, 1800);
-            outline.push_popup_tab_outline(card, &tab, stroke, palette::CARD_OUTLINE);
+            outline.push_title_tab_outline(card, &tab, stroke, palette::CARD_OUTLINE);
             let stroke_pixels = painted_rects(&outline).collect::<Vec<_>>();
             let mut overhang = 0;
             for run in buffer.layout_runs() {
@@ -465,10 +612,12 @@ fn popup_fallback_keeps_rtl_ink_inside_its_measured_border_gap() {
         workspace.header.height = workspace.chrome.top;
         workspace.tab_viewport.height = workspace.chrome.top;
         let stroke = physical_outline_width(3, metrics.scale);
-        assert!(PopupTitleTab::new(&mut fonts.font_system, metrics, &workspace, stroke).is_none());
+        assert!(
+            FrameTitleTab::popup(&mut fonts.font_system, metrics, &workspace, stroke).is_none()
+        );
         let row = chrome::popup_title_row(&workspace, metrics, stroke).unwrap();
         let available = row.width - metrics.padding * 2.0;
-        let title = PopupTitle::fit(
+        let title = FrameTitle::fit(
             &mut fonts.font_system,
             metrics,
             workspace.popup_label().unwrap(),
@@ -1605,7 +1754,7 @@ fn retained_resize_keeps_strokes_clear_of_displayed_rows() {
             assert!(
                 cards
                     .iter()
-                    .all(|(card, _)| card.bounds.bottom() == fill.bounds.bottom())
+                    .all(|(card, _)| card.unwrap().bounds.bottom() == fill.bounds.bottom())
             );
             let rules = paint
                 .pane_outlines(&paint.panes, paint.terminal, fill, 1.0, metrics, 1.0)
@@ -1914,7 +2063,7 @@ fn shared_bottom_preserves_grid_and_bounds_short_scene_paint() {
                         );
                         for (card, _) in &cards {
                             assert_eq!(
-                                card.bounds.bottom(),
+                                card.unwrap().bounds.bottom(),
                                 fill.bounds.bottom(),
                                 "columns and sidebar must share one line"
                             );
@@ -2163,7 +2312,9 @@ fn shared_bottom_preserves_grid_and_bounds_short_scene_paint() {
                                     if rect.contains(x, y) {
                                         assert!(
                                             cards.iter().any(|(card, _)| {
-                                                card.bands().any(|band| band.contains(x, y))
+                                                card.is_some_and(|card| {
+                                                    card.bands().any(|band| band.contains(x, y))
+                                                })
                                             }),
                                             "stroke outside bottom curve at {x},{y}"
                                         );
@@ -2200,8 +2351,12 @@ fn shared_bottom_preserves_grid_and_bounds_short_scene_paint() {
                         assert_eq!(paint.panes, workspace.panes);
                         let cards =
                             card_backdrops(&paint, scenes[0].as_ref(), &peers, metrics, stroke);
-                        let bottom = cards[0].0.bounds.bottom();
-                        assert!(cards.iter().all(|(card, _)| card.bounds.bottom() == bottom));
+                        let bottom = cards[0].0.unwrap().bounds.bottom();
+                        assert!(
+                            cards
+                                .iter()
+                                .all(|(card, _)| card.unwrap().bounds.bottom() == bottom)
+                        );
                         let mut displayed = Vec::new();
                         let mut batch = RectangleBatch::new(width, height);
                         for ((panes, terminal, allocated, current), scene) in std::iter::once((
@@ -2923,7 +3078,7 @@ fn card_backdrop_keeps_cards_like_the_agent_sidebar_at_terminal_opacity() {
                             // Sidebar badges read the sidebar card's background from the end.
                             if let Some(area) = workspace.sidebar_area() {
                                 assert_eq!(
-                                    cards.last().unwrap().0.bounds,
+                                    cards.last().unwrap().0.unwrap().bounds,
                                     workspace.card_rect(
                                         area,
                                         metrics,
@@ -3062,5 +3217,410 @@ fn card_backdrop_keeps_cards_like_the_agent_sidebar_at_terminal_opacity() {
                 }
             }
         }
+    }
+}
+
+#[test]
+fn agents_title_uses_the_shared_tab_without_changing_sidebar_bounds() {
+    use eon_workspace_protocol::v38::Sidebar;
+    let mut fonts = FontSetup::new(&FontSettings::default()).unwrap();
+    for scale in [1.0, 1.3, 2.0] {
+        let metrics = fonts.metrics(scale);
+        for width in [1100, 1600] {
+            let mut snapshot = popup_title_snapshot("Popup", 4.0);
+            snapshot.sidebar = Sidebar::Open;
+            let workspace = WorkspaceScene::from_snapshot(
+                &snapshot,
+                PhysicalSize::new(width, 900),
+                metrics,
+                0.0,
+                0.0,
+                |_, text| (text.into(), text.len() as f32 * metrics.width),
+            );
+            let before = workspace.clone();
+            let stroke = physical_outline_width(1, metrics.scale);
+            let Some(area) = workspace.sidebar_area() else {
+                continue;
+            };
+            let tab =
+                FrameTitleTab::sidebar(&mut fonts.font_system, metrics, &workspace, stroke, stroke)
+                    .expect("visible sidebar has title clearance");
+            assert_eq!(tab.title.label, "Agents");
+            assert!(tab.top > workspace.header.bottom());
+            let card = CardFill {
+                bounds: workspace.card_rect(area, metrics, stroke),
+                radius: workspace.card_radius(),
+            };
+            assert_eq!(tab.return_run, (card.bounds.top - tab.top) * 1.5);
+            assert!(tab.start + tab.return_run + stroke <= card.bounds.right() - card.radius);
+            assert_eq!(workspace.sidebar_area(), before.sidebar_area());
+            assert_eq!(workspace.sidebar_list, before.sidebar_list);
+            assert_eq!(workspace.terminal, before.terminal);
+        }
+    }
+}
+
+#[test]
+fn all_native_dialog_titles_fit_inside_existing_dismissal_bounds() {
+    use crate::{DialogKind, DialogScene};
+    let mut fonts = FontSetup::new(&FontSettings::default()).unwrap();
+    for scale in [1.0, 1.3, 2.0] {
+        let metrics = fonts.metrics(scale);
+        for width in [400, 1280] {
+            for kind in [
+                DialogKind::Shortcuts,
+                DialogKind::AttentionInbox,
+                DialogKind::WindowMenu,
+                DialogKind::QuitOtherWindow {
+                    name: "Other".into(),
+                },
+                DialogKind::CloseLastTab {
+                    terminals: 3,
+                    detach: Some("Alt+Shift+D".into()),
+                    workspace: None,
+                },
+                DialogKind::QuitWindow {
+                    terminals: Some(3),
+                    running: 1,
+                    detach: None,
+                },
+            ] {
+                let viewer =
+                    DialogScene::new(kind, vec![], PhysicalSize::new(width, 800), metrics, 0.0);
+                let before = viewer.clone();
+                for border in [1, 2, 3] {
+                    let stroke = physical_outline_width(border, metrics.scale);
+                    let (card, tab) =
+                        FrameTitleTab::dialog(&mut fonts.font_system, metrics, &viewer, stroke)
+                            .expect("normal and narrow dialogs have existing title clearance");
+                    assert!(tab.top >= viewer.bounds.top);
+                    assert_eq!(tab.return_run, (card.bounds.top - tab.top) * 1.5);
+                    assert_eq!(card.radius, crate::scene::card_gap(metrics));
+                    assert!(
+                        tab.start + tab.return_run + stroke <= card.bounds.right() - card.radius
+                    );
+                    for band in title_tab_bands(card, &tab, 0.0) {
+                        assert!(band.left >= viewer.bounds.left - 0.001);
+                        assert!(band.right() <= viewer.bounds.right() + 0.001);
+                        assert!(band.top >= viewer.bounds.top.floor());
+                        assert!(band.bottom() <= viewer.bounds.bottom().ceil());
+                    }
+                    assert_eq!(
+                        viewer, before,
+                        "title rendering must leave action/content geometry alone"
+                    );
+                }
+            }
+        }
+    }
+}
+
+#[test]
+fn top_pane_title_reserves_the_scrollback_pill_and_its_background() {
+    use eon_workspace_protocol::v38::{Column, Pane};
+    let mut fonts = FontSetup::new(&FontSettings::default()).unwrap();
+    let metrics = fonts.metrics(1.0);
+    let mut snapshot = popup_title_snapshot("Popup", 4.0);
+    let tab = &mut snapshot.tabs[0];
+    tab.selected_popup = None;
+    tab.popups.clear();
+    tab.selected_pane = Some("p1".into());
+    tab.columns = vec![Column {
+        expanded: "p1".into(),
+        panes: vec![Pane {
+            id: "p1".into(),
+            label: "p1  very long Codex title that has to fit beside scrollback".into(),
+            session: "s1".into(),
+            endpoint: b"/tmp/p1.sock".to_vec(),
+            pinned_name: None,
+            live: true,
+            attention: None,
+        }],
+    }];
+    for width in [400, 1280] {
+        let workspace = WorkspaceScene::from_snapshot(
+            &snapshot,
+            PhysicalSize::new(width, 800),
+            metrics,
+            0.0,
+            0.0,
+            |_, text| (text.into(), text.len() as f32 * metrics.width),
+        );
+        let stroke = physical_outline_width(1, metrics.scale);
+        let limit = workspace.panes[0].rect.right() - 130.0;
+        let title = FrameTitleTab::pane(
+            &mut fonts.font_system,
+            metrics,
+            &workspace,
+            &workspace.panes,
+            stroke,
+            stroke,
+            Some(limit),
+        )
+        .unwrap();
+        assert!(title.start + title.return_run + stroke <= limit);
+        let mut scene = padding_scene();
+        scene.screen = orbit_protocol::Screen::Alternate;
+        let mut plain = RectangleBatch::new(width, 800);
+        build_workspace_padding(
+            &mut plain,
+            &workspace,
+            Some(&scene),
+            &[],
+            metrics,
+            PaddingColor::ExtendAlways,
+            true,
+            stroke,
+            (None, 0.0),
+            &[],
+        );
+        let mut notched = RectangleBatch::new(width, 800);
+        build_workspace_padding(
+            &mut notched,
+            &workspace,
+            Some(&scene),
+            &[],
+            metrics,
+            PaddingColor::ExtendAlways,
+            true,
+            stroke,
+            (None, 0.0),
+            &[Some(title.clone())],
+        );
+        let x = workspace.panes[0].rect.left + metrics.padding + 1.0;
+        let y = workspace
+            .card_fill(workspace.chrome, metrics, stroke)
+            .bounds
+            .top
+            + 1.5;
+        assert!(
+            padding_pixel(&plain, x, y).is_some(),
+            "explicit terminal background reaches the old title band"
+        );
+        assert_eq!(
+            padding_pixel(&notched, x, y),
+            None,
+            "the notched title retains one uniform background"
+        );
+        assert!(notched.bytes.len() < plain.bytes.len());
+    }
+}
+
+#[test]
+fn short_dialogs_fall_back_before_their_title_contour_leaves_dismissal_bounds() {
+    use crate::{DialogKind, DialogScene};
+    let mut fonts = FontSetup::new(&FontSettings::default()).unwrap();
+    let metrics = fonts.metrics(1.0);
+    for height in [1, 16, 32, 64, 200] {
+        let viewer = DialogScene::new(
+            DialogKind::Shortcuts,
+            vec![],
+            PhysicalSize::new(400, height),
+            metrics,
+            0.0,
+        );
+        if let Some((card, tab)) =
+            FrameTitleTab::dialog(&mut fonts.font_system, metrics, &viewer, 1.0)
+        {
+            for band in title_tab_bands(card, &tab, 0.0) {
+                assert!(
+                    band.top >= viewer.bounds.top.floor()
+                        && band.bottom() <= viewer.bounds.bottom().ceil(),
+                    "title contour outside dismissal bounds at height {height}: {band:?}, {:?}",
+                    viewer.bounds
+                );
+            }
+        }
+    }
+}
+
+#[test]
+fn chosen_title_return_starts_beside_the_fitted_label_and_spans_one_and_a_half_rises() {
+    let mut fonts = FontSetup::new(&FontSettings::default()).unwrap();
+    let metrics = fonts.metrics(1.0);
+    for width in [400, 1280] {
+        let workspace = roomy_popup_title_workspace(
+            metrics,
+            PhysicalSize::new(width, 800),
+            "A deliberately long popup title that needs fitting in the narrow window",
+        );
+        let tab = FrameTitleTab::popup(&mut fonts.font_system, metrics, &workspace, 1.0).unwrap();
+        let card = workspace.card_fill(workspace.chrome, metrics, 1.0);
+        let text_end = card.bounds.left + metrics.padding + tab.title.width;
+        assert_eq!(tab.return_run, (card.bounds.top - tab.top) * 1.5);
+        assert!(
+            (tab.start - text_end).abs() <= metrics.padding / 2.0,
+            "curve must start beside visible text, not after its extra run: {}",
+            tab.start - text_end
+        );
+    }
+}
+
+#[test]
+fn empty_columns_keep_title_and_backdrop_slots_aligned() {
+    use eon_workspace_protocol::v38::{Column, Pane};
+    let mut fonts = FontSetup::new(&FontSettings::default()).unwrap();
+    let metrics = fonts.metrics(1.0);
+    let mut snapshot = popup_title_snapshot("Popup", 4.0);
+    let tab = &mut snapshot.tabs[0];
+    tab.selected_popup = None;
+    tab.selected_pane = Some("p0".into());
+    tab.columns = (0..3)
+        .map(|index| Column {
+            expanded: format!("p{index}"),
+            panes: vec![Pane {
+                id: format!("p{index}"),
+                label: format!("Pane {index}"),
+                session: format!("s{index}"),
+                endpoint: format!("/tmp/p{index}.sock").into_bytes(),
+                pinned_name: None,
+                live: true,
+                attention: None,
+            }],
+        })
+        .collect();
+    for empty in 0..3 {
+        let mut workspace = WorkspaceScene::from_snapshot(
+            &snapshot,
+            PhysicalSize::new(1600, 800),
+            metrics,
+            0.0,
+            0.0,
+            |_, text| (text.into(), text.len() as f32 * metrics.width),
+        );
+        if empty == 0 {
+            workspace.panes.clear();
+        } else {
+            workspace.other_columns[empty - 1].panes.clear();
+        }
+        let titles = FrameTitleTab::workspace(
+            &mut fonts.font_system,
+            metrics,
+            &workspace,
+            true,
+            (1.0, 1.0),
+            None,
+        );
+        let cards = card_backdrops(&workspace, None, &[None, None], metrics, 1.0);
+        assert_eq!(titles.len(), 3);
+        assert_eq!(cards.len(), 3);
+        for (index, (title, (card, _))) in titles.iter().zip(&cards).enumerate() {
+            if index == empty {
+                assert!(title.is_none());
+                assert!(card.is_none());
+            } else {
+                let title = title.as_ref().unwrap();
+                let card = card.unwrap();
+                assert_eq!(title.title.label, format!("Pane {index}"));
+                assert_eq!(title.row.left, card.bounds.left);
+            }
+        }
+        let mut batch = RectangleBatch::new(1600, 800);
+        push_title_tab_backdrop(&mut batch, workspace.pane_viewport, &cards, 0.8, &titles);
+        for (title, (card, _)) in titles.iter().zip(&cards) {
+            if let (Some(title), Some(card)) = (title, card) {
+                assert!(painted_rects(&batch).any(|rect| {
+                    rect.contains(card.bounds.left + metrics.padding, title.top + 0.5)
+                }));
+            }
+        }
+    }
+}
+
+#[test]
+fn clipped_sidebar_title_falls_back_when_its_card_edge_does_not_align() {
+    use eon_workspace_protocol::v38::Sidebar;
+    let mut fonts = FontSetup::new(&FontSettings::default()).unwrap();
+    let metrics = fonts.metrics(1.0);
+    let mut snapshot = popup_title_snapshot("Popup", 4.0);
+    snapshot.sidebar = Sidebar::Open;
+    let mut workspace = WorkspaceScene::from_snapshot(
+        &snapshot,
+        PhysicalSize::new(1600, 800),
+        metrics,
+        0.0,
+        0.0,
+        |_, text| (text.into(), text.len() as f32 * metrics.width),
+    );
+    workspace.pane_viewport.height = crate::scene::chrome_title_metrics(metrics).text_height / 2.0;
+    let area = workspace.sidebar_area().unwrap();
+    assert_ne!(
+        workspace.card_rect(area, metrics, 1.0).top,
+        crate::scene::title_rule_y(
+            area.top,
+            crate::scene::chrome_title_metrics(metrics).text_height
+        )
+    );
+    assert!(
+        FrameTitleTab::sidebar(&mut fonts.font_system, metrics, &workspace, 1.0, 1.0).is_none()
+    );
+}
+
+#[test]
+fn fallback_dialog_frame_uses_configured_stroke_at_fractional_scale() {
+    let mut fonts = FontSetup::new(&FontSettings::default()).unwrap();
+    let metrics = fonts.metrics(1.3);
+    let viewer = crate::DialogScene::new(
+        crate::DialogKind::Shortcuts,
+        vec![],
+        PhysicalSize::new(64, 300),
+        metrics,
+        0.0,
+    );
+    let stroke = physical_outline_width(3, metrics.scale);
+    let tab = FrameTitleTab::dialog(&mut fonts.font_system, metrics, &viewer, stroke);
+    assert!(tab.is_none(), "narrow dialog must exercise the fallback");
+    assert_eq!(stroke, 4.0);
+    let mut batch = RectangleBatch::new(400, 300);
+    batch.push_dialog_frame(
+        viewer.bounds,
+        metrics.padding.min(viewer.bounds.width / 8.0),
+        tab.as_ref(),
+        stroke,
+    );
+    let ink = painted_rects(&batch)
+        .zip(batch.bytes.chunks_exact(VERTEX_SIZE as usize * 6))
+        .filter_map(|(rect, quad)| {
+            let channel = |offset| f32::from_ne_bytes(quad[offset..offset + 4].try_into().unwrap());
+            let color = palette::CARD_OUTLINE;
+            (channel(8) == f32::from(color.r) / 255.0
+                && channel(12) == f32::from(color.g) / 255.0
+                && channel(16) == f32::from(color.b) / 255.0)
+                .then_some(rect)
+        })
+        .collect::<Vec<_>>();
+    let y = viewer.bounds.top + viewer.bounds.height / 2.0;
+    assert!(
+        ink.iter()
+            .any(|r| r.contains(viewer.bounds.left + stroke - 0.5, y))
+    );
+    assert!(
+        !ink.iter()
+            .any(|r| r.contains(viewer.bounds.left + stroke + 0.5, y))
+    );
+}
+
+#[test]
+fn dialog_title_edge_keeps_a_clear_row_below_bar_chips() {
+    let mut fonts = FontSetup::new(&FontSettings::default()).unwrap();
+    for scale in [1.0, 1.3, 2.0] {
+        let metrics = fonts.metrics(scale);
+        let size = PhysicalSize::new(1280, 800);
+        let workspace = popup_title_workspace(metrics, size, "Popup", 4.0);
+        let viewer =
+            crate::DialogScene::new(crate::DialogKind::Shortcuts, vec![], size, metrics, 0.0);
+        let (card, _) = FrameTitleTab::dialog(
+            &mut fonts.font_system,
+            metrics,
+            &viewer,
+            physical_outline_width(1, metrics.scale),
+        )
+        .unwrap();
+        assert!(
+            card.bounds.top >= workspace.header.bottom().ceil() + 1.0,
+            "dialog edge {} touches bar bottom {} at scale {scale}",
+            card.bounds.top,
+            workspace.header.bottom()
+        );
     }
 }

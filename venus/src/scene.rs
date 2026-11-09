@@ -2035,7 +2035,7 @@ fn bar_title_margin(metrics: CellMetrics) -> f32 {
 
 /// The even gap around and between pane cards, which is also their corner radius: 8 logical
 /// pixels at default typography, always less than the label padding so no label meets a curve.
-fn card_gap(metrics: CellMetrics) -> f32 {
+pub(crate) fn card_gap(metrics: CellMetrics) -> f32 {
     let radius = (metrics.padding * 2.0 / 3.0).round();
     // Horizontal terminal padding keeps text clear of the rounded corners.
     debug_assert!(metrics.padding >= radius);

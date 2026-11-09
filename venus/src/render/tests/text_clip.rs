@@ -479,3 +479,92 @@ fn fractional_card_text_survives_glyphon_preparation_with_hints_and_header_scrol
         assert_eq!(text_areas(&text, None).count(), 1);
     }
 }
+
+#[test]
+fn notched_dialog_preserves_text_in_its_exposed_top_cutout() {
+    use crate::{DialogKind, DialogScene};
+    let mut fonts = FontSetup::new(&FontSettings::default()).unwrap();
+    let metrics = fonts.metrics(1.0);
+    let viewer = DialogScene::new(
+        DialogKind::Shortcuts,
+        vec![],
+        PhysicalSize::new(1280, 800),
+        metrics,
+        0.0,
+    );
+    let (card, tab) = FrameTitleTab::dialog(&mut fonts.font_system, metrics, &viewer, 1.0).unwrap();
+    let fill = title_tab_bands(card, &tab, 0.0);
+    let point = (card.bounds.right() - metrics.padding * 2.0, tab.top + 2.5);
+    assert!(!fill.iter().any(|band| band.contains(point.0, point.1)));
+    let text = [PlacedText {
+        buffer: Buffer::new(&mut fonts.font_system, Metrics::new(16.0, 18.0)),
+        custom_glyph: None,
+        left: 0.0,
+        top: 0.0,
+        bound_left: 0,
+        bound_top: 0,
+        right: 1280,
+        bottom: 800,
+        color: Color::rgb(255, 255, 255),
+    }];
+    let overlay = (
+        1,
+        fill.iter()
+            .copied()
+            .map(text_clip_bounds)
+            .collect::<Vec<_>>(),
+    );
+    let visible = |b: TextBounds, (x, y): (f32, f32)| {
+        x >= b.left as f32 && x < b.right as f32 && y >= b.top as f32 && y < b.bottom as f32
+    };
+    let areas = text_areas(&text, Some(&overlay)).collect::<Vec<_>>();
+    assert!(
+        areas.iter().any(|area| visible(area.bounds, point)),
+        "the tab cutout exposes the bar, so its text must survive too"
+    );
+}
+
+#[test]
+fn rectangular_text_overlays_keep_their_bounds_and_foreground_text() {
+    let mut fonts = FontSystem::new();
+    let text = [PlacedText {
+        buffer: Buffer::new(&mut fonts, Metrics::new(16.0, 18.0)),
+        custom_glyph: None,
+        left: 0.0,
+        top: 0.0,
+        bound_left: 0,
+        bound_top: 0,
+        right: 100,
+        bottom: 100,
+        color: Color::rgb(255, 255, 255),
+    }];
+    let mask = TextBounds {
+        left: 20,
+        top: 30,
+        right: 60,
+        bottom: 70,
+    };
+    let overlay = (1, vec![mask]);
+    let areas = text_areas(&text, Some(&overlay)).collect::<Vec<_>>();
+    for y in 0..100 {
+        for x in 0..100 {
+            let actual = areas
+                .iter()
+                .filter(|area| {
+                    x >= area.bounds.left
+                        && x < area.bounds.right
+                        && y >= area.bounds.top
+                        && y < area.bounds.bottom
+                })
+                .count();
+            let covered = x >= mask.left && x < mask.right && y >= mask.top && y < mask.bottom;
+            assert_eq!(
+                actual,
+                usize::from(!covered),
+                "rectangular overlay at {x},{y}"
+            );
+        }
+    }
+    let foreground = (0, vec![mask]);
+    assert_eq!(text_areas(&text, Some(&foreground)).count(), 1);
+}

@@ -306,7 +306,7 @@ The inline popup mark and the current-row and keyboard-focus outlines remain.
 Tint intensity is fixed; the existing
 `focus_color` controls its hue.
 
-`border_width` sizes neutral pane-card, agent-sidebar-card and popup outlines,
+`border_width` sizes neutral pane-card, agent-sidebar-card, popup and native dialog outlines,
 including their title edges, and the Eon Bar widget outlines. `focus_border_width` sizes the selected pane's
 whole outline. Both accept integers from 1 through 3 logical pixels; defaults
 are omitted, leaving Venus's built-in widths in use. With the example's widths,
@@ -325,28 +325,35 @@ reopens. Eon owns this setting for both products; no Venus or Orbit
 configuration is needed.
 
 With pane frames on, each column has one continuous terminal-background fill,
-from its first pane's rounded top edge down to the column's rounded bottom.
+from its first pane's shared title contour down to the column's rounded bottom.
 Stacked title rows and the space between cards share the expanded terminal's
-background colour and opacity, except that extended top padding fills an
-unzoomed expanded pane's band below its title (`padding_color`). Above that edge
-and outside the outer corners, the gaps and footer stay the opaque bar colour.
-The first title sits on that boundary. The Agents fill follows its rounded
-outer edge, with its title on the boundary. Header scrolling keeps the fill's
-top fixed. Frameless mode keeps terminal-background strips across the window
-below the bar, including the sidebar and footer.
+background colour and opacity. Extended top padding fills an unzoomed expanded
+pane's band below its title (`padding_color`), outside a fitted tab's uniform
+title area. Outside the shared title contour and outer corners, the gaps and
+footer stay the opaque bar colour. The Agents fill follows the same contour.
+Header scrolling keeps the fill's top fixed. Frameless mode keeps terminal
+background strips across the window below the bar, including the sidebar and
+footer.
 
-A popup's outline rises from its left border over the name in a rounded tab,
-then curves smoothly back into the top edge. The whole name sits on the popup
-terminal's background colour and opacity. The tab keeps its stroke clear of the
-text and the bar; when that clearance cannot fit, the name keeps its original
-gap in the top frame line. This also applies with pane frames
-off; stacked pane headers keep their boundary titles. Long popup names fit with
-an ellipsis, and the title is omitted when the window cannot fit it. The full
-name remains available to accessibility. Terminal layout and input bounds stay
-unchanged.
-The popup tab shape is fixed and follows the configured font size and line
+Popups, each column's top pane (including a lone or zoomed pane), Agents and
+native titled dialogs use one shared title style. The outline rises seamlessly
+from the left border over the fitted name, then returns into the top edge with
+a tangent S curve spanning 1.5 times its rise. The curve begins beside the
+visible text, including after truncation. Lower stacked panes keep their compact
+border-gap titles. The tab uses existing chrome clearance and adds no height or
+terminal rows. It keeps its stroke clear of text and neighbouring chrome; where
+that clearance cannot fit, the title keeps a compact gap in the top frame line.
+A title is omitted only when it cannot fit. Full accessibility names and input
+bounds stay unchanged. Popup tabs keep their outline with pane frames off;
+pane and sidebar titles stay plain then. Dialog tabs stay inside their existing
+dismissal bounds and use the dialog's opaque background; other tabs inherit
+their terminal background colour and opacity.
+
+The shared tab shape is fixed and follows the configured font size and line
 height (defaults: 16 px and 1.125), existing title padding, and `border_width`
-(default: 1). Its fill uses `background_opacity` (default: 0.8).
+(default: 1). A selected pane retains its `focus_border_width` and focus colour.
+Terminal-backed fills use `background_opacity` (default: 0.8). The fixed policy
+and its support-cost rationale are recorded in `eon-27deg`.
 
 `padding_color` controls terminal padding in panes, popups and eonbase.
 `extend` uses the nearest edge cell's background on each side and
@@ -359,7 +366,8 @@ Default backgrounds retain the configured opacity; explicit backgrounds paint
 as they do in cells. Padding stays inside the rounded card and below outlines.
 In an expanded pane with frames on and no zoom, the band below the title line
 follows the top padding's colour and opacity instead of the shared title-row
-background, under the title text and outline; collapsed title rows, popups,
+background outside the fitted tab's title area; compact titles keep the existing
+header-band treatment. Collapsed title rows, popups,
 zoom and frameless mode keep their existing backgrounds. The setting applies
 when a window opens or reopens.
 

@@ -719,12 +719,12 @@ re-proved when that platform or feature is next touched.
     label takes that position and the first pill follows it. Pill height follows VEN-C21; the gap between pills and
     header button width stay as before; on a short window the extra inset
     yields before the pills do. On a window too small for the gaps they
-    yield before a terminal cell does. Each pane's top edge passes through the
-    middle of its title row, breaks around its label and follows its own rounded
-    corners. At the unscrolled top, each column's first pane, the popup card and
+    yield before a terminal cell does. Below the first pane, each stacked title edge keeps its compact
+    border-gap title and rounded corners. The first pane's fitted tab uses the
+    shared contour. At the unscrolled top, each column's first pane, the popup card and
     the agent sidebar card share one snapped top line, subject to VEN-C18's
-    tiny-window popup exception. Each column's fill starts at its first pane's top
-    edge and follows that pane's rounded top corners down to the column's rounded
+    tiny-window popup exception. Each column's fill starts at its first pane's shared title
+    contour and follows it down to the column's rounded
     bottom; inside it, title rows and the space between stacked pane cards share the
     expanded terminal's background color/opacity under the surface-wide blur request,
     so the stack has one background. In framed, unzoomed expanded panes, the band
@@ -733,11 +733,12 @@ re-proved when that platform or feature is next touched.
     [Configuration behavior](../../docs/CONFIGURATION.md#configuration-behavior))
     instead of the shared title-row background; title text, cutouts and outlines
     stay above it, while collapsed rows, popups, zoom and frameless headers retain
-    their existing backgrounds. Nothing above that top edge or outside those
-    outer corners takes the terminal background: everything below the tab bar outside
-    the column fills, including the gaps and footer band, takes the header's opaque
-    color, so header, gaps and footer form one frame. The first pane's label sits on
-    the boundary between the two. The selected pane in the selected column has a
+    their existing backgrounds. A fitted tab keeps its uniform column background
+    and opacity; the extended top-padding band continues outside its title area.
+    Compact titles keep the existing header-band treatment. Outside the shared
+    title contour and those outer corners, everything below the tab bar that the
+    column fills do not cover, including the gaps and footer band, takes the
+    header's opaque color, so header, gaps and footer form one frame. The selected pane in the selected column has a
     brighter label and, with pane frames enabled, its whole frame in the focus
     color at the focus border width. Eon supplies both
     widths in logical pixels. Hover adds a pill behind the label;
@@ -1464,12 +1465,21 @@ re-proved when that platform or feature is next touched.
   enough to keep that cell. Shared Eon-supplied logical
   margins inset the popup terminal content within that stable shell. The popup
   uses the border width and carries its catalog label, such as "Files",
-  using the shared chrome title metric. When the title and its clearance fit, a
-  rounded tab rises from the card's left border over the label and returns
-  smoothly into its top edge. The tab's fill and the exposed popup margins share
-  the terminal default background and opacity, with the existing best-effort
-  surface-wide compositor blur request. If only the original border-gap title
-  fits, the popup retains that title; tiny surfaces omit the label. It keeps a
+  using the shared chrome title metric. Popup labels use Venus's shared
+  framed-title treatment: the same rounded tab, shaping, fitting, padding and
+  outline policy as each column's top pane, including a lone or zoomed pane,
+  the Agents sidebar and native titled dialogs. The outline rises seamlessly
+  from the left border over the label and returns tangentially into the top
+  edge with an S curve spanning 1.5 times its rise, starting beside the fitted
+  visible text. The tab uses its surface's background and opacity. It occupies
+  existing chrome clearance and adds no height or terminal rows. Where its
+  stroke cannot clear the label or neighbouring chrome, retain the compact
+  border-gap title; omit a label only when it cannot fit. Lower panes in a stack
+  retain their compact titles. Terminal layout, hover/click targets and
+  accessibility names and bounds stay unchanged. Native dialog title ink stays
+  inside existing dismissal bounds. Exposed popup margins share the terminal
+  default background and opacity, with the existing best-effort surface-wide
+  compositor blur request. It keeps a
   small top gutter before terminal padding. Scene owns both rectangles: chrome
   drives the outline, while terminal drives resize, clipping, pointer input, IME
   and accessibility. Margins and the title gutter shrink to preserve a usable
@@ -2128,9 +2138,10 @@ re-proved when that platform or feature is next touched.
     - A left sidebar 28 cells wide sits below the Eon Bar. The bar keeps its
       full width, its controls and its drag region.
     - Its card uses the border width and the pane cards' corner radius, with
-      "Agents" in its rounded top edge in the pane-title style, using the shared
-      chrome title metric. Behind rows, its fill, from its
-      rounded top edge down, takes the background of the terminal in the
+      "Agents" in VEN-C18's shared framed-title tab, using the same component,
+      chrome title metric and existing clearance as top-pane and popup titles,
+      without changing sidebar or list bounds. Behind rows, its fill, from its
+      shared title contour down, takes the background of the terminal in the
       leftmost visible column at the terminal-background opacity ([Window
       background and
       decorations](PRESENTATION.md#window-background-and-decorations)), so it

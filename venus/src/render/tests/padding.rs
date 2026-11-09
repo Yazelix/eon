@@ -239,6 +239,7 @@ fn padding_color_stays_in_pane_and_popup_shapes_in_both_frame_modes() {
                     frames,
                     stroke,
                     (None, 0.0),
+                    &[],
                 );
                 let grid = scene_grid(&scene, workspace.terminal, metrics);
                 let title_top = if popup {
@@ -332,6 +333,7 @@ fn padding_color_stays_in_pane_and_popup_shapes_in_both_frame_modes() {
                     frames,
                     stroke,
                     (None, 0.0),
+                    &[],
                 );
                 assert!(disabled.bytes.is_empty());
                 if frames && !popup {
@@ -366,6 +368,7 @@ fn padding_color_stays_in_pane_and_popup_shapes_in_both_frame_modes() {
                             true,
                             stroke,
                             (None, 0.0),
+                            &[],
                         );
                         let expected = extends.then_some(edge.content[0].cells[1].style.background);
                         assert_eq!(
@@ -461,6 +464,7 @@ fn padding_color_stays_in_pane_and_popup_shapes_in_both_frame_modes() {
                         true,
                         stroke,
                         (None, 0.0),
+                        &[],
                     );
                     let zoom_title = zoomed.panes[0].frame(zoomed.terminal).top;
                     assert_eq!(

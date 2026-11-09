@@ -477,25 +477,29 @@ F6 keyboard focus keeps a mint pill outline. Turning pane frames off leaves labe
 their interaction feedback. The hints sit bare in the margin below the cards. Hiding the footer returns its row to terminal content.
 
 With pane frames on, each column has one continuous terminal-background fill,
-from its first pane's rounded top edge down to the column's rounded bottom.
+from its first pane's shared title contour down to the column's rounded bottom.
 Stacked title rows and the space between cards share the expanded terminal's
-background colour and opacity, except that extended top padding fills an
-unzoomed expanded pane's band below its title (`padding_color`). Above that edge
-and outside the outer corners, the gaps and footer stay the opaque bar colour.
-The first title sits on that boundary. The Agents fill follows its rounded
-outer edge, with its title on the boundary. Header scrolling keeps the fill's
-top fixed. Frameless mode keeps terminal-background strips across the window
-below the bar, including the sidebar and footer.
+background colour and opacity. Extended top padding fills an unzoomed expanded
+pane's band below its title (`padding_color`), outside a fitted tab's uniform
+title area. Outside the shared title contour and outer corners, the gaps and
+footer stay the opaque bar colour. The Agents fill follows the same contour.
+Header scrolling keeps the fill's top fixed. Frameless mode keeps terminal
+background strips across the window below the bar, including the sidebar and
+footer.
 
-A popup's outline rises from its left border over the name in a rounded tab,
-then curves smoothly back into the top edge. The whole name sits on the popup
-terminal's background colour and opacity. The tab keeps its stroke clear of the
-text and the bar; when that clearance cannot fit, the name keeps its original
-gap in the top frame line. This also applies with pane frames
-off; stacked pane headers keep their boundary titles. Long popup names fit with
-an ellipsis, and the title is omitted when the window cannot fit it. The full
-name remains available to accessibility. Terminal layout and input bounds stay
-unchanged.
+Popups, each column's top pane (including a lone or zoomed pane), Agents and
+native titled dialogs use one shared title style. The outline rises seamlessly
+from the left border over the fitted name, then returns into the top edge with
+a tangent S curve spanning 1.5 times its rise. The curve begins beside the
+visible text, including after truncation. Lower stacked panes keep their compact
+border-gap titles. The tab uses existing chrome clearance and adds no height or
+terminal rows. It keeps its stroke clear of text and neighbouring chrome; where
+that clearance cannot fit, the title keeps a compact gap in the top frame line.
+A title is omitted only when it cannot fit. Full accessibility names and input
+bounds stay unchanged. Popup tabs keep their outline with pane frames off;
+pane and sidebar titles stay plain then. Dialog tabs stay inside their existing
+dismissal bounds and use the dialog's opaque background; other tabs inherit
+their terminal background colour and opacity.
 
 Keycaps are steel blue and brighten under the pointer; in their popups keys
 are mint and descriptions white, and the expanded hints show mint keys before

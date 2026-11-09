@@ -222,14 +222,15 @@ visible. Each pane is its own rounded card, stacked without gaps in its
 column's allocated card area. Even outer gaps surround and separate the
 allocated column areas. Collapsed panes show a rounded title edge with corners turning toward the
 expanded pane and sides continuing to the next card in that direction. The
-expanded pane has a full rounded frame with its title in the top edge.
+expanded pane has a full rounded frame. The top pane uses the shared tab; lower
+stacked titles keep compact gaps in their rounded edges.
 `border_width` sizes neutral outlines; `focus_border_width` sizes the selected
 pane's outline. The visible shortcut footer sits bare in the margin below
 the allocated column areas.
 Selection, hover, and keyboard focus have distinct fills or outlines.
 
 With pane frames on, each column has one continuous terminal-background fill,
-from its first pane's rounded top edge down to the column's rounded bottom.
+from its first pane's shared title contour down to the column's rounded bottom.
 The last collapsed pane's label sits in that bottom edge, closing the stack with
 one line. At the unscrolled bottom, columns and the Agents card share one snapped
 painted bottom line. Its inset is half the title height, bounded by terminal
@@ -250,23 +251,27 @@ popup and frameless paint.
 Last collapsed labels center on the line, clamped so their text boxes end at
 or above the bottom of their unchanged title bands.
 Stacked title rows and the space between cards share the expanded terminal's
-background colour and opacity, except that extended top padding fills an
-unzoomed expanded pane's band below its title (`padding_color`). Above that edge
-and outside the outer corners, the gaps and footer stay the opaque bar colour.
-The first title sits on that boundary. The Agents fill follows its rounded
-outer edge, with its title on the boundary. Header scrolling keeps the fill's
-top fixed. Frameless mode keeps terminal-background strips across the window
-below the bar, including the sidebar and footer.
+background colour and opacity. Extended top padding fills an unzoomed expanded
+pane's band below its title (`padding_color`), outside a fitted tab's uniform
+title area. Outside the shared title contour and outer corners, the gaps and
+footer stay the opaque bar colour. The Agents fill follows the same contour.
+Header scrolling keeps the fill's top fixed. Frameless mode keeps terminal
+background strips across the window below the bar, including the sidebar and
+footer.
 
-A popup's outline rises from its left border over the name in a rounded tab,
-then curves smoothly back into the top edge. The whole name sits on the popup
-terminal's background colour and opacity. The tab keeps its stroke clear of the
-text and the bar; when that clearance cannot fit, the name keeps its original
-gap in the top frame line. This also applies with pane frames
-off; stacked pane headers keep their boundary titles. Long popup names fit with
-an ellipsis, and the title is omitted when the window cannot fit it. The full
-name remains available to accessibility. Terminal layout and input bounds stay
-unchanged.
+Popups, each column's top pane (including a lone or zoomed pane), Agents and
+native titled dialogs use one shared title style. The outline rises seamlessly
+from the left border over the fitted name, then returns into the top edge with
+a tangent S curve spanning 1.5 times its rise. The curve begins beside the
+visible text, including after truncation. Lower stacked panes keep their compact
+border-gap titles. The tab uses existing chrome clearance and adds no height or
+terminal rows. It keeps its stroke clear of text and neighbouring chrome; where
+that clearance cannot fit, the title keeps a compact gap in the top frame line.
+A title is omitted only when it cannot fit. Full accessibility names and input
+bounds stay unchanged. Popup tabs keep their outline with pane frames off;
+pane and sidebar titles stay plain then. Dialog tabs stay inside their existing
+dismissal bounds and use the dialog's opaque background; other tabs inherit
+their terminal background colour and opacity.
 
 Visible headers pair Eon's opaque pane
 identity with Orbit's working directory. Home displays `~`, and its descendants

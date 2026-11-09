@@ -471,7 +471,7 @@ fn card_backdrops(
     columns: &[Option<&Scene>],
     metrics: CellMetrics,
     stroke_width: f32,
-) -> Vec<(CardFill, SceneColor)> {
+) -> Vec<(Option<CardFill>, SceneColor)> {
     let mut cards = std::iter::once((
         workspace.card_fill(workspace.chrome, metrics, stroke_width),
         !workspace.panes.is_empty() || workspace.popup_label().is_some(),
@@ -490,11 +490,11 @@ fn card_backdrops(
                 )
             }),
     )
-    .filter_map(|(card, shown, scene)| {
-        shown.then_some((
-            card,
+    .map(|(card, shown, scene)| {
+        (
+            shown.then_some(card),
             scene.map_or(palette::TERMINAL_FALLBACK, |scene| scene.background),
-        ))
+        )
     })
     .collect::<Vec<_>>();
     // The agent sidebar's card takes the background of the card beside it (VEN-C30),
@@ -502,17 +502,18 @@ fn card_backdrops(
     if workspace.sidebar().is_some() {
         let beside = cards
             .iter()
+            .filter_map(|(card, background)| card.map(|card| (card, background)))
             .min_by(|left, right| left.0.bounds.left.total_cmp(&right.0.bounds.left))
             .map_or(palette::TERMINAL_FALLBACK, |(_, background)| *background);
         cards.push((
-            CardFill {
+            Some(CardFill {
                 bounds: workspace.card_rect(
                     workspace.sidebar_area().unwrap(),
                     metrics,
                     stroke_width,
                 ),
                 radius: workspace.card_radius(),
-            },
+            }),
             beside,
         ));
     }
@@ -524,12 +525,12 @@ fn card_backdrops(
 fn push_card_backdrop(
     rectangles: &mut RectangleBatch,
     frame: SceneRect,
-    cards: &[(CardFill, SceneColor)],
+    cards: &[(Option<CardFill>, SceneColor)],
     opacity: f32,
 ) {
     let rects = cards
         .iter()
-        .map(|(card, _)| card.bounds)
+        .filter_map(|(card, _)| card.map(|card| card.bounds))
         .collect::<Vec<_>>();
     for rect in uncovered(frame, &rects) {
         rectangles.push(
@@ -542,6 +543,7 @@ fn push_card_backdrop(
         );
     }
     for (fill, background) in cards {
+        let Some(fill) = fill else { continue };
         for band in fill.bands() {
             rectangles.push(
                 band.left,
@@ -566,22 +568,24 @@ fn push_card_backdrop(
     }
 }
 
-struct PopupTitle {
+#[derive(Clone)]
+struct FrameTitle {
     label: String,
     width: f32,
 }
 
-struct PopupTitleTab {
+#[derive(Clone)]
+struct FrameTitleTab {
     top: f32,
-    right: f32,
+    start: f32,
     left_radius: f32,
-    right_radius: f32,
-    join_radius: f32,
-    title: PopupTitle,
+    row: SceneRect,
+    return_run: f32,
+    title: FrameTitle,
 }
 
 // Fill and stroke share the contour, including the tangent return into the top rule.
-fn popup_tab_bands(card: CardFill, tab: &PopupTitleTab, inset: f32) -> Vec<SceneRect> {
+fn title_tab_bands(card: CardFill, tab: &FrameTitleTab, inset: f32) -> Vec<SceneRect> {
     let bounds = SceneRect {
         left: card.bounds.left + inset,
         top: card.bounds.top + inset,
@@ -590,10 +594,8 @@ fn popup_tab_bands(card: CardFill, tab: &PopupTitleTab, inset: f32) -> Vec<Scene
     };
     let radius = (rounded_radius(card.bounds, card.radius) - inset).max(0.0);
     let left_radius = (tab.left_radius - inset).max(0.0);
-    let right_radius = (tab.right_radius - inset).max(0.0);
-    let join = tab.join_radius + inset;
     let top = tab.top + inset;
-    let right = tab.right - inset;
+    let return_start = tab.start;
     let cut = bounds.top + radius;
     let circle =
         |radius: f32, distance: f32| (radius * radius - distance * distance).max(0.0).sqrt();
@@ -607,12 +609,16 @@ fn popup_tab_bands(card: CardFill, tab: &PopupTitleTab, inset: f32) -> Vec<Scene
         };
         let end = if y >= bounds.top {
             bounds.right() - radius + circle(radius, bounds.top + radius - y)
-        } else if y < top + right_radius {
-            right - right_radius + circle(right_radius, top + right_radius - y)
-        } else if y >= bounds.top - join {
-            right + join - circle(join, y - (bounds.top - join))
         } else {
-            right
+            let rise = card.bounds.top - tab.top;
+            let radius = (tab.return_run.powi(2) + rise.powi(2)) / (4.0 * rise);
+            let join_y = tab.top + rise / 2.0 + inset * (1.0 - rise / (2.0 * radius));
+            if y < join_y {
+                return_start + circle((radius - inset).max(0.0), tab.top + radius - y)
+            } else {
+                return_start + tab.return_run
+                    - circle(radius + inset, y - (card.bounds.top - radius))
+            }
         };
         bands.push(SceneRect {
             left,
@@ -630,19 +636,20 @@ fn popup_tab_bands(card: CardFill, tab: &PopupTitleTab, inset: f32) -> Vec<Scene
 }
 
 // Partition once so the terminal background under the title never double-blends.
-fn push_popup_tab_backdrop(
+fn push_title_tab_backdrop(
     rectangles: &mut RectangleBatch,
     frame: SceneRect,
-    cards: &[(CardFill, SceneColor)],
+    cards: &[(Option<CardFill>, SceneColor)],
     opacity: f32,
-    tab: &PopupTitleTab,
+    tabs: &[Option<FrameTitleTab>],
 ) {
     let bands = cards
         .iter()
         .enumerate()
         .flat_map(|(index, (card, background))| {
-            let fill = if index == 0 {
-                popup_tab_bands(*card, tab, 0.0)
+            let Some(card) = card else { return Vec::new() };
+            let fill = if let Some(Some(tab)) = tabs.get(index) {
+                title_tab_bands(*card, tab, 0.0)
             } else {
                 card.bands().collect()
             };
@@ -698,6 +705,7 @@ fn build_workspace_padding(
     pane_frames: bool,
     stroke_width: f32,
     scroll: (Option<&ScenePreview>, f32),
+    titles: &[Option<FrameTitleTab>],
 ) -> Vec<Vec<SceneColor>> {
     if padding_color == PaddingColor::Background {
         return Vec::new();
@@ -797,10 +805,23 @@ fn build_workspace_padding(
             .chain(outer.is_none().then_some(bounds));
         rectangles.card_clip = pane;
         for band in bands {
-            rectangles.clip = bounds
+            let Some(clip) = bounds
                 .intersection(viewport)
-                .and_then(|clip| clip.intersection(band));
-            if rectangles.clip.is_some() {
+                .and_then(|clip| clip.intersection(band))
+            else {
+                continue;
+            };
+            let title = titles
+                .get(index)
+                .and_then(Option::as_ref)
+                .map(|tab| SceneRect {
+                    left: tab.row.left,
+                    top: tab.top,
+                    width: tab.start + tab.return_run - tab.row.left,
+                    height: tab.row.bottom() - tab.top,
+                });
+            for clip in uncovered(clip, &title.into_iter().collect::<Vec<_>>()) {
+                rectangles.clip = Some(clip);
                 let top_colors = build_padding_rectangles(
                     rectangles,
                     scene,
@@ -977,7 +998,7 @@ pub struct Renderer {
     viewport: Viewport,
     atlas: TextAtlas,
     text_renderer: TextRenderer,
-    text_overlay: Option<(usize, TextBounds)>,
+    text_overlay: Option<(usize, Vec<TextBounds>)>,
     text: Vec<PlacedText>,
     /// The keycap popup this frame drew, for the pointer.
     hint_popup_hit: Option<chrome::HintPopupHit>,
@@ -1437,7 +1458,7 @@ impl Renderer {
                     &mut self.fonts.font_system,
                     &mut self.atlas,
                     &self.viewport,
-                    text_areas(&self.text, self.text_overlay),
+                    text_areas(&self.text, self.text_overlay.as_ref()),
                     &mut self.swash_cache,
                     |request| rasterize_bar_icon(request, eon_icon),
                 )
@@ -1451,7 +1472,7 @@ impl Renderer {
                         &mut self.fonts.font_system,
                         &mut self.atlas,
                         &self.viewport,
-                        text_areas(&self.text, self.text_overlay),
+                        text_areas(&self.text, self.text_overlay.as_ref()),
                         &mut self.swash_cache,
                         |request| rasterize_bar_icon(request, eon_icon),
                     )
@@ -1688,6 +1709,7 @@ impl Renderer {
         let mut rectangles = RectangleBatch::new(self.config.width, self.config.height);
         let mut cursor_vertex_boundary = 0;
         if let Some(workspace) = workspace {
+            let title_tabs = self.workspace_title_tabs(workspace);
             self.clear = wgpu::Color::TRANSPARENT;
             if self.pane_frames {
                 // Below the tab bar, everything no card covers is opaque bar color, so the bar,
@@ -1706,18 +1728,13 @@ impl Renderer {
                     width: self.config.width as f32,
                     height: self.config.height as f32 - workspace.tab_viewport.bottom(),
                 };
-                if let Some(tab) = PopupTitleTab::new(
-                    &mut self.fonts.font_system,
-                    self.metrics,
-                    workspace,
-                    physical_outline_width(self.border_width, self.metrics.scale),
-                ) {
-                    push_popup_tab_backdrop(
+                if title_tabs.iter().any(Option::is_some) {
+                    push_title_tab_backdrop(
                         &mut rectangles,
                         frame,
                         &cards,
                         self.background_opacity,
-                        &tab,
+                        &title_tabs,
                     );
                 } else {
                     push_card_backdrop(&mut rectangles, frame, &cards, self.background_opacity);
@@ -1764,6 +1781,7 @@ impl Renderer {
                 self.pane_frames,
                 self.card_stroke_width(),
                 (scroll_preview, scroll_offset),
+                &title_tabs,
             );
             let backgrounds = card_backdrops(
                 workspace,
@@ -1781,6 +1799,7 @@ impl Renderer {
                 &mut rectangles,
                 &backgrounds,
                 &bands,
+                &title_tabs,
             );
             for ((column, scene), band) in workspace
                 .other_columns
@@ -2024,22 +2043,19 @@ impl Renderer {
         self.upload_dynamic_vertices(&rectangles.bytes);
     }
 
-    fn build_scrollback(
+    fn scrollback_geometry(
         &mut self,
         area: SceneRect,
         clip: SceneRect,
         in_header: bool,
         cursor: Option<SceneRect>,
-        rectangles: &mut RectangleBatch,
-    ) -> f32 {
-        let Some(label) = self.terminal.scrollback_label.clone() else {
-            return 0.0;
-        };
+    ) -> Option<(SceneRect, f32)> {
+        let label = self.terminal.scrollback_label.as_ref()?;
         let padding = self.metrics.padding;
         let width = fit_header_text(
             &mut self.fonts.font_system,
             self.metrics,
-            &label,
+            label,
             f32::INFINITY,
         )
         .1
@@ -2048,7 +2064,7 @@ impl Renderer {
         let inset = if in_header { 0.0 } else { padding / 2.0 };
         let height = self.metrics.height + inset * 2.0;
         if width > area.width - padding || height > area.height {
-            return 0.0;
+            return None;
         }
         let rect = SceneRect {
             left: area.right() - width - padding,
@@ -2063,8 +2079,26 @@ impl Renderer {
         if rect.intersection(clip) != Some(rect)
             || cursor.is_some_and(|cursor| cursor.intersection(rect).is_some())
         {
-            return 0.0;
+            return None;
         }
+        Some((rect, inset))
+    }
+
+    fn build_scrollback(
+        &mut self,
+        area: SceneRect,
+        clip: SceneRect,
+        in_header: bool,
+        cursor: Option<SceneRect>,
+        rectangles: &mut RectangleBatch,
+    ) -> f32 {
+        let Some((rect, inset)) = self.scrollback_geometry(area, clip, in_header, cursor) else {
+            return 0.0;
+        };
+        let label = self.terminal.scrollback_label.clone().unwrap();
+        let padding = self.metrics.padding;
+        let width = rect.width;
+        let height = rect.height;
         self.terminal.scrollback_rect = Some(rect);
         let first = self.text.len();
         self.push_text_clipped(
@@ -2090,12 +2124,12 @@ impl Renderer {
         if !in_header {
             self.text_overlay = Some((
                 first,
-                TextBounds {
+                vec![TextBounds {
                     left: rect.left.floor() as i32,
                     top: rect.top.floor() as i32,
                     right: rect.right().ceil() as i32,
                     bottom: rect.bottom().ceil() as i32,
-                },
+                }],
             ));
         }
         width
@@ -2630,10 +2664,18 @@ fn shaping(text: &str) -> Shaping {
     }
 }
 
-fn text_areas(
-    text: &[PlacedText],
-    overlay: Option<(usize, TextBounds)>,
-) -> impl Iterator<Item = TextArea<'_>> {
+fn text_areas<'a>(
+    text: &'a [PlacedText],
+    overlay: Option<&(usize, Vec<TextBounds>)>,
+) -> impl Iterator<Item = TextArea<'a>> {
+    let rect = |bounds: &TextBounds| SceneRect {
+        left: bounds.left as f32,
+        top: bounds.top as f32,
+        width: bounds.right as f32 - bounds.left as f32,
+        height: bounds.bottom as f32 - bounds.top as f32,
+    };
+    let overlay =
+        overlay.map(|(first, masks)| (*first, masks.iter().map(rect).collect::<Vec<_>>()));
     text.iter().enumerate().flat_map(move |(index, text)| {
         let bounds = TextBounds {
             left: text.bound_left,
@@ -2641,33 +2683,14 @@ fn text_areas(
             right: text.right,
             bottom: text.bottom,
         };
-        let mut clips = [bounds; 4];
-        let count = if let Some((first_overlay_text, occlusion)) = overlay
-            && index < first_overlay_text
-            && bounds.left < occlusion.right
-            && bounds.right > occlusion.left
-            && bounds.top < occlusion.bottom
-            && bounds.bottom > occlusion.top
-        {
-            // Rectangles precede glyphs. Keep the text around this floating
-            // preview without cloning its buffers or adding a rendering pass.
-            clips[0].bottom = bounds.bottom.min(occlusion.top);
-            clips[1].top = bounds.top.max(occlusion.bottom);
-            clips[2].top = bounds.top.max(occlusion.top);
-            clips[2].bottom = bounds.bottom.min(occlusion.bottom);
-            clips[2].right = bounds.right.min(occlusion.left);
-            clips[3] = TextBounds {
-                left: bounds.left.max(occlusion.right),
-                right: bounds.right,
-                ..clips[2]
-            };
-            4
-        } else {
-            1
-        };
-        clips
+        let occlusion = overlay.as_ref().filter(|(first, _)| index < *first);
+        // Rectangles precede glyphs; use the painted contour without another rendering pass.
+        occlusion
+            .map(|(_, masks)| uncovered(rect(&bounds), masks))
             .into_iter()
-            .take(count)
+            .flatten()
+            .map(text_clip_bounds)
+            .chain(occlusion.is_none().then_some(bounds))
             .filter(|clip| clip.left < clip.right && clip.top < clip.bottom)
             .map(move |bounds| TextArea {
                 buffer: &text.buffer,
@@ -2860,16 +2883,16 @@ struct RectangleBatch {
 }
 
 impl RectangleBatch {
-    fn push_popup_tab_outline(
+    fn push_title_tab_outline(
         &mut self,
         card: CardFill,
-        tab: &PopupTitleTab,
+        tab: &FrameTitleTab,
         width: f32,
         color: SceneColor,
     ) {
-        let inner = popup_tab_bands(card, tab, width);
+        let inner = title_tab_bands(card, tab, width);
         let cut = card.bounds.top + rounded_radius(card.bounds, card.radius);
-        for band in popup_tab_bands(card, tab, 0.0)
+        for band in title_tab_bands(card, tab, 0.0)
             .into_iter()
             .filter(|band| band.top < cut)
         {

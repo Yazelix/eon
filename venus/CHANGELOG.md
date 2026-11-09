@@ -2,6 +2,12 @@
 
 ## Unreleased
 
+- VEN-C8/C18/C30: top panes, popups, Agents and native titled dialogs share
+  one fitted tab with a tangent S return spanning 1.5 times its rise. Lower
+  stacked panes retain compact titles; title clearance, terminal rows, actions
+  and accessibility bounds remain unchanged (`eon-27deg`). Native dialog titles
+  use the chrome title style in place of the bold heading style.
+
 - EONW v38 carries nullable recovered session IDs and registration diagnostics.
   A registry failure shows a notice while the recovered terminal remains usable.
 
