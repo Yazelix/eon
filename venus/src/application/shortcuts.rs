@@ -656,6 +656,20 @@ pub(super) fn shortcut_groups_for(
     shortcut_groups_with(platform, entries, sidebar, running, true)
 }
 
+/// Opposite arrow keys the viewer lists on one row; a popup taking either key splits them.
+pub(super) const PAIRED_ROWS: [(NativeShortcutAction, NativeShortcutAction, &str); 2] = [
+    (
+        NativeShortcutAction::TraverseChrome(WorkspaceDirection::Left),
+        NativeShortcutAction::TraverseChrome(WorkspaceDirection::Right),
+        "Previous or next column or tab while tabs are focused",
+    ),
+    (
+        NativeShortcutAction::TraverseChrome(WorkspaceDirection::Up),
+        NativeShortcutAction::TraverseChrome(WorkspaceDirection::Down),
+        "Previous or next pane or agent row while one is focused",
+    ),
+];
+
 /// The viewer's groups; `number_keys = false` leaves out the workspace position keys (VEN-C8).
 fn shortcut_groups_with(
     platform: NativePlatform,
@@ -664,35 +678,67 @@ fn shortcut_groups_with(
     running: bool,
     number_keys: bool,
 ) -> Vec<ShortcutGroup> {
+    let row = |shortcut: &NativeShortcut| {
+        ShortcutRow::new(
+            shortcut.trigger.display_label_for(platform),
+            match shortcut.overriding_popup(platform, entries) {
+                Some(entry) => format!("{} (overridden by {})", shortcut.label, entry.label),
+                None => match shortcut.taken_keys(platform, entries) {
+                    taken if taken.is_empty() => shortcut.label.into(),
+                    taken => format!("{} ({})", shortcut.label, taken.join("; ")),
+                },
+            },
+        )
+    };
+    let plain = |shortcut: &NativeShortcut| {
+        shortcut.overriding_popup(platform, entries).is_none()
+            && shortcut.taken_keys(platform, entries).is_empty()
+    };
     let mut groups = ["Navigate", "Tabs and panes", "Host"]
         .into_iter()
         .map(|title| {
-            ShortcutGroup::new(
-                title,
-                FIXED_SHORTCUTS
+            let shortcuts = FIXED_SHORTCUTS
+                .iter()
+                .filter(|shortcut| {
+                    shortcut.group == title
+                        && shortcut.bound(sidebar, running)
+                        && (number_keys
+                            || shortcut.action != NativeShortcutAction::ShowWorkspacePosition)
+                })
+                .collect::<Vec<_>>();
+            let mut rows = Vec::with_capacity(shortcuts.len());
+            for shortcut in &shortcuts {
+                let Some(&(first, second, description)) = PAIRED_ROWS
                     .iter()
-                    .filter(|shortcut| {
-                        shortcut.group == title
-                            && shortcut.bound(sidebar, running)
-                            && (number_keys
-                                || shortcut.action != NativeShortcutAction::ShowWorkspacePosition)
-                    })
-                    .map(|shortcut| {
-                        ShortcutRow::new(
+                    .find(|(first, second, _)| [*first, *second].contains(&shortcut.action))
+                else {
+                    rows.push(row(shortcut));
+                    continue;
+                };
+                let partner = if shortcut.action == first {
+                    second
+                } else {
+                    first
+                };
+                match shortcuts
+                    .iter()
+                    .find(|other| other.action == partner)
+                    .filter(|other| plain(shortcut) && plain(other))
+                {
+                    Some(other) if shortcut.action == first => rows.push(ShortcutRow::new(
+                        format!(
+                            "{} / {}",
                             shortcut.trigger.display_label_for(platform),
-                            match shortcut.overriding_popup(platform, entries) {
-                                Some(entry) => {
-                                    format!("{} (overridden by {})", shortcut.label, entry.label)
-                                }
-                                None => match shortcut.taken_keys(platform, entries) {
-                                    taken if taken.is_empty() => shortcut.label.into(),
-                                    taken => format!("{} ({})", shortcut.label, taken.join("; ")),
-                                },
-                            },
-                        )
-                    })
-                    .collect(),
-            )
+                            other.trigger.display_label_for(platform)
+                        ),
+                        description,
+                    )),
+                    // The first key's row lists this one.
+                    Some(_) => {}
+                    None => rows.push(row(shortcut)),
+                }
+            }
+            ShortcutGroup::new(title, rows)
         })
         .collect::<Vec<_>>();
     // An overridden entry keeps its default chord's row; an unbound one has none.

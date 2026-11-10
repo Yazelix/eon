@@ -8,8 +8,7 @@ use super::{
     palette, physical_outline_width, shaping,
 };
 use crate::{
-    DialogKind, DialogScene, Load, SceneRect, WorkspaceFocus, WorkspaceHeaderControl,
-    WorkspaceScene,
+    DialogScene, Load, SceneRect, WorkspaceFocus, WorkspaceHeaderControl, WorkspaceScene,
     scene::{
         HintSection, QuotaProvider, SIDEBAR_EMPTY, SIDEBAR_TITLE, ShortcutHintGroup,
         ShortcutHintsScene, TabBadge, WorkspaceControl, chrome_title_metrics,
@@ -1472,6 +1471,28 @@ fn fit_tab_text(
     fit_header_text(fonts, metrics, fallback.as_deref().unwrap_or(text), width)
 }
 
+/// Lines `text` takes in dialog row typography wrapped to `width` pixels.
+pub(super) fn dialog_text_lines(
+    fonts: &mut FontSystem,
+    metrics: CellMetrics,
+    cell_font: super::cells::CellFont,
+    text: &str,
+    width: f32,
+) -> usize {
+    super::shape_styled_text(
+        fonts,
+        metrics,
+        cell_font,
+        text,
+        width,
+        f32::MAX,
+        DrawStyleKind::Status(Wrap::WordOrGlyph),
+    )
+    .layout_runs()
+    .count()
+    .max(1)
+}
+
 pub(super) fn fit_header_text(
     fonts: &mut FontSystem,
     metrics: CellMetrics,
@@ -1761,6 +1782,18 @@ impl Renderer {
     /// Measure an exact, non-truncated Eon Bar fact label with header typography.
     pub fn measure_header_text(&mut self, label: &str) -> (String, f32) {
         self.fit_header_text(label, f32::INFINITY)
+    }
+
+    /// Lines `text` takes in dialog row typography wrapped to `width` pixels, as a dialog row
+    /// draws it.
+    pub fn dialog_text_lines(&mut self, text: &str, width: f32) -> usize {
+        dialog_text_lines(
+            &mut self.fonts.font_system,
+            self.metrics,
+            self.cell_font,
+            text,
+            width,
+        )
     }
 
     /// Fit header text to `width` pixels with header typography, as tab labels are.
@@ -2173,29 +2206,32 @@ impl Renderer {
                 rectangles,
             );
         }
-        let key_cells = match viewer.kind {
-            DialogKind::Shortcuts | DialogKind::AttentionInbox => 15.0,
-            DialogKind::WindowMenu
-            | DialogKind::QuitOtherWindow { .. }
-            | DialogKind::CloseLastTab { .. }
-            | DialogKind::QuitWindow { .. } => 6.0,
-        };
-        let key_width = (self.metrics.font_size * key_cells).min(viewer.content.width * 0.4);
-        let gap = padding.min(self.metrics.width);
-        for group in &viewer.groups {
+        let headings = viewer
+            .groups
+            .iter()
+            .map(|group| (group, group.heading))
+            .chain(
+                viewer
+                    .continued
+                    .iter()
+                    .map(|(group, heading)| (&viewer.groups[*group], *heading)),
+            );
+        for (group, heading) in headings {
             if !group.title.is_empty() {
                 self.push_text_clipped(
                     &group.title,
-                    group.heading.left,
-                    group.heading.top,
-                    group.heading.width,
-                    group.heading.width,
-                    group.heading.height,
+                    heading.left,
+                    heading.top,
+                    heading.width,
+                    heading.width,
+                    heading.height,
                     palette::ACCENT,
                     DrawStyleKind::PopupLabel,
                     viewer.content,
                 );
             }
+        }
+        for group in &viewer.groups {
             for row in &group.rows {
                 if row.focused {
                     rectangles.push_rounded(
@@ -2208,14 +2244,14 @@ impl Renderer {
                     &row.shortcut,
                     row.rect.left,
                     row.rect.top,
-                    key_width,
-                    key_width,
+                    row.label_width,
+                    row.label_width,
                     row.rect.height,
                     palette::SHORTCUT_KEY_TEXT,
                     DrawStyleKind::Status(Wrap::WordOrGlyph),
                     viewer.content,
                 );
-                let action_left = row.rect.left + key_width + gap;
+                let action_left = row.rect.left + row.label_width + viewer.label_gap;
                 self.push_text_clipped(
                     &row.action,
                     action_left,
@@ -2254,7 +2290,7 @@ impl Renderer {
             );
         }
         rectangles.clip = None;
-        for (index, line) in viewer.kind.footer().iter().enumerate() {
+        for (index, line) in viewer.footer().iter().enumerate() {
             self.push_text_clipped(
                 line,
                 viewer.content.left,

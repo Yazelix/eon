@@ -818,6 +818,8 @@ pub struct ShortcutRow {
     pub rect: SceneRect,
     pub menu_action: Option<WindowMenuAction>,
     pub focused: bool,
+    /// The width of the label column this row sits in; its description starts after it.
+    pub(crate) label_width: f32,
 }
 
 /// A window-menu target keeps its identity across summary refreshes.
@@ -1186,6 +1188,7 @@ impl ShortcutRow {
             rect: SceneRect::default(),
             menu_action: None,
             focused: false,
+            label_width: 0.0,
         }
     }
 }
@@ -1289,6 +1292,9 @@ pub fn attention_inbox_hints() -> Vec<ShortcutHint> {
     .collect()
 }
 
+/// How the Shortcuts viewer closes, its whole footer while every row shows.
+const SHORTCUTS_CLOSE: &str = "Esc or Alt+/ to close";
+
 /// What the one native dialog shows.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum DialogKind {
@@ -1370,7 +1376,7 @@ impl DialogKind {
     #[must_use]
     pub(crate) fn footer(&self) -> Vec<String> {
         match self {
-            Self::Shortcuts => vec!["Wheel or ↑↓ to scroll · Esc or Alt+/ to close".into()],
+            Self::Shortcuts => vec![format!("Wheel or ↑↓ to scroll · {SHORTCUTS_CLOSE}")],
             Self::WindowMenu => {
                 vec!["↑↓ or Tab to choose · Enter to activate · Esc to close".into()]
             }
@@ -1406,6 +1412,59 @@ impl DialogKind {
     }
 }
 
+/// Dialog text measured in the rows' typography.
+pub trait DialogText {
+    /// The width of `text` on one line.
+    fn width(&self, text: &str) -> f32;
+    /// The lines `text` takes wrapped to `width`, as a row draws it.
+    fn lines(&self, text: &str, width: f32) -> usize;
+}
+
+/// Dialog text estimated from the terminal cell width, for texts the renderer has not measured.
+#[derive(Clone, Copy, Debug)]
+pub struct CellText(pub CellMetrics);
+
+impl DialogText for CellText {
+    fn width(&self, text: &str) -> f32 {
+        text.chars().count() as f32 * self.0.width
+    }
+
+    fn lines(&self, text: &str, width: f32) -> usize {
+        wrapped_lines(text, width, |text| self.width(text))
+    }
+}
+
+/// Lines `text` takes wrapped to `width` with `measure` giving widths: word by word, a word
+/// wider than a line breaking between characters.
+pub fn wrapped_lines(text: &str, width: f32, measure: impl Fn(&str) -> f32) -> usize {
+    let space = (measure("x x") - measure("xx")).max(0.0);
+    let (mut lines, mut used) = (1, 0.0f32);
+    for word in text.split(' ').filter(|word| !word.is_empty()) {
+        let word_width = measure(word);
+        if used > 0.0 && used + space + word_width <= width {
+            used += space + word_width;
+            continue;
+        }
+        if used > 0.0 {
+            lines += 1;
+            used = 0.0;
+        }
+        if word_width <= width {
+            used = word_width;
+            continue;
+        }
+        for glyph in word.chars() {
+            let glyph = measure(glyph.encode_utf8(&mut [0; 4]));
+            if used > 0.0 && used + glyph > width {
+                lines += 1;
+                used = 0.0;
+            }
+            used += glyph;
+        }
+    }
+    lines
+}
+
 /// Bounded geometry shared by native viewers, the Window menu and close prompts.
 #[derive(Clone, Debug, PartialEq)]
 pub struct DialogScene {
@@ -1420,6 +1479,10 @@ pub struct DialogScene {
     pub(crate) empty: Option<&'static str>,
     pub scroll: f32,
     pub max_scroll: f32,
+    /// The space between a row's label column and its description.
+    pub(crate) label_gap: f32,
+    /// A heading repeated where its group continues at the top of another column.
+    pub(crate) continued: Vec<(usize, SceneRect)>,
 }
 
 impl DialogScene {
@@ -1429,6 +1492,7 @@ impl DialogScene {
         size: PhysicalSize<u32>,
         metrics: CellMetrics,
         scroll: f32,
+        measure: &dyn DialogText,
     ) -> Self {
         let id = window
             .window
@@ -1452,6 +1516,7 @@ impl DialogScene {
             size,
             metrics,
             scroll,
+            measure,
         )
     }
     #[must_use]
@@ -1462,6 +1527,7 @@ impl DialogScene {
         size: PhysicalSize<u32>,
         metrics: CellMetrics,
         scroll: f32,
+        measure: &dyn DialogText,
     ) -> Self {
         let row = |label: &str, description: String, action: WindowMenuAction| {
             let mut row = ShortcutRow::new(label, description);
@@ -1508,7 +1574,24 @@ impl DialogScene {
             ));
         }
         groups.push(ShortcutGroup::new("Other windows", others));
-        Self::new(DialogKind::WindowMenu, groups, size, metrics, scroll)
+        Self::new(
+            DialogKind::WindowMenu,
+            groups,
+            size,
+            metrics,
+            scroll,
+            measure,
+        )
+    }
+
+    /// The footer's hint lines; Shortcuts mention scrolling only while their rows overflow.
+    #[must_use]
+    pub(crate) fn footer(&self) -> Vec<String> {
+        if self.kind == DialogKind::Shortcuts && self.max_scroll == 0.0 {
+            vec![SHORTCUTS_CLOSE.into()]
+        } else {
+            self.kind.footer()
+        }
     }
 
     pub fn menu_rows(&self) -> impl Iterator<Item = &ShortcutRow> {
@@ -1546,48 +1629,215 @@ impl DialogScene {
         (self.scroll + delta).clamp(0.0, self.max_scroll)
     }
 
-    /// Shortcuts fill the window's height; the prompt fits its content. A group without a
-    /// title has no heading.
+    /// Lays out a list dialog sized to its content and kept between the Eon Bar and the hints
+    /// bar while the window allows: each column's labels measured, dense rows whose
+    /// descriptions wrap in place, and for Shortcuts the fewest balanced columns, up to three,
+    /// that show every row without scrolling. The attention inbox keeps that whole height for
+    /// its own rows. A group without a title has no heading. `measure` gives a text's width and
+    /// wrapped lines in the rows' typography.
     #[must_use]
+    #[allow(clippy::too_many_lines)]
     pub fn new(
         kind: DialogKind,
         mut groups: Vec<ShortcutGroup>,
         size: PhysicalSize<u32>,
         metrics: CellMetrics,
         scroll: f32,
+        measure: &dyn DialogText,
     ) -> Self {
         let width = size.width as f32;
         let height = size.height as f32;
-        let margin = metrics.padding.min(width / 12.0).min(height / 12.0);
-        let dialog_width = (metrics.font_size * 54.0).min(width - margin * 2.0);
-        let heading_height = metrics.height * 1.4;
-        let row_height = metrics.height * 2.25;
-        let group_gap = metrics.height * 0.6;
-        let content_height = groups.iter().fold(0.0, |height, group| {
-            let heading = if group.title.is_empty() {
+        let line = metrics.height;
+        let edge = (header_heights(metrics).0 + card_gap(metrics)).min(height / 12.0);
+        let side = metrics.padding.min(width / 12.0);
+        let available = (height - edge * 2.0).max(0.0);
+        let footer_height = line * (kind.footer().len() as f32 + 0.75);
+        let padding_for = |width: f32| metrics.padding.min(width / 8.0);
+        let padding = padding_for(width - side * 2.0);
+        let chrome_height = padding + line * 3.0 + footer_height;
+        let heading_height = line * 1.4;
+        // Whole-pixel rows keep their edges on the pixel grid wherever they stack.
+        let row_height = (line * 1.3).round();
+        // Status text wraps onto lines this tall.
+        let wrapped_line = line * 1.25;
+        let group_gap = line * 0.5;
+        let label_gap = metrics.padding * 1.5;
+        let column_gap = metrics.padding * 2.5;
+        // Headings, the subtitle and the footer use the smaller popup-label face.
+        let label_ratio = 11.0 * metrics.scale / chrome_title_metrics(metrics).font_size;
+        let heading_for = |group: &ShortcutGroup| {
+            if group.title.is_empty() {
                 0.0
             } else {
                 heading_height
-            };
-            height + heading + row_height * group.rows.len() as f32 + group_gap
-        });
-        let available = height - margin * 2.0;
-        let footer_lines = kind.footer().len() as f32;
-        let padding_for = |width: f32| metrics.padding.min(width / 8.0);
+            }
+        };
+        let row_extent = |row: &ShortcutRow, width: f32| {
+            let lines = measure.lines(&row.action, width).max(1) as f32;
+            row_height + ((lines - 1.0) * wrapped_line).ceil()
+        };
+        let label = |row: &ShortcutRow| {
+            if row.shortcut.is_empty() {
+                0.0
+            } else {
+                measure.width(&row.shortcut).ceil() + 1.0
+            }
+        };
+        let natural = groups
+            .iter()
+            .flat_map(|group| &group.rows)
+            .map(|row| measure.width(&row.action).ceil() + 1.0)
+            .fold(0.0, f32::max);
+        // Places rows into one column per entry of `descs`, each column's descriptions as wide
+        // as its entry, starting a column once the current one passes an even share of the
+        // total, or where `assigned` puts each row: (group, row, column, top, extent) per row,
+        // (group, column, top) per heading, each column's label width, and the tallest column.
+        type Placement = (
+            Vec<(usize, usize, usize, f32, f32)>,
+            Vec<(usize, usize, f32)>,
+            Vec<f32>,
+            f32,
+        );
+        let place = |descs: &[f32], assigned: Option<&[usize]>| -> Placement {
+            let columns = descs.len();
+            let total = groups.iter().fold(0.0, |sum, group| {
+                sum + heading_for(group)
+                    + group
+                        .rows
+                        .iter()
+                        .map(|row| row_extent(row, descs[0]))
+                        .sum::<f32>()
+                    + group_gap
+            });
+            let share = total / columns as f32;
+            let (mut rows, mut headings) = (Vec::new(), Vec::new());
+            let mut labels = vec![0.0f32; columns];
+            let (mut column, mut top, mut tallest) = (0, 0.0f32, 0.0f32);
+            for (group_index, group) in groups.iter().enumerate() {
+                headings.push((group_index, column, top));
+                top += heading_for(group);
+                for (row_index, row) in group.rows.iter().enumerate() {
+                    let next = match assigned {
+                        Some(assigned) => assigned[rows.len()] != column,
+                        None => {
+                            top + row_extent(row, descs[column]) > share + row_height * 0.6
+                                && column + 1 < columns
+                        }
+                    };
+                    if next {
+                        // A section moving whole leaves the column where its previous one
+                        // ended, which the tallest column already counts.
+                        if row_index == 0 {
+                            headings.pop();
+                        } else {
+                            tallest = tallest.max(top);
+                        }
+                        column += 1;
+                        top = 0.0;
+                        headings.push((group_index, column, top));
+                        top += heading_for(group);
+                    }
+                    let extent = row_extent(row, descs[column]);
+                    labels[column] = labels[column].max(label(row));
+                    rows.push((group_index, row_index, column, top, extent));
+                    top += extent;
+                }
+                top += group_gap;
+                tallest = tallest.max(top - group_gap);
+            }
+            (rows, headings, labels, tallest)
+        };
+        let usable = (width - side * 2.0 - padding * 2.0).max(0.0);
+        let fixed = |labels: &[f32]| {
+            labels.iter().sum::<f32>()
+                + label_gap * labels.len() as f32
+                + column_gap * (labels.len() as f32 - 1.0)
+        };
+        let room = available - chrome_height;
+        let widest_label = groups
+            .iter()
+            .flat_map(|group| &group.rows)
+            .map(label)
+            .fold(0.0, f32::max);
+        let mut desc = natural.min(usable - fixed(&[widest_label])).max(1.0);
+        let mut chosen = place(&[desc], None);
+        let max_columns = if kind == DialogKind::Shortcuts { 3 } else { 1 };
+        for columns in 2..=max_columns {
+            if chosen.3 <= room {
+                break;
+            }
+            let mut wider = natural;
+            let mut candidate = place(&vec![wider; columns], None);
+            for _ in 0..2 {
+                wider = ((usable - fixed(&candidate.2)) / columns as f32).min(natural);
+                candidate = place(&vec![wider; columns], None);
+            }
+            if wider < natural.min(metrics.font_size * 11.0) {
+                break;
+            }
+            (desc, chosen) = (wider, candidate);
+        }
+        // Bound the columns to the visible width: descriptions narrow first, then labels, and a
+        // heading widens its column only into width left over, clipped beyond it.
+        let mut labels = chosen.2;
+        let columns = labels.len() as f32;
+        let spare = usable - column_gap * (columns - 1.0) - label_gap * columns;
+        let label_total = labels.iter().sum::<f32>();
+        if label_total > spare.max(0.0) {
+            let fit = spare.max(0.0) / label_total;
+            labels.iter_mut().for_each(|label| *label *= fit);
+        }
+        let desc = desc
+            .min((spare - labels.iter().sum::<f32>()) / columns)
+            .max(0.0);
+        let mut widths = labels
+            .iter()
+            .map(|label| label + label_gap + desc)
+            .collect::<Vec<_>>();
+        let mut leftover = usable - widths.iter().sum::<f32>() - column_gap * (columns - 1.0);
+        for &(group, column, _) in &chosen.1 {
+            let heading = measure.width(&groups[group].title) * label_ratio;
+            let wider = (heading - widths[column]).clamp(0.0, leftover.max(0.0));
+            widths[column] += wider;
+            leftover -= wider;
+        }
+        // Descriptions wrap in the columns' final width, so rows take the height they draw.
+        let assigned = chosen.0.iter().map(|row| row.2).collect::<Vec<_>>();
+        let descs = widths
+            .iter()
+            .zip(&labels)
+            .map(|(width, label)| width - label - label_gap)
+            .collect::<Vec<_>>();
+        let (rows, headings, _, content_height) = place(&descs, Some(&assigned));
+        let content_width = widths.iter().sum::<f32>() + column_gap * (widths.len() as f32 - 1.0);
+        let dialog_width = match kind {
+            DialogKind::AttentionInbox => metrics.font_size * 54.0,
+            _ => {
+                [
+                    content_width,
+                    measure.width(kind.title()) + padding * 2.0,
+                    measure.width(&kind.subtitle()) * label_ratio,
+                ]
+                .into_iter()
+                .chain(
+                    kind.footer()
+                        .iter()
+                        .map(|footer| measure.width(footer) * label_ratio),
+                )
+                .fold(0.0, f32::max)
+                    + padding * 2.0
+            }
+        }
+        .min(width - side * 2.0)
+        .max(0.0);
         let dialog_height = match kind {
-            DialogKind::Shortcuts | DialogKind::AttentionInbox => available,
-            DialogKind::WindowMenu
-            | DialogKind::QuitOtherWindow { .. }
-            | DialogKind::CloseLastTab { .. }
-            | DialogKind::QuitWindow { .. } => (padding_for(dialog_width)
-                + metrics.height * 3.0
-                + content_height
-                + metrics.height * (footer_lines + 0.75))
-                .min(available),
+            DialogKind::AttentionInbox => available,
+            // Whole pixels leave the rows' float sums room to fit.
+            _ => (chrome_height + content_height).ceil().min(available),
         };
         let bounds = SceneRect {
-            left: ((width - dialog_width) / 2.0).max(0.0),
-            top: (margin + (available - dialog_height) / 2.0).max(0.0),
+            left: ((width - dialog_width) / 2.0).max(0.0).floor(),
+            top: (edge + (available - dialog_height) / 2.0).max(0.0).floor(),
             width: dialog_width,
             height: dialog_height,
         };
@@ -1596,47 +1846,55 @@ impl DialogScene {
             left: bounds.left + padding,
             top: bounds.top + padding,
             width: bounds.width - padding * 2.0,
-            height: metrics.height * 1.5,
+            height: line * 1.5,
         };
         let subtitle = SceneRect {
             top: title.bottom(),
-            height: metrics.height,
+            height: line,
             ..title
         };
-        let footer_height = (metrics.height * (footer_lines + 0.75)).min(bounds.height / 3.0);
-        let content_top =
-            (subtitle.bottom() + metrics.height * 0.5).min(bounds.bottom() - footer_height);
+        let footer_height = footer_height.min(bounds.height / 3.0);
+        let content_top = (subtitle.bottom() + line * 0.5).min(bounds.bottom() - footer_height);
         let content = SceneRect {
             top: content_top,
             height: bounds.bottom() - footer_height - content_top,
             ..title
         };
-        let max_scroll = (content_height - content.height).max(0.0);
+        // A layout that fits exactly may still differ by rounding.
+        let overflow = content_height - content.height;
+        let max_scroll = if overflow > 0.5 { overflow } else { 0.0 };
         let scroll = scroll.clamp(0.0, max_scroll);
-        let mut top = content.top - scroll;
-        for group in &mut groups {
-            let height = if group.title.is_empty() {
-                0.0
-            } else {
-                heading_height
+        let mut lefts = Vec::with_capacity(widths.len());
+        let mut left = content.left;
+        for width in &widths {
+            lefts.push(left);
+            left += width + column_gap;
+        }
+        let mut continued = Vec::new();
+        let mut headed = vec![false; groups.len()];
+        for (group, column, top) in headings {
+            let heading = SceneRect {
+                left: lefts[column],
+                top: content.top + top - scroll,
+                width: widths[column],
+                height: heading_for(&groups[group]),
             };
-            group.heading = SceneRect {
-                left: content.left,
-                top,
-                width: content.width,
-                height,
-            };
-            top += height;
-            for row in &mut group.rows {
-                row.rect = SceneRect {
-                    left: content.left,
-                    top,
-                    width: content.width,
-                    height: row_height,
-                };
-                top += row_height;
+            if !headed[group] {
+                headed[group] = true;
+                groups[group].heading = heading;
+            } else if !groups[group].title.is_empty() {
+                continued.push((group, heading));
             }
-            top += group_gap;
+        }
+        for (group, row, column, top, extent) in rows {
+            let row = &mut groups[group].rows[row];
+            row.rect = SceneRect {
+                left: lefts[column],
+                top: content.top + top - scroll,
+                width: widths[column],
+                height: extent,
+            };
+            row.label_width = labels[column];
         }
         Self {
             kind,
@@ -1650,6 +1908,8 @@ impl DialogScene {
             empty: None,
             scroll,
             max_scroll,
+            label_gap,
+            continued,
         }
     }
 
@@ -1664,12 +1924,14 @@ impl DialogScene {
         scroll: f32,
         now: u64,
     ) -> Self {
+        // The inbox keeps a fixed width; the cell estimate serves its frame.
         let mut dialog = Self::new(
             DialogKind::AttentionInbox,
             Vec::new(),
             size,
             metrics,
             scroll,
+            &CellText(metrics),
         );
         let filter_height = (metrics.height * 2.0).min(dialog.content.height);
         dialog.filters = AttentionFilter::ALL
@@ -1845,6 +2107,7 @@ impl DialogScene {
     /// The final-close prompt for `tab`: its panes by header label, then its popups by
     /// entry label. `workspace` names the workspace the close removes while others remain.
     #[must_use]
+    #[allow(clippy::too_many_arguments)]
     pub fn close_last_tab(
         tab: &Tab,
         entries: &[PopupEntry],
@@ -1853,6 +2116,7 @@ impl DialogScene {
         size: PhysicalSize<u32>,
         metrics: CellMetrics,
         scroll: f32,
+        measure: &dyn DialogText,
     ) -> Self {
         let rows = tab
             .panes()
@@ -1879,6 +2143,7 @@ impl DialogScene {
             size,
             metrics,
             scroll,
+            measure,
         )
     }
 
@@ -1892,6 +2157,7 @@ impl DialogScene {
         size: PhysicalSize<u32>,
         metrics: CellMetrics,
         scroll: f32,
+        measure: &dyn DialogText,
     ) -> Self {
         let rows = busy
             .into_iter()
@@ -1927,6 +2193,7 @@ impl DialogScene {
             size,
             metrics,
             scroll,
+            measure,
         )
     }
 }

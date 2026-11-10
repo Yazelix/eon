@@ -51,6 +51,54 @@ fn eon_icon_opens_window_controls_without_hints_or_sidebar() {
 }
 
 #[test]
+fn window_menu_keeps_long_names_and_descriptions_inside_a_narrow_dialog() {
+    use eon_workspace_protocol::v38::{RunningWindows, WindowEntry, WindowState};
+    let window = |id: &str| WindowEntry {
+        window: Some(id.into()),
+        generation: format!("g1-{id}"),
+        // The longest name a window takes, in wide glyphs.
+        name: Some("W".repeat(64)),
+        started_at: Some(1),
+        live_terminals: Some(2),
+        state: WindowState::Live,
+    };
+    let running = RunningWindows {
+        this: window("01234567"),
+        others: Some(vec![window("89abcdef")]),
+        omitted: 0,
+    };
+    let metrics = CellMetrics::for_scale(1.0);
+    let measure = crate::CellText(metrics);
+    let menu = DialogScene::window_menu(
+        &running,
+        &[],
+        None,
+        PhysicalSize::new(320, 500),
+        metrics,
+        0.0,
+        &measure,
+    );
+    assert!(menu.bounds.right() <= 320.0);
+    assert!(menu.content.right() <= menu.bounds.right());
+    for group in &menu.groups {
+        assert!(group.heading.right() <= menu.content.right() + 0.01);
+    }
+    for row in menu.menu_rows() {
+        assert!(
+            row.rect.left >= menu.content.left && row.rect.right() <= menu.content.right() + 0.01
+        );
+        // Each description has the height of its lines wrapped in the width it draws in.
+        let width = row.rect.right() - (row.rect.left + row.label_width + menu.label_gap);
+        let lines = measure.lines(&row.action, width);
+        assert!(
+            row.rect.height >= metrics.height * (1.0 + 1.25 * (lines - 1) as f32),
+            "{} needs {lines} lines in {width}",
+            row.action
+        );
+    }
+}
+
+#[test]
 fn window_menu_projects_summary_and_clips_actions_to_its_scroll_area() {
     use eon_workspace_protocol::v38::{PopupKey, RunningWindows, WindowEntry, WindowState};
     let window = |id: &str, count| WindowEntry {
@@ -74,6 +122,7 @@ fn window_menu_projects_summary_and_clips_actions_to_its_scroll_area() {
             PhysicalSize::new(800, 500),
             CellMetrics::for_scale(1.0),
             scroll,
+            &crate::CellText(CellMetrics::for_scale(1.0)),
         )
     };
     let empty = project(&running, 0.0);
@@ -95,6 +144,7 @@ fn window_menu_projects_summary_and_clips_actions_to_its_scroll_area() {
         PhysicalSize::new(800, 500),
         CellMetrics::for_scale(1.0),
         0.0,
+        &crate::CellText(CellMetrics::for_scale(1.0)),
     );
     let row = updates.menu_rows().last().unwrap();
     assert_eq!(row.menu_action, Some(WindowMenuAction::Updates));
@@ -171,7 +221,13 @@ fn peer_quit_keeps_id_and_count_apart_from_a_long_name() {
         state: WindowState::Live,
     };
     let metrics = CellMetrics::for_scale(1.0);
-    let scene = DialogScene::quit_other_window(&peer, PhysicalSize::new(320, 500), metrics, 0.0);
+    let scene = DialogScene::quit_other_window(
+        &peer,
+        PhysicalSize::new(320, 500),
+        metrics,
+        0.0,
+        &crate::CellText(metrics),
+    );
     assert_eq!(scene.kind.subtitle(), "n".repeat(64));
     assert_eq!(scene.groups[0].rows[0].shortcut, "ID");
     assert_eq!(scene.groups[0].rows[0].action, "01234567");

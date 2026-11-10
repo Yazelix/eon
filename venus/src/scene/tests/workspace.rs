@@ -798,10 +798,160 @@ fn popup_outer_chrome_reuses_the_pane_stack_rectangle() {
 }
 
 #[test]
+fn shortcut_viewer_sizes_to_its_rows_and_flows_into_columns_between_the_bars() {
+    let metrics = CellMetrics::for_scale(1.0);
+    let measure = crate::CellText(metrics);
+    let group = |title: &str, rows: usize| {
+        ShortcutGroup::new(
+            title,
+            (0..rows)
+                .map(|index| ShortcutRow::new("Alt+Shift+Z", format!("Entry {index}")))
+                .collect(),
+        )
+    };
+    // A short list keeps one column, sized to its rows, and says nothing about scrolling.
+    let short = DialogScene::new(
+        DialogKind::Shortcuts,
+        vec![group("Navigate", 3)],
+        PhysicalSize::new(1280, 800),
+        metrics,
+        0.0,
+        &measure,
+    );
+    assert!(short.bounds.width < 640.0 && short.bounds.height < 400.0);
+    assert_eq!(short.max_scroll, 0.0);
+    assert_eq!(short.footer(), ["Esc or Alt+/ to close"]);
+    let label = short.groups[0].rows[0].label_width;
+    assert!(label >= measure.width("Alt+Shift+Z") && label < measure.width("Alt+Shift+Z") + 2.0);
+    // A list taller than one column flows into balanced columns instead of scrolling.
+    let size = PhysicalSize::new(1280, 800);
+    let long = DialogScene::new(
+        DialogKind::Shortcuts,
+        vec![group("Navigate", 30), group("Host", 30)],
+        size,
+        metrics,
+        0.0,
+        &measure,
+    );
+    assert_eq!(long.max_scroll, 0.0);
+    assert_eq!(long.footer(), ["Esc or Alt+/ to close"]);
+    let mut lefts = long
+        .groups
+        .iter()
+        .flat_map(|group| &group.rows)
+        .map(|row| row.rect.left)
+        .collect::<Vec<_>>();
+    lefts.dedup();
+    assert!(lefts.len() >= 2, "{lefts:?}");
+    for row in long.groups.iter().flat_map(|group| &group.rows) {
+        assert!(row.rect.top >= long.content.top && row.rect.bottom() <= long.content.bottom());
+        assert!(row.rect.right() <= long.content.right());
+    }
+    // A section split across columns repeats its heading above its continuation.
+    assert!(!long.continued.is_empty());
+    // The dialog stays clear of the Eon Bar and the hints bar.
+    let edge = header_heights(metrics).0;
+    assert!(long.bounds.top >= edge);
+    assert!(long.bounds.bottom() <= size.height as f32 - edge);
+    // The Window menu keeps one column; its scroll hint stays.
+    let menu = DialogScene::new(
+        DialogKind::WindowMenu,
+        vec![group("This window", 3)],
+        size,
+        metrics,
+        0.0,
+        &measure,
+    );
+    assert!(menu.bounds.width < 640.0);
+    assert_eq!(menu.footer(), DialogKind::WindowMenu.footer());
+}
+
+#[test]
+fn shortcut_viewer_section_moving_whole_to_a_column_leaves_no_blank_space() {
+    let metrics = CellMetrics::for_scale(1.0);
+    let rows = |count| {
+        (0..count)
+            .map(|index| ShortcutRow::new("Alt+Z", format!("Entry {index}")))
+            .collect()
+    };
+    // Two equal sections too tall for one column split at the second's first row.
+    let scene = DialogScene::new(
+        DialogKind::Shortcuts,
+        vec![
+            ShortcutGroup::new("Navigate", rows(15)),
+            ShortcutGroup::new("Host", rows(15)),
+        ],
+        PhysicalSize::new(1280, 800),
+        metrics,
+        0.0,
+        &CellText(metrics),
+    );
+    let (first, second) = (&scene.groups[0], &scene.groups[1]);
+    assert!(second.rows[0].rect.left > first.rows[0].rect.left);
+    assert_eq!(second.heading.left, second.rows[0].rect.left);
+    assert!(scene.continued.is_empty());
+    assert_eq!(scene.max_scroll, 0.0);
+    // The content ends with its tallest column, within the pixel its height rounds up.
+    let bottom = scene
+        .groups
+        .iter()
+        .flat_map(|group| &group.rows)
+        .map(|row| row.rect.bottom())
+        .fold(0.0, f32::max);
+    assert!(scene.content.bottom() - bottom < 1.0, "{scene:?}");
+}
+
+#[test]
+fn dialog_rows_take_the_lines_their_descriptions_wrap_to() {
+    // A word wider than its line breaks between glyphs: 21 glyphs of 10 px need three lines
+    // of 106 px, not the two their total width suggests.
+    let ten = |text: &str| text.chars().count() as f32 * 10.0;
+    assert_eq!(crate::wrapped_lines(&"x".repeat(21), 106.0, ten), 3);
+    assert_eq!(crate::wrapped_lines("aaaa bbbb cccc", 95.0, ten), 2);
+    assert_eq!(crate::wrapped_lines("", 95.0, ten), 1);
+
+    // Row heights follow the measured lines at the width each description draws in.
+    struct Wraps(CellText);
+    impl DialogText for Wraps {
+        fn width(&self, text: &str) -> f32 {
+            self.0.width(text)
+        }
+        fn lines(&self, text: &str, width: f32) -> usize {
+            if text.starts_with("Long") {
+                4
+            } else {
+                self.0.lines(text, width)
+            }
+        }
+    }
+    let metrics = CellMetrics::for_scale(1.0);
+    let scene = DialogScene::new(
+        DialogKind::Shortcuts,
+        vec![ShortcutGroup::new(
+            "Navigate",
+            vec![
+                ShortcutRow::new("Alt+A", "Long unbroken label"),
+                ShortcutRow::new("Alt+B", "Short"),
+            ],
+        )],
+        PhysicalSize::new(1280, 800),
+        metrics,
+        0.0,
+        &Wraps(CellText(metrics)),
+    );
+    let [long, short] = &scene.groups[0].rows[..] else {
+        panic!("two rows");
+    };
+    assert!(long.rect.height >= short.rect.height + metrics.height * 1.25 * 3.0 - 1.0);
+    assert!(short.rect.top >= long.rect.bottom());
+}
+
+#[test]
 fn shortcut_viewer_clamps_scroll_and_keeps_fixed_dismissal_space() {
     let groups = vec![ShortcutGroup::new(
         "Projects and tools",
-        (0..32)
+        // More rows than three columns show in the largest window.
+        (0..200)
             .map(|index| ShortcutRow::new("Alt+Z", format!("Entry {index}")))
             .collect(),
     )];
@@ -812,14 +962,21 @@ fn shortcut_viewer_clamps_scroll_and_keeps_fixed_dismissal_space() {
                 (f64::from(width) * scale) as u32,
                 (f64::from(height) * scale) as u32,
             );
-            let start =
-                DialogScene::new(DialogKind::Shortcuts, groups.clone(), size, metrics, -100.0);
+            let start = DialogScene::new(
+                DialogKind::Shortcuts,
+                groups.clone(),
+                size,
+                metrics,
+                -100.0,
+                &crate::CellText(metrics),
+            );
             let end = DialogScene::new(
                 DialogKind::Shortcuts,
                 groups.clone(),
                 size,
                 metrics,
                 f32::MAX,
+                &crate::CellText(metrics),
             );
 
             assert_eq!(start.scroll, 0.0);
@@ -840,7 +997,7 @@ fn shortcut_viewer_clamps_scroll_and_keeps_fixed_dismissal_space() {
             assert_eq!(start.subtitle, end.subtitle);
             assert_eq!(start.content, end.content);
             assert!(start.content.bottom() < start.bounds.bottom());
-            assert_eq!(end.groups[0].rows.len(), 32);
+            assert_eq!(end.groups[0].rows.len(), 200);
         }
     }
 
@@ -851,6 +1008,7 @@ fn shortcut_viewer_clamps_scroll_and_keeps_fixed_dismissal_space() {
         PhysicalSize::new(1, 1),
         metrics,
         0.0,
+        &crate::CellText(metrics),
     );
     assert!(tiny.bounds.right() <= 1.0 && tiny.bounds.bottom() <= 1.0);
     assert!(
@@ -899,8 +1057,18 @@ fn shortcut_viewer_clamps_scroll_and_keeps_fixed_dismissal_space() {
         ),
     }];
     let size = PhysicalSize::new(960, 600);
-    let prompt =
-        |detach| DialogScene::close_last_tab(&tab, &entries, detach, None, size, metrics, 0.0);
+    let prompt = |detach| {
+        DialogScene::close_last_tab(
+            &tab,
+            &entries,
+            detach,
+            None,
+            size,
+            metrics,
+            0.0,
+            &crate::CellText(metrics),
+        )
+    };
     let asked = prompt(Some("Alt+Shift+D".into()));
     let panes = tab.panes().count();
     assert_eq!(
@@ -937,6 +1105,7 @@ fn shortcut_viewer_clamps_scroll_and_keeps_fixed_dismissal_space() {
         size,
         metrics,
         0.0,
+        &crate::CellText(metrics),
     );
     assert_eq!(workspace.kind.title(), "Close the last tab?");
     assert_eq!(
@@ -959,6 +1128,7 @@ fn shortcut_viewer_clamps_scroll_and_keeps_fixed_dismissal_space() {
         PhysicalSize::new(320, 180),
         metrics,
         f32::MAX,
+        &crate::CellText(metrics),
     );
     assert!(crowded.max_scroll > 0.0);
     assert_eq!(crowded.scroll, crowded.max_scroll);
@@ -985,7 +1155,15 @@ fn quit_prompt_words_counts_and_lists_busy_terminals() {
         omitted: 0,
     };
     let prompt = |terminals, busy: Option<&BusyTerminals>, detach: Option<&str>| {
-        DialogScene::quit_window(terminals, busy, detach.map(Into::into), size, metrics, 0.0)
+        DialogScene::quit_window(
+            terminals,
+            busy,
+            detach.map(Into::into),
+            size,
+            metrics,
+            0.0,
+            &crate::CellText(metrics),
+        )
     };
     let single = prompt(Some(1), Some(&one), Some("Alt+Shift+D"));
     assert_eq!(single.kind.title(), "Quit this window?");

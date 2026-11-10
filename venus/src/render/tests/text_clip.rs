@@ -495,6 +495,7 @@ fn notched_dialog_preserves_text_in_its_exposed_top_cutout() {
         PhysicalSize::new(1280, 800),
         metrics,
         0.0,
+        &crate::CellText(metrics),
     );
     let (card, tab) = FrameTitleTab::dialog(&mut fonts.font_system, metrics, &viewer, 1.0).unwrap();
     let fill = title_tab_bands(card, &tab, 0.0);
@@ -571,4 +572,36 @@ fn rectangular_text_overlays_keep_their_bounds_and_foreground_text() {
     }
     let foreground = (0, vec![mask]);
     assert_eq!(text_areas(&text, Some(&foreground)).count(), 1);
+}
+
+#[test]
+fn dialog_text_lines_count_the_lines_a_dialog_row_draws() {
+    let mut fonts = FontSetup::new(&FontSettings::default()).unwrap();
+    let metrics = fonts.metrics(1.0);
+    let cell_font = fitted_cell_font(&mut fonts.font_system, metrics, fonts.family, false);
+    let mut lines = |text: &str, width: f32| {
+        crate::render::chrome::dialog_text_lines(
+            &mut fonts.font_system,
+            metrics,
+            cell_font,
+            text,
+            width,
+        )
+    };
+    assert_eq!(lines("Focus next tab", 1000.0), 1);
+    assert_eq!(lines("", 1000.0), 1);
+    let glyph = crate::render::chrome::fit_header_text(
+        &mut FontSetup::new(&FontSettings::default())
+            .unwrap()
+            .font_system,
+        metrics,
+        "W",
+        f32::INFINITY,
+    )
+    .1;
+    // An unbroken word breaks between glyphs: ten fit on each line, so forty take four.
+    assert_eq!(lines(&"W".repeat(40), glyph * 10.5), 4);
+    // Words wrap whole: two words that each fit a line but not together take two.
+    let word = "W".repeat(6);
+    assert_eq!(lines(&format!("{word} {word}"), glyph * 10.5), 2);
 }

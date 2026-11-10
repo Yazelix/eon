@@ -287,6 +287,26 @@ Stack label darkens only as far as 4.5:1 contrast needs. Dialog tabs stay inside
 their existing dismissal bounds and use the dialog's opaque background; other
 tabs inherit their terminal background colour and opacity.
 
+Native list dialogs share one layout: Shortcuts, the Window menu and the quit
+and close prompts.
+
+- **Size.** Each dialog is sized to its content and centred between the Eon
+  Bar and the hints bar while the window has room.
+- **Rows.** Each label column is as wide as the widest label in it.
+  Descriptions start after it and wrap in place at the width they draw in.
+  Each row is as tall as its shaped lines, about 1.3 lines for one line, on
+  whole pixels. Columns never pass the dialog's edge: a heading wider than
+  the room left is clipped.
+- **Columns.** Shortcuts flow their sections into the fewest balanced
+  columns, up to three, that show every row without scrolling. A section
+  continued in the next column repeats its heading.
+- **Arrow keys.** Opposite arrow keys share one row unless a popup takes
+  either key.
+- **Scrolling.** Rows scroll only in a window too small for them. Only then
+  does the Shortcuts footer mention scrolling.
+- **Attention inbox.** It keeps the full height between the bars for its own
+  rows.
+
 Visible headers pair Eon's opaque pane
 identity with Orbit's working directory. Home displays `~`, and its descendants
 use `~/`; without `HOME`, paths stay absolute. Every column's expanded pane

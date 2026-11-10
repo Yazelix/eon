@@ -12,7 +12,8 @@ use orbit_protocol::{
     },
 };
 use std::{
-    collections::{HashMap, HashSet, VecDeque},
+    cell::RefCell,
+    collections::{HashMap, HashSet, VecDeque, hash_map::Entry},
     ffi::OsString,
     io::{self, Read, Write},
     net::Shutdown,
@@ -38,15 +39,15 @@ use winit::{
 };
 use yazelix_venus::{
     Accessibility, AccessibilityTarget, AttentionFilter, BarItem, BenchTrace, CellMetrics,
-    ClipboardEffect, Color, ConnectionState, CpuReadings, CpuTimes, CpuUse, DialogKind,
-    DialogScene, DiskUse, EonBar, FontSettings, FontSetup, HeaderText, Hyperlink, ImageKey,
-    ImageResync, InputState, LoadLevels, LocalClock, LocalNoticeSource, MAX_LINK_BYTES,
+    CellText, ClipboardEffect, Color, ConnectionState, CpuReadings, CpuTimes, CpuUse, DialogKind,
+    DialogScene, DialogText, DiskUse, EonBar, FontSettings, FontSetup, HeaderText, Hyperlink,
+    ImageKey, ImageResync, InputState, LoadLevels, LocalClock, LocalNoticeSource, MAX_LINK_BYTES,
     ModelEffect, ModelError, Outgoing, PaddingColor, PresentOutcome, RamUse, Renderer, Scene,
     SceneRect, SessionModel, ShortcutHintsScene, SidebarView, Transport, TransportEvent,
     WindowMenuAction, WorkspaceEvent, WorkspaceFocus, WorkspaceHeaderControl, WorkspaceHit,
     WorkspaceModel, WorkspaceScene, WorkspaceTransport, active_popup, attention_only_change,
     bench_trace, bench_tracing, focused_terminal, labels_only_change, read_eon_icon,
-    shown_workspace, validate_copy_uri, validate_open_uri,
+    shown_workspace, validate_copy_uri, validate_open_uri, wrapped_lines,
 };
 
 mod geometry;
@@ -1177,6 +1178,9 @@ struct Application {
     quota_widths: HashMap<String, f32>,
     /// Fitted header texts, the workspace label's name, by their text.
     fitted_texts: HashMap<String, (String, f32)>,
+    /// The open dialog's texts measured in its row typography, with the metrics they were
+    /// measured at.
+    dialog_texts: DialogTexts,
     tab_scroll: f32,
     pane_scroll: f32,
     cursor: PhysicalPosition<f64>,
@@ -1300,6 +1304,7 @@ impl Application {
             tab_texts: HashMap::new(),
             quota_widths: HashMap::new(),
             fitted_texts: HashMap::new(),
+            dialog_texts: DialogTexts::default(),
             tab_scroll: 0.0,
             pane_scroll: 0.0,
             cursor: PhysicalPosition::new(0.0, 0.0),
@@ -1592,6 +1597,71 @@ impl Application {
 
     /// The open dialog: the close prompt, else the shortcut viewer.
     fn dialog_scene(&self) -> Option<DialogScene> {
+        self.dialog_scene_with(&self.dialog_text()?)
+    }
+
+    /// Dialog text as the renderer measured it, estimated where it has not yet.
+    fn dialog_text(&self) -> Option<MeasuredText<'_>> {
+        Some(
+            self.dialog_texts
+                .at(self.window.as_ref()?.renderer.metrics()),
+        )
+    }
+
+    /// Measures what the open dialog lays out that the renderer has not measured yet, so its
+    /// scene sizes rows as they are drawn. Measured widths can move the wrap widths a layout
+    /// asks for, so a few passes settle it; the measurements last while the dialog stays open
+    /// at the same metrics.
+    fn measure_dialog_texts(&mut self) {
+        let Some(metrics) = self.window.as_ref().map(|state| state.renderer.metrics()) else {
+            self.dialog_texts = DialogTexts::default();
+            return;
+        };
+        if self.dialog_texts.metrics != Some(metrics) {
+            self.dialog_texts = DialogTexts {
+                metrics: Some(metrics),
+                ..DialogTexts::default()
+            };
+        }
+        for _ in 0..4 {
+            let asked = RefCell::default();
+            self.dialog_scene_with(&MeasuredText {
+                asked: Some(&asked),
+                ..self.dialog_texts.at(metrics)
+            });
+            let Asked { widths, lines } = asked.into_inner();
+            self.dialog_texts
+                .widths
+                .retain(|text, _| widths.contains(text));
+            self.dialog_texts.lines.retain(|key, _| lines.contains(key));
+            let Some(state) = self.window.as_mut() else {
+                return;
+            };
+            let mut measured = false;
+            for text in widths {
+                if let Entry::Vacant(entry) = self.dialog_texts.widths.entry(text) {
+                    let width = state.renderer.measure_header_text(entry.key()).1;
+                    entry.insert(width);
+                    measured = true;
+                }
+            }
+            for key in lines {
+                if let Entry::Vacant(entry) = self.dialog_texts.lines.entry(key) {
+                    let (text, width) = entry.key();
+                    let count = state
+                        .renderer
+                        .dialog_text_lines(text, f32::from_bits(*width));
+                    entry.insert(count);
+                    measured = true;
+                }
+            }
+            if !measured {
+                return;
+            }
+        }
+    }
+
+    fn dialog_scene_with(&self, measure: &dyn DialogText) -> Option<DialogScene> {
         if self.window_menu.open {
             let state = self.window.as_ref()?;
             return Some(DialogScene::window_menu(
@@ -1601,6 +1671,7 @@ impl Application {
                 state.renderer.size(),
                 state.renderer.metrics(),
                 self.window_menu.scroll,
+                measure,
             ));
         }
         if self.attention_inbox.open {
@@ -1616,7 +1687,7 @@ impl Application {
             ));
         }
         let Some(prompt) = &self.close_prompt else {
-            return self.shortcut_viewer_scene();
+            return self.shortcut_viewer_scene_with(measure);
         };
         let state = self.window.as_ref()?;
         let snapshot = self.workspace_model.snapshot()?;
@@ -1628,6 +1699,7 @@ impl Application {
                     state.renderer.size(),
                     state.renderer.metrics(),
                     prompt.scroll,
+                    measure,
                 ));
             }
             // Worded from the current snapshot, so an open prompt follows the busy list.
@@ -1639,6 +1711,7 @@ impl Application {
                     state.renderer.size(),
                     state.renderer.metrics(),
                     prompt.scroll,
+                    measure,
                 ));
             }
         };
@@ -1652,10 +1725,15 @@ impl Application {
             state.renderer.size(),
             state.renderer.metrics(),
             prompt.scroll,
+            measure,
         ))
     }
 
     fn shortcut_viewer_scene(&self) -> Option<DialogScene> {
+        self.shortcut_viewer_scene_with(&self.dialog_text()?)
+    }
+
+    fn shortcut_viewer_scene_with(&self, measure: &dyn DialogText) -> Option<DialogScene> {
         let state = self.window.as_ref()?;
         self.shortcut_viewer.open.then(|| {
             DialogScene::new(
@@ -1673,6 +1751,7 @@ impl Application {
                 state.renderer.size(),
                 state.renderer.metrics(),
                 self.shortcut_viewer.scroll,
+                measure,
             )
         })
     }
@@ -4241,6 +4320,7 @@ impl Application {
     }
 
     fn refresh_client_view(&mut self) {
+        self.measure_dialog_texts();
         if !self.link_surface_available(self.links.unshifted) {
             self.links.pressed = None;
         }
@@ -6979,5 +7059,66 @@ fn send_focus(mailbox: &FocusMailbox, mut output: impl Write) -> io::Result<()> 
     Ok(())
 }
 
+/// Dialog texts the renderer measured at `metrics`: widths, and line counts by text and wrap
+/// width bits.
+#[derive(Debug, Default)]
+struct DialogTexts {
+    metrics: Option<CellMetrics>,
+    widths: HashMap<String, f32>,
+    lines: HashMap<(String, u32), usize>,
+}
+
+impl DialogTexts {
+    /// These measurements for a layout at `metrics`; measurements taken at other metrics give
+    /// way to the cell estimate until they are taken again.
+    fn at(&self, metrics: CellMetrics) -> MeasuredText<'_> {
+        MeasuredText {
+            texts: (self.metrics == Some(metrics)).then_some(self),
+            estimate: CellText(metrics),
+            asked: None,
+        }
+    }
+}
+
+/// The measured dialog texts, estimating any not measured yet and, with `asked`, noting every
+/// width and wrap a layout asks for.
+struct MeasuredText<'a> {
+    texts: Option<&'a DialogTexts>,
+    estimate: CellText,
+    asked: Option<&'a RefCell<Asked>>,
+}
+
+/// The widths and wraps a dialog layout asked for.
+#[derive(Default)]
+struct Asked {
+    widths: HashSet<String>,
+    lines: HashSet<(String, u32)>,
+}
+
+impl MeasuredText<'_> {
+    fn known_width(&self, text: &str) -> f32 {
+        self.texts
+            .and_then(|texts| texts.widths.get(text).copied())
+            .unwrap_or_else(|| self.estimate.width(text))
+    }
+}
+
+impl DialogText for MeasuredText<'_> {
+    fn width(&self, text: &str) -> f32 {
+        if let Some(asked) = self.asked {
+            asked.borrow_mut().widths.insert(text.to_owned());
+        }
+        self.known_width(text)
+    }
+
+    fn lines(&self, text: &str, width: f32) -> usize {
+        let key = (text.to_owned(), width.to_bits());
+        let lines = self.texts.and_then(|texts| texts.lines.get(&key).copied());
+        if let Some(asked) = self.asked {
+            asked.borrow_mut().lines.insert(key);
+        }
+        lines.unwrap_or_else(|| wrapped_lines(text, width, |text| self.known_width(text)))
+    }
+}
 #[cfg(test)]
 mod tests;

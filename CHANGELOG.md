@@ -29,6 +29,13 @@ installation, and proven contract changes.
   optional path, are links in Eon and eonbase: hover highlights them, and
   Ctrl+click opens and Ctrl+Shift+C copies `http://` followed by the text.
   `[terminal] detect_local_hosts = false` turns this off (`eon-onvk0`).
+- The Shortcuts viewer (Alt+/), the Window menu and the quit and close prompts
+  share one compact layout. Each is sized to its content and sits between the
+  Eon Bar and the hints bar, with a measured label column and dense rows.
+  Shortcuts flow into up to three columns, so every binding shows without
+  scrolling in a normal window. Left and Right, and Up and Down, share one row
+  each. The attention inbox keeps its rows and width but now also sits between
+  the bars, so it is shorter than before (`eon-8s8s7`).
 
 - Venus favors smaller GPU allocations on non-CPU adapters, reducing measured
   Intel Vulkan allocation and residency by about 180 MiB. CPU adapters such

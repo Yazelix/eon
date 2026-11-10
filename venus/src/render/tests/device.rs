@@ -84,6 +84,7 @@ fn content_cache_separates_generations_and_viewer_state() {
             PhysicalSize::new(320, 180),
             CellMetrics::for_scale(1.0),
             scroll,
+            &crate::CellText(CellMetrics::for_scale(1.0)),
         ))
     };
     let viewer = |scroll| dialog(crate::DialogKind::Shortcuts, scroll);

@@ -1,7 +1,7 @@
 use super::*;
 use crate::application::shortcuts::{
-    ALT_SHIFT, CTRL_ALT, CTRL_SHIFT, FIXED_SHORTCUTS, command_q_for, native_pointer_shortcut_for,
-    shortcut_groups_for,
+    ALT_SHIFT, CTRL_ALT, CTRL_SHIFT, FIXED_SHORTCUTS, PAIRED_ROWS, command_q_for,
+    native_pointer_shortcut_for, shortcut_groups_for,
 };
 use eon_workspace_protocol::v38::{InvokeIntent, Side, Tab};
 
@@ -214,13 +214,34 @@ fn shortcut_viewer_uses_live_rows_and_captures_its_local_sequence() {
             .filter(|group| group.title != "Projects and tools")
             .map(|group| group.rows.len())
             .sum::<usize>(),
-        FIXED_SHORTCUTS.len()
+        FIXED_SHORTCUTS.len() - PAIRED_ROWS.len()
     );
+    let display_of = |action| {
+        FIXED_SHORTCUTS
+            .iter()
+            .find(|shortcut| shortcut.action == action)
+            .unwrap()
+            .trigger
+            .display_label_for(NativePlatform::Linux)
+    };
     for shortcut in FIXED_SHORTCUTS {
         let display = shortcut.trigger.display_label_for(NativePlatform::Linux);
+        // A paired arrow key is listed on its pair's one row.
+        let (listed, description) = PAIRED_ROWS
+            .iter()
+            .find(|(first, second, _)| [*first, *second].contains(&shortcut.action))
+            .map_or_else(
+                || (display.clone(), shortcut.label),
+                |(first, second, description)| {
+                    (
+                        format!("{} / {}", display_of(*first), display_of(*second)),
+                        description,
+                    )
+                },
+            );
         assert_eq!(
             rows.iter()
-                .filter(|row| **row == (display.as_str(), shortcut.label))
+                .filter(|row| **row == (listed.as_str(), description))
                 .count(),
             1,
             "{}",
@@ -286,6 +307,27 @@ fn shortcut_viewer_uses_live_rows_and_captures_its_local_sequence() {
         1
     );
     assert!(rows.contains(&("Ctrl+click", "Open link")));
+    // A popup taking one arrow key lists both keys on their own rows again.
+    let split = shortcut_groups_for(
+        NativePlatform::Linux,
+        &[PopupEntry {
+            id: "arrow".into(),
+            label: "Arrow".into(),
+            shortcut: PopupKey::Bound(Shortcut {
+                modifiers: 0,
+                key: "ArrowLeft".into(),
+            }),
+        }],
+        eon_workspace_protocol::v38::Sidebar::Open,
+        true,
+    );
+    let split = split
+        .iter()
+        .flat_map(|group| &group.rows)
+        .map(|row| row.shortcut.as_str())
+        .collect::<Vec<_>>();
+    assert!(split.contains(&"Left") && split.contains(&"Right"));
+    assert!(split.contains(&"Up / Down"));
     assert!(rows.contains(&("Alt+Z", "Money ops")));
     assert!(
         shortcut_groups_for(
@@ -951,4 +993,24 @@ fn quit_key_lists_hints_and_yields_to_a_popup() {
     );
     // Without a running-windows summary (eonbase) there is no Quit.
     assert!(rows(NativePlatform::Linux, &[], false).is_empty());
+}
+
+#[test]
+fn dialog_texts_measured_at_other_metrics_give_way_to_the_estimate() {
+    let measured = CellMetrics::for_scale(1.0);
+    let texts = DialogTexts {
+        metrics: Some(measured),
+        widths: HashMap::from([("Alt+H".to_owned(), 99.0)]),
+        lines: HashMap::from([(("Focus".to_owned(), 50.0f32.to_bits()), 7)]),
+    };
+    let current = texts.at(measured);
+    assert_eq!(current.width("Alt+H"), 99.0);
+    assert_eq!(current.lines("Focus", 50.0), 7);
+    let scaled = CellMetrics::for_scale(2.0);
+    let stale = texts.at(scaled);
+    assert_eq!(stale.width("Alt+H"), CellText(scaled).width("Alt+H"));
+    assert_eq!(
+        stale.lines("Focus", 50.0),
+        CellText(scaled).lines("Focus", 50.0)
+    );
 }

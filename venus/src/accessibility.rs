@@ -273,7 +273,7 @@ impl Snapshot {
                 DialogKind::AttentionInbox | DialogKind::WindowMenu => {
                     let mut dialog = Node::new(Role::Dialog);
                     dialog.set_label(viewer.kind.title());
-                    dialog.set_description(viewer.kind.footer().join(" · "));
+                    dialog.set_description(viewer.footer().join(" · "));
                     dialog
                 }
                 DialogKind::Shortcuts => {
@@ -1272,7 +1272,15 @@ mod tests {
         );
         let action = WindowMenuAction::peer(&b);
         let dialog = |running: &RunningWindows| {
-            DialogScene::window_menu(running, &[], Some(&action), size, metrics, 0.0)
+            DialogScene::window_menu(
+                running,
+                &[],
+                Some(&action),
+                size,
+                metrics,
+                0.0,
+                &crate::CellText(metrics),
+            )
         };
         snapshot.set_dialog(Some(&dialog(&running)));
         let id = snapshot.menu_ids[&action];
@@ -1315,6 +1323,7 @@ mod tests {
             size,
             metrics,
             0.0,
+            &crate::CellText(metrics),
         )));
         let updates = snapshot.menu_ids[&WindowMenuAction::Updates];
         assert_eq!(snapshot.tree().focus, updates);
@@ -3181,6 +3190,7 @@ mod tests {
             size,
             CellMetrics::for_scale(1.0),
             0.0,
+            &crate::CellText(CellMetrics::for_scale(1.0)),
         );
         let mut snapshot = Snapshot::new(size);
         snapshot.dialog = Some(viewer);
@@ -3216,6 +3226,7 @@ mod tests {
             size,
             CellMetrics::for_scale(1.0),
             0.0,
+            &crate::CellText(CellMetrics::for_scale(1.0)),
         ));
         let update = snapshot.tree();
         let prompt = node(&update, DIALOG);
@@ -3247,6 +3258,7 @@ mod tests {
             size,
             CellMetrics::for_scale(1.0),
             0.0,
+            &crate::CellText(CellMetrics::for_scale(1.0)),
         ));
         assert_eq!(
             node(&snapshot.tree(), DIALOG).description(),
@@ -3266,6 +3278,7 @@ mod tests {
             size,
             CellMetrics::for_scale(1.0),
             0.0,
+            &crate::CellText(CellMetrics::for_scale(1.0)),
         ));
         let update = snapshot.tree();
         let prompt = node(&update, DIALOG);

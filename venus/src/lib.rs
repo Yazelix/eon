@@ -25,13 +25,14 @@ pub use render::{
     Renderer, read_eon_icon,
 };
 pub use scene::{
-    AttentionFilter, AttentionFilterChip, BarItem, Color, DialogKind, DialogScene, DrawCell,
-    DrawCursor, DrawRow, DrawStyle, EonBar, GlyphRun, HeaderText, HintSection, Hyperlink,
-    LocalClock, Scene, SceneGraphics, ScenePlacement, ScenePreview, SceneRect, ShortcutGroup,
-    ShortcutHint, ShortcutHintsScene, ShortcutRow, SidebarRow, SidebarView, WindowMenuAction,
-    WorkspaceColumn, WorkspaceFocus, WorkspaceHeaderControl, WorkspaceHit, WorkspacePane,
-    WorkspaceScene, WorkspaceTab, attention_inbox_hints, shown_workspace, validate_copy_uri,
-    validate_open_uri, window_summary, workspace_column_width,
+    AttentionFilter, AttentionFilterChip, BarItem, CellText, Color, DialogKind, DialogScene,
+    DialogText, DrawCell, DrawCursor, DrawRow, DrawStyle, EonBar, GlyphRun, HeaderText,
+    HintSection, Hyperlink, LocalClock, Scene, SceneGraphics, ScenePlacement, ScenePreview,
+    SceneRect, ShortcutGroup, ShortcutHint, ShortcutHintsScene, ShortcutRow, SidebarRow,
+    SidebarView, WindowMenuAction, WorkspaceColumn, WorkspaceFocus, WorkspaceHeaderControl,
+    WorkspaceHit, WorkspacePane, WorkspaceScene, WorkspaceTab, attention_inbox_hints,
+    shown_workspace, validate_copy_uri, validate_open_uri, window_summary, workspace_column_width,
+    wrapped_lines,
 };
 pub(crate) use system::Load;
 pub use system::{CpuReadings, CpuTimes, CpuUse, DiskUse, LoadLevels, RamUse};

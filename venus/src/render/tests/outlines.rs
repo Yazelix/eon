@@ -3425,8 +3425,14 @@ fn all_native_dialog_titles_fit_inside_existing_dismissal_bounds() {
                     detach: None,
                 },
             ] {
-                let viewer =
-                    DialogScene::new(kind, vec![], PhysicalSize::new(width, 800), metrics, 0.0);
+                let viewer = DialogScene::new(
+                    kind,
+                    vec![],
+                    PhysicalSize::new(width, 800),
+                    metrics,
+                    0.0,
+                    &crate::CellText(metrics),
+                );
                 let before = viewer.clone();
                 for border in [1, 2, 3] {
                     let stroke = physical_outline_width(border, metrics.scale);
@@ -3467,6 +3473,7 @@ fn short_dialogs_fall_back_before_their_title_contour_leaves_dismissal_bounds() 
             PhysicalSize::new(400, height),
             metrics,
             0.0,
+            &crate::CellText(metrics),
         );
         if let Some((card, tab)) =
             FrameTitleTab::dialog(&mut fonts.font_system, metrics, &viewer, 1.0)
@@ -3614,6 +3621,7 @@ fn fallback_dialog_frame_uses_configured_stroke_at_fractional_scale() {
         PhysicalSize::new(64, 300),
         metrics,
         0.0,
+        &crate::CellText(metrics),
     );
     let stroke = physical_outline_width(3, metrics.scale);
     let tab = FrameTitleTab::dialog(&mut fonts.font_system, metrics, &viewer, stroke);
@@ -3655,8 +3663,14 @@ fn dialog_title_edge_keeps_a_clear_row_below_bar_chips() {
         let metrics = fonts.metrics(scale);
         let size = PhysicalSize::new(1280, 800);
         let workspace = popup_title_workspace(metrics, size, "Popup", 4.0);
-        let viewer =
-            crate::DialogScene::new(crate::DialogKind::Shortcuts, vec![], size, metrics, 0.0);
+        let viewer = crate::DialogScene::new(
+            crate::DialogKind::Shortcuts,
+            vec![],
+            size,
+            metrics,
+            0.0,
+            &crate::CellText(metrics),
+        );
         let (card, _) = FrameTitleTab::dialog(
             &mut fonts.font_system,
             metrics,
