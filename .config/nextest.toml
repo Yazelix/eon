@@ -1,0 +1,34 @@
+# These groups preserve mutexes that libtest otherwise keeps within one process.
+[test-groups]
+orbit-fork-and-socket = { max-threads = 1 }
+update-signals = { max-threads = 1 }
+real-pty = { max-threads = 1 }
+
+[[profile.default.overrides]]
+filter = '''
+package(/^yazelix-orbit$/) & (
+    test(=host::tests::the_decision_deadline_cuts_off_only_an_incomplete_answer)
+    | test(=host::tests::the_worker_runtime_takes_the_hosts_options)
+    | test(=host::tests::the_worker_leads_each_output_with_its_status_lifetime)
+    | test(=host::tests::a_closed_pty_publishes_the_clear_of_a_presented_selection)
+    | test(=pty::tests::spawn_failure_releases_partial_resources)
+    | test(=status::tests::a_pty_childs_reports_reach_the_records)
+    | test(=socket::tests::attached_socket_keeps_canonical_requests_typed)
+    | test(=socket::tests::resource_messages_never_pressure_the_client_and_end_before_exited)
+    | test(=socket::tests::socket_protocol_mechanics_preserve_canonical_bytes_and_bend_policy)
+    | test(=socket::tests::metadata_observer_is_canonical_read_only_and_reports_changes)
+    | test(=socket::tests::nonreading_observer_converges_on_the_latest_metadata)
+    | test(=socket::tests::observer_pressure_is_metadata_its_queue_cannot_take)
+    | test(=socket::tests::listener_enforces_private_exact_socket_cleanup)
+    | test(=socket::tests::worker_bound_admits_a_maximum_scroll_outcome_behind_a_started_maximum_frame)
+)
+'''
+test-group = "orbit-fork-and-socket"
+
+[[profile.default.overrides]]
+filter = 'package(/^eon$/) & test(/^update::tests::(confirmation_|a_backend_that_hangs_is_stopped$)/)'
+test-group = "update-signals"
+
+[[profile.default.overrides]]
+filter = 'package(/^yazelix-orbit$/) & binary(/^real_pty$/)'
+test-group = "real-pty"

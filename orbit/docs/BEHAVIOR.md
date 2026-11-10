@@ -2153,7 +2153,7 @@ script from the source tree:
 ```sh
 cargo build --release --locked -p yazelix-orbit
 ORBIT_BIN=$PWD/target/release/yazelix-orbit \
-  eon-test --release -p yazelix-orbit --test real_pty -- --ignored
+  eon-test --release -p yazelix-orbit --test real_pty --run-ignored only
 ```
 
 The terminal-identity check also needs the `eon` entry in `share/terminfo`

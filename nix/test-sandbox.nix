@@ -4,8 +4,9 @@
 #
 # On Linux the suites run inside bubblewrap, with private PID, network and
 # /dev, and empty /tmp and /run that hide the session's Wayland, D-Bus and Eon
-# sockets. Without arguments it runs the workspace suites, then the
-# installer's, stopping at the first failing suite.
+# sockets. Without arguments it runs workspace executable tests, workspace
+# doctests, then installer executable tests. Each step finishes its selected
+# tests; a failed step prevents later steps.
 #
 # macOS has no such namespaces, so the suites share the host's processes,
 # network and files. There eon-test refuses while this user runs an Eon
@@ -14,6 +15,28 @@
 # Linux-only.
 { pkgs }:
 let
+  tests = runner: installer: ''
+    case "''${1:-}" in
+      list)
+        shift
+        ${runner} cargo nextest list --locked --offline "$@"
+        ;;
+      --doc)
+        ${runner} cargo test --locked --offline "$@"
+        ;;
+      *)
+        if [ "$#" -gt 0 ]; then
+          ${runner} cargo nextest run --locked --offline --no-fail-fast "$@"
+        else
+          ${runner} cargo nextest run --locked --offline --no-fail-fast --workspace
+          ${runner} cargo test --locked --offline --workspace --doc
+          ${pkgs.lib.optionalString installer ''
+            ${runner} cargo nextest run --locked --offline --no-fail-fast --manifest-path installer/Cargo.toml
+          ''}
+        fi
+        ;;
+    esac
+  '';
   macos = ''
     if [ -z "''${GHOSTTY_SOURCE_DIR:-}" ] || [ -z "''${EON_VENUS_FONT_DIRS:-}" ] || ! command -v cargo >/dev/null; then
       echo "eon-test: the dev shell toolchain is missing; run it as nix develop -c eon-test" >&2
@@ -109,16 +132,13 @@ let
       environment+=(ORBIT_BIN="$target/debug/yazelix-orbit")
     fi
 
-    if [ "$#" -gt 0 ]; then
-      isolated cargo test --locked --offline "$@"
-    else
-      isolated cargo test --locked --offline --workspace
-    fi
+    ${tests "isolated" false}
   '';
 in
 pkgs.writeShellApplication {
   name = "eon-test";
   runtimeInputs = pkgs.lib.optional pkgs.stdenv.isLinux pkgs.bubblewrap ++ [
+    pkgs.cargo-nextest
     pkgs.coreutils
     pkgs.git
   ];
@@ -199,11 +219,6 @@ pkgs.writeShellApplication {
       environment+=(--setenv ORBIT_BIN "$target/debug/yazelix-orbit")
     fi
 
-    if [ "$#" -gt 0 ]; then
-      sandbox cargo test --locked --offline "$@"
-    else
-      sandbox cargo test --locked --offline --workspace
-      sandbox cargo test --locked --offline --manifest-path installer/Cargo.toml
-    fi
+    ${tests "sandbox" true}
   '' else macos;
 }

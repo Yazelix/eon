@@ -19,11 +19,34 @@ the canonical EONW package. `eon/crates/eon/tests/workspace_control.rs`
 exercises the real Eon binary, aliases and self-launches.
 
 Run the test suites with `nix develop -c eon-test`. It fetches locked crates,
-then runs `cargo test --locked --offline` in the bubblewrap sandbox that
-`nix/test-sandbox.nix` defines, so it is safe from inside a live Eon terminal.
-Without arguments it runs the workspace suites, then the installer's, stopping
-at the first failing suite; with arguments it passes them to `cargo test`, for
-example `eon-test -p yazelix-venus`. It needs unprivileged user namespaces and supports
+then runs `cargo nextest run --locked --offline --no-fail-fast` in the bubblewrap
+sandbox that `nix/test-sandbox.nix` defines, so it is safe from inside a live Eon terminal.
+Without arguments it runs the workspace executable tests, workspace doctests
+through `cargo test --doc`, then the installer's executable tests. A failed step
+prevents later steps; nextest finishes all selected tests within its step, without
+retries. Executable-test counts appear in nextest's
+`Summary [...] N tests run: N passed, M skipped` lines; `test result:` lines
+belong to the separate doctest step. Executable test failures exit 100; build
+failures exit 101. Use the exit status to decide whether the run passed.
+
+Arguments pass to nextest, for example `eon-test -p yazelix-venus`.
+`eon-test list --workspace --message-format json` lists tests and ignored status;
+`eon-test --doc -p eon-runtime` selects doctests separately. Focused executable
+runs do not include doctests. `list` and `--doc` must be the first argument to
+`eon-test`. `--no-run` conflicts with the runner's `--no-fail-fast`; use
+`eon-test list` to build and discover tests without executing them.
+Use native nextest controls: `--run-ignored only`, `--test-threads N` and
+`--no-capture` before `--`, and `--cargo-profile NAME` for the Cargo profile.
+`.config/nextest.toml` preserves the Orbit fork/socket, update signal and real-PTY
+test locks across nextest processes. Other tests run with nextest's default
+CPU-count concurrency, configurable with `--test-threads`; the three groups stay
+at one concurrent test to preserve their safety constraints. Nextest discovers this
+config for the root workspace. Separate `--manifest-path` workspaces use their
+own nextest configuration; their tests have no shared lock groups.
+
+The runner provides cargo-nextest from the flake's nixpkgs pin. Its sandbox
+environment, namespaces, sockets and writable paths are the same for nextest and
+doctests. It needs unprivileged user namespaces and supports
 x86_64 Linux only. It is proved on a non-NixOS host; on NixOS the hidden `/run`
 also hides `/run/current-system` and `/run/wrappers`. The Apple Silicon dev
 shell has an unproven macOS branch without namespaces: it refuses while an Eon
@@ -305,8 +328,9 @@ PTY reads; it is a performance budget for these inputs, not an ORBF limit.
 A text projection does not prove style/graphics fidelity.
 
 The text oracles are frozen captures from the accepted Orbit. After an approved
-terminal-behavior change, run `nix develop -c eon-test -p eon-bench --test gate --
---nocapture`. A mismatch prints replacement text between `ACTUAL-BEGIN` and
+terminal-behavior change, run
+`nix develop -c eon-test -p eon-bench --test gate --no-capture`.
+A mismatch prints replacement text between `ACTUAL-BEGIN` and
 `ACTUAL-END`; verify it against the intended behavior, update only that corpus's
 `eon/tools/eon-bench/tests/fixtures/gate/<id>.txt`, then rerun for the next case.
 Record the producer revision, corpus seed/version and 80x24 grid in the bead.
