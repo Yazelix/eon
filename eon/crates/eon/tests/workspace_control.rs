@@ -3939,7 +3939,7 @@ esac
         if let Some((leader, _)) = other.as_mut() {
             leader.write_all(b"y\n").unwrap();
         }
-        let flags = unsafe { libc::fcntl(device.as_raw_fd(), libc::F_GETFL) };
+        let flags = status_flags(device.as_raw_fd());
         assert_eq!(flags & libc::O_NONBLOCK, 0);
         let mut command = eon_command(binary);
         command
@@ -3994,7 +3994,7 @@ esac
             }
             for _ in 0..10 {
                 assert_eq!(
-                    unsafe { libc::fcntl(device.as_raw_fd(), libc::F_GETFL) },
+                    status_flags(device.as_raw_fd()),
                     flags,
                     "{ending}: inherited stdin flags changed during prompt"
                 );
@@ -4019,7 +4019,7 @@ esac
             .exit(deadline)
             .unwrap_or_else(|| panic!("{ending}: helper did not finish"));
         assert_eq!(
-            unsafe { libc::fcntl(device.as_raw_fd(), libc::F_GETFL) },
+            status_flags(device.as_raw_fd()),
             flags,
             "{ending}: inherited stdin flags changed after exit"
         );
@@ -4114,7 +4114,7 @@ esac
         );
         fs::write(root.join("mode"), manager).unwrap();
         let (leader, device) = pseudo_terminal();
-        let flags = unsafe { libc::fcntl(device.as_raw_fd(), libc::F_GETFL) };
+        let flags = status_flags(device.as_raw_fd());
         let mut command = eon_command(&commands);
         command
             .env("PATH", std::env::join_paths(&path).unwrap())
@@ -4188,10 +4188,7 @@ esac
             child.guard.0.try_wait().unwrap().is_none(),
             "result was not retained"
         );
-        assert_eq!(
-            unsafe { libc::fcntl(device.as_raw_fd(), libc::F_GETFL) },
-            flags
-        );
+        assert_eq!(status_flags(device.as_raw_fd()), flags);
         child.terminals[0].write_all(b"\n").unwrap();
         let exit = Instant::now() + Duration::from_secs(5);
         let exited = child.exit(exit);
@@ -15828,6 +15825,22 @@ fn pane_send_pastes_then_waits_for_enter_and_exits_by_failure() {
     fs::write(&supervisor.stop, "").unwrap();
     wait_for_successful_exit(&mut supervisor.child);
     fs::remove_dir_all(off).unwrap();
+}
+
+/// XNU's kernel-private FWASWRITTEN, "descriptor was written" (xnu
+/// bsd/sys/fcntl.h), which F_GETFL reports once anything has written through
+/// the open file description.
+#[cfg(target_os = "macos")]
+const FWASWRITTEN: libc::c_int = 0x0001_0000;
+
+/// The status flags of `fd`, without what a kernel records on its own, so that
+/// only flags someone set count when they are compared.
+fn status_flags(fd: std::os::fd::RawFd) -> libc::c_int {
+    // SAFETY: F_GETFL only reads the descriptor's flags.
+    let flags = unsafe { libc::fcntl(fd, libc::F_GETFL) };
+    #[cfg(target_os = "macos")]
+    let flags = flags & !FWASWRITTEN;
+    flags
 }
 
 /// A pseudoterminal's controller and the device a child reads as stdin, both
