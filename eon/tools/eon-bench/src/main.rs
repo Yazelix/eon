@@ -2,12 +2,13 @@
 
 use std::{path::PathBuf, process::ExitCode};
 
-use eon_bench::{child, corpus, floor, headless, memory, orbit, response, terminals, writer};
+use eon_bench::{child, corpus, floor, gate, headless, memory, orbit, response, terminals, writer};
 
 const USAGE: &str = "\
 usage: eon-bench corpus --out DIR [--only ID]...
        eon-bench floor --layer pty --out DIR [OPTIONS]
        eon-bench orbit --out DIR [OPTIONS]
+       eon-bench gate --baseline FILE --eon PATH --source-tree HASH [OPTIONS]
        eon-bench memory --out DIR [OPTIONS]
        eon-bench headless --eon PATH --out DIR [OPTIONS]
        eon-bench terminals --eon PATH --source-tree HASH --out DIR [OPTIONS]
@@ -31,6 +32,8 @@ enum Command {
     Corpus(PathBuf, Vec<&'static corpus::Corpus>),
     Floor(floor::Options),
     Orbit(orbit::Options),
+    Gate(gate::Options),
+    GateWriter(PathBuf),
     Memory(memory::Options, bool),
     Child(child::Options),
     Write(PathBuf, PathBuf),
@@ -101,6 +104,8 @@ fn main() -> ExitCode {
         Some("corpus") => corpus_options(rest).map(|(out, only)| Command::Corpus(out, only)),
         Some("floor") => floor::options(rest).map(Command::Floor),
         Some("orbit") => orbit::options(rest).map(Command::Orbit),
+        Some("gate") => gate::options(rest).map(Command::Gate),
+        Some("gate-writer") if rest.len() == 1 => Ok(Command::GateWriter(rest[0].clone().into())),
         Some("memory" | "memory-inner") => memory::options(rest)
             .map(|options| Command::Memory(options, arguments[0] == "memory-inner")),
         Some("child") => child::options(rest).map(Command::Child),
@@ -130,6 +135,8 @@ fn main() -> ExitCode {
         Command::Corpus(out, only) => corpus::write_files(&out, &only),
         Command::Floor(options) => floor::run(&options),
         Command::Orbit(options) => orbit::run(&options),
+        Command::Gate(options) => gate::run(&options),
+        Command::GateWriter(dir) => orbit::invariants::writer(&dir),
         Command::Memory(options, false) => memory::run(rest, &options),
         Command::Memory(options, true) => memory::run_inner(&options),
         Command::Child(options) => match child::run(&options) {

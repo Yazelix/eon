@@ -1952,7 +1952,7 @@ pub(crate) fn built_worker_output_bound() -> usize {
     bounds.unwrap().output_bytes as usize
 }
 
-/// Opt-in benchmark diagnostics; never waits for a reader or writes the pressured disk.
+/// Opt-in diagnostics; only untimed tests request blocking delivery, never disk writes.
 // The Venus and Runtime copies mirror this format at their own ownership boundaries.
 #[doc(hidden)]
 pub fn bench_trace(stage: &str, detail: impl std::fmt::Display) {
@@ -1969,7 +1969,8 @@ pub fn bench_trace(stage: &str, detail: impl std::fmt::Display) {
     let socket = SOCKET.get_or_init(|| {
         let path = std::env::var_os("EON_BENCH_TRACE")?;
         let socket = std::os::unix::net::UnixDatagram::unbound().ok()?;
-        socket.set_nonblocking(true).ok()?;
+        let blocking = std::env::var("EON_BENCH_TRACE_BLOCKING").as_deref() == Ok("1");
+        socket.set_nonblocking(!blocking).ok()?;
         socket.connect(path).ok()?;
         Some(socket)
     });
@@ -1989,7 +1990,14 @@ pub fn bench_trace(stage: &str, detail: impl std::fmt::Display) {
         std::process::id(),
         LOST.load(Ordering::Relaxed)
     );
-    if packet.len() > 4096 || socket.send(packet.as_bytes()).is_err() {
+    let sent = packet.len() <= 4096
+        && loop {
+            match socket.send(packet.as_bytes()) {
+                Err(e) if e.kind() == std::io::ErrorKind::Interrupted => continue,
+                result => break result.is_ok(),
+            }
+        };
+    if !sent {
         LOST.fetch_add(1, Ordering::Relaxed);
     }
 }

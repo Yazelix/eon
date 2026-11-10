@@ -230,7 +230,7 @@ fn hash(path: &Path) -> Result<String> {
     hash.update(&fs::read(path).map_err(error)?);
     Ok(hash.hex())
 }
-fn tool(name: &str) -> Result<PathBuf> {
+pub(crate) fn tool(name: &str) -> Result<PathBuf> {
     let key = format!("EON_BENCH_{}", name.to_uppercase().replace('-', "_"));
     let path = PathBuf::from(
         std::env::var(&key).map_err(|_| format!("missing {key}; use the Nix bench package"))?,
@@ -259,7 +259,7 @@ fn wrapper_path(text: &str, key: &str) -> Result<PathBuf> {
     Ok(path)
 }
 
-fn check_candidate_fontconfig(eon: &Path, expected: &Path) -> Result {
+pub(crate) fn check_candidate_fontconfig(eon: &Path, expected: &Path) -> Result {
     let venus = wrapper_path(&fs::read_to_string(eon).map_err(error)?, "EON_VENUS")?;
     let actual = wrapper_path(
         &fs::read_to_string(venus).map_err(error)?,
@@ -273,6 +273,31 @@ fn check_candidate_fontconfig(eon: &Path, expected: &Path) -> Result {
         ));
     }
     Ok(())
+}
+
+// Shared with gate preflight so fixed timing conditions have one owner.
+pub(crate) fn fixed_tools(
+    font: &Path,
+    kitten_path: &Path,
+    repetitions: u64,
+) -> Result<Vec<(String, String)>> {
+    Ok(vec![
+        (
+            "font-file".into(),
+            format!("{} sha256:{}", font.display(), hash(font)?),
+        ),
+        ("font-px".into(), "16".into()),
+        (
+            "scrollback".into(),
+            "Eon/Ghostty: 16 MiB; foot/Alacritty/kitty/WezTerm: 10000 lines; Herdr: binary default"
+                .into(),
+        ),
+        (
+            "kitten".into(),
+            format!("{} sha256:{}", kitten_path.display(), hash(kitten_path)?),
+        ),
+        ("kitten-repetitions".into(), repetitions.to_string()),
+    ])
 }
 
 struct CoreStop {
@@ -537,23 +562,7 @@ pub fn run_inner(options: &Options) -> Result {
         };
         fs::write(settings.out.join(format!("{workload}.vt")), payload).map_err(error)?;
     }
-    let mut tools = vec![
-        (
-            "font-file".into(),
-            format!("{} sha256:{}", font.display(), hash(&font)?),
-        ),
-        ("font-px".into(), "16".into()),
-        (
-            "scrollback".into(),
-            "Eon/Ghostty: 16 MiB; foot/Alacritty/kitty/WezTerm: 10000 lines; Herdr: binary default"
-                .into(),
-        ),
-        (
-            "kitten".into(),
-            format!("{} sha256:{}", kitten_path.display(), hash(&kitten_path)?),
-        ),
-        ("kitten-repetitions".into(), options.repetitions.to_string()),
-    ];
+    let mut tools = fixed_tools(&font, &kitten_path, options.repetitions)?;
     let mut subjects = Vec::new();
     let mut gaps = vec![object([("subject", "tern".into()), ("observed_at", "2026-11-08".into()), ("refresh", "Historical availability observation; refresh before a future comparison".into()), ("reason", "Closed beta/waitlist at https://stencil.so/tern; no downloadable Linux build observed".into())]), object([("subject", "termua".into()), ("observed_at", "2026-11-08".into()), ("refresh", "Historical availability observation; refresh before a future comparison".into()), ("reason", "Not in this pinned nixpkgs; upstream v0.1.5 binary packaging required additional investigation; optional comparison deferred".into())])];
     let mut failures = Vec::new();

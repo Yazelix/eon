@@ -106,6 +106,23 @@ impl Corpus {
         format!("{}.vt", self.id)
     }
 
+    /// Timing-free gate input: a 64 KiB prefix ending on whole generator units,
+    /// grouped into >=2 KiB chunks for reply-and-client-drain pacing.
+    pub(crate) fn quick_chunks(&self) -> Vec<Vec<u8>> {
+        let mut rng = Rng(self.seed);
+        let mut chunks = Vec::new();
+        let mut length = 0;
+        while length < 64 * 1024 {
+            let mut chunk = Vec::new();
+            while chunk.len() < 2048 {
+                (self.unit)(&mut rng, &mut chunk);
+            }
+            length += chunk.len();
+            chunks.push(chunk);
+        }
+        chunks
+    }
+
     /// Writes the corpus to `out` and returns its length and SHA-256.
     pub fn write(&self, out: &mut impl Write) -> std::io::Result<(u64, String)> {
         let mut rng = Rng(self.seed);

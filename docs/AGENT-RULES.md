@@ -88,6 +88,7 @@ installed UI that is one dogfood observation.
 | Installed runtime, UI, or product-configuration interaction | Affected profile refresh plus one isolated outermost installed dogfood observation per accepted batch. |
 | Shared runtime/wire protocol, component manifest, security, runtime/build dependency, or lifecycle boundary | Full affected Rust and Nix surfaces. |
 | Promotion or release | Complete delivery and promotion proof. |
+| Output or render path, or preparation for a release | Tier 1 frame invariants in `eon-test`, plus `eon-bench gate --baseline "${XDG_STATE_HOME:-$HOME/.local/state}/eon-bench/baseline-<machine>.json"` on that machine (baselines stay local and are never committed; two complete runs; the same cell's p50 and p95 must both exceed baseline by more than 25% in both runs to fail); without a baseline for this machine, record one with the parent revision's Eon and Orbit using `--record-baseline`, or name the missing Tier 2 check in the owning bead. |
 
 Every route preserves Git and user state, validates trust boundaries, keeps
 exact pins exact, preserves live terminals, and retains the cheapest check for a

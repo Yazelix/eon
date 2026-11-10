@@ -15,6 +15,9 @@
 //! worker, taken while the child holds the session open after the workload).
 //! Orbit itself is not changed or instrumented.
 
+#[doc(hidden)]
+pub mod invariants;
+
 use std::{
     io::{BufReader, Read, Write},
     net::Shutdown,

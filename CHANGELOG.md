@@ -37,6 +37,11 @@ installation, and proven contract changes.
   each. The attention inbox keeps its rows and width but now also sits between
   the bars, so it is shorter than before (`eon-8s8s7`).
 
+- `eon-bench gate` checks local Orbit and rendered Eon completion timings
+  against a machine baseline, confirming regressions in two complete runs.
+  `eon-test` checks attached frame counts, revision delivery and final screens
+  without timing thresholds (`eon-benchmarks-xl2bp.7`).
+
 - Venus favors smaller GPU allocations on non-CPU adapters, reducing measured
   Intel Vulkan allocation and residency by about 180 MiB. CPU adapters such
   as lavapipe retain wgpu's default allocation policy (`eon-ypy0a.2`).

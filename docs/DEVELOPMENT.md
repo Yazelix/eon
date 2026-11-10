@@ -290,6 +290,88 @@ Below 20 samples the p95 is the slowest sample.
 Samples are the data; the summaries are recomputed from them. The `pty` layer
 counts `pty_bytes` and `pty_reads`.
 
+### Output regression gate
+
+`eon-test` runs the bench crate's timing-free attached-Orbit check: all six
+seeded corpora as 64 KiB whole-unit prefixes at 80x24, paced by status replies
+and client drains. Every emitted revision must arrive in order exactly once,
+frames may not exceed attached PTY reads, each frame stays within 128 KiB,
+and frames per MiB stay below 4,096 plus four endpoint frames. The last screen
+must match its fixed text oracle. The generous count ceiling allows fragmented
+PTY reads; it is a performance budget for these inputs, not an ORBF limit.
+A text projection does not prove style/graphics fidelity.
+
+The text oracles are frozen captures from the accepted Orbit. After an approved
+terminal-behavior change, run `nix develop -c eon-test -p eon-bench --test gate --
+--nocapture`. A mismatch prints replacement text between `ACTUAL-BEGIN` and
+`ACTUAL-END`; verify it against the intended behavior, update only that corpus's
+`eon/tools/eon-bench/tests/fixtures/gate/<id>.txt`, then rerun for the next case.
+Record the producer revision, corpus seed/version and 80x24 grid in the bead.
+Re-capture is a deliberate oracle update, not a way to dismiss a regression.
+Tier 1 sets `EON_BENCH_TRACE_BLOCKING=1` only on its isolated Orbit: diagnostics
+backpressure the host until the raw receive thread drains them into a channel.
+The gate removes this override from timed children. Ordinary diagnostics stay
+nonblocking by default; do not enable blocking mode for timing.
+
+`gate` compares release builds on the same Linux machine. It runs the six full
+corpora through detached and attached Orbit, then `terminals --subject eon`
+(cat64 and the five kitten workloads) on private Sway with lavapipe. Each of
+its two complete runs uses ten samples after two warmups per cell, with ten
+kitten repetitions as in the recorded terminal comparison. It fails
+when the **same cell's median and nearest-rank p95 seconds both exceed the
+baseline by more than 25% in both runs**. Equality, one slow statistic or one
+slow run does not confirm a regression. A failed or incomplete suite, invalid
+sample, changed machine or different fixed conditions fails the check.
+Each complete run records Linux Mains supplies at start and end in
+`run-N-power.json`; unavailable AC state, an endpoint change or a difference
+from the baseline invalidates timing before any regression decision. A machine
+without an observable Linux `Mains` power supply cannot pass Tier 2; record
+the missing check in the owning bead. An interrupted run retains a null end. Endpoint checks cannot detect unplugging
+and reconnecting entirely between observations.
+Rendered completion is not pixel/frame latency; GPU hardware timing is outside
+this baseline. No hosted timing job runs on shared CI machines.
+
+Build parent and candidate Eon/Orbit release artifacts with separate out-links
+before the quiet window. The recording command measures the parent's Eon and
+Orbit; the comparison measures the candidate's. Pass `--orbit` explicitly to
+select each producer; otherwise Orbit comes from the bench package's pinned
+`EON_BENCH_ORBIT`, which must belong to that run's declared revision. A
+coordinator's quiet grant is required on a shared machine;
+run timing commands through its heavy wrapper, with its granted exemption.
+
+```sh
+baseline_dir="${XDG_STATE_HOME:-$HOME/.local/state}/eon-bench"
+mkdir -p "$baseline_dir"
+# Parent revision: record once on this machine, never overwrite an accepted file.
+PARENT_BENCH/bin/eon-bench gate --baseline "$baseline_dir/baseline-MACHINE.json" \
+  --record-baseline --eon PARENT_EON/bin/eon --orbit PARENT_ORBIT/bin/yazelix-orbit \
+  --source-tree PARENT_TREE \
+  --cpus 6-11 --out /absolute/fresh/baseline-evidence
+# Candidate revision: uses the baseline's affinity and load ceiling.
+CANDIDATE_BENCH/bin/eon-bench gate --baseline "$baseline_dir/baseline-MACHINE.json" \
+  --eon CANDIDATE_EON/bin/eon --orbit CANDIDATE_ORBIT/bin/yazelix-orbit \
+  --source-tree CANDIDATE_TREE \
+  --out /absolute/fresh/gate-evidence
+```
+
+Without `--out`, the command creates a fresh directory under
+`~/.cache/eon-bench/`. Baseline schema 1 (`eon-bench-gate`) contains the hashed
+local machine ID, fixed machine/suite/corpus/tool/font conditions, 18 cells
+with sample count/p50/p95 seconds, required `ac_power.start`/`end` maps of
+Mains supply names to online booleans, source tree and artifact identities, and the
+raw evidence location. Raw samples remain in each suite's `result.json`;
+statistics are recomputed from them. Untimed preflight checks the baseline
+destination and current machine/tool/adapter conditions before timing. Conditions
+include the Vulkan ICD and Sway identity from the isolated adapter probe.
+Comparisons retain each run's candidate build/tool artifacts and write two snapshots and a
+`result.json` with confirmed cell keys. Recording uses create-new semantics;
+keep each machine's baseline in `$XDG_STATE_HOME/eon-bench/` (default
+`~/.local/state/eon-bench/`), never in the repository. Keep benchmark numbers
+and the baseline's SHA-256 in the owning bead; explain any replacement there.
+Each machine records its own baseline. Without a baseline
+for this machine, record the parent revision first or record the missing Tier 2
+proof in the owning bead. macOS has no rendered timing baseline yet.
+
 ### Memory
 
 `nix run .#bench -- memory --eon CANDIDATE/bin/eon --out DIR` measures Linux PSS, with RSS and

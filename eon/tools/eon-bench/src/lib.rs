@@ -5,6 +5,7 @@ pub mod child;
 pub mod corpus;
 mod environment;
 pub mod floor;
+pub mod gate;
 pub mod headless;
 mod isolation;
 mod json;
