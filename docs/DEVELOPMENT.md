@@ -142,7 +142,10 @@ runtime roots and no shell-startup marker. A fixture login profile exposes a
 command only in `~/.nix-profile/bin`. The managed shell must resolve that
 command and the candidate's packaged `eon` and `hx`; the step then types
 `eon hx`, observes the Helix process, captures it when permitted and stops its
-private workspace. The main CLI/driver scenario runs separately. Linux's
+private workspace. When the step fails while its window still runs, its log
+ends with the session, each pane's text, the step's processes and, when
+permitted, a capture; a personal Mac's pane text and screen stay out. The main
+CLI/driver scenario runs separately. Linux's
 `macos-app` Nix check builds the icon/resources and tests the native launcher's
 bounded PATH import; it proves no LaunchServices behavior.
 

@@ -100,11 +100,51 @@ pub fn execute_filtered(
     group: bool,
     filter: impl FnOnce(Vec<u8>) -> Result<Vec<u8>, Failure>,
 ) -> Result<(ExitStatus, Vec<u8>), Failure> {
-    execute_output(log, command, deadline, capture, group, |log, stdout| {
-        let stdout = filter(stdout)?;
-        log.line(&String::from_utf8_lossy(&stdout));
+    execute_output(
+        log,
+        command,
+        deadline,
+        capture,
+        group,
+        GRACE,
+        |log, stdout| {
+            let stdout = filter(stdout)?;
+            log.line(&String::from_utf8_lossy(&stdout));
+            Ok(stdout)
+        },
+    )
+}
+
+/// Like `succeed` with capture, for a command that only reads and may be
+/// killed outright: at `deadline` its process group gets KILL with no grace
+/// after TERM, so the call ends about then. With `logged`, stdout is also
+/// logged.
+pub fn probe(
+    log: &mut Log,
+    command: &mut Command,
+    deadline: Instant,
+    logged: bool,
+) -> Result<Vec<u8>, Failure> {
+    let program = command.get_program().to_string_lossy().into_owned();
+    let (status, stdout) = execute_output(
+        log,
+        command,
+        deadline,
+        true,
+        true,
+        Duration::ZERO,
+        |log, stdout| {
+            if logged {
+                log.line(&String::from_utf8_lossy(&stdout));
+            }
+            Ok(stdout)
+        },
+    )?;
+    if status.success() {
         Ok(stdout)
-    })
+    } else {
+        Err(Failure::Command(format!("{program} exited with {status}")))
+    }
 }
 
 /// Like `succeed` with capture, but stdout stays out of the log.
@@ -115,7 +155,9 @@ pub fn capture_stdout(
 ) -> Result<Vec<u8>, Failure> {
     let program = command.get_program().to_string_lossy().into_owned();
     let (status, stdout) =
-        execute_output(log, command, deadline, true, true, |_, stdout| Ok(stdout))?;
+        execute_output(log, command, deadline, true, true, GRACE, |_, stdout| {
+            Ok(stdout)
+        })?;
     if status.success() {
         Ok(stdout)
     } else {
@@ -129,6 +171,7 @@ fn execute_output(
     deadline: Instant,
     capture: bool,
     group: bool,
+    grace: Duration,
     filter: impl FnOnce(&mut Log, Vec<u8>) -> Result<Vec<u8>, Failure>,
 ) -> Result<(ExitStatus, Vec<u8>), Failure> {
     log.line(&format!("$ {command:?}"));
@@ -154,7 +197,7 @@ fn execute_output(
     });
     let Some(status) = wait(&mut child, deadline) else {
         log.line("mac-proof: deadline passed; stopping it");
-        stop(&mut child, group);
+        stop_within(&mut child, group, grace);
         return Err(Failure::Timeout);
     };
     let mut stdout = Vec::new();
@@ -205,9 +248,14 @@ fn wait(child: &mut Child, deadline: Instant) -> Option<ExitStatus> {
 /// the grace period ends, so no member outlives it; without `group`, kills
 /// the child alone.
 pub fn stop(child: &mut Child, group: bool) {
+    stop_within(child, group, GRACE);
+}
+
+/// `stop` with `grace` between TERM and KILL.
+fn stop_within(child: &mut Child, group: bool, grace: Duration) {
     if group {
         let _ = signal("TERM", child.id());
-        wait(child, Instant::now() + GRACE);
+        wait(child, Instant::now() + grace);
         let _ = signal("KILL", child.id());
     }
     let _ = child.kill();
@@ -802,6 +850,35 @@ mod tests {
             runner.records[0].first_failure.as_deref(),
             Some("the run's time limit passed")
         );
+        fs::remove_dir_all(evidence).unwrap();
+    }
+
+    #[test]
+    fn a_probe_that_ignores_term_ends_at_its_deadline() {
+        let evidence = scratch("probe");
+        fs::create_dir_all(&evidence).unwrap();
+        let mut log = Log {
+            file: File::create(evidence.join("log")).unwrap(),
+        };
+        let started = Instant::now();
+        let result = probe(
+            &mut log,
+            Command::new("sh").args(["-c", "trap '' TERM; sleep 600 & wait"]),
+            started + Duration::from_millis(300),
+            true,
+        );
+        assert!(matches!(result, Err(Failure::Timeout)));
+        // Far inside the grace period a step's command gets.
+        assert!(started.elapsed() < GRACE / 4, "{:?}", started.elapsed());
+        let ran = probe(
+            &mut log,
+            Command::new("sh").args(["-c", "echo found"]),
+            Instant::now() + GRACE,
+            false,
+        );
+        assert_eq!(ran.ok().unwrap(), b"found\n");
+        let text = fs::read_to_string(evidence.join("log")).unwrap();
+        assert!(!text.contains("\nfound\n"), "{text}");
         fs::remove_dir_all(evidence).unwrap();
     }
 

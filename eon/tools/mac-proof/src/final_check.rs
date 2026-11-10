@@ -1043,7 +1043,7 @@ fn manual(
     match launched {
         Ok(()) => {
             progress(
-                "Eon is open with its default configuration. Dismiss its first tab's quick search with Escape to use the prepared launch directory.",
+                "Eon is open with its default configuration. Its first tab's shell is open in the prepared launch directory.",
             );
             let (items, closed) = walk(
                 input,

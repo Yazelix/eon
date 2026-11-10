@@ -5,7 +5,7 @@ use crate::{
     mac,
     picture::{Picture, Region, backdrop_shares, blend, check_blend, check_shares},
     retina,
-    step::{Failure, Log, Outcome, Runner, capture_stdout, check, execute, succeed},
+    step::{Failure, Log, Outcome, Runner, capture_stdout, check, execute, probe, succeed},
 };
 use orbit_protocol::session::{
     self as orbs, ClientMessage, KeyAction, KeyEvent, Modifiers, PhysicalKey, ServerMessage,
@@ -25,6 +25,9 @@ use std::{
 
 const MINUTE: Duration = Duration::from_secs(60);
 const PAUSE: Duration = Duration::from_millis(250);
+/// How long a failure's evidence may take in all, and each part of it.
+const EVIDENCE: Duration = Duration::from_secs(20);
+const EVIDENCE_PART: Duration = Duration::from_secs(5);
 const BLACK: [u8; 3] = [0; 3];
 const DARK: [u8; 3] = [32; 3];
 const LIGHT: [u8; 3] = [224; 3];
@@ -896,11 +899,11 @@ impl Scenario {
             .arg(&output)
             .args(["--stderr"])
             .arg(output);
-        // An inert startup comment tags even a supervisor that fails before Venus
-        // appears, so failure cleanup can identify it without scanning other Eons.
-        command
-            .args(["--args", "run", "--", "eon-nu", "--execute"])
-            .arg(format!("# {}/", self.root.display()));
+        // No command, so the pane runs the default shell, the only terminal that
+        // leaves the busy list (EON-C11). The launch directory lies under the
+        // root, which tags even a supervisor that fails before Venus appears, so
+        // failure cleanup can identify it without scanning other Eons.
+        command.args(["--args", "run", "--dir"]).arg(self.work());
         command
     }
 
@@ -951,6 +954,11 @@ impl Scenario {
     /// The scenario's processes now, which also joins them to `seen`.
     fn processes(&mut self, log: &mut Log, deadline: Instant) -> Result<Vec<Process>, Failure> {
         let listing = listing(log, deadline)?;
+        Ok(self.own(&listing, log))
+    }
+
+    /// The scenario's processes in `listing`, which also joins them to `seen`.
+    fn own(&mut self, listing: &[Process], log: &mut Log) -> Vec<Process> {
         // With the slash, the root of a run whose pid extends this one's
         // does not match.
         let markers = [
@@ -973,7 +981,7 @@ impl Scenario {
                     .map(|process| process.parent),
             );
         }
-        let ours = ours(&listing, &roots, &markers);
+        let ours = ours(listing, &roots, &markers);
         for process in &ours {
             let previous = self.seen.insert(process.pid, process.command.clone());
             if previous.as_ref() != Some(&process.command) {
@@ -983,7 +991,7 @@ impl Scenario {
                 ));
             }
         }
-        Ok(ours)
+        ours
     }
 
     /// Venus under the current supervisor.
@@ -1038,6 +1046,13 @@ impl Scenario {
         })
     }
 
+    /// Where the next capture goes in the evidence.
+    fn next_capture(&mut self, label: &str) -> PathBuf {
+        self.captures += 1;
+        self.evidence
+            .join(format!("captures/{:02}-{label}.png", self.captures))
+    }
+
     /// `screencapture` of the main display into the evidence, read back small.
     fn capture(
         &mut self,
@@ -1045,10 +1060,7 @@ impl Scenario {
         log: &mut Log,
         deadline: Instant,
     ) -> Result<Picture, Failure> {
-        self.captures += 1;
-        let png = self
-            .evidence
-            .join(format!("captures/{:02}-{label}.png", self.captures));
+        let png = self.next_capture(label);
         let bmp = self.root.join("capture.bmp");
         succeed(
             log,
@@ -1118,27 +1130,130 @@ impl Scenario {
         .map(drop)
     }
 
-    /// Pastes `text`, a shell comment, with Command+V and Return into the
-    /// terminal Venus shows, until `eon pane read` finds it in pane or popup
-    /// `target`. Venus may not have attached when the first paste arrives, so
-    /// it pastes again every five seconds. Return leaves the shell's line
-    /// empty for what a stranger would type.
+    /// Pastes `text`, a shell comment, into the terminal Venus shows until
+    /// `eon pane read` finds it in pane or popup `target`. Return leaves the
+    /// shell's line empty for what a stranger would type.
     fn typed(&mut self, target: &str, text: &str, log: &mut Log, deadline: Instant) -> Outcome {
+        self.pasted(text, log, deadline, |scenario, log| {
+            let reply = scenario.act(&["pane", "read", target], log, deadline)?;
+            Ok(reply["text"]
+                .as_str()
+                .is_some_and(|shown| shown.contains(text))
+                .then_some(()))
+        })
+    }
+
+    /// Pastes `text` with Command+V and Return into the terminal Venus shows
+    /// until `found` yields a value. Venus may not have attached when the
+    /// first paste arrives, so it pastes again every five seconds: `text`
+    /// must be safe to run more than once.
+    fn pasted<T>(
+        &mut self,
+        text: &str,
+        log: &mut Log,
+        deadline: Instant,
+        mut found: impl FnMut(&Scenario, &mut Log) -> Result<Option<T>, Failure>,
+    ) -> Result<T, Failure> {
         self.copy(text, log, deadline)?;
         loop {
             self.press(&[PASTE, RETURN], log, deadline)?;
             let wait = deadline.min(Instant::now() + Duration::from_secs(5));
-            let read = until(wait, || {
-                let reply = self.act(&["pane", "read", target], log, deadline)?;
-                Ok(reply["text"]
-                    .as_str()
-                    .is_some_and(|shown| shown.contains(text))
-                    .then_some(()))
-            });
-            match read {
+            match until(wait, || found(&*self, &mut *log)) {
                 Err(Failure::Timeout) if Instant::now() < deadline => {}
                 other => return other,
             }
+        }
+    }
+
+    /// Logs what a failed step can still show while the scenario runs: the
+    /// session, each pane's text, the scenario's processes and a capture.
+    /// A personal Mac's pane text and screen stay out of it.
+    fn failure_evidence(&mut self, log: &mut Log) {
+        self.evidence_within(EVIDENCE, EVIDENCE_PART, log);
+    }
+
+    /// `failure_evidence` within `budget` in all and `share` for each
+    /// command, its end included: a command still running then is killed
+    /// outright. The failed step's own deadline may have passed. A part that
+    /// fails is logged as unavailable and the rest goes on; once the budget
+    /// is spent, no further command starts.
+    fn evidence_within(&mut self, budget: Duration, share: Duration, log: &mut Log) {
+        let end = Instant::now() + budget;
+        let run = |log: &mut Log, command: &mut Command, logged: bool| {
+            let now = Instant::now();
+            if now >= end {
+                return Err("the evidence budget is spent".to_owned());
+            }
+            probe(log, command, end.min(now + share), logged)
+                .map_err(|failure| cause(&failure).to_owned())
+        };
+        let missing = |log: &mut Log, what: &str, why: &str| {
+            log.line(&format!(
+                "mac-proof: failure evidence: {what} unavailable: {why}"
+            ));
+        };
+        const PERSONAL: &str = "left out on a personal Mac";
+        log.line("mac-proof: failure evidence: the session, pane text, processes and a capture");
+        let session = run(log, &mut self.eon(&["session", "--json"]), true).and_then(|reply| {
+            serde_json::from_slice::<Value>(&reply).map_err(|error| error.to_string())
+        });
+        match session {
+            Ok(_) if self.personal_mac => missing(log, "pane text", PERSONAL),
+            Ok(session) => {
+                for pane in panes(&session) {
+                    let mut read = self.eon(&["pane", "read", &pane.id, "--json"]);
+                    if let Err(why) = run(log, &mut read, true) {
+                        missing(log, &format!("{}'s text", pane.id), &why);
+                    }
+                }
+            }
+            Err(why) => missing(log, "the session and its pane text", &why),
+        }
+        // As `listing` does, with ps's output, every process's argv, unlogged.
+        let listed = run(log, Command::new("id").arg("-u"), true).and_then(|user| {
+            let all = run(
+                log,
+                Command::new("ps").args(["-A", "-ww", "-o", "uid=,pid=,ppid=,command="]),
+                false,
+            )?;
+            Ok(parse_processes(
+                &String::from_utf8_lossy(&all),
+                String::from_utf8_lossy(&user).trim(),
+            ))
+        });
+        match listed {
+            Ok(listing) => {
+                let processes = self.own(&listing, log);
+                log.line(&format!(
+                    "mac-proof: failure evidence: {} processes",
+                    processes.len()
+                ));
+                for process in processes {
+                    log.line(&format!(
+                        "mac-proof: failure evidence: process {} of {}: {}",
+                        process.pid, process.parent, process.command
+                    ));
+                }
+            }
+            Err(why) => missing(log, "the processes", &why),
+        }
+        let capture = match self.screen.clone() {
+            _ if self.personal_mac => Err(PERSONAL.to_owned()),
+            Err(reason) => Err(reason),
+            Ok(()) => {
+                let png = self.next_capture("failure");
+                run(
+                    log,
+                    Command::new("screencapture")
+                        .args(["-x", "-t", "png"])
+                        .arg(png),
+                    false,
+                )
+                .map(drop)
+            }
+        };
+        if let Err(why) = capture {
+            missing(log, "a capture", &why);
         }
     }
 
@@ -1504,6 +1619,51 @@ fn ours(listing: &[Process], roots: &[u32], markers: &[String]) -> Vec<Process> 
         .collect()
 }
 
+/// Why `failure` happened, in a few words.
+fn cause(failure: &Failure) -> &str {
+    match failure {
+        Failure::Timeout => "timed out",
+        Failure::Command(message) | Failure::Check(message) | Failure::Unavailable(message) => {
+            message
+        }
+    }
+}
+
+/// Whether `eon session --json` shows one pane and no busy terminal: the
+/// tab's default shell leads its own terminal (EON-C11).
+fn idle_shell(workspace: &Value) -> bool {
+    panes(workspace).len() == 1
+        && workspace["busy"]["terminals"]
+            .as_array()
+            .is_some_and(Vec::is_empty)
+}
+
+/// Which directory entry `path` is: its directory with symbolic links
+/// resolved, and its own name as written, so that two links in one
+/// directory to one file stay distinct.
+fn entry(path: &Path) -> Result<PathBuf, String> {
+    let (Some(directory), Some(name)) = (path.parent(), path.file_name()) else {
+        return Err(format!("{} names no directory entry", path.display()));
+    };
+    fs::canonicalize(directory)
+        .map(|directory| directory.join(name))
+        .map_err(|error| format!("{}: {error}", directory.display()))
+}
+
+/// Checks that `found` names the directory entries of `expected`, in order.
+/// A package's files may be reached through a directory of links to it.
+fn same_entries(found: &[PathBuf], expected: &[PathBuf]) -> Result<(), String> {
+    let entries = |paths: &[PathBuf]| paths.iter().map(|path| entry(path)).collect();
+    let differ = || format!("app shell resolved {found:?}, expected {expected:?}");
+    let (found, expected): (Result<Vec<_>, _>, Result<Vec<_>, _>) =
+        (entries(found), entries(expected));
+    match (found, expected) {
+        (Ok(found), Ok(expected)) if found == expected => Ok(()),
+        (Err(error), _) | (_, Err(error)) => Err(format!("{}: {error}", differ())),
+        _ => Err(differ()),
+    }
+}
+
 #[derive(Debug, PartialEq)]
 struct Pane {
     id: String,
@@ -1658,6 +1818,7 @@ fn app_bundle(scenario: &mut Scenario, log: &mut Log, deadline: Instant) -> Outc
         Environment::Private,
         scenario.personal_mac,
     );
+    app.screen = scenario.screen.clone();
     app.root = scenario.root.with_extension("app");
     app.runtime = PathBuf::from(format!("/tmp/ea-{}", std::process::id()));
     let result = (|| {
@@ -1690,18 +1851,40 @@ fn app_bundle(scenario: &mut Scenario, log: &mut Log, deadline: Instant) -> Outc
         app.start_app(&app.package.join("Applications/Eon.app"), log)?;
         app.wait_for_workspace(log, deadline)?;
         app.wait_for_venus(log, deadline)?;
+        log.line("mac-proof: waiting for the default shell to leave the busy list");
         until(deadline, || {
-            app.press(&[ESCAPE], log, deadline)?;
-            thread::sleep(PAUSE);
-            let workspace = app.workspace(log, deadline)?;
-            Ok((panes(&workspace).len() == 1
-                && workspace["busy"]["terminals"]
-                    .as_array()
-                    .is_some_and(Vec::is_empty))
-            .then_some(()))
+            Ok(idle_shell(&app.workspace(log, deadline)?).then_some(()))
         })?;
-        let pane = panes(&app.workspace(log, deadline)?).remove(0).id;
-        app.typed(&pane, "# mac-proof app ready", log, deadline)?;
+        // A shell that leads its terminal may not read input yet, and the
+        // terminal echoes what it has not read: only a command's effect shows
+        // that the shell ran it. This one also shows where `--dir` put it.
+        let started = app.root.join("started");
+        let report = format!(
+            "$env.PWD | save --force {}",
+            quote(&started.to_string_lossy())
+        );
+        let directory = app.pasted(&report, log, deadline, |_, _| {
+            Ok(fs::read_to_string(&started)
+                .ok()
+                .map(|text| PathBuf::from(text.trim()))
+                .filter(|directory| directory.is_absolute()))
+        })?;
+        let work = app.work();
+        let resolve = |path: &Path| {
+            fs::canonicalize(path)
+                .map_err(|error| Failure::Check(format!("{}: {error}", path.display())))
+        };
+        check(resolve(&directory)? == resolve(&work)?, || {
+            format!(
+                "the app's shell started in {}, not in --dir's {}",
+                directory.display(),
+                work.display()
+            )
+        })?;
+        log.line(&format!(
+            "mac-proof: the app's shell ran a pasted command in {}",
+            directory.display()
+        ));
         let paths = app.root.join("paths.json");
         let ran = app.root.join("host-tool");
         let text = format!(
@@ -1721,10 +1904,8 @@ fn app_bundle(scenario: &mut Scenario, log: &mut Log, deadline: Instant) -> Outc
             app.package.join("libexec/eon/bin/hx"),
             probe,
         ];
-        check(
-            resolved.iter().map(PathBuf::from).collect::<Vec<_>>() == expected,
-            || format!("app shell resolved {resolved:?}, expected {expected:?}"),
-        )?;
+        let found: Vec<PathBuf> = resolved.iter().map(PathBuf::from).collect();
+        same_entries(&found, &expected).map_err(Failure::Check)?;
         until(deadline, || {
             Ok(fs::read_to_string(&ran)
                 .is_ok_and(|text| text.trim() == "eon-host-path-ok")
@@ -1741,12 +1922,16 @@ fn app_bundle(scenario: &mut Scenario, log: &mut Log, deadline: Instant) -> Outc
                 .then_some(()))
         })?;
         log.line("mac-proof: typing eon hx started the packaged Helix");
-        if scenario.screen.is_ok() {
+        if app.screen.is_ok() {
             app.window_capture("app-helix", log, deadline)?;
         }
         stop(&mut app, log, deadline)
     })();
     if result.is_err() {
+        // A `stop` that failed has logged its own evidence and cleaned up.
+        if app.supervisor.is_some() {
+            app.failure_evidence(log);
+        }
         app.clean(log);
     }
     result
@@ -2588,11 +2773,7 @@ fn quit(scenario: &mut Scenario, log: &mut Log, deadline: Instant) -> Outcome {
         // Escape closes quick search, which starts the tab's shell.
         scenario.press(&[ESCAPE], log, deadline)?;
         thread::sleep(Duration::from_secs(2));
-        let workspace = scenario.workspace(log, deadline)?;
-        let idle = workspace["busy"]["terminals"]
-            .as_array()
-            .is_some_and(Vec::is_empty);
-        Ok((idle && panes(&workspace).len() == 1).then_some(()))
+        Ok(idle_shell(&scenario.workspace(log, deadline)?).then_some(()))
     })?;
     scenario.press(&[QUIT], log, deadline)?;
     quit_ended(scenario, venus, log, deadline)?;
@@ -2649,6 +2830,11 @@ pub(crate) fn stop(scenario: &mut Scenario, log: &mut Log, deadline: Instant) ->
     let _ = until(settled, || {
         Ok(scenario.survivors(log, settled)?.is_empty().then_some(()))
     });
+    // `clean` ends what evidence could show. A process left behind needs
+    // none: by then the supervisor is gone, and the failure names it.
+    if reply.is_err() || exited.is_err() {
+        scenario.failure_evidence(log);
+    }
     let left = scenario.clean(log);
     let reply = reply?;
     let results: Vec<Value> = reply
@@ -2699,6 +2885,14 @@ mod tests {
             args.iter()
                 .any(|arg| arg == &format!("EON_RUNTIME_DIR={}", scenario.runtime.display()))
         );
+        // No command follows, so the pane runs the default shell, and the
+        // launch directory carries the root's marker for cleanup.
+        let work = scenario.work().to_string_lossy().into_owned();
+        assert_eq!(
+            &args[args.len() - 4..],
+            ["--args", "run", "--dir", work.as_str()]
+        );
+        assert!(work.contains(&format!("{}/", scenario.root.display())));
         for forbidden in [
             "EON_SESSION_BIN=",
             "EON_HX=",
@@ -2711,6 +2905,127 @@ mod tests {
                 "{forbidden}: {args:?}"
             );
         }
+    }
+
+    #[test]
+    fn only_one_pane_and_no_busy_terminal_make_an_idle_shell() {
+        let pane = json!({"id": "p1", "terminal": "terminal-1", "endpoint": "/e"});
+        let reply = |panes: Value, busy: Value| {
+            json!({
+                "tabs": [{"id": "t1", "panes": panes}],
+                "busy": {"terminals": busy, "omitted": 0},
+            })
+        };
+        // Quick search is up: nothing is busy, but no pane runs yet.
+        assert!(!idle_shell(&reply(json!([]), json!([]))));
+        // A pane started with a command stays busy.
+        let busy = json!([{"pane": "p1", "terminal": "terminal-1"}]);
+        assert!(!idle_shell(&reply(json!([pane.clone()]), busy)));
+        assert!(idle_shell(&reply(json!([pane.clone()]), json!([]))));
+        // An absent busy list does not tell.
+        assert!(!idle_shell(
+            &json!({"tabs": [{"id": "t1", "panes": [pane]}]})
+        ));
+    }
+
+    #[test]
+    fn a_directory_of_links_names_its_package_s_entries() {
+        let root = std::env::temp_dir().join(format!("mac-proof-entries-{}", std::process::id()));
+        let _ = fs::remove_dir_all(&root);
+        let bin = root.join("package/libexec/eon/bin");
+        fs::create_dir_all(&bin).unwrap();
+        fs::create_dir_all(root.join("product")).unwrap();
+        fs::write(root.join("package/eon"), "").unwrap();
+        for name in ["eon", "hx"] {
+            std::os::unix::fs::symlink("../../../eon", bin.join(name)).unwrap();
+        }
+        std::os::unix::fs::symlink(root.join("package/libexec"), root.join("product/libexec"))
+            .unwrap();
+        let through = |base: &str, name: &str| root.join(base).join("libexec/eon/bin").join(name);
+        let package = [through("package", "eon"), through("package", "hx")];
+        let product = [through("product", "eon"), through("product", "hx")];
+        assert_eq!(same_entries(&package, &product), Ok(()));
+        // Both names link to one file, and still differ.
+        let swapped = [through("package", "hx"), through("package", "eon")];
+        let differ = same_entries(&swapped, &product).unwrap_err();
+        assert!(differ.starts_with("app shell resolved "), "{differ}");
+        assert!(same_entries(&package[..1], &product).is_err());
+        let elsewhere = [root.join("package/eon"), through("package", "hx")];
+        assert!(same_entries(&elsewhere, &product).is_err());
+        let absent = same_entries(&[root.join("absent/eon")], &product[..1]).unwrap_err();
+        assert!(absent.contains("absent: "), "{absent}");
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn failure_evidence_records_what_it_cannot_get() {
+        for (personal_mac, capture) in [(false, "not probed"), (true, "left out on a personal Mac")]
+        {
+            let path = std::env::temp_dir().join(format!(
+                "mac-proof-evidence-{}-{personal_mac}.log",
+                std::process::id()
+            ));
+            let mut log = Log::new(File::create(&path).unwrap());
+            // No such package, so `eon session` cannot start.
+            let mut scenario = Scenario::new(
+                PathBuf::from("/package"),
+                PathBuf::from("/evidence"),
+                Environment::Private,
+                personal_mac,
+            );
+            scenario.failure_evidence(&mut log);
+            let text = fs::read_to_string(&path).unwrap();
+            fs::remove_file(path).unwrap();
+            for line in [
+                "mac-proof: failure evidence: the session and its pane text unavailable: ",
+                " processes\n",
+                &format!("mac-proof: failure evidence: a capture unavailable: {capture}\n"),
+            ] {
+                assert!(text.contains(line), "{line:?} in {text}");
+            }
+        }
+    }
+
+    #[test]
+    fn a_stalled_probe_ends_at_its_share_and_a_spent_budget_starts_no_other() {
+        let root = std::env::temp_dir().join(format!("mac-proof-stalled-{}", std::process::id()));
+        let _ = fs::remove_dir_all(&root);
+        // An `eon` that ignores TERM and never answers.
+        fs::create_dir_all(root.join("package/bin")).unwrap();
+        let eon = root.join("package/bin/eon");
+        fs::write(&eon, "#!/bin/sh\ntrap '' TERM\nwhile :; do :; done\n").unwrap();
+        use std::os::unix::fs::PermissionsExt;
+        fs::set_permissions(&eon, fs::Permissions::from_mode(0o700)).unwrap();
+        let mut scenario = Scenario::new(
+            root.join("package"),
+            PathBuf::from("/evidence"),
+            Environment::Private,
+            false,
+        );
+        scenario.root = root.join("scenario");
+        fs::create_dir_all(scenario.work()).unwrap();
+        scenario.screen = Ok(());
+        let mut log = Log::new(File::create(root.join("log")).unwrap());
+        let (budget, started) = (Duration::from_millis(500), Instant::now());
+        scenario.evidence_within(budget, budget, &mut log);
+        let took = started.elapsed();
+        // The session probe takes the whole budget and is killed at its
+        // end, far inside the grace period a step's command gets.
+        assert!(
+            took >= budget && took < budget + Duration::from_secs(2),
+            "{took:?}"
+        );
+        let text = fs::read_to_string(root.join("log")).unwrap();
+        for line in [
+            "mac-proof: failure evidence: the session and its pane text unavailable: timed out\n",
+            "mac-proof: failure evidence: the processes unavailable: the evidence budget is spent\n",
+            "mac-proof: failure evidence: a capture unavailable: the evidence budget is spent\n",
+        ] {
+            assert!(text.contains(line), "{line:?} in {text}");
+        }
+        // Only the session probe started.
+        assert_eq!(text.matches("\n$ ").count(), 1, "{text}");
+        fs::remove_dir_all(root).unwrap();
     }
 
     #[test]
