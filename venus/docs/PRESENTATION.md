@@ -86,17 +86,19 @@ order, selection, and popups; Venus draws the visible scene.
   minutes, such as `90m`. A stale chip that cannot fit its label with `old`
   disappears rather than drop `old`. Hover and accessibility never show raw
   epoch timestamps.
-- A fresh window with a reset, past its first tenth, colours its chip's label by
+- A fresh window with a reset and at least 1% used colours its chip's label by
   pace on a continuous green, yellow, orange and red scale, projecting the
   snapshot's used and elapsed shares of the window linearly to the reset: green
   is comfortably under pace, exactly on pace is a light green turning toward
   yellow, and a window that runs out a twentieth of a window before the reset
   is yellow, a tenth orange, and a quarter or more full red. A used-up window
-  is always coloured. Stale, blocked, unknown, reset-less and younger windows
-  keep the neutral text colour. Hover and accessibility say in words that at
-  this pace the window lasts until reset, runs out about a stated time before
-  it, or is used up, so colour is never the only signal. Every colour keeps at
-  least 4.5:1 contrast on the bar.
+  is always coloured. Stale, blocked, unknown and reset-less windows, and
+  windows with under 1% used, keep the neutral text colour. Hover and
+  accessibility say in words that at this pace the window lasts until reset,
+  runs out about a stated time before it, or is used up, so colour is never the
+  only signal. Once the reset has passed, hover drops the pace line; the label
+  colour and accessible description still reflect the reading. Every colour
+  keeps at least 4.5:1 contrast on the bar.
 - The CPU and RAM chips show whole-machine use as an icon and a percentage,
   such as `12%`, refreshed every 2 seconds. CPU covers the last 2 seconds and
   first appears 2 seconds after the window opens; on macOS user, system and

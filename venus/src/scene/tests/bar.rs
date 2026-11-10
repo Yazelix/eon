@@ -315,9 +315,13 @@ fn quota_shortfall_projects_linear_pace_with_a_basis_only() {
         (0.45, 50, 0.1),   // orange
         (0.375, 50, 0.25), // full red
         (0.25, 50, 0.5),   // still full red
-        (0.1, 50, 0.8),    // the first judged instant
-        (0.5, 100, -1.0),  // nothing used never runs out
-        (0.05, 0, 0.95),   // used up, even in a young window
+        (0.1, 50, 0.8),
+        (0.09, 50, 0.82), // no elapsed-time gate
+        (0.005, 99, 0.5), // 1% used after only 90 seconds
+        (0.01, 99, 0.0),  // 1% used, exactly on pace
+        (0.5, 99, -1.0),  // little used, comfortably under pace
+        (0.0, 99, 1.0),   // use at the window start is still judged
+        (0.05, 0, 0.95),  // used up, even in a young window
         (0.95, 0, 0.05),
     ] {
         let actual = shortfall(elapsed, remaining).expect("judged window");
@@ -326,24 +330,31 @@ fn quota_shortfall_projects_linear_pace_with_a_basis_only() {
             "{elapsed} elapsed, {remaining}% left: {actual} != {expected}"
         );
     }
-    assert_eq!(shortfall(0.09, 50), None, "a young window has no basis");
+    for elapsed in [0.0, 0.005, 0.1, 0.5, 1.0] {
+        assert_eq!(shortfall(elapsed, 100), None, "nothing used has no basis");
+    }
     let reset_less = QuotaWindow {
         resets_at: None,
         ..window(0.5, 0)
     };
     assert_eq!(quota_shortfall(&reset_less, 1000), None);
+    let future_start = QuotaWindow {
+        resets_at: Some(1000 + 18_060),
+        ..window(0.0, 99)
+    };
+    assert_eq!(quota_shortfall(&future_start, 1000), Some(1.0));
     // More used is never better; more elapsed for the same use is never worse.
-    for elapsed in (10..=100).map(|step| step as f32 / 100.0) {
+    for elapsed in (0..=100).map(|step| step as f32 / 100.0) {
         let mut previous = f32::NEG_INFINITY;
-        for remaining in (0..=100).rev() {
+        for remaining in (0..=99).rev() {
             let current = shortfall(elapsed, remaining).expect("judged window");
             assert!(current >= previous, "{elapsed} elapsed, {remaining}% left");
             previous = current;
         }
     }
-    for remaining in 0..=100 {
+    for remaining in 0..=99 {
         let mut previous = f32::INFINITY;
-        for elapsed in (10..=100).map(|step| step as f32 / 100.0) {
+        for elapsed in (0..=100).map(|step| step as f32 / 100.0) {
             let current = shortfall(elapsed, remaining).expect("judged window");
             assert!(current <= previous, "{elapsed} elapsed, {remaining}% left");
             previous = current;
@@ -402,19 +413,49 @@ fn quota_tooltip_lists_what_the_chip_does_not_show() {
             Some(fable),
             "Claude Fable-only 7d window\nResets Thu 16:00\nLasts until reset at this pace",
         ),
-        // Too young to judge the pace.
+        // Under 1% used has no pace, even with a reset.
         (
             Codex,
             Fresh,
-            Some(quota(300, 50, Some(17_940))),
+            Some(quota(300, 100, Some(17_940))),
             "Codex 5h window\nResets at 16:59",
+        ),
+        (
+            Codex,
+            Fresh,
+            Some(quota(300, 99, Some(17_940))),
+            "Codex 5h window\nResets at 16:59\nRuns out about 3h20m before reset",
+        ),
+        (
+            Codex,
+            Fresh,
+            Some(quota(300, 100, Some(1_800))),
+            "Codex 5h window\nResets at 12:30",
+        ),
+        (
+            Codex,
+            Fresh,
+            Some(quota(300, 99, Some(18_000))),
+            "Codex 5h window\nResets at 17:00\nRuns out about 5h before reset",
+        ),
+        (
+            Codex,
+            Stale,
+            Some(quota(300, 99, Some(17_940))),
+            "Codex 5h window\nResets at 16:59\nData is stale",
         ),
         // After that, the date.
         (
             Codex,
             Fresh,
             Some(quota(10_080, 50, Some(601_200))),
-            "Codex 7d window\nResets 11 Nov 11:00",
+            "Codex 7d window\nResets 11 Nov 11:00\nRuns out about 6d22h before reset",
+        ),
+        (
+            Claude,
+            Fresh,
+            Some(quota(10_080, 85, Some(586_800))),
+            "Claude 7d window\nResets 11 Nov 07:00\nRuns out about 5d15h before reset",
         ),
         (
             Codex,
@@ -574,6 +615,18 @@ fn quota_pace_colors_fresh_windows_and_says_so_in_words() {
             resets_at: Some(observed_at + 378_000),
             scope: None,
         },
+        QuotaWindow {
+            duration_minutes: 300,
+            remaining_percent: 99,
+            resets_at: Some(observed_at + 17_940),
+            scope: None,
+        },
+        QuotaWindow {
+            duration_minutes: 10_080,
+            remaining_percent: 85,
+            resets_at: Some(observed_at + 586_800),
+            scope: None,
+        },
     ];
     for (window, label, shortfall, detail) in [
         (
@@ -588,21 +641,35 @@ fn quota_pace_colors_fresh_windows_and_says_so_in_words() {
             0.25,
             "7d window: 50% remaining; observed 2d15h into 7d. At this pace it runs out about 1d18h before reset.",
         ),
+        (
+            &windows[2],
+            "1m/5h 99%",
+            2.0 / 3.0,
+            "5h window: 99% remaining; observed 1m into 5h. At this pace it runs out about 3h20m before reset.",
+        ),
+        (
+            &windows[3],
+            "5h/7d 85%",
+            1.0 - (5.0 / 168.0) / 0.15,
+            "7d window: 85% remaining; observed 5h into 7d. At this pace it runs out about 5d15h before reset.",
+        ),
     ] {
-        let text = quota_text(
-            QuotaProvider::Codex,
-            CodexQuotaState::Fresh,
-            observed_at,
-            Some(window),
-            None,
-        );
-        assert_eq!(text.label, label);
-        let pace = text.pace.expect("each fresh chip judges its one window");
-        assert!((pace - shortfall).abs() < 1e-3);
-        assert_eq!(
-            text.description,
-            format!("Codex quota state: fresh. {detail}")
-        );
+        for provider in [QuotaProvider::Codex, QuotaProvider::Claude] {
+            let text = quota_text(
+                provider,
+                CodexQuotaState::Fresh,
+                observed_at,
+                Some(window),
+                None,
+            );
+            assert_eq!(text.label, label);
+            let pace = text.pace.expect("each fresh chip judges its one window");
+            assert!((pace - shortfall).abs() < 1e-3);
+            assert_eq!(
+                text.description,
+                format!("{} quota state: fresh. {detail}", provider.name())
+            );
+        }
     }
 
     let used_up = QuotaWindow {
@@ -660,10 +727,15 @@ fn quota_pace_colors_fresh_windows_and_says_so_in_words() {
         text.description
     );
 
-    // Stale, blocked, unknown and young windows keep neutral labels and descriptions.
-    let young = QuotaWindow {
+    // Stale, blocked, unknown and unused windows keep neutral labels and descriptions.
+    let unused = QuotaWindow {
+        remaining_percent: 100,
         resets_at: Some(observed_at + 17_940),
         ..windows[0].clone()
+    };
+    let unused_old = QuotaWindow {
+        resets_at: Some(observed_at + 1_800),
+        ..unused.clone()
     };
     for (state, window, label) in [
         (
@@ -678,7 +750,9 @@ fn quota_pace_colors_fresh_windows_and_says_so_in_words() {
         ),
         (CodexQuotaState::Blocked, None, "blocked"),
         (CodexQuotaState::Unknown, None, "unknown"),
-        (CodexQuotaState::Fresh, Some(&young), "1m/5h 50%"),
+        (CodexQuotaState::Fresh, Some(&unused), "1m/5h 100%"),
+        (CodexQuotaState::Fresh, Some(&unused_old), "4h30m/5h 100%"),
+        (CodexQuotaState::Stale, Some(&windows[2]), "1m/5h 99% old"),
     ] {
         let text = quota_text(QuotaProvider::Codex, state, observed_at, window, None);
         assert_eq!(text.label, label);

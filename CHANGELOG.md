@@ -5,6 +5,10 @@ installation, and proven contract changes.
 
 ## Unreleased
 
+- Codex and Claude quota chips show pace colour and hover/accessibility text
+  from 1% used, with no elapsed-time gate. Windows with no quota used are
+  neutral at any age and show no pace line (`eon-7aw48`).
+
 - Each column card's top line carries a Stack tab, labelled `Stack`, or
   `Stack 1`, `Stack 2`, ... left to right when a tab has several columns
   (Stack N is `column` N in `eon session --json`). Every pane title, the top

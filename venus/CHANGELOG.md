@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+- Codex and Claude quota chips show pace colour and hover/accessibility text
+  from 1% used, with no elapsed-time gate. Windows with no quota used are
+  neutral at any age and show no pace line (`eon-7aw48`).
+
 - VEN-C5: plain-text loopback hosts with a port (`localhost`, `127.0.0.1`,
   `[::1]`) are detected as links targeting `http://` and the text, unless
   `--detect-local-hosts false` (`eon-onvk0`). New launch flag, no wire change.

@@ -2950,7 +2950,7 @@ fn quota_window_position(window: &QuotaWindow, observed_at: u64) -> Option<Strin
 
 /// How early, as a share of the window, the pace so far runs out before the reset if it
 /// continues linearly; negative is the share left spare, down to -1. `None` has no basis:
-/// no reset, or under a tenth of the window elapsed with quota left.
+/// no reset, or under 1% used with quota left.
 fn quota_shortfall(window: &QuotaWindow, observed_at: u64) -> Option<f32> {
     // EONW rejects zero-length windows.
     let elapsed = quota_elapsed_seconds(window, observed_at)? as f32
@@ -2958,10 +2958,9 @@ fn quota_shortfall(window: &QuotaWindow, observed_at: u64) -> Option<f32> {
     let used = f32::from(100 - window.remaining_percent) / 100.0;
     if used >= 1.0 {
         Some(1.0 - elapsed)
-    } else if elapsed < 0.1 {
+    } else if window.remaining_percent >= 100 {
         None
     } else {
-        // Nothing used divides to infinity, which clamps to -1.
         Some((1.0 - elapsed / used).max(-1.0))
     }
 }

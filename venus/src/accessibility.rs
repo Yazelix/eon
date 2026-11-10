@@ -2594,9 +2594,9 @@ mod tests {
                     "",
                     "fresh",
                     " At this pace it lasts until reset.",
-                    "Lasts until reset at this pace",
+                    "\nLasts until reset at this pace",
                 ),
-                ClaudeQuotaState::Stale => (" old", "stale", "", "Data is stale"),
+                ClaudeQuotaState::Stale => (" old", "stale", "", "\nData is stale"),
             };
             for windows in &claude_windows {
                 for providers in 0..4 {
@@ -2797,6 +2797,13 @@ mod tests {
                                     ),
                                 };
                                 assert_eq!(quota.label, format!("{label}{suffix}"));
+                                let (pace, last) = if state == ClaudeQuotaState::Fresh
+                                    && quota.window == Some(QuotaWindowIdentity::Claude(10080))
+                                {
+                                    ("", "")
+                                } else {
+                                    (pace, last)
+                                };
                                 assert_eq!(
                                     quota.accessible_label,
                                     format!("Claude {label}{suffix}")
@@ -2811,7 +2818,7 @@ mod tests {
                                 let window = detail.split(':').next().unwrap();
                                 assert_eq!(
                                     quota.tooltip,
-                                    format!("Claude {window}\nResets {reset}\n{last}")
+                                    format!("Claude {window}\nResets {reset}{last}")
                                 );
                             }
                             children.extend([SHORTCUTS, CLOSE_TAB, PANE_PANEL]);
