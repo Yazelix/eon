@@ -13,6 +13,10 @@ installation, and proven contract changes.
   the wider bar gap (6 px) make the top pane about 30 px shorter
   (`eon-whjhd`).
 
+- `eon tab switch TAB [--json]` makes a tab of the session active, as clicking
+  it does, from any tab and without moving desktop focus; a tab that is not live
+  exits 3 (`unknown-tab`). `eon focus` takes a pane and directions only; a tab
+  ID there exits 2 and names `eon tab switch` (`eon-cglv2.1`).
 - `eon-bench terminals` measures tmux and Zellij inside foot against a
   same-cohort bare-foot baseline, plus fresh-window PSS/RSS/anonymous PSS for
   Eon, foot and Ghostty with separate Venus attribution, using its existing

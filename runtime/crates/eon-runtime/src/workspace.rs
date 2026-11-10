@@ -2494,6 +2494,9 @@ impl Workspace {
                 return Ok(());
             }
         }
+        if tab_number(id).is_some() {
+            return Err(action_error("unknown-tab", format!("tab {id} is not live")));
+        }
         Err(action_error(
             "unknown-id",
             format!("{id} is not a live tab or pane identity"),
@@ -3724,7 +3727,7 @@ fn validated_directory(directory: Vec<u8>) -> Result<PathBuf, Failure> {
     Ok(directory)
 }
 
-fn tab_number(value: &str) -> Option<usize> {
+pub(crate) fn tab_number(value: &str) -> Option<usize> {
     value.strip_prefix('t').and_then(canonical_number)
 }
 
@@ -9313,6 +9316,75 @@ mod tests {
             [t2_pane.session, popup_caller]
         );
         assert_eq!(set.snapshot(), sole);
+    }
+
+    #[test]
+    fn tab_switch_selects_a_callers_tab_as_a_click_does_without_showing_its_session() {
+        let mut set = two_workspace_set(|_| Ok(()));
+        let apply = |set: &mut WorkspaceSet, id: &str, caller: Option<&str>, action| {
+            set.dispatch(id, caller, action, prepared, |_| Ok(()))
+        };
+        let switch = |tab: &str| Action::Workspace(WorkspaceAction::FocusId(tab.into()));
+        let callers = [0, 1].map(|index| {
+            set.workspaces[index].tabs[0].columns[0].panes[0]
+                .session
+                .id
+                .clone()
+        });
+        // Each session gets a second tab showing its Agent, then its first
+        // tab is active again, with the caller's pane in it.
+        for (index, caller) in callers.iter().enumerate() {
+            let caller = Some(caller.as_str());
+            let launch = Action::LaunchTab {
+                directory: b"/".to_vec(),
+                argv: Vec::new(),
+                focus: true,
+            };
+            apply(&mut set, &format!("launch-{index}"), caller, launch).unwrap();
+            let [first, second] = [0, 1].map(|tab| set.workspaces[index].tabs[tab].id.clone());
+            apply(
+                &mut set,
+                &format!("agent-{index}"),
+                caller,
+                invoke(&second, "agent"),
+            )
+            .unwrap();
+            apply(&mut set, &format!("back-{index}"), caller, switch(&first)).unwrap();
+        }
+
+        for (index, caller) in callers.iter().enumerate() {
+            let before = set.clone();
+            let second = before.workspaces[index].tabs[1].id.clone();
+            let request = format!("switch-{index}");
+            apply(&mut set, &request, Some(caller), switch(&second)).unwrap();
+            // Only the caller's session's active tab moves: the Agent the
+            // tab showed stays shown and the shown session stays shown.
+            let mut expected = before.workspaces.clone();
+            expected[index].active = 1;
+            assert_eq!(set.workspaces, expected);
+            assert_eq!(set.shown, 0);
+            assert!(set.workspaces[index].tabs[1].selected_popup.is_some());
+            if index == 0 {
+                // A click on the shown session's tab has the same result.
+                let mut clicked = before.clone();
+                apply(&mut clicked, &request, None, switch(&second)).unwrap();
+                assert_eq!(clicked.workspaces, set.workspaces);
+            }
+        }
+
+        // The active tab is a harmless no-op; another session's tab or a
+        // dead one fails as unknown-tab and changes nothing.
+        let before = set.clone();
+        let active = set.workspaces[0].tabs[1].id.clone();
+        apply(&mut set, "again", Some(&callers[0]), switch(&active)).unwrap();
+        assert_eq!(set.workspaces, before.workspaces);
+        let foreign = set.workspaces[1].tabs[0].id.clone();
+        for (id, tab) in [("foreign", foreign.as_str()), ("dead", "t99")] {
+            let failure = apply(&mut set, id, Some(&callers[0]), switch(tab)).unwrap_err();
+            assert_eq!(failure.code, "unknown-tab", "{tab}");
+            assert_eq!(set.workspaces, before.workspaces);
+            assert_eq!(set.shown, 0);
+        }
     }
 
     #[test]

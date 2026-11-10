@@ -83,6 +83,9 @@ fn cli_path(action: &Action) -> CliPath {
             WorkspaceAction::CreatePane { focus } => {
                 [words(&["pane", "create"]), flag(!focus, "--no-focus")].concat()
             }
+            WorkspaceAction::FocusId(tab) if tab_number(tab).is_some() => {
+                words(&["tab", "switch", tab])
+            }
             WorkspaceAction::FocusId(id) => words(&["focus", id]),
             WorkspaceAction::Focus(to) => words(&["focus", direction(to)]),
             WorkspaceAction::Move(to @ (Direction::Left | Direction::Right)) => {
@@ -232,6 +235,7 @@ fn every_eonw_action_has_a_cli_path_or_a_named_exception() {
         WorkspaceAction::CreatePane { focus: true },
         WorkspaceAction::CreatePane { focus: false },
         WorkspaceAction::FocusId(text("p2")),
+        WorkspaceAction::FocusId(text("t2")),
         WorkspaceAction::CloseTab { tab: text("t2") },
         WorkspaceAction::SetTabDirectory {
             tab: text("t1"),

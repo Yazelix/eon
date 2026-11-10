@@ -22,9 +22,11 @@ rather than guessing IDs.
 Leave the person's active tab, selection, shown popup and desktop focus alone
 unless asked to move them. Pass `--no-focus` to `pane create`, `session new`
 and directory-based `tab create`.
-Never run `eon focus ID`, `eon session switch SESSION`,
+Never run `eon focus PANE`, `eon tab switch TAB`, `eon session switch SESSION`,
 `eon tab close TAB` or `eon pane close PANE` on things you did not
-open unless the person asks. If asked to clean up, close what you opened with
+open unless the person asks. When the person asks to see a tab, run
+`eon tab switch tN --json`: it selects that tab as a click does and leaves
+desktop focus alone. If asked to clean up, close what you opened with
 `eon tab close tN --json` or `eon pane close pN --json`: they close targets in
 any tab of your session without moving focus. If an affected terminal is still
 running a command, or Eon cannot tell (always so in an eonbase window), `--json`

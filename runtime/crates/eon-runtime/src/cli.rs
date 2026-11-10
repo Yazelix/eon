@@ -19,8 +19,8 @@ use super::{
     windows,
     workspace::{
         caller_output, failure_human, human as human_output, json as json_output, json_escape,
-        list_human, list_json, registration_json, resolve_target, terminal_editing_json,
-        terminal_history_json, terminal_sent_json, terminal_text_json,
+        list_human, list_json, registration_json, resolve_target, tab_number,
+        terminal_editing_json, terminal_history_json, terminal_sent_json, terminal_text_json,
     },
 };
 use eon_workspace_protocol::v38::{
@@ -1047,6 +1047,7 @@ const HELP_SECTIONS: &[(&str, &[(&str, &str)])] = &[
                 "tab directory TAB [--json] -- DIRECTORY",
                 "Set the tab's launch directory",
             ),
+            ("tab switch TAB [--json]", "Make TAB the active tab"),
             ("tab move left|right [--json]", "Move the active tab"),
             (
                 "pane create [--json] [--no-focus]",
@@ -1094,8 +1095,8 @@ const HELP_SECTIONS: &[(&str, &[(&str, &str)])] = &[
                 "Hide a popup as its window would",
             ),
             (
-                "focus ID|left|right|up|down [--json]",
-                "Focus by ID or navigate",
+                "focus PANE|left|right|up|down [--json]",
+                "Focus a pane or navigate",
             ),
         ],
     ),
@@ -2441,6 +2442,9 @@ fn parse_control_arguments(arguments: &[OsString]) -> Result<(Action, bool), Err
         _ if !focus => return Err(Error::usage(EON_USAGE)),
         ["session"] | ["session", "ls"] => Action::Workspace(WorkspaceAction::Inspect),
         ["tab", "create"] => Action::Workspace(WorkspaceAction::CreateTab),
+        ["tab", "switch", tab] if tab_number(tab).is_some() => {
+            Action::Workspace(WorkspaceAction::FocusId((*tab).into()))
+        }
         ["tab", "move", "left"] => Action::Workspace(WorkspaceAction::Move(Direction::Left)),
         ["tab", "move", "right"] => Action::Workspace(WorkspaceAction::Move(Direction::Right)),
         ["pane", "read", target] => Action::ReadTerminal {
@@ -2464,6 +2468,11 @@ fn parse_control_arguments(arguments: &[OsString]) -> Result<(Action, bool), Err
         ["focus", "right"] => Action::Workspace(WorkspaceAction::Focus(Direction::Right)),
         ["focus", "up"] => Action::Workspace(WorkspaceAction::Focus(Direction::Up)),
         ["focus", "down"] => Action::Workspace(WorkspaceAction::Focus(Direction::Down)),
+        ["focus", tab] if tab_number(tab).is_some() => {
+            return Err(Error::usage(format!(
+                "eon focus takes a pane; switch to tab {tab} with `eon tab switch {tab}`"
+            )));
+        }
         ["focus", id] => Action::Workspace(WorkspaceAction::FocusId((*id).into())),
         _ => return Err(Error::usage(EON_USAGE)),
     };
@@ -3502,6 +3511,46 @@ mod tests {
         for name in ["up", "down"] {
             assert!(parse_control_arguments(&["tab", "move", name].map(Into::into)).is_err());
         }
+    }
+
+    #[test]
+    fn tab_switch_takes_a_tab_and_focus_refers_tabs_to_it() {
+        let parse = |args: &[&str]| {
+            parse_control_arguments(&args.iter().map(OsString::from).collect::<Vec<_>>())
+        };
+        let focus = |id: &str| Action::Workspace(WorkspaceAction::FocusId(id.into()));
+        assert_eq!(
+            parse(&["tab", "switch", "t2"]).unwrap(),
+            (focus("t2"), false)
+        );
+        assert_eq!(
+            parse(&["tab", "switch", "--json", "t12"]).unwrap(),
+            (focus("t12"), true)
+        );
+        assert_eq!(parse(&["focus", "p2"]).unwrap(), (focus("p2"), false));
+        for args in [
+            &["tab", "switch"][..],
+            &["tab", "switch", "p2"],
+            &["tab", "switch", "t0"],
+            &["tab", "switch", "t02"],
+            &["tab", "switch", "s1"],
+            &["tab", "switch", "t1", "t2"],
+            &["tab", "switch", "t1", "--no-focus"],
+        ] {
+            let error = parse(args).unwrap_err();
+            assert_eq!(
+                (error.status, error.message),
+                (2, EON_USAGE.into()),
+                "{args:?}"
+            );
+        }
+        let error = parse(&["focus", "t2", "--json"]).unwrap_err();
+        assert_eq!(error.status, 2);
+        assert!(
+            error.message.contains("`eon tab switch t2`"),
+            "{}",
+            error.message
+        );
     }
 
     #[test]

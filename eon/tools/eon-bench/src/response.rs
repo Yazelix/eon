@@ -697,18 +697,13 @@ impl Session {
         }
     }
     fn focus(&mut self, target: &str) -> Result {
-        self.eon(&["focus", target, "--json"])?;
-        self.wait(
-            0,
-            &format!(
-                "{}={target}",
-                if target.starts_with('t') {
-                    "tab"
-                } else {
-                    "pane"
-                }
-            ),
-        )
+        let tab = target.starts_with('t');
+        if tab {
+            self.eon(&["tab", "switch", target, "--json"])?;
+        } else {
+            self.eon(&["focus", target, "--json"])?;
+        }
+        self.wait(0, &format!("{}={target}", if tab { "tab" } else { "pane" }))
     }
     fn verify_focus(&mut self) -> Result {
         fn focused(value: &Value) -> Option<&Value> {

@@ -3118,7 +3118,7 @@ fn closing_a_pending_pair_dismisses_it_and_starts_the_first_pane() {
 
     // A tab whose pair cannot stop stays, and a later close finishes it.
     fs::write(&window.fail_stop_once, "terminal-2").unwrap();
-    assert!(window.eon(&["focus", "t1"]).status.success());
+    assert!(window.eon(&["tab", "switch", "t1"]).status.success());
     assert!(matches!(
         workspace_action(&control, "close-t1-partial", Action::CloseTab { tab: "t1".into() }),
         Response::Failure(failure)
@@ -8569,17 +8569,50 @@ fn tab_directory_retargets_future_sessions_without_crossing_tabs() {
         .success()
     );
     assert!(
-        invoke(&binary, &runtime, &config, &["focus", "t1"])
+        invoke(&binary, &runtime, &config, &["tab", "switch", "t1"])
             .status
             .success()
     );
+    // A dead tab, a tab given to `focus` and a pane given to `tab switch`
+    // fail with their exit statuses and change nothing.
+    let selection = || {
+        let session = invoke(&binary, &runtime, &config, &["session", "--json"]);
+        let session: serde_json::Value = serde_json::from_slice(&session.stdout).unwrap();
+        let tabs = session["tabs"].as_array().unwrap().iter();
+        let selected = tabs.map(|tab| (tab["id"].clone(), tab["selected_pane"].clone()));
+        (session["active_tab"].clone(), selected.collect::<Vec<_>>())
+    };
+    let before = selection();
+    assert_eq!(before.0, "t1");
+    let dead = invoke(
+        &binary,
+        &runtime,
+        &config,
+        &["tab", "switch", "t9", "--json"],
+    );
+    assert_eq!(dead.status.code(), Some(3));
+    assert!(
+        stdout(&dead).contains("\"code\":\"unknown-tab\""),
+        "{}",
+        stdout(&dead)
+    );
+    let focused_tab = invoke(&binary, &runtime, &config, &["focus", "t2", "--json"]);
+    assert_eq!(focused_tab.status.code(), Some(2));
+    assert!(
+        String::from_utf8_lossy(&focused_tab.stderr).contains("`eon tab switch t2`"),
+        "{}",
+        String::from_utf8_lossy(&focused_tab.stderr)
+    );
+    let pane_as_tab = invoke(&binary, &runtime, &config, &["tab", "switch", "p1"]);
+    assert_eq!(pane_as_tab.status.code(), Some(2));
+    assert_eq!(selection(), before);
     assert!(
         invoke(&binary, &runtime, &config, &["pane", "create"])
             .status
             .success()
     );
     assert!(
-        invoke(&binary, &runtime, &config, &["focus", "t2"])
+        invoke(&binary, &runtime, &config, &["tab", "switch", "t2"])
             .status
             .success()
     );
@@ -8606,7 +8639,7 @@ fn tab_directory_retargets_future_sessions_without_crossing_tabs() {
     );
     fs::remove_dir(&disappearing).unwrap();
     assert!(
-        invoke(&binary, &runtime, &config, &["focus", "t1"])
+        invoke(&binary, &runtime, &config, &["tab", "switch", "t1"])
             .status
             .success()
     );

@@ -1312,6 +1312,9 @@ names its socket. CLI JSON names a session `session` and a terminal
   Amended on 2026-11-09 (approved by Lucca on 2026-11-09, relayed by
   eon-overseer) by `eon-fv1j0`: `tab create --directory DIRECTORY` becomes
   `tab create --dir DIR`, with no alias.
+  Amended on 2026-11-09 (approved by Lucca, relayed by eon-overseer) by
+  `eon-cglv2.1`: `eon tab switch TAB [--json]` selects a tab as a click does,
+  and `eon focus` takes a pane, not a tab.
 - **Consumer:** One local CLI or approved composition controlling a live Eon
   supervisor.
 - **Trigger:** The client submits one versioned session or supervisor-lifecycle
@@ -1446,6 +1449,17 @@ names its socket. CLI JSON names a session `session` and a terminal
     unchanged.
   - `eon tab directory TAB [--json] -- DIRECTORY` on a pending tab is a pick:
     it commits exactly as a pair pick does (EON-C18).
+  - `eon tab switch TAB [--json]` makes live tab TAB the active tab of the
+    addressed session, as clicking it in the tab bar does: it sends the same
+    EONW `FocusId` action, so TAB shows the pane and popup it last selected and
+    every other tab keeps its selection. Run from an Eon terminal it addresses
+    the caller's session, whichever tab the caller is in; when that session is
+    hidden its active tab changes and it stays hidden. It never moves desktop
+    focus or shows another session. Switching to the active tab returns the
+    unchanged snapshot. A TAB that is not a `tN` identity is a usage error
+    (exit 2), and a `tN` that is not a live tab of the addressed session fails
+    as `unknown-tab` (exit 3); both change nothing. `eon focus ID` takes a pane
+    ID; a tab ID there is a usage error (exit 2) that names `eon tab switch`.
   - `eon popup hide POPUP [--json]` hides popup `uN` of the addressed
     session, as its owning window's dismissal would:
 

@@ -312,7 +312,7 @@ fn record(r: &mut Recorder) -> Result<()> {
         })?;
         r.sleep(Duration::from_secs(1))?;
 
-        action(r, &eon, &home, &["focus", "t1"])?;
+        action(r, &eon, &home, &["tab", "switch", "t1"])?;
         wait_for(r, &eon, &home, "demo tab focused", |state| {
             state["active_tab"] == "t1"
         })?;
@@ -562,7 +562,7 @@ fn features(r: &mut Recorder) -> Result<()> {
         }
     };
     let focus_demo_tab = |r: &mut Recorder| {
-        action(r, &eon, &home, &["focus", "t1"])?;
+        action(r, &eon, &home, &["tab", "switch", "t1"])?;
         wait_for(r, &eon, &home, "demo tab focused", |state| {
             state["active_tab"] == "t1"
         })
