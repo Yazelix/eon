@@ -938,13 +938,29 @@ user namespaces inside the Nix build sandbox.
 
 Build both installed products with `nix build --no-link .#default .#eonbase`.
 eonbase installs Eon's built executable under its own name, so the eon crate
-compiles and its package tests run once for both.
+compiles once for both.
 
-The eon package check runs the eon and eon-runtime tests in parallel, then
-their ignored timing measurements one at a time.
+On Linux, `.#default`, `.#eonbase` and `.#checks.x86_64-linux.default` require
+`.#checks.x86_64-linux.eon-tests` as a build-only dependency. This Crane
+cargoNextest check runs every eon/eon-runtime executable
+test: regular tests in parallel under `.config/nextest.toml`'s process locks,
+then ignored tests one at a time against packaged release Orbit. Cargo runs
+their doctests separately. The check retains its discovered test inventory in
+`test-list.json`; build it directly with
+`nix build --out-link result-eon-tests .#checks.x86_64-linux.eon-tests`.
 
-Linux package checks use the sandbox's executable `/dev/shm` for ephemeral test
-state, keeping lifecycle records and sockets off the builder's disk journal.
+Eon's Linux package compiles the release executable with thin LTO.
+The check executes dev-profile tests
+using a separate reusable dependency cache and line-table debug information.
+It retains debug assertions and overflow checks. Beyond the author's full
+isolated `eon-test` gate, this check proves the suite in the Nix sandbox against
+release Orbit, including the ignored lease timing measurement. Its artifacts
+are build inputs only and do not ship in the runtime closure. Orbit and Venus
+keep their package and specialized checks; Darwin keeps Eon's release-profile
+package suite.
+
+The Linux `eon-tests` check uses the sandbox's executable `/dev/shm` for ephemeral
+test state, keeping lifecycle records and sockets off the builder's disk journal.
 Sources and compilation stay in the ordinary build directory.
 
 `nix build --no-link .#checks.x86_64-linux.helix-grammars` runs the pinned
@@ -956,7 +972,7 @@ builds the complete source closure, including disabled grammars. The cache job
 publishes and pins it separately from runtime closures so source outputs remain
 available for substitution.
 
-Every build loads the configuration corpus in
+The Eon Runtime test suite loads the configuration corpus in
 `runtime/crates/eon-runtime/testdata/config-corpus`: `config.toml` fixtures from
 each release, each beside an `expected.json` of the resolved values and
 warnings it must keep giving (on a mismatch the test prints what the fixture

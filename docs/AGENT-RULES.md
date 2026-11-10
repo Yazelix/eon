@@ -97,7 +97,13 @@ known regression.
 Before review of a code, test or script candidate, the author runs
 `nix develop -c eon-test` over the whole workspace, not only changed crates;
 before pushing a landing, the overseer runs `nix build`, batching landings
-that come close together. This catches downstream failures such as the
+that come close together. On Linux, `.#default`, `.#eonbase` and
+`.#checks.x86_64-linux.default` require the cached dev-profile
+`.#checks.x86_64-linux.eon-tests` check: all eon/eon-runtime
+executable tests, their ignored tests afterwards one at a time against
+packaged release Orbit, and their doctests. Linux Nix verification executes
+these tests in the dev profile. Orbit, Venus and Darwin retain their existing
+package test routes. This catches downstream failures such as the
 2026-11-07 Venus launch argument that broke the package build through another
 crate's pinned-argv test.
 

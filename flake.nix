@@ -417,9 +417,6 @@
               checkFlags=()
               cargoTestFlags=(--package yazelix-venus --no-run)
               cargoCheckHook
-              checkFlags=()
-              cargoTestFlags=(--package eon --package eon-runtime --no-run)
-              cargoCheckHook
             '';
             doCheck = false;
           };
@@ -1000,7 +997,7 @@
             assert helix.rev == helixIdentity.revision;
             assert lib.assertMsg (helixCargo.workspace.package.version == helixIdentity.version)
               "Helix manifest version does not match the selected Cargo workspace package";
-            buildWorkspacePackage {
+            buildWorkspacePackage ({
               pname = "eon";
               inherit (eonCargo.package) version;
               src = workspaceSource;
@@ -1009,69 +1006,11 @@
                 "--package"
                 "eon"
               ];
-              cargoTestFlags = [
-                "--package"
-                "eon"
-                "--package"
-                "eon-runtime"
-              ];
-              # Eon Runtime's lease tests run this Orbit, including the ignored one
-              # that measures it under PTY load.
-              ORBIT_BIN = "${orbitPackage}/bin/yazelix-orbit";
-              preCheck =
-                if pkgs.stdenv.isLinux then
-                  ''
-                    # Keep ephemeral lifecycle state off the builder's disk journal.
-                    eonTestBuildTmpdir="$TMPDIR"
-                    export TMPDIR=/dev/shm
-                  ''
-                else
-                  ''
-                    # macOS socket paths hold 103 bytes, so the tests' runtime
-                    # roots need a TMPDIR of at most 7 bytes. Each build takes
-                    # its own, since /tmp is shared by every build user.
-                    eonTestBuildTmpdir="$TMPDIR"
-                    eonTestTmpdir=
-                    for name in {0..9} {a..z}; do
-                      if mkdir -m 700 "/tmp/e$name" 2>/dev/null; then
-                        eonTestTmpdir="/tmp/e$name"
-                        export TMPDIR="$eonTestTmpdir"
-                        break
-                      fi
-                    done
-                    test "$TMPDIR" != "$eonTestBuildTmpdir"
-                    eonTestCleanup() {
-                      if [ -n "''${eonTestTmpdir:-}" ]; then
-                        rm -rf "$eonTestTmpdir"
-                      fi
-                    }
-                    # A failed check, in the hook or in postCheck, stops before
-                    # postCheck's cleanup, so failureHooks runs it instead.
-                    failureHooks+=(eonTestCleanup)
-                  '';
-              # The hook runs the tests in parallel. The ignored tests measure timing,
-              # so they run afterwards one at a time, with the hook's profile, target
-              # and environment so nothing recompiles.
-              postCheck =
-                ''
-                  eonIgnoredTestFlags=(-j "$NIX_BUILD_CORES" --profile release
-                    --target ${pkgs.stdenv.hostPlatform.rust.rustcTarget} --offline)
-                  concatTo eonIgnoredTestFlags cargoTestFlags
-                  ${pkgs.rust.envVars.setEnv} cargo test "''${eonIgnoredTestFlags[@]}" -- --ignored --test-threads=1
-                ''
-                + lib.optionalString (!pkgs.stdenv.isLinux) ''
-                  eonTestCleanup
-                  eonTestTmpdir=
-                ''
-                + ''
-                  export TMPDIR="$eonTestBuildTmpdir"
-                '';
+              doCheck = !pkgs.stdenv.isLinux;
               nativeBuildInputs = [
                 pkgs.copyDesktopItems
                 pkgs.makeWrapper
               ];
-              # Runtime tests paste printed commands into Eon's Nushell.
-              nativeCheckInputs = [ nushellPackage ];
               desktopItems = [ desktopItem ];
               postInstall = ''
                 for size in 16 24 32 48 64 128 256 512; do
@@ -1142,12 +1081,111 @@
                 mainProgram = "eon";
                 platforms = [ system ];
               };
-            };
+            } // lib.optionalAttrs pkgs.stdenv.isDarwin {
+              cargoTestFlags = [
+                "--package"
+                "eon"
+                "--package"
+                "eon-runtime"
+              ];
+              # Eon Runtime's lease tests run this Orbit, including the ignored one
+              # that measures it under PTY load.
+              ORBIT_BIN = "${orbitPackage}/bin/yazelix-orbit";
+              preCheck = ''
+                # macOS socket paths hold 103 bytes, so the tests' runtime
+                # roots need a TMPDIR of at most 7 bytes. Each build takes
+                # its own, since /tmp is shared by every build user.
+                eonTestBuildTmpdir="$TMPDIR"
+                eonTestTmpdir=
+                for name in {0..9} {a..z}; do
+                  if mkdir -m 700 "/tmp/e$name" 2>/dev/null; then
+                    eonTestTmpdir="/tmp/e$name"
+                    export TMPDIR="$eonTestTmpdir"
+                    break
+                  fi
+                done
+                test "$TMPDIR" != "$eonTestBuildTmpdir"
+                eonTestCleanup() {
+                  if [ -n "''${eonTestTmpdir:-}" ]; then
+                    rm -rf "$eonTestTmpdir"
+                  fi
+                }
+                # A failed check, in the hook or in postCheck, stops before
+                # postCheck's cleanup, so failureHooks runs it instead.
+                failureHooks+=(eonTestCleanup)
+              '';
+              # The hook runs the tests in parallel. The ignored tests measure timing,
+              # so they run afterwards one at a time, with the hook's profile, target
+              # and environment so nothing recompiles.
+              postCheck = ''
+                eonIgnoredTestFlags=(-j "$NIX_BUILD_CORES" --profile release
+                  --target ${pkgs.stdenv.hostPlatform.rust.rustcTarget} --offline)
+                concatTo eonIgnoredTestFlags cargoTestFlags
+                ${pkgs.rust.envVars.setEnv} cargo test "''${eonIgnoredTestFlags[@]}" -- --ignored --test-threads=1
+                eonTestCleanup
+                eonTestTmpdir=
+                export TMPDIR="$eonTestBuildTmpdir"
+              '';
+              # Runtime tests paste printed commands into Eon's Nushell.
+              nativeCheckInputs = [ nushellPackage ];
+            });
+          eonTestArgs = {
+            pname = "eon-tests";
+            inherit (eonCargo.package) version;
+            src = workspaceSource;
+            cargoVendorDir = null;
+            cargoDeps = rustPlatform.importCargoLock workspaceCargoLock;
+            postPatch = cargoVendorTimestamps;
+            strictDeps = true;
+            doIncludeCrossToolchainEnv = false;
+            CARGO_PROFILE = "dev";
+            CARGO_PROFILE_DEV_DEBUG = "line-tables-only";
+            cargoExtraArgs = "--locked --offline --target ${pkgs.stdenv.hostPlatform.rust.rustcTarget} -p eon -p eon-runtime";
+            nativeBuildInputs = [ rustPlatform.cargoSetupHook ];
+          };
+          # Release artifacts cannot cover dev-profile tests; cache their dependencies separately.
+          eonTestCargoArtifacts = craneLib.buildDepsOnly (eonTestArgs // {
+            src = crateSource;
+            buildPhaseCargoCommand = "cargoWithProfile test ${eonTestArgs.cargoExtraArgs} --no-run";
+            doCheck = false;
+            installCargoArtifactsMode = "use-symlink";
+          });
+          eonTests = (craneLib.overrideScope (_: _: {
+            inherit inheritCargoArtifactsHook;
+          })).cargoNextest (eonTestArgs // {
+            cargoArtifacts = eonTestCargoArtifacts;
+            doInstallCargoArtifacts = false;
+            ORBIT_BIN = "${orbitPackage}/bin/yazelix-orbit";
+            nativeCheckInputs = [ nushellPackage ];
+            cargoNextestExtraArgs = ''--config-file ${./.config/nextest.toml} --no-fail-fast --no-tests fail --test-threads "$NIX_BUILD_CORES"'';
+            preCheck = ''
+              eonTestBuildTmpdir="$TMPDIR"
+              export TMPDIR=/dev/shm
+              cargo nextest list --cargo-profile "$CARGO_PROFILE" ${eonTestArgs.cargoExtraArgs} \
+                --config-file ${./.config/nextest.toml} --message-format json > "$out/test-list.json"
+            '';
+            postCheck = ''
+              cargo nextest run --cargo-profile "$CARGO_PROFILE" ${eonTestArgs.cargoExtraArgs} \
+                --config-file ${./.config/nextest.toml} --no-fail-fast --run-ignored only \
+                --test-threads 1 --no-tests fail --success-output immediate
+              cargo test --profile "$CARGO_PROFILE" ${eonTestArgs.cargoExtraArgs} --doc
+              export TMPDIR="$eonTestBuildTmpdir"
+            '';
+          });
           # The installed product: eonPackage's files and the source receipt that
           # `eon update --check` reads (EON-C41 Provenance). The receipt names this
           # flake's revision, so it stays outside the Rust build: a commit that
           # changes no source rebuilds only this.
-          eonProduct = pkgs.runCommand "eon-${eonCargo.package.version}" { inherit (eonPackage) meta; } ''
+          eonProduct = pkgs.runCommand "eon-${eonCargo.package.version}" {
+            inherit (eonPackage) meta;
+            # Landing tooling roots the release dependency cache through checks.default.
+            passthru = lib.optionalAttrs pkgs.stdenv.isLinux {
+              inherit (eonPackage) cargoArtifacts;
+            };
+          } ''
+            ${lib.optionalString pkgs.stdenv.isLinux ''
+              test -s ${eonTests}/test-list.json
+            ''}
             mkdir -p "$out/share"
             for entry in ${eonPackage}/*; do
               if [ "''${entry##*/}" != share ]; then
@@ -1183,6 +1221,9 @@
                 platforms = [ system ];
               };
             } ''
+              ${lib.optionalString pkgs.stdenv.isLinux ''
+                test -s ${eonTests}/test-list.json
+              ''}
               install -Dm755 ${eonPackage}/bin/.eon-wrapped "$out/bin/eonbase"
               install -Dm444 ${./LICENSE} "$out/share/licenses/eonbase/LICENSE"
               install -Dm444 ${./runtime/LICENSE} "$out/share/licenses/eonbase/eon-runtime/LICENSE"
@@ -1438,7 +1479,7 @@
             };
           };
           checks.${system} = {
-            default = eonPackage;
+            default = if pkgs.stdenv.isLinux then eonProduct else eonPackage;
             source-receipt = eonProduct;
             macos-app = macosApp;
             helix-grammars = helix.checks.${system}.codeberg_grammars;
@@ -1454,6 +1495,7 @@
               touch "$out"
             '';
           } // lib.optionalAttrs pkgs.stdenv.isLinux {
+            eon-tests = eonTests;
             bundle-relink = bundleRelink.tree;
             bundle-launch = bundleRelink.launch;
           } // orbitChecks;

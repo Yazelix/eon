@@ -309,7 +309,10 @@ pushes that source closure with `cachix push`. It pins the aggregate as
 `flake.lock` and `cachix pin --keep-forever` to retain it.
 
 The job then builds `packages.x86_64-linux.default` and
-`packages.x86_64-linux.eonbase` with their required package checks. A second
+`packages.x86_64-linux.eonbase` with their required checks. Each product
+requires a build-only check that runs Eon and Eon Runtime's
+tests through cached dev-profile Nextest, including serial ignored lease tests
+against release Orbit and separate doctests. A second
 `cachix push` publishes both outputs and their runtime dependencies. Grammar
 sources are the build inputs this job publishes; it does not upload the whole
 store, compilers or unrelated build intermediates.
