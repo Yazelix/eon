@@ -1188,17 +1188,37 @@ fn cpu(threads: u64, running: &(impl Fn() -> bool + Sync)) -> u64 {
     })
 }
 
-/// Buffered writes that rewrite one file of at most `cap` bytes, leaving the
-/// kernel's writeback to drain them. The file never has a name (O_TMPFILE), so
-/// its blocks return when this process dies, however it dies.
-fn sequential(directory: &Path, cap: u64, running: &impl Fn() -> bool) -> Result<u64> {
-    let chunk: Vec<u8> = (0..MIB).map(|i| (i % 251) as u8).collect();
-    let mut file = fs::OpenOptions::new()
+#[cfg(target_os = "linux")]
+fn sequential_file(directory: &Path) -> Result<File> {
+    fs::OpenOptions::new()
         .write(true)
         .mode(0o600)
         .custom_flags(libc::O_TMPFILE)
         .open(directory)
-        .map_err(|error| format!("{}: unnamed file: {error}", directory.display()))?;
+        .map_err(|error| format!("{}: unnamed file: {error}", directory.display()))
+}
+
+#[cfg(target_os = "macos")]
+fn sequential_file(directory: &Path) -> Result<File> {
+    let path = directory.join(format!("sequential-{}", std::process::id()));
+    let file = fs::OpenOptions::new()
+        .write(true)
+        .create_new(true)
+        .mode(0o600)
+        .open(&path)
+        .map_err(|error| format!("{}: temporary file: {error}", path.display()))?;
+    fs::remove_file(&path)
+        .map_err(|error| format!("{}: unlink temporary file: {error}", path.display()))?;
+    Ok(file)
+}
+
+/// Buffered writes that rewrite one file of at most `cap` bytes, leaving the
+/// kernel's writeback to drain them. The file has no name before writes, so
+/// its blocks return when this process dies, however it dies. Linux uses
+/// O_TMPFILE; macOS can leave one empty file if killed between create and unlink.
+fn sequential(directory: &Path, cap: u64, running: &impl Fn() -> bool) -> Result<u64> {
+    let chunk: Vec<u8> = (0..MIB).map(|i| (i % 251) as u8).collect();
+    let mut file = sequential_file(directory)?;
     let (mut written, mut offset) = (0u64, 0u64);
     while running() {
         if offset + MIB > cap {
@@ -1405,10 +1425,12 @@ mod tests {
 
     /// A controller whose workers run `script` in sh with the worker's arguments
     /// ($1 kind, $4 window directory, $5 report), without the 5 s warm-up.
+    #[cfg(target_os = "linux")]
     fn controller(name: &str, script: &str, guard_mib: &'static str) -> (PathBuf, Pressure) {
         controller_in(name, script, guard_mib, own_cgroup())
     }
 
+    #[cfg(target_os = "linux")]
     fn controller_in(
         name: &str,
         script: &str,
@@ -1432,6 +1454,7 @@ mod tests {
         (out, pressure)
     }
 
+    #[cfg(target_os = "linux")]
     fn running(pressure: &Pressure) -> usize {
         let mut workers = pressure.shared.workers.lock().unwrap();
         workers
@@ -1441,6 +1464,7 @@ mod tests {
             .count()
     }
 
+    #[cfg(target_os = "linux")]
     #[test]
     fn lost_telemetry_kills_the_workers_at_once_and_fails_the_run() {
         // The sampler stops pressure itself: a driver stuck in a long measurement
@@ -1483,6 +1507,7 @@ mod tests {
         fs::remove_dir_all(&out).unwrap();
     }
 
+    #[cfg(target_os = "linux")]
     #[test]
     fn a_new_oom_event_kills_the_workers_at_once_and_fails_the_run() {
         // A resource guard tripping mid-window, through the sampler, not only guard(),
@@ -1535,6 +1560,7 @@ mod tests {
         fs::remove_dir_all(&cgroup).unwrap();
     }
 
+    #[cfg(target_os = "linux")]
     #[test]
     fn telemetry_lost_after_the_last_window_still_fails_the_run() {
         let out = scratch("late-loss");
@@ -1560,6 +1586,7 @@ mod tests {
         fs::remove_dir_all(&out).unwrap();
     }
 
+    #[cfg(target_os = "linux")]
     #[test]
     fn unsafe_starting_conditions_start_no_worker() {
         let marker = scratch("unsafe-marker").join("started");
@@ -1578,6 +1605,7 @@ mod tests {
         fs::remove_dir_all(marker.parent().unwrap()).unwrap();
     }
 
+    #[cfg(target_os = "linux")]
     #[test]
     fn a_worker_that_ends_early_fails_its_case_and_is_never_signalled() {
         let (out, mut pressure) = controller(
@@ -1608,6 +1636,7 @@ mod tests {
         fs::remove_dir_all(&out).unwrap();
     }
 
+    #[cfg(target_os = "linux")]
     #[test]
     fn a_case_that_outlasts_its_window_fails_after_measuring() {
         // Workers stop at the window's deadline, so samples taken after it ran unpressured.
@@ -1636,6 +1665,7 @@ mod tests {
         fs::remove_dir_all(&out).unwrap();
     }
 
+    #[cfg(target_os = "linux")]
     fn start_time(pid: u32) -> String {
         let stat = fs::read_to_string(format!("/proc/{pid}/stat")).unwrap();
         stat.rsplit_once(") ")
@@ -1647,6 +1677,7 @@ mod tests {
             .to_owned()
     }
 
+    #[cfg(target_os = "linux")]
     #[test]
     fn every_case_gets_marked_telemetry_and_an_attainment_record() {
         // Without the markers and record, a matrix result could not say what pressure a case saw.
@@ -1713,6 +1744,35 @@ mod tests {
         assert!(field("min_available_kb") <= number(begin[11]));
         assert!(!out.join("pressure").exists());
         fs::remove_dir_all(&out).unwrap();
+    }
+
+    #[test]
+    fn sequential_file_is_private_unlinked_and_on_the_requested_filesystem() {
+        use std::os::unix::fs::MetadataExt;
+
+        let directory = scratch("sequential-file");
+        let mut file = sequential_file(&directory).unwrap();
+        let metadata = file.metadata().unwrap();
+        assert_eq!(metadata.dev(), fs::metadata(&directory).unwrap().dev());
+        assert_eq!(metadata.mode() & 0o777, 0o600);
+        assert_eq!(metadata.nlink(), 0);
+        file.write_all(b"pressure").unwrap();
+        assert_eq!(file.metadata().unwrap().len(), 8);
+        assert_eq!(fs::read_dir(&directory).unwrap().count(), 0);
+        drop(file);
+        assert_eq!(fs::read_dir(&directory).unwrap().count(), 0);
+        fs::remove_dir(&directory).unwrap();
+    }
+
+    #[cfg(target_os = "macos")]
+    #[test]
+    fn sequential_file_refuses_to_overwrite_an_existing_file() {
+        let directory = scratch("sequential-existing");
+        let path = directory.join(format!("sequential-{}", std::process::id()));
+        fs::write(&path, b"keep").unwrap();
+        assert!(sequential_file(&directory).is_err());
+        assert_eq!(fs::read(&path).unwrap(), b"keep");
+        fs::remove_dir_all(&directory).unwrap();
     }
 
     #[test]

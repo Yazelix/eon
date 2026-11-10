@@ -781,8 +781,8 @@ cold popup and dialog controls are not under pressure. Workers are separate
 5 s, stop on SIGTERM at the case end (2 s grace, then SIGKILL) and stop by
 themselves at the window deadline. A case whose samples outlast its window,
 or whose worker ends early, fails rather than measuring without pressure. The
-disk writer's file never has a name, so a killed run leaves at most one 4 KiB
-metadata file per worker behind.
+disk writer's file has no name while writing, so a killed response run leaves
+at most one 4 KiB metadata file per worker behind.
 
 | Profile | Load | Bounds |
 | --- | --- | --- |

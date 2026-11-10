@@ -2,10 +2,15 @@
 //! SIGTERM well before its deadline, reports its work and leaves no files.
 
 use std::{
-    io::{BufRead, BufReader},
-    process::{Command, Stdio},
+    process::Command,
     thread,
     time::{Duration, Instant},
+};
+
+#[cfg(target_os = "linux")]
+use std::{
+    io::{BufRead, BufReader},
+    process::Stdio,
 };
 
 fn monotonic_ns() -> u64 {
@@ -61,11 +66,13 @@ fn workers_stop_on_sigterm_and_report_their_work() {
 }
 
 /// The environment variable that makes `driver_death_parent` act as a driver.
+#[cfg(target_os = "linux")]
 const PARENT: &str = "EON_BENCH_PRESSURE_PARENT";
 
 /// A stand-in driver for `workers_die_with_their_driver_and_leave_no_file`: it
 /// starts one sequential writer the way the bench does, prints its PID and
 /// waits to be killed. Without the variable it does nothing.
+#[cfg(target_os = "linux")]
 #[test]
 fn driver_death_parent() {
     let Some(out) = std::env::var_os(PARENT) else {
@@ -92,6 +99,7 @@ fn driver_death_parent() {
 }
 
 /// The start time field of /proc/PID/stat, or None once the PID is gone.
+#[cfg(target_os = "linux")]
 fn started(pid: u32) -> Option<String> {
     let stat = std::fs::read_to_string(format!("/proc/{pid}/stat")).ok()?;
     let fields = stat
@@ -105,6 +113,7 @@ fn started(pid: u32) -> Option<String> {
 
 /// When the driver dies, the kernel SIGKILLs its workers, skipping every
 /// cleanup; the sequential writer's allocation must still not survive it.
+#[cfg(target_os = "linux")]
 #[test]
 fn workers_die_with_their_driver_and_leave_no_file() {
     let out = std::env::temp_dir().join(format!("eon-bench-driver-{}", std::process::id()));
