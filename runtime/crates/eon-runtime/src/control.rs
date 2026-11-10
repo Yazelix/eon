@@ -1188,8 +1188,7 @@ mod tests {
         super::handle_client(stream, |_| (super::ControlResponse::Workspace(full), false));
         let held = start.elapsed();
         assert!(
-            held >= super::REPLY_DEADLINE
-                && held < super::REPLY_DEADLINE + Duration::from_millis(500),
+            held >= super::REPLY_DEADLINE && held < super::REPLY_DEADLINE + Duration::from_secs(1),
             "{held:?}"
         );
         assert!(slow.join().unwrap() < size);

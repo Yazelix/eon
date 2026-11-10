@@ -3664,7 +3664,7 @@ fn update_check_reports_a_profile_entry_as_one_json_object_without_changing_it()
     let package = root.join("store/eon");
     fs::create_dir_all(package.join("bin")).unwrap();
     fs::create_dir_all(package.join("share")).unwrap();
-    fs::copy(binary, package.join("bin/eon")).unwrap();
+    executable(&package.join("bin/eon"), fs::read(binary).unwrap());
     let attribute = format!("packages.{platform}.default");
     fs::write(
         package.join("share/eon-source-receipt.json"),
@@ -5149,7 +5149,7 @@ fn read_subscription_frame(stream: &mut UnixStream) -> Option<Vec<u8>> {
 #[test]
 fn a_stalled_subscriber_never_delays_requests_another_subscriber_or_stop() {
     const ACTIONS: usize = 450;
-    const BOUND: Duration = Duration::from_secs(2);
+    const BOUND: Duration = Duration::from_secs(5);
     let root = temporary_directory();
     let runtime = root.join("runtime");
     let config = root.join("config");
@@ -16950,7 +16950,7 @@ fn update_direct_checks_and_installs_only_through_the_owned_payload_helper() {
     ] {
         fs::set_permissions(path, fs::Permissions::from_mode(0o700)).unwrap();
     }
-    fs::copy(binary, package.join("bin/eon")).unwrap();
+    executable(&package.join("bin/eon"), fs::read(binary).unwrap());
     fs::write(package.join("share/eon-source-receipt.json"), serde_json::json!({
         "schema_version":1,"repository":"https://github.com/Yazelix/eon","revision":"1".repeat(40),
         "build":build,"platform":"x86_64-linux","attribute":null

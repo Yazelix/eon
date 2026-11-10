@@ -836,11 +836,9 @@
                 "--package"
                 "eon-runtime"
               ];
-              dontUseCargoParallelTests = true;
               # Eon Runtime's lease tests run this Orbit, including the ignored one
               # that measures it under PTY load.
               ORBIT_BIN = "${orbitPackage}/bin/yazelix-orbit";
-              checkFlags = [ "--include-ignored" ];
               preCheck =
                 if pkgs.stdenv.isLinux then
                   ''
@@ -868,11 +866,21 @@
                         rm -rf "$eonTestTmpdir"
                       fi
                     }
-                    # A failed check skips postCheck.
+                    # A failed check, in the hook or in postCheck, stops before
+                    # postCheck's cleanup, so failureHooks runs it instead.
                     failureHooks+=(eonTestCleanup)
                   '';
+              # The hook runs the tests in parallel. The ignored tests measure timing,
+              # so they run afterwards one at a time, with the hook's profile, target
+              # and environment so nothing recompiles.
               postCheck =
-                lib.optionalString (!pkgs.stdenv.isLinux) ''
+                ''
+                  eonIgnoredTestFlags=(-j "$NIX_BUILD_CORES" --profile release
+                    --target ${pkgs.stdenv.hostPlatform.rust.rustcTarget} --offline)
+                  concatTo eonIgnoredTestFlags cargoTestFlags
+                  ${pkgs.rust.envVars.setEnv} cargo test "''${eonIgnoredTestFlags[@]}" -- --ignored --test-threads=1
+                ''
+                + lib.optionalString (!pkgs.stdenv.isLinux) ''
                   eonTestCleanup
                   eonTestTmpdir=
                 ''

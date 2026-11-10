@@ -746,6 +746,9 @@ Build both installed products with `nix build --no-link .#default .#eonbase`.
 eonbase installs Eon's built executable under its own name, so the eon crate
 compiles and its package tests run once for both.
 
+The eon package check runs the eon and eon-runtime tests in parallel, then
+their ignored timing measurements one at a time.
+
 Linux package checks use the sandbox's executable `/dev/shm` for ephemeral test
 state, keeping lifecycle records and sockets off the builder's disk journal.
 Sources and compilation stay in the ordinary build directory.

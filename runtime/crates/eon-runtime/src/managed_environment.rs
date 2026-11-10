@@ -4403,10 +4403,8 @@ label = "Browse"
         let root = crate::supervisor::temporary_directory();
         let program = root.join("systemctl");
         let pids = root.join("pids");
-        let script = |body: &str| {
-            fs::write(&program, format!("#!/bin/sh\n{body}\n")).unwrap();
-            fs::set_permissions(&program, fs::Permissions::from_mode(0o755)).unwrap();
-        };
+        let script =
+            |body: &str| crate::sessions::tests::script(&program, &format!("#!/bin/sh\n{body}\n"));
         script(&format!(
             "sleep 30 &\necho \"$$ $!\" > '{}'\nwait",
             pids.display()

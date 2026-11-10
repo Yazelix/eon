@@ -1166,8 +1166,16 @@ mod tests {
             assert!(!output.closed().unwrap());
         }
         drop((reader, peer));
+        // A child that a parallel test forks holds both peers until it execs.
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(5);
         for (_, output) in &outputs {
-            assert!(output.closed().unwrap());
+            while !output.closed().unwrap() {
+                assert!(
+                    std::time::Instant::now() < deadline,
+                    "the gone reader never closed the output"
+                );
+                std::thread::sleep(std::time::Duration::from_millis(10));
+            }
         }
     }
     #[test]
