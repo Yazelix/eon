@@ -40,14 +40,15 @@ use winit::{
 use yazelix_venus::{
     Accessibility, AccessibilityTarget, AttentionFilter, BarItem, BenchTrace, CellMetrics,
     CellText, ClipboardEffect, Color, ConnectionState, CpuReadings, CpuTimes, CpuUse, DialogKind,
-    DialogScene, DialogText, DiskUse, EonBar, FontSettings, FontSetup, HeaderText, Hyperlink,
-    ImageKey, ImageResync, InputState, LoadLevels, LocalClock, LocalNoticeSource, MAX_LINK_BYTES,
-    ModelEffect, ModelError, Outgoing, PaddingColor, PaneHeaderAction, PresentOutcome, RamUse,
-    Renderer, Scene, SceneRect, SessionModel, ShortcutHintsScene, SidebarView, Transport,
-    TransportEvent, WindowMenuAction, WorkspaceEvent, WorkspaceFocus, WorkspaceHeaderControl,
-    WorkspaceHit, WorkspaceModel, WorkspaceScene, WorkspaceTransport, active_popup,
-    attention_only_change, bench_trace, bench_tracing, focused_terminal, labels_only_change,
-    read_eon_icon, shown_workspace, validate_copy_uri, validate_open_uri, wrapped_lines,
+    DialogScene, DialogText, DiskUse, EonBar, FontSettings, FontSetup, HeaderText, HeadingAction,
+    Hyperlink, ImageKey, ImageResync, InputState, LoadLevels, LocalClock, LocalNoticeSource,
+    MAX_LINK_BYTES, ModelEffect, ModelError, Outgoing, PaddingColor, PaneHeaderAction,
+    PresentOutcome, RamUse, Renderer, Scene, SceneRect, SessionModel, ShortcutHintsScene,
+    SidebarView, Transport, TransportEvent, WindowMenuAction, WorkspaceEvent, WorkspaceFocus,
+    WorkspaceHeaderControl, WorkspaceHit, WorkspaceModel, WorkspaceScene, WorkspaceTransport,
+    active_popup, attention_only_change, bench_trace, bench_tracing, focused_terminal,
+    labels_only_change, read_eon_icon, shown_workspace, validate_copy_uri, validate_open_uri,
+    wrapped_lines,
 };
 
 mod geometry;
@@ -529,6 +530,8 @@ struct WindowState {
 enum HeaderPress {
     Control(WorkspaceHeaderControl),
     Pane(String, PaneHeaderAction),
+    /// A heading's button, with what it would send when pressed: a release sends only that.
+    Heading(HeadingAction, WorkspaceAction),
     Drag,
 }
 
@@ -2551,6 +2554,20 @@ impl Application {
         }
     }
 
+    /// Returns keyboard focus to the sidebar's rows: the row it last held while that row shows,
+    /// else the first.
+    fn focus_sidebar_rows(&mut self) {
+        if let Some(row) = self.workspace_scene().and_then(|scene| {
+            self.sidebar_row
+                .as_deref()
+                .and_then(|row| scene.sidebar_row(row))
+                .or_else(|| scene.sidebar_rows().first())
+                .map(|row| row.target.clone())
+        }) {
+            self.focus_sidebar_row(row);
+        }
+    }
+
     /// Sends `FocusAttention` for a sidebar row; focus follows the result (`AttentionJump`).
     fn activate_sidebar_row(&mut self, target: &str) {
         if !self.presentation.has_presented_geometry() {
@@ -2621,6 +2638,14 @@ impl Application {
                 self.workspace_scene()
                     .is_some_and(|scene| scene.sidebar_row(row).is_some())
             })
+        {
+            self.set_workspace_focus(WorkspaceFocus::Terminal);
+        }
+        if let WorkspaceFocus::HeadingAction(action) = self.workspace_focus
+            && self
+                .workspace_scene()
+                .and_then(|scene| scene.heading_action(action))
+                .is_none()
         {
             self.set_workspace_focus(WorkspaceFocus::Terminal);
         }
@@ -2722,6 +2747,28 @@ impl Application {
         self.presentation.invalidate();
         self.send_resize();
         self.refresh_client_view();
+    }
+
+    /// Focuses a heading's Hide button, or with `activate` sends what it does.
+    fn heading_button(&mut self, action: HeadingAction, activate: bool) {
+        if !self.presentation.has_presented_geometry()
+            || self.dialog_open()
+            || self
+                .workspace_scene()
+                .and_then(|scene| scene.heading_action(action))
+                .is_none()
+        {
+            return;
+        }
+        if !activate {
+            self.set_workspace_focus(WorkspaceFocus::HeadingAction(action));
+        } else if let Some(request) = self
+            .workspace_model
+            .snapshot()
+            .and_then(|snapshot| heading_request(snapshot, action))
+        {
+            self.request_workspace(request);
+        }
     }
 
     fn pane_button(&mut self, pane: &str, action: PaneHeaderAction, activate: bool) {
@@ -3834,6 +3881,21 @@ impl Application {
             return false;
         }
         if event.state == ElementState::Pressed {
+            let hide_sidebar = WorkspaceFocus::HeadingAction(HeadingAction::HideSidebar);
+            if !event.repeat
+                && code == KeyCode::Tab
+                && (focus == WorkspaceFocus::Sidebar || focus == hide_sidebar)
+                && (modifiers == session::Modifiers::empty()
+                    || modifiers == session::Modifiers::SHIFT)
+            {
+                // The sidebar's two stops: its rows and its Hide button.
+                if focus == WorkspaceFocus::Sidebar {
+                    self.heading_button(HeadingAction::HideSidebar, false);
+                } else {
+                    self.focus_sidebar_rows();
+                }
+                return true;
+            }
             if !event.repeat
                 && code == KeyCode::Tab
                 && matches!(focus, WorkspaceFocus::Panes | WorkspaceFocus::PaneAction(_))
@@ -3897,12 +3959,27 @@ impl Application {
                     self.activate_workspace_header(control);
                     return true;
                 }
+                if let WorkspaceFocus::HeadingAction(action) = focus {
+                    self.heading_button(action, true);
+                    return true;
+                }
                 if focus == WorkspaceFocus::Sidebar
                     && let Some(row) = self.sidebar_row.clone()
                 {
                     self.activate_sidebar_row(&row);
                     return true;
                 }
+            }
+            if focus == hide_sidebar
+                && matches!(
+                    fixed.map(|shortcut| shortcut.action),
+                    Some(NativeShortcutAction::TraverseChrome(
+                        WorkspaceDirection::Up | WorkspaceDirection::Down
+                    ))
+                )
+            {
+                self.focus_sidebar_rows();
+                return true;
             }
             if focus == WorkspaceFocus::Sidebar
                 && let Some(NativeShortcutAction::TraverseChrome(
@@ -4960,6 +5037,9 @@ impl Application {
                 Some((WorkspaceFocus::PaneAction(action), id.to_owned()))
             }
             Some(WorkspaceHit::SidebarRow(id)) => Some((WorkspaceFocus::Sidebar, id.to_owned())),
+            Some(WorkspaceHit::HeadingAction(action)) => {
+                Some((WorkspaceFocus::HeadingAction(action), String::new()))
+            }
             Some(WorkspaceHit::Control(control)) => {
                 Some((WorkspaceFocus::Header(control), String::new()))
             }
@@ -5005,6 +5085,21 @@ impl Application {
             .renderer
             .set_pressed_pane_action(match &self.header_press {
                 Some(HeaderPress::Pane(id, action)) => Some((id.clone(), *action)),
+                _ => None,
+            });
+        state
+            .renderer
+            .set_pressed_heading(match &self.header_press {
+                // A button whose heading now names another target is no longer held.
+                Some(HeaderPress::Heading(action, pressed))
+                    if self
+                        .workspace_model
+                        .snapshot()
+                        .and_then(|snapshot| held_heading_request(snapshot, *action, pressed))
+                        .is_some() =>
+                {
+                    Some(*action)
+                }
                 _ => None,
             });
         state.renderer.set_pressed_header(match &self.header_press {
@@ -5422,6 +5517,7 @@ impl ApplicationHandler<UserEvent> for Application {
                                 WorkspaceHit::Tab(_)
                                 | WorkspaceHit::Pane(_)
                                 | WorkspaceHit::PaneAction(..)
+                                | WorkspaceHit::HeadingAction(_)
                                 | WorkspaceHit::Quota(_)
                                 | WorkspaceHit::Version
                                 | WorkspaceHit::Cpu
@@ -5579,6 +5675,7 @@ impl ApplicationHandler<UserEvent> for Application {
                             WorkspaceHit::Tab(_)
                                 | WorkspaceHit::Pane(_)
                                 | WorkspaceHit::PaneAction(..)
+                                | WorkspaceHit::HeadingAction(_)
                                 | WorkspaceHit::ColumnTerminal(_)
                                 | WorkspaceHit::Control(_)
                         )
@@ -5642,6 +5739,22 @@ impl ApplicationHandler<UserEvent> for Application {
                         self.refresh_client_view();
                         return;
                     }
+                    if let HeaderPress::Heading(action, pressed) = press {
+                        if presentation_current
+                            && hit == Some(WorkspaceHit::HeadingAction(action))
+                            && self
+                                .workspace_model
+                                .snapshot()
+                                .and_then(|snapshot| {
+                                    held_heading_request(snapshot, action, &pressed)
+                                })
+                                .is_some()
+                        {
+                            self.heading_button(action, true);
+                        }
+                        self.refresh_client_view();
+                        return;
+                    }
                     let activate = match press {
                         HeaderPress::Control(control)
                             if presentation_current
@@ -5649,7 +5762,10 @@ impl ApplicationHandler<UserEvent> for Application {
                         {
                             Some(control)
                         }
-                        HeaderPress::Control(_) | HeaderPress::Drag | HeaderPress::Pane(..) => None,
+                        HeaderPress::Control(_)
+                        | HeaderPress::Drag
+                        | HeaderPress::Pane(..)
+                        | HeaderPress::Heading(..) => None,
                     };
                     self.refresh_client_view();
                     if let Some(control) = activate {
@@ -5683,6 +5799,16 @@ impl ApplicationHandler<UserEvent> for Application {
                         Some(WorkspaceHit::PaneAction(id, action)) => {
                             let id = id.to_owned();
                             self.header_press = Some(HeaderPress::Pane(id, action));
+                            self.refresh_client_view();
+                            return;
+                        }
+                        Some(WorkspaceHit::HeadingAction(action)) => {
+                            // Hold what the button sends now: the release must still mean it.
+                            self.header_press = self
+                                .workspace_model
+                                .snapshot()
+                                .and_then(|snapshot| heading_request(snapshot, action))
+                                .map(|pressed| HeaderPress::Heading(action, pressed));
                             self.refresh_client_view();
                             return;
                         }
@@ -5969,6 +6095,9 @@ impl ApplicationHandler<UserEvent> for Application {
                                 activate,
                             }) => {
                                 self.pane_button(&pane, action, activate);
+                            }
+                            Some(AccessibilityTarget::HeadingAction { action, activate }) => {
+                                self.heading_button(action, activate);
                             }
                             Some(AccessibilityTarget::HeaderControl { control, activate }) => {
                                 self.set_workspace_focus(WorkspaceFocus::Header(control));
@@ -6578,7 +6707,9 @@ fn sidebar_view(focus: WorkspaceFocus, row: Option<&str>) -> SidebarView<'_> {
 fn cycle_focus(focus: WorkspaceFocus, sidebar_rows: bool, has_panes: bool) -> WorkspaceFocus {
     match focus {
         WorkspaceFocus::Terminal if sidebar_rows => WorkspaceFocus::Sidebar,
-        WorkspaceFocus::Terminal | WorkspaceFocus::Sidebar => WorkspaceFocus::Tabs,
+        WorkspaceFocus::Terminal
+        | WorkspaceFocus::Sidebar
+        | WorkspaceFocus::HeadingAction(HeadingAction::HideSidebar) => WorkspaceFocus::Tabs,
         WorkspaceFocus::Tabs if has_panes => WorkspaceFocus::Panes,
         _ => WorkspaceFocus::Terminal,
     }
@@ -6632,6 +6763,7 @@ fn accessibility_workspace_focus(
         AccessibilityTarget::Tab(id) => (WorkspaceFocus::Tabs, id),
         AccessibilityTarget::Pane(id) => (WorkspaceFocus::Panes, id),
         AccessibilityTarget::PaneAction { .. }
+        | AccessibilityTarget::HeadingAction { .. }
         | AccessibilityTarget::HeaderControl { .. }
         | AccessibilityTarget::WindowMenu { .. }
         | AccessibilityTarget::InboxFilter(_)
@@ -6643,6 +6775,35 @@ fn accessibility_workspace_focus(
         }
     };
     queue(CommonAction::FocusId(id)).then_some(focus)
+}
+
+/// What a heading's Hide button sends: the popup's dismissal that `eon popup hide` sends, or the
+/// sidebar's toggle while the sidebar is open.
+fn heading_request(
+    snapshot: &eon_workspace_protocol::v38::Snapshot,
+    action: HeadingAction,
+) -> Option<WorkspaceAction> {
+    match action {
+        HeadingAction::HidePopup => active_popup(snapshot).map(|popup| {
+            WorkspaceAction::DismissPopup(eon_workspace_protocol::v38::PopupTarget {
+                tab: snapshot.active_tab.clone(),
+                instance: popup.id.clone(),
+            })
+        }),
+        HeadingAction::HideSidebar => {
+            (snapshot.sidebar == Sidebar::Open).then_some(WorkspaceAction::ToggleSidebar)
+        }
+    }
+}
+
+/// What releasing a held heading button sends: what it sent when `pressed`, while the heading
+/// still sends that. A popup shown in place of the pressed one is not dismissed for it.
+fn held_heading_request(
+    snapshot: &eon_workspace_protocol::v38::Snapshot,
+    action: HeadingAction,
+    pressed: &WorkspaceAction,
+) -> Option<WorkspaceAction> {
+    heading_request(snapshot, action).filter(|request| request == pressed)
 }
 
 /// The tab a final close names: the shown workspace's only tab, closed whole or through its

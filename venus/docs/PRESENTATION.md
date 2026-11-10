@@ -283,6 +283,7 @@ headers keep the controls inline. The title and scrollback indicator fit to its
 left. Both controls disappear together if two full targets cannot fit; collapsed
 bottom rows and tight clearances retain a compact gap. Stack, Agents, popup and
 dialog headings have no pane actions, and a popup covers the underlying headers.
+Popup and Agents headings have a Hide button of their own, described below.
 Hover and press highlight the individual button. A one-pane tab keeps a dimmed,
 disabled Zoom button in its slot.
 
@@ -296,6 +297,24 @@ final-pane confirmation. After a keyboard Close, focus returns to the selected
 pane's title. Escape cancels that prompt; Enter closes its held target.
 Agents can use `eon pane close PANE`; zoom is window-local view state.
 
+Popup and Agents headings also carry a second notch at the right, mirroring the
+title's, with one Hide button (`–`); the name fits to its left. The popup's
+button hides the shown popup exactly as `eon popup hide POPUP` does, and the
+Agents button hides the sidebar as Alt+Shift+H and `eon sidebar hide` do. Hover
+fills the button's pill, a held press turns it accent, and releasing over it
+activates it; a press held while another popup takes the heading does nothing.
+With pane frames off, the popup keeps its outline and both notches, and the
+Agents button shows beside its plain label with no notch or outline. With
+frames on, a heading without clearance for its tab keeps a compact title and
+the button sits in its own gap in the top edge. A heading too narrow for a
+full button shows none. With keyboard focus in the sidebar, Tab and Shift+Tab
+move between its rows and Hide, Enter or Space activates it, and Up or Down
+returns to the rows. F6 skips a sidebar with no rows, so Hide has no keyboard
+stop there and Alt+Shift+H hides it. The popup's button has no keyboard stop.
+Most popups still hide on their own shortcut; Sessions' key confirms its
+selection instead, and quick search and Files switch to each other. Screen
+readers list `Hide popup <name>` and `Hide agent sidebar` as buttons.
+
 Pane headers use the continuous band above. Stack tabs, popups, Agents and
 native titled dialogs share a fitted tab style. Their outline rises seamlessly
 from the left border over the fitted name,
@@ -307,7 +326,8 @@ Pane bands preserve the existing header allocation and terminal rows.
 A tab keeps its stroke clear of text and neighbouring chrome; where that
 clearance cannot fit, the title keeps a compact gap in the top frame line.
 A title is omitted only when it cannot fit. A tab keeps full accessibility
-names and adds no input targets; decorative pane caps outside a header row do
+names and adds no input targets other than the Hide buttons above; decorative
+pane caps outside a header row do
 not extend that row's click or accessibility bounds. The Stack label is a visual
 heading only. Keyboard title focus colours the title's span of the continuous
 pane edge; hover fills a rounded title pill. Button focus uses its accent pill

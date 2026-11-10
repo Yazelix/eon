@@ -10801,6 +10801,77 @@ fn popup_hide_hides_a_popup_and_refuses_unknown_ones() {
 }
 
 #[test]
+fn sidebar_commands_show_hide_and_toggle() {
+    let (root, mut default) = quit_workspace();
+    let sidebar = |window: Option<&Path>, verb: &str| {
+        let mut command = quit_command(&root);
+        if let Some(window) = window {
+            command.env("EON_WINDOW_RUNTIME_DIR", window);
+        }
+        command.args(["sidebar", verb, "--json"]).output().unwrap()
+    };
+    // The sidebar starts open; show and hide repeat without flipping it back.
+    for (verb, state) in [
+        ("hide", "closed"),
+        ("hide", "closed"),
+        ("show", "open"),
+        ("show", "open"),
+        ("toggle", "closed"),
+        ("toggle", "open"),
+    ] {
+        let output = sidebar(None, verb);
+        assert_eq!(output.status.code(), Some(0), "{verb}: {output:?}");
+        assert!(
+            stdout(&output).contains(&format!("\"sidebar\":\"{state}\"")),
+            "{verb} should leave the sidebar {state}: {output:?}"
+        );
+    }
+    let usage = quit_command(&root)
+        .args(["sidebar", "open"])
+        .output()
+        .unwrap();
+    assert_eq!(usage.status.code(), Some(2), "{usage:?}");
+
+    // A window whose sidebar is off: hide has nothing to do, show and toggle cannot.
+    fs::write(
+        root.join("config/config.toml"),
+        "[terminal]\nfont_fallbacks = []\n[anima]\nenabled = false\n[sidebar]\nenabled = false\n",
+    )
+    .unwrap();
+    let window = open_quit_window(&root);
+    let window_root = root.join("r").join("w").join(&window);
+    let hidden = sidebar(Some(&window_root), "hide");
+    assert_eq!(hidden.status.code(), Some(0), "{hidden:?}");
+    assert!(
+        stdout(&hidden).contains("\"sidebar\":\"off\""),
+        "{hidden:?}"
+    );
+    for verb in ["show", "toggle"] {
+        let refused = sidebar(Some(&window_root), verb);
+        assert_eq!(refused.status.code(), Some(1), "{verb}: {refused:?}");
+        assert!(
+            stdout(&refused).contains("\"code\":\"unavailable\""),
+            "{verb}: {refused:?}"
+        );
+    }
+
+    let generation = generation_runtime(&window_root);
+    let stopped = quit_command(&root)
+        .args(["window", "stop", &window, "--json"])
+        .output()
+        .unwrap();
+    assert!(stopped.status.success(), "{stopped:?}");
+    wait_for_generation_removal(&generation);
+    let stopped = quit_command(&root)
+        .args(["window", "stop", "default", "--json"])
+        .output()
+        .unwrap();
+    assert!(stopped.status.success(), "{stopped:?}");
+    wait_for_successful_exit(&mut default.child);
+    fs::remove_dir_all(root).unwrap();
+}
+
+#[test]
 fn quit_outside_eon_stops_the_only_window_and_refuses_several() {
     let (root, mut default) = quit_workspace();
     let runtime = root.join("r");

@@ -2,6 +2,15 @@
 
 ## Unreleased
 
+- VEN-C18/C30: popup and Agents headings carry a right action notch mirroring
+  the title notch, holding one Hide button. The popup's sends `DismissPopup`
+  for the shown instance; the sidebar's sends `ToggleSidebar` while the
+  sidebar is open. The notch drawing is shared by every framed title tab;
+  pane bands, Stack tabs and dialogs are unchanged. Pointer release, Tab and
+  Enter or Space in the sidebar, and AccessKit buttons (`Hide popup <label>`,
+  `Hide agent sidebar`) share the scene's targets. No wire change
+  (`eon-5g0e5`).
+
 - VEN-C8/C18: pane headers form one continuous raised band across the fitted
   title and right Zoom/Restore and Close group. Collapsed edges mirror the band;
   final-bottom and tight-clearance titles retain compact gaps. Title focus colours

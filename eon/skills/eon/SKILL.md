@@ -90,6 +90,10 @@ for a pending tab only when the person asks.
 Hide popup `uN` with `eon popup hide uN --json` only when asked: a keep-alive
 popup keeps running, a transient one stops, and a pending tab's Files starts
 the tab's first pane at its starting directory.
+Show or hide the window's agent sidebar with `eon sidebar show|hide|toggle
+--json` only when asked: it is the person's view. The reply's `sidebar` reads
+`open`, `closed` or `off`; check it, because a keypress at the same moment can
+reverse `show` or `hide`.
 
 ## Read the session
 

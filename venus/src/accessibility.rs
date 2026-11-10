@@ -1,6 +1,6 @@
 use crate::{
-    CellMetrics, DialogKind, DialogScene, MAX_LINK_BYTES, PaneHeaderAction, Scene, SceneRect,
-    WindowMenuAction, WorkspaceFocus, WorkspaceHeaderControl, WorkspaceScene,
+    CellMetrics, DialogKind, DialogScene, HeadingAction, MAX_LINK_BYTES, PaneHeaderAction, Scene,
+    SceneRect, WindowMenuAction, WorkspaceFocus, WorkspaceHeaderControl, WorkspaceScene,
     scene::{
         AccessiblePosition, AccessibleRow, AccessibleSelection, AccessibleText,
         QuotaWindowIdentity, SIDEBAR_EMPTY, WorkspaceQuota,
@@ -41,6 +41,8 @@ const WORKSPACE_LABEL: NodeId = NodeId(20);
 const DISK: NodeId = NodeId(21);
 const HINT_PIECES: NodeId = NodeId(22);
 const WINDOW_MENU: NodeId = NodeId(64);
+const POPUP_HIDE: NodeId = NodeId(65);
+const SIDEBAR_HIDE: NodeId = NodeId(66);
 /// One label per shortcut hints keycap; at most one group per set of modifiers.
 const HINT_GROUP_START: u64 = 23;
 // Scene rows are u16, so this range cannot collide with fixed or text-run nodes.
@@ -697,15 +699,19 @@ impl Snapshot {
                 let mut sidebar = Node::new(Role::Complementary);
                 sidebar.set_label("Agent sidebar");
                 sidebar.set_bounds(rect(bounds));
+                // The Hide button, then each tab's heading and its rows, in visual order.
+                let mut children = Vec::new();
+                if let Some(node) = heading_button(workspace, HeadingAction::HideSidebar) {
+                    children.push(SIDEBAR_HIDE);
+                    nodes.push((SIDEBAR_HIDE, node));
+                }
                 if workspace.sidebar_empty() {
-                    sidebar.set_children(vec![SIDEBAR_EMPTY_STATE]);
+                    children.push(SIDEBAR_EMPTY_STATE);
                     let mut empty = Node::new(Role::Label);
                     empty.set_value(SIDEBAR_EMPTY);
                     empty.set_bounds(rect(bounds));
                     nodes.push((SIDEBAR_EMPTY_STATE, empty));
                 }
-                // Each tab's heading, then its rows, in visual order.
-                let mut children = Vec::new();
                 for heading in &workspace.sidebar_headings {
                     let id = self.sidebar_ids[heading.tab.as_str()];
                     let mut node = Node::new(Role::Heading);
@@ -757,8 +763,12 @@ impl Snapshot {
                     .column_panes()
                     .map(|(panes, _)| panes.len())
                     .sum::<usize>()
-                    + 1,
+                    + 2,
             );
+            if let Some(node) = heading_button(workspace, HeadingAction::HidePopup) {
+                children.push(POPUP_HIDE);
+                nodes.push((POPUP_HIDE, node));
+            }
             if workspace.panes.is_empty()
                 && (terminal || visible_terminal.is_some() || !self.status.is_empty())
             {
@@ -882,6 +892,9 @@ impl Snapshot {
                         .unwrap_or(content),
                     WorkspaceFocus::Tabs => selected_tab,
                     WorkspaceFocus::Header(control) => control_node_id(control),
+                    WorkspaceFocus::HeadingAction(action) => workspace
+                        .heading_action(action)
+                        .map_or(content, |_| heading_node_id(action)),
                     WorkspaceFocus::Sidebar => workspace
                         .sidebar_rows()
                         .iter()
@@ -975,6 +988,16 @@ impl Snapshot {
                 target: row.target.clone(),
                 activate: action == Action::Click,
             });
+        }
+        for heading in [HeadingAction::HidePopup, HeadingAction::HideSidebar] {
+            if target == heading_node_id(heading) {
+                return workspace.heading_action(heading).map(|_| {
+                    AccessibilityTarget::HeadingAction {
+                        action: heading,
+                        activate: action == Action::Click,
+                    }
+                });
+            }
         }
         for header_action in PaneHeaderAction::ALL {
             if let Some((pane, _)) = self.pane_action_ids[header_action.index()]
@@ -1117,6 +1140,24 @@ fn accessible_link_label(uri: &str) -> String {
     }
 }
 
+fn heading_node_id(action: HeadingAction) -> NodeId {
+    match action {
+        HeadingAction::HidePopup => POPUP_HIDE,
+        HeadingAction::HideSidebar => SIDEBAR_HIDE,
+    }
+}
+
+/// The button node of a heading's action, while the scene shows it.
+fn heading_button(workspace: &WorkspaceScene, action: HeadingAction) -> Option<Node> {
+    let target = workspace.heading_action(action)?;
+    let mut node = Node::new(Role::Button);
+    node.set_label(workspace.heading_action_label(action));
+    node.set_bounds(rect(target));
+    node.add_action(Action::Click);
+    node.add_action(Action::Focus);
+    Some(node)
+}
+
 /// Accessible action routed back through Venus and Eon semantics.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum AccessibilityTarget {
@@ -1137,6 +1178,11 @@ pub enum AccessibilityTarget {
     PaneAction {
         pane: String,
         action: PaneHeaderAction,
+        activate: bool,
+    },
+    /// A popup or Agents heading's button; `activate` presses it, otherwise it takes focus.
+    HeadingAction {
+        action: HeadingAction,
         activate: bool,
     },
     /// An agent sidebar row by its target; `activate` jumps to it, otherwise it takes focus.
@@ -3932,7 +3978,31 @@ mod tests {
         assert_eq!(sidebar.role(), Role::Complementary);
         assert_eq!(sidebar.label(), Some("Agent sidebar"));
         assert_eq!(sidebar.bounds(), Some(rect(scene.sidebar().unwrap())));
-        assert_eq!(sidebar.children(), [SIDEBAR_EMPTY_STATE]);
+        assert_eq!(sidebar.children(), [SIDEBAR_HIDE, SIDEBAR_EMPTY_STATE]);
+        // The Agents heading's Hide button is a button on its drawn target.
+        let hide = node(&update, SIDEBAR_HIDE);
+        assert_eq!(hide.role(), Role::Button);
+        assert_eq!(hide.label(), Some("Hide agent sidebar"));
+        assert_eq!(
+            hide.bounds(),
+            Some(rect(
+                scene.heading_action(HeadingAction::HideSidebar).unwrap()
+            ))
+        );
+        let mut focused = Snapshot::new(size);
+        focused.set_workspace(Some(&scene));
+        for (action, activate) in [(Action::Click, true), (Action::Focus, false)] {
+            assert!(hide.supports_action(action));
+            assert_eq!(
+                focused.action_target(SIDEBAR_HIDE, action),
+                Some(AccessibilityTarget::HeadingAction {
+                    action: HeadingAction::HideSidebar,
+                    activate,
+                })
+            );
+        }
+        focused.workspace_focus = WorkspaceFocus::HeadingAction(HeadingAction::HideSidebar);
+        assert_eq!(focused.tree().focus, SIDEBAR_HIDE);
         assert_eq!(
             node(&update, SIDEBAR_EMPTY_STATE).value(),
             Some(SIDEBAR_EMPTY)
@@ -3976,7 +4046,10 @@ mod tests {
         snapshot.set_workspace(Some(&scene));
         let update = snapshot.tree();
         let (heading, row) = (snapshot.sidebar_ids["t1"], snapshot.sidebar_ids["p1"]);
-        assert_eq!(node(&update, SIDEBAR).children(), [heading, row]);
+        assert_eq!(
+            node(&update, SIDEBAR).children(),
+            [SIDEBAR_HIDE, heading, row]
+        );
         assert!(
             update
                 .nodes
@@ -4845,7 +4918,27 @@ mod tests {
         assert_eq!(node(&tiny, PANE_PANEL).children(), &[CONTENT]);
 
         assert_eq!(node(&update, PANE_PANEL).label(), Some("Files"));
-        assert_eq!(node(&update, PANE_PANEL).children(), &[CONTENT]);
+        // The popup heading's Hide button comes before the popup's terminal; the tiny popup
+        // above has no title row and so no button.
+        assert_eq!(node(&update, PANE_PANEL).children(), &[POPUP_HIDE, CONTENT]);
+        assert!(tiny.nodes.iter().all(|(id, _)| *id != POPUP_HIDE));
+        let hide = node(&update, POPUP_HIDE);
+        assert_eq!(hide.role(), Role::Button);
+        assert_eq!(hide.label(), Some("Hide popup Files"));
+        assert_eq!(
+            hide.bounds(),
+            Some(rect(
+                workspace.heading_action(HeadingAction::HidePopup).unwrap()
+            ))
+        );
+        assert_eq!(
+            snapshot.action_target(POPUP_HIDE, Action::Click),
+            Some(AccessibilityTarget::HeadingAction {
+                action: HeadingAction::HidePopup,
+                activate: true,
+            })
+        );
+        assert_eq!(snapshot.action_target(SIDEBAR_HIDE, Action::Click), None);
         assert_eq!(update.focus, CONTENT);
         assert!(node(&update, tab).supports_action(Action::Click));
         assert!(node(&update, tab).supports_action(Action::Focus));

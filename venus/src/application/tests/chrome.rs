@@ -498,6 +498,109 @@ fn scrollback_pill_activates_only_a_complete_left_click() {
 }
 
 #[test]
+fn heading_hide_sends_the_cli_actions() {
+    let mut snapshot = quit_snapshot();
+    snapshot.tabs = vec![
+        Tab {
+            pending: false,
+            selected_popup: None,
+            popups: Vec::new(),
+            id: "t1".into(),
+            directory: b"/work".to_vec(),
+            selected_pane: None,
+            attention_rollup: None,
+            columns: Vec::new(),
+        },
+        Tab {
+            pending: false,
+            selected_popup: None,
+            popups: Vec::new(),
+            id: "t2".into(),
+            directory: b"/work".to_vec(),
+            selected_pane: None,
+            attention_rollup: None,
+            columns: Vec::new(),
+        },
+    ];
+    // No popup shows, so its button has nothing to send.
+    assert_eq!(heading_request(&snapshot, HeadingAction::HidePopup), None);
+    // `eon popup hide u1` sends the dismissal of that instance in its owning tab.
+    show_test_popup(&mut snapshot);
+    assert_eq!(
+        heading_request(&snapshot, HeadingAction::HidePopup),
+        Some(WorkspaceAction::DismissPopup(
+            eon_workspace_protocol::v38::PopupTarget {
+                tab: "t1".into(),
+                instance: "u1".into(),
+            }
+        ))
+    );
+    // A popup hidden in another tab is not the shown one.
+    snapshot.active_tab = "t2".into();
+    assert_eq!(heading_request(&snapshot, HeadingAction::HidePopup), None);
+
+    // Hide only ever closes an open sidebar: it never toggles a closed one open.
+    for (sidebar, request) in [
+        (Sidebar::Open, Some(WorkspaceAction::ToggleSidebar)),
+        (Sidebar::Closed, None),
+        (Sidebar::Off, None),
+    ] {
+        snapshot.sidebar = sidebar;
+        assert_eq!(
+            heading_request(&snapshot, HeadingAction::HideSidebar),
+            request
+        );
+    }
+}
+
+#[test]
+fn held_popup_hide_never_dismisses_a_popup_shown_in_its_place() {
+    let mut snapshot = quit_snapshot();
+    snapshot.tabs = vec![Tab {
+        pending: false,
+        selected_popup: None,
+        popups: Vec::new(),
+        id: "t1".into(),
+        directory: b"/work".to_vec(),
+        selected_pane: None,
+        attention_rollup: None,
+        columns: Vec::new(),
+    }];
+    show_test_popup(&mut snapshot);
+    let hide = HeadingAction::HidePopup;
+    // Press Hide on Files (`u1`), and hold.
+    let pressed = heading_request(&snapshot, hide).unwrap();
+    assert_eq!(
+        held_heading_request(&snapshot, hide, &pressed),
+        Some(pressed.clone())
+    );
+
+    // A shortcut shows another popup while the button is held: the release sends nothing, so
+    // the replacement, which a dismissal could stop, stays.
+    let mut replacement = snapshot.tabs[0].popups[0].clone();
+    replacement.id = "u2".into();
+    snapshot.tabs[0].popups.push(replacement);
+    snapshot.tabs[0].selected_popup = Some("u2".into());
+    assert_eq!(held_heading_request(&snapshot, hide, &pressed), None);
+    // Nor does it once no popup shows.
+    snapshot.tabs[0].selected_popup = None;
+    assert_eq!(held_heading_request(&snapshot, hide, &pressed), None);
+    // Back on the pressed popup, the release hides it.
+    snapshot.tabs[0].selected_popup = Some("u1".into());
+    assert_eq!(
+        held_heading_request(&snapshot, hide, &pressed),
+        Some(pressed)
+    );
+
+    // A sidebar closed under a held Hide is not toggled open by the release.
+    let hide = HeadingAction::HideSidebar;
+    snapshot.sidebar = Sidebar::Open;
+    let pressed = heading_request(&snapshot, hide).unwrap();
+    snapshot.sidebar = Sidebar::Closed;
+    assert_eq!(held_heading_request(&snapshot, hide, &pressed), None);
+}
+
+#[test]
 fn sidebar_rows_take_f6_focus_step_by_arrow_and_follow_their_jump() {
     use eon_workspace_protocol::v38::{Attention, AttentionState, Column, PopupGeometry};
 
@@ -508,6 +611,15 @@ fn sidebar_rows_take_f6_focus_step_by_arrow_and_follow_their_jump() {
     );
     assert_eq!(
         cycle_focus(WorkspaceFocus::Sidebar, true, true),
+        WorkspaceFocus::Tabs
+    );
+    // The sidebar's Hide button is a stop inside the sidebar, so F6 leaves it as it leaves the rows.
+    assert_eq!(
+        cycle_focus(
+            WorkspaceFocus::HeadingAction(HeadingAction::HideSidebar),
+            true,
+            true
+        ),
         WorkspaceFocus::Tabs
     );
     assert_eq!(

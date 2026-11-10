@@ -577,6 +577,8 @@ struct FrameTitleTab {
     row: SceneRect,
     return_run: f32,
     title: FrameTitle,
+    /// `start` of the mirrored action notch at the card's right, on headings that hold a button.
+    action: Option<f32>,
 }
 
 #[derive(Clone)]
@@ -659,6 +661,40 @@ impl PaneTitleTab {
 
 // Fill and stroke share the contour, including the tangent return into the top rule.
 fn title_tab_bands(card: CardFill, tab: &FrameTitleTab, inset: f32) -> Vec<SceneRect> {
+    let (mut bands, body) = notch_bands(card, tab, tab.start, inset);
+    if let Some(start) = tab.action {
+        // The action notch is the title notch mirrored about the card's centre. Each row keeps
+        // the title's band and adds only what the mirrored band reaches beyond it, starting at
+        // that band's own right edge, so no pixel blends twice.
+        let mirror = card.bounds.left + card.bounds.right();
+        let (action, _) = notch_bands(card, tab, start, inset);
+        let pieces = bands
+            .iter()
+            .zip(action)
+            .filter_map(|(band, action)| {
+                let left = (mirror - action.right()).max(band.right());
+                let right = mirror - action.left;
+                (right > left).then_some(SceneRect {
+                    left,
+                    width: right - left,
+                    ..*band
+                })
+            })
+            .collect::<Vec<_>>();
+        bands.extend(pieces);
+    }
+    bands.extend(body);
+    bands
+}
+
+/// The rows of one notch of `tab` whose flat top ends at `start`, down to where the card's
+/// own corner ends, and the card's bands below them.
+fn notch_bands(
+    card: CardFill,
+    tab: &FrameTitleTab,
+    start: f32,
+    inset: f32,
+) -> (Vec<SceneRect>, Vec<SceneRect>) {
     let bounds = SceneRect {
         left: card.bounds.left + inset,
         top: card.bounds.top + inset,
@@ -668,7 +704,7 @@ fn title_tab_bands(card: CardFill, tab: &FrameTitleTab, inset: f32) -> Vec<Scene
     let radius = (rounded_radius(card.bounds, card.radius) - inset).max(0.0);
     let left_radius = (tab.left_radius - inset).max(0.0);
     let top = tab.top + inset;
-    let return_start = tab.start;
+    let return_start = start;
     let cut = bounds.top + radius;
     let circle =
         |radius: f32, distance: f32| (radius * radius - distance * distance).max(0.0).sqrt();
@@ -700,12 +736,11 @@ fn title_tab_bands(card: CardFill, tab: &FrameTitleTab, inset: f32) -> Vec<Scene
             height: 1.0,
         });
     }
-    bands.extend(
-        CardFill { bounds, radius }
-            .bands()
-            .filter(|band| band.top >= cut),
-    );
-    bands
+    let body = CardFill { bounds, radius }
+        .bands()
+        .filter(|band| band.top >= cut)
+        .collect();
+    (bands, body)
 }
 
 fn title_tab_outline_rects(

@@ -25,7 +25,7 @@ use super::{
 };
 use eon_workspace_protocol::v38::{
     Action, AttentionState, Direction, Failure, MAX_HISTORY_TEXT_BYTES, MAX_PASTE_BYTES, Pane,
-    PopupTarget, Response, Side, Snapshot, Tab, TerminalHistory, TerminalInput, VERSION,
+    PopupTarget, Response, Side, Sidebar, Snapshot, Tab, TerminalHistory, TerminalInput, VERSION,
     WorkspaceAction, WorkspaceInfo, WorkspaceTarget as SessionTarget, valid_caller, validate_paste,
 };
 use std::{
@@ -809,6 +809,9 @@ fn execute(inputs: &Inputs, arguments: Vec<OsString>) -> Result<i32, Error> {
             if let Some((popup, json)) = parse_popup_hide_arguments(&arguments)? {
                 return Ok(hide_popup(inputs, popup, json, target)?);
             }
+            if let Some((verb, json)) = parse_sidebar_arguments(&arguments)? {
+                return Ok(sidebar(inputs, verb, json, target)?);
+            }
             if let Some((action, json, yes)) = parse_close_arguments(&arguments)? {
                 return Ok(control(inputs, action, json, false, target, yes)?);
             }
@@ -951,7 +954,7 @@ fn renamed_command(arguments: &[OsString]) -> Option<Error> {
 /// The first words `execute` hands to `parse_control_arguments`.
 fn control_command(command: &OsStr) -> bool {
     [
-        "session", "tab", "pane", "popup", "edit", "focus", "--window",
+        "session", "tab", "pane", "popup", "sidebar", "edit", "focus", "--window",
     ]
     .iter()
     .any(|word| command == *word)
@@ -1107,6 +1110,10 @@ const HELP_SECTIONS: &[(&str, &[(&str, &str)])] = &[
             (
                 "popup hide POPUP [--json]",
                 "Hide a popup as its window would",
+            ),
+            (
+                "sidebar show|hide|toggle [--json]",
+                "Show or hide the agent sidebar",
             ),
             (
                 "focus PANE|left|right|up|down [--json]",
@@ -2247,6 +2254,48 @@ fn hide_popup(
     control(inputs, action, json, false, target, false)
 }
 
+/// `eon sidebar`'s verb.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum SidebarVerb {
+    Show,
+    Hide,
+    Toggle,
+}
+
+/// `eon sidebar` (EON-C10). `toggle` sends one `ToggleSidebar`. `show` and
+/// `hide` read the session first and send it only when the sidebar differs,
+/// else read the session again and print that; a visibility change between
+/// the first read and the toggle can reverse the result.
+fn sidebar(
+    inputs: &Inputs,
+    verb: SidebarVerb,
+    json: bool,
+    target: WorkspaceTarget,
+) -> Result<i32, String> {
+    let caller = match calling_terminal() {
+        Ok(caller) => caller,
+        Err(error) => return report_failure(&error, json),
+    };
+    let snapshot = match resolve_workspace(inputs, target.clone(), caller.as_deref())
+        .and_then(|resolved| inspect(&resolved.socket, caller.as_deref(), &resolved.label))
+    {
+        Ok(snapshot) => snapshot,
+        Err(error) => return report_failure(&error, json),
+    };
+    let action = match (verb, snapshot.sidebar) {
+        (SidebarVerb::Show, Sidebar::Open)
+        | (SidebarVerb::Hide, Sidebar::Closed | Sidebar::Off) => {
+            Action::Workspace(WorkspaceAction::Inspect)
+        }
+        (SidebarVerb::Show | SidebarVerb::Toggle, Sidebar::Off) => {
+            let detail = "the agent sidebar is off; set [sidebar] enabled = true";
+            return report_failure(&failure("unavailable", detail), json);
+        }
+        _ => Action::ToggleSidebar,
+    };
+    control(inputs, action, json, false, target, false)
+}
+
 /// The session `eon session` reports: the caller's, else the shown one.
 fn inspect(socket: &Path, caller: Option<&str>, window: &str) -> Result<Snapshot, Failure> {
     match send_action_from(
@@ -2673,6 +2722,23 @@ fn parse_popup_hide_arguments(arguments: &[OsString]) -> Result<Option<(String, 
         return Err(Error::usage(EON_USAGE));
     }
     Ok(Some((popup.into(), json)))
+}
+
+/// `sidebar show|hide|toggle [--json]`.
+fn parse_sidebar_arguments(arguments: &[OsString]) -> Result<Option<(SidebarVerb, bool)>, Error> {
+    let (verb, json) = match arguments {
+        [command, verb] if command == "sidebar" => (verb, false),
+        [command, verb, flag] if command == "sidebar" && flag == "--json" => (verb, true),
+        [command, ..] if command == "sidebar" => return Err(Error::usage(EON_USAGE)),
+        _ => return Ok(None),
+    };
+    let verb = match verb.to_str() {
+        Some("show") => SidebarVerb::Show,
+        Some("hide") => SidebarVerb::Hide,
+        Some("toggle") => SidebarVerb::Toggle,
+        _ => return Err(Error::usage(EON_USAGE)),
+    };
+    Ok(Some((verb, json)))
 }
 
 /// `edit [--json] -- FILE`, with a relative FILE resolved against the
@@ -3167,6 +3233,35 @@ mod tests {
             assert_eq!(parse(&args).unwrap_err().status, 2, "{args:?}");
         }
         assert_eq!(parse(&["pane", "read", "u2"]).unwrap(), None);
+    }
+
+    #[test]
+    fn sidebar_parser_takes_one_verb_and_json_once() {
+        let parse = |args: &[&str]| {
+            parse_sidebar_arguments(&args.iter().map(OsString::from).collect::<Vec<_>>())
+        };
+        for (word, verb) in [
+            ("show", SidebarVerb::Show),
+            ("hide", SidebarVerb::Hide),
+            ("toggle", SidebarVerb::Toggle),
+        ] {
+            assert_eq!(parse(&["sidebar", word]).unwrap(), Some((verb, false)));
+            assert_eq!(
+                parse(&["sidebar", word, "--json"]).unwrap(),
+                Some((verb, true))
+            );
+        }
+        for args in [
+            vec!["sidebar"],
+            vec!["sidebar", "--json"],
+            vec!["sidebar", "open"],
+            vec!["sidebar", "hide", "show"],
+            vec!["sidebar", "--json", "hide"],
+            vec!["sidebar", "hide", "--json", "--json"],
+        ] {
+            assert_eq!(parse(&args).unwrap_err().status, 2, "{args:?}");
+        }
+        assert_eq!(parse(&["popup", "hide", "u2"]).unwrap(), None);
     }
 
     #[test]

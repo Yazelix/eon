@@ -19,6 +19,7 @@ fn popup_tab_joins_the_left_border_and_returns_into_the_top_edge() {
         left_radius: 14.0,
         row: SceneRect::default(),
         return_run: 21.0,
+        action: None,
         title: FrameTitle {
             label: "Agent".into(),
             width: 82.0,
@@ -68,6 +69,7 @@ fn title_return_arcs_keep_normal_stroke_width_at_their_tangent_join() {
         left_radius: 14.0,
         row: SceneRect::default(),
         return_run: 21.0,
+        action: None,
         title: FrameTitle {
             label: "Agent".into(),
             width: 82.0,
@@ -597,7 +599,7 @@ fn popup_tabs_clear_the_bar_and_text_or_keep_the_border_gap_title() {
             FrameTitleTab::popup(&mut fonts.font_system, metrics, &workspace, stroke).is_none()
         );
         assert!(
-            chrome::popup_title_row(&workspace, metrics, stroke).is_some(),
+            workspace.popup_title_row(metrics).is_some(),
             "zero-gap popup must keep its existing title"
         );
     }
@@ -613,7 +615,7 @@ fn popup_tabs_clear_the_bar_and_text_or_keep_the_border_gap_title() {
         "narrow padding cannot clear the thick stroke"
     );
     assert!(
-        chrome::popup_title_row(&workspace, metrics, stroke).is_some(),
+        workspace.popup_title_row(metrics).is_some(),
         "thick-stroke fallback must retain the existing title"
     );
 }
@@ -718,7 +720,7 @@ fn popup_fallback_keeps_rtl_ink_inside_its_measured_border_gap() {
         assert!(
             FrameTitleTab::popup(&mut fonts.font_system, metrics, &workspace, stroke).is_none()
         );
-        let row = chrome::popup_title_row(&workspace, metrics, stroke).unwrap();
+        let row = workspace.popup_title_row(metrics).unwrap();
         let available = row.width - metrics.padding * 2.0;
         let title = FrameTitle::fit(
             &mut fonts.font_system,
@@ -2645,6 +2647,7 @@ fn title_rules_leave_label_and_scrollback_gaps_inside_the_fixed_card() {
                     left_radius: 14.0,
                     row: label,
                     return_run: 21.0,
+                    action: None,
                     title: FrameTitle {
                         label: "label".into(),
                         width: label.width,
@@ -3393,6 +3396,158 @@ fn card_backdrop_keeps_cards_like_the_agent_sidebar_at_terminal_opacity() {
                     }
                 }
             }
+        }
+    }
+}
+
+#[test]
+fn heading_action_notches_mirror_the_title_notch_without_double_blending() {
+    use crate::HeadingAction;
+    use eon_workspace_protocol::v38::Sidebar;
+    let mut fonts = FontSetup::new(&FontSettings::default()).unwrap();
+    for scale in [1.0, 1.3, 2.0] {
+        let metrics = fonts.metrics(scale);
+        let mut snapshot = popup_title_snapshot(
+            "Files",
+            chrome_title_metrics(metrics).text_height / metrics.scale,
+        );
+        snapshot.sidebar = Sidebar::Open;
+        // Wide enough for the sidebar to show at every scale.
+        let mut workspace = WorkspaceScene::from_snapshot(
+            &snapshot,
+            PhysicalSize::new(3200, 900),
+            metrics,
+            0.0,
+            0.0,
+            |_, text| (text.into(), text.len() as f32 * metrics.width),
+        );
+        // As `roomy_popup_title_workspace`: a full padding band above the titles.
+        workspace.header.height = workspace
+            .header
+            .height
+            .min(workspace.chrome.top - metrics.padding);
+        workspace.tab_viewport.height = workspace.header.height;
+        for border in [1, 3] {
+            let stroke = physical_outline_width(border, metrics.scale);
+            let area = workspace.sidebar_area().unwrap();
+            for (action, tab, card) in [
+                (
+                    HeadingAction::HidePopup,
+                    FrameTitleTab::popup(&mut fonts.font_system, metrics, &workspace, stroke),
+                    workspace.card_fill(workspace.chrome, metrics, stroke),
+                ),
+                (
+                    HeadingAction::HideSidebar,
+                    FrameTitleTab::sidebar(
+                        &mut fonts.font_system,
+                        metrics,
+                        &workspace,
+                        stroke,
+                        stroke,
+                    ),
+                    CardFill {
+                        bounds: workspace.card_rect(area, metrics, stroke),
+                        radius: workspace.card_radius(),
+                    },
+                ),
+            ] {
+                let context = format!("{action:?} at scale {scale}, border {border}");
+                let tab = tab.unwrap_or_else(|| panic!("no tab: {context}"));
+                let target = workspace.heading_action(action).unwrap();
+                let start = tab
+                    .action
+                    .unwrap_or_else(|| panic!("no action notch: {context}"));
+                let mirror = |x: f32| card.bounds.left + card.bounds.right() - x;
+                // The title's return reaches the top edge before the action notch's leaves it.
+                let title_end = tab.start + tab.return_run;
+                let action_begin = mirror(start + tab.return_run);
+                assert!(title_end + stroke < action_begin, "{context}");
+                for inset in [0.0, stroke] {
+                    let bands = title_tab_bands(card, &tab, inset);
+                    for (index, band) in bands.iter().enumerate() {
+                        assert!(
+                            bands[index + 1..]
+                                .iter()
+                                .all(|other| band.intersection(*other).is_none()),
+                            "dual-notch fill must not blend a pixel twice: {context}"
+                        );
+                    }
+                    // Inside the stroke too, the notch holds the button's pill at its top row.
+                    let y = target.top + 0.5;
+                    for x in [
+                        target.left + metrics.padding / 2.0,
+                        target.left + target.width / 2.0,
+                        target.right() - metrics.padding / 2.0,
+                    ] {
+                        assert!(
+                            bands.iter().any(|band| band.contains(x, y)),
+                            "button outside its notch at {x}, inset {inset}: {context}"
+                        );
+                    }
+                }
+                // Above the card's top edge both notches fill and the edge between them is bare.
+                let bands = title_tab_bands(card, &tab, 0.0);
+                let above = card.bounds.top - 0.5;
+                let filled = |x: f32| bands.iter().any(|band| band.contains(x, above));
+                assert!(filled(card.bounds.left + metrics.padding), "{context}");
+                assert!(filled(target.left + target.width / 2.0), "{context}");
+                assert!(!filled((title_end + action_begin) / 2.0), "{context}");
+                // The stroke follows the action notch's cap as it follows the title's.
+                let outline = title_tab_outline_rects(card, &tab, stroke);
+                for x in [
+                    card.bounds.left + metrics.padding * 2.0,
+                    target.left + target.width / 2.0,
+                ] {
+                    assert!(
+                        outline
+                            .iter()
+                            .any(|(rect, _)| rect.contains(x, tab.top + 0.5)),
+                        "no cap stroke at {x}: {context}"
+                    );
+                }
+            }
+        }
+    }
+}
+
+#[test]
+fn compact_heading_button_gap_keeps_the_titles_margin_and_clears_its_gap() {
+    use crate::HeadingAction;
+    let mut fonts = FontSetup::new(&FontSettings::default()).unwrap();
+    for scale in [1.0, 1.3, 2.0] {
+        let metrics = fonts.metrics(scale);
+        let label = "A popup label long enough to be fitted against its Hide button gjpqy";
+        let snapshot = popup_title_snapshot(
+            label,
+            chrome_title_metrics(metrics).text_height / metrics.scale,
+        );
+        for width in [420, 760, 1600] {
+            let workspace = WorkspaceScene::from_snapshot(
+                &snapshot,
+                PhysicalSize::new(width, 900),
+                metrics,
+                0.0,
+                0.0,
+                |_, text| (text.into(), text.len() as f32 * metrics.width),
+            );
+            let row = workspace.popup_title_row(metrics).unwrap();
+            let hide = workspace.heading_action(HeadingAction::HidePopup).unwrap();
+            let gap = chrome::heading_button_gap(hide, metrics);
+            // The edge breaks half a padding before and after the button, as around a title.
+            assert_eq!(gap.left, hide.left - metrics.padding / 2.0);
+            assert_eq!(gap.right(), hide.right() + metrics.padding / 2.0);
+            assert!(gap.right() <= row.right());
+            // The compact title, fitted as the popup fits it, ends before the button's gap.
+            let title = FrameTitle::fit(
+                &mut fonts.font_system,
+                metrics,
+                label,
+                (hide.left - row.left - metrics.padding * 2.0).max(0.0),
+            );
+            assert!(
+                title.border_gap(row, metrics).right() <= gap.left,
+                "title gap runs into the button's at scale {scale}, width {width}"
+            );
         }
     }
 }

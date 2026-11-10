@@ -1334,6 +1334,9 @@ names its socket. CLI JSON names a session `session` and a terminal
   Amended on 2026-11-10 (approved by eon-overseer under Lucca's standing
   rule) by `eon-el45.1`: `tab create --worktree` and the `eon worktree`
   commands are EON-C42's.
+  Amended on 2026-11-10 (approved by eon-overseer under Lucca's standing
+  rule) by `eon-5g0e5`: `eon sidebar show|hide|toggle`, best effort under a
+  concurrent visibility change.
 - **Consumer:** One local CLI or approved composition controlling a live Eon
   supervisor.
 - **Trigger:** The client submits one versioned session or supervisor-lifecycle
@@ -1498,6 +1501,18 @@ names its socket. CLI JSON names a session `session` and a terminal
     addressed session does not list fails with
     `unknown-popup`; one that leaves between the read and the dismissal fails
     with `stale-popup`. Both exit 3 and change nothing.
+  - `eon sidebar show|hide|toggle [--json]` acts on the agent sidebar of the
+    window showing the resolved session (EON-C31), as Alt+Shift+H and the
+    sidebar's Hide button do. `toggle` sends one `ToggleSidebar`. `show` and
+    `hide` read the session first and send `ToggleSidebar` only when `sidebar`
+    differs from the value asked for; otherwise they change nothing and print
+    a fresh read of the session. They are best effort: EONW has no action that
+    sets the value, so a keypress or another command that changes visibility
+    between the first read and the toggle reverses the result, which the
+    printed `sidebar` shows. `hide` succeeds while `sidebar` is `off`; `show` and `toggle` then
+    fail `unavailable` (exit 1). Each prints the resulting session, whose
+    `sidebar` reads `open`, `closed` or `off`. They change no tab, selection,
+    popup or desktop focus.
   - `eon tab close TAB [--yes] [--json]` and
     `eon pane close PANE [--yes] [--json]` resolve their explicit live IDs
     in any tab of the addressed session: the validated caller's session
@@ -3678,6 +3693,9 @@ names its socket. CLI JSON names a session `session` and a terminal
   session --json`.
   Amended on 2026-11-07 (approved by eon-overseer under Lucca's standing rule)
   by `eon-30skm` (S3): its prose says session for the product concept.
+  Amended on 2026-11-10 (approved by eon-overseer under Lucca's standing rule)
+  by `eon-5g0e5`: `eon sidebar` and the sidebar's Hide button send
+  `ToggleSidebar`.
 - **Consumer:** One person supervising coding agents across the tabs and sessions (EON-C33)
   of one full-Eon window.
   eonbase has no poller and no sidebar; its `sidebar` is `Off`.
@@ -3790,7 +3808,8 @@ names its socket. CLI JSON names a session `session` and a terminal
     - The value lives in memory while the supervisor runs, so it survives detach and reattach.
       It resets to `Open` after a supervisor restart.
     - `ToggleSidebar` flips `Open` and `Closed`. A toggle, rather than a set, cannot race a stale
-      snapshot. In `Off` it is a no-op.
+      snapshot. In `Off` it is a no-op. `eon sidebar` (EON-C10) and the sidebar's Hide button
+      (VEN-C30) send the same action.
   - **EONW v18 and v19** (amend EON-C10) add:
     - an optional `attention` on `Pane` and `Popup`, holding:
       - `state`: the *normalized* EON-C31 state of the terminal's most urgent record, one of

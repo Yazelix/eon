@@ -355,6 +355,16 @@ pub(super) struct HeaderInteraction {
     clock_hovered: bool,
     pressed_header: Option<WorkspaceHeaderControl>,
     pub(super) pressed_pane: Option<(String, crate::PaneHeaderAction)>,
+    pressed_heading: Option<crate::HeadingAction>,
+}
+
+/// One header button's interaction state.
+#[derive(Clone, Copy)]
+struct HeaderButtonState {
+    hovered: bool,
+    pressed: bool,
+    focused: bool,
+    enabled: bool,
 }
 
 impl HeaderInteraction {
@@ -1095,26 +1105,14 @@ fn push_dots(
     }
 }
 
-pub(super) fn popup_title_row(
-    workspace: &WorkspaceScene,
-    metrics: CellMetrics,
-    stroke: f32,
-) -> Option<SceneRect> {
-    workspace.popup_label()?;
-    let terminal = workspace.visible_terminal()?;
-    let row = SceneRect {
-        height: chrome_title_metrics(metrics).text_height,
-        ..workspace.chrome
-    };
-    let card = workspace.card_fill(workspace.chrome, metrics, stroke);
-    if terminal.top + metrics.padding < row.bottom()
-        || terminal.height < metrics.padding * 2.0 + metrics.height
-        || terminal.width < metrics.padding * 2.0 + metrics.width * 4.0
-        || card.bounds.top != crate::scene::title_rule_y(row.top, row.height)
-    {
-        return None;
+/// The gap a heading's button leaves in its card's top edge where no notch holds it: its
+/// target and half a padding each side, the margin a compact title's gap keeps around its text.
+pub(super) fn heading_button_gap(target: SceneRect, metrics: CellMetrics) -> SceneRect {
+    SceneRect {
+        left: target.left - metrics.padding / 2.0,
+        width: target.width + metrics.padding,
+        ..target
     }
-    Some(row)
 }
 
 impl FrameTitle {
@@ -1150,16 +1148,28 @@ impl FrameTitleTab {
         stroke: f32,
     ) -> Option<Self> {
         let label = workspace.popup_label()?;
-        let row = popup_title_row(workspace, metrics, stroke)?;
+        let row = workspace.popup_title_row(metrics)?;
         let card = workspace.card_fill(workspace.chrome, metrics, stroke);
         // A clear raster row separates the cap from both the bar and the title box.
         let frame_top = workspace
             .tab_viewport
             .bottom()
             .max(workspace.header.bottom());
-        Self::new(fonts, metrics, label, row, card, frame_top, stroke)
+        Self::new(
+            fonts,
+            metrics,
+            label,
+            row,
+            card,
+            frame_top,
+            stroke,
+            workspace.heading_action(crate::HeadingAction::HidePopup),
+        )
     }
 
+    /// The tab over `row`; with an `action` button it also carries the mirrored right notch
+    /// around that button, and its label stops before that notch.
+    #[allow(clippy::too_many_arguments)]
     fn new(
         fonts: &mut FontSystem,
         metrics: CellMetrics,
@@ -1168,13 +1178,34 @@ impl FrameTitleTab {
         card: crate::scene::CardFill,
         frame_top: f32,
         stroke: f32,
+        action: Option<SceneRect>,
     ) -> Option<Self> {
         let extra = crate::scene::title_tab_rise(metrics).max(stroke + 1.0);
         let top = (row.top - extra).floor().max(frame_top.ceil() + 1.0);
         if top + stroke + 1.0 > row.top {
             return None;
         }
-        Self::at(fonts, metrics, label, row, card, top, row.top, stroke)
+        let Some(target) = action else {
+            return Self::at(fonts, metrics, label, row, card, top, row.top, stroke);
+        };
+        // Both notches return to the top edge over the same run; flat edge stays between them.
+        let return_run = (card.bounds.top - top) * 1.5;
+        let label_row = SceneRect {
+            width: (target.left - metrics.padding - return_run - row.left).max(0.0),
+            ..row
+        };
+        let mut tab = Self::at(fonts, metrics, label, label_row, card, top, row.top, stroke)?;
+        // The title's return starts this far before the padded right edge of its label; the
+        // mirrored one starts as far before the padded left edge of the button.
+        let label_edge = card.bounds.left
+            + metrics.padding
+            + tab.title.ink_width(metrics, stroke)
+            + metrics.padding / 2.0;
+        tab.action = Some(
+            card.bounds.left + card.bounds.right() - target.left + metrics.padding / 2.0
+                - (label_edge - tab.start),
+        );
+        Some(tab)
     }
 
     #[allow(clippy::too_many_arguments)]
@@ -1230,10 +1261,13 @@ impl FrameTitleTab {
             row,
             return_run,
             title,
+            action: None,
         })
     }
 
-    /// The tab on the top line of a card allocated `area`, labelled `label`.
+    /// The tab on the top line of a card allocated `area`, labelled `label`, with the right
+    /// notch of its `action` button when it has one.
+    #[allow(clippy::too_many_arguments)]
     fn card(
         fonts: &mut FontSystem,
         metrics: CellMetrics,
@@ -1242,6 +1276,7 @@ impl FrameTitleTab {
         label: &str,
         stroke: f32,
         card_stroke: f32,
+        action: Option<SceneRect>,
     ) -> Option<Self> {
         let row = SceneRect {
             height: chrome_title_metrics(metrics).text_height,
@@ -1265,6 +1300,7 @@ impl FrameTitleTab {
                 .bottom()
                 .max(workspace.tab_viewport.bottom()),
             stroke,
+            action,
         )
     }
 
@@ -1284,6 +1320,7 @@ impl FrameTitleTab {
             SIDEBAR_TITLE,
             stroke,
             card_stroke,
+            workspace.heading_action(crate::HeadingAction::HideSidebar),
         )
     }
 
@@ -1320,6 +1357,7 @@ impl FrameTitleTab {
             card,
             viewer.bounds.top,
             stroke,
+            None,
         )
         .map(|tab| (card, tab))
     }
@@ -1350,6 +1388,7 @@ impl FrameTitleTab {
                                 label,
                                 border,
                                 card_stroke,
+                                None,
                             )
                         })
                 })
@@ -1839,6 +1878,10 @@ impl Renderer {
         self.header.pressed_pane = action;
     }
 
+    pub fn set_pressed_heading(&mut self, action: Option<crate::HeadingAction>) {
+        self.header.pressed_heading = action;
+    }
+
     pub fn set_pressed_header(&mut self, control: Option<WorkspaceHeaderControl>) {
         self.header.pressed_header = control;
     }
@@ -2039,6 +2082,16 @@ impl Renderer {
                 label.push_str(" — unavailable in a one-pane tab");
             }
             Some((label, rect))
+        });
+        let hovered_pane = hovered_pane.or_else(|| {
+            let (WorkspaceFocus::HeadingAction(action), _) = self.header.hovered_header.as_ref()?
+            else {
+                return None;
+            };
+            Some((
+                workspace.heading_action_label(*action),
+                workspace.heading_action(*action)?,
+            ))
         });
         let (label, anchor) = if let Some((label, rect)) = &hovered_pane {
             (label.as_str(), *rect)
@@ -2559,11 +2612,20 @@ impl Renderer {
             };
             let stroke = physical_outline_width(self.border_width, self.metrics.scale);
             let tab = title_tabs.last().and_then(Option::as_ref);
+            let hide = workspace.heading_action(crate::HeadingAction::HideSidebar);
             let gap = if let Some(tab) = tab {
                 self.build_frame_title(&tab.title, row, area, palette::PRIMARY_TEXT, stroke)
             } else {
+                // A compact title stops before the button.
+                let width = hide.map_or(width, |hide| {
+                    (hide.left - row.left - padding * 2.0).max(0.0)
+                });
                 self.build_border_title(SIDEBAR_TITLE, row, area, width, palette::PRIMARY_TEXT)
             };
+            // Without its notch the button sits in a gap in the top edge.
+            let button_gap = hide
+                .filter(|_| tab.is_none_or(|tab| tab.action.is_none()))
+                .map(|hide| heading_button_gap(hide, self.metrics));
             if self.pane_frames {
                 let card = crate::scene::CardFill {
                     bounds: workspace.card_rect(area, self.metrics, self.card_stroke_width()),
@@ -2579,12 +2641,26 @@ impl Renderer {
                 rectangles.push_card_outline(
                     card.bounds,
                     card.radius,
-                    &[gap],
+                    &[Some(gap), button_gap]
+                        .into_iter()
+                        .flatten()
+                        .collect::<Vec<_>>(),
                     stroke,
                     palette::CARD_OUTLINE,
                 );
                 rectangles.clip = None;
             }
+            self.push_heading_button(
+                workspace,
+                focus,
+                rectangles,
+                crate::HeadingAction::HideSidebar,
+                area,
+                backgrounds
+                    .last()
+                    .copied()
+                    .unwrap_or(palette::TERMINAL_FALLBACK),
+            );
             let list = workspace.sidebar_list;
             if workspace.sidebar_empty() {
                 self.push_text_clipped(
@@ -2937,7 +3013,8 @@ impl Renderer {
                 workspace.card_fill(workspace.chrome, self.metrics, self.card_stroke_width());
             let mut clip = workspace.chrome;
             let mut gaps = Vec::new();
-            if let Some(row) = popup_title_row(workspace, self.metrics, stroke) {
+            if let Some(row) = workspace.popup_title_row(self.metrics) {
+                let hide = workspace.heading_action(crate::HeadingAction::HidePopup);
                 let title = if let Some(tab) = FrameTitleTab::popup(
                     &mut self.fonts.font_system,
                     self.metrics,
@@ -2950,13 +3027,17 @@ impl Renderer {
                     clip.height = (workspace.chrome.bottom() - cut).max(0.0);
                     tab.title
                 } else {
+                    // A compact title stops before the button, which sits in its own gap.
                     let title = FrameTitle::fit(
                         &mut self.fonts.font_system,
                         self.metrics,
                         label,
-                        (row.width - self.metrics.padding * 2.0).max(0.0),
+                        (hide.map_or(row.width, |hide| hide.left - row.left)
+                            - self.metrics.padding * 2.0)
+                            .max(0.0),
                     );
                     gaps.push(title.border_gap(row, self.metrics));
+                    gaps.extend(hide.map(|hide| heading_button_gap(hide, self.metrics)));
                     title
                 };
                 self.build_frame_title(
@@ -2965,6 +3046,17 @@ impl Renderer {
                     workspace.chrome,
                     palette::PRIMARY_TEXT,
                     stroke,
+                );
+                self.push_heading_button(
+                    workspace,
+                    focus,
+                    rectangles,
+                    crate::HeadingAction::HidePopup,
+                    workspace.chrome,
+                    backgrounds
+                        .first()
+                        .copied()
+                        .unwrap_or(palette::TERMINAL_FALLBACK),
                 );
             }
             rectangles.clip = Some(clip);
@@ -3135,24 +3227,6 @@ impl Renderer {
                             .pressed_pane
                             .as_ref()
                             .is_some_and(|(id, held)| id == &pane.id && *held == action);
-                        if hovered {
-                            rectangles.push_rounded(
-                                target,
-                                self.metrics.padding / 2.0,
-                                if pressed {
-                                    palette::ACCENT
-                                } else {
-                                    palette::CHROME_HIGHLIGHT
-                                },
-                            );
-                        }
-                        if current && focus == WorkspaceFocus::PaneAction(action) && enabled {
-                            rectangles.push_rounded_outline(
-                                target,
-                                self.metrics.padding / 2.0,
-                                palette::ACCENT,
-                            );
-                        }
                         let glyph = match action {
                             crate::PaneHeaderAction::Close => "×",
                             crate::PaneHeaderAction::Zoom if workspace.zoomed_pane().is_some() => {
@@ -3160,47 +3234,26 @@ impl Renderer {
                             }
                             crate::PaneHeaderAction::Zoom => "□",
                         };
-                        let (buffer, left, top) = ink_centred_glyph(
-                            &mut self.fonts.font_system,
-                            &mut self.swash_cache,
-                            self.metrics,
+                        self.push_header_button(
+                            rectangles,
+                            target,
+                            row,
+                            rect,
                             glyph,
-                            (target.left + target.width / 2.0, row.top + row.height / 2.0),
-                        );
-                        self.text.push(PlacedText {
-                            buffer,
-                            custom_glyph: None,
-                            left,
-                            top,
-                            right: target.right().floor() as i32,
-                            bottom: rect.bottom().floor() as i32,
-                            bound_left: target.left.ceil() as i32,
-                            bound_top: rect.top.ceil() as i32,
-                            color: {
-                                let background = if hovered {
-                                    if pressed {
-                                        palette::ACCENT
-                                    } else {
-                                        palette::CHROME_HIGHLIGHT
-                                    }
-                                } else {
-                                    backgrounds
-                                        .get(column_index)
-                                        .copied()
-                                        .unwrap_or(palette::TERMINAL_FALLBACK)
-                                };
-                                let c = blend_to_contrast(
-                                    if enabled {
-                                        color
-                                    } else {
-                                        palette::DEAD_PANE_TEXT
-                                    },
-                                    background,
-                                    if enabled { 4.5 } else { 3.0 },
-                                );
-                                Color::rgb(c.r, c.g, c.b)
+                            HeaderButtonState {
+                                hovered,
+                                pressed,
+                                focused: current
+                                    && focus == WorkspaceFocus::PaneAction(action)
+                                    && enabled,
+                                enabled,
                             },
-                        });
+                            color,
+                            backgrounds
+                                .get(column_index)
+                                .copied()
+                                .unwrap_or(palette::TERMINAL_FALLBACK),
+                        );
                     }
                 }
                 rectangles.clip = None;
@@ -3263,6 +3316,94 @@ impl Renderer {
                 ),
             );
         }
+    }
+
+    /// Draws one header button: its hover pill, accent while held, focus outline and
+    /// ink-centred `glyph`, readable over `background`. `clip` bounds the glyph.
+    #[allow(clippy::too_many_arguments)]
+    fn push_header_button(
+        &mut self,
+        rectangles: &mut RectangleBatch,
+        target: SceneRect,
+        row: SceneRect,
+        clip: SceneRect,
+        glyph: &str,
+        state: HeaderButtonState,
+        color: SceneColor,
+        background: SceneColor,
+    ) {
+        let pill = if state.pressed {
+            palette::ACCENT
+        } else {
+            palette::CHROME_HIGHLIGHT
+        };
+        if state.hovered {
+            rectangles.push_rounded(target, self.metrics.padding / 2.0, pill);
+        }
+        if state.focused {
+            rectangles.push_rounded_outline(target, self.metrics.padding / 2.0, palette::ACCENT);
+        }
+        let (buffer, left, top) = ink_centred_glyph(
+            &mut self.fonts.font_system,
+            &mut self.swash_cache,
+            self.metrics,
+            glyph,
+            (target.left + target.width / 2.0, row.top + row.height / 2.0),
+        );
+        let c = blend_to_contrast(
+            if state.enabled {
+                color
+            } else {
+                palette::DEAD_PANE_TEXT
+            },
+            if state.hovered { pill } else { background },
+            if state.enabled { 4.5 } else { 3.0 },
+        );
+        self.text.push(PlacedText {
+            buffer,
+            custom_glyph: None,
+            left,
+            top,
+            right: target.right().floor() as i32,
+            bottom: clip.bottom().floor() as i32,
+            bound_left: target.left.ceil() as i32,
+            bound_top: clip.top.ceil() as i32,
+            color: Color::rgb(c.r, c.g, c.b),
+        });
+    }
+
+    /// Draws a popup or Agents heading's Hide button, which is as tall as its title row.
+    fn push_heading_button(
+        &mut self,
+        workspace: &WorkspaceScene,
+        focus: WorkspaceFocus,
+        rectangles: &mut RectangleBatch,
+        action: crate::HeadingAction,
+        clip: SceneRect,
+        background: SceneColor,
+    ) {
+        let Some(target) = workspace.heading_action(action) else {
+            return;
+        };
+        rectangles.clip = Some(clip);
+        self.push_header_button(
+            rectangles,
+            target,
+            target,
+            clip,
+            "–",
+            HeaderButtonState {
+                hovered: self
+                    .header
+                    .hovers(WorkspaceFocus::HeadingAction(action), ""),
+                pressed: self.header.pressed_heading == Some(action),
+                focused: focus == WorkspaceFocus::HeadingAction(action),
+                enabled: true,
+            },
+            palette::PRIMARY_TEXT,
+            background,
+        );
+        rectangles.clip = None;
     }
 
     /// Pane and sidebar titles share shaping, placement and their measured border gap.

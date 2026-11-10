@@ -1490,6 +1490,9 @@ re-proved when that platform or feature is next touched.
   gap below the bar. Amended on 2026-11-10 by `eon-2ibdd`, approved by
   eon-overseer under Lucca's standing rule: distinguish VEN-C8's continuous pane
   bands from the unchanged Stack, popup, Agents and dialog title tabs.
+  Amended on 2026-11-10 by `eon-5g0e5`, approved by eon-overseer under Lucca's
+  standing rule: popup and Agents headings carry a right action notch holding
+  a Hide button.
 - **Consumer:** One person using a Venus workspace supplied through EONW v5.
 - **Trigger:** The active tab selects a popup, its selection changes, or the
   person invokes an Eon-supplied catalog shortcut.
@@ -1534,9 +1537,23 @@ re-proved when that platform or feature is next touched.
   their cards; pane headers retain VEN-C8's allocation and input bounds. A Stack
   tab has its own stack band (VEN-C8). Where its
   stroke cannot clear the label or neighbouring chrome, retain the compact
-  border-gap title; omit a label only when it cannot fit. Pane headers keep VEN-C8's final
-  collapsed-title and clearance exceptions. Hover/click targets and
-  accessibility names stay unchanged; decorative pane cap pixels outside a
+  border-gap title; omit a label only when it cannot fit. Popup and Agents
+  headings also carry a right action notch mirroring the title notch, holding
+  one Hide button; the label fits to its left. With pane frames off the popup
+  keeps its outline and both notches, and the Agents button shows without a
+  notch or outline. With frames on, where the notch cannot form the button
+  sits in a gap in the top edge half a padding wider than it on each side.
+  Where the button cannot fit at full size the heading shows none. The
+  popup's Hide sends `DismissPopup` naming the shown instance, as
+  `eon popup hide` does. Hover fills the button's pill, a held press turns it
+  accent, and release over the button activates it only while the heading
+  still sends what it sent when pressed: a popup shown in place of the
+  pressed one is never dismissed by that release.
+  AccessKit lists `Hide popup <label>` and `Hide agent sidebar` as buttons.
+  Pane headers keep VEN-C8's final
+  collapsed-title and clearance exceptions. Title hover/click targets and
+  accessibility names stay unchanged, and the Hide buttons are these
+  headings' only input targets; decorative pane cap pixels outside a
   header row add no hit or accessibility area. Native dialog title ink stays
   inside existing dismissal bounds. Exposed popup margins share the terminal
   default background and opacity, with the existing best-effort surface-wide
@@ -2188,7 +2205,9 @@ re-proved when that platform or feature is next touched.
   Lucca (delegated: 'auto-decide'): Agents shares its tab clearance with the
   Stack tabs. Amended on 2026-11-10 by `eon-x8d5x`, approved by Lucca
   (option 2, relayed through eon-overseer): popup rows share pane-row fills
-  and carry a larger popup marker at the right edge.
+  and carry a larger popup marker at the right edge. Amended on 2026-11-10 by
+  `eon-5g0e5`, approved by eon-overseer under Lucca's standing rule: the
+  Agents heading's Hide button and its keyboard stop.
 - **Consumer:** One person using a Venus window attached to a full Eon
   workspace. The sidebar itself needs `sidebar` other than `Off`. Alt+G and
   Alt+Shift+G work under `Off` too.
@@ -2201,7 +2220,12 @@ re-proved when that platform or feature is next touched.
   - **Visibility.** The sidebar shows while the snapshot's `sidebar` is
     `Open`, on every tab of the window. Alt+Shift+H sends `ToggleSidebar`, so
     one press always flips the choice between open and closed. That shows on
-    screen unless the window is too narrow (see Layout).
+    screen unless the window is too narrow (see Layout). The Agents heading's
+    Hide button (VEN-C18) sends the same `ToggleSidebar`, and only while the
+    snapshot's `sidebar` is `Open`; it shows only while the sidebar does. With
+    keyboard focus in the sidebar, Tab and Shift+Tab move between its rows and
+    Hide, Enter or Space activates Hide, and Up or Down returns to the rows.
+    F6 skips a sidebar with no rows, so Hide has no keyboard stop there.
   - **Layout.**
     - A left sidebar 28 cells wide sits below the Eon Bar. The bar keeps its
       full width, its controls and its drag region.

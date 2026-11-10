@@ -466,6 +466,13 @@ impl PaneHeaderAction {
     }
 }
 
+/// Actions on enclosure headings, shared by drawing, input and accessibility.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub enum HeadingAction {
+    HidePopup,
+    HideSidebar,
+}
+
 /// A column other than the selected one: its accordion headers and terminal area.
 #[derive(Clone, Debug, PartialEq)]
 pub struct WorkspaceColumn {
@@ -840,6 +847,8 @@ pub enum WorkspaceHit<'a> {
     SidebarRow(&'a str),
     Pane(&'a str),
     PaneAction(&'a str, PaneHeaderAction),
+    /// A popup or Agents heading's button.
+    HeadingAction(HeadingAction),
     /// Another column's terminal area, named by that column's expanded pane.
     ColumnTerminal(&'a str),
     Terminal,
@@ -856,6 +865,7 @@ pub enum WorkspaceFocus {
     PaneAction(PaneHeaderAction),
     /// The agent sidebar's rows; the application keeps which one.
     Sidebar,
+    HeadingAction(HeadingAction),
 }
 
 /// One native dialog row; window-menu rows carry a semantic action.
@@ -2302,6 +2312,9 @@ pub struct WorkspaceScene {
     active_tab_scroll: f32,
     selected_pane_scroll: f32,
     popup_label: Option<String>,
+    /// The Hide buttons in the popup and Agents headings' title rows, while each fits.
+    popup_hide: Option<SceneRect>,
+    sidebar_hide: Option<SceneRect>,
     /// Only the selected pane is laid out while zoom is visible.
     zoomed: bool,
 }
@@ -3971,8 +3984,11 @@ impl WorkspaceScene {
                         .label
                         .clone()
                 }),
+                popup_hide: None,
+                sidebar_hide: None,
                 zoomed: false,
-            };
+            }
+            .with_heading_actions(metrics);
         }
 
         let active = &snapshot.tabs[active_tab];
@@ -4167,7 +4183,79 @@ impl WorkspaceScene {
             active_tab_scroll,
             selected_pane_scroll,
             popup_label: None,
+            popup_hide: None,
+            sidebar_hide: None,
             zoomed,
+        }
+        .with_heading_actions(metrics)
+    }
+
+    /// Places each heading's Hide button at the right of its title row, as a pane's buttons sit.
+    fn with_heading_actions(mut self, metrics: CellMetrics) -> Self {
+        let button = chrome_title_metrics(metrics).text_height;
+        let target = |row: SceneRect| {
+            (row.width >= button + metrics.padding * 4.0).then(|| SceneRect {
+                left: row.right() - metrics.padding / 2.0 - button,
+                top: row.top,
+                width: button,
+                height: button,
+            })
+        };
+        self.popup_hide = self.popup_title_row(metrics).and_then(target);
+        self.sidebar_hide = self.sidebar_title_row(metrics).and_then(target);
+        self
+    }
+
+    /// The popup's title row, while its card's top edge runs through it and its terminal
+    /// leaves it clear.
+    pub(crate) fn popup_title_row(&self, metrics: CellMetrics) -> Option<SceneRect> {
+        self.popup_label.as_ref()?;
+        let terminal = self.visible_terminal()?;
+        let row = SceneRect {
+            height: chrome_title_metrics(metrics).text_height,
+            ..self.chrome
+        };
+        if terminal.top + metrics.padding < row.bottom()
+            || terminal.height < metrics.padding * 2.0 + metrics.height
+            || terminal.width < metrics.padding * 2.0 + metrics.width * 4.0
+            || popup_card_rect(self.chrome, metrics).top != title_rule_y(row.top, row.height)
+        {
+            return None;
+        }
+        Some(row)
+    }
+
+    /// The Agents heading's title row, while the sidebar's card's top edge runs through it.
+    fn sidebar_title_row(&self, metrics: CellMetrics) -> Option<SceneRect> {
+        let area = self.sidebar_area()?;
+        let row = SceneRect {
+            height: chrome_title_metrics(metrics).text_height,
+            ..area
+        };
+        // A card's top edge does not depend on its stroke.
+        (self.card_rect(area, metrics, 0.0).top == title_rule_y(row.top, row.height)).then_some(row)
+    }
+
+    /// A heading's Hide button, while it shows.
+    #[must_use]
+    pub fn heading_action(&self, action: HeadingAction) -> Option<SceneRect> {
+        match action {
+            HeadingAction::HidePopup => self.popup_hide,
+            HeadingAction::HideSidebar => self.sidebar_hide,
+        }
+    }
+
+    /// The hover and accessible label of a heading's button.
+    #[must_use]
+    pub fn heading_action_label(&self, action: HeadingAction) -> String {
+        match action {
+            HeadingAction::HidePopup => {
+                format!(
+                    "Hide popup {}",
+                    self.popup_label.as_deref().unwrap_or_default()
+                )
+            }
+            HeadingAction::HideSidebar => "Hide agent sidebar".into(),
         }
     }
 
@@ -4365,6 +4453,14 @@ impl WorkspaceScene {
                 .position(|group| group.hover.contains(x, y))
         }) {
             return Some(WorkspaceHit::HintGroup(index));
+        }
+        for action in [HeadingAction::HidePopup, HeadingAction::HideSidebar] {
+            if self
+                .heading_action(action)
+                .is_some_and(|target| target.contains(x, y))
+            {
+                return Some(WorkspaceHit::HeadingAction(action));
+            }
         }
         if let Some(row) = self.sidebar_rows.iter().find(|row| {
             row.rect

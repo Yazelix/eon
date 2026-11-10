@@ -5,6 +5,15 @@ installation, and proven contract changes.
 
 ## Unreleased
 
+- Popup and Agents sidebar headings have a Hide button in a second notch at
+  the right of the heading. The popup's does what `eon popup hide POPUP` does;
+  the sidebar's does what Alt+Shift+H does. New `eon sidebar show|hide|toggle
+  [--json]` shows or hides the agent sidebar from the CLI and prints the
+  session with its `sidebar` state; `show` and `hide` are best effort when a
+  key or another command changes visibility at the same moment. With keyboard
+  focus in the sidebar, Tab reaches Hide and Enter or Space activates it
+  (`eon-5g0e5`).
+
 - Untimed benchmark traces on macOS retry a full receiver instead of losing
   records. A stalled collector times out once, then drops with loss accounting
   so it cannot keep stalling Orbit (`eon-it2ye`).

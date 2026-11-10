@@ -1,9 +1,10 @@
 use super::*;
 
-#[test]
-fn agent_sidebar_pushes_columns_hides_for_width_and_shows_its_empty_state() {
+/// One tab of two one-pane columns and the hidden popup `u1`, labelled Agent, with the sidebar
+/// open.
+fn sidebar_snapshot() -> Snapshot {
     use eon_workspace_protocol::v38::{
-        AttentionState, Column, Popup, PopupEntry, PopupGeometry, PopupKey, Shortcut,
+        Column, Popup, PopupEntry, PopupGeometry, PopupKey, Shortcut,
     };
 
     let pane = |id: &str| Pane {
@@ -15,7 +16,7 @@ fn agent_sidebar_pushes_columns_hides_for_width_and_shows_its_empty_state() {
         live: true,
         attention: None,
     };
-    let mut snapshot = Snapshot {
+    Snapshot {
         workspace: "s1".into(),
         active_workspace: "s1".into(),
         workspaces: vec![eon_workspace_protocol::v38::WorkspaceInfo {
@@ -69,7 +70,113 @@ fn agent_sidebar_pushes_columns_hides_for_width_and_shows_its_empty_state() {
         busy: None,
         sidebar: Sidebar::Open,
         attention_queue: Vec::new(),
+    }
+}
+
+#[test]
+fn heading_hide_targets_sit_in_their_title_rows_and_yield_when_narrow() {
+    let mut snapshot = sidebar_snapshot();
+    snapshot.tabs[0].selected_popup = Some("u1".into());
+    let metrics = CellMetrics::for_scale(1.0);
+    let project = |snapshot: &Snapshot, width| {
+        WorkspaceScene::from_snapshot(
+            snapshot,
+            PhysicalSize::new(width, 600),
+            metrics,
+            0.0,
+            0.0,
+            |_, text| (text.into(), text.len() as f32 * 10.0),
+        )
     };
+    let (popup, sidebar) = (HeadingAction::HidePopup, HeadingAction::HideSidebar);
+
+    // Each button is a square of the title height at the right of its heading's title row,
+    // half a padding from the card's edge, and is what a pointer there hits.
+    let scene = project(&snapshot, 1400);
+    let button = chrome_title_metrics(metrics).text_height;
+    for (action, right) in [
+        (popup, scene.chrome.right()),
+        (sidebar, scene.sidebar().unwrap().right()),
+    ] {
+        let target = scene.heading_action(action).unwrap();
+        assert_eq!(
+            (target.top, target.width, target.height),
+            (scene.pane_viewport.top, button, button),
+            "{action:?}"
+        );
+        assert_eq!(target.right(), right - metrics.padding / 2.0, "{action:?}");
+        for (x, y) in [
+            (target.left, target.top),
+            (target.right() - 0.5, target.bottom() - 0.5),
+        ] {
+            assert_eq!(
+                scene.hit_test(x, y),
+                Some(WorkspaceHit::HeadingAction(action)),
+                "{action:?}"
+            );
+        }
+        // It covers neither the popup's terminal nor the sidebar's rows.
+        assert_eq!(target.intersection(scene.terminal), None, "{action:?}");
+        assert_eq!(target.intersection(scene.sidebar_list), None, "{action:?}");
+    }
+    assert_eq!(scene.heading_action_label(popup), "Hide popup Agent");
+    assert_eq!(scene.heading_action_label(sidebar), "Hide agent sidebar");
+
+    // Without a shown popup only the sidebar has a button, and where the popup's was hits none.
+    let shown = scene.heading_action(popup).unwrap();
+    snapshot.tabs[0].selected_popup = None;
+    let columns = project(&snapshot, 1400);
+    assert_eq!(columns.heading_action(popup), None);
+    assert_eq!(
+        columns.heading_action(sidebar),
+        scene.heading_action(sidebar)
+    );
+    assert_ne!(
+        columns.hit_test(shown.left, shown.top),
+        Some(WorkspaceHit::HeadingAction(popup))
+    );
+
+    // A sidebar that hides for width, or is closed, has no button.
+    let narrowest = (card_gap(metrics) + 280.0 + 800.0) as u32;
+    assert!(
+        project(&snapshot, narrowest)
+            .heading_action(sidebar)
+            .is_some()
+    );
+    assert_eq!(
+        project(&snapshot, narrowest - 1).heading_action(sidebar),
+        None
+    );
+    snapshot.sidebar = Sidebar::Closed;
+    assert_eq!(project(&snapshot, 1400).heading_action(sidebar), None);
+
+    // A popup shows its button only with four paddings of title row left beside it, so a
+    // narrow popup shows none.
+    snapshot.tabs[0].selected_popup = Some("u1".into());
+    let mut shown = [false; 2];
+    for width in (40..=400).step_by(10) {
+        let scene = project(&snapshot, width);
+        let target = scene.heading_action(popup);
+        shown[usize::from(target.is_some())] = true;
+        if let Some(target) = target {
+            assert!(
+                target.left - scene.chrome.left >= metrics.padding * 3.5,
+                "{width}: {target:?} in {:?}",
+                scene.chrome
+            );
+        }
+    }
+    assert_eq!(
+        shown, [true; 2],
+        "narrow popups yield and roomy ones do not"
+    );
+}
+
+#[test]
+fn agent_sidebar_pushes_columns_hides_for_width_and_shows_its_empty_state() {
+    use eon_workspace_protocol::v38::AttentionState;
+
+    let mut snapshot = sidebar_snapshot();
     let metrics = CellMetrics::for_scale(1.0);
     let project = |snapshot: &Snapshot, width| {
         WorkspaceScene::from_snapshot(

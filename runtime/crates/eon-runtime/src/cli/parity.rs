@@ -22,10 +22,12 @@ enum CliPath {
     /// These arguments parse to a `popup hide` of this action's popup; the
     /// command reads its owning tab from the session.
     Hide(Vec<OsString>),
+    /// These arguments parse to the `sidebar toggle` that sends this action.
+    Sidebar(Vec<OsString>),
 }
 
 fn cli_path(action: &Action) -> CliPath {
-    use CliPath::{Command, Exception, Hide, Lifecycle, Send};
+    use CliPath::{Command, Exception, Hide, Lifecycle, Send, Sidebar};
     let words = |words: &[&str]| words.iter().map(OsString::from).collect::<Vec<_>>();
     let flag = |set: bool, flag: &str| if set { words(&[flag]) } else { Vec::new() };
     let direction = |direction: &Direction| match direction {
@@ -105,14 +107,12 @@ fn cli_path(action: &Action) -> CliPath {
             return Exception("eon-agent-parity-a9g0.1 adds popup commands");
         }
         Action::DismissPopup(target) => return Hide(words(&["popup", "hide", &target.instance])),
+        Action::ToggleSidebar => return Sidebar(words(&["sidebar", "toggle"])),
         Action::CreateColumn
-        | Action::ToggleSidebar
         | Action::FocusAttention { .. }
         | Action::NextAttention
         | Action::PreviousAttention => {
-            return Exception(
-                "eon-agent-parity-a9g0.6 adds column, sidebar and attention commands",
-            );
+            return Exception("eon-agent-parity-a9g0.6 adds column and attention commands");
         }
         Action::Subscribe { .. } => return Lifecycle("events"),
         Action::ReadTerminal { target } => words(&["pane", "read", target]),
@@ -383,6 +383,18 @@ fn every_eonw_action_has_a_cli_path_or_a_named_exception() {
                     panic!("{action:?}");
                 };
                 assert_eq!(popup, target.instance, "{arguments:?}");
+            }
+            CliPath::Sidebar(arguments) => {
+                assert!(control_command(&arguments[0]), "{arguments:?}");
+                let parsed = parse_workspace_target_arguments(&arguments)
+                    .and_then(|(arguments, _)| parse_sidebar_arguments(&arguments))
+                    .map_err(|error| error.message);
+                assert_eq!(
+                    parsed,
+                    Ok(Some((SidebarVerb::Toggle, false))),
+                    "{arguments:?}"
+                );
+                assert_eq!(action, Action::ToggleSidebar, "{arguments:?}");
             }
             CliPath::Exception(reason) => {
                 assert!(reason.contains("eon-"), "{action:?}: {reason}");
