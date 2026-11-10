@@ -32,3 +32,8 @@ test-group = "update-signals"
 [[profile.default.overrides]]
 filter = 'package(/^yazelix-orbit$/) & binary(/^real_pty$/)'
 test-group = "real-pty"
+
+# This test reports where its slow phase's time goes, for the macOS proof.
+[[profile.default.overrides]]
+filter = 'package(/^yazelix-orbit$/) & test(=metadata_observer_streams_inactive_title_and_cwd_without_owning_input)'
+success-output = "final"

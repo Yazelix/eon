@@ -40,7 +40,10 @@ Use native nextest controls: `--run-ignored only`, `--test-threads N` and
 `.config/nextest.toml` preserves the Orbit fork/socket, update signal and real-PTY
 test locks across nextest processes. Other tests run with nextest's default
 CPU-count concurrency, configurable with `--test-threads`; the three groups stay
-at one concurrent test to preserve their safety constraints. Nextest discovers this
+at one concurrent test to preserve their safety constraints. The config also
+shows the output of Orbit's
+`metadata_observer_streams_inactive_title_and_cwd_without_owning_input` when it
+passes: one line on where its slow phase's time goes. Nextest discovers this
 config for the root workspace. Separate `--manifest-path` workspaces use their
 own nextest configuration; their tests have no shared lock groups.
 

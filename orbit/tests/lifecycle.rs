@@ -12,6 +12,7 @@ use std::{
     sync::{
         Arc, Barrier,
         atomic::{AtomicU64, Ordering},
+        mpsc,
     },
     thread,
     time::{Duration, Instant},
@@ -390,10 +391,24 @@ impl Client {
     }
 
     fn wait_title(&mut self, expected: &str) -> TestResult {
-        let deadline = Instant::now() + Duration::from_secs(10);
+        self.wait_title_within(expected, Duration::from_secs(10))
+            .map(drop)
+    }
+
+    /// Reads frames until the title is `expected`, and returns their count
+    /// and the longest wait for one.
+    fn wait_title_within(
+        &mut self,
+        expected: &str,
+        bound: Duration,
+    ) -> TestResult<(u32, Duration)> {
+        let deadline = Instant::now() + bound;
+        let mut frames = 0;
+        let mut longest_wait = Duration::ZERO;
+        let mut waiting_since = Instant::now();
         loop {
             if self.frame.title == expected {
-                return Ok(());
+                return Ok((frames, longest_wait));
             }
             if Instant::now() >= deadline {
                 return Err(format!(
@@ -403,7 +418,12 @@ impl Client {
                 .into());
             }
             match read_message(&mut self.reader)? {
-                ServerMessage::Frame(frame) => self.frame = *frame,
+                ServerMessage::Frame(frame) => {
+                    self.frame = *frame;
+                    frames += 1;
+                    longest_wait = longest_wait.max(waiting_since.elapsed());
+                    waiting_since = Instant::now();
+                }
                 ServerMessage::Exited { code } => {
                     return Err(format!("shell exited with {code}").into());
                 }
@@ -532,11 +552,15 @@ fn connect_bounded(socket: &Path, deadline: Instant) -> TestResult<UnixStream> {
     }
 }
 
+/// The read bound of the streams `connect_with_timeouts` opens: a reader
+/// fails when nothing arrives within it, whatever else bounds its wait.
+const STREAM_READ_BOUND: Duration = Duration::from_secs(2);
+
 fn connect_with_timeouts(socket: &Path, deadline: Instant) -> TestResult<UnixStream> {
     loop {
         let stream = connect_bounded(socket, deadline)?;
         match stream
-            .set_read_timeout(Some(Duration::from_secs(2)))
+            .set_read_timeout(Some(STREAM_READ_BOUND))
             .and_then(|()| stream.set_write_timeout(Some(Duration::from_secs(2))))
         {
             Ok(()) => return Ok(stream),
@@ -843,6 +867,31 @@ fn attachment_negotiation_and_races_recover_for_canonical_client() -> TestResult
     Ok(())
 }
 
+/// Titles the slow phase prints, each over 1 KB: about ten times what the
+/// nonreading observer's socket takes on Linux.
+const SLOW_TITLES: u32 = 1000;
+
+/// Time allowed per slow title. With a client attached, Orbit publishes a
+/// frame for every PTY read, which costs a debug build from 0.7 ms per title
+/// on a quiet Linux machine to over 5 ms under load there and on the
+/// three-CPU macOS runner, where a fixed five seconds for the phase ran out.
+const SLOW_TITLE_ALLOWANCE: Duration = Duration::from_millis(30);
+
+/// CPU seconds of the children this process has reaped. Under nextest, which
+/// runs one test per process, those are the test's own Orbit with its worker
+/// and shell.
+fn reaped_children_cpu() -> f64 {
+    let mut usage = std::mem::MaybeUninit::<libc::rusage>::zeroed();
+    // SAFETY: usage is a valid rusage for getrusage to fill, and stays zeroed
+    // if it fails.
+    let usage = unsafe {
+        libc::getrusage(libc::RUSAGE_CHILDREN, usage.as_mut_ptr());
+        usage.assume_init()
+    };
+    let seconds = |time: libc::timeval| time.tv_sec as f64 + time.tv_usec as f64 / 1e6;
+    seconds(usage.ru_utime) + seconds(usage.ru_stime)
+}
+
 #[test]
 fn metadata_observer_streams_inactive_title_and_cwd_without_owning_input() -> TestResult {
     let dir = TestDir::new("metadata-observer")?;
@@ -852,6 +901,7 @@ fn metadata_observer_streams_inactive_title_and_cwd_without_owning_input() -> Te
     let partial = dir.0.join("partial");
     let complete = dir.0.join("complete");
     let slow = dir.0.join("slow");
+    let slow_times = dir.0.join("slow-times");
     let slow_done = dir.0.join("slow-done");
     let exit = dir.0.join("exit");
     let server = Server(
@@ -873,9 +923,10 @@ fn metadata_observer_streams_inactive_title_and_cwd_without_owning_input() -> Te
                  printf '\\033]2;rapid-final\\033\\\\\\033]7;file:///tmp/eon-rapid\\033\\\\'; \
                  while [ ! -e \"$ORBIT_SLOW\" ]; do sleep 0.01; done; \
                  padding=$(printf '%01000d' 0); i=0; \
-                 while [ \"$i\" -lt 1000 ]; do \
+                 while [ \"$i\" -lt \"$ORBIT_SLOW_TITLES\" ]; do \
                    printf '\\033]2;slow-%04d-%s\\033\\\\' \"$i\" \"$padding\"; i=$((i + 1)); \
                  done; \
+                 times > \"$ORBIT_SLOW_TIMES\"; \
                  printf '\\033]2;slow-final\\033\\\\\\033]7;file:///tmp/eon-slow\\033\\\\'; \
                  printf done > \"$ORBIT_SLOW_DONE\"; \
                  while [ ! -e \"$ORBIT_EXIT\" ]; do sleep 0.01; done; exit 17",
@@ -885,6 +936,8 @@ fn metadata_observer_streams_inactive_title_and_cwd_without_owning_input() -> Te
             .env("ORBIT_PARTIAL", &partial)
             .env("ORBIT_COMPLETE", &complete)
             .env("ORBIT_SLOW", &slow)
+            .env("ORBIT_SLOW_TITLES", SLOW_TITLES.to_string())
+            .env("ORBIT_SLOW_TIMES", &slow_times)
             .env("ORBIT_SLOW_DONE", &slow_done)
             .env("ORBIT_EXIT", &exit)
             .spawn()?,
@@ -934,18 +987,50 @@ fn metadata_observer_streams_inactive_title_and_cwd_without_owning_input() -> Te
         .get_mut()
         .set_read_timeout(Some(Duration::from_secs(5)))?;
 
+    // The slow phase's bounds scale with its payload.
+    let slow_bound = SLOW_TITLE_ALLOWANCE * SLOW_TITLES;
+    let (client_saw_rapid, rapid_seen) = mpsc::channel();
     let interactive = thread::spawn(move || {
         interactive
-            .wait_title("slow-final")
-            .map(|_| interactive)
+            .wait_title("rapid-final")
+            .and_then(|()| {
+                let _ = client_saw_rapid.send(());
+                // The client takes slow-final after the shell reports the
+                // slow phase done, so this wait outlasts that phase's bound.
+                // Each read still fails after `STREAM_READ_BOUND` without a
+                // frame.
+                interactive.wait_title_within("slow-final", slow_bound + Duration::from_secs(10))
+            })
+            .map(|(frames, longest_wait)| (interactive, frames, longest_wait))
             .map_err(|error| error.to_string())
     });
     fs::write(&complete, b"complete")?;
     observer.wait_metadata("rapid-final", "file:///tmp/eon-rapid")?;
+    // A slow frame may replace a rapid-final frame that the client has not
+    // started to take, so the client takes it before the slow phase starts.
+    // Its own wait for rapid-final ends within twelve seconds.
+    if rapid_seen.recv_timeout(Duration::from_secs(15)).is_err() {
+        let error = interactive
+            .join()
+            .map_err(|_| "interactive metadata-pressure reader panicked")?
+            .err()
+            .unwrap_or_default();
+        return Err(format!("interactive reader never saw rapid-final: {error}").into());
+    }
 
+    let slow_started = Instant::now();
     fs::write(&slow, b"slow")?;
-    assert_eq!(wait_file_text(&slow_done)?, "done");
-    let _interactive = interactive
+    // Sleeping between polls leaves the CPU to the Orbit this waits for.
+    while fs::read_to_string(&slow_done).ok().as_deref() != Some("done") {
+        if slow_started.elapsed() >= slow_bound {
+            return Err(
+                format!("the slow phase's {SLOW_TITLES} titles took over {slow_bound:?}").into(),
+            );
+        }
+        thread::sleep(Duration::from_millis(10));
+    }
+    let slow_elapsed = slow_started.elapsed();
+    let (_interactive, slow_frames, longest_frame_wait) = interactive
         .join()
         .map_err(|_| "interactive metadata-pressure reader panicked")?
         .map_err(|error| format!("interactive metadata-pressure reader failed: {error}"))?;
@@ -964,6 +1049,21 @@ fn metadata_observer_streams_inactive_title_and_cwd_without_owning_input() -> Te
     }
     assert_eq!(server.wait()?.code(), Some(17));
     assert!(UnixStream::connect(&socket).is_err());
+
+    // Where the slow phase's time goes; nextest shows this line on success.
+    let shell_cpu = fs::read_to_string(&slow_times)?;
+    println!(
+        "slow phase: {SLOW_TITLES} titles in {:.3} s of {} s allowed; \
+         {slow_frames} frames to the client, the longest wait for one {:.3} s of {} s allowed; \
+         shell CPU since its start (user, system) {:?}; \
+         Orbit, its worker and the shell {:.3} s CPU over the whole test",
+        slow_elapsed.as_secs_f64(),
+        slow_bound.as_secs(),
+        longest_frame_wait.as_secs_f64(),
+        STREAM_READ_BOUND.as_secs(),
+        shell_cpu.lines().next().unwrap_or_default(),
+        reaped_children_cpu(),
+    );
     Ok(())
 }
 
