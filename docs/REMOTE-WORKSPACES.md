@@ -2,18 +2,24 @@
 
 [EON-C38](CONTRACTS.md#eon-c38--persistent-workspace-identity-and-host-registry)
 was approved as Planned on 2026-11-03. Slice 2a
-(`eon-remote-workspaces-52i4.5`) implements persistent IDs and optional names
-for this user's host registry. Each window still owns its session members;
-its `sN` handles map to durable IDs. The CLI reads registrations independently
-of a running window and targets a member by its full persistent ID.
+(`eon-remote-workspaces-52i4.5`) landed on `edge` as `a20504d` and `c5f40f0`
+with persistent IDs and optional names for this user's host registry
+([landing and proof summary](https://github.com/Yazelix/eon/pull/6#issuecomment-6727991134)).
+Each window still owns its session members; its `sN` handles map to durable
+IDs. The CLI reads registrations independently of a running window and targets
+a member by its full persistent ID. Current accepted behavior and proof live
+in `CONTRACTS.md` and the closed 2a bead, rather than the historical draft below.
 
-This fork's integration acceptance and independent reviews remain pending.
 The registry stores neither membership nor layout. Restart recovery still
 merges surviving terminals into a session that remains usable by its local
 handle with a null persistent ID until registration confirms a new ID.
-Registration errors are visible without stopping recovered work; restoring original
-groups belongs to slice 2b. The remote flows below remain a plan and future
-acceptance matrix, not implemented SSH or recovery guarantees.
+Registration errors are visible without stopping recovered work. Restoring
+original groups belongs to slice 2b (`eon-remote-workspaces-52i4.6`), whose
+[contract draft](LOCAL-SESSION-RECOVERY.md) is now available for review.
+Only its three product directions have Yu's approval; detailed behavior and
+exact schema still need review and approval with Lucca. No 2b acceptance
+checks have run. The remote flows below remain a plan and future acceptance
+matrix, not implemented SSH or recovery guarantees.
 
 ## Office to home, with one active PC
 
@@ -118,10 +124,12 @@ navigation remains scoped to the window's host unless separately amended.
 
 ## EON-C38 — Persistent workspace identity and host registry
 
-**Approved by Lucca on 2026-11-03 and indexed in
-[`docs/CONTRACTS.md`](CONTRACTS.md#eon-c38--persistent-workspace-identity-and-host-registry)
-as Planned.** That entry is canonical; the text below is the reviewed draft.
-It is not an implemented or proved guarantee.
+**Historical draft approved by Lucca on 2026-11-03.** The text below records
+that approval's original scope and terminology, including its then-Planned
+status and unrun proof. It is not the current implementation/proof record:
+2a subsequently landed, and the amended
+[canonical EON-C38](CONTRACTS.md#eon-c38--persistent-workspace-identity-and-host-registry)
+and `eon-remote-workspaces-52i4.5` record its current behavior and evidence.
 
 - **Status:** Planned (approved 2026-11-03; see `docs/CONTRACTS.md`).
 - **Consumer:** Local and remote Eon workspace clients and the host's
@@ -166,13 +174,14 @@ It is not an implemented or proved guarantee.
 ## Order and contract routing
 
 The next implementation sequence is **2a → 2b → 3 (SSH attach) → takeover**.
-Only the next slice's contract text is brought for approval now. The remaining
-rows are a plan, not approved future contract text or implementation claims.
+2a is landed; the [2b draft](LOCAL-SESSION-RECOVERY.md) is the current review
+proposal. The remaining rows are a plan, not approved future contract text or
+implementation claims.
 
 | Phase | Scope and where its text belongs |
 | --- | --- |
-| 2a | Persistent identity and host registry: new EON-C38, after exact-text approval; CLI changes amend EON-C10 |
-| 2b | Local original-group/layout recovery: amendments to EON-C15 and EON-C33 |
+| 2a, landed | Persistent identity and host registry: accepted EON-C38 and matching C10/C33/C39 amendments; proof in the 2a bead |
+| 2b, draft | Local original-group/layout recovery: proposed EON-C15/C33 amendments and consistency changes in [the 2b draft](LOCAL-SESSION-RECOVERY.md); behavior/schema approval and runtime proof pending |
 | 3: SSH attach | OpenSSH, headless host and portable hosting: use reserved EON-C34; incorporate existing supervision/attach beads |
 | Takeover, after 3 | Connected frozen clients, single active client and safe switching: exact Eon/Orbit/Venus amendments approved in that slice |
 | Managed hosting | Explicit service ownership and Nix/Home Manager support/proof; part of the initial remote feature, not silently deferred away |
@@ -186,8 +195,8 @@ supervision/attach and discovery/host-label work, not duplicated. Their old
 attach-first/exact-build wording is not the current plan. PR #2 remains a
 prototype/reference; its code or proof is not imported wholesale.
 
-C34 is reserved for SSH attachment and will be used for that feature. C38 is
-only the new identity/registry contract submitted for review here. Recovery,
+C34 is reserved for SSH attachment and will be used for that feature. C38
+owns the landed identity/registry slice; 2b allocates no new contract ID. Recovery,
 CLI, close and final-window behavior amend EON-C15, C33, C10 and C8 in their
 owning slices; attach/window/attention/platform boundaries are amended there
 as necessary. No other new contract IDs are allocated by this plan. Orbit
@@ -195,15 +204,23 @@ retains input, admission, viewport/selection and frame/history ownership;
 Venus retains presentation. Old proof remains valid only for its recorded
 surface, not for these future changes.
 
-This revision was checked against edge
-`a92831765c0af35f112b3f17adcc01ecdddde2be`; EONW/management/ORBS/ORBF versions
-are 29/5/14/3. Implementation must use the then-current canonical schemas.
-The original PR base remains `3ee3422`; repairs append commits without rewriting
-published history. The existing slice-1 bead is `eon-remote-workspaces-52i4.4`.
+The earlier plan was checked against `a92831765c0af35f112b3f17adcc01ecdddde2be`
+(EONW/management/ORBS/ORBF 29/5/14/3). This documentation update was checked
+against `edge` at `12ee64fc6d7d9997ecb5535b7f528eb2519912e3`, where EONW is
+v38. Implementation must use the then-current canonical schemas, not those
+historical version numbers. The existing plan bead is
+`eon-remote-workspaces-52i4.4`; its `eon-hyil8` dependency was removed. This
+plan uses today's window-owned sessions and does not require global session
+ownership or movement between windows.
 
 ## Acceptance matrix
 
-**All rows are future runtime proof, NOT RUN.** Every accepted proof records
+**The 2a rows describe its acceptance scope; use the closed 2a bead and the
+[landing report](https://github.com/Yazelix/eon/pull/6#issuecomment-6727991134)
+for its recorded checks and limitations. No checks were rerun for this
+planning update. All 2b and later rows remain future runtime proof, NOT RUN.**
+R1–R4 summarize the [unapproved 2b draft](LOCAL-SESSION-RECOVERY.md#acceptance-matrix),
+which supplies its fuller failure matrix. Every accepted proof records
 exact source/component/wire versions, artifacts, platform, hosting mode and
 commands/observations/results. Use independently identified sibling sessions
 and hosts to prove isolation. Process identities and advancing counters prove
@@ -218,11 +235,12 @@ The final history/network proof is needed before issue #1 is complete.
 | I2 | 2a | Concurrent registry mutations; interrupted/failed durable write; creation commits but its reply is lost at a request/reply boundary | Serialized atomic state or explicit failure; no reused ID or partly successful registration. A missing reply does not imply rollback. If the committed result cannot be reliably identified, report uncertainty without guessing from possibly duplicate names; do not automatically reissue an uncertain creation as a new request |
 | I3 | 2a | Corrupt/unknown registry version, stale/ambiguous ID/name | No overwrite, guessed/rebound target, destructive cleanup or duplicate launch |
 | I4 | Discovery/lifecycle | Forget live, confirmed-stopped, cached-stopped and unreachable sessions | Only authoritative confirmed-stopped registration can be forgotten |
-| R1 | 2b | Normal supervisor exit and replacement with multiple layouts/popups | Original IDs/groups/layout and verified live Orbit/PTY identities; counters advance |
-| R2 | 2b | Supervisor crash and concurrent replacements | One supervisor/lifecycle ownership winner; no duplicate terminals or split lease |
-| R3 | 2b | Corrupt/unknown snapshot; missing/extra run | Honest blocked/partial recovery; missing slots stopped; no unsafe adoption, restart or Stop |
-| R4 | 2b/3 | PID reuse, wrong UID/start-time, replaced inode or stale lease | Refusal without signal, deletion or attachment to substituted owner |
-| L1 | 2b/3 | Detach (Alt+Shift+D) a local window, or close or detach a remote window; reconnect repeatedly | Work survives; same persistent target and fresh authoritative display |
+| R1 | 2b, local same boot/login | Supervisor exit without Stop, then replacement in the same namespace/generation with multiple named sessions/layouts/popups | Confirmed original persistent IDs and committed structure/selection around the same verified Orbit/PTY runs; counters advance; no command/input replay |
+| R2 | 2b, local same boot/login | Supervisor crash and concurrent replacements in the same namespace/generation | One supervisor/lifecycle ownership winner; no duplicate terminals or split lease; other windows remain unchanged |
+| R3 | 2b | Corrupt/unknown/missing-required checkpoint; missing, unresolved or extra run; unavailable registry | Safely recoverable live runs remain usable with visible degraded diagnostics; no guessed grouping/ID; stopped versus unresolved slots distinguished; no unsafe adoption, replay or Stop; damaged state preserved |
+| R4 | 2b, local | PID reuse, wrong UID/start-time, replaced record/socket inode, wrong run ID or busy lease | Existing C15 refusal preserved, without signal, deletion or attachment to a substituted owner; SSH identity proof stays in slice 3 |
+| L1 | 2b, local | Detach (Alt+Shift+D) and reattach to the same live local supervisor repeatedly, then test supervisor loss separately | Live detach preserves the current session map; loss follows the proposed 2b checkpoint rules; fresh authoritative display/events; local close/Quit policy unchanged |
+| L1r | 3, remote | Close or detach a remote window; reconnect repeatedly | Remote work survives; same persistent target and fresh authoritative display; future remote proof, not a 2b claim |
 | L2 | 3/Discovery | SSH loss; input/Stop while offline; reconnect | Disabled/rejected offline actions; no replay; process counter continues |
 | L3 | Lifecycle/Discovery | Stop session A while another host is open in another window | Only A stops; unrelated session/host tasks remain; final Stop retains empty window/picker |
 | L4 | Lifecycle | Partial Stop or lost acknowledgement | Remaining work retained; explicit partial/unknown outcome; query before further action on that target; unrelated work remains usable; no automatic replay |
