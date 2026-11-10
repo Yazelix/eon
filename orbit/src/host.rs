@@ -2115,22 +2115,25 @@ mod tests {
     #[cfg(target_os = "linux")]
     #[test]
     fn compressed_history_evicts_oldest_lines_under_the_byte_budget() {
-        let mut terminal = Terminal::new(80, 24).unwrap();
+        // Writing costs time per line at any width, while a wide row costs more of
+        // the unchanged production budget, so at 1,000 columns 4,000 lines pass
+        // 16 MiB and evict the 1,000-line compressed head well before the end.
+        let mut terminal = Terminal::new(1000, 24).unwrap();
         terminal
             .set_scrollback_max_bytes(Some(crate::frame::SCROLLBACK_BUDGET_BYTES))
             .unwrap();
-        let lines: Vec<_> = (0..50_000)
+        let lines: Vec<_> = (0..4000)
             .map(|line| format!("{line:05} {}", "x".repeat(66)))
             .collect();
-        terminal.vt_write(lines[..10_000].join("\r\n").as_bytes());
+        terminal.vt_write(lines[..1000].join("\r\n").as_bytes());
         let mut compression = HistoryCompression::default();
         compression.postpone(Instant::now());
         finish_compression(&mut compression, &mut terminal);
         terminal.vt_write(b"\r\n");
-        terminal.vt_write(lines[10_000..].join("\r\n").as_bytes());
+        terminal.vt_write(lines[1000..].join("\r\n").as_bytes());
         let text = history::read(&terminal, 0).unwrap().text;
         let first = lines.len() - text.lines().count();
-        assert!(first > 10_000, "compressed history was not evicted");
+        assert!(first > 1000, "compressed history was not evicted");
         assert_eq!(text, lines[first..].join("\n"));
         compression.postpone(Instant::now());
         finish_compression(&mut compression, &mut terminal);
