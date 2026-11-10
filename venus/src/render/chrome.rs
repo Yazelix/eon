@@ -1428,17 +1428,7 @@ impl PaneTitleTab {
             own_ink.top,
             stroke,
         )?;
-        let action = pane.actions.map(|actions| FrameTitleTab {
-            start: card.bounds.left + card.bounds.right() - actions[0].left + metrics.padding / 2.0
-                - tab.left_radius,
-            ..tab.clone()
-        });
-        Some(Self {
-            card,
-            tab,
-            flip,
-            action,
-        })
+        Some(Self { card, tab, flip })
     }
 
     pub(super) fn workspace(
@@ -3117,34 +3107,11 @@ impl Renderer {
                 rectangles.clip = Some(rect);
                 if pill.width > self.metrics.padding {
                     if self.header.hovers(WorkspaceFocus::Panes, &pane.id) {
-                        if let Some(notch) = notch {
-                            rectangles.clip = Some(workspace.pane_viewport);
-                            for band in notch.hover_bands(physical_outline_width(
-                                if current {
-                                    self.focus_border_width
-                                } else {
-                                    self.border_width
-                                },
-                                self.metrics.scale,
-                            )) {
-                                if let Some(fill) = band.intersection(fill.bounds) {
-                                    rectangles.push(
-                                        fill.left,
-                                        fill.top,
-                                        fill.width,
-                                        fill.height,
-                                        palette::CHROME_HIGHLIGHT,
-                                        1.0,
-                                    );
-                                }
-                            }
-                        } else {
-                            rectangles.push_rounded(
-                                pill,
-                                self.metrics.padding / 2.0,
-                                palette::CHROME_HIGHLIGHT,
-                            );
-                        }
+                        rectangles.push_rounded(
+                            pill,
+                            self.metrics.padding / 2.0,
+                            palette::CHROME_HIGHLIGHT,
+                        );
                     }
                     if notch.is_none() && current && focus == WorkspaceFocus::Panes {
                         rectangles.push_rounded_outline(

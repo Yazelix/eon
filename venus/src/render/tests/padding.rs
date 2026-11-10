@@ -627,7 +627,7 @@ fn padding_color_declines_only_primary_vertical_edges() {
 }
 
 #[test]
-fn expanded_padding_uses_the_fitted_pane_notch_contour() {
+fn expanded_padding_uses_the_continuous_pane_header_contour() {
     let metrics = CellMetrics::for_scale(1.0);
     let (workspace, _) = retained_frame_text_clip(PhysicalSize::new(1280, 800));
     let mut fonts = clipping_test_fonts();
@@ -680,11 +680,11 @@ fn expanded_padding_uses_the_fitted_pane_notch_contour() {
     );
     assert!(
         padding_pixel(&batch, band.left + band.width / 2.0, band.top + 0.5).is_some(),
-        "extended padding must reach the inside of the raised title"
+        "extended padding must reach the middle of the raised header band"
     );
     assert_eq!(
         padding_pixel(&batch, band.right() + 1.0, band.top + 0.5),
         None,
-        "padding must not cover the space outside the notch return"
+        "padding must not cover the space outside the pane's outer corner"
     );
 }

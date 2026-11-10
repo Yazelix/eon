@@ -9,10 +9,12 @@ installation, and proven contract changes.
   records. A stalled collector times out once, then drops with loss accounting
   so it cannot keep stalling Orbit (`eon-it2ye`).
 
-- Pane headers have Zoom/Restore and Close buttons in a right action notch.
-  Each targets its own pane; Close keeps the existing final-pane confirmation.
-  Tab and Shift+Tab traverse the selected header's controls, with Enter or Space
-  to activate. Zoom is disabled in a one-pane tab (`eon-ipc6f`).
+- Pane headers form one continuous band, with the fitted title at the left
+  and Zoom/Restore and Close at the right. Keyboard title focus colours its
+  edge span; hover and button focus use rounded pills. Each button targets its
+  own pane, Close retains the final-pane confirmation, and Zoom is disabled in
+  a one-pane tab. Tab and Shift+Tab traverse the controls; Enter or Space
+  activates them (`eon-7xryp`, `eon-ipc6f`, `eon-2ibdd`).
 
 - `eon report` prints a Markdown bug report for the window it runs in: versions,
   the window, install route, distribution, compositor, configuration warnings
@@ -27,12 +29,6 @@ installation, and proven contract changes.
 - `eon-bench floor --layer pty` accepts Apple's duplicated ONLCR CRs only
   before LF, with the complete output checked. Linux keeps its exact byte
   count; `pty_bytes` reports all delivered bytes (`eon-18gk1`).
-
-- Framed pane titles use a left notch continuous with their pane edge,
-  including first, lone and zoomed panes. Interior lower edges mirror the
-  notch; the final collapsed title keeps its bottom-edge gap. Keyboard focus
-  colours the notch itself (`eon-7xryp`). Right-side pane controls follow in
-  `eon-ipc6f`.
 
 - Each column card's top line carries a Stack tab, labelled `Stack`, or
   `Stack 1`, `Stack 2`, ... left to right when a tab has several columns
@@ -86,11 +82,9 @@ installation, and proven contract changes.
   with 50 filled workspace tabs on the shared private Sway launcher. Process
   PSS, RSS and anonymous PSS retain the existing estimator, with separately
   labelled software/hardware adapters and codec attribution diagnostics.
-- Pane, popup, Agents and native dialog titles use one shared notched tab with
-  a smooth S return beside the fitted label. Only the top pane in each column
-  receives the tab; lower stacked titles stay compact, with terminal rows and
-  interaction bounds unchanged (`eon-27deg`). Native dialog titles
-  use the chrome title style in place of the bold heading style.
+- Popup, Agents and native dialog titles share a fitted notched tab with a
+  smooth S return beside the label. Native dialog titles use the chrome title
+  style. Terminal rows and interaction bounds remain unchanged (`eon-27deg`).
 
 - Orbit compresses cold terminal history losslessly, including during periodic
   redraws, and recompresses it after reads and scrolling, retaining the same

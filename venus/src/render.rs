@@ -585,7 +585,6 @@ struct PaneTitleTab {
     tab: FrameTitleTab,
     /// Reflection about a lower pane edge; text itself stays upright.
     flip: Option<f32>,
-    action: Option<FrameTitleTab>,
 }
 
 struct PaneTitleCache {
@@ -623,18 +622,18 @@ impl PaneTitleTab {
     }
 
     fn bands(&self, inset: f32) -> Vec<SceneRect> {
-        let mut bands = title_tab_bands(self.card, &self.tab, inset);
-        if let Some(action) = &self.action {
-            for band in title_tab_bands(self.card, action, inset) {
-                let reflected = SceneRect {
-                    left: self.card.bounds.left + self.card.bounds.right() - band.right(),
-                    ..band
-                };
-                let pieces = uncovered(reflected, &bands);
-                bands.extend(pieces);
-            }
-        }
-        bands.into_iter().map(|band| self.reflect(band)).collect()
+        let cut = self.card.bounds.top + rounded_radius(self.card.bounds, self.card.radius);
+        title_tab_bands(self.card, &self.tab, inset)
+            .into_iter()
+            .map(|mut band| {
+                if band.top < cut {
+                    band.width = (self.card.bounds.left + self.card.bounds.right()
+                        - 2.0 * band.left)
+                        .max(0.0);
+                }
+                self.reflect(band)
+            })
+            .collect()
     }
 
     fn outline_rects(&self, width: f32) -> Vec<(SceneRect, f32)> {
@@ -646,18 +645,6 @@ impl PaneTitleTab {
             .flat_map(|band| uncovered(band, &inner))
             .flat_map(|piece| span_rects(piece.left, piece.right(), piece.top))
             .collect()
-    }
-
-    fn hover_bands(&self, inset: f32) -> impl Iterator<Item = SceneRect> {
-        let header = self.reflect(SceneRect {
-            left: self.card.bounds.left,
-            top: self.tab.top,
-            width: self.tab.start + self.tab.return_run - self.card.bounds.left,
-            height: self.tab.row.bottom() - self.tab.top,
-        });
-        self.bands(inset)
-            .into_iter()
-            .filter_map(move |band| band.intersection(header))
     }
 
     fn replacement(&self) -> SceneRect {
@@ -3102,18 +3089,23 @@ impl RectangleBatch {
                 }
             }
             if let Some(tab) = tab {
-                let target = if focused_title == Some(index) {
-                    &mut accent
-                } else {
-                    target
-                };
+                let title_span = (focused_title == Some(index)).then(|| SceneRect {
+                    width: tab.tab.start + tab.tab.return_run - tab.card.bounds.left,
+                    ..tab.replacement()
+                });
                 // Caps may borrow an adjacent header's margin, but never its input bounds.
                 for (rect, alpha) in tab.outline_rects(width) {
                     if let Some(rect) = rect
                         .intersection(viewport)
                         .and_then(|rect| rect.intersection(fill.bounds))
                     {
-                        target.extend(uncovered(rect, &gaps).into_iter().map(|rect| (rect, alpha)));
+                        for rect in uncovered(rect, &gaps) {
+                            if let Some(title) = title_span.and_then(|span| rect.intersection(span))
+                            {
+                                accent.push((title, alpha));
+                            }
+                            target.push((rect, alpha));
+                        }
                     }
                 }
             }

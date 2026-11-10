@@ -2616,7 +2616,7 @@ fn title_rules_leave_label_and_scrollback_gaps_inside_the_fixed_card() {
         ..label
     };
     for top in [20.0, 70.0, 21.25, -10.0] {
-        for notched in [false, true] {
+        for banded in [false, true] {
             let mut batch = RectangleBatch::new(400, 200);
             let viewport = SceneRect {
                 top: 20.0,
@@ -2634,18 +2634,7 @@ fn title_rules_leave_label_and_scrollback_gaps_inside_the_fixed_card() {
                 bounds: viewport,
                 radius: 8.0,
             };
-            let tab = notched.then(|| PaneTitleTab {
-                action: Some(FrameTitleTab {
-                    top: top - 14.0,
-                    start: 45.0,
-                    left_radius: 14.0,
-                    row: label,
-                    return_run: 21.0,
-                    title: FrameTitle {
-                        label: String::new(),
-                        width: 0.0,
-                    },
-                }),
+            let tab = banded.then(|| PaneTitleTab {
                 card: CardFill {
                     bounds: frame,
                     radius: 8.0,
@@ -2689,7 +2678,7 @@ fn title_rules_leave_label_and_scrollback_gaps_inside_the_fixed_card() {
                                 ..label
                             },
                         ]),
-                        notched,
+                        banded,
                     ),
                 )],
                 &[tab],
@@ -2705,18 +2694,21 @@ fn title_rules_leave_label_and_scrollback_gaps_inside_the_fixed_card() {
             if top >= viewport.top {
                 assert!(
                     !quads.iter().any(|rect| rect.contains(160.0, top + 0.5)),
-                    "header stroke crosses scrollback, notched={notched}"
+                    "header stroke crosses scrollback, banded={banded}"
                 );
                 assert_eq!(
                     quads.iter().any(|rect| rect.contains(10.5, top + 0.5)),
-                    notched
+                    banded
                 );
-                assert!(quads.iter().any(|rect| rect.contains(120.0, top + 0.5)));
                 assert_eq!(
-                    quads.iter().any(|rect| rect.contains(180.0, top + 0.5)),
-                    notched,
-                    "the plain rule between scrollback and the action notch must survive"
+                    quads.iter().any(|rect| rect.contains(120.0, top + 0.5)),
+                    !banded,
+                    "the raised band must not retain the lowered middle rule"
                 );
+                assert!(!quads.iter().any(|rect| rect.contains(180.0, top + 0.5)));
+                if banded && top - 14.0 >= viewport.top {
+                    assert!(quads.iter().any(|rect| rect.contains(180.0, top - 13.5)));
+                }
                 assert!(!quads.iter().any(|rect| rect.contains(50.0, top + 0.5)));
             } else {
                 assert!(
@@ -3733,11 +3725,11 @@ fn dialog_title_edge_keeps_a_clear_row_below_bar_chips() {
 }
 
 #[test]
-fn pane_notches_clear_adjacent_descenders_and_preserve_joined_focus_strokes() {
+fn pane_headers_clear_adjacent_descenders_and_preserve_joined_focus_strokes() {
     use eon_workspace_protocol::v38::{Column, Pane};
     let mut fonts = clipping_test_fonts();
     let mut swash = SwashCache::new();
-    for scale in [1.0, 1.3, 2.0] {
+    for scale in [1.0, 1.3, 4.0 / 3.0, 2.0] {
         let metrics = CellMetrics::for_scale(scale);
         for selected in 0..4 {
             for width in [760, 1280] {
@@ -3796,7 +3788,7 @@ fn pane_notches_clear_adjacent_descenders_and_preserve_joined_focus_strokes() {
                     } else {
                         let fitted = &notch
                             .as_ref()
-                            .expect("visible header must have a notch")
+                            .expect("visible header must have a raised band")
                             .tab;
                         let limit = if pane.selected {
                             right
@@ -3805,22 +3797,33 @@ fn pane_notches_clear_adjacent_descenders_and_preserve_joined_focus_strokes() {
                         };
                         assert!(
                             fitted.start + fitted.return_run <= limit,
-                            "notch curve enters the reserved right slot"
+                            "title fitting enters the reserved right slot"
                         );
                         if let Some(actions) = pane.actions {
                             assert!(
                                 fitted.start + fitted.return_run < actions[0].left,
-                                "title notch must clear the actual action slot"
+                                "title fitting must clear the actual action slot"
                             );
                             let header = notch.as_ref().unwrap();
-                            assert!(header.action.is_some());
+                            let middle = header.reflect(SceneRect {
+                                left: fitted.start + fitted.return_run,
+                                top: fitted.top,
+                                width: 1.0,
+                                height: 1.0,
+                            });
+                            assert!(
+                                header.bands(0.0).iter().any(|band| {
+                                    band.contains(middle.left + 0.5, middle.top + 0.5)
+                                }),
+                                "the pane header must fill the valley between title and actions"
+                            );
                             let bands = header.bands(0.0);
                             for (i, band) in bands.iter().enumerate() {
                                 assert!(
                                     bands[i + 1..]
                                         .iter()
                                         .all(|other| band.intersection(*other).is_none()),
-                                    "dual-notch fill must not blend a pixel twice"
+                                    "header band must not blend a pixel twice"
                                 );
                             }
                         }
@@ -3904,7 +3907,7 @@ fn pane_notches_clear_adjacent_descenders_and_preserve_joined_focus_strokes() {
                         .find(|overlap| overlap.width > 0.01 && overlap.height > 0.01);
                     assert!(
                         collision.is_none(),
-                        "notch stroke crosses title ink: scale={scale}, selected={selected}, rect={rect:?}, overlap={collision:?}"
+                        "header stroke crosses title ink: scale={scale}, selected={selected}, rect={rect:?}, overlap={collision:?}"
                     );
                 }
                 let notch = tabs[selected].as_ref().unwrap();
@@ -3918,7 +3921,7 @@ fn pane_notches_clear_adjacent_descenders_and_preserve_joined_focus_strokes() {
                     strokes
                         .iter()
                         .any(|rect| rect.intersection(point).is_some()),
-                    "notch cap not drawn"
+                    "raised header edge not drawn"
                 );
                 assert!(
                     strokes
@@ -3926,20 +3929,26 @@ fn pane_notches_clear_adjacent_descenders_and_preserve_joined_focus_strokes() {
                         .all(|rect| rect.bottom() <= fill.bounds.bottom() + 0.001),
                     "pane stroke enters the footer"
                 );
-                if selected == 0 {
-                    let cap = notch.reflect(SceneRect {
-                        left: notch.card.bounds.left + metrics.padding * 2.0,
-                        top: notch.tab.top + focus,
-                        width: 1.0,
-                        height: 1.0,
-                    });
-                    assert!(
-                        notch
-                            .hover_bands(focus)
-                            .any(|band| band.intersection(cap).is_some()),
-                        "hover fill must reach the inside of the raised cap"
-                    );
-                }
+                let accent_color = [palette::ACCENT.r, palette::ACCENT.g, palette::ACCENT.b]
+                    .map(|value| f32::from(value) / 255.0);
+                let title_focus = painted_rects(&batch)
+                    .zip(batch.bytes.chunks_exact(VERTEX_SIZE as usize * 6))
+                    .filter(|(_, bytes)| {
+                        let color: [f32; 3] = std::array::from_fn(|index| {
+                            let start = (index + 2) * 4;
+                            f32::from_ne_bytes(bytes[start..start + 4].try_into().unwrap())
+                        });
+                        color == accent_color
+                    })
+                    .map(|(rect, _)| rect)
+                    .collect::<Vec<_>>();
+                assert!(!title_focus.is_empty(), "title edge must retain F6 focus");
+                assert!(
+                    title_focus
+                        .iter()
+                        .all(|rect| rect.right() <= notch.tab.start + notch.tab.return_run + 0.001),
+                    "title focus must stop before the empty middle and action group"
+                );
             }
         }
     }

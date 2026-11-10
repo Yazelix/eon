@@ -294,8 +294,8 @@ badge is dimmed on purpose and reads below it. The other badges keep their
 own colours. It accepts
 `preset:<name>` from the cursor presets above or `custom:#RRGGBB`; `random` is
 invalid. The setting is omitted by default, leaving Venus's built-in focus
-colour in use. The example selects `custom:#b207fb`. F6 keyboard focus in the chrome keeps
-its mint pill outline. This setting applies to full-Eon surfaces;
+colour in use. The example selects `custom:#b207fb`. F6 keyboard focus colours a framed pane title's edge span mint;
+other chrome controls keep their mint pill outline. This setting applies to full-Eon surfaces;
 eonbase has no pane outline.
 
 `border_width` sizes neutral pane-card, agent-sidebar-card, popup and native dialog outlines,
@@ -306,7 +306,7 @@ physical widths are `max(1, round(width * scale))`:
 at scale 1.3 they draw at 1 and 1 physical pixels, and at scale 2 at 2
 and 2. Pane frames off hides pane and sidebar outlines and title rules;
 popups keep their outline. These settings apply to full-Eon surfaces;
-eonbase receives neither override. F6 focus uses a pane notch's configured
+eonbase receives neither override. F6 title focus uses the pane header's configured
 stroke; other focus pills and the current agent row keep their one-physical-pixel
 outlines.
 
@@ -321,7 +321,7 @@ With pane frames on, each column has one continuous terminal-background fill,
 from its Stack tab's contour down to the column's rounded bottom.
 The Stack band, stacked title rows and the space between cards share the
 expanded terminal's background colour and opacity. Extended top padding fills
-an unzoomed expanded pane's band below its title (`padding_color`). Outside the shared title contour and outer corners, the gaps and
+an unzoomed expanded pane's band below its top edge (`padding_color`). Outside the shared title contour and outer corners, the gaps and
 footer stay the opaque bar colour. The Agents fill follows the same contour.
 Header scrolling keeps the fill's top fixed. Frameless mode keeps terminal
 background strips across the window below the bar, including the sidebar and
@@ -332,18 +332,19 @@ has one column and `Stack 1`, `Stack 2`, ... from left to right when it has
 several; Stack N holds the panes whose `column` is N in `eon session --json`.
 The first pane's top edge sits one stack band lower: one title row plus the
 tab's rise, a third of the title padding (24 px at the default font). Every
-pane title, the first, a lone and a zoomed pane's included, uses the shared left
-title notch. Interior collapsed edges below the expanded pane mirror the notch;
-the final collapsed title keeps a compact gap in the column's bottom edge.
-Caps use the space clear of neighbouring title ink and retain a compact gap
-when the configured stroke cannot clear the text or viewport. The column's sides run from the Stack line
+framed pane header, the first, a lone and a zoomed pane's included, has one
+continuous raised band: the edge runs straight over the fitted title, empty
+middle and right action group between rounded outer corners. Interior collapsed
+edges below the expanded pane mirror the band; the final collapsed title keeps
+a compact gap in the column's bottom edge. Insufficient text/stroke clearance
+also retains a compact gap. The column's sides run from the Stack line
 down to the first pane's rounded top corners in the neutral border colour and
 width, even while that pane is selected. Headers scroll below the band. On a
 window too short for the band, a first header and one padded terminal row, the
 band yields whole and the label goes.
 
 Each pane header has a right action group: Zoom (`□`, Restore `▣` while zoomed)
-and Close (`×`). Framed headers give the group a mirrored notch; frameless
+and Close (`×`). Framed headers keep both in the continuous band; frameless
 headers keep the controls inline. The title and scrollback indicator fit to its
 left. Both controls disappear together if two full targets cannot fit; collapsed
 bottom rows and tight clearances retain a compact gap. Stack, Agents, popup and
@@ -360,35 +361,39 @@ selection. Close targets its own pane exactly as Alt+W does, with the same
 final-pane confirmation. After a keyboard Close, focus returns to the selected
 pane's title. Escape cancels that prompt; Enter closes its held target.
 Agents can use `eon pane close PANE`; zoom is window-local view state.
-Action size, spacing and notch curves derive from the configured typography and
-existing title padding. Border widths, focus color and background opacity apply
-to both notches. There are no separate action-geometry settings; the controls
-keep full targets and text/curve clearance across supported fonts and scales.
+Action size, spacing and header corners derive from the configured typography
+and existing title padding. Border widths, focus color and background opacity
+apply to the continuous band. There are no separate action-geometry settings;
+the controls keep full targets and text/curve clearance across supported fonts and scales.
 
-Pane notches, Stack tabs, popups, Agents and native titled dialogs use one shared
-title style. The outline rises seamlessly from the left border over the fitted name,
+Pane headers use the continuous band above. Stack tabs, popups, Agents and
+native titled dialogs share a fitted tab style. Their outline rises seamlessly
+from the left border over the fitted name,
 then returns into the top edge with a tangent S curve spanning 1.5 times its
 rise. The curve begins beside the visible text, including after truncation.
 Stack, popup and Agents tab tops sit one card gap (8 px) below the bar's pills.
-A pane, popup, Agents or dialog tab adds no height or terminal rows inside its card.
+Popup, Agents and dialog tabs add no height or terminal rows inside their cards.
+Pane bands preserve the existing header allocation and terminal rows.
 A tab keeps its stroke clear of text and neighbouring chrome; where that
 clearance cannot fit, the title keeps a compact gap in the top frame line.
 A title is omitted only when it cannot fit. A tab keeps full accessibility
 names and adds no input targets; decorative pane caps outside a header row do
 not extend that row's click or accessibility bounds. The Stack label is a visual
-heading only. Keyboard focus colours the pane notch's own stroke; hover fills
-inside it. Compact and frameless titles retain their focus pill.
+heading only. Keyboard title focus colours the title's span of the continuous
+pane edge; hover fills a rounded title pill. Button focus uses its accent pill
+outline. Compact and frameless titles retain their focus pill.
 Popup tabs keep their outline with pane frames off; Stack and Agents labels show
 plain then, and the Stack band stays reserved. On a light terminal background a
 Stack label darkens only as far as 4.5:1 contrast needs. Dialog tabs stay inside
 their existing dismissal bounds and use the dialog's opaque background; other
 tabs inherit their terminal background colour and opacity.
 
-The shared tab shape is fixed and follows the configured font size and line
-height (defaults: 16 px and 1.125), existing title padding, and `border_width`
+The pane band and shared tab shapes are fixed and follow the configured font
+size and line height (defaults: 16 px and 1.125), existing title padding, and `border_width`
 (default: 1). A selected pane retains its `focus_border_width` and focus colour.
 Terminal-backed fills use `background_opacity` (default: 0.8). The fixed policy
-and its support-cost rationale are recorded in `eon-27deg`. The Stack tabs are
+and its support-cost rationale are recorded in `eon-27deg` and `eon-2ibdd`.
+There is one pane-header treatment, with no style setting. The Stack tabs are
 fixed the same way: their labels (`Stack`, `Stack N`), the stack band (one title
 row plus a third of the title padding: 24 px at the defaults) and the card gap
 between the bar's pills and the tab tops (default: 8 px) derive from the font
@@ -405,7 +410,7 @@ Alternate-screen TUIs always extend. `extend-always` skips those exceptions;
 `background` keeps the terminal default background throughout the padding.
 Default backgrounds retain the configured opacity; explicit backgrounds paint
 as they do in cells. Padding stays inside the rounded card and below outlines.
-In an expanded pane with frames on and no zoom, the band below the title line
+In an expanded pane with frames on and no zoom, the pane's band below its top edge
 follows the top padding's colour and opacity instead of the shared title-row
 background. Collapsed title rows, the Stack band, popups,
 zoom and frameless mode keep their existing backgrounds. The setting applies
