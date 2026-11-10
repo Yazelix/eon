@@ -5,6 +5,10 @@ installation, and proven contract changes.
 
 ## Unreleased
 
+- Untimed benchmark traces on macOS retry a full receiver instead of losing
+  records. A stalled collector times out once, then drops with loss accounting
+  so it cannot keep stalling Orbit (`eon-it2ye`).
+
 - Pane headers have Zoom/Restore and Close buttons in a right action notch.
   Each targets its own pane; Close keeps the existing final-pane confirmation.
   Tab and Shift+Tab traverse the selected header's controls, with Enter or Space

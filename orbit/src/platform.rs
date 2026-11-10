@@ -471,6 +471,44 @@ pub(crate) fn send_nothing(stream: &UnixStream) -> io::Result<()> {
     Ok(())
 }
 
+#[cfg(any(target_os = "macos", test))]
+pub(crate) fn send_bench_trace(
+    mut send: impl FnMut() -> io::Result<usize>,
+    timeout: std::time::Duration,
+    drop_mode: &std::sync::atomic::AtomicBool,
+) -> io::Result<usize> {
+    use std::{
+        sync::atomic::Ordering,
+        time::{Duration, Instant},
+    };
+    let start = Instant::now();
+    loop {
+        let error = match send() {
+            Ok(sent) => return Ok(sent),
+            Err(error) => error,
+        };
+        let interrupted = error.kind() == io::ErrorKind::Interrupted;
+        if !interrupted
+            && error.kind() != io::ErrorKind::WouldBlock
+            && error.raw_os_error() != Some(libc::ENOBUFS)
+        {
+            return Err(error);
+        }
+        if drop_mode.load(Ordering::Relaxed) {
+            return Err(error);
+        }
+        let remaining = timeout.saturating_sub(start.elapsed());
+        if remaining.is_zero() {
+            drop_mode.store(true, Ordering::Relaxed);
+            return Err(io::ErrorKind::TimedOut.into());
+        }
+        if !interrupted {
+            // Darwin's writable sender can still have a full datagram receiver.
+            std::thread::sleep(Duration::from_millis(1).min(remaining));
+        }
+    }
+}
+
 /// Shrinks the socket's send buffer, so a test can fill it.
 #[cfg(test)]
 pub(crate) fn set_send_buffer(stream: &UnixStream, size: c_int) -> io::Result<()> {
@@ -591,4 +629,156 @@ pub(crate) fn process_start_identity(pid: u32) -> io::Result<u64> {
         .and_then(|info| started(&info))
         .filter(|identity| *identity != 0)
         .ok_or_else(|| errno(libc::EPROTO))
+}
+
+#[cfg(test)]
+mod bench_trace_tests {
+    use super::send_bench_trace;
+    use std::{
+        io,
+        os::unix::net::UnixDatagram,
+        sync::{
+            atomic::{AtomicBool, Ordering},
+            mpsc,
+        },
+        time::Duration,
+    };
+
+    fn full_queue() -> (UnixDatagram, UnixDatagram, u64) {
+        let (sender, receiver) = UnixDatagram::pair().unwrap();
+        sender.set_nonblocking(true).unwrap();
+        receiver
+            .set_read_timeout(Some(Duration::from_secs(10)))
+            .unwrap();
+        for sequence in 0u64..100_000 {
+            match sender.send(&sequence.to_le_bytes()) {
+                Ok(8) => (),
+                Err(e)
+                    if e.kind() == io::ErrorKind::WouldBlock
+                        || e.raw_os_error() == Some(libc::ENOBUFS) =>
+                {
+                    return (sender, receiver, sequence);
+                }
+                result => panic!("cannot fill trace queue: {result:?}"),
+            }
+        }
+        panic!("trace queue did not fill");
+    }
+
+    #[test]
+    fn bench_trace_retries_a_full_queue_until_it_drains() {
+        let (sender, receiver, queued) = full_queue();
+        let drop_mode = AtomicBool::new(false);
+        let (release, wait) = mpsc::channel();
+        let mut retries = 0;
+        std::thread::scope(|scope| {
+            let reader = scope.spawn(move || {
+                wait.recv_timeout(Duration::from_secs(10)).unwrap();
+                let mut packet = [0; 8];
+                for sequence in 0..=queued {
+                    assert_eq!(receiver.recv(&mut packet).unwrap(), 8);
+                    assert_eq!(u64::from_le_bytes(packet), sequence);
+                }
+                receiver.set_nonblocking(true).unwrap();
+                assert_eq!(
+                    receiver.recv(&mut packet).unwrap_err().kind(),
+                    io::ErrorKind::WouldBlock
+                );
+            });
+            assert_eq!(
+                send_bench_trace(
+                    || {
+                        let result = sender.send(&queued.to_le_bytes());
+                        if result.is_err() {
+                            retries += 1;
+                            if retries == 1 {
+                                release.send(()).unwrap();
+                            }
+                        }
+                        result
+                    },
+                    Duration::from_secs(10),
+                    &drop_mode
+                )
+                .unwrap(),
+                8
+            );
+            reader.join().unwrap();
+        });
+        assert!(retries > 0, "the receiver drained before any retry");
+        assert!(!drop_mode.load(Ordering::Relaxed));
+    }
+
+    #[test]
+    fn bench_trace_timeout_switches_later_records_to_drop_mode() {
+        let (sender, _receiver, _) = full_queue();
+        let drop_mode = AtomicBool::new(false);
+        let error = send_bench_trace(
+            || sender.send(b"lost"),
+            Duration::from_millis(5),
+            &drop_mode,
+        )
+        .unwrap_err();
+        assert_eq!(error.kind(), io::ErrorKind::TimedOut);
+        assert!(drop_mode.load(Ordering::Relaxed));
+        let mut attempts = 0;
+        let error = send_bench_trace(
+            || {
+                attempts += 1;
+                sender.send(b"also lost")
+            },
+            Duration::from_secs(2),
+            &drop_mode,
+        )
+        .unwrap_err();
+        assert!(
+            error.kind() == io::ErrorKind::WouldBlock
+                || error.raw_os_error() == Some(libc::ENOBUFS)
+        );
+        assert_eq!(attempts, 1, "drop mode must not wait again");
+    }
+
+    #[test]
+    fn bench_trace_drop_mode_does_not_retry_interrupted_sends() {
+        let drop_mode = AtomicBool::new(true);
+        let mut attempts = 0;
+        let error = send_bench_trace(
+            || {
+                attempts += 1;
+                assert_eq!(attempts, 1, "drop mode retried EINTR");
+                Err(io::Error::from_raw_os_error(libc::EINTR))
+            },
+            Duration::from_secs(10),
+            &drop_mode,
+        )
+        .unwrap_err();
+        assert_eq!(error.kind(), io::ErrorKind::Interrupted);
+        assert_eq!(attempts, 1);
+    }
+
+    #[test]
+    fn bench_trace_permanent_errors_do_not_retry() {
+        for closed in [false, true] {
+            let (sender, receiver) = UnixDatagram::pair().unwrap();
+            sender.set_nonblocking(true).unwrap();
+            let packet = vec![0; if closed { 8 } else { 1024 * 1024 }];
+            let _receiver = (!closed).then_some(receiver);
+            let drop_mode = AtomicBool::new(false);
+            let mut attempts = 0;
+            let error = send_bench_trace(
+                || {
+                    attempts += 1;
+                    sender.send(&packet)
+                },
+                Duration::from_secs(2),
+                &drop_mode,
+            )
+            .unwrap_err();
+            if !closed {
+                assert_eq!(error.raw_os_error(), Some(libc::EMSGSIZE));
+            }
+            assert_eq!(attempts, 1);
+            assert!(!drop_mode.load(Ordering::Relaxed));
+        }
+    }
 }

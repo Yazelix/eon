@@ -1963,18 +1963,25 @@ pub fn bench_trace(stage: &str, detail: impl std::fmt::Display) {
         OnceLock,
         atomic::{AtomicU64, Ordering},
     };
-    static SOCKET: OnceLock<Option<std::os::unix::net::UnixDatagram>> = OnceLock::new();
+    static SOCKET: OnceLock<Option<(std::os::unix::net::UnixDatagram, bool)>> = OnceLock::new();
     static NEXT: AtomicU64 = AtomicU64::new(0);
     static LOST: AtomicU64 = AtomicU64::new(0);
+    #[cfg(target_os = "macos")]
+    static DROP_MODE: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
     let socket = SOCKET.get_or_init(|| {
         let path = std::env::var_os("EON_BENCH_TRACE")?;
         let socket = std::os::unix::net::UnixDatagram::unbound().ok()?;
         let blocking = std::env::var("EON_BENCH_TRACE_BLOCKING").as_deref() == Ok("1");
-        socket.set_nonblocking(!blocking).ok()?;
+        socket
+            .set_nonblocking(cfg!(target_os = "macos") || !blocking)
+            .ok()?;
         socket.connect(path).ok()?;
-        Some(socket)
+        Some((socket, blocking))
     });
-    let Some(socket) = socket else { return };
+    #[cfg_attr(not(target_os = "macos"), allow(unused_variables))]
+    let Some((socket, blocking)) = socket else {
+        return;
+    };
     let mut time = libc::timespec {
         tv_sec: 0,
         tv_nsec: 0,
@@ -1992,7 +1999,17 @@ pub fn bench_trace(stage: &str, detail: impl std::fmt::Display) {
     );
     let sent = packet.len() <= 4096
         && loop {
-            match socket.send(packet.as_bytes()) {
+            #[cfg(target_os = "macos")]
+            if *blocking {
+                break platform::send_bench_trace(
+                    || socket.send(packet.as_bytes()),
+                    Duration::from_secs(60),
+                    &DROP_MODE,
+                )
+                .is_ok();
+            }
+            let result = socket.send(packet.as_bytes());
+            match result {
                 Err(e) if e.kind() == std::io::ErrorKind::Interrupted => continue,
                 result => break result.is_ok(),
             }

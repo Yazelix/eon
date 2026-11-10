@@ -392,18 +392,35 @@ mod tests {
         let producer = std::thread::spawn(move || {
             let socket = UnixDatagram::unbound().unwrap();
             socket.connect(path).unwrap();
-            socket
-                .set_write_timeout(Some(Duration::from_secs(60)))
-                .unwrap();
+            socket.set_nonblocking(true).unwrap();
             for sequence in 0..=257 {
                 let stage = match sequence {
                     0 => "start",
                     257 => "end",
                     _ => "pty_read",
                 };
-                socket
-                    .send(format!("orbit\t42\t{sequence}\t0\t0\t{stage}\t1").as_bytes())
-                    .unwrap();
+                let packet = format!("orbit\t42\t{sequence}\t0\t0\t{stage}\t1");
+                let start = Instant::now();
+                loop {
+                    match socket.send(packet.as_bytes()) {
+                        Err(e)
+                            if matches!(
+                                e.kind(),
+                                std::io::ErrorKind::Interrupted | std::io::ErrorKind::WouldBlock
+                            ) || e.raw_os_error() == Some(libc::ENOBUFS) =>
+                        {
+                            assert!(
+                                start.elapsed() < Duration::from_secs(60),
+                                "trace send timed out: {e}"
+                            );
+                            std::thread::sleep(Duration::from_millis(1));
+                        }
+                        result => {
+                            assert_eq!(result.unwrap(), packet.len());
+                            break;
+                        }
+                    }
+                }
             }
         });
         // Consume nothing until the producer has sent far beyond the namespace's queue of 10.

@@ -339,6 +339,12 @@ Tier 1 sets `EON_BENCH_TRACE_BLOCKING=1` only on its isolated Orbit: diagnostics
 backpressure the host until the raw receive thread drains them into a channel.
 The gate removes this override from timed children. Ordinary diagnostics stay
 nonblocking by default; do not enable blocking mode for timing.
+On macOS, Orbit retries ENOBUFS/EAGAIN with a 1 ms pause for at most 60 seconds
+per record. After the first timeout it stays in drop mode for the rest of the
+process, so a collector that never drains cannot repeatedly stall the host.
+Permanent errors and timeouts count as lost records and invalidate evidence.
+macOS defaults to a 2048-byte Unix datagram limit (`net.local.dgram.maxdgram`);
+EMSGSIZE is a permanent, counted failure even below the trace's 4096-byte cap.
 
 `gate` compares release builds on the same Linux machine. It runs the six full
 corpora through detached and attached Orbit, then `terminals --subject eon`
