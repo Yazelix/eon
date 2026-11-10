@@ -103,7 +103,7 @@ const STEPS: &[Spec] = &[
         requires: &["session"],
         proves: "LaunchServices opens Eon.app with only the system PATH and private roots; \
                  its managed shell resolves the candidate's eon/hx and a user-profile-only \
-                 command, and typing eon hx starts Helix. No terminal environment or \
+                 command, and typing hx starts Helix. No terminal environment or \
                  shell-startup marker supplies the tools. This supplies run arguments; \
                  no-argument Finder/Dock launch and a click while Eon runs remain unproved \
                  (eon-mac-launch-kz4p.59 native reopen/Quit; .60 dispatcher and bundled Venus)",
@@ -1638,6 +1638,32 @@ fn idle_shell(workspace: &Value) -> bool {
             .is_some_and(Vec::is_empty)
 }
 
+/// Rejects a failed shell command while waiting for the app's Helix process.
+fn helix_command(text: &str, personal_mac: bool) -> Outcome {
+    let lower = text.to_ascii_lowercase();
+    check(
+        ![
+            "invalid command",
+            "command not found",
+            "unknown command",
+            ": not found",
+            " not found.",
+        ]
+        .iter()
+        .any(|error| lower.contains(error)),
+        || {
+            format!(
+                "the app shell could not start Helix:\n{}",
+                if personal_mac {
+                    "pane text left out on a personal Mac"
+                } else {
+                    text
+                }
+            )
+        },
+    )
+}
+
 /// Which directory entry `path` is: its directory with symbolic links
 /// resolved, and its own name as written, so that two links in one
 /// directory to one file stay distinct.
@@ -1888,7 +1914,7 @@ fn app_bundle(scenario: &mut Scenario, log: &mut Log, deadline: Instant) -> Outc
         let paths = app.root.join("paths.json");
         let ran = app.root.join("host-tool");
         let text = format!(
-            "which eon hx eon-host-path-probe | get path | to json | save --force {}; eon-host-path-probe | save --force {}; eon hx",
+            "which eon hx eon-host-path-probe | get path | to json | save --force {}; eon-host-path-probe | save --force {}; hx",
             quote(&paths.to_string_lossy()),
             quote(&ran.to_string_lossy())
         );
@@ -1914,14 +1940,23 @@ fn app_bundle(scenario: &mut Scenario, log: &mut Log, deadline: Instant) -> Outc
         log.line(&format!(
             "mac-proof: bundle shell resolved {resolved:?}; profile-only tool ran"
         ));
+        let pane = selection(&app.workspace(log, deadline)?).1;
         until(deadline, || {
+            let output = capture_stdout(
+                log,
+                &mut app.eon(&["pane", "read", &pane, "--json"]),
+                deadline,
+            )?;
+            let reply: Value = serde_json::from_slice(&output)
+                .map_err(|error| Failure::Check(format!("app pane read: {error}")))?;
+            helix_command(reply["text"].as_str().unwrap_or_default(), app.personal_mac)?;
             Ok(app
                 .processes(log, deadline)?
                 .iter()
                 .any(|process| matches!(process.name(), "hx" | ".hx-wrapped"))
                 .then_some(()))
         })?;
-        log.line("mac-proof: typing eon hx started the packaged Helix");
+        log.line("mac-proof: typing hx started the packaged Helix");
         if app.screen.is_ok() {
             app.window_capture("app-helix", log, deadline)?;
         }
@@ -2904,6 +2939,28 @@ mod tests {
                 !args.iter().any(|arg| arg.contains(forbidden)),
                 "{forbidden}: {args:?}"
             );
+        }
+    }
+
+    #[test]
+    fn helix_wait_rejects_command_errors_with_the_pane_text() {
+        for diagnostic in [
+            "eon: invalid command or arguments",
+            "bash: hx: command not found",
+            "zsh: command not found: hx",
+            "fish: Unknown command: hx",
+            "Error: nu::shell::external_command\nCommand `hx` not found.",
+            "/bin/sh: hx: not found",
+        ] {
+            let text = format!("❯ hx\n{diagnostic}\n❯ ");
+            let failure = helix_command(&text, false).expect_err("command failed");
+            assert!(cause(&failure).contains(&text), "{}", cause(&failure));
+            let personal = helix_command(&text, true).expect_err("command failed");
+            assert!(cause(&personal).contains("pane text left out on a personal Mac"));
+            assert!(!cause(&personal).contains(&text));
+        }
+        for text in ["", "❯ hx", "Helix 25.07\nNORMAL"] {
+            assert!(helix_command(text, false).is_ok(), "{text}");
         }
     }
 

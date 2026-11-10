@@ -76,8 +76,8 @@ const ITEMS: &[Item] = &[
     },
     Item {
         title: "Finder and Dock",
-        action: "Use Finder's Go > Go to Folder to open the private test-app folder printed above. Drag its Eon.app to the Dock. In Eon run `eon quit --all`, then double-click Eon.app in Finder. Dismiss quick search with Escape, run `which eon hx`, then `eon quit --all`. Click Eon in the Dock, dismiss quick search, and run `eon hx`. Remove this test app from the Dock when done.",
-        expected: "Finder and the Dock each open a private Eon window without a Terminal launch, the shell finds packaged eon and hx, and eon hx opens Helix.",
+        action: "Use Finder's Go > Go to Folder to open the private test-app folder printed above. Drag its Eon.app to the Dock. In Eon run `eon quit --all`, then double-click Eon.app in Finder. Dismiss quick search with Escape, run `which eon hx`, then `eon quit --all`. Click Eon in the Dock, dismiss quick search, and run `hx`. Remove this test app from the Dock when done.",
+        expected: "Finder and the Dock each open a private Eon window without a Terminal launch, the shell finds packaged eon and hx, and hx opens Helix.",
         slug: "finder-and-dock",
     },
 ];

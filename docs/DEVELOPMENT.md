@@ -151,7 +151,7 @@ The `app-bundle` step uses LaunchServices (`open`) to start the package's
 runtime roots and no shell-startup marker. A fixture login profile exposes a
 command only in `~/.nix-profile/bin`. The managed shell must resolve that
 command and the candidate's packaged `eon` and `hx`; the step then types
-`eon hx`, observes the Helix process, captures it when permitted and stops its
+`hx`, observes the Helix process, captures it when permitted and stops its
 private workspace. When the step fails while its window still runs, its log
 ends with the session, each pane's text, the step's processes and, when
 permitted, a capture; a personal Mac's pane text and screen stay out. The main
@@ -199,7 +199,7 @@ items are Look, Second display (answer s to skip if you have only one), Typing
 and input methods, Fonts, Keyboard, Yazi images, Agent, Copy out, and Finder
 and Dock. The last item uses the private test app printed by the check:
 restart it from Finder and the Dock, verify `which eon hx`, and open Helix
-with `eon hx`. Remove this temporary app from the Dock afterward. Its wrapper
+with `hx`. Remove this temporary app from the Dock afterward. Its wrapper
 retains the check's private roots even after all its windows are stopped;
 it invokes the candidate's actual app launcher and packaged composition.
 `mac-proof final --help` prints each action and expected result. Eon uses the
