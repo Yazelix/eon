@@ -1046,7 +1046,10 @@ names its socket. CLI JSON names a session `session` and a terminal
 - **Status:** Partially proved; the pre-Bend baseline is candidate evidence.
   Amended on 2026-11-06 (approved by Lucca, relayed by
   eon-overseer) by `eon-7cf0y.22` (S4): `eon config path` and `eon config dir`
-  replace `config-path` and `config-dir`.
+  replace `config-path` and `config-dir`. Amended on 2026-11-10 (approved by
+  Lucca, relayed by eon-overseer) by `eon-xodrj.3`: Eon's packaged Helix is
+  built without Steel, and a configuration root whose path is not valid UTF-8
+  no longer fails Helix launch.
 - **Consumer:** People and agents inspecting Eon configuration defaults and
   paths, Eon terminals launched under Nushell or Bash, and every terminal,
   popup, Venus and quota reader the supervisor starts.
@@ -1072,9 +1075,9 @@ names its socket. CLI JSON names a session `session` and a terminal
     beside `config path` and `config defaults`.
   - Eon selects exact Nushell, Bash, Starship, Zoxide, fzf, Atuin, Carapace,
     Helix, Yazi, and LazyGit artifacts.
-  - Helix that Eon starts loads its Steel configuration files, `helix.scm` and
-    `init.scm`, only from Eon's Helix config directory, never from a
-    repository's `.helix` directory.
+  - Eon's packaged Helix is built without Steel, so no Steel file runs in it,
+    whether from Eon's Helix config directory or from a repository's `.helix`
+    directory.
   - Stable `eon-*` commands expose managed shells and tools outside Eon; one
     child-private PATH exposes accepted unprefixed names inside terminals.
   - Configuration accepts one direct argv command and independent Starship,
@@ -1144,9 +1147,7 @@ names its socket. CLI JSON names a session `session` and a terminal
   a replacement terminal. Optional integration failure warns without preventing
   shell launch. A missing or failing host mise is skipped silently; mise reports
   its own per-project errors, such as an untrusted configuration. Unavailable
-  native clipboard access reports Nushell's own error. A configuration root
-  whose path is not valid UTF-8 fails Helix launch, since Helix cannot read
-  its Steel configuration directory there.
+  native clipboard access reports Nushell's own error.
   Eon never mutates global configuration, startup files, aliases, or PATH.
 - **Owner:** Eon supplies defaults, component selection and Nix shell adapters;
   Eon Runtime owns strict configuration and private launch-environment
@@ -1216,14 +1217,15 @@ names its socket. CLI JSON names a session `session` and a terminal
     the `config-path` and `config defaults` help entries name `config.toml`;
     `relative_configuration_root_is_resolved_once` covers absolute output for
     both commands.
-  - **Steel trust:** `eon-2yj90` adds to `managed-command-path`, on Linux, the
-    real `hx` on Eon's managed PATH, under a pseudo-terminal in a repository
-    that holds `.helix/helix.scm` and `.helix/init.scm`: the `init.scm` in the
-    configuration root's `helix` directory runs and the repository's does
-    not. `managed_commands_use_exact_programs_and_private_configuration`
-    checks that Helix gets `HELIX_STEEL_CONFIG`, and
-    `helix_does_not_start_under_a_configuration_root_that_is_not_utf8` that
-    such a root fails Helix launch.
+  - **No Steel:** `eon-xodrj.3` replaces the `eon-2yj90` Steel trust check.
+    `managed-command-path` runs, on Linux, the real `hx` on Eon's managed
+    PATH, under a pseudo-terminal in a repository that holds
+    `.helix/helix.scm` and `.helix/init.scm`, with `helix.scm` and `init.scm`
+    also in the configuration root's `helix` directory: Helix draws the file
+    and neither `init.scm` runs. The `HELIX_STEEL_CONFIG` assertion in
+    `managed_commands_use_exact_programs_and_private_configuration` and
+    `helix_does_not_start_under_a_configuration_root_that_is_not_utf8` went
+    with the behavior they checked.
   - **Note:** `eon-8olu` removed the managed Zsh and Fish shells. The
     `shell-environment` check went with them; its Zsh and Fish evidence above
     no longer applies. The remaining checks cover Nushell and Bash launch
@@ -1232,7 +1234,7 @@ names its socket. CLI JSON names a session `session` and a terminal
   startup of each shell, and a native Wayland clipboard round trip through
   `clip copy`, the aliases and `wl-paste`. Agent session (`eon-geigu`): a
   Claude Code started in such a terminal shows no transcript-saving warning.
-  Steel trust (`eon-2yj90`): no real Helix run on macOS.
+  No Steel (`eon-xodrj.3`): no real Helix run on macOS.
   Re-proof of EON-C9 on the beta candidate is pending under eon-igae.7.5;
   retired shell evidence does not cover the current managed shells.
 

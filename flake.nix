@@ -21,7 +21,7 @@
       inputs.kinestra.follows = "kinestra";
     };
     helix = {
-      url = "github:Yazelix/nova-helix/af9acb1335d4e0b15f9f5725327afe79e94edee5";
+      url = "github:Yazelix/nova-helix/6ee75ad3b7b2f2ed82daae0f9bf1663c168f48ea";
       inputs.nixpkgs.follows = "nixpkgs";
     };
     yazi = {
@@ -647,8 +647,13 @@
               };
             });
 
-          helixPackage =
-            helix.packages.${system}.yazelix_helix;
+          # Eon's Helix is built without Steel (EON-C9), which nova-helix enables by
+          # default. buildRustPackage reads buildNoDefaultFeatures and buildFeatures
+          # only from its own call, so the override sets what its Cargo hook reads.
+          helixPackage = helix.packages.${system}.yazelix_helix.overrideAttrs {
+            cargoBuildNoDefaultFeatures = true;
+            cargoBuildFeatures = [ "git" ];
+          };
 
           nushellPackage = managedPackage nushellIdentity pkgs.nushell;
           bashPackage =

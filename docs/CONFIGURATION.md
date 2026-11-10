@@ -754,11 +754,9 @@ If no desktop clipboard is available, Nushell reports the error.
 
 The profile also exposes `eon-hx`, `eon-yazi`, `eon-ya`, `eon-lazygit`, and
 `eon-lg`. Inside terminals their unprefixed names resolve to the pinned tools.
-Eon's Helix reads its configuration, including the Steel files `helix.scm` and
-`init.scm`, from `$(eon config dir)/helix/`, and never runs Steel files from a
-repository's `.helix` directory. `hx --config-dir DIR` reads `config.toml` from
-DIR but still takes `helix.scm` and `init.scm` from `$(eon config dir)/helix/`.
-Eon does not start Helix when the configuration root's path is not valid UTF-8.
+Eon's Helix reads its configuration from `$(eon config dir)/helix/`. It is
+built without Steel, so it never runs `helix.scm` or `init.scm`, whether they
+are in that directory or in a repository's `.helix` directory.
 Eon does not rewrite the parent PATH, aliases, shell startup files, or native
 tool data paths.
 

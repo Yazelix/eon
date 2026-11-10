@@ -19,6 +19,12 @@ installation, and proven contract changes.
   for those three files. The README and the installer guide give the commands, the
   checks and the limits of the published install; Nix stays supported
   (`eon-igae.15.2`).
+- Eon's Helix no longer runs Steel: it is built without it, so `helix.scm` and
+  `init.scm` in `$(eon config dir)/helix/` are ignored, as a repository's
+  `.helix` ones already were. Eon no longer refuses to start Helix when the
+  configuration root's path is not valid UTF-8. The packaged Helix moves to
+  nova-helix `6ee75ad3`, whose `hx --listen PATH` opens files in a running
+  editor; Eon does not use it yet (`eon-xodrj.3`).
 
 - Untimed benchmark traces on macOS retry a full receiver instead of losing
   records. A stalled collector times out once, then drops with loss accounting

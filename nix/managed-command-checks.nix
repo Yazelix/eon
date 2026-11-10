@@ -130,29 +130,35 @@ pkgs.runCommand "eon-managed-command-path-check" { } ''
     || fail "Nushell added a mise hook with [shell] mise = false"
   ${pkgs.lib.optionalString pkgs.stdenv.isLinux ''
 
-    # hx in a repository whose .helix holds Steel files loads Steel only
-    # from Eon's Helix directory. Helix needs a terminal, which script gives
-    # it; the user's init.scm marks that Steel loaded.
+    # Eon's Helix is built without Steel (EON-C9): hx runs no init.scm, from a
+    # repository's .helix or from Eon's Helix directory. Helix needs a
+    # terminal, which script gives it. A Steel build runs init.scm before
+    # its first frame, so the check waits until Helix has drawn the file's
+    # name.
     ${pkgs.coreutils}/bin/mkdir -p "$TMPDIR/repo/.helix" "$EON_CONFIG_HOME/helix"
     : > "$TMPDIR/repo/.helix/helix.scm"
+    : > "$EON_CONFIG_HOME/helix/helix.scm"
     printf '(create-directory! "%s")\n' "$TMPDIR/repo-steel" > "$TMPDIR/repo/.helix/init.scm"
     printf '(create-directory! "%s")\n' "$TMPDIR/user-steel" > "$EON_CONFIG_HOME/helix/init.scm"
     (cd "$TMPDIR/repo" && TERM=xterm-256color exec ${pkgs.util-linux}/bin/script -qec 'hx notes.txt' /dev/null) \
       < /dev/null > "$TMPDIR/helix.log" 2>&1 &
     helix=$!
+    drawn=
     for _ in $(${pkgs.coreutils}/bin/seq 600); do
-      if test -e "$TMPDIR/user-steel" || test -e "$TMPDIR/repo-steel"; then
+      if ${pkgs.gnugrep}/bin/grep -aq 'notes\.txt' "$TMPDIR/helix.log"; then
+        drawn=1
         break
       fi
       ${pkgs.coreutils}/bin/sleep 0.1
     done
     kill "$helix" 2> /dev/null || true
     wait "$helix" || true
-    if test -e "$TMPDIR/repo-steel" || ! test -e "$TMPDIR/user-steel"; then
+    if test -z "$drawn" || test -e "$TMPDIR/repo-steel" || test -e "$TMPDIR/user-steel"; then
       ${pkgs.coreutils}/bin/tail -c 4096 "$TMPDIR/helix.log" | ${pkgs.coreutils}/bin/cat -v >&2
+      test -n "$drawn" || fail "Helix did not draw notes.txt"
       test ! -e "$TMPDIR/repo-steel" \
         || fail "Helix ran the repository's .helix/init.scm"
-      fail "Helix did not run init.scm from Eon's Helix directory"
+      fail "Helix ran init.scm from Eon's Helix directory"
     fi
   ''}
   ${pkgs.coreutils}/bin/touch "$out"
