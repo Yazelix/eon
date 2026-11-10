@@ -4567,12 +4567,17 @@ mod tests {
                 let logs = (0..8).fold(root.join("logs"), |path, _| path.join("l".repeat(120)));
                 state.log = DiagnosticLog::open_in(Ok(logs), "g1-test", "eon");
             }
-            let extra =
-                start_column_run(&state, &root, "terminal-9", &root.join("terminal-9.sock"));
+            let endpoint = root.join("terminal-9.sock");
+            let extra = start_column_run(&state, &root, "terminal-9", &endpoint);
             let extra_pid = sessions::tests::orbit_pid(&extra);
             let extra_run = extra.run_id().to_owned();
+            let context = format!(
+                "keep_pane={keep_pane}, Orbit pid {extra_pid}, run {extra_run}, endpoint {}",
+                endpoint.display()
+            );
             let scope = column_scope(&mut state, &root, "p1");
-            assert_eq!(scope.untracked[0].run, extra_run);
+            assert_eq!(scope.untracked.len(), 1, "{context}: {scope:?}");
+            assert_eq!(scope.untracked[0].run, extra_run, "{context}");
             drop(extra);
             let deadline = Instant::now() + SESSION_START_TIMEOUT;
             let acquired = loop {
@@ -4583,7 +4588,7 @@ mod tests {
                     &state.sessions,
                     deadline,
                 )
-                .unwrap();
+                .unwrap_or_else(|error| panic!("{context}: discover before Stop: {error}"));
                 match sessions::acquire_runs(candidates, state.log.orbit_directory().ok(), deadline)
                 {
                     Ok(acquired) => break acquired,
@@ -4592,7 +4597,7 @@ mod tests {
                     {
                         std::thread::sleep(Duration::from_millis(5))
                     }
-                    Err(error) => panic!("{error}"),
+                    Err(error) => panic!("{context}: acquire lease before Stop: {error}"),
                 }
             };
             // SAFETY: freezes only the test-owned host after acquiring its lease.
@@ -4604,9 +4609,11 @@ mod tests {
                 // An unanswered poll prevents sending Stop to the surviving pane.
                 assert!(sessions::send_program_status(&mut state.sessions[0], deadline).unwrap());
             }
-            let error = super::stop_consented_runs(&mut state, &scope, acquired).unwrap_err();
-            assert_eq!(error.code, "column-close-failed");
-            assert!(error.detail.contains("terminal-9"), "{error:?}");
+            let Err(error) = super::stop_consented_runs(&mut state, &scope, acquired) else {
+                panic!("{context}: Stop of frozen Orbit unexpectedly succeeded");
+            };
+            assert_eq!(error.code, "column-close-failed", "{context}: {error:?}");
+            assert!(error.detail.contains("terminal-9"), "{context}: {error:?}");
             assert!(
                 eon_workspace_protocol::v39::encode_response(&super::Response::Failure(
                     error.clone()
@@ -4614,19 +4621,20 @@ mod tests {
                 .is_ok(),
                 "the close failure must fit EONW even with a long Orbit log path"
             );
-            assert_eq!(state.sessions.len(), usize::from(keep_pane));
+            assert_eq!(state.sessions.len(), usize::from(keep_pane), "{context}");
             assert!(
                 !state
                     .sessions
                     .iter()
-                    .any(|session| session.run_id() == extra_run)
+                    .any(|session| session.run_id() == extra_run),
+                "{context}: failed untracked run stayed in the supervisor's sessions"
             );
             if keep_pane {
                 assert!(!state.stopping);
                 let retry = column_scope(&mut state, &root, "p1");
                 assert_eq!(
                     retry.untracked, scope.untracked,
-                    "retry must still list the live run"
+                    "{context}: retry must still list the live run"
                 );
                 // SAFETY: resumes the test-owned host frozen above.
                 assert_eq!(unsafe { libc::kill(pane_pid, libc::SIGCONT) }, 0);
@@ -4642,24 +4650,57 @@ mod tests {
                 );
             }
             // SAFETY: resumes the test-owned host frozen above.
-            assert_eq!(unsafe { libc::kill(extra_pid, libc::SIGCONT) }, 0);
+            assert_eq!(
+                unsafe { libc::kill(extra_pid, libc::SIGCONT) },
+                0,
+                "{context}: resume failed: {}",
+                std::io::Error::last_os_error()
+            );
             let deadline = Instant::now() + SESSION_START_TIMEOUT;
-            loop {
-                reap_finished_sessions(&mut state, &crate::fixtures::inputs(), &root).unwrap();
-                let untracked = sessions::untracked_runs(
-                    &root,
-                    LaunchMode::Workspace,
-                    "component-1",
-                    &state.sessions,
-                    deadline,
-                )
-                .unwrap();
-                if untracked.is_empty() {
-                    break;
+            // Wait for Orbit to finish changing its record and sockets, leaving discovery to reap it.
+            let exited_start = loop {
+                let process = crate::platform::process(extra_pid as u32)
+                    .unwrap_or_else(|error| panic!("{context}: observe resumed Orbit: {error}"))
+                    .unwrap_or_else(|| panic!("{context}: child vanished before discovery"));
+                if process.ended {
+                    break process.start;
                 }
-                assert!(Instant::now() < deadline, "the resumed orphan did not end");
+                assert!(
+                    Instant::now() < deadline,
+                    "{context}: resumed Orbit did not exit after {error:?}"
+                );
                 std::thread::sleep(Duration::from_millis(10));
-            }
+            };
+            let untracked = sessions::untracked_runs(
+                &root,
+                LaunchMode::Workspace,
+                "component-1",
+                &state.sessions,
+                deadline,
+            )
+            .unwrap_or_else(|error| panic!("{context}: discover after Orbit exit: {error}"));
+            assert!(
+                untracked.is_empty(),
+                "{context}: discovery still lists {:?}",
+                untracked
+                    .iter()
+                    .map(|run| &run.identity)
+                    .collect::<Vec<_>>()
+            );
+            let record = endpoint.with_extension("sock.record");
+            assert!(
+                !record
+                    .try_exists()
+                    .unwrap_or_else(|error| panic!("{context}: inspect record: {error}")),
+                "{context}: discovery left {}",
+                record.display()
+            );
+            assert!(
+                crate::platform::process(extra_pid as u32)
+                    .unwrap_or_else(|error| panic!("{context}: inspect reaping: {error}"))
+                    .is_none_or(|process| process.start != exited_start),
+                "{context}: discovery did not reap the ended child"
+            );
             if keep_pane {
                 assert!(
                     sessions::session_finished(&mut state.sessions[0])
