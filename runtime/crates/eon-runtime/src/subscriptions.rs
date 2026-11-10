@@ -1,11 +1,11 @@
 //! EON-C39 event subscriptions: each subscriber's connection, its bounded
-//! nonblocking writer and the EONW v38 messages it reads.
+//! nonblocking writer and the EONW v39 messages it reads.
 
 use super::events::{
     ColumnOrder, Event, Events, Filter, FilterSpec, Kind, PaneChange, PopupChange, Projection,
     QueueItem, SnapshotState, TabChange, WorkspaceChange, WorkspaceItem,
 };
-use eon_workspace_protocol::v38::{
+use eon_workspace_protocol::v39::{
     self as eonw, Change, End, EventKind, Failure, Gap, GapReason, Resume, Subscribed,
     SubscriptionMessage, Tabs, WindowSnapshot, WorkspaceEntry, WorkspaceInfo,
     encode_subscription_message,
@@ -554,7 +554,7 @@ fn filter_spec(filter: &eonw::Filter) -> FilterSpec {
     }
 }
 
-/// A subscription snapshot as EONW v38 carries it: the head's snapshot and
+/// A subscription snapshot as EONW v39 carries it: the head's snapshot and
 /// one `TABS` message per workspace with admitted tabs.
 fn window_snapshot(state: &SnapshotState) -> (WindowSnapshot, Vec<Tabs>) {
     let tabs: Vec<_> = state
@@ -605,7 +605,7 @@ fn column_order(column: &ColumnOrder) -> eonw::ColumnOrder {
     }
 }
 
-/// An event as EONW v38 carries it; the filter-only `hidden` and queue
+/// An event as EONW v39 carries it; the filter-only `hidden` and queue
 /// `previous` stay behind.
 fn event_message(seq: u64, event: &Event) -> SubscriptionMessage {
     let change = match event {
@@ -683,7 +683,7 @@ fn event_message(seq: u64, event: &Event) -> SubscriptionMessage {
 pub(crate) mod tests {
     use super::*;
     use crate::events::tests::{attention, base, pane_mut, tab_mut};
-    use eon_workspace_protocol::v38::{
+    use eon_workspace_protocol::v39::{
         AttentionState as State, HEADER_BYTES, declared_message_len, decode_subscription_message,
     };
     use std::cell::Cell;

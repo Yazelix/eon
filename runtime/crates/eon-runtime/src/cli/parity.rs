@@ -5,7 +5,7 @@
 //! `eon window stop` and `eon quit`.
 
 use super::*;
-use eon_workspace_protocol::v38::{Filter, InvokeIntent, TerminalInput};
+use eon_workspace_protocol::v39::{Filter, InvokeIntent, TerminalInput};
 
 enum CliPath {
     /// These arguments parse to exactly this action.
@@ -108,6 +108,9 @@ fn cli_path(action: &Action) -> CliPath {
         }
         Action::DismissPopup(target) => return Hide(words(&["popup", "hide", &target.instance])),
         Action::ToggleSidebar => return Sidebar(words(&["sidebar", "toggle"])),
+        Action::SetSidebar { open } => {
+            return Sidebar(words(&["sidebar", if *open { "show" } else { "hide" }]));
+        }
         Action::CreateColumn
         | Action::FocusAttention { .. }
         | Action::NextAttention
@@ -134,6 +137,7 @@ fn cli_path(action: &Action) -> CliPath {
             return Send(arguments);
         }
         Action::ClosePane { pane } => words(&["pane", "close", pane]),
+        Action::CloseColumn { pane, .. } => words(&["column", "close", pane]),
         Action::RenamePane { pane, name: None } => {
             words(&["pane", "rename", "--clear", "--", pane])
         }
@@ -265,6 +269,10 @@ fn every_eonw_action_has_a_cli_path_or_a_named_exception() {
         Action::DismissPopup(popup),
         Action::CreateColumn,
         Action::ClosePane { pane: text("p3") },
+        Action::CloseColumn {
+            pane: text("p3"),
+            consent: None,
+        },
         Action::RenamePane {
             pane: text("p1"),
             name: None,
@@ -293,6 +301,8 @@ fn every_eonw_action_has_a_cli_path_or_a_named_exception() {
             focus: true,
         },
         Action::ToggleSidebar,
+        Action::SetSidebar { open: true },
+        Action::SetSidebar { open: false },
         Action::FocusAttention {
             tab: text("t1"),
             target: text("p1"),
@@ -389,12 +399,13 @@ fn every_eonw_action_has_a_cli_path_or_a_named_exception() {
                 let parsed = parse_workspace_target_arguments(&arguments)
                     .and_then(|(arguments, _)| parse_sidebar_arguments(&arguments))
                     .map_err(|error| error.message);
-                assert_eq!(
-                    parsed,
-                    Ok(Some((SidebarVerb::Toggle, false))),
-                    "{arguments:?}"
-                );
-                assert_eq!(action, Action::ToggleSidebar, "{arguments:?}");
+                let verb = match action {
+                    Action::ToggleSidebar => SidebarVerb::Toggle,
+                    Action::SetSidebar { open: true } => SidebarVerb::Show,
+                    Action::SetSidebar { open: false } => SidebarVerb::Hide,
+                    _ => panic!("{action:?}"),
+                };
+                assert_eq!(parsed, Ok(Some((verb, false))), "{arguments:?}");
             }
             CliPath::Exception(reason) => {
                 assert!(reason.contains("eon-"), "{action:?}: {reason}");

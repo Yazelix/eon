@@ -8,7 +8,7 @@ use super::{
         validate_private_directory,
     },
 };
-use eon_workspace_protocol::v38::{
+use eon_workspace_protocol::v39::{
     Failure, MAX_HISTORY_TEXT_BYTES, MAX_PASTE_BYTES, MAX_SESSIONS, MAX_TERMINAL_METADATA_BYTES,
     MAX_TERMINAL_TEXT_BYTES,
 };
@@ -197,12 +197,12 @@ impl Drop for ReadyClaim {
     }
 }
 
-struct ManagedCandidate {
+pub(super) struct ManagedCandidate {
     number: usize,
     endpoint: PathBuf,
     record_path: PathBuf,
     record: ObjectIdentity,
-    identity: LiveIdentity,
+    pub(super) identity: LiveIdentity,
 }
 
 fn artifact_path(endpoint: &Path, suffix: &str) -> PathBuf {
@@ -782,6 +782,21 @@ pub(super) fn acquire_generation_sessions(
     orbit_logs: Option<&Path>,
     deadline: Instant,
 ) -> Result<Vec<RunningSession>, String> {
+    acquire_runs(
+        untracked_runs(runtime, mode, component_generation, owned, deadline)?,
+        orbit_logs,
+        deadline,
+    )
+}
+
+/// Discovers untracked runs without leasing them; listing never consents to stop.
+pub(super) fn untracked_runs(
+    runtime: &Path,
+    mode: LaunchMode,
+    component_generation: &str,
+    owned: &[RunningSession],
+    deadline: Instant,
+) -> Result<Vec<ManagedCandidate>, String> {
     let mut paths = fs::read_dir(runtime)
         .map_err(|error| {
             format!(
@@ -886,6 +901,14 @@ pub(super) fn acquire_generation_sessions(
         return Err("eonbase cannot recover more than one live terminal".into());
     }
 
+    Ok(candidates)
+}
+
+pub(super) fn acquire_runs(
+    candidates: Vec<ManagedCandidate>,
+    orbit_logs: Option<&Path>,
+    deadline: Instant,
+) -> Result<Vec<RunningSession>, String> {
     candidates
         .into_iter()
         .map(|candidate| acquire_management(candidate, orbit_logs, deadline))
@@ -2332,6 +2355,41 @@ pub(crate) mod tests {
     };
 
     #[test]
+    fn discovery_lists_without_leasing() {
+        let root = temporary_directory();
+        let run = leased_orbit(&root, "exec sleep 300");
+        let run_id = run.run_id().to_owned();
+        drop(run);
+        let candidates = super::untracked_runs(
+            &root,
+            super::LaunchMode::Workspace,
+            "component-1",
+            &[],
+            Instant::now() + Duration::from_secs(5),
+        )
+        .unwrap();
+        assert_eq!(candidates.len(), 1);
+        assert_eq!(candidates[0].identity.run_id, run_id);
+        // Discovery still has its candidates, yet another caller can lease the same live run.
+        let mut acquired = super::acquire_generation_sessions(
+            &root,
+            super::LaunchMode::Workspace,
+            "component-1",
+            &[],
+            None,
+            Instant::now() + Duration::from_secs(5),
+        )
+        .unwrap();
+        assert_eq!(acquired.len(), 1);
+        assert_eq!(acquired[0].run_id(), run_id);
+        assert!(super::session_finished(&mut acquired[0]).unwrap().is_none());
+        super::stop_managed_sessions(&mut acquired, Duration::from_secs(5)).unwrap();
+        drop(acquired);
+        drop(candidates);
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
     fn management_busy_survives_peer_close_before_acquisition() {
         let root = temporary_directory();
         let (session, peer, _) = tombstoned_session(&root, 1, TerminationReason::NaturalExit);
@@ -3285,7 +3343,7 @@ pub(crate) mod tests {
         let (mut session, peer, tombstone) =
             tombstoned_session(&root, 1, TerminationReason::NaturalExit);
         let code =
-            |result: Result<bool, eon_workspace_protocol::v38::Failure>| result.unwrap_err().code;
+            |result: Result<bool, eon_workspace_protocol::v39::Failure>| result.unwrap_err().code;
         let paste = || LeaseInput::Paste("hi".into());
 
         let orbit = answer(

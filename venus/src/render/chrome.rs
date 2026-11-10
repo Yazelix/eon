@@ -14,7 +14,7 @@ use crate::{
         ShortcutHintsScene, TabBadge, WorkspaceControl, chrome_title_metrics,
     },
 };
-use eon_workspace_protocol::v38::AttentionState;
+use eon_workspace_protocol::v39::AttentionState;
 use glyphon::{
     Attrs, Buffer, Color, ContentType, CustomGlyph, Family, FontSystem, Metrics,
     RasterizeCustomGlyphRequest, RasterizedCustomGlyph, SwashCache, TextBounds, Weight, Wrap,
@@ -3951,7 +3951,7 @@ mod tests {
 
     #[test]
     fn placed_control_glyphs_stay_inside_their_targets() {
-        use eon_workspace_protocol::v38::{Column, Pane, PopupGeometry, Sidebar, Snapshot, Tab};
+        use eon_workspace_protocol::v39::{Column, Pane, PopupGeometry, Sidebar, Snapshot, Tab};
         let snapshot = Snapshot {
             workspace: "s1".into(),
             active_workspace: "s1".into(),
@@ -4586,7 +4586,7 @@ mod tests {
 
     #[test]
     fn popup_and_pane_rows_share_surfaces_in_every_state() {
-        use eon_workspace_protocol::v38::{
+        use eon_workspace_protocol::v39::{
             Attention, AttentionRecord, Column, Pane, Popup, PopupEntry, PopupGeometry, PopupKey,
             Sidebar, Snapshot, Tab,
         };
@@ -4617,7 +4617,7 @@ mod tests {
         let snapshot = Snapshot {
             workspace: "s1".into(),
             active_workspace: "s1".into(),
-            workspaces: vec![eon_workspace_protocol::v38::WorkspaceInfo {
+            workspaces: vec![eon_workspace_protocol::v39::WorkspaceInfo {
                 id: "s1".into(),
                 persistent_id: Some("s1".into()),
                 registration_error: None,
@@ -5226,7 +5226,7 @@ mod tests {
     #[ignore = "requires an isolated native Wayland display and Vulkan renderer"]
     fn long_workspace_labels_stay_on_the_visible_line() {
         use crate::EonBar;
-        use eon_workspace_protocol::v38::{Pane, Snapshot, Tab};
+        use eon_workspace_protocol::v39::{Pane, Snapshot, Tab};
         use winit::{
             application::ApplicationHandler, event::WindowEvent, event_loop::EventLoop,
             platform::wayland::EventLoopBuilderExtWayland, window::WindowId,
@@ -5263,7 +5263,7 @@ mod tests {
                 let snapshot = Snapshot {
                     workspace: "s1".into(),
                     active_workspace: "s1".into(),
-                    workspaces: vec![eon_workspace_protocol::v38::WorkspaceInfo {
+                    workspaces: vec![eon_workspace_protocol::v39::WorkspaceInfo {
                         id: "s1".into(),
                         persistent_id: Some("s1".into()),
                         registration_error: None,
@@ -5273,7 +5273,7 @@ mod tests {
                         recency: 0,
                     }],
                     active_tab: "t2".into(),
-                    geometry: eon_workspace_protocol::v38::PopupGeometry {
+                    geometry: eon_workspace_protocol::v39::PopupGeometry {
                         side_margin: 8.0,
                         vertical_margin: 4.0,
                     },
@@ -5288,7 +5288,7 @@ mod tests {
                             id: format!("t{}", index + 1),
                             directory: format!("/tmp/{directory}").into_bytes(),
                             selected_pane: Some(format!("p{}", index + 1)),
-                            columns: vec![eon_workspace_protocol::v38::Column {
+                            columns: vec![eon_workspace_protocol::v39::Column {
                                 panes: vec![Pane {
                                     label: format!("p{}", index + 1),
                                     pinned_name: None,
@@ -5310,7 +5310,7 @@ mod tests {
                     claude_quota_failure: None,
                     running: None,
                     busy: None,
-                    sidebar: eon_workspace_protocol::v38::Sidebar::Open,
+                    sidebar: eon_workspace_protocol::v39::Sidebar::Open,
                     attention_queue: Vec::new(),
                 };
                 let workspace = WorkspaceScene::from_snapshot(
@@ -5673,19 +5673,19 @@ mod tests {
                 // Shared popup/sidebar titles use the pane metric and interrupt their top edge.
                 snapshot
                     .entries
-                    .push(eon_workspace_protocol::v38::PopupEntry {
+                    .push(eon_workspace_protocol::v39::PopupEntry {
                         id: "files".into(),
                         label: "Files".into(),
-                        shortcut: eon_workspace_protocol::v38::PopupKey::Bound(
-                            eon_workspace_protocol::v38::Shortcut {
-                                modifiers: eon_workspace_protocol::v38::ALT,
+                        shortcut: eon_workspace_protocol::v39::PopupKey::Bound(
+                            eon_workspace_protocol::v39::Shortcut {
+                                modifiers: eon_workspace_protocol::v39::ALT,
                                 key: "KeyF".into(),
                             },
                         ),
                     });
                 snapshot.tabs[1]
                     .popups
-                    .push(eon_workspace_protocol::v38::Popup {
+                    .push(eon_workspace_protocol::v39::Popup {
                         id: "u1".into(),
                         entry: "files".into(),
                         session: "files-session".into(),
@@ -5777,7 +5777,7 @@ mod tests {
                 }
                 self.0 = true;
                 // Popup text must stay clear of its marker, including RTL and zero-width lines.
-                use eon_workspace_protocol::v38::{
+                use eon_workspace_protocol::v39::{
                     Attention, AttentionRecord, Popup, PopupEntry, PopupKey,
                 };
                 let attention = Attention {
@@ -5867,7 +5867,7 @@ mod tests {
     /// by whole pixels to keep the descenders inside.
     #[test]
     fn chip_label_descenders_stay_inside_their_clip_and_chip() {
-        use eon_workspace_protocol::v38::{
+        use eon_workspace_protocol::v39::{
             Column, Pane, PopupGeometry, Sidebar, Snapshot, Tab, WorkspaceInfo,
         };
 

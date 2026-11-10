@@ -5,12 +5,20 @@ installation, and proven contract changes.
 
 ## Unreleased
 
+- `eon column close PANE --yes [--json]` closes the pane's Stack through
+  EONW v39. Without `--yes`, it lists every terminal it would stop and
+  refuses, including idle and one-pane Stacks. Consent binds the generation,
+  exact run IDs and the close's consequence; a changed scope stops nothing.
+  Column close never sweeps in a run that appeared later. The Stack Close
+  button follows in `eon-t5boa`. `eon sidebar show|hide` and Agents Hide set
+  Runtime's value directly, so concurrent hides cannot reopen it
+  (`eon-cq38r`). EONW v39 requires restarting windows for the updated CLI.
+
 - Popup and Agents sidebar headings have a Hide button in a second notch at
   the right of the heading. The popup's does what `eon popup hide POPUP` does;
-  the sidebar's does what Alt+Shift+H does. New `eon sidebar show|hide|toggle
+  the sidebar's sets the sidebar closed. New `eon sidebar show|hide|toggle
   [--json]` shows or hides the agent sidebar from the CLI and prints the
-  session with its `sidebar` state; `show` and `hide` are best effort when a
-  key or another command changes visibility at the same moment. With keyboard
+  session with its `sidebar` state; `show` and `hide` set the state directly. With keyboard
   focus in the sidebar, Tab reaches Hide and Enter or Space activates it
   (`eon-5g0e5`).
 - The Nix-free Linux install is the README's first install route. From v0.2.0

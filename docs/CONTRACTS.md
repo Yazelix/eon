@@ -562,6 +562,8 @@ names its socket. CLI JSON names a session `session` and a terminal
   it closes the session; EONW v36.
   Amended on 2026-11-07 (approved by eon-overseer under Lucca's standing rule)
   by `eon-30skm` (S3): its prose says session for the product concept.
+  Amended on 2026-11-10 (approved plan v5, relayed by eon-overseer) by
+  `eon-cq38r`: consent-bound column close over exact generation and run IDs on EONW v39.
 - **Consumer:** One local Eon session user.
 - **Trigger:** Launch, create or close a tab, create, close or rename a pane, create a column, traverse focus,
   reorder the active tab or selected pane, move the selected pane into a neighbouring column, zoom the
@@ -781,8 +783,9 @@ names its socket. CLI JSON names a session `session` and a terminal
     and shows the failure, and Alt+Shift+Q then tries again.
     eonbase has no Quit key.
 
-    CLI closes also use EON-C10's target-scoped busy confirmation, independently
-    of `warning_close_last_tab`. A native confirmed close sends its named
+    Tab and pane CLI closes also use EON-C10's target-scoped busy confirmation,
+    independently of `warning_close_last_tab`; a column close always needs
+    consent, under the rule below, whatever that setting is. A native confirmed close sends its named
     close action without first selecting the named tab. If that tab became
     background while the prompt was open, the current active tab stays active.
   - Closing a pane names an exact live `pN` in any tab of the addressed
@@ -802,6 +805,57 @@ names its socket. CLI JSON names a session `session` and a terminal
     a terminal that ended naturally during the request is reconciled as an
     exit. Venus maps Alt+W directly to the selected pane without a mode;
     `eon pane close PANE` sends the same target-bearing EONW action.
+  - Closing a column sends EONW v39's `CloseColumn { pane, consent }`, which
+    closes every pane of the column that holds the named live pane, in one
+    request. What it would stop is its scope: that column's panes' terminals,
+    with the end `column`; or, when the column is its tab's only column and
+    that tab is its session's only tab, every terminal of the tab, popups
+    included, with the end `session` while other sessions remain (EON-C33)
+    and `window` otherwise. With the end `window` the scope also lists every
+    live run of the generation that no tab tracks, such as a terminal that
+    became ready after its start timed out. Pane close's popup rule applies
+    with the column in the pane's place: while a popup or picker covers the
+    tab, a close without a calling terminal is `unavailable`, and a validated
+    calling terminal may close a column but not the tab's only one. An
+    unknown pane fails `unknown-pane`; a scope whose untracked runs cannot be
+    listed fails `column-close-failed`. Both stop nothing.
+
+    A column close always needs consent, whatever its terminals run and
+    however many they are, because it stops several terminals at once. A
+    request without a consent stops nothing and answers `Confirm` with the
+    scope: the generation, the pane, the end, the session's name, each pane
+    and popup terminal with its run ID, its name and whether EON-C11 classes
+    it busy when the answer is built, and each untracked run with its
+    terminal ID and run ID. A run ID names one start of a terminal and is
+    never reused, where a terminal ID can be after a failed start. The busy
+    marks inform the person and never decide whether a close runs. A consent
+    names a generation, run IDs and an end. Runtime stops terminals only
+    when, as the close runs, the consent's generation is the window's, its
+    run IDs are exactly those of the scope's terminals and untracked runs,
+    and its end is the scope's end; otherwise it stops nothing and answers
+    `Confirm` with the current scope. So a consent never covers a pane that
+    joined the column, a column the pane moved to, a column a pane has left,
+    a terminal started under a listed terminal's ID, a close that became or
+    stopped being a final close, or a run it did not name: each answers
+    `Confirm` again. Work that starts in a listed run after the answer is
+    inside the consent.
+
+    A client sends a consent only on Enter in Venus's prompt, once that
+    prompt's list has been presented for its confirmation delay (VEN-C8), or
+    on the CLI's `--yes` (EON-C10).
+    A matching close stops exactly the consented runs, together, under one
+    shared five-second bound, and prunes each confirmed end as a pane exit,
+    so the column leaves its tab and selection moves as when a column's last
+    pane exits; with the end `session` it removes the session as final-tab
+    close does. It leases the listed untracked runs before it stops
+    anything, and a lease that fails stops nothing. Unlike tab and pane
+    closes, a column close never stops a run the consent did not name: once
+    the stops are confirmed and no terminal of the window remains, it ends
+    the generation only if no other run of the generation is live. A run
+    that appeared in between is left running; the close then fails
+    `column-close-failed` naming it, and the window stays for a Stop, as an
+    incomplete Stop does (EON-C11). A terminal that does not end fails
+    `column-close-failed` and stays in its tab.
   - Ended terminals leave no dead pane or empty tab; focus moves deterministically
     to the same identity when possible, otherwise the following sibling at the
     removed index, otherwise the preceding sibling. A session left empty
@@ -835,7 +889,7 @@ names its socket. CLI JSON names a session `session` and a terminal
 - **Owner:** Eon Runtime session topology, identity, focus, pruning and action
   enforcement; Eon supplies product defaults/policy. Orbit owns terminals and
   Venus owns native materialization.
-- **Consumes:** Current EONW v38 session/popup values, Orbit terminal
+- **Consumes:** Current EONW v39 session/popup values, Orbit terminal
   identities/endpoints and Venus `VEN-C8`.
 - **Boundary:** No arbitrary split tree, vertical splits, column resizing,
   arbitrary reorder target, cross-tab pane movement, picker relocation, durable layout
@@ -1303,7 +1357,7 @@ names its socket. CLI JSON names a session `session` and a terminal
   (EON-C11, Routing).
   Quoted amendment direction approved on 2026-11-08 by Lucca
   ("2 we fix and push", relayed by eon-overseer) for `eon-remote-workspaces-52i4.5`:
-  EONW v38 carries each session's persistent ID beside its window-local
+  EONW v39 carries each session's persistent ID beside its window-local
   `sN`. Ordinary inspection and `session ls` include `persistent_id` and
   `registration_error`. `persistent_id` is null only for an existing recovered
   member whose registration is pending or failed; `registration_error` is null
@@ -1360,6 +1414,8 @@ names its socket. CLI JSON names a session `session` and a terminal
   Amended on 2026-11-10 (approved by Lucca, relayed by eon-overseer) by
   `eon-igae.17.1`: `[editor] command` has no default in the `no-helix`
   package, where an unset command resolves from `$VISUAL`, then `$EDITOR`.
+  Amended on 2026-11-10 (approved plan v5, relayed by eon-overseer) by
+  `eon-cq38r`: `eon column close` and Runtime-owned sidebar show/hide on EONW v39.
 - **Consumer:** One local CLI or approved composition controlling a live Eon
   supervisor.
 - **Trigger:** The client submits one versioned session or supervisor-lifecycle
@@ -1527,12 +1583,10 @@ names its socket. CLI JSON names a session `session` and a terminal
   - `eon sidebar show|hide|toggle [--json]` acts on the agent sidebar of the
     window showing the resolved session (EON-C31), as Alt+Shift+H and the
     sidebar's Hide button do. `toggle` sends one `ToggleSidebar`. `show` and
-    `hide` read the session first and send `ToggleSidebar` only when `sidebar`
-    differs from the value asked for; otherwise they change nothing and print
-    a fresh read of the session. They are best effort: EONW has no action that
-    sets the value, so a keypress or another command that changes visibility
-    between the first read and the toggle reverses the result, which the
-    printed `sidebar` shows. `hide` succeeds while `sidebar` is `off`; `show` and `toggle` then
+    `hide` send `SetSidebar`, which sets the value in the Runtime,
+    so repeating either changes nothing and no concurrent command or keypress
+    reverses the one that ran last. `hide` succeeds while `sidebar` is `off`;
+    `show` and `toggle` then
     fail `unavailable` (exit 1). Each prints the resulting session, whose
     `sidebar` reads `open`, `closed` or `off`. They change no tab, selection,
     popup or desktop focus.
@@ -1577,6 +1631,38 @@ names its socket. CLI JSON names a session `session` and a terminal
     when the window ends. The caller's own terminal may end with it, as
     with Stop. Eon rejects a non-boolean `warning_close_last_tab` with the
     rest of `config.toml`.
+  - `eon column close PANE --yes [--json]` closes the column, shown as a
+    Stack, that holds live pane `PANE`, resolved as `eon pane close` resolves
+    its pane, through EON-C8's column close. It does not inspect the session
+    first: it sends the close without a consent and works from Runtime's
+    `Confirm` answer alone. It closes only with `--yes`, whatever the column
+    runs, however many panes it holds and whatever `warning_close_last_tab`
+    is. It asks no question and reads no answer from standard input, at a
+    terminal or not.
+
+    Without `--yes` it stops nothing and fails `not-confirmed` (exit 1) with
+    detail `close of the column of pane PANE requires confirmation; rerun
+    with --yes`. Human mode first prints, on standard error, what the close
+    would stop: its consequence (the column, or for a final close that it
+    closes session NAME or quits the window), then one line per terminal
+    with its pane or popup ID and name, `running` on the ones marked busy,
+    and each untracked run by terminal ID as `in no tab` and `running`.
+
+    With `--yes` it sends the close again with a consent that repeats that
+    answer's generation, the run IDs of its terminals and untracked runs,
+    and its end. `--yes` consents to that one answer without showing it
+    first, and never bypasses target, caller, popup or Stop validation. If
+    Runtime answers `Confirm` again, what the close stops changed in between
+    and nothing was stopped: the command fails `close-changed` (exit 1) and
+    human mode prints the new answer as above. With `--json`, `not-confirmed`
+    and `close-changed` add a `close` member beside `error`, with
+    `generation`, `pane`, `end` (`column`, `session` or `window`), `session`,
+    `terminals`, each with `session`, `tab`, `pane`, `popup`, `terminal`,
+    `run`, `name` and `busy`, and `untracked`, each with `terminal` and
+    `run`. Success prints what `eon pane close` prints, `Ended` included. The
+    caller's own terminal is listed like any other when it is in the column.
+    A background column's close leaves the shown session, active tab,
+    selection, shown popup and desktop focus alone.
   - CLI JSON carries each pane's and popup's full EON-C31 attention record, the window's
     EON-C31 attention queue in order, and the window's Codex and Claude quota readings
     (EON-C27), as EON-C31's CLI JSON rule lists them. It also carries the window's
@@ -1687,7 +1773,7 @@ names its socket. CLI JSON names a session `session` and a terminal
 - **Owner:** Eon Runtime supervisor session/action state and CLI projection;
   its canonical EONW package owns types, codec and result ordering. Eon supplies
   validated component facts and product defaults.
-- **Consumes:** Current EONW v38 and accepted Orbit management operations.
+- **Consumes:** Current EONW v39 and accepted Orbit management operations.
 - **Boundary:** Additive lifecycle tags do not widen the pinned Venus workspace
   consumer. There is no event stream or subscription policy other than
   EON-C39's event subscription, and no remote transport,
@@ -1699,7 +1785,7 @@ names its socket. CLI JSON names a session `session` and a terminal
   child-protocol escape hatch.
 - **Package owner:** The canonical EONW crate lives in
   `runtime/crates/eon-workspace-protocol` with its accepted package/API and
-  v38 bytes. Venus, Eon Runtime and Eon consume it by path.
+  v39 bytes. Venus, Eon Runtime and Eon consume it by path.
   See [package selection](ARCHITECTURE.md#in-tree-package-selection).
 - **Runtime policy:** Project is required and defaults to Alt+Z; it has no
   command of its own and shows the tab's pair (EON-C18) on quick search. Git
@@ -1785,8 +1871,8 @@ names its socket. CLI JSON names a session `session` and a terminal
   fzf list of the popup's window's sessions (EON-C33's picker); Commands >
   Switch session runs the same list in the Commands popup. Each row shows
   the session's name, or its `sN` when unnamed, its tab count, and
-  ` · needs input` when its EONW v38 `attention` is needs input. Rows run by
-  EONW v38 `recency`, most recently shown first, with the shown session last
+  ` · needs input` when its EONW v39 `attention` is needs input. Rows run by
+  EONW v39 `recency`, most recently shown first, with the shown session last
   and marked ` · shown`, and the query matches only that name or `sN`. Enter on the highlighted row,
   including on an empty query, runs `eon session switch sN` once the CLI
   has checked again that the `sN` is live; otherwise it changes nothing and
@@ -2917,7 +3003,7 @@ names its socket. CLI JSON names a session `session` and a terminal
   Yazi owns filesystem browsing, and Anima owns style selection, rendering,
   input dismissal, playback timing, and terminal restoration. Eon consumes one
   picked directory per pick without interpreting Yazi's navigation state.
-- **Consumes:** EON-C17, current EONW v38 popup/pending-tab values, Orbit's
+- **Consumes:** EON-C17, current EONW v39 popup/pending-tab values, Orbit's
   accepted terminal startup/attachment/exit/stop contracts and the selected exact
   Venus consumer.
 - **Boundary:** No custom filesystem walker, file opening from a pending tab's
@@ -3742,6 +3828,8 @@ names its socket. CLI JSON names a session `session` and a terminal
   Amended on 2026-11-10 (approved by eon-overseer under Lucca's standing rule)
   by `eon-5g0e5`: `eon sidebar` and the sidebar's Hide button send
   `ToggleSidebar`.
+  Amended on 2026-11-10 (approved plan v5, relayed by eon-overseer) by
+  `eon-cq38r`: `SetSidebar` and disabled-sidebar action rules on EONW v39.
 - **Consumer:** One person supervising coding agents across the tabs and sessions (EON-C33)
   of one full-Eon window.
   eonbase has no poller and no sidebar; its `sidebar` is `Off`.
@@ -3853,9 +3941,12 @@ names its socket. CLI JSON names a session `session` and a terminal
     `Closed`, or `Off` (when `[sidebar] enabled = false`).
     - The value lives in memory while the supervisor runs, so it survives detach and reattach.
       It resets to `Open` after a supervisor restart.
-    - `ToggleSidebar` flips `Open` and `Closed`. A toggle, rather than a set, cannot race a stale
-      snapshot. In `Off` it is a no-op. `eon sidebar` (EON-C10) and the sidebar's Hide button
-      (VEN-C30) send the same action.
+    - `ToggleSidebar` flips `Open` and `Closed`; the key toggles, so it cannot
+      race a stale snapshot. `SetSidebar { open }` sets `Open` or `Closed`;
+      commands that name a state set it. In `Off`, `SetSidebar { open: true }`
+      and `ToggleSidebar` fail `unavailable`, and `SetSidebar { open: false }`
+      changes nothing. These rules apply to workspace windows; eonbase keeps
+      workspace actions `session-unavailable`, since it has no workspace snapshot.
   - **EONW v18 and v19** (amend EON-C10) add:
     - an optional `attention` on `Pane` and `Popup`, holding:
       - `state`: the *normalized* EON-C31 state of the terminal's most urgent record, one of
@@ -4029,7 +4120,7 @@ names its socket. CLI JSON names a session `session` and a terminal
   - **Orbit** owns the records, their neutral facts and the terminal title.
   - **Venus** owns presentation and hiding for width (VEN-C30).
 - **Consumes:** ORB-C15, ORB-C13 generation 7, EON-C8 topology, and EON-C10
-  (EONW v38, request and response). EON-C39 exposes a stream of its changes.
+  (EONW v39, request and response). EON-C39 exposes a stream of its changes.
 - **Boundary:**
   - no hooks and no edits to agent configuration;
   - no provider parsing; the Runtime passes `app` and `name` through unchanged, and Venus maps
@@ -5158,7 +5249,7 @@ names its socket. CLI JSON names a session `session` and a terminal
   session for the product concept.
   Quoted amendment direction approved on 2026-11-08 by Lucca
   ("2 we fix and push", relayed by eon-overseer) for `eon-remote-workspaces-52i4.5`:
-  EONW v38 initial and gap snapshots and session events carry the same
+  EONW v39 initial and gap snapshots and session events carry the same
   local-handle/persistent-ID mapping and `registration_error` as ordinary
   inspection, including a null ID for an unregistered recovered member.
   Confirming registration for an already published recovered member emits
@@ -5187,7 +5278,7 @@ names its socket. CLI JSON names a session `session` and a terminal
   - `eon pane wait TARGET --until done|needs-input|attention|ended
     [--timeout SECONDS] [--json]`.
 - **Result:**
-  - **One subscription.** The CLI sends one EONW v38 `Subscribe` request.
+  - **One subscription.** The CLI sends one EONW v39 `Subscribe` request.
     The supervisor either refuses it with an ordinary EONW `Failure` reply
     and closes the connection, or answers `SUBSCRIBED` and keeps the
     connection open for `TABS`, `EVENT`, `GAP` and `END` messages. A
@@ -5369,9 +5460,9 @@ names its socket. CLI JSON names a session `session` and a terminal
     subscriber, the attention poller or Stop.
 - **Owner:** Eon Runtime: the event projection, sequence, retained events,
   filters, subscriber bounds and CLI projection. Its canonical EONW package
-  owns the v38 `Subscribe` action and the `SUBSCRIBED`, `TABS`, `EVENT`,
+  owns the v39 `Subscribe` action and the `SUBSCRIBED`, `TABS`, `EVENT`,
   `GAP` and `END` messages.
-- **Consumes:** EON-C10 (current EONW v38; subscriptions introduced in v30
+- **Consumes:** EON-C10 (current EONW v39; subscriptions introduced in v30
   by `eon-ciwn.6`, targeting, exit codes),
   EON-C31 (attention records, the queue and its CLI visibility), EON-C11
   (busy terminals, generations), EON-C23 (window and supervisor start time)

@@ -4,7 +4,7 @@
 //! meaning.
 
 use super::sessions::{self, ProgramStatusRead, RunningSession};
-use eon_workspace_protocol::v38::{
+use eon_workspace_protocol::v39::{
     self as eonw, Action, AttentionKind, AttentionRecord, AttentionState as State, Sidebar,
     Snapshot,
 };
@@ -87,7 +87,7 @@ pub(super) fn targets(workspaces: &[Snapshot]) -> (Vec<Target>, Option<String>) 
 
 /// `target` as EON-C11 names a busy terminal: by a pane's label or a
 /// popup's entry label.
-fn busy_terminal(workspaces: &[Snapshot], target: &Target) -> eonw::BusyTerminal {
+pub(super) fn busy_terminal(workspaces: &[Snapshot], target: &Target) -> eonw::BusyTerminal {
     let workspace = &workspaces[target.workspace];
     let tab = &workspace.tabs[target.tab];
     let (id, name) = match &target.entry {
@@ -452,6 +452,7 @@ impl Attention {
     ) {
         match action {
             Action::ToggleSidebar => self.toggle_sidebar(),
+            Action::SetSidebar { open } => self.set_sidebar(*open),
             Action::FocusAttention { target, .. } => {
                 if direct_cross_workspace {
                     self.cursor = None;
@@ -753,6 +754,17 @@ impl Attention {
         }
     }
 
+    pub(super) fn sidebar(&self) -> Sidebar {
+        self.sidebar
+    }
+
+    /// A state-naming command never reverses its requested value.
+    fn set_sidebar(&mut self, open: bool) {
+        if self.sidebar != Sidebar::Off {
+            self.sidebar = if open { Sidebar::Open } else { Sidebar::Closed };
+        }
+    }
+
     /// `ToggleSidebar`: flips Open and Closed; Off stays.
     fn toggle_sidebar(&mut self) {
         self.sidebar = match self.sidebar {
@@ -767,7 +779,7 @@ impl Attention {
 mod tests {
     use super::*;
     use ProgramState::{Blocked, Done, Error, Idle, Working};
-    use eon_workspace_protocol::v38::{Column, Pane, Popup, PopupGeometry, Tab};
+    use eon_workspace_protocol::v39::{Column, Pane, Popup, PopupGeometry, Tab};
     use std::{fs, slice, thread};
 
     /// A record created at its change `changed`.
@@ -848,7 +860,7 @@ mod tests {
         Snapshot {
             workspace: "s1".into(),
             active_workspace: "s1".into(),
-            workspaces: vec![eon_workspace_protocol::v38::WorkspaceInfo {
+            workspaces: vec![eon_workspace_protocol::v39::WorkspaceInfo {
                 id: "s1".into(),
                 persistent_id: Some("s1".into()),
                 registration_error: None,
@@ -897,6 +909,23 @@ mod tests {
             .find(|target| target.session == session)
             .unwrap();
         Some(attention.shown(target, now)?.state)
+    }
+
+    #[test]
+    fn set_sidebar_sets_and_keeps_off() {
+        let mut attention = Attention::new(true);
+        for open in [false, false, true, true, false] {
+            attention.handled(&Action::SetSidebar { open }, None, &[], false, false);
+            assert_eq!(
+                attention.sidebar(),
+                if open { Sidebar::Open } else { Sidebar::Closed }
+            );
+        }
+        let mut off = Attention::new(false);
+        for open in [true, false] {
+            off.set_sidebar(open);
+            assert_eq!(off.sidebar(), Sidebar::Off);
+        }
     }
 
     #[test]
@@ -1752,7 +1781,7 @@ mod tests {
             managed_environment::{PopupCatalog, PopupCommand, PopupDefinition},
             workspace::{Session, WorkspaceSet},
         };
-        use eon_workspace_protocol::v38::{PopupKey, WorkspaceAction};
+        use eon_workspace_protocol::v39::{PopupKey, WorkspaceAction};
         let mut window = WorkspaceSet::with_recovered_sessions(
             "/runtime".into(),
             "/".into(),
@@ -1960,7 +1989,7 @@ mod tests {
         // carries its own rollup.
         let mut reply = before[1].clone();
         reply.workspaces = ["s1", "s2"]
-            .map(|id| eon_workspace_protocol::v38::WorkspaceInfo {
+            .map(|id| eon_workspace_protocol::v39::WorkspaceInfo {
                 id: id.into(),
                 persistent_id: Some(id.into()),
                 registration_error: None,
@@ -2210,7 +2239,7 @@ mod tests {
     #[test]
     fn a_subscriber_reads_attention_in_the_turn_that_applies_it() {
         use crate::{events::Projection, subscriptions::Subscribers};
-        use eon_workspace_protocol::v38::{
+        use eon_workspace_protocol::v39::{
             Change, EventKind, Filter, HEADER_BYTES, SubscriptionMessage, declared_message_len,
             decode_subscription_message,
         };
@@ -2400,7 +2429,7 @@ mod tests {
 
     #[test]
     fn busy_needs_the_default_shell_a_child_foreground_and_a_fresh_reply() {
-        use eon_workspace_protocol::v38::{PopupEntry, PopupKey, TargetId};
+        use eon_workspace_protocol::v39::{PopupEntry, PopupKey, TargetId};
         let root = crate::supervisor::temporary_directory();
         let mut sessions: Vec<_> = (1..=12)
             .map(|number| {

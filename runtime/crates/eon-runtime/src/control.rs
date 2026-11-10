@@ -8,7 +8,7 @@ use super::{
     workspace,
 };
 use eon_workspace_protocol::stop;
-use eon_workspace_protocol::v38::{
+use eon_workspace_protocol::v39::{
     Action, Error as ProtocolError, Failure, HEADER_BYTES, LifecycleResponse, MAX_DETAIL_BYTES,
     Request, Response, Runtime, VERSION, WorkspaceAction, declared_message_len,
     declared_response_len, decode_lifecycle_response, decode_request, decode_response,
@@ -559,6 +559,7 @@ pub(super) fn probe_launch_mode(socket: &Path) -> Result<LaunchMode, EndpointFai
         )),
         ControlResponse::Workspace(
             Response::Ended(_)
+            | Response::Confirm(_)
             | Response::Text(_)
             | Response::Sent(_)
             | Response::History(_)
@@ -1136,16 +1137,16 @@ mod tests {
     #[test]
     fn a_slow_reader_holds_the_supervisor_no_longer_than_the_reply_deadline() {
         let history = |text: String| {
-            super::Response::History(eon_workspace_protocol::v38::TerminalHistory {
-                target: eon_workspace_protocol::v38::TerminalTarget {
+            super::Response::History(eon_workspace_protocol::v39::TerminalHistory {
+                target: eon_workspace_protocol::v39::TerminalTarget {
                     workspace: "s1".into(),
                     tab: "t1".into(),
-                    id: eon_workspace_protocol::v38::TargetId::Pane("p1".into()),
+                    id: eon_workspace_protocol::v39::TargetId::Pane("p1".into()),
                     terminal: "terminal-1".into(),
                 },
                 caller: None,
                 revision: 1,
-                screen: eon_workspace_protocol::v38::Screen::Primary,
+                screen: eon_workspace_protocol::v39::Screen::Primary,
                 rows: 24,
                 columns: 80,
                 title: String::new(),

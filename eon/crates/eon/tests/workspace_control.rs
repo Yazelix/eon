@@ -1,5 +1,5 @@
 use eon_workspace_protocol::stop;
-use eon_workspace_protocol::v38::{
+use eon_workspace_protocol::v39::{
     Action as ProtocolAction, Availability, Change, Direction, End, Failure as ProtocolFailure,
     Filter, HEADER_BYTES, InvokeIntent, LifecycleResponse, MAX_SESSIONS, Popup, PopupTarget,
     Request, Response, Runtime, Screen, Sent, Snapshot, SubscriptionMessage, Tab, TabChange,
@@ -7204,7 +7204,7 @@ fn workspace_requests_project_callers_and_close_only_the_target_workspace() {
         &control,
         "switch",
         Action::SwitchWorkspace {
-            workspace: eon_workspace_protocol::v38::WorkspaceTarget::Selector("original".into()),
+            workspace: eon_workspace_protocol::v39::WorkspaceTarget::Selector("original".into()),
         },
     ));
     assert_eq!(switched.workspace, "s1");
@@ -7214,7 +7214,7 @@ fn workspace_requests_project_callers_and_close_only_the_target_workspace() {
                 &control,
                 "same",
                 Action::SwitchWorkspace {
-                    workspace: eon_workspace_protocol::v38::WorkspaceTarget::Selector("s1".into())
+                    workspace: eon_workspace_protocol::v39::WorkspaceTarget::Selector("s1".into())
                 }
             ))
             .tabs
@@ -7225,7 +7225,7 @@ fn workspace_requests_project_callers_and_close_only_the_target_workspace() {
         &control,
         "back",
         Action::SwitchWorkspace {
-            workspace: eon_workspace_protocol::v38::WorkspaceTarget::Selector("s2".into()),
+            workspace: eon_workspace_protocol::v39::WorkspaceTarget::Selector("s2".into()),
         },
     ));
     let inspected = snapshot(protocol_action_from(
@@ -7240,7 +7240,7 @@ fn workspace_requests_project_callers_and_close_only_the_target_workspace() {
     // The first confirmed stop is pruned; the failing terminal and workspace remain.
     fs::write(&fail, "terminal-2").unwrap();
     assert!(
-        matches!(workspace_action(&control, "close-fails", Action::CloseWorkspace { workspace: eon_workspace_protocol::v38::WorkspaceTarget::Selector("s1".into()) }), Response::Failure(error) if error.code == "session-close-failed" && error.detail.contains("injected stop failure"))
+        matches!(workspace_action(&control, "close-fails", Action::CloseWorkspace { workspace: eon_workspace_protocol::v39::WorkspaceTarget::Selector("s1".into()) }), Response::Failure(error) if error.code == "session-close-failed" && error.detail.contains("injected stop failure"))
     );
     let remaining = snapshot(protocol_action_from(
         &control,
@@ -7258,14 +7258,14 @@ fn workspace_requests_project_callers_and_close_only_the_target_workspace() {
     );
     assert_eq!(remaining.active_workspace, "s2");
     assert!(
-        matches!(workspace_action(&control, "close-fails", Action::CloseWorkspace { workspace: eon_workspace_protocol::v38::WorkspaceTarget::Selector("s1".into()) }), Response::Failure(error) if error.code == "duplicate-request")
+        matches!(workspace_action(&control, "close-fails", Action::CloseWorkspace { workspace: eon_workspace_protocol::v39::WorkspaceTarget::Selector("s1".into()) }), Response::Failure(error) if error.code == "duplicate-request")
     );
     let closed = snapshot(protocol_action_from(
         &control,
         "retry-close",
         Some(&second),
         ProtocolAction::Workspace(Action::CloseWorkspace {
-            workspace: eon_workspace_protocol::v38::WorkspaceTarget::Selector("s1".into()),
+            workspace: eon_workspace_protocol::v39::WorkspaceTarget::Selector("s1".into()),
         }),
     ));
     assert_eq!(
@@ -7287,7 +7287,7 @@ fn workspace_requests_project_callers_and_close_only_the_target_workspace() {
             &control,
             "last",
             Action::CloseWorkspace {
-                workspace: eon_workspace_protocol::v38::WorkspaceTarget::Selector("s2".into())
+                workspace: eon_workspace_protocol::v39::WorkspaceTarget::Selector("s2".into())
             }
         ),
         Response::Ended(_)
@@ -9817,7 +9817,7 @@ fn a_workspace_final_close_shows_the_recent_one_and_attach_keeps_it() {
         &control,
         "back",
         Action::SwitchWorkspace {
-            workspace: eon_workspace_protocol::v38::WorkspaceTarget::Selector("s1".into()),
+            workspace: eon_workspace_protocol::v39::WorkspaceTarget::Selector("s1".into()),
         },
     ));
     assert_eq!(first.tabs.len(), 1);
@@ -11201,6 +11201,23 @@ fn sidebar_commands_show_hide_and_toggle() {
             "{verb} should leave the sidebar {state}: {output:?}"
         );
     }
+    let mut hides = (0..2)
+        .map(|_| {
+            quit_command(&root)
+                .args(["sidebar", "hide", "--json"])
+                .stdout(Stdio::piped())
+                .spawn()
+                .unwrap()
+        })
+        .collect::<Vec<_>>();
+    for hide in hides.drain(..) {
+        let output = hide.wait_with_output().unwrap();
+        assert!(output.status.success(), "{output:?}");
+        assert!(
+            stdout(&output).contains("\"sidebar\":\"closed\""),
+            "{output:?}"
+        );
+    }
     let usage = quit_command(&root)
         .args(["sidebar", "open"])
         .output()
@@ -12091,7 +12108,7 @@ fn running_windows_name_each_other_and_refresh_on_start_and_end() {
         }
         let response = read_request(&mut stream);
         assert!(matches!(
-            eon_workspace_protocol::v38::decode_lifecycle_response(&response).unwrap(),
+            eon_workspace_protocol::v39::decode_lifecycle_response(&response).unwrap(),
             LifecycleResponse::Runtime(_)
         ));
     }
@@ -17128,6 +17145,121 @@ fn cli_closes_background_ids_and_preserves_the_presented_workspace() {
     assert_only_ended(&endpoints, &[]);
 
     let stopped = run(None, &["window", "stop", "default", "--json"]);
+    assert!(stopped.status.success(), "{stopped:?}");
+    wait_for_successful_exit(&mut default.child);
+    fs::remove_dir_all(root).unwrap();
+}
+
+#[test]
+fn cli_column_close_needs_yes_and_binds_consent_to_runtimes_answer() {
+    let (root, mut default) = quit_workspace();
+    fs::write(root.join("foreground"), "child").unwrap();
+    let runtime = root.join("r");
+    let caller = quit_caller(&runtime);
+    let run = |args: &[&str]| {
+        let mut command = quit_command(&root);
+        command
+            .env("EON_TERMINAL", OsStr::from_bytes(&caller))
+            .args(args);
+        command
+    };
+    let inspect = || run(&["session", "--json"]).output().unwrap();
+    let parsed =
+        |output: &Output| serde_json::from_slice::<serde_json::Value>(&output.stdout).unwrap();
+    let directory = root.to_str().unwrap();
+    let malformed = run(&["column", "close", "", "--json"]).output().unwrap();
+    assert_eq!(malformed.status.code(), Some(2), "{malformed:?}");
+    assert_eq!(parsed(&malformed)["error"]["code"], "malformed-action");
+    // An idle background one-pane Stack still needs --yes. Its refusal preserves focus.
+    let background = run(&["tab", "create", "--no-focus", "--dir", directory, "--json"])
+        .output()
+        .unwrap();
+    assert!(background.status.success(), "{background:?}");
+    let background = parsed(&background);
+    let tab = background["tabs"].as_array().unwrap().last().unwrap()["id"]
+        .as_str()
+        .unwrap()
+        .to_owned();
+    let pane = background["tabs"].as_array().unwrap().last().unwrap()["panes"][0]["id"]
+        .as_str()
+        .unwrap()
+        .to_owned();
+    let endpoint = background["tabs"].as_array().unwrap().last().unwrap()["panes"][0]["endpoint"]
+        .as_str()
+        .unwrap()
+        .to_owned();
+    wait_for_busy_panes(&root, None, &[]);
+    let before = presented(&inspect());
+    let refused = quit_with_answers(&mut run(&["column", "close", &pane]), b"y\n");
+    assert_eq!(refused.status.code(), Some(1), "{refused:?}");
+    let text = String::from_utf8_lossy(&refused.stderr);
+    assert!(text.contains("would stop 1 terminal:"), "{text}");
+    assert!(text.contains("Nothing was closed."), "{text}");
+    assert!(text.contains("error not-confirmed:"), "{text}");
+    assert!(!text.contains("[y/N]"), "{text}");
+    assert_eq!(presented(&inspect()), before);
+    // Input queued at a real terminal is equally unable to authorize a close.
+    let (mut leader, device) = pseudo_terminal();
+    leader.write_all(b"y\n").unwrap();
+    let refused = run(&["column", "close", &pane, "--json"])
+        .stdin(Stdio::from(device))
+        .output()
+        .unwrap();
+    drop(leader);
+    assert_eq!(refused.status.code(), Some(1), "{refused:?}");
+    let value = parsed(&refused);
+    assert_eq!(value["error"]["code"], "not-confirmed");
+    assert_eq!(value["close"]["end"], "column");
+    assert_eq!(value["close"]["pane"], pane);
+    assert_eq!(value["close"]["terminals"][0]["busy"], false);
+    assert!(!value["close"]["generation"].as_str().unwrap().is_empty());
+    assert!(
+        !value["close"]["terminals"][0]["run"]
+            .as_str()
+            .unwrap()
+            .is_empty()
+    );
+    assert!(refused.stderr.is_empty());
+    assert_eq!(presented(&inspect()), before);
+    // Work begins in the listed run before a later --yes invocation.
+    fs::write(root.join("foreground"), "other").unwrap();
+    wait_for_busy_panes(&root, None, &["p1", &pane]);
+    let endpoints = live_terminals(&terminal_endpoints(&parsed(&inspect())));
+    let closed = run(&["column", "close", &pane, "--yes", "--json"])
+        .output()
+        .unwrap();
+    assert!(closed.status.success(), "{closed:?}");
+    assert_only_ended(&endpoints, &[endpoint]);
+    assert_closed_only(&before, &presented(&inspect()), &tab);
+    // A command pane's running mark comes from Runtime; the same consent path closes it.
+    let background = run(&[
+        "tab",
+        "create",
+        "--no-focus",
+        "--dir",
+        directory,
+        "--json",
+        "--",
+        "sleep",
+        "300",
+    ])
+    .output()
+    .unwrap();
+    assert!(background.status.success(), "{background:?}");
+    let background = parsed(&background);
+    let pane = background["tabs"].as_array().unwrap().last().unwrap()["panes"][0]["id"]
+        .as_str()
+        .unwrap();
+    let refused = run(&["column", "close", pane, "--json"]).output().unwrap();
+    assert_eq!(refused.status.code(), Some(1), "{refused:?}");
+    assert_eq!(parsed(&refused)["close"]["terminals"][0]["busy"], true);
+    let closed = run(&["column", "close", pane, "--yes", "--json"])
+        .output()
+        .unwrap();
+    assert!(closed.status.success(), "{closed:?}");
+    let stopped = run(&["window", "stop", "default", "--json"])
+        .output()
+        .unwrap();
     assert!(stopped.status.success(), "{stopped:?}");
     wait_for_successful_exit(&mut default.child);
     fs::remove_dir_all(root).unwrap();

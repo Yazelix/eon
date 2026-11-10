@@ -801,6 +801,7 @@ line points agents to `eon --skill`.
 | `eon pane create [--json] [--no-focus] -- COMMAND...` | From an Eon terminal, run COMMAND exactly as given (no shell) in a new pane of the caller's column, at the tab's directory, with `--no-focus` and `created` as above; refused with exit 1 outside an Eon terminal |
 | `eon edit [--json] -- FILE` | Open FILE in the configured editor (`[editor] command`: Helix by default, or `$VISUAL` or `$EDITOR` in the package without Helix) in a new pane, placed as `pane create` places it, at the tab's directory; the JSON reply names the new pane in `created`, as `pane create` does |
 | `eon pane close PANE [--yes] [--json]` | Close any pane of the addressed session, stopping its terminal without changing the active tab, selection or shown popup; busy closes ask first, as described after this table. The final tab's last pane quits the window, or closes the session while others remain, asking first from a terminal |
+| `eon column close PANE --yes [--json]` | Close the column (Stack) holding PANE. Without `--yes`, list every terminal it would stop and fail `not-confirmed` (exit 1); never reads stdin. A changed scope fails `close-changed` (exit 1) and stops nothing |
 | `eon pane move up\|down [--json]` | Move the selected pane, or the calling pane, one position within its column |
 | `eon pane move left\|right [--json]` | Move the selected pane, or the calling pane, into the neighbouring column, as Ctrl+Alt+H/L does |
 | `eon pane read TARGET [--json]` | Print the visible text of pane or popup TARGET, in any session of the window, without changing anything; see [Reading a terminal](#reading-a-terminal) |
@@ -808,7 +809,7 @@ line points agents to `eon --skill`.
 | `eon pane history TARGET --edit [--json]` | Open that text in the configured editor in a Scrollback popup over TARGET's tab, as Alt+Shift+E does, when the tab is the shown session's active tab; see [Reading a terminal](#reading-a-terminal) |
 | `eon pane send TARGET [--enter] [--force] [--stdin] [--json] [-- TEXT]` | Paste TEXT, or standard input with `--stdin`, into pane or popup TARGET in any session of the window, then with `--enter` press Enter; see [Sending to a terminal](#sending-to-a-terminal) |
 | `eon popup hide POPUP [--json]` | Hide popup `uN` of the session as its window's dismissal would: a keep-alive popup keeps running, a transient one stops, and a pending tab's Files starts the tab's first terminal at its starting directory |
-| `eon sidebar show\|hide\|toggle [--json]` | Show, hide or toggle the window's agent sidebar, as Alt+Shift+H and the sidebar's Hide button do, and print the session, whose `sidebar` reads `open`, `closed` or `off`. `show` and `hide` read the state first and act only when it differs, so repeating one changes nothing; they are best effort, because a keypress or another command that changes visibility at the same moment can reverse the result. With `[sidebar] enabled = false`, `hide` succeeds and `show` and `toggle` fail `unavailable` (exit 1) |
+| `eon sidebar show\|hide\|toggle [--json]` | Show, hide or toggle the window's agent sidebar, as Alt+Shift+H and the sidebar's Hide button do, and print the session, whose `sidebar` reads `open`, `closed` or `off`. `show` and `hide` set the state directly in Runtime, so repeating either changes nothing; the command or keypress that ran last determines visibility. With `[sidebar] enabled = false`, `hide` succeeds and `show` and `toggle` fail `unavailable` (exit 1) |
 | `eon focus PANE\|left\|right\|up\|down [--json]` | Focus pane PANE, switching to its tab, or traverse the session; switch tabs with `eon tab switch` |
 | `eon versions` | Print Eon, protocol, and component identities |
 | `eon report` | Print a Markdown bug report for this window, with paths under your home as `~` and long environment values (8 bytes or more) removed, to read and then paste into the bug form; see [Troubleshooting and reporting](#troubleshooting-and-reporting) |
@@ -921,6 +922,21 @@ supervisor cannot be inspected, it stops nothing and exits 4
 (`supervisor-unavailable`). Run `env -u EON_TERMINAL eon ...` to act on the
 shown session without caller
 context. Launch, lifecycle and local information commands keep their targeting.
+
+`eon column close PANE` lists every pane and popup terminal it would stop,
+marks those known to be running, and refuses with `not-confirmed` (exit 1).
+A final close also lists live runs in no tab and says whether it closes the
+session or quits the window. This applies even to an idle or one-pane Stack,
+independently of `warning_close_last_tab`. It reads no stdin, piped or at a terminal.
+Use `--yes` only when stopping all work in that invocation's listed runs is
+authorized. Runtime binds consent to the generation, exact run IDs and the
+close's consequence; if those change before the close runs, it stops nothing
+and fails `close-changed` (exit 1). Busy marks only inform: work started later
+in a listed run is inside the consent. `--json` refusals include the scope in
+`close` beside `error`, with `generation`, `pane`, `end`, `session`, `terminals`
+(each with its target, `run`, `name` and `busy`) and `untracked` runs.
+Column targeting and popup rules follow pane close, except a caller may not
+close the tab's only column while its popup is shown.
 
 Before every `tab close` or `pane close`, the CLI inspects the session and
 checks the named target, even with `--json` or `--yes`. When a terminal the

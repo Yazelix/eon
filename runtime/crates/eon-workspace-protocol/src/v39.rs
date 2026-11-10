@@ -1,4 +1,4 @@
-//! Eon-owned values and bounded EONW v38 codec for local workspace clients.
+//! Eon-owned values and bounded EONW v39 codec for local workspace clients.
 //!
 //! Every message is a 12-byte header (`EONW`, little-endian version, kind,
 //! zero flags, little-endian payload length) followed by its payload.
@@ -17,7 +17,7 @@ pub use subscription::{
     decode_subscription_message, encode_subscription_message,
 };
 
-pub const VERSION: u16 = 38;
+pub const VERSION: u16 = 39;
 pub const HEADER_BYTES: usize = 12;
 const MAGIC: &[u8; 4] = b"EONW";
 const MAX_MESSAGE_BYTES: usize = 2 * 1024 * 1024;
@@ -108,11 +108,14 @@ const TEXT: u8 = 134;
 const SENT: u8 = 135;
 const HISTORY: u8 = 141;
 const EDITING: u8 = 142;
+const CONFIRM: u8 = 143;
 
 const INVOKE_POPUP: u8 = 19;
 const DISMISS_POPUP: u8 = 20;
 const CREATE_COLUMN: u8 = 22;
 const CLOSE_PANE: u8 = 23;
+const CLOSE_COLUMN: u8 = 44;
+const SET_SIDEBAR: u8 = 45;
 const RENAME_PANE: u8 = 36;
 const LAUNCH_TAB: u8 = 37;
 const MOVE_PANE_LEFT: u8 = 24;
@@ -226,6 +229,11 @@ pub enum Action {
     ClosePane {
         pane: String,
     },
+    /// Close the column holding `pane`, only with consent to its current scope.
+    CloseColumn {
+        pane: String,
+        consent: Option<CloseConsent>,
+    },
     RenamePane {
         pane: String,
         name: Option<String>,
@@ -253,6 +261,10 @@ pub enum Action {
     },
     /// Flip the window's agent sidebar between open and closed (EON-C31).
     ToggleSidebar,
+    /// Set the window's agent sidebar open or closed (EON-C31).
+    SetSidebar {
+        open: bool,
+    },
     /// Focus the exact pane id or popup instance `target` of `tab` under
     /// EON-C31's covered-target rule.
     FocusAttention {
@@ -682,6 +694,7 @@ pub enum Response {
     /// A tab or pane close stopped the window's last terminal and ended its
     /// generation, so no workspace remains to snapshot.
     Ended(Ended),
+    Confirm(CloseScope),
     Text(TerminalText),
     Sent(Sent),
     History(TerminalHistory),
@@ -691,6 +704,47 @@ pub enum Response {
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Ended {
     pub generation: String,
+}
+
+/// How far a column close reaches (EON-C8).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum CloseEnd {
+    Column,
+    Session,
+    Window,
+}
+
+/// The exact runs a client consents to stop, in one generation (EON-C8).
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct CloseConsent {
+    pub generation: String,
+    pub runs: Vec<String>,
+    pub end: CloseEnd,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct CloseTerminal {
+    pub target: TerminalTarget,
+    pub run: String,
+    pub name: String,
+    pub busy: bool,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct UntrackedRun {
+    pub terminal: String,
+    pub run: String,
+}
+
+/// What a column close would stop, in window order (EON-C8).
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct CloseScope {
+    pub generation: String,
+    pub pane: String,
+    pub end: CloseEnd,
+    pub session: String,
+    pub terminals: Vec<CloseTerminal>,
+    pub untracked: Vec<UntrackedRun>,
 }
 
 /// Which of a tab's terminals a target is.
@@ -956,6 +1010,21 @@ pub fn encode_request(request: &Request) -> Result<Vec<u8>> {
             payload.byte(CLOSE_PANE);
             payload.string(pane);
         }
+        Action::CloseColumn { pane, consent } => {
+            identity("pane id", pane)?;
+            payload.byte(CLOSE_COLUMN);
+            payload.string(pane);
+            payload.byte(u8::from(consent.is_some()));
+            if let Some(consent) = consent {
+                validate_close_consent(consent)?;
+                payload.string(&consent.generation);
+                payload.count(consent.runs.len());
+                for run in &consent.runs {
+                    payload.string(run);
+                }
+                encode_close_end(&mut payload, consent.end);
+            }
+        }
         Action::RenamePane { pane, name } => {
             identity("pane id", pane)?;
             if let Some(name) = name {
@@ -1001,6 +1070,10 @@ pub fn encode_request(request: &Request) -> Result<Vec<u8>> {
             payload.byte(u8::from(*focus));
         }
         Action::ToggleSidebar => payload.byte(TOGGLE_SIDEBAR),
+        Action::SetSidebar { open } => {
+            payload.byte(SET_SIDEBAR);
+            payload.byte(u8::from(*open));
+        }
         Action::FocusAttention { tab, target } => {
             identity("tab id", tab)?;
             identity("attention target", target)?;
@@ -1165,6 +1238,23 @@ pub fn decode_request(bytes: &[u8]) -> Result<Request> {
             let pane = decoder.string("pane id", MAX_ID_BYTES)?;
             Some(Action::ClosePane { pane })
         }
+        CLOSE_COLUMN => Some(Action::CloseColumn {
+            pane: decoder.string("pane id", MAX_ID_BYTES)?,
+            consent: if decode_bool(&mut decoder, "close consent")? {
+                let generation = decoder.string("generation", MAX_ID_BYTES)?;
+                let count = decoder.count("close runs", MAX_SESSIONS + 1)?;
+                let runs = (0..count)
+                    .map(|_| decoder.string("run id", MAX_ID_BYTES))
+                    .collect::<Result<_>>()?;
+                Some(CloseConsent {
+                    generation,
+                    runs,
+                    end: decode_close_end(&mut decoder)?,
+                })
+            } else {
+                None
+            },
+        }),
         RENAME_PANE => Some(Action::RenamePane {
             pane: decoder.string("pane id", MAX_ID_BYTES)?,
             name: decode_pane_name(&mut decoder)?,
@@ -1204,6 +1294,9 @@ pub fn decode_request(bytes: &[u8]) -> Result<Request> {
             })
         }
         TOGGLE_SIDEBAR => Some(Action::ToggleSidebar),
+        SET_SIDEBAR => Some(Action::SetSidebar {
+            open: decode_bool(&mut decoder, "sidebar open")?,
+        }),
         FOCUS_ATTENTION => Some(Action::FocusAttention {
             tab: decoder.string("tab id", MAX_ID_BYTES)?,
             target: decoder.string("attention target", MAX_ID_BYTES)?,
@@ -1244,6 +1337,12 @@ pub fn decode_request(bytes: &[u8]) -> Result<Request> {
         identity("request id", &id)?;
         match &action {
             Action::ClosePane { pane } => identity("pane id", pane)?,
+            Action::CloseColumn { pane, consent } => {
+                identity("pane id", pane)?;
+                if let Some(consent) = consent {
+                    validate_close_consent(consent)?;
+                }
+            }
             Action::RenamePane { pane, name } => {
                 identity("pane id", pane)?;
                 if let Some(name) = name {
@@ -1516,6 +1615,7 @@ fn validate_popup_action(action: &Action) -> Result<()> {
         }
         Action::Workspace(_)
         | Action::CreateColumn
+        | Action::CloseColumn { .. }
         | Action::ClosePane { .. }
         | Action::RenamePane { .. }
         | Action::MovePaneSideways(_)
@@ -1523,6 +1623,7 @@ fn validate_popup_action(action: &Action) -> Result<()> {
         | Action::CreateCommandPane { .. }
         | Action::LaunchTab { .. }
         | Action::ToggleSidebar
+        | Action::SetSidebar { .. }
         | Action::FocusAttention { .. }
         | Action::NextAttention
         | Action::PreviousAttention
@@ -1620,6 +1721,26 @@ pub fn encode_response(response: &Response) -> Result<Vec<u8>> {
             encode_failure(&mut payload, failure)?;
             FAILURE
         }
+        Response::Confirm(scope) => {
+            validate_close_scope(scope)?;
+            payload.string(&scope.generation);
+            payload.string(&scope.pane);
+            encode_close_end(&mut payload, scope.end);
+            payload.string(&scope.session);
+            payload.count(scope.terminals.len());
+            for terminal in &scope.terminals {
+                encode_target(&mut payload, &terminal.target);
+                payload.string(&terminal.run);
+                payload.string(&terminal.name);
+                payload.byte(u8::from(terminal.busy));
+            }
+            payload.count(scope.untracked.len());
+            for run in &scope.untracked {
+                payload.string(&run.terminal);
+                payload.string(&run.run);
+            }
+            CONFIRM
+        }
         Response::Ended(ended) => {
             identity("generation", &ended.generation)?;
             payload.string(&ended.generation);
@@ -1701,6 +1822,71 @@ fn validate_target(target: &TerminalTarget) -> Result<()> {
         TargetId::Popup(id) => identity("target popup", id)?,
     }
     identity("target terminal", &target.terminal)
+}
+
+fn encode_close_end(encoder: &mut Encoder, end: CloseEnd) {
+    encoder.byte(match end {
+        CloseEnd::Column => 0,
+        CloseEnd::Session => 1,
+        CloseEnd::Window => 2,
+    });
+}
+
+fn decode_close_end(decoder: &mut Decoder<'_>) -> Result<CloseEnd> {
+    match decoder.byte()? {
+        0 => Ok(CloseEnd::Column),
+        1 => Ok(CloseEnd::Session),
+        2 => Ok(CloseEnd::Window),
+        value => Err(Error::InvalidTag {
+            field: "close end",
+            value,
+        }),
+    }
+}
+
+fn validate_close_runs<'a>(runs: impl Iterator<Item = &'a str>) -> Result<()> {
+    let mut seen = HashSet::new();
+    for run in runs {
+        identity("run id", run)?;
+        if !seen.insert(run) || seen.len() > MAX_SESSIONS + 1 {
+            return Err(Error::InvalidValue {
+                field: "close runs",
+            });
+        }
+    }
+    Ok(())
+}
+
+fn validate_close_consent(consent: &CloseConsent) -> Result<()> {
+    identity("generation", &consent.generation)?;
+    validate_close_runs(consent.runs.iter().map(String::as_str))
+}
+
+fn validate_close_scope(scope: &CloseScope) -> Result<()> {
+    identity("generation", &scope.generation)?;
+    identity("pane id", &scope.pane)?;
+    validate_workspace_name(&scope.session)?;
+    if scope.terminals.is_empty()
+        || scope.terminals.len() > MAX_SESSIONS
+        || (scope.end != CloseEnd::Window && !scope.untracked.is_empty())
+    {
+        return Err(Error::InvalidValue {
+            field: "close scope",
+        });
+    }
+    for terminal in &scope.terminals {
+        validate_busy_terminal(&terminal.target, &terminal.name)?;
+    }
+    for run in &scope.untracked {
+        identity("terminal id", &run.terminal)?;
+    }
+    validate_close_runs(
+        scope
+            .terminals
+            .iter()
+            .map(|terminal| terminal.run.as_str())
+            .chain(scope.untracked.iter().map(|run| run.run.as_str())),
+    )
 }
 
 fn encode_target(encoder: &mut Encoder, target: &TerminalTarget) {
@@ -1842,6 +2028,43 @@ pub fn decode_response(bytes: &[u8]) -> Result<Response> {
         let failure = decode_failure(&mut decoder)?;
         decoder.finish()?;
         return Ok(Response::Failure(failure));
+    }
+    if kind == CONFIRM {
+        let generation = decoder.string("generation", MAX_ID_BYTES)?;
+        let pane = decoder.string("pane id", MAX_ID_BYTES)?;
+        let end = decode_close_end(&mut decoder)?;
+        let session = decoder.string("session name", MAX_WORKSPACE_NAME_BYTES)?;
+        let count = decoder.count("close terminals", MAX_SESSIONS)?;
+        let terminals = (0..count)
+            .map(|_| {
+                Ok(CloseTerminal {
+                    target: decode_target(&mut decoder)?,
+                    run: decoder.string("run id", MAX_ID_BYTES)?,
+                    name: decoder.string("busy name", MAX_PANE_LABEL_BYTES)?,
+                    busy: decode_bool(&mut decoder, "close busy")?,
+                })
+            })
+            .collect::<Result<_>>()?;
+        let count = decoder.count("untracked runs", MAX_SESSIONS + 1)?;
+        let untracked = (0..count)
+            .map(|_| {
+                Ok(UntrackedRun {
+                    terminal: decoder.string("terminal id", MAX_ID_BYTES)?,
+                    run: decoder.string("run id", MAX_ID_BYTES)?,
+                })
+            })
+            .collect::<Result<_>>()?;
+        let scope = CloseScope {
+            generation,
+            pane,
+            end,
+            session,
+            terminals,
+            untracked,
+        };
+        decoder.finish()?;
+        validate_close_scope(&scope)?;
+        return Ok(Response::Confirm(scope));
     }
     if kind == ENDED {
         let ended = Ended {
@@ -3638,6 +3861,203 @@ impl<'a> Decoder<'a> {
 mod tests {
     use super::*;
 
+    fn close_scope() -> CloseScope {
+        CloseScope {
+            generation: "g1".into(),
+            pane: "p2".into(),
+            end: CloseEnd::Window,
+            session: "s1".into(),
+            terminals: vec![CloseTerminal {
+                target: TerminalTarget {
+                    workspace: "s1".into(),
+                    tab: "t1".into(),
+                    id: TargetId::Pane("p2".into()),
+                    terminal: "terminal-2".into(),
+                },
+                run: "run-a".into(),
+                name: "fish".into(),
+                busy: false,
+            }],
+            untracked: vec![UntrackedRun {
+                terminal: "terminal-9".into(),
+                run: "run-b".into(),
+            }],
+        }
+    }
+
+    #[test]
+    fn column_close_wire_binds_unique_bounded_runs() {
+        for (action, golden) in [
+            (
+                Action::SetSidebar { open: false },
+                "454f4e57270001000700000002007231002d00",
+            ),
+            (
+                Action::SetSidebar { open: true },
+                "454f4e57270001000700000002007231002d01",
+            ),
+            (
+                Action::CloseColumn {
+                    pane: "p2".into(),
+                    consent: None,
+                },
+                "454f4e57270001000b00000002007231002c0200703200",
+            ),
+        ] {
+            let request = Request {
+                id: "r1".into(),
+                caller: None,
+                action,
+            };
+            let bytes = encode_request(&request).unwrap();
+            assert_eq!(
+                bytes
+                    .iter()
+                    .map(|byte| format!("{byte:02x}"))
+                    .collect::<String>(),
+                golden
+            );
+            assert_eq!(decode_request(&bytes).unwrap(), request);
+        }
+        let scope = close_scope();
+        let consent = CloseConsent {
+            generation: scope.generation.clone(),
+            runs: vec!["run-a".into(), "run-b".into()],
+            end: scope.end,
+        };
+        let request = |consent| Request {
+            id: "r1".into(),
+            caller: None,
+            action: Action::CloseColumn {
+                pane: "p2".into(),
+                consent: Some(consent),
+            },
+        };
+        let valid = request(consent.clone());
+        let bytes = encode_request(&valid).unwrap();
+        assert_eq!(
+            hex(&bytes),
+            "454f4e57270001002000000002007231002c0200703201020067310200050072756e2d61050072756e2d6202"
+        );
+        assert_eq!(decode_request(&bytes).unwrap(), valid);
+        let response = Response::Confirm(scope.clone());
+        let bytes = encode_response(&response).unwrap();
+        assert_eq!(
+            hex(&bytes),
+            "454f4e5727008f004b000000020067310200703202020073310100020073310200743100020070320a007465726d696e616c2d32050072756e2d610400666973680001000a007465726d696e616c2d39050072756e2d62"
+        );
+        assert_eq!(decode_response(&bytes).unwrap(), response);
+        // A second run replaced with the first is rejected at the wire boundary too.
+        let duplicate = |mut bytes: Vec<u8>| {
+            let offset = bytes.windows(5).position(|part| part == b"run-b").unwrap();
+            bytes[offset..offset + 5].copy_from_slice(b"run-a");
+            bytes
+        };
+        assert!(decode_response(&duplicate(bytes.clone())).is_err());
+        let mut wrong_end = bytes.clone();
+        wrong_end[20] = 0;
+        assert!(
+            decode_response(&wrong_end).is_err(),
+            "untracked runs require window end"
+        );
+        let mut empty_run = bytes;
+        let offset = empty_run
+            .windows(7)
+            .position(|part| part == b"\x05\x00run-a")
+            .unwrap();
+        empty_run.splice(offset..offset + 7, [0, 0]);
+        let length = (empty_run.len() - HEADER_BYTES) as u32;
+        empty_run[8..12].copy_from_slice(&length.to_le_bytes());
+        assert!(decode_response(&empty_run).is_err());
+        let mut oversized = encode_request(&valid).unwrap();
+        oversized[27..29].copy_from_slice(&((MAX_SESSIONS + 2) as u16).to_le_bytes());
+        assert!(decode_request(&oversized).is_err());
+        assert!(decode_request(&duplicate(encode_request(&valid).unwrap())).is_err());
+        for runs in [
+            vec!["".into()],
+            vec!["run-a".into(), "run-a".into()],
+            vec!["x".repeat(MAX_ID_BYTES + 1)],
+            (0..MAX_SESSIONS + 2).map(|n| format!("run-{n}")).collect(),
+        ] {
+            assert!(
+                encode_request(&request(CloseConsent {
+                    runs,
+                    ..consent.clone()
+                }))
+                .is_err()
+            );
+        }
+        let boundary = request(CloseConsent {
+            runs: (0..MAX_SESSIONS + 1).map(|n| format!("run-{n}")).collect(),
+            ..consent
+        });
+        assert_eq!(
+            decode_request(&encode_request(&boundary).unwrap()).unwrap(),
+            boundary
+        );
+        for broken in [
+            CloseScope {
+                terminals: Vec::new(),
+                ..scope.clone()
+            },
+            CloseScope {
+                pane: String::new(),
+                ..scope.clone()
+            },
+            CloseScope {
+                generation: String::new(),
+                ..scope.clone()
+            },
+            CloseScope {
+                end: CloseEnd::Column,
+                ..scope.clone()
+            },
+            CloseScope {
+                end: CloseEnd::Session,
+                ..scope.clone()
+            },
+            CloseScope {
+                untracked: vec![UntrackedRun {
+                    terminal: "terminal-9".into(),
+                    run: "run-a".into(),
+                }],
+                ..scope.clone()
+            },
+            CloseScope {
+                untracked: (0..MAX_SESSIONS + 1)
+                    .map(|n| UntrackedRun {
+                        terminal: format!("terminal-{n}"),
+                        run: format!("run-{n}"),
+                    })
+                    .collect(),
+                ..scope.clone()
+            },
+            CloseScope {
+                terminals: vec![scope.terminals[0].clone(); MAX_SESSIONS + 1],
+                ..scope.clone()
+            },
+        ] {
+            assert!(encode_response(&Response::Confirm(broken)).is_err());
+        }
+        for end in [CloseEnd::Column, CloseEnd::Session, CloseEnd::Window] {
+            let response = Response::Confirm(CloseScope {
+                end,
+                untracked: Vec::new(),
+                ..scope.clone()
+            });
+            assert_eq!(
+                decode_response(&encode_response(&response).unwrap()).unwrap(),
+                response
+            );
+        }
+        let mut payload = Encoder::default();
+        payload.string("r1");
+        payload.byte(0);
+        payload.byte(SET_SIDEBAR);
+        payload.byte(2);
+        assert!(decode_request(&frame(REQUEST, payload.bytes).unwrap()).is_err());
+    }
+
     #[test]
     fn c38_recovered_registration_state_is_optional_bounded_and_round_trips() {
         let mut state = snapshot();
@@ -4846,14 +5266,14 @@ mod tests {
         for (action, expected) in [
             (
                 Action::Workspace(WorkspaceAction::CloseTab { tab: "t1".into() }),
-                "454f4e57260001000a00000002007231001202007431",
+                "454f4e57270001000a00000002007231001202007431",
             ),
             (
                 Action::Workspace(WorkspaceAction::SetTabDirectory {
                     tab: "t1".into(),
                     directory: b"/tmp".to_vec(),
                 }),
-                "454f4e57260001001000000002007231000c0200743104002f746d70",
+                "454f4e57270001001000000002007231000c0200743104002f746d70",
             ),
             (
                 Action::InvokePopup {
@@ -4862,29 +5282,29 @@ mod tests {
                     expected_instance: Some("u1".into()),
                     intent: InvokeIntent::Focus,
                 },
-                "454f4e572600010015000000020072310013020074310300676974010200753101",
+                "454f4e572700010015000000020072310013020074310300676974010200753101",
             ),
-            (Action::CreateColumn, "454f4e572600010006000000020072310016"),
+            (Action::CreateColumn, "454f4e572700010006000000020072310016"),
             (
                 Action::ClosePane { pane: "p2".into() },
-                "454f4e57260001000a00000002007231001702007032",
+                "454f4e57270001000a00000002007231001702007032",
             ),
             (
                 Action::MovePaneSideways(Side::Right),
-                "454f4e572600010006000000020072310019",
+                "454f4e572700010006000000020072310019",
             ),
             (
                 Action::Edit {
                     file: b"/tmp/a".to_vec(),
                 },
-                "454f4e57260001000e00000002007231001a06002f746d702f61",
+                "454f4e57270001000e00000002007231001a06002f746d702f61",
             ),
             (
                 Action::CreateCommandPane {
                     argv: vec![b"hx".to_vec(), b"a".to_vec()],
                     focus: false,
                 },
-                "454f4e57260001001000000002007231001b00020002006878010061",
+                "454f4e57270001001000000002007231001b00020002006878010061",
             ),
             (
                 Action::LaunchTab {
@@ -4892,7 +5312,7 @@ mod tests {
                     argv: vec![],
                     focus: true,
                 },
-                "454f4e57260001000f00000002007231002504002f746d70000001",
+                "454f4e57270001000f00000002007231002504002f746d70000001",
             ),
             (
                 Action::LaunchTab {
@@ -4900,44 +5320,44 @@ mod tests {
                     argv: vec![b"hx".to_vec(), b"a".to_vec()],
                     focus: false,
                 },
-                "454f4e57260001001600000002007231002504002f746d7002000200687801006100",
+                "454f4e57270001001600000002007231002504002f746d7002000200687801006100",
             ),
             (
                 Action::ToggleSidebar,
-                "454f4e57260001000600000002007231001c",
+                "454f4e57270001000600000002007231001c",
             ),
             (
                 Action::FocusAttention {
                     tab: "t1".into(),
                     target: "p2".into(),
                 },
-                "454f4e57260001000e00000002007231001d0200743102007032",
+                "454f4e57270001000e00000002007231001d0200743102007032",
             ),
             (
                 Action::NextAttention,
-                "454f4e57260001000600000002007231001e",
+                "454f4e57270001000600000002007231001e",
             ),
             (
                 Action::PreviousAttention,
-                "454f4e57260001000600000002007231001f",
+                "454f4e57270001000600000002007231001f",
             ),
             (
                 Action::ReadTerminal {
                     target: "p2".into(),
                 },
-                "454f4e57260001000a00000002007231002602007032",
+                "454f4e57270001000a00000002007231002602007032",
             ),
             (
                 Action::ReadTerminalHistory {
                     target: "p2".into(),
                 },
-                "454f4e57260001000a00000002007231002902007032",
+                "454f4e57270001000a00000002007231002902007032",
             ),
             (
                 Action::EditTerminalHistory {
                     target: "p2".into(),
                 },
-                "454f4e57260001000a00000002007231002a02007032",
+                "454f4e57270001000a00000002007231002a02007032",
             ),
             (
                 Action::SendTerminal {
@@ -4946,7 +5366,7 @@ mod tests {
                     input: TerminalInput::Paste("hi".into()),
                 },
                 // v27's u32-length paste.
-                "454f4e572600010012000000020072310027020070320000020000006869",
+                "454f4e572700010012000000020072310027020070320000020000006869",
             ),
             (
                 Action::SendTerminal {
@@ -4954,7 +5374,7 @@ mod tests {
                     force: true,
                     input: TerminalInput::Enter,
                 },
-                "454f4e57260001000c000000020072310027020075310101",
+                "454f4e57270001000c000000020072310027020075310101",
             ),
         ] {
             let request = Request {
@@ -4974,7 +5394,7 @@ mod tests {
         let bytes = encode_request(&request).unwrap();
         assert_eq!(
             hex(&bytes),
-            "454f4e57260001001700000002007231010e007465726d696e616c2d322e392d310201",
+            "454f4e57270001001700000002007231010e007465726d696e616c2d322e392d310201",
         );
         assert_eq!(decode_request(&bytes).unwrap(), request);
         for caller in ["", "session 2"] {
@@ -5091,7 +5511,7 @@ mod tests {
             (
                 snapshot,
                 concat!(
-                    "454f4e5726008100500100000100020002000100010000000200743100000041",
+                    "454f4e5727008100500100000100020002000100010000000200743100000041",
                     "00008040010003006769740300476974000404004b6579470100020074310400",
                     "2f746d700001020070330102007531030002007031030073703103002f703101",
                     "02007031000002007032030073703203002f7032010200703200000200703303",
@@ -5108,7 +5528,7 @@ mod tests {
                     "00000000",
                 ),
             ),
-            (failure, "454f4e57260082000a00000004006275737902006e6f"),
+            (failure, "454f4e57270082000a00000004006275737902006e6f"),
             (
                 Response::Text(TerminalText {
                     target: terminal_target(TargetId::Pane("p2".into()), "terminal-2"),
@@ -5123,7 +5543,7 @@ mod tests {
                     text: "a\nb".into(),
                 }),
                 concat!(
-                    "454f4e572600860038000000",
+                    "454f4e572700860038000000",
                     // Workspace, tab, pane p2 and its terminal; no caller.
                     "020073310200743100020070320a007465726d696e616c2d3200",
                     // Revision, alternate screen, 24x80, title, directory,
@@ -5146,7 +5566,7 @@ mod tests {
                     text: "a\nb".into(),
                 }),
                 concat!(
-                    "454f4e5726008d003c000000",
+                    "454f4e5727008d003c000000",
                     "020073310200743100020070320a007465726d696e616c2d3200",
                     // Revision, primary screen, 24x80, title, directory,
                     // omitted lines, cut bytes, then the u32-length text.
@@ -5162,7 +5582,7 @@ mod tests {
                     enter_delay_ms: 300,
                 }),
                 concat!(
-                    "454f4e572600870036000000",
+                    "454f4e572700870036000000",
                     "020073310200743100020070320a007465726d696e616c2d32",
                     "01020073310200743101020075310a007465726d696e616c2d33",
                     "012c01",
@@ -5175,7 +5595,7 @@ mod tests {
                     popup: terminal_target(TargetId::Popup("u1".into()), "terminal-3"),
                 }),
                 concat!(
-                    "454f4e5726008e0033000000",
+                    "454f4e5727008e0033000000",
                     // Pane p2 and its terminal, no caller, then popup u1 and
                     // its terminal.
                     "020073310200743100020070320a007465726d696e616c2d3200",
@@ -5186,7 +5606,7 @@ mod tests {
                 Response::Ended(Ended {
                     generation: "g1".into(),
                 }),
-                "454f4e57260085000400000002006731",
+                "454f4e57270085000400000002006731",
             ),
         ] {
             let bytes = encode_response(&response).unwrap();
@@ -5214,7 +5634,7 @@ mod tests {
                 busy: None,
             }),
             concat!(
-                "454f4e572600830030000000020067310500302e392e30260002006f6b010002",
+                "454f4e572700830030000000020067310500302e392e30270002006f6b010002",
                 "007331010500726561647900040062757379",
                 // v28: absent name, supervisor start in Unix milliseconds.
                 "000000000000000000",
@@ -5299,7 +5719,7 @@ mod tests {
         assert_eq!(
             hex(&bytes),
             concat!(
-                "454f4e5726008100be00000001000100010000000100740000000000000000",
+                "454f4e5727008100be00000001000100010000000100740000000000000000",
                 "0000010001007401002f00010100700001000100700200737002002f700101007000",
                 "010128000000000000000001000000000000000000000000010000000002",
                 "0200733102007331010002007331013000303132333435363738396162636465663031323334353637383961626364656630303030303030303030303030303031000001000100",
@@ -5339,7 +5759,7 @@ mod tests {
         assert_eq!(
             hex(&bytes),
             concat!(
-                "454f4e5726008100ef0000000100010001000000010074000000000000000000",
+                "454f4e5727008100ef0000000100010001000000010074000000000000000000",
                 "00010001007401002f00010100700001000100700200737002002f7001010070",
                 "0001012800000000000000000100000000000000000000000001000000000202",
                 "007331020073310100020073310130003031323334353637383961626364656630313233343536373839616263646566303030303030303030303030303030310000010001000100020073310100740100700101",
@@ -5411,7 +5831,7 @@ mod tests {
         assert_eq!(
             hex(&bytes),
             concat!(
-                "454f4e572600830063000000020067310500302e392e30260002006f6b0000",
+                "454f4e572700830063000000020067310500302e392e30270002006f6b0000",
                 "01050072656164790105007265616479",
                 "000000000000000000",
             )
@@ -5722,10 +6142,10 @@ mod tests {
             ),
             (&[43], Error::Truncated),
             (
-                &[44],
+                &[46],
                 Error::InvalidTag {
                     field: "action",
-                    value: 44,
+                    value: 46,
                 },
             ),
             (

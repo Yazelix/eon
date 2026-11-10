@@ -5,7 +5,7 @@ remaining limitations. Beads and Git retain execution history; `CHANGELOG.md`
 retains accepted user-visible chronology.
 
 `VEN-C16` owns platform scope. Venus consumes ORBF v3 / ORBS v14 through the
-in-tree `orbit-protocol` crate and canonical EONW v38 through the in-tree
+in-tree `orbit-protocol` crate and canonical EONW v39 through the in-tree
 `eon-workspace-protocol` crate. A protocol version named in a contract below
 records when that behavior entered the wire; the current consumer is the
 in-tree version. VEN-C31 entered with ORBF v3 in ORBS v14.
@@ -2222,6 +2222,8 @@ re-proved when that platform or feature is next touched.
   and carry a larger popup marker at the right edge. Amended on 2026-11-10 by
   `eon-5g0e5`, approved by eon-overseer under Lucca's standing rule: the
   Agents heading's Hide button and its keyboard stop.
+  Amended on 2026-11-10 (approved plan v5, relayed by eon-overseer) by
+  `eon-cq38r`: EONW v39; Hide sets the sidebar closed through `SetSidebar`.
 - **Consumer:** One person using a Venus window attached to a full Eon
   workspace. The sidebar itself needs `sidebar` other than `Off`. Alt+G and
   Alt+Shift+G work under `Off` too.
@@ -2235,7 +2237,7 @@ re-proved when that platform or feature is next touched.
     `Open`, on every tab of the window. Alt+Shift+H sends `ToggleSidebar`, so
     one press always flips the choice between open and closed. That shows on
     screen unless the window is too narrow (see Layout). The Agents heading's
-    Hide button (VEN-C18) sends the same `ToggleSidebar`, and only while the
+    Hide button (VEN-C18) sends `SetSidebar { open: false }`, and only while the
     snapshot's `sidebar` is `Open`; it shows only while the sidebar does. With
     keyboard focus in the sidebar, Tab and Shift+Tab move between its rows and
     Hide, Enter or Space activates Hide, and Up or Down returns to the rows.

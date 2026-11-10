@@ -2,6 +2,9 @@
 
 ## Unreleased
 
+- Consume EONW v39; the Agents Hide button sets the sidebar closed through
+  `SetSidebar { open: false }` (`eon-cq38r`).
+
 - VEN-C18/C30: popup and Agents headings carry a right action notch mirroring
   the title notch, holding one Hide button. The popup's sends `DismissPopup`
   for the shown instance; the sidebar's sends `ToggleSidebar` while the

@@ -15,18 +15,19 @@ use super::{
     scrollback::{self, Snapshots},
     session_registry::{self, Registration, Registry},
     sessions::{
-        self, AttachName, RunningSession, TAB_VARIABLE, TERMINAL_VARIABLE,
-        acquire_generation_sessions, bound_io, name_presentation, recover_sessions,
+        self, AttachName, ManagedCandidate, RunningSession, TAB_VARIABLE, TERMINAL_VARIABLE,
+        acquire_generation_sessions, acquire_runs, bound_io, name_presentation, recover_sessions,
         session_finished, session_finished_within, start_orbit, stop_managed_sessions,
+        untracked_runs,
     },
     subscriptions::{Subscriber, Subscribers},
     workspace::{self, LaunchCommand, SessionEnd, SessionOperation, WorkspaceSet},
 };
-use eon_workspace_protocol::v38::{
-    Action, Availability, BusyTerminals, Editing, Ended, FILES_ENTRY, Failure, InvokeIntent,
-    LifecycleResponse, Request, Response, Runtime, Screen, Sent, Snapshot, TargetId,
-    TerminalHistory, TerminalInput, TerminalText, VERSION, WindowEntry, WindowState,
-    WorkspaceAction, WorkspaceTarget,
+use eon_workspace_protocol::v39::{
+    Action, Availability, BusyTerminals, CloseConsent, CloseEnd, CloseScope, CloseTerminal,
+    Editing, Ended, FILES_ENTRY, Failure, InvokeIntent, LifecycleResponse, Request, Response,
+    Runtime, Screen, Sent, Snapshot, TargetId, TerminalHistory, TerminalInput, TerminalText,
+    UntrackedRun, VERSION, WindowEntry, WindowState, WorkspaceAction, WorkspaceTarget,
 };
 use orbit_protocol::management::{LeaseInput, Screen as OrbitScreen};
 use std::{
@@ -734,7 +735,7 @@ impl PresentationProcess {
                 };
                 if let Some(snapshot) = snapshot {
                     let bytes =
-                        eon_workspace_protocol::v38::encode_response(&Response::Snapshot(snapshot))
+                        eon_workspace_protocol::v39::encode_response(&Response::Snapshot(snapshot))
                             .map_err(|error| format!("cannot encode startup snapshot: {error}"))?;
                     let mut remaining = bytes.as_slice();
                     while !remaining.is_empty() {
@@ -1944,7 +1945,7 @@ fn close_workspace_tab(
             "closing tab {tab}: stopping {}",
             sessions.join(", ")
         ));
-        stop_closed_sessions(state, sessions, "tab-close-failed")?;
+        stop_closed_sessions(state, sessions, "tab-close-failed", &[])?;
         Ok(reply_workspace)
     })();
     let elapsed = started.elapsed().as_millis();
@@ -1983,7 +1984,7 @@ fn close_workspace_pane(
         .ok_or_else(|| failure("session-unavailable", "eonbase has no Eon session"))?;
     let reply_workspace = workspace.caller_workspace_id(caller.as_deref())?;
     let sessions = workspace.prepare_close_pane(&request.id, caller.as_deref(), pane)?;
-    stop_closed_sessions(state, sessions, "pane-close-failed")?;
+    stop_closed_sessions(state, sessions, "pane-close-failed", &[])?;
     closed_response(
         state,
         runtime,
@@ -1991,6 +1992,261 @@ fn close_workspace_pane(
         "pane-close-failed",
         reply_workspace.as_deref(),
     )
+}
+
+#[allow(clippy::too_many_arguments)]
+fn close_workspace_column(
+    request: &Request,
+    pane: &str,
+    consent: Option<&CloseConsent>,
+    state: &mut SupervisorState,
+    inputs: &Inputs,
+    config: &Path,
+    runtime: &Path,
+    generation: &str,
+) -> Result<Response, Failure> {
+    let (scope, candidates) =
+        column_close_scope(request, pane, state, inputs, config, runtime, generation)?;
+    if !consent.is_some_and(|consent| consent_matches(consent, &scope, generation)) {
+        return Ok(Response::Confirm(scope));
+    }
+    // Keep topology fixed between comparing the scope and sending its stops.
+    let reply_workspace = scope.terminals[0].target.workspace.clone();
+    stop_consented(state, &scope, candidates)?;
+    consented_close_response(state, runtime, generation, Some(&reply_workspace))
+}
+
+/// Rebuild the exact scope in this supervisor turn; marks never decide consent.
+fn column_close_scope(
+    request: &Request,
+    pane: &str,
+    state: &mut SupervisorState,
+    inputs: &Inputs,
+    config: &Path,
+    runtime: &Path,
+    generation: &str,
+) -> Result<(CloseScope, Vec<ManagedCandidate>), Failure> {
+    reap_finished_sessions(state, inputs, config)
+        .map_err(|detail| failure("column-close-failed", detail))?;
+    let caller = caller_session(state, inputs, config, request)?;
+    let workspace = state
+        .workspaces
+        .as_mut()
+        .ok_or_else(|| failure("session-unavailable", "eonbase has no Eon session"))?;
+    let (closing, end) = workspace.prepare_close_column(&request.id, caller.as_deref(), pane)?;
+    let mut snapshots = workspace.snapshots();
+    for snapshot in &mut snapshots {
+        state.pane_labels.present(snapshot, workspace.home());
+    }
+    let busy = state
+        .attention
+        .as_ref()
+        .map(|attention| attention.busy_terminals(&snapshots, &state.sessions, Instant::now()));
+    let (targets, _) = attention::targets(&snapshots);
+    let mut terminals = Vec::new();
+    for terminal in targets
+        .iter()
+        .map(|target| attention::busy_terminal(&snapshots, target))
+        .filter(|terminal| closing.contains(&terminal.target.terminal))
+    {
+        let run = state
+            .sessions
+            .iter()
+            .find(|session| session.id == terminal.target.terminal)
+            .ok_or_else(|| {
+                failure(
+                    "column-close-failed",
+                    format!(
+                        "terminal {} is missing from the supervisor",
+                        terminal.target.terminal
+                    ),
+                )
+            })?;
+        terminals.push(CloseTerminal {
+            busy: busy
+                .as_ref()
+                .is_none_or(|busy| busy.iter().any(|item| item.target == terminal.target)),
+            target: terminal.target,
+            run: run.run_id().into(),
+            name: terminal.name,
+        });
+    }
+    let addressed = snapshots
+        .iter()
+        .find(|snapshot| {
+            snapshot
+                .tabs
+                .iter()
+                .any(|tab| tab.panes().any(|candidate| candidate.id == pane))
+        })
+        .expect("validated live pane");
+    let session = addressed
+        .workspaces
+        .iter()
+        .find(|member| member.id == addressed.workspace)
+        .and_then(|member| member.name.as_deref())
+        .unwrap_or(&addressed.workspace)
+        .to_owned();
+    let candidates = if end == CloseEnd::Window {
+        untracked_runs(
+            runtime,
+            LaunchMode::Workspace,
+            &state.component_generation,
+            &state.sessions,
+            Instant::now() + SESSION_START_TIMEOUT,
+        )
+        .map_err(|detail| failure("column-close-failed", detail))?
+    } else {
+        Vec::new()
+    };
+    let untracked = candidates
+        .iter()
+        .map(|candidate| UntrackedRun {
+            terminal: candidate.identity.session_id.clone(),
+            run: candidate.identity.run_id.clone(),
+        })
+        .collect();
+    Ok((
+        CloseScope {
+            generation: generation.into(),
+            pane: pane.into(),
+            end,
+            session,
+            terminals,
+            untracked,
+        },
+        candidates,
+    ))
+}
+
+fn consent_matches(consent: &CloseConsent, scope: &CloseScope, generation: &str) -> bool {
+    let expected: std::collections::HashSet<_> = scope
+        .terminals
+        .iter()
+        .map(|terminal| &terminal.run)
+        .chain(scope.untracked.iter().map(|run| &run.run))
+        .collect();
+    let actual: std::collections::HashSet<_> = consent.runs.iter().collect();
+    consent.generation == generation
+        && scope.generation == generation
+        && consent.end == scope.end
+        && actual.len() == consent.runs.len()
+        && actual == expected
+}
+
+fn stop_consented(
+    state: &mut SupervisorState,
+    scope: &CloseScope,
+    candidates: Vec<ManagedCandidate>,
+) -> Result<(), Failure> {
+    let untracked = acquire_runs(
+        candidates,
+        state.log.orbit_directory().ok(),
+        Instant::now() + SESSION_START_TIMEOUT,
+    )
+    .map_err(|detail| failure("column-close-failed", detail))?;
+    stop_consented_runs(state, scope, untracked)
+}
+
+fn stop_consented_runs(
+    state: &mut SupervisorState,
+    scope: &CloseScope,
+    untracked: Vec<RunningSession>,
+) -> Result<(), Failure> {
+    state.sessions.extend(untracked);
+    let untracked: Vec<_> = scope
+        .untracked
+        .iter()
+        .map(|run| run.terminal.clone())
+        .collect();
+    let closing = scope
+        .terminals
+        .iter()
+        .map(|terminal| terminal.target.terminal.clone())
+        .chain(untracked.iter().cloned())
+        .collect();
+    let mut result = stop_closed_sessions(state, closing, "column-close-failed", &untracked);
+    if let Err(error) = &mut result
+        && !scope.untracked.is_empty()
+    {
+        // Untracked survivors return to discovery, which owns their later exit.
+        state.sessions.retain(|session| {
+            !scope
+                .untracked
+                .iter()
+                .any(|run| run.run == session.run_id())
+        });
+        if state.sessions.is_empty() {
+            state.stopping = true;
+            *error = failure(
+                "column-close-failed",
+                format!(
+                    "{}; {}",
+                    stop_incomplete(
+                        LaunchMode::Workspace,
+                        state.window.as_deref(),
+                        &scope.generation
+                    ),
+                    error.detail
+                ),
+            );
+        }
+    }
+    result
+}
+
+/// A column close never sweeps: a late arrival stays for the person's Stop.
+fn consented_close_response(
+    state: &mut SupervisorState,
+    runtime: &Path,
+    generation: &str,
+    reply_workspace: Option<&str>,
+) -> Result<Response, Failure> {
+    if !state.sessions.is_empty()
+        && state
+            .workspaces
+            .as_ref()
+            .is_some_and(WorkspaceSet::has_sessions)
+    {
+        return state
+            .workspace_snapshot_in(reply_workspace)
+            .map(Response::Snapshot);
+    }
+    state.stopping = true;
+    let remaining = untracked_runs(
+        runtime,
+        LaunchMode::Workspace,
+        &state.component_generation,
+        &state.sessions,
+        Instant::now() + SESSION_START_TIMEOUT,
+    );
+    match remaining {
+        Ok(runs) if runs.is_empty() => Ok(Response::Ended(Ended {
+            generation: generation.into(),
+        })),
+        result => {
+            let detail = match result {
+                Ok(runs) => runs
+                    .iter()
+                    .map(|run| {
+                        format!(
+                            "{} started while the close ran and was not stopped",
+                            run.identity.session_id
+                        )
+                    })
+                    .collect::<Vec<_>>()
+                    .join("; "),
+                Err(detail) => detail,
+            };
+            Err(failure(
+                "column-close-failed",
+                format!(
+                    "{detail}; {}",
+                    stop_incomplete(LaunchMode::Workspace, state.window.as_deref(), generation)
+                ),
+            ))
+        }
+    }
 }
 
 fn close_workspace(
@@ -2011,7 +2267,7 @@ fn close_workspace(
         .ok_or_else(|| failure("session-unavailable", "eonbase has no Eon session"))?;
     let reply_workspace = workspace.caller_workspace_id(caller.as_deref())?;
     let sessions = workspace.prepare_close_workspace(&request.id, caller.as_deref(), target)?;
-    stop_closed_sessions(state, sessions, "session-close-failed")?;
+    stop_closed_sessions(state, sessions, "session-close-failed", &[])?;
     closed_response(
         state,
         runtime,
@@ -2028,9 +2284,13 @@ fn stop_closed_sessions(
     state: &mut SupervisorState,
     sessions: Vec<String>,
     code: &str,
+    untracked: &[String],
 ) -> Result<(), Failure> {
     let (ended, errors) = stop_owned_sessions(&mut state.sessions, &sessions, &state.log);
     for (id, natural_status) in ended {
+        if untracked.contains(&id) {
+            continue;
+        }
         state
             .workspaces
             .as_mut()
@@ -3024,6 +3284,23 @@ fn dispatch_registered_request(
             &request, tab, state, inputs, config, runtime, generation,
         )),
         Request {
+            action:
+                Action::CloseColumn {
+                    ref pane,
+                    ref consent,
+                },
+            ..
+        } => closed(close_workspace_column(
+            &request,
+            pane,
+            consent.as_ref(),
+            state,
+            inputs,
+            config,
+            runtime,
+            generation,
+        )),
+        Request {
             action: Action::ClosePane { ref pane },
             ..
         } => closed(close_workspace_pane(
@@ -3117,9 +3394,25 @@ fn dispatch_registered_request(
                 }
                 (action, _) => (action, None),
             };
+            if matches!(
+                action,
+                Action::ToggleSidebar | Action::SetSidebar { open: true }
+            ) && state
+                .attention
+                .as_ref()
+                .is_none_or(|owner| owner.sidebar() == eon_workspace_protocol::v39::Sidebar::Off)
+            {
+                return (
+                    ControlResponse::Workspace(Response::Failure(failure(
+                        "unavailable",
+                        "the agent sidebar is off; set [sidebar] enabled = true",
+                    ))),
+                    false,
+                );
+            }
             let accepted = matches!(
                 action,
-                Action::ToggleSidebar | Action::FocusAttention { .. }
+                Action::ToggleSidebar | Action::SetSidebar { .. } | Action::FocusAttention { .. }
             )
             .then(|| action.clone());
             let visit = match &action {
@@ -3760,6 +4053,752 @@ mod tests {
     /// written starts nothing and leaves no snapshot. A failed start keeps
     /// its snapshot only while its launch record says the editor may still
     /// run (EON-C10).
+    fn consent_of(scope: &super::CloseScope) -> super::CloseConsent {
+        super::CloseConsent {
+            generation: scope.generation.clone(),
+            end: scope.end,
+            runs: scope
+                .terminals
+                .iter()
+                .map(|terminal| terminal.run.clone())
+                .chain(scope.untracked.iter().map(|run| run.run.clone()))
+                .collect(),
+        }
+    }
+
+    #[cfg(target_os = "linux")]
+    fn column_request(
+        state: &mut SupervisorState,
+        root: &Path,
+        pane: &str,
+        consent: Option<&super::CloseConsent>,
+    ) -> Result<super::Response, super::Failure> {
+        let request = super::Request {
+            id: super::request_id(),
+            caller: None,
+            action: Action::CloseColumn {
+                pane: pane.into(),
+                consent: consent.cloned(),
+            },
+        };
+        super::close_workspace_column(
+            &request,
+            pane,
+            consent,
+            state,
+            &crate::fixtures::inputs(),
+            root,
+            root,
+            "g1-test",
+        )
+    }
+
+    #[cfg(target_os = "linux")]
+    fn column_scope(state: &mut SupervisorState, root: &Path, pane: &str) -> super::CloseScope {
+        let super::Response::Confirm(scope) = column_request(state, root, pane, None).unwrap()
+        else {
+            panic!("every close asks")
+        };
+        scope
+    }
+
+    #[cfg(target_os = "linux")]
+    fn start_column_run(
+        state: &SupervisorState,
+        root: &Path,
+        id: &str,
+        endpoint: &Path,
+    ) -> sessions::RunningSession {
+        let mut inputs = crate::fixtures::inputs();
+        inputs.orbit = std::env::var_os("ORBIT_BIN").unwrap().into();
+        super::start_orbit(
+            &inputs,
+            root,
+            endpoint,
+            id,
+            "component-1",
+            root,
+            &["sh".into(), "-c".into(), "exec sleep 300".into()],
+            None,
+            &state.log,
+            Instant::now() + SESSION_START_TIMEOUT,
+        )
+        .unwrap()
+    }
+
+    #[cfg(target_os = "linux")]
+    fn column_mutate(state: &mut SupervisorState, root: &Path, action: Action) {
+        let mut starts = Vec::new();
+        state
+            .workspaces
+            .as_mut()
+            .unwrap()
+            .dispatch(
+                &super::request_id(),
+                None,
+                action,
+                |_, _| Ok(Vec::new()),
+                |operation| {
+                    if let SessionOperation::Start { session, .. } = operation {
+                        starts.push(session);
+                    }
+                    Ok(())
+                },
+            )
+            .unwrap();
+        for session in starts {
+            let run = start_column_run(state, root, &session.id, &session.endpoint);
+            state.sessions.push(run);
+        }
+    }
+
+    #[test]
+    fn a_consent_matches_on_generation_runs_and_end_only() {
+        use eon_workspace_protocol::v39::{
+            CloseEnd, CloseScope, CloseTerminal, TargetId, TerminalTarget, UntrackedRun,
+        };
+        let mut scope = CloseScope {
+            generation: "g1".into(),
+            pane: "p1".into(),
+            end: CloseEnd::Window,
+            session: "s1".into(),
+            terminals: vec![CloseTerminal {
+                target: TerminalTarget {
+                    workspace: "s1".into(),
+                    tab: "t1".into(),
+                    id: TargetId::Pane("p1".into()),
+                    terminal: "terminal-1".into(),
+                },
+                run: "run-a".into(),
+                name: "shell".into(),
+                busy: false,
+            }],
+            untracked: vec![UntrackedRun {
+                terminal: "terminal-9".into(),
+                run: "run-b".into(),
+            }],
+        };
+        let consent = consent_of(&scope);
+        assert!(super::consent_matches(&consent, &scope, "g1"));
+        let mut reversed = consent.clone();
+        reversed.runs.reverse();
+        assert!(super::consent_matches(&reversed, &scope, "g1"));
+        scope.terminals[0].name = "cargo".into();
+        scope.terminals[0].busy = true;
+        assert!(super::consent_matches(&consent, &scope, "g1"));
+        for bad in [
+            super::CloseConsent {
+                generation: "g2".into(),
+                ..consent.clone()
+            },
+            super::CloseConsent {
+                end: CloseEnd::Session,
+                ..consent.clone()
+            },
+            super::CloseConsent {
+                runs: vec!["run-a".into()],
+                ..consent.clone()
+            },
+            super::CloseConsent {
+                runs: vec!["run-a".into(), "run-b".into(), "run-c".into()],
+                ..consent.clone()
+            },
+            super::CloseConsent {
+                runs: vec!["run-a".into(), "run-b".into(), "run-a".into()],
+                ..consent.clone()
+            },
+        ] {
+            assert!(!super::consent_matches(&bad, &scope, "g1"));
+        }
+        assert!(!super::consent_matches(&consent, &scope, "g2"));
+        scope.terminals[0].run = "replacement".into();
+        assert!(!super::consent_matches(&consent, &scope, "g1"));
+    }
+
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn a_column_close_never_runs_without_a_consent_that_names_its_runs() {
+        use eon_workspace_protocol::v39::{CloseEnd, Side};
+        let root = temporary_directory();
+        let (mut state, _) = finishing_window(&root);
+        // A one-pane final column always asks, even once the default shell is idle.
+        state.sessions[0].default_shell = true;
+        let deadline = Instant::now() + Duration::from_secs(10);
+        let idle = loop {
+            state.tend(Instant::now());
+            let scope = column_scope(&mut state, &root, "p1");
+            if !scope.terminals[0].busy {
+                break scope;
+            }
+            assert!(Instant::now() < deadline, "no idle foreground observation");
+            std::thread::sleep(Duration::from_millis(20));
+        };
+        assert_eq!(idle.end, CloseEnd::Window);
+        assert_eq!(state.sessions.len(), 1);
+        // A changed busy mark alone does not change consent.
+        state.sessions[0].default_shell = false;
+        let busy = column_scope(&mut state, &root, "p1");
+        assert!(busy.terminals[0].busy);
+        assert!(super::consent_matches(&consent_of(&idle), &busy, "g1-test"));
+        column_mutate(
+            &mut state,
+            &root,
+            Action::Workspace(WorkspaceAction::CreatePane { focus: true }),
+        );
+        let changed = column_request(&mut state, &root, "p1", Some(&consent_of(&idle))).unwrap();
+        assert!(matches!(changed, super::Response::Confirm(_)));
+        assert_eq!(state.sessions.len(), 2);
+        let two = column_scope(&mut state, &root, "p1");
+        column_mutate(&mut state, &root, Action::CreateColumn);
+        let moved = column_request(&mut state, &root, "p1", Some(&consent_of(&two))).unwrap();
+        assert!(
+            matches!(moved, super::Response::Confirm(_)),
+            "end changed to column"
+        );
+        column_mutate(
+            &mut state,
+            &root,
+            Action::Workspace(WorkspaceAction::FocusId("p1".into())),
+        );
+        let before_move = column_scope(&mut state, &root, "p1");
+        column_mutate(&mut state, &root, Action::MovePaneSideways(Side::Right));
+        assert!(matches!(
+            column_request(&mut state, &root, "p1", Some(&consent_of(&before_move))).unwrap(),
+            super::Response::Confirm(_)
+        ));
+        // A listed pane exits: the old set is refused.
+        let before_exit = column_scope(&mut state, &root, "p1");
+        let exited = before_exit
+            .terminals
+            .iter()
+            .find(|terminal| terminal.target.id != super::TargetId::Pane("p1".into()))
+            .unwrap()
+            .target
+            .terminal
+            .clone();
+        stop_owned_session(&mut state.sessions, &exited, &state.log).unwrap();
+        state
+            .workspaces
+            .as_mut()
+            .unwrap()
+            .session_ended(&exited, crate::workspace::SessionEnd::Closed, |_| Ok(()))
+            .unwrap();
+        assert!(matches!(
+            column_request(&mut state, &root, "p1", Some(&consent_of(&before_exit))).unwrap(),
+            super::Response::Confirm(_)
+        ));
+        // Match closes precisely this column and leaves the other live column alone.
+        let scope = column_scope(&mut state, &root, "p1");
+        let expected = state.sessions.len() - scope.terminals.len();
+        assert!(matches!(
+            column_request(&mut state, &root, "p1", Some(&consent_of(&scope))).unwrap(),
+            super::Response::Snapshot(_)
+        ));
+        assert_eq!(state.sessions.len(), expected);
+        // A final close that gains another session asks again.
+        let anchor = state.workspaces.as_ref().unwrap().snapshot().tabs[0]
+            .panes()
+            .next()
+            .unwrap()
+            .id
+            .clone();
+        column_mutate(
+            &mut state,
+            &root,
+            Action::LaunchTab {
+                directory: root.as_os_str().as_encoded_bytes().to_vec(),
+                argv: Vec::new(),
+                focus: false,
+            },
+        );
+        let nonfinal = column_scope(&mut state, &root, &anchor);
+        assert_eq!(nonfinal.end, CloseEnd::Column);
+        let tab = state
+            .workspaces
+            .as_ref()
+            .unwrap()
+            .snapshot()
+            .tabs
+            .last()
+            .unwrap()
+            .id
+            .clone();
+        let request = super::Request {
+            id: super::request_id(),
+            caller: None,
+            action: Action::Workspace(WorkspaceAction::CloseTab { tab: tab.clone() }),
+        };
+        super::close_workspace_tab(
+            &request,
+            &tab,
+            &mut state,
+            &crate::fixtures::inputs(),
+            &root,
+            &root,
+            "g1-test",
+        )
+        .unwrap();
+        assert!(
+            matches!(column_request(&mut state, &root, &anchor, Some(&consent_of(&nonfinal))).unwrap(),
+            super::Response::Confirm(scope) if scope.end == CloseEnd::Window)
+        );
+        let final_scope = column_scope(&mut state, &root, &anchor);
+        assert_eq!(final_scope.end, CloseEnd::Window);
+        column_mutate(
+            &mut state,
+            &root,
+            Action::Workspace(WorkspaceAction::NewWorkspace {
+                name: None,
+                focus: false,
+            }),
+        );
+        let changed =
+            column_request(&mut state, &root, &anchor, Some(&consent_of(&final_scope))).unwrap();
+        assert!(
+            matches!(changed, super::Response::Confirm(scope) if scope.end == CloseEnd::Session)
+        );
+        let scope = column_scope(&mut state, &root, &anchor);
+        let record = sessions::tests::record(&state.sessions[0]).to_path_buf();
+        fs::set_permissions(&record, fs::Permissions::from_mode(0o644)).unwrap();
+        let error =
+            column_request(&mut state, &root, &anchor, Some(&consent_of(&scope))).unwrap_err();
+        assert_eq!(error.code, "column-close-failed");
+        assert!(
+            state
+                .workspaces
+                .as_ref()
+                .unwrap()
+                .snapshot()
+                .tabs
+                .iter()
+                .any(|tab| tab.panes().any(|pane| pane.id == anchor)),
+            "a failed stop keeps its pane"
+        );
+        fs::set_permissions(&record, fs::Permissions::from_mode(0o600)).unwrap();
+        reap_finished_sessions(&mut state, &crate::fixtures::inputs(), &root).unwrap();
+        stop_generation_sessions(&mut state, &root, LaunchMode::Workspace).unwrap();
+        drop(state);
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn a_consent_does_not_cover_a_run_that_reused_its_terminal_number() {
+        let root = temporary_directory();
+        let (mut state, _) = finishing_window(&root);
+        let endpoint = root.join("terminal-9.sock");
+        let a = start_column_run(&state, &root, "terminal-9", &endpoint);
+        let run_a = a.run_id().to_owned();
+        let first = column_scope(&mut state, &root, "p1");
+        assert_eq!(first.untracked[0].run, run_a);
+        let mut leased = vec![a];
+        sessions::stop_managed_sessions(&mut leased, SESSION_START_TIMEOUT).unwrap();
+        drop(leased);
+        column_scope(&mut state, &root, "p1"); // retires A before the number is reused
+        let b = start_column_run(&state, &root, "terminal-9", &endpoint);
+        let run_b = b.run_id().to_owned();
+        assert_ne!(run_a, run_b);
+        assert!(
+            matches!(column_request(&mut state, &root, "p1", Some(&consent_of(&first))).unwrap(), super::Response::Confirm(scope) if scope.untracked[0].run == run_b)
+        );
+        assert!(
+            sessions::session_finished(&mut state.sessions[0])
+                .unwrap()
+                .is_none()
+        );
+        state.sessions.push(b);
+        stop_generation_sessions(&mut state, &root, LaunchMode::Workspace).unwrap();
+        drop(state);
+        fs::remove_dir_all(root).unwrap();
+        // A failed pane start leaves its number free while its run can still be live.
+        let root = temporary_directory();
+        let (mut state, _) = finishing_window(&root);
+        let mut workspace = state.workspaces.take().unwrap();
+        let mut failed = Vec::new();
+        assert!(
+            workspace
+                .dispatch(
+                    &super::request_id(),
+                    None,
+                    Action::Workspace(WorkspaceAction::CreatePane { focus: false }),
+                    |_, _| Ok(Vec::new()),
+                    |operation| {
+                        if let SessionOperation::Start { session, .. } = operation {
+                            failed.push(start_column_run(
+                                &state,
+                                &root,
+                                &session.id,
+                                &session.endpoint,
+                            ));
+                            return Err("start timed out and rollback failed".into());
+                        }
+                        Ok(())
+                    }
+                )
+                .is_err()
+        );
+        state.workspaces = Some(workspace);
+        let first = column_scope(&mut state, &root, "p1");
+        assert_eq!(first.untracked[0].terminal, "terminal-2");
+        sessions::stop_managed_sessions(&mut failed, SESSION_START_TIMEOUT).unwrap();
+        drop(failed);
+        column_scope(&mut state, &root, "p1");
+        column_mutate(
+            &mut state,
+            &root,
+            Action::Workspace(WorkspaceAction::CreatePane { focus: false }),
+        );
+        assert!(
+            matches!(column_request(&mut state, &root, "p1", Some(&consent_of(&first))).unwrap(), super::Response::Confirm(scope)
+                if scope.untracked.is_empty() && scope.terminals.iter().any(|terminal|
+                    terminal.target.terminal == "terminal-2" && terminal.run != first.untracked[0].run))
+        );
+        stop_generation_sessions(&mut state, &root, LaunchMode::Workspace).unwrap();
+        drop(state);
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn a_final_column_close_stops_only_the_runs_it_listed() {
+        let root = temporary_directory();
+        let (mut state, _) = finishing_window(&root);
+        let held = start_column_run(&state, &root, "terminal-9", &root.join("terminal-9.sock"));
+        let scope = column_scope(&mut state, &root, "p1");
+        assert_eq!(scope.untracked.len(), 1);
+        let mut missing = consent_of(&scope);
+        missing.runs.pop();
+        assert!(matches!(
+            column_request(&mut state, &root, "p1", Some(&missing)).unwrap(),
+            super::Response::Confirm(_)
+        ));
+        // A lease held elsewhere fails before any tracked terminal is stopped.
+        assert_eq!(
+            column_request(&mut state, &root, "p1", Some(&consent_of(&scope)))
+                .unwrap_err()
+                .code,
+            "column-close-failed"
+        );
+        assert!(
+            sessions::session_finished(&mut state.sessions[0])
+                .unwrap()
+                .is_none()
+        );
+        drop(held);
+        fs::write(root.join("bad.record"), "malformed").unwrap();
+        assert_eq!(
+            column_request(&mut state, &root, "p1", None)
+                .unwrap_err()
+                .code,
+            "column-close-failed"
+        );
+        assert!(
+            sessions::session_finished(&mut state.sessions[0])
+                .unwrap()
+                .is_none()
+        );
+        fs::remove_file(root.join("bad.record")).unwrap();
+        let request = super::Request {
+            id: super::request_id(),
+            caller: None,
+            action: Action::CloseColumn {
+                pane: "p1".into(),
+                consent: Some(consent_of(&scope)),
+            },
+        };
+        let (scope, candidates) = super::column_close_scope(
+            &request,
+            "p1",
+            &mut state,
+            &crate::fixtures::inputs(),
+            &root,
+            &root,
+            "g1-test",
+        )
+        .unwrap();
+        super::stop_consented(&mut state, &scope, candidates).unwrap();
+        assert!(state.sessions.is_empty());
+        let mut late =
+            start_column_run(&state, &root, "terminal-10", &root.join("terminal-10.sock"));
+        let error =
+            super::consented_close_response(&mut state, &root, "g1-test", None).unwrap_err();
+        assert_eq!(error.code, "column-close-failed");
+        assert!(
+            error
+                .detail
+                .contains("terminal-10 started while the close ran and was not stopped")
+        );
+        assert!(error.detail.contains("eon window stop "));
+        assert!(state.stopping);
+        assert!(sessions::session_finished(&mut late).unwrap().is_none());
+        state.sessions.push(late);
+        stop_generation_sessions(&mut state, &root, LaunchMode::Workspace).unwrap();
+        drop(state);
+        fs::remove_dir_all(root).unwrap();
+        let root = temporary_directory();
+        let (mut state, _) = finishing_window(&root);
+        let extra = start_column_run(&state, &root, "terminal-9", &root.join("terminal-9.sock"));
+        let extra_run = extra.run_id().to_owned();
+        drop(extra);
+        let scope = column_scope(&mut state, &root, "p1");
+        assert_eq!(
+            scope.untracked,
+            [super::UntrackedRun {
+                terminal: "terminal-9".into(),
+                run: extra_run,
+            }]
+        );
+        assert!(matches!(
+            column_request(&mut state, &root, "p1", Some(&consent_of(&scope))).unwrap(),
+            super::Response::Ended(_)
+        ));
+        assert!(state.stopping && state.sessions.is_empty());
+        drop(state);
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn failed_untracked_column_stops_stay_discoverable_and_keep_the_supervisor_available() {
+        for keep_pane in [true, false] {
+            let root = temporary_directory();
+            let (mut state, _) = finishing_window(&root);
+            if !keep_pane {
+                let logs = (0..8).fold(root.join("logs"), |path, _| path.join("l".repeat(120)));
+                state.log = DiagnosticLog::open_in(Ok(logs), "g1-test", "eon");
+            }
+            let extra =
+                start_column_run(&state, &root, "terminal-9", &root.join("terminal-9.sock"));
+            let extra_pid = sessions::tests::orbit_pid(&extra);
+            let extra_run = extra.run_id().to_owned();
+            let scope = column_scope(&mut state, &root, "p1");
+            assert_eq!(scope.untracked[0].run, extra_run);
+            drop(extra);
+            let deadline = Instant::now() + SESSION_START_TIMEOUT;
+            let acquired = loop {
+                let candidates = sessions::untracked_runs(
+                    &root,
+                    LaunchMode::Workspace,
+                    "component-1",
+                    &state.sessions,
+                    deadline,
+                )
+                .unwrap();
+                match sessions::acquire_runs(candidates, state.log.orbit_directory().ok(), deadline)
+                {
+                    Ok(acquired) => break acquired,
+                    Err(error)
+                        if error.contains("already managed") && Instant::now() < deadline =>
+                    {
+                        std::thread::sleep(Duration::from_millis(5))
+                    }
+                    Err(error) => panic!("{error}"),
+                }
+            };
+            // SAFETY: freezes only the test-owned host after acquiring its lease.
+            assert_eq!(unsafe { libc::kill(extra_pid, libc::SIGSTOP) }, 0);
+            let pane_pid = sessions::tests::orbit_pid(&state.sessions[0]);
+            if keep_pane {
+                // SAFETY: freezes the other host started by this test.
+                assert_eq!(unsafe { libc::kill(pane_pid, libc::SIGSTOP) }, 0);
+                // An unanswered poll prevents sending Stop to the surviving pane.
+                assert!(sessions::send_program_status(&mut state.sessions[0], deadline).unwrap());
+            }
+            let error = super::stop_consented_runs(&mut state, &scope, acquired).unwrap_err();
+            assert_eq!(error.code, "column-close-failed");
+            assert!(error.detail.contains("terminal-9"), "{error:?}");
+            assert!(
+                eon_workspace_protocol::v39::encode_response(&super::Response::Failure(
+                    error.clone()
+                ))
+                .is_ok(),
+                "the close failure must fit EONW even with a long Orbit log path"
+            );
+            assert_eq!(state.sessions.len(), usize::from(keep_pane));
+            assert!(
+                !state
+                    .sessions
+                    .iter()
+                    .any(|session| session.run_id() == extra_run)
+            );
+            if keep_pane {
+                assert!(!state.stopping);
+                let retry = column_scope(&mut state, &root, "p1");
+                assert_eq!(
+                    retry.untracked, scope.untracked,
+                    "retry must still list the live run"
+                );
+                // SAFETY: resumes the test-owned host frozen above.
+                assert_eq!(unsafe { libc::kill(pane_pid, libc::SIGCONT) }, 0);
+            } else {
+                assert!(state.stopping, "an empty window stays for an explicit Stop");
+                assert!(error.detail.contains("eon window stop "), "{error:?}");
+                assert_eq!(
+                    super::consented_close_response(&mut state, &root, "g1-test", None)
+                        .unwrap_err()
+                        .code,
+                    "column-close-failed",
+                    "a retry cannot answer Ended while the run lives"
+                );
+            }
+            // SAFETY: resumes the test-owned host frozen above.
+            assert_eq!(unsafe { libc::kill(extra_pid, libc::SIGCONT) }, 0);
+            let deadline = Instant::now() + SESSION_START_TIMEOUT;
+            loop {
+                reap_finished_sessions(&mut state, &crate::fixtures::inputs(), &root).unwrap();
+                let untracked = sessions::untracked_runs(
+                    &root,
+                    LaunchMode::Workspace,
+                    "component-1",
+                    &state.sessions,
+                    deadline,
+                )
+                .unwrap();
+                if untracked.is_empty() {
+                    break;
+                }
+                assert!(Instant::now() < deadline, "the resumed orphan did not end");
+                std::thread::sleep(Duration::from_millis(10));
+            }
+            if keep_pane {
+                assert!(
+                    sessions::session_finished(&mut state.sessions[0])
+                        .unwrap()
+                        .is_none()
+                );
+                let (response, ended) = super::dispatch_control_request(
+                    super::Request {
+                        id: super::request_id(),
+                        caller: None,
+                        action: Action::Workspace(WorkspaceAction::Inspect),
+                    },
+                    &mut state,
+                    &crate::fixtures::inputs(),
+                    &root,
+                    &root,
+                    "g1-test",
+                );
+                assert!(!ended);
+                assert!(matches!(
+                    response,
+                    crate::control::ControlResponse::Workspace(super::Response::Snapshot(_))
+                ));
+                assert!(
+                    matches!(column_request(&mut state, &root, "p1", Some(&consent_of(&scope))).unwrap(),
+                    super::Response::Confirm(current) if current.untracked.is_empty())
+                );
+            }
+            stop_generation_sessions(&mut state, &root, LaunchMode::Workspace).unwrap();
+            drop(state);
+            fs::remove_dir_all(root).unwrap();
+        }
+    }
+
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn work_started_after_a_column_scope_is_stopped_by_its_consent() {
+        let root = temporary_directory();
+        let (mut state, gate) = finishing_window(&root);
+        sessions::stop_managed_sessions(&mut state.sessions, SESSION_START_TIMEOUT).unwrap();
+        state.sessions.clear();
+        let mut shell = leased_orbit(
+            &root,
+            &format!("set -m; read -r _ < '{}'; sleep 300", gate.display()),
+        );
+        shell.default_shell = true;
+        state.sessions.push(shell);
+        let deadline = Instant::now() + Duration::from_secs(10);
+        let idle = loop {
+            state.tend(Instant::now());
+            let scope = column_scope(&mut state, &root, "p1");
+            if !scope.terminals[0].busy {
+                break scope;
+            }
+            assert!(Instant::now() < deadline, "shell never reported idle");
+            std::thread::sleep(Duration::from_millis(20));
+        };
+        fs::write(gate, "\n").unwrap();
+        let deadline = Instant::now() + Duration::from_secs(10);
+        loop {
+            state.tend(Instant::now());
+            if column_scope(&mut state, &root, "p1").terminals[0].busy {
+                break;
+            }
+            assert!(Instant::now() < deadline, "job never took the foreground");
+            std::thread::sleep(Duration::from_millis(20));
+        }
+        assert!(matches!(
+            column_request(&mut state, &root, "p1", Some(&consent_of(&idle))).unwrap(),
+            super::Response::Ended(_)
+        ));
+        assert!(state.sessions.is_empty());
+        drop(state);
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn sidebar_actions_in_off_answer_as_eon_c31_says() {
+        let root = temporary_directory();
+        let (mut state, _) = finishing_window(&root);
+        state.attention = Some(crate::attention::Attention::new(false));
+        for (action, code) in [
+            (Action::SetSidebar { open: true }, Some("unavailable")),
+            (Action::ToggleSidebar, Some("unavailable")),
+            (Action::SetSidebar { open: false }, None),
+        ] {
+            let (response, _) = super::dispatch_control_request(
+                super::Request {
+                    id: super::request_id(),
+                    caller: None,
+                    action,
+                },
+                &mut state,
+                &crate::fixtures::inputs(),
+                &root,
+                &root,
+                "g1-test",
+            );
+            match (code, response) {
+                (
+                    Some(code),
+                    crate::control::ControlResponse::Workspace(super::Response::Failure(error)),
+                ) => assert_eq!(error.code, code),
+                (
+                    None,
+                    crate::control::ControlResponse::Workspace(super::Response::Snapshot(snapshot)),
+                ) => assert_eq!(snapshot.sidebar, eon_workspace_protocol::v39::Sidebar::Off),
+                _ => panic!("unexpected sidebar result"),
+            }
+        }
+        state.workspaces = None;
+        state.attention = None;
+        for action in [
+            Action::SetSidebar { open: true },
+            Action::SetSidebar { open: false },
+            Action::ToggleSidebar,
+        ] {
+            let (response, _) = super::dispatch_control_request(
+                super::Request {
+                    id: super::request_id(),
+                    caller: None,
+                    action,
+                },
+                &mut state,
+                &crate::fixtures::inputs(),
+                &root,
+                &root,
+                "g1-test",
+            );
+            assert!(
+                matches!(response, crate::control::ControlResponse::Workspace(super::Response::Failure(error)) if error.code == "session-unavailable")
+            );
+        }
+        stop_generation_sessions(&mut state, &root, LaunchMode::Terminal).unwrap();
+        drop(state);
+        fs::remove_dir_all(root).unwrap();
+    }
+
     #[test]
     fn a_scrollback_record_precedes_its_editor_and_only_a_confirmed_failure_discards() {
         let runtime = temporary_directory();
@@ -4166,7 +5205,7 @@ mod tests {
     #[test]
     fn c38_registered_recovery_retries_and_publishes_the_confirmed_same_member() {
         use crate::session_registry::{Operation, Registry, Worker};
-        use eon_workspace_protocol::v38::{Change, SubscriptionMessage, WorkspaceChange};
+        use eon_workspace_protocol::v39::{Change, SubscriptionMessage, WorkspaceChange};
         let (root, inputs, mut state, old_peer) = subscribed_window();
         drop(old_peer);
         let registry_root = root.join("registry");
@@ -4277,19 +5316,19 @@ mod tests {
         let socket = root.join("eon.sock");
         let listener = control::ControlListener::bind(&socket).unwrap();
         let generation = "g1-00000000000000000000000000000001";
-        let starting = eon_workspace_protocol::v38::Runtime {
+        let starting = eon_workspace_protocol::v39::Runtime {
             generation: generation.into(),
             name: None,
             started_at: 1,
             eon_version: inputs.version.into(),
-            workspace_protocol: eon_workspace_protocol::v38::VERSION,
+            workspace_protocol: eon_workspace_protocol::v39::VERSION,
             component_report: inputs.component_report().unwrap().into(),
             sessions: Vec::new(),
-            attach: eon_workspace_protocol::v38::Availability {
+            attach: eon_workspace_protocol::v39::Availability {
                 available: false,
                 reason: "registering".into(),
             },
-            stop: eon_workspace_protocol::v38::Availability {
+            stop: eon_workspace_protocol::v39::Availability {
                 available: true,
                 reason: "starting".into(),
             },
@@ -4304,7 +5343,7 @@ mod tests {
             std::thread::sleep(Duration::from_millis(1));
         }
         let control::ControlResponse::Lifecycle(
-            eon_workspace_protocol::v38::LifecycleResponse::Runtime(status),
+            eon_workspace_protocol::v39::LifecycleResponse::Runtime(status),
         ) = control::send_action(&socket, Action::Workspace(WorkspaceAction::InspectRuntime))
             .unwrap()
         else {
@@ -4342,7 +5381,7 @@ mod tests {
             control,
             session_registry::{Fault, Registry, Worker},
         };
-        use eon_workspace_protocol::v38::{Request, encode_request};
+        use eon_workspace_protocol::v39::{Request, encode_request};
         use std::io::Write;
         let (root, inputs, mut state, peer) = subscribed_window();
         let registry_root = root.join("registry");
@@ -4568,16 +5607,16 @@ mod tests {
         state
             .subscribers
             .attach(stream, *subscriber, Instant::now());
-        let mut message = vec![0; eon_workspace_protocol::v38::HEADER_BYTES];
+        let mut message = vec![0; eon_workspace_protocol::v39::HEADER_BYTES];
         peer.read_exact(&mut message).unwrap();
         message.resize(
-            eon_workspace_protocol::v38::declared_message_len(&message).unwrap(),
+            eon_workspace_protocol::v39::declared_message_len(&message).unwrap(),
             0,
         );
-        peer.read_exact(&mut message[eon_workspace_protocol::v38::HEADER_BYTES..])
+        peer.read_exact(&mut message[eon_workspace_protocol::v39::HEADER_BYTES..])
             .unwrap();
-        let eon_workspace_protocol::v38::SubscriptionMessage::Subscribed(subscribed) =
-            eon_workspace_protocol::v38::decode_subscription_message(&message).unwrap()
+        let eon_workspace_protocol::v39::SubscriptionMessage::Subscribed(subscribed) =
+            eon_workspace_protocol::v39::decode_subscription_message(&message).unwrap()
         else {
             panic!("no SUBSCRIBED");
         };
@@ -4593,7 +5632,7 @@ mod tests {
         assert_eq!(state.workspace_snapshot_in(None).unwrap(), before);
         assert!(state.venus.is_none());
 
-        let missing = eon_workspace_protocol::v38::Filter {
+        let missing = eon_workspace_protocol::v39::Filter {
             workspaces: vec!["s9".into()],
             ..Default::default()
         };
@@ -4708,7 +5747,7 @@ mod tests {
     /// A pending window with one unfiltered subscriber that has read its
     /// snapshot, and that subscriber's end of the connection.
     fn subscribed_window() -> (PathBuf, crate::cli::Inputs, SupervisorState, UnixStream) {
-        use eon_workspace_protocol::v38::SubscriptionMessage;
+        use eon_workspace_protocol::v39::SubscriptionMessage;
         let root = temporary_directory();
         let inputs = crate::fixtures::inputs();
         let workspace = WorkspaceSet::pending(
@@ -4783,9 +5822,9 @@ mod tests {
         mut peer: UnixStream,
     ) -> std::thread::JoinHandle<(
         super::Response,
-        Vec<eon_workspace_protocol::v38::SubscriptionMessage>,
+        Vec<eon_workspace_protocol::v39::SubscriptionMessage>,
     )> {
-        use eon_workspace_protocol::v38::{
+        use eon_workspace_protocol::v39::{
             HEADER_BYTES, declared_message_len, decode_response, encode_request,
         };
         use std::io::Write;
@@ -4845,9 +5884,9 @@ mod tests {
 
     /// The names of the `workspace-renamed` events in `messages`.
     fn renames(
-        messages: &[eon_workspace_protocol::v38::SubscriptionMessage],
+        messages: &[eon_workspace_protocol::v39::SubscriptionMessage],
     ) -> Vec<Option<String>> {
-        use eon_workspace_protocol::v38::{Change, SubscriptionMessage, WorkspaceChange};
+        use eon_workspace_protocol::v39::{Change, SubscriptionMessage, WorkspaceChange};
         messages
             .iter()
             .filter_map(|message| match message {
@@ -4866,8 +5905,8 @@ mod tests {
     /// Every whole subscription message already written to `peer`.
     fn subscription_messages(
         peer: &mut UnixStream,
-    ) -> Vec<eon_workspace_protocol::v38::SubscriptionMessage> {
-        use eon_workspace_protocol::v38::{declared_message_len, decode_subscription_message};
+    ) -> Vec<eon_workspace_protocol::v39::SubscriptionMessage> {
+        use eon_workspace_protocol::v39::{declared_message_len, decode_subscription_message};
         peer.set_nonblocking(true).unwrap();
         let mut bytes = Vec::new();
         let mut buffer = [0; 65536];
@@ -4895,7 +5934,7 @@ mod tests {
     #[cfg(target_os = "linux")]
     #[test]
     fn attention_reaches_subscribers_in_the_loop_turn_that_polls_it() {
-        use eon_workspace_protocol::v38::{AttentionState, Change, SubscriptionMessage};
+        use eon_workspace_protocol::v39::{AttentionState, Change, SubscriptionMessage};
         let root = temporary_directory();
         let inputs = crate::fixtures::inputs();
         let session = leased_orbit(
@@ -4946,8 +5985,8 @@ mod tests {
                 id: "subscribe-1".into(),
                 caller: None,
                 action: Action::Subscribe {
-                    filter: eon_workspace_protocol::v38::Filter {
-                        kinds: vec![eon_workspace_protocol::v38::EventKind::Attention],
+                    filter: eon_workspace_protocol::v39::Filter {
+                        kinds: vec![eon_workspace_protocol::v39::EventKind::Attention],
                         ..Default::default()
                     },
                     after: None,
@@ -5024,7 +6063,7 @@ mod tests {
         let workspace = WorkspaceSet::with_recovered_sessions(
             root.to_path_buf(),
             root.to_path_buf(),
-            None,
+            Some(root.to_path_buf()),
             vec![(
                 1,
                 Session {
@@ -5088,8 +6127,8 @@ mod tests {
     fn inspected(
         state: &mut SupervisorState,
     ) -> (
-        Option<eon_workspace_protocol::v38::Attention>,
-        Vec<eon_workspace_protocol::v38::QueueEntry>,
+        Option<eon_workspace_protocol::v39::Attention>,
+        Vec<eon_workspace_protocol::v39::QueueEntry>,
     ) {
         // Each request ID is accepted once.
         static INSPECTIONS: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
@@ -5108,10 +6147,10 @@ mod tests {
         );
         assert!(!ended);
         let snapshot = match response {
-            super::ControlResponse::Workspace(eon_workspace_protocol::v38::Response::Snapshot(
+            super::ControlResponse::Workspace(eon_workspace_protocol::v39::Response::Snapshot(
                 snapshot,
             )) => snapshot,
-            super::ControlResponse::Workspace(eon_workspace_protocol::v38::Response::Failure(
+            super::ControlResponse::Workspace(eon_workspace_protocol::v39::Response::Failure(
                 failure,
             )) => panic!("Inspect failed: {} {}", failure.code, failure.detail),
             _ => panic!("Inspect answers with a snapshot"),
@@ -5130,9 +6169,9 @@ mod tests {
     fn raise_finish(
         state: &mut SupervisorState,
         gate: &Path,
-    ) -> eon_workspace_protocol::v38::AttentionState {
-        use eon_workspace_protocol::v38::AttentionState;
-        let changed = |attention: &Option<eon_workspace_protocol::v38::Attention>| {
+    ) -> eon_workspace_protocol::v39::AttentionState {
+        use eon_workspace_protocol::v39::AttentionState;
+        let changed = |attention: &Option<eon_workspace_protocol::v39::Attention>| {
             attention
                 .as_ref()
                 .and_then(|attention| attention.record.as_ref())
@@ -5165,7 +6204,7 @@ mod tests {
     #[cfg(target_os = "linux")]
     #[test]
     fn selected_raise_waits_for_native_window_focus() {
-        use eon_workspace_protocol::v38::AttentionState::{Finished, Idle};
+        use eon_workspace_protocol::v39::AttentionState::{Finished, Idle};
         use std::io::Write;
         let root = temporary_directory();
         let (mut state, gate) = finishing_window(&root);
@@ -5286,7 +6325,7 @@ mod tests {
     #[cfg(target_os = "linux")]
     #[test]
     fn replacement_venus_does_not_inherit_focus() {
-        use eon_workspace_protocol::v38::AttentionState::{Finished, Idle};
+        use eon_workspace_protocol::v39::AttentionState::{Finished, Idle};
         use std::{io::Write, net::Shutdown};
         let root = temporary_directory();
         let (mut state, gate) = finishing_window(&root);
@@ -6264,7 +7303,7 @@ mod tests {
 
     #[test]
     fn startup_snapshot_transfer_uses_the_admission_deadline() {
-        use eon_workspace_protocol::v38::{
+        use eon_workspace_protocol::v39::{
             Column, Pane, PopupGeometry, Response, Snapshot, Tab, encode_response,
         };
         use std::time::{Duration, Instant};
@@ -6273,7 +7312,7 @@ mod tests {
         let snapshot = Snapshot {
             workspace: "s1".into(),
             active_workspace: "s1".into(),
-            workspaces: vec![eon_workspace_protocol::v38::WorkspaceInfo {
+            workspaces: vec![eon_workspace_protocol::v39::WorkspaceInfo {
                 id: "s1".into(),
                 persistent_id: Some("s1".into()),
                 registration_error: None,
@@ -6317,7 +7356,7 @@ mod tests {
             claude_quota_failure: None,
             running: None,
             busy: None,
-            sidebar: eon_workspace_protocol::v38::Sidebar::Open,
+            sidebar: eon_workspace_protocol::v39::Sidebar::Open,
             attention_queue: Vec::new(),
         };
         let expected = encode_response(&Response::Snapshot(snapshot.clone())).unwrap();

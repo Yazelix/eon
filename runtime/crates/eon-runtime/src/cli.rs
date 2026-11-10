@@ -23,10 +23,11 @@ use super::{
         terminal_editing_json, terminal_history_json, terminal_sent_json, terminal_text_json,
     },
 };
-use eon_workspace_protocol::v38::{
-    Action, AttentionState, Direction, Failure, MAX_HISTORY_TEXT_BYTES, MAX_PASTE_BYTES, Pane,
-    PopupTarget, Response, Side, Sidebar, Snapshot, Tab, TerminalHistory, TerminalInput, VERSION,
-    WorkspaceAction, WorkspaceInfo, WorkspaceTarget as SessionTarget, valid_caller, validate_paste,
+use eon_workspace_protocol::v39::{
+    Action, AttentionState, CloseConsent, CloseEnd, CloseScope, Direction, Failure,
+    MAX_HISTORY_TEXT_BYTES, MAX_PASTE_BYTES, Pane, PopupTarget, Response, Side, Snapshot, Tab,
+    TargetId, TerminalHistory, TerminalInput, VERSION, WorkspaceAction, WorkspaceInfo,
+    WorkspaceTarget as SessionTarget, valid_caller, validate_paste,
 };
 use std::{
     env,
@@ -819,7 +820,12 @@ fn execute(inputs: &Inputs, arguments: Vec<OsString>) -> Result<i32, Error> {
                 return Ok(sidebar(inputs, verb, json, target)?);
             }
             if let Some((action, json, yes)) = parse_close_arguments(&arguments)? {
-                return Ok(control(inputs, action, json, false, target, yes)?);
+                return Ok(match action {
+                    Action::CloseColumn { pane, .. } => {
+                        close_column(inputs, pane, json, yes, target)?
+                    }
+                    action => control(inputs, action, json, false, target, yes)?,
+                });
             }
             let (action, json) = parse_control_arguments(&arguments)?;
             control(
@@ -963,7 +969,7 @@ fn renamed_command(arguments: &[OsString]) -> Option<Error> {
 /// The first words `execute` hands to `parse_control_arguments`.
 fn control_command(command: &OsStr) -> bool {
     [
-        "session", "tab", "pane", "popup", "sidebar", "edit", "focus", "--window",
+        "session", "tab", "pane", "column", "popup", "sidebar", "edit", "focus", "--window",
     ]
     .iter()
     .any(|word| command == *word)
@@ -1088,6 +1094,12 @@ const HELP_SECTIONS: &[(&str, &[(&str, &str)])] = &[
                 "pane close PANE [--yes] [--json]",
                 "Close any pane of this session",
             ),
+            (
+                "column close PANE --yes [--json]",
+                "Close the column (Stack) that",
+            ),
+            ("", "holds a pane; without --yes, list"),
+            ("", "what it would stop"),
             (
                 "pane rename PANE NAME [--json]",
                 "Pin a pane name; empty clears",
@@ -1306,9 +1318,11 @@ pane history --edit opens the history in a Scrollback editor popup,
 only in the shown session's active tab.
 pane send refuses while a person is typing; --force bypasses the typing check.
 Where shown, {command}--json{reset} prints JSON and never asks.
-Busy tab/pane closes require {command}--yes{reset} with {command}--json{reset}; {command}--yes{reset} confirms only that close.
-Tab/pane close IDs resolve in the caller's session, otherwise the shown one.
-Without a terminal, a confirmation needs yes or exits 1 (not-confirmed).
+Busy tab/pane closes require {command}--yes{reset} with {command}--json{reset};
+a column close always requires {command}--yes{reset} and reads no stdin.
+Tab/pane/column close IDs resolve in the caller's session,
+otherwise the shown one.
+Tab/pane confirmation without a terminal needs yes or exits 1 (not-confirmed).
 Exit status: 0 success, 1 failed, 2 invalid command, 3 target not found,
 4 Eon unreachable, 5 person typing (nothing sent), 130 interrupted.
 Agent? Run {command}eon --skill{reset} to learn how to work in Eon.
@@ -1793,6 +1807,13 @@ fn control(
             }
             Ok(0)
         }
+        // A second scope means consent no longer covers the current close.
+        ControlResponse::Workspace(Response::Confirm(scope)) => {
+            let CloseStep::Refuse(error) = column_close_step(&scope, 1, yes) else {
+                unreachable!()
+            };
+            report_column_refusal(&scope, &error, json)
+        }
         // Only `eon pane send` asks for this, through `send_terminal`.
         ControlResponse::Workspace(Response::Sent(_)) => {
             Err("Eon supervisor returned a terminal result for a session action".into())
@@ -2090,7 +2111,7 @@ fn close_question(
     let Some(target_label) = close_target_label(action) else {
         return Ok(None);
     };
-    let tab_terminals = |tab: &eon_workspace_protocol::v38::Tab| -> Vec<(String, String)> {
+    let tab_terminals = |tab: &eon_workspace_protocol::v39::Tab| -> Vec<(String, String)> {
         tab.panes()
             .map(|pane| (pane.session.clone(), pane.label.clone()))
             .chain(tab.popups.iter().map(|popup| {
@@ -2271,38 +2292,181 @@ enum SidebarVerb {
     Toggle,
 }
 
-/// `eon sidebar` (EON-C10). `toggle` sends one `ToggleSidebar`. `show` and
-/// `hide` read the session first and send it only when the sidebar differs,
-/// else read the session again and print that; a visibility change between
-/// the first read and the toggle can reverse the result.
+/// State-naming commands set the Runtime-owned value in one request (EON-C10).
 fn sidebar(
     inputs: &Inputs,
     verb: SidebarVerb,
     json: bool,
     target: WorkspaceTarget,
 ) -> Result<i32, String> {
+    let action = match verb {
+        SidebarVerb::Show => Action::SetSidebar { open: true },
+        SidebarVerb::Hide => Action::SetSidebar { open: false },
+        SidebarVerb::Toggle => Action::ToggleSidebar,
+    };
+    control(inputs, action, json, false, target, false)
+}
+
+#[derive(Debug, PartialEq)]
+enum CloseStep {
+    Consent,
+    Refuse(Failure),
+}
+
+fn column_close_step(scope: &CloseScope, round: usize, yes: bool) -> CloseStep {
+    if round == 0 && yes {
+        return CloseStep::Consent;
+    }
+    let (code, detail) = if round == 0 {
+        (
+            "not-confirmed",
+            format!(
+                "close of the column of pane {} requires confirmation; rerun with --yes",
+                scope.pane
+            ),
+        )
+    } else {
+        (
+            "close-changed",
+            format!(
+                "what closing the column of pane {} stops changed before it ran; nothing was closed; rerun",
+                scope.pane
+            ),
+        )
+    };
+    CloseStep::Refuse(failure(code, detail))
+}
+
+fn close_column(
+    inputs: &Inputs,
+    pane: String,
+    json: bool,
+    yes: bool,
+    target: WorkspaceTarget,
+) -> Result<i32, String> {
     let caller = match calling_terminal() {
         Ok(caller) => caller,
         Err(error) => return report_failure(&error, json),
     };
-    let snapshot = match resolve_workspace(inputs, target.clone(), caller.as_deref())
-        .and_then(|resolved| inspect(&resolved.socket, caller.as_deref(), &resolved.label))
-    {
-        Ok(snapshot) => snapshot,
+    let action = Action::CloseColumn {
+        pane: pane.clone(),
+        consent: None,
+    };
+    if let Err(error) = validate_action(caller.clone(), action.clone()) {
+        return report_failure(&failure("malformed-action", error.detail), json);
+    }
+    let resolved = match resolve_workspace(inputs, target.clone(), caller.as_deref()) {
+        Ok(resolved) => resolved,
         Err(error) => return report_failure(&error, json),
     };
-    let action = match (verb, snapshot.sidebar) {
-        (SidebarVerb::Show, Sidebar::Open)
-        | (SidebarVerb::Hide, Sidebar::Closed | Sidebar::Off) => {
-            Action::Workspace(WorkspaceAction::Inspect)
-        }
-        (SidebarVerb::Show | SidebarVerb::Toggle, Sidebar::Off) => {
-            let detail = "the agent sidebar is off; set [sidebar] enabled = true";
-            return report_failure(&failure("unavailable", detail), json);
-        }
-        _ => Action::ToggleSidebar,
+    let response = match send_action_from(Ok(&resolved.socket), caller, action) {
+        Ok(response) => response,
+        Err(error) => return report_failure(&unreachable_supervisor(error, &resolved.label), json),
     };
-    control(inputs, action, json, false, target, false)
+    match response {
+        ControlResponse::Workspace(Response::Confirm(scope)) => {
+            match column_close_step(&scope, 0, yes) {
+                CloseStep::Consent => control(
+                    inputs,
+                    Action::CloseColumn {
+                        pane,
+                        consent: Some(CloseConsent {
+                            generation: scope.generation,
+                            runs: scope
+                                .terminals
+                                .into_iter()
+                                .map(|terminal| terminal.run)
+                                .chain(scope.untracked.into_iter().map(|run| run.run))
+                                .collect(),
+                            end: scope.end,
+                        }),
+                    },
+                    json,
+                    false,
+                    target,
+                    true,
+                ),
+                CloseStep::Refuse(error) => report_column_refusal(&scope, &error, json),
+            }
+        }
+        ControlResponse::Workspace(Response::Failure(error)) => report_failure(&error, json),
+        _ => Err("Eon returned the wrong result for column close scope".into()),
+    }
+}
+
+fn column_close_human(scope: &CloseScope, changed: bool) -> String {
+    let count = scope.terminals.len() + scope.untracked.len();
+    let consequence = match scope.end {
+        CloseEnd::Column => "stop".into(),
+        CloseEnd::Session => format!("close session {} and stop", scope.session),
+        CloseEnd::Window => "quit the window and stop".into(),
+    };
+    let mut output = format!(
+        "{}Closing the column of pane {} would {}{consequence} {count} terminal{}:\n",
+        if changed {
+            "The column changed before it was closed. "
+        } else {
+            ""
+        },
+        scope.pane,
+        if changed { "now " } else { "" },
+        if count == 1 { "" } else { "s" }
+    );
+    for terminal in &scope.terminals {
+        let (kind, id) = match &terminal.target.id {
+            TargetId::Pane(id) => ("pane", id),
+            TargetId::Popup(id) => ("popup", id),
+        };
+        output.push_str(&format!(
+            "  {kind} {id}    {}{}\n",
+            terminal.name,
+            if terminal.busy { "    running" } else { "" }
+        ));
+    }
+    for run in &scope.untracked {
+        output.push_str(&format!("  {}    in no tab    running\n", run.terminal));
+    }
+    output.push_str("Nothing was closed.\n");
+    output
+}
+
+fn column_close_json(scope: &CloseScope, error: &Failure) -> serde_json::Value {
+    use serde_json::json;
+    let terminals: Vec<_> = scope
+        .terminals
+        .iter()
+        .map(|terminal| {
+            let (pane, popup) = match &terminal.target.id {
+                TargetId::Pane(id) => (Some(id), None),
+                TargetId::Popup(id) => (None, Some(id)),
+            };
+            json!({ "session": terminal.target.workspace, "tab": terminal.target.tab,
+            "pane": pane, "popup": popup, "terminal": terminal.target.terminal,
+            "run": terminal.run, "name": terminal.name, "busy": terminal.busy })
+        })
+        .collect();
+    let untracked: Vec<_> = scope
+        .untracked
+        .iter()
+        .map(|run| json!({ "terminal": run.terminal, "run": run.run }))
+        .collect();
+    json!({ "error": { "code": error.code, "detail": error.detail }, "close": {
+        "generation": scope.generation, "pane": scope.pane, "end": match scope.end {
+            CloseEnd::Column => "column", CloseEnd::Session => "session", CloseEnd::Window => "window"
+        }, "session": scope.session, "terminals": terminals, "untracked": untracked } })
+}
+
+fn report_column_refusal(scope: &CloseScope, error: &Failure, json: bool) -> Result<i32, String> {
+    if json {
+        write_stdout(format!("{}\n", column_close_json(scope, error)))?;
+        Ok(1)
+    } else {
+        eprint!(
+            "{}",
+            column_close_human(scope, error.code == "close-changed")
+        );
+        report_failure(error, false)
+    }
 }
 
 /// The session `eon session` reports: the caller's, else the shown one.
@@ -2434,13 +2598,13 @@ fn parse_pane_send_arguments(arguments: &[OsString]) -> Result<Option<PaneSend>,
     }))
 }
 
-/// `tab close TAB [--yes] [--json]` and `pane close PANE [--yes] [--json]`.
+/// An exact tab, pane or column close, with --yes and --json at most once.
 fn parse_close_arguments(arguments: &[OsString]) -> Result<Option<(Action, bool, bool)>, Error> {
     let [command, operation, rest @ ..] = arguments else {
         return Ok(None);
     };
     let kind = match (command.to_str(), operation.to_str()) {
-        (Some(kind @ ("tab" | "pane")), Some("close")) => kind,
+        (Some(kind @ ("tab" | "pane" | "column")), Some("close")) => kind,
         _ => return Ok(None),
     };
     let (mut json, mut yes) = (false, false);
@@ -2461,6 +2625,11 @@ fn parse_close_arguments(arguments: &[OsString]) -> Result<Option<(Action, bool,
     };
     let action = if kind == "tab" {
         Action::Workspace(WorkspaceAction::CloseTab { tab: target.into() })
+    } else if kind == "column" {
+        Action::CloseColumn {
+            pane: target.into(),
+            consent: None,
+        }
     } else {
         Action::ClosePane {
             pane: target.into(),
@@ -2575,7 +2744,7 @@ fn parse_pane_rename_arguments(arguments: &[OsString]) -> Result<(Action, bool),
         _ => return Err(Error::usage(EON_USAGE)),
     };
     if let Some(name) = name {
-        eon_workspace_protocol::v38::validate_pane_name(name)
+        eon_workspace_protocol::v39::validate_pane_name(name)
             .map_err(|error| Error::usage(error.to_string()))?;
     }
     Ok((
@@ -2876,6 +3045,101 @@ mod parity;
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn column_close_steps_follow_runtimes_answer() {
+        use eon_workspace_protocol::v39::{CloseTerminal, TerminalTarget, UntrackedRun};
+        let mut scope = CloseScope {
+            generation: "g1".into(),
+            pane: "p3".into(),
+            end: CloseEnd::Column,
+            session: "work".into(),
+            terminals: vec![CloseTerminal {
+                target: TerminalTarget {
+                    workspace: "s1".into(),
+                    tab: "t1".into(),
+                    id: TargetId::Pane("p3".into()),
+                    terminal: "terminal-1".into(),
+                },
+                run: "run-a".into(),
+                name: "fish".into(),
+                busy: false,
+            }],
+            untracked: Vec::new(),
+        };
+        assert_eq!(column_close_step(&scope, 0, true), CloseStep::Consent);
+        for (round, yes, code) in [
+            (0, false, "not-confirmed"),
+            (1, true, "close-changed"),
+            (1, false, "close-changed"),
+        ] {
+            let CloseStep::Refuse(error) = column_close_step(&scope, round, yes) else {
+                panic!("must refuse")
+            };
+            assert_eq!(error.code, code);
+        }
+        assert!(column_close_human(&scope, false).contains("would stop 1 terminal:"));
+        scope.terminals[0].busy = true;
+        scope.end = CloseEnd::Session;
+        assert!(
+            column_close_human(&scope, false)
+                .contains("would close session work and stop 1 terminal:")
+        );
+        scope.end = CloseEnd::Window;
+        scope.untracked.push(UntrackedRun {
+            terminal: "terminal-9".into(),
+            run: "run-b".into(),
+        });
+        let text = column_close_human(&scope, true);
+        for part in [
+            "The column changed before it was closed.",
+            "would now quit the window and stop 2 terminals:",
+            "pane p3    fish    running",
+            "terminal-9    in no tab    running",
+            "Nothing was closed.",
+        ] {
+            assert!(text.contains(part), "{text}");
+        }
+        let value = column_close_json(&scope, &failure("not-confirmed", "refused"));
+        assert_eq!(value["close"]["generation"], "g1");
+        assert_eq!(value["close"]["terminals"][0]["run"], "run-a");
+        assert_eq!(
+            value["close"]["terminals"][0]["popup"],
+            serde_json::Value::Null
+        );
+        assert_eq!(value["close"]["untracked"][0]["run"], "run-b");
+        for args in [
+            vec!["column", "close", "p3"],
+            vec!["column", "close", "--json", "p3", "--yes"],
+        ] {
+            let (action, json, yes) =
+                parse_close_arguments(&args.iter().map(OsString::from).collect::<Vec<_>>())
+                    .unwrap()
+                    .unwrap();
+            assert_eq!(
+                action,
+                Action::CloseColumn {
+                    pane: "p3".into(),
+                    consent: None
+                }
+            );
+            assert_eq!(
+                (json, yes),
+                (args.contains(&"--json"), args.contains(&"--yes"))
+            );
+        }
+        for args in [
+            vec!["column", "close"],
+            vec!["column", "close", "p3", "p4"],
+            vec!["column", "close", "p3", "--yes", "--yes"],
+            vec!["column", "close", "p3", "--json", "--json"],
+        ] {
+            assert!(
+                parse_close_arguments(&args.iter().map(OsString::from).collect::<Vec<_>>())
+                    .is_err()
+            );
+        }
+    }
 
     #[test]
     fn c38_creation_requires_an_id_and_close_accepts_late_registration() {
@@ -3762,7 +4026,7 @@ mod tests {
 
     #[test]
     fn close_question_is_target_scoped_and_conservative() {
-        use eon_workspace_protocol::v38::{
+        use eon_workspace_protocol::v39::{
             BusyTerminal, BusyTerminals, Column, Pane, Popup, PopupEntry, PopupGeometry, PopupKey,
             Sidebar, Tab, TargetId, TerminalTarget,
         };
@@ -4012,7 +4276,7 @@ mod tests {
 
     #[test]
     fn close_question_combines_busy_and_final_warnings_once() {
-        use eon_workspace_protocol::v38::{
+        use eon_workspace_protocol::v39::{
             BusyTerminal, BusyTerminals, Column, Pane, Popup, PopupEntry, PopupGeometry, PopupKey,
             Sidebar, Tab, TargetId, TerminalTarget,
         };

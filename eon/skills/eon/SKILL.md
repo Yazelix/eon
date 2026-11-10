@@ -23,7 +23,7 @@ Leave the person's active tab, selection, shown popup and desktop focus alone
 unless asked to move them. Pass `--no-focus` to `pane create`, `session new`
 and directory-based `tab create`.
 Never run `eon focus PANE`, `eon tab switch TAB`, `eon session switch SESSION`,
-`eon tab close TAB` or `eon pane close PANE` on things you did not
+`eon tab close TAB`, `eon pane close PANE` or `eon column close PANE` on things you did not
 open unless the person asks. When the person asks to see a tab, run
 `eon tab switch tN --json`: it selects that tab as a click does and leaves
 desktop focus alone. If asked to clean up, close what you opened with
@@ -34,6 +34,14 @@ refuses with exit 1 (`not-confirmed`); do not automatically retry with
 `--yes`. Pass `--yes` (`eon tab close tN --yes --json` or
 `eon pane close pN --yes --json`) only when stopping that busy work is
 authorized.
+For a whole Stack, `eon column close pN --json` reports every run it would
+stop and always refuses without `--yes`, even when idle or one pane. It never
+reads stdin. Only pass `--yes` when stopping all those runs is authorized;
+consent covers work that starts later in the same runs. A changed scope fails
+`close-changed` and stops nothing. Read the returned `close` object rather than
+reconstructing the affected set. `eon sidebar show|hide|toggle --json` changes
+the window's sidebar without moving focus; show/hide set the state directly.
+
 Rename your pane with `eon pane rename pN NAME --json` only when the person asks.
 
 ## Run something beside you
