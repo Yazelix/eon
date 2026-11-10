@@ -363,7 +363,7 @@ impl Process {
     fn alive(&self) -> bool {
         Self::at(self.pid).is_ok_and(|p| p.start == self.start)
     }
-    fn signal(&self, signal: i32) {
+    fn signal(&self, _signal: i32) {
         #[cfg(target_os = "linux")]
         // SAFETY: pidfd pins one process identity; only signal after checking start time.
         unsafe {
@@ -373,7 +373,7 @@ impl Process {
                     libc::syscall(
                         libc::SYS_pidfd_send_signal,
                         fd,
-                        signal,
+                        _signal,
                         std::ptr::null::<libc::siginfo_t>(),
                         0,
                     );

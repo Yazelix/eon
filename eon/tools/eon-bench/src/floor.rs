@@ -31,8 +31,9 @@ eon-bench floor: the corpora at the layers below Eon
 Each sample runs `eon-bench write` on a fresh {}x{} PTY: it writes the corpus,
 asks for a status report (ESC[5n) and stops its clock at the reply, which the
 reader sends once it has drained everything before the query. The bytes
-drained must be the corpus plus one CR per LF (ONLCR) plus the query, or the
-run fails. Rounds run every corpus once, in order, so corpora interleave.
+drained must be the corpus plus one CR per LF (ONLCR) plus the query. Apple
+also permits duplicated CRs before LF, with all content checked; pty_bytes
+counts the actual delivered bytes. Rounds run every corpus once, in order.
 Throughput is MB (10^6 bytes) of corpus per second. Exits 0 on success, 1 when
 a sample fails, and 2 for a usage error.",
         suite::settings_help(),

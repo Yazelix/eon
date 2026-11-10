@@ -217,8 +217,11 @@ restores the terminal's mode. REPORT gets the bytes and seconds.
 
 `floor --layer pty` is the kernel floor: each corpus drained from a bare 80x24
 PTY by eon-bench, in nonblocking reads that wait only when the PTY is empty,
-while the writer writes it. Every sample must drain exactly the corpus, one CR
-per LF and the query, and fails after 60 s of silence. Before each sample it waits while the
+while the writer writes it. Linux requires exactly the corpus, one CR per LF
+and the query. Apple also accepts CRs duplicated by ONLCR before LF, checking
+the captured content after timing; capturing adds one copy per read on Apple.
+`pty_bytes` counts all delivered bytes, including duplicates; throughput uses
+corpus bytes. A sample fails after 60 s of silence. Before each sample it waits while the
 1-minute load is above `--max-load` (online CPUs / 4 by default), for at most
 10 minutes (`--load-wait MINUTES`); `--cpus LIST` pins it on Linux. Two warmup rounds, then ten
 sample rounds, each running every corpus once (`--quick`: one and three).

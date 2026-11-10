@@ -3,8 +3,8 @@
 
 use std::process::Command;
 
-/// Two samples of the `ascii` corpus complete, and each drains exactly the
-/// corpus, one CR per LF and the 4-byte query: 16,777,289 + 272,685 + 4.
+/// Two samples of `ascii` drain the corpus, one CR per LF and the query:
+/// 16,777,289 + 272,685 + 4, plus only content-checked CR duplicates on Apple.
 #[test]
 fn floor_pty_drains_the_corpus_through_a_real_pty() {
     let out = std::env::temp_dir().join(format!("eon-bench-floor-{}", std::process::id()));
@@ -25,11 +25,33 @@ fn floor_pty_drains_the_corpus_through_a_real_pty() {
     );
     assert!(stdout.contains("\nascii "), "{stdout}");
     let result = std::fs::read_to_string(out.join("result.json")).unwrap();
-    assert_eq!(
-        result.matches("\"pty_bytes\": 17049978").count(),
-        2,
-        "{result}"
-    );
+    let counts: Vec<u64> = result
+        .split("\"pty_bytes\": ")
+        .skip(1)
+        .filter_map(|tail| {
+            tail.chars()
+                .take_while(char::is_ascii_digit)
+                .collect::<String>()
+                .parse()
+                .ok()
+        })
+        .collect();
+    assert_eq!(counts.len(), 2, "{result}");
+    for bytes in counts {
+        if cfg!(target_vendor = "apple") {
+            assert!(bytes >= 17_049_978, "{result}");
+            // Direct stderr bypasses libtest capture so native CI retains the count.
+            use std::io::Write;
+            writeln!(
+                std::io::stderr().lock(),
+                "floor PTY: {bytes} bytes, {} duplicated CRs",
+                bytes - 17_049_978
+            )
+            .unwrap();
+        } else {
+            assert_eq!(bytes, 17_049_978, "{result}");
+        }
+    }
     std::fs::remove_dir_all(&out).unwrap();
 }
 
@@ -49,17 +71,18 @@ fn drain_checks_the_byte_count_and_needs_the_query() {
     assert_eq!(expected, contents.len() as u64 + 2 + 4);
 
     let drained = eon_bench::pty::drain(writer, &file, &report, expected).unwrap();
-    assert_eq!(drained.bytes, expected);
+    if cfg!(target_vendor = "apple") {
+        assert!(drained.bytes >= expected);
+    } else {
+        assert_eq!(drained.bytes, expected);
+    }
     assert!(drained.seconds > 0.0);
 
     let error = eon_bench::pty::drain(writer, &file, &report, expected + 1).err();
     assert!(
         error
             .as_deref()
-            .is_some_and(|error| error.contains(&format!(
-                "delivered {expected} bytes; expected {}",
-                expected + 1
-            ))),
+            .is_some_and(|error| error.contains(&format!("expected {} plus", expected + 1))),
         "{error:?}"
     );
 

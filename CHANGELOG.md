@@ -15,6 +15,9 @@ installation, and proven contract changes.
 - Codex and Claude quota chips show pace colour and hover/accessibility text
   from 1% used, with no elapsed-time gate. Windows with no quota used are
   neutral at any age and show no pace line (`eon-7aw48`).
+- `eon-bench floor --layer pty` accepts Apple's duplicated ONLCR CRs only
+  before LF, with the complete output checked. Linux keeps its exact byte
+  count; `pty_bytes` reports all delivered bytes (`eon-18gk1`).
 
 - Each column card's top line carries a Stack tab, labelled `Stack`, or
   `Stack 1`, `Stack 2`, ... left to right when a tab has several columns

@@ -30,13 +30,17 @@ pub struct Drained {
 
 /// Runs `writer write FILE --report REPORT` on a fresh PTY's slave and drains
 /// the master, answering the writer's status query. The bytes drained must be
-/// `expected_bytes`.
+/// `expected_bytes`, plus only duplicated ONLCR CRs on Apple, with content checked.
 pub fn drain(
     writer: &Path,
     file: &Path,
     report: &Path,
     expected_bytes: u64,
 ) -> Result<Drained, String> {
+    let mut output = Vec::new();
+    if cfg!(target_vendor = "apple") {
+        output.reserve(expected_bytes as usize + CHUNK);
+    }
     let (mut master, slave) = open(ROWS, COLS).map_err(|error| format!("openpty: {error}"))?;
     let stdio = |slave: &File| {
         slave
@@ -57,7 +61,7 @@ pub fn drain(
         .map_err(|error| format!("{}: {error}", writer.display()))?;
     // Only the writer holds the slave now, so the master ends when it exits.
     drop(slave);
-    let read = read_until_closed(&mut master);
+    let read = read_until_closed(&mut master, &mut output);
     if read.is_err() {
         // Exact PID; the writer is our own child.
         let _ = child.kill();
@@ -76,9 +80,15 @@ pub fn drain(
     if !status.success() {
         return Err(format!("writer {status}: {errors}"));
     }
-    if bytes != expected_bytes {
+    let extra_crs = if cfg!(target_vendor = "apple") {
+        let corpus = std::fs::read(file).map_err(|error| format!("{}: {error}", file.display()))?;
+        duplicated_crs(&corpus, &output)?
+    } else {
+        0
+    };
+    if bytes != expected_bytes + extra_crs {
         return Err(format!(
-            "the PTY delivered {bytes} bytes; expected {expected_bytes}"
+            "the PTY delivered {bytes} bytes; expected {expected_bytes} plus {extra_crs} duplicated CRs"
         ));
     }
     let report = std::fs::read_to_string(report)
@@ -99,7 +109,7 @@ pub fn drain(
 /// status query that ends the writer's output. The master is nonblocking and
 /// polled only when it has nothing to read, so a busy run costs one syscall
 /// per read.
-fn read_until_closed(master: &mut File) -> Result<(u64, u64), String> {
+fn read_until_closed(master: &mut File, output: &mut Vec<u8>) -> Result<(u64, u64), String> {
     let mut buffer = vec![0; CHUNK];
     let (mut bytes, mut reads) = (0u64, 0u64);
     let mut end = QueryAtEnd::default();
@@ -119,6 +129,9 @@ fn read_until_closed(master: &mut File) -> Result<(u64, u64), String> {
         };
         bytes += count as u64;
         reads += 1;
+        if cfg!(target_vendor = "apple") {
+            output.extend_from_slice(&buffer[..count]);
+        }
         if end.push(&buffer[..count]) && !answered {
             master
                 .write_all(STATUS_OK)
@@ -132,6 +145,40 @@ fn read_until_closed(master: &mut File) -> Result<(u64, u64), String> {
         ));
     }
     Ok((bytes, reads))
+}
+
+/// XNU can enqueue ONLCR's CR, fill the queue, then enqueue it again when retrying LF.
+fn duplicated_crs(corpus: &[u8], output: &[u8]) -> Result<u64, String> {
+    let (mut at, mut extra) = (0, 0);
+    let mismatch = |at: usize, expected: &str| {
+        let actual = output
+            .get(at)
+            .map_or_else(|| "EOF".into(), |byte| format!("0x{byte:02x}"));
+        format!("the PTY output at byte {at}: expected {expected}, received {actual}")
+    };
+    for byte in corpus.iter().chain(STATUS_QUERY) {
+        let translated = if *byte == b'\n' {
+            b"\r\n".as_slice()
+        } else {
+            std::slice::from_ref(byte)
+        };
+        for &expected in translated {
+            if expected == b'\n' {
+                while output.get(at) == Some(&b'\r') {
+                    at += 1;
+                    extra += 1;
+                }
+            }
+            if output.get(at) != Some(&expected) {
+                return Err(mismatch(at, &format!("0x{expected:02x}")));
+            }
+            at += 1;
+        }
+    }
+    if at != output.len() {
+        return Err(mismatch(at, "EOF"));
+    }
+    Ok(extra)
 }
 
 /// Waits until the master has data or its slave has closed, failing after
@@ -220,7 +267,7 @@ pub fn open(rows: u16, cols: u16) -> std::io::Result<(File, File)> {
 }
 
 /// The bytes a PTY with ONLCR delivers for `corpus` and the status query:
-/// each LF gains a CR before it.
+/// each LF gains a CR before it. Apple may additionally duplicate that CR.
 pub fn expected_bytes(corpus: &[u8]) -> u64 {
     let newlines = corpus.iter().filter(|&&byte| byte == b'\n').count();
     (corpus.len() + newlines + STATUS_QUERY.len()) as u64
@@ -228,7 +275,50 @@ pub fn expected_bytes(corpus: &[u8]) -> u64 {
 
 #[cfg(test)]
 mod tests {
-    use super::QueryAtEnd;
+    use super::{QueryAtEnd, duplicated_crs, expected_bytes};
+    use crate::writer::STATUS_QUERY;
+
+    #[test]
+    fn apple_output_allows_only_extra_crs_before_lf() {
+        let valid: &[(&[u8], &[u8], u64)] = &[
+            (b"", b"", 0),
+            (b"a\r\nb\r", b"a\r\r\nb\r", 0),
+            (b"a\r\nb\r", b"a\r\r\r\nb\r", 1),
+            (b"\n", b"\r\r\r\n", 2),
+            (b"\r\n", b"\r\r\r\r\n", 2),
+            (b"\r\r\n", b"\r\r\r\r\n", 1),
+            (b"\n\n", b"\r\r\n\r\r\r\n", 3),
+        ];
+        for &(corpus, data, extra) in valid {
+            let output = [data, STATUS_QUERY].concat();
+            assert_eq!(duplicated_crs(corpus, &output), Ok(extra));
+            assert_eq!(output.len() as u64, expected_bytes(corpus) + extra);
+            // The old oracle, retained on Linux, rejects any duplicate count.
+            assert_eq!(output.len() as u64 == expected_bytes(corpus), extra == 0);
+        }
+        for data in [
+            b"ab\r\n".as_slice(),
+            b"ab\r\r",
+            b"\rab\r\r\n",
+            b"a\rb\r\r\n",
+            b"ac\r\r\n",
+            b"a\r\r\r\n", // One duplicate cannot hide the dropped 'b'.
+        ] {
+            let output = [data, STATUS_QUERY].concat();
+            assert!(duplicated_crs(b"ab\r\n", &output).is_err(), "{output:?}");
+        }
+        for output in [
+            b"ab\r\r\n\x1b[5".as_slice(),
+            b"ab\r\r\n\x1b[6n",
+            b"ab\r\r\n\x1b[5n\r",
+        ] {
+            assert!(duplicated_crs(b"ab\r\n", output).is_err(), "{output:?}");
+        }
+        assert_eq!(
+            duplicated_crs(b"ab\r\n", b"ac\r\r\n\x1b[5n"),
+            Err("the PTY output at byte 1: expected 0x62, received 0x63".into())
+        );
+    }
 
     /// The query is found at the end of the stream however reads split it,
     /// including one byte at a time, and not when output follows it.
