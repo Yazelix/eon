@@ -3267,8 +3267,9 @@ pub(crate) fn human_busy(busy: Option<&BusyTerminals>) -> String {
     output
 }
 
-/// The window's busy terminals as `busy`, null when unknown (EON-C10).
-pub(crate) fn json_busy(output: &mut String, busy: Option<&BusyTerminals>) {
+/// The window's busy terminals as `busy`, null when unknown (EON-C10); each
+/// terminal's name only with `names`.
+pub(crate) fn json_busy(output: &mut String, busy: Option<&BusyTerminals>, names: bool) {
     let Some(busy) = busy else {
         output.push_str("null");
         return;
@@ -3291,10 +3292,13 @@ pub(crate) fn json_busy(output: &mut String, busy: Option<&BusyTerminals>) {
         output.push_str(",\"popup\":");
         json_option(output, popup);
         output.push_str(&format!(
-            ",\"terminal\":\"{}\",\"name\":\"{}\"}}",
-            json_escape(&terminal.target.terminal),
-            json_escape(&terminal.name),
+            ",\"terminal\":\"{}\"",
+            json_escape(&terminal.target.terminal)
         ));
+        if names {
+            output.push_str(&format!(",\"name\":\"{}\"", json_escape(&terminal.name)));
+        }
+        output.push('}');
     }
     output.push_str(&format!("],\"omitted\":{}}}", busy.omitted));
 }
@@ -3463,7 +3467,7 @@ pub(crate) fn json(snapshot: &Snapshot) -> String {
         output.push_str("null");
     }
     output.push_str(",\"busy\":");
-    json_busy(&mut output, snapshot.busy.as_ref());
+    json_busy(&mut output, snapshot.busy.as_ref(), true);
     output.push_str("}\n");
     output
 }

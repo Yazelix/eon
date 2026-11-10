@@ -140,12 +140,16 @@ pub(super) fn default_namespace_id(generation: &str, current: &str) -> String {
 }
 
 /// Every running window, as `running_windows` orders it, with each
-/// namespace that cannot be inspected in its place.
-fn window_listing(inputs: &Inputs) -> Result<Vec<Result<Listed, Uninspectable>>, String> {
+/// namespace that cannot be inspected in its place. With `remove_dead`, what
+/// dead generations left is removed on the way.
+fn window_listing(
+    inputs: &Inputs,
+    remove_dead: bool,
+) -> Result<Vec<Result<Listed, Uninspectable>>, String> {
     let base = base_runtime_directory("eon");
     let current = current_generation(inputs)?;
     let mut windows = Vec::new();
-    match running_generations(inputs, &base) {
+    match running_generations(inputs, &base, remove_dead) {
         Ok(records) => windows.extend(records.into_iter().map(|record| {
             (
                 default_namespace_id(&record.id, &current),
@@ -163,7 +167,9 @@ fn window_listing(inputs: &Inputs) -> Result<Vec<Result<Listed, Uninspectable>>,
     }
     for (id, root) in window_entries()? {
         let records = root
-            .and_then(|root| running_generations(inputs, &root).map(|records| (root, records)))
+            .and_then(|root| {
+                running_generations(inputs, &root, remove_dead).map(|records| (root, records))
+            })
             .map_err(|error| format!("cannot inspect Eon window {id}: {error}"));
         match records {
             Ok((root, records)) => windows.extend(
@@ -209,7 +215,7 @@ fn window_listing(inputs: &Inputs) -> Result<Vec<Result<Listed, Uninspectable>>,
 /// Every running window: the default namespace's, this build's first, then
 /// each independent window's by ID (EON-C23).
 pub(super) fn running_windows(inputs: &Inputs) -> Result<Vec<Listed>, String> {
-    window_listing(inputs)?
+    window_listing(inputs, true)?
         .into_iter()
         .map(|found| found.map_err(|window| window.error))
         .collect()
@@ -496,7 +502,7 @@ pub(super) fn quit(inputs: &Inputs, json: bool, arguments: &[OsString]) -> Resul
             )
         });
         // As `eon window ls` shows it, else in full.
-        let window = window_listing(inputs)
+        let window = window_listing(inputs, true)
             .ok()
             .and_then(|windows| {
                 windows
@@ -812,6 +818,35 @@ fn own_window(inputs: &Inputs) -> Result<(PathBuf, String), Failure> {
     }
 }
 
+/// Generation `generation` of the window at `root`, else that window's one
+/// running generation, as one `eon window ls --json` object without its labels
+/// (window name, busy terminals' names), or none when it is not running. It
+/// asks supervisors only what `eon window ls` does, without a caller, and
+/// removes nothing a dead generation left: `eon report` changes no runtime
+/// state (EON-C1).
+pub(super) fn listed_window_json(
+    inputs: &Inputs,
+    root: &Path,
+    generation: &str,
+) -> Result<Option<String>, String> {
+    let windows = window_listing(inputs, false)?
+        .into_iter()
+        .map(|found| found.map_err(|window| window.error))
+        .collect::<Result<Vec<_>, _>>()?;
+    let windows: Vec<&Listed> = windows
+        .iter()
+        .filter(|window| window.root == root)
+        .collect();
+    let window = windows
+        .iter()
+        .find(|window| window.record.id == generation)
+        .or(match windows.as_slice() {
+            [only] => Some(only),
+            _ => None,
+        });
+    Ok(window.map(|window| window_json(&window.record, &window.id, &window.short_id, false)))
+}
+
 /// `eon window stop previous|all` and `eon quit --all`: the validated Stop of
 /// each selected running window, each window's generations in turn and the
 /// caller's own window last (EON-C23). A namespace that cannot be inspected
@@ -836,7 +871,7 @@ pub(super) fn stop_windows(inputs: &Inputs, bulk: Bulk, json: bool) -> Result<i3
         records: Result<Vec<GenerationRecord>, String>,
     }
     let mut windows: Vec<Target> = Vec::new();
-    for found in window_listing(inputs)? {
+    for found in window_listing(inputs, true)? {
         match found {
             Ok(window) => {
                 if bulk == Bulk::Previous && window.record.current() {
@@ -951,7 +986,7 @@ pub(super) fn list_windows(inputs: &Inputs, json: bool) -> Result<i32, String> {
     if json {
         let windows: Vec<String> = windows
             .iter()
-            .map(|window| window_json(&window.record, &window.id, &window.short_id))
+            .map(|window| window_json(&window.record, &window.id, &window.short_id, true))
             .collect();
         write_stdout(format!("{{\"windows\":[{}]}}\n", windows.join(",")))?;
         return Ok(0);

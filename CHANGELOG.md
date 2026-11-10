@@ -5,6 +5,13 @@ installation, and proven contract changes.
 
 ## Unreleased
 
+- `eon report` prints a Markdown bug report for the window it runs in: versions,
+  the window, install route, distribution, compositor, configuration warnings
+  and the newest supervisor log's last 40 lines, with paths under your home as
+  `~` and long environment values (8 bytes or more) removed. Commands offers it
+  as **Show bug report**, and the bug form gains an Eon installer option
+  (`eon-8uxif`).
+
 - Codex and Claude quota chips show pace colour and hover/accessibility text
   from 1% used, with no elapsed-time gate. Windows with no quota used are
   neutral at any age and show no pace line (`eon-7aw48`).

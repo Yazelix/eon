@@ -2053,6 +2053,14 @@ fn read_config(
     Ok(config)
 }
 
+/// The warnings the configuration gives, as `read_config` would print them, without printing
+/// them or preparing any directory.
+pub(super) fn configuration_warnings(defaults: &Defaults) -> Result<Vec<String>, String> {
+    let root = super::supervisor::configuration_directory()?;
+    let config = parse_config(&root, defaults)?;
+    Ok(config_warnings(&config, &root.join(CONFIG_FILE), defaults))
+}
+
 /// One warning per unknown, deprecated or renamed key of the configuration read from `path`,
 /// and per popup it configures on a focus key.
 fn config_warnings(config: &EonConfig, path: &Path, defaults: &Defaults) -> Vec<String> {

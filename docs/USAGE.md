@@ -743,6 +743,7 @@ line points agents to `eon --skill`.
 | `eon popup hide POPUP [--json]` | Hide popup `uN` of the session as its window's dismissal would: a keep-alive popup keeps running, a transient one stops, and a pending tab's Files starts the tab's first terminal at its starting directory |
 | `eon focus PANE\|left\|right\|up\|down [--json]` | Focus pane PANE, switching to its tab, or traverse the session; switch tabs with `eon tab switch` |
 | `eon versions` | Print Eon, protocol, and component identities |
+| `eon report` | Print a Markdown bug report for this window, with paths under your home as `~` and long environment values (8 bytes or more) removed, to read and then paste into the bug form; see [Troubleshooting and reporting](#troubleshooting-and-reporting) |
 | `eon update --install [--yes] [--json] [--profile ABS --entry NAME \| --prefix ABS]` | Update one eligible Nix entry on its original ref or one managed Linux prefix through its bundled installer for fresh launches; JSON/nonterminal consent requires an explicit or configured target; see [Update](#update) |
 | `eon update --check [--json] [--profile ABS --entry NAME \| --prefix ABS]` | Report this installation's owner, source and installed build, whether an update exists, and whether Eon may install it, without changing anything; see [Update](#update) |
 | `eon config path` | Create the configuration root and print the full path of its settings file, `config.toml`, which need not exist yet |
@@ -1244,10 +1245,19 @@ composition.
   environment is outside the supported boundary.
 
 Report reproducible failures in [GitHub Issues](https://github.com/Yazelix/eon/issues/new?template=bug_report.yml).
-Include `eon versions`, the relevant window from `eon window ls --json`, your
-distribution, compositor, GPU, and the exact command and error. Remove paths,
-environment values, terminal content, and credentials that should remain
-private.
+Run `eon report` from the window that failed, read it, then paste it. It prints
+the bug form's fields as Markdown: `eon versions`, the window from
+`eon window ls --json` without the window's name or busy terminals' names
+(outside Eon, the `default` window), the install route, distribution,
+compositor, configuration warnings and the last 40 lines of the newest
+supervisor log, which it names. A part it cannot determine reads `unknown`. It
+shows paths under your home as `~` and removes long environment values (8 bytes
+or more), except `XDG_CURRENT_DESKTOP`, `XDG_SESSION_TYPE`, the XDG base
+directories under your home (shown as `~` paths) and Eon's `EON_*` identifiers,
+and writes your user name as `[user]`. It reads no terminal content, but the log
+tail may still hold other private text, so read it before you share. Fill in the
+GPU, the exact steps, and the expected and actual results yourself, and attach
+the whole log when asked. Commands offers it as **Show bug report**.
 
 ### Naming a pane
 

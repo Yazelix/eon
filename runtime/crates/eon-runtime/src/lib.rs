@@ -12,6 +12,7 @@ mod pair;
 mod pane_labels;
 mod platform;
 mod quota;
+mod report;
 mod running;
 mod scrollback;
 mod session_registry;
@@ -28,6 +29,7 @@ pub use managed_environment::{
     BarLoad, Defaults, ManagedPrograms, PaddingColor, PopupCatalog, PopupCommand, PopupDefinition,
     ShellConfig, StartupAnimation, TerminalAccess, TerminalConfig, UpdateSettings, update_target,
 };
+pub use report::{ReportFacts, report_facts};
 
 #[cfg(test)]
 mod fixtures;

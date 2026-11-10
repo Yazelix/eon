@@ -87,6 +87,8 @@ names its socket. CLI JSON names a session `session` and a terminal
   `eon --version`.
   Amended on 2026-11-07 (approved by eon-overseer under Lucca's standing rule)
   by `eon-30skm` (S3): its prose says session for the product concept.
+  Amended on 2026-11-09 (approved by eon-overseer under Lucca's delegation) by
+  `eon-8uxif`: `eon report`.
 - **Consumer:** A user launching Eon or eonbase from one accepted product
   generation.
 - **Trigger:** Eon starts a new composed runtime or adopts an exact live run.
@@ -142,6 +144,19 @@ names its socket. CLI JSON names a session `session` and a terminal
     Eon version, as one line on stdout and exit successfully without starting
     children or preparing configuration or runtime state. Extra arguments are
     invalid syntax.
+  - Standalone `eon report` prints a Markdown bug report for the window it runs
+    in, or the `default` window outside Eon, to stdout and exits successfully.
+    It starts no Eon component, checks no network, and creates, changes or
+    removes no configuration or runtime state; it may run `nix profile list`
+    and, on macOS, `sw_vers`, each under a time limit. A section it cannot
+    determine reads `unknown` and the report still prints; extra arguments are
+    invalid syntax.
+    Its output shows paths under `$HOME` as `~`, replaces the user name with
+    `[user]` and every environment value of 8 bytes or more with `[redacted]`,
+    except `XDG_CURRENT_DESKTOP`, `XDG_SESSION_TYPE`, the XDG base directories
+    `XDG_CONFIG_HOME`, `XDG_DATA_HOME`, `XDG_CACHE_HOME` and `XDG_STATE_HOME`,
+    and Eon's own `EON_*` values, and never includes terminal content. Its
+    layout is not a stable interface.
   - Eon owns the cursor-tail duration default `1.5` and the optional
     `[terminal] cursor_trail_duration` multiplier in the same config file.
     Zero disables the trail while retaining the cursor color and contrasting
@@ -165,7 +180,8 @@ names its socket. CLI JSON names a session `session` and a terminal
   owns the consumed runtime. See the
   [runtime input contract](ARCHITECTURE.md#ownership-and-invocation).
 - **Proof:** `795d735a8f61ef439c56d68e1cc4d3929af0dfcf`, `eon-monorepo-2oko.6`;
-  `eon --skill`: `eon-ivge0`, whose commit is its revision.
+  `eon --skill`: `eon-ivge0`, whose commit is its revision;
+  `eon report`: `eon-8uxif`, whose commit is its revision.
   - **Qualification:** The evidence at
     `795d735a8f61ef439c56d68e1cc4d3929af0dfcf` predates the Bend Orbit import
     (`6818aee17b131b4156515c0cf3f0067020558b0f`). It is pre-Bend candidate

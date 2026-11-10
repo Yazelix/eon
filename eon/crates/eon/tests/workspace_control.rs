@@ -887,6 +887,371 @@ fn version_prints_one_line_without_preparing_anything() {
 }
 
 #[test]
+fn report_prints_a_redacted_bug_report_without_preparing_anything() {
+    let root = temporary_directory();
+    let home = root.join("home");
+    let config = home.join(".config/eon");
+    fs::create_dir_all(&config).unwrap();
+    fs::write(
+        config.join("config.toml"),
+        "[terminal]\nfuture_border_width = 3\n",
+    )
+    .unwrap();
+    let runtime = root.join("runtime");
+    let state = home.join(".local/state");
+    // Install inspection is local: a Nix it asks records the call, warns on stderr with the
+    // home and a secret, and lists one profile entry that installs this eon.
+    let package = root.join("package");
+    fs::create_dir_all(package.join("bin")).unwrap();
+    symlink(env!("CARGO_BIN_EXE_eon"), package.join("bin/eon")).unwrap();
+    let stubs = root.join("stubs");
+    fs::create_dir(&stubs).unwrap();
+    executable(
+        &stubs.join("nix"),
+        format!(
+            "#!/bin/sh\necho \"nix $*\" >> '{}'\n\
+             echo \"warning: $HOME/.nix-profile is old; $SECRET_TOKEN\" >&2\n\
+             printf '%s' '{{\"version\":3,\"elements\":{{\"eon\":{{\
+             \"originalUrl\":\"github:Yazelix/eon\",\"storePaths\":[\"{}\"]}}}}}}'\n",
+            root.join("nix-calls").display(),
+            package.display()
+        ),
+    );
+    let path = std::iter::once(stubs)
+        .chain(std::env::split_paths(&std::env::var_os("PATH").unwrap()))
+        .collect::<Vec<_>>();
+    let token = "s3cr3t-value-123";
+    let eon = |program: &Path, arguments: &[&str]| {
+        Command::new(program)
+            .args(arguments)
+            .env_clear()
+            .env("PATH", std::env::join_paths(&path).unwrap())
+            .env("HOME", &home)
+            .env("USER", "reporter")
+            .env("EON_RUNTIME_DIR", &runtime)
+            .env("SECRET_TOKEN", token)
+            .env("XDG_CURRENT_DESKTOP", "sway")
+            .env("XDG_SESSION_TYPE", "wayland")
+            .stdin(Stdio::null())
+            .output()
+            .unwrap()
+    };
+    let built = Path::new(env!("CARGO_BIN_EXE_eon"));
+    let (distribution, compositor) = if cfg!(target_os = "macos") {
+        let version = Command::new("/usr/bin/sw_vers")
+            .arg("-productVersion")
+            .output()
+            .unwrap();
+        (
+            format!(
+                "macOS {}",
+                String::from_utf8(version.stdout).unwrap().trim()
+            ),
+            "macOS".to_owned(),
+        )
+    } else {
+        // A build sandbox has no os-release: the report then names why it cannot tell.
+        let pretty = match ["/etc/os-release", "/usr/lib/os-release"]
+            .into_iter()
+            .find_map(|path| Some((path, fs::read_to_string(path).ok()?)))
+        {
+            None => {
+                "unknown (neither /etc/os-release nor /usr/lib/os-release is readable)".to_owned()
+            }
+            Some((path, os_release)) => os_release
+                .lines()
+                .find_map(|line| line.strip_prefix("PRETTY_NAME="))
+                .map(|name| name.trim().trim_matches(['"', '\'']))
+                .filter(|name| !name.is_empty())
+                .map_or_else(
+                    || format!("unknown ({path} has no PRETTY_NAME)"),
+                    str::to_owned,
+                ),
+        };
+        (pretty, "sway (wayland)".to_owned())
+    };
+    let check = |output: &Output, install: &str| -> String {
+        assert_eq!(output.status.code(), Some(0), "{output:?}");
+        assert!(output.stderr.is_empty(), "{output:?}");
+        let report = stdout(output).to_owned();
+        assert!(report.starts_with("<!-- eon report: read this before sharing it."));
+        let mut from = 0;
+        for heading in [
+            "### Eon version\n```text\neon ".to_owned(),
+            "### Window\nnone running\n".to_owned(),
+            format!("### Install route\n{install}\n"),
+            format!("### Distribution\n{distribution}\n"),
+            format!("### Compositor\n{compositor}\n"),
+            "### GPU and driver\nnot detected yet; please fill in\n".to_owned(),
+            "### Configuration warnings\n```text\neon: ignoring unknown setting \
+             terminal.future_border_width in ~/.config/eon/config.toml\n```\n"
+                .to_owned(),
+            "### Logs\n".to_owned(),
+        ] {
+            let at = report[from..]
+                .find(&heading)
+                .unwrap_or_else(|| panic!("missing {heading:?} in order:\n{report}"));
+            from += at + heading.len();
+        }
+        let home = home.to_str().unwrap();
+        assert!(!report.contains(home), "{report}");
+        assert!(!report.contains(token), "{report}");
+        assert!(!report.contains("reporter"), "{report}");
+        report
+    };
+
+    // Without logs, the Logs section is unknown and nothing is created.
+    let report = check(&eon(built, &["report"]), "Other (install_kind: unmanaged)");
+    assert!(
+        report.contains("### Logs\nunknown (cannot list ~/.local/state/eon/logs: "),
+        "{report}"
+    );
+    assert!(!state.exists());
+    assert!(!runtime.exists());
+    assert_eq!(fs::read_dir(&config).unwrap().count(), 1);
+    assert!(!root.join("nix-calls").exists());
+
+    // The report reads the newest log of its window's generation, not a newer one of another.
+    let generation = report
+        .lines()
+        .find(|line| line.starts_with("eon "))
+        .and_then(|line| line.split(' ').nth(2))
+        .unwrap()
+        .to_owned();
+    let logs = state.join("eon/logs");
+    fs::create_dir_all(&logs).unwrap();
+    let log = logs.join(format!("{generation}-1000-1.log"));
+    let lines: String = (1..=60)
+        .map(|line| {
+            format!(
+                "line {line} in {} with {token} on reporter-desktop\n",
+                home.display()
+            )
+        })
+        .collect();
+    fs::write(&log, lines).unwrap();
+    fs::write(
+        logs.join("g1-ffffffffffffffffffffffffffffffff-2000-1.log"),
+        "other generation\n",
+    )
+    .unwrap();
+    let report = check(&eon(built, &["report"]), "Other (install_kind: unmanaged)");
+    let tail = format!(
+        "### Logs\n```text\n~/.local/state/eon/logs/{generation}-1000-1.log\n{}```\n",
+        (21..=60)
+            .map(|line| format!("line {line} in ~ with [redacted] on [user]-desktop\n"))
+            .collect::<String>()
+    );
+    assert!(report.ends_with(&tail), "{report}");
+    assert!(!report.contains("other generation"));
+
+    // Started through the Nix profile that installs it, the report asks Nix and drops the
+    // warning Nix prints beside the listing.
+    let profile = home.join(".nix-profile");
+    symlink(&package, &profile).unwrap();
+    check(
+        &eon(&profile.join("bin/eon"), &["report"]),
+        "Nix profile (nix profile add) (install_kind: nix-profile)",
+    );
+    assert_eq!(
+        fs::read_to_string(root.join("nix-calls")).unwrap(),
+        format!("nix profile list --json --profile {}\n", profile.display())
+    );
+
+    // Extra arguments are invalid syntax; help stays with the help.
+    let output = eon(built, &["report", "extra"]);
+    assert_eq!(output.status.code(), Some(2), "{output:?}");
+    assert!(output.stdout.is_empty());
+    assert!(String::from_utf8_lossy(&output.stderr).contains("eon --help"));
+    let output = eon(built, &["report", "--help"]);
+    assert!(output.status.success(), "{output:?}");
+    assert!(stdout(&output).contains("  report "));
+    fs::remove_dir_all(root).unwrap();
+}
+
+/// Each entry under `root` with its type, mode, owner, size, times, link target and
+/// contents: what a change to it would change.
+fn tree_state(root: &Path) -> Vec<String> {
+    let mut entries = Vec::new();
+    let mut pending = vec![root.to_path_buf()];
+    while let Some(path) = pending.pop() {
+        let metadata = fs::symlink_metadata(&path).unwrap();
+        let file_type = metadata.file_type();
+        if file_type.is_dir() {
+            pending.extend(
+                fs::read_dir(&path)
+                    .unwrap()
+                    .map(|entry| entry.unwrap().path()),
+            );
+        }
+        entries.push(format!(
+            "{} mode={:o} uid={} size={} mtime={}.{} ctime={}.{} link={:?} contents={:?}",
+            path.display(),
+            metadata.mode(),
+            metadata.uid(),
+            metadata.size(),
+            metadata.mtime(),
+            metadata.mtime_nsec(),
+            metadata.ctime(),
+            metadata.ctime_nsec(),
+            file_type
+                .is_symlink()
+                .then(|| fs::read_link(&path).unwrap()),
+            file_type.is_file().then(|| fs::read(&path).unwrap()),
+        ));
+    }
+    entries.sort();
+    entries
+}
+
+#[test]
+fn report_leaves_an_orphaned_generation_untouched() {
+    let root = temporary_directory();
+    let home = root.join("home");
+    fs::create_dir(&home).unwrap();
+    let runtime = root.join("runtime");
+    let eon = |arguments: &[&str]| {
+        Command::new(env!("CARGO_BIN_EXE_eon"))
+            .args(arguments)
+            .env_clear()
+            .env("PATH", std::env::var_os("PATH").unwrap())
+            .env("HOME", &home)
+            .env("EON_RUNTIME_DIR", &runtime)
+            .stdin(Stdio::null())
+            .output()
+            .unwrap()
+    };
+    let versions = eon(&["versions"]);
+    assert!(versions.status.success(), "{versions:?}");
+    let current = stdout(&versions)
+        .lines()
+        .find(|line| line.starts_with("eon "))
+        .and_then(|line| line.split(' ').nth(2))
+        .unwrap()
+        .to_owned();
+    assert!(!runtime.exists());
+
+    // The current generation and an earlier one, each orphaned: its supervisor is gone, but
+    // its directory, dead socket and launcher record stay, and no lifecycle lock exists.
+    let private = |path: &Path| {
+        fs::create_dir(path).unwrap();
+        fs::set_permissions(path, fs::Permissions::from_mode(0o700)).unwrap();
+    };
+    private(&runtime);
+    private(&runtime.join("generations"));
+    for generation in [current.as_str(), "g1-ffffffffffffffffffffffffffffffff"] {
+        let directory = runtime.join("generations").join(generation);
+        private(&directory);
+        let socket = directory.join("eon.sock");
+        drop(UnixListener::bind(&socket).unwrap());
+        fs::set_permissions(&socket, fs::Permissions::from_mode(0o600)).unwrap();
+        symlink("/bin/false", directory.join("eon")).unwrap();
+        // A concurrent test's forked child shares the listener until it execs.
+        let deadline = Instant::now() + Duration::from_secs(5);
+        while UnixStream::connect(&socket).is_ok() {
+            assert!(Instant::now() < deadline, "dead socket kept accepting");
+            thread::sleep(Duration::from_millis(1));
+        }
+    }
+    let before = tree_state(&runtime);
+
+    let output = eon(&["report"]);
+    assert_eq!(output.status.code(), Some(0), "{output:?}");
+    assert!(output.stderr.is_empty(), "{output:?}");
+    assert!(
+        stdout(&output).contains("### Window\nnone running\n"),
+        "{output:?}"
+    );
+    assert_eq!(tree_state(&runtime), before);
+    assert!(
+        fs::read_dir(&runtime).unwrap().all(|entry| !entry
+            .unwrap()
+            .file_name()
+            .as_bytes()
+            .ends_with(b".lock"))
+    );
+    fs::remove_dir_all(root).unwrap();
+}
+
+#[test]
+fn report_inside_eon_never_asks_a_supervisor_about_its_caller() {
+    let root = temporary_directory();
+    let home = root.join("home");
+    fs::create_dir(&home).unwrap();
+    let runtime = root.join("runtime");
+    let eon = |arguments: &[&str]| {
+        Command::new(env!("CARGO_BIN_EXE_eon"))
+            .args(arguments)
+            .env_clear()
+            .env("PATH", std::env::var_os("PATH").unwrap())
+            .env("HOME", &home)
+            .env("EON_RUNTIME_DIR", &runtime)
+            .env("EON_TERMINAL", "terminal-1.run-1")
+            .stdin(Stdio::null())
+            .output()
+            .unwrap()
+    };
+    let versions = eon(&["versions"]);
+    assert!(versions.status.success(), "{versions:?}");
+    let current = stdout(&versions)
+        .lines()
+        .find(|line| line.starts_with("eon "))
+        .and_then(|line| line.split(' ').nth(2))
+        .unwrap()
+        .to_owned();
+
+    // The window's supervisor answers what `eon window ls` asks and records every request:
+    // validating a caller would first reconcile its terminals, which changes runtime state.
+    let listener = generation_listener(&runtime, &current);
+    let requests = Arc::new(Mutex::new(Vec::new()));
+    let recorded = Arc::clone(&requests);
+    let server_id = current.clone();
+    thread::spawn(move || {
+        loop {
+            let (mut stream, _) = listener.accept().unwrap();
+            let request = decode_request(&read_request(&mut stream)).unwrap();
+            recorded
+                .lock()
+                .unwrap()
+                .push((request.action.clone(), request.caller.clone()));
+            let response = match request.action {
+                ProtocolAction::Workspace(Action::InspectPresentation | Action::InspectRuntime) => {
+                    encode_lifecycle_response(&LifecycleResponse::Runtime(previous_runtime(
+                        &server_id,
+                    )))
+                }
+                _ => encode_response(&Response::Failure(ProtocolFailure {
+                    code: "unknown-caller".into(),
+                    detail: "not this supervisor's terminal".into(),
+                })),
+            };
+            stream.write_all(&response.unwrap()).unwrap();
+        }
+    });
+
+    let output = eon(&["report"]);
+    assert_eq!(output.status.code(), Some(0), "{output:?}");
+    let report = stdout(&output);
+    assert!(
+        report.contains(&format!("\"generation\":\"{current}\"")),
+        "{report}"
+    );
+    let requests = requests.lock().unwrap();
+    assert!(!requests.is_empty());
+    for (action, caller) in requests.iter() {
+        assert!(
+            matches!(
+                action,
+                ProtocolAction::Workspace(Action::InspectPresentation | Action::InspectRuntime)
+            ) && caller.is_none(),
+            "{action:?} from {caller:?}"
+        );
+    }
+    drop(requests);
+    fs::remove_dir_all(root).unwrap();
+}
+
+#[test]
 fn unknown_configuration_keys_warn_once_on_the_managed_cli() {
     let root = temporary_directory();
     for (directory, source, key) in [

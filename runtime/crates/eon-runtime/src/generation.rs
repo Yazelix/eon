@@ -645,10 +645,14 @@ impl GenerationRecord {
     }
 }
 
+/// Every generation of the window at `root`, current first. With
+/// `remove_dead`, a dead generation's socket, launcher record and directory
+/// are removed once its lifecycle lock is free.
 fn discover_generations(
     inputs: &Inputs,
     root: &Path,
     current: &str,
+    remove_dead: bool,
 ) -> Result<Vec<GenerationRecord>, String> {
     let component_report = inputs.component_report()?;
     if !private_directory_exists(root, "runtime directory")? {
@@ -665,6 +669,7 @@ fn discover_generations(
         &supervisor_lock_path(root, current),
         component_report,
         true,
+        remove_dead,
     )];
     for (id, path) in candidates {
         let id = id.to_string_lossy();
@@ -676,6 +681,7 @@ fn discover_generations(
                 &supervisor_lock_path(root, &id),
                 component_report,
                 true,
+                remove_dead,
             ));
         }
     }
@@ -760,7 +766,7 @@ pub(super) fn live_supervisors(
                     let id = entry.generation.clone();
                     let probe = thread::Builder::new()
                         .spawn_scoped(scope, move || {
-                            inspect_generation(&id, "previous", runtime, &lock, "", false)
+                            inspect_generation(&id, "previous", runtime, &lock, "", false, false)
                         })
                         .map_err(|error| {
                             format!("cannot start running Eon window inspection: {error}")
@@ -832,6 +838,7 @@ fn inspect_selected_generation(
         &supervisor_lock_path(root, target),
         component_report,
         true,
+        true,
     )))
 }
 
@@ -842,6 +849,7 @@ fn inspect_generation(
     lifecycle_lock: &Path,
     current_components: &str,
     cleanup: bool,
+    remove_dead: bool,
 ) -> GenerationRecord {
     if !valid_generation(id) {
         return failed_generation(
@@ -941,7 +949,7 @@ fn inspect_generation(
                     },
                 };
             }
-            if cleanup
+            if remove_dead
                 && dead
                 && let Ok(Some(_lifecycle_lock)) = try_lock_supervisor_lifecycle(lifecycle_lock)
             {
@@ -1061,6 +1069,7 @@ pub(super) fn generations_command(
         inputs,
         &runtime_directory(product),
         &current_generation(inputs)?,
+        true,
     )?;
     write_stdout(if json {
         generations_json(&records)
@@ -1149,7 +1158,7 @@ fn generations_json(records: &[GenerationRecord]) -> String {
             output.push_str(&format!("\"{}\"", json_escape(session)));
         }
         output.push_str("],\"busy\":");
-        super::workspace::json_busy(&mut output, record.busy.as_ref());
+        super::workspace::json_busy(&mut output, record.busy.as_ref(), true);
         output.push_str(&format!(
             ",\"attach\":{{\"available\":{},\"reason\":\"{}\"}},\"stop\":{{\"available\":{},\"reason\":\"{}\"}},\"detail\":\"{}\"}}",
             record.attach.available,
@@ -1171,12 +1180,20 @@ fn json_option(value: Option<&str>) -> String {
 }
 
 /// One `eon window ls --json` window (EON-C23), with no trailing newline.
-pub(super) fn window_json(record: &GenerationRecord, id: &str, short_id: &str) -> String {
+/// Without `labels`, the window's name is null and each busy terminal leaves
+/// out its name: both are labels a person sees, which can come from a title or
+/// directory.
+pub(super) fn window_json(
+    record: &GenerationRecord,
+    id: &str,
+    short_id: &str,
+    labels: bool,
+) -> String {
     let mut output = format!(
         "{{\"id\":\"{}\",\"short_id\":\"{}\",\"name\":{},\"current\":{},\"generation\":\"{}\",\"state\":\"{}\",\"compatible\":{},\"eon_version\":{},\"workspace_protocol\":{},\"started_at\":{},\"terminals\":[",
         json_escape(id),
         json_escape(short_id),
-        json_option(record.name.as_deref()),
+        json_option(record.name.as_deref().filter(|_| labels)),
         record.current(),
         json_escape(&record.id),
         record.state,
@@ -1196,7 +1213,7 @@ pub(super) fn window_json(record: &GenerationRecord, id: &str, short_id: &str) -
         output.push_str(&format!("\"{}\"", json_escape(session)));
     }
     output.push_str("],\"busy\":");
-    super::workspace::json_busy(&mut output, record.busy.as_ref());
+    super::workspace::json_busy(&mut output, record.busy.as_ref(), labels);
     output.push_str(&format!(
         ",\"attach\":{{\"available\":{},\"reason\":\"{}\"}},\"stop\":{{\"available\":{},\"reason\":\"{}\"}},\"executable\":{},\"detail\":\"{}\",\"component_report\":{}}}",
         record.attach.available,
@@ -1349,12 +1366,14 @@ pub(super) fn generation_running(
 }
 
 /// The generations of the window at `root` whose supervisor has not ended,
-/// current first.
+/// current first, removing what dead ones left when `remove_dead`.
 pub(super) fn running_generations(
     inputs: &Inputs,
     root: &Path,
+    remove_dead: bool,
 ) -> Result<Vec<GenerationRecord>, String> {
-    let mut records = discover_generations(inputs, root, &current_generation(inputs)?)?;
+    let mut records =
+        discover_generations(inputs, root, &current_generation(inputs)?, remove_dead)?;
     records.retain(|record| record.state != "dead");
     Ok(records)
 }
@@ -1362,7 +1381,7 @@ pub(super) fn running_generations(
 /// The generation `eon window attach` presents: current unless it has ended,
 /// else the window's one other running generation.
 pub(super) fn window_generation(inputs: &Inputs, id: &str, root: &Path) -> Result<String, Error> {
-    let records = running_generations(inputs, root)?;
+    let records = running_generations(inputs, root, true)?;
     if let Some(selected) = preferred_window_generation(
         &current_generation(inputs)?,
         &records
@@ -1702,7 +1721,7 @@ pub(super) fn stop_generations(
     json: bool,
     ask: &Ask,
 ) -> Result<i32, String> {
-    let mut records = discover_generations(inputs, root, &current_generation(inputs)?)?;
+    let mut records = discover_generations(inputs, root, &current_generation(inputs)?, true)?;
     // The CLI may itself be running inside current; stop that generation last.
     records.sort_by_key(|record| record.kind == "current");
     if json {
@@ -1943,8 +1962,15 @@ mod tests {
         }
         symlink("/bin/false", directory.join("eon")).unwrap();
         let lock = supervisor_lock_path(&base, id);
-        let record =
-            super::inspect_generation(id, "previous", directory.clone(), &lock, "test", false);
+        let record = super::inspect_generation(
+            id,
+            "previous",
+            directory.clone(),
+            &lock,
+            "test",
+            false,
+            false,
+        );
         assert_eq!(record.state, "dead");
         assert!(
             super::live_supervisors(
@@ -2061,6 +2087,46 @@ mod tests {
             .unwrap()
             .0,
             "Quit window eon? It stops 2 terminals; 5 still running: Agent and 4 more. [y/N] "
+        );
+    }
+
+    #[test]
+    fn window_json_leaves_out_labels_only_when_asked() {
+        use eon_workspace_protocol::v38::{BusyTerminal, TargetId, TerminalTarget};
+        let mut record = super::dead_generation("g1", "current", "/runtime".into(), "ended");
+        record.name = Some("client-acme-window".into());
+        record.busy = Some(BusyTerminals {
+            terminals: vec![BusyTerminal {
+                target: TerminalTarget {
+                    workspace: "s1".into(),
+                    tab: "t1".into(),
+                    id: TargetId::Pane("p3".into()),
+                    terminal: "terminal-3".into(),
+                },
+                name: "p3  ~/client-acme".into(),
+            }],
+            omitted: 2,
+        });
+        let listed: serde_json::Value =
+            serde_json::from_str(&super::window_json(&record, "default", "default", true)).unwrap();
+        assert_eq!(listed["name"], "client-acme-window");
+        assert_eq!(listed["busy"]["terminals"][0]["name"], "p3  ~/client-acme");
+        let reported = super::window_json(&record, "default", "default", false);
+        assert!(!reported.contains("client-acme"), "{reported}");
+        let reported: serde_json::Value = serde_json::from_str(&reported).unwrap();
+        assert_eq!(reported["name"], serde_json::Value::Null);
+        assert_eq!(
+            reported["busy"],
+            serde_json::json!({
+                "terminals": [{
+                    "session": "s1",
+                    "tab": "t1",
+                    "pane": "p3",
+                    "popup": null,
+                    "terminal": "terminal-3",
+                }],
+                "omitted": 2,
+            })
         );
     }
 
@@ -2211,6 +2277,7 @@ mod tests {
                     &crate::fixtures::inputs(),
                     &inspection_root,
                     &current_generation(&crate::fixtures::inputs()).unwrap(),
+                    true,
                 ))
                 .unwrap();
         });
@@ -2240,6 +2307,7 @@ mod tests {
             &crate::fixtures::inputs(),
             &root,
             &current_generation(&crate::fixtures::inputs()).unwrap(),
+            true,
         )
         .unwrap();
         assert!(!dead.exists());

@@ -135,6 +135,7 @@ const RUNNER_COMMANDS: &[(&str, &[&str], RunnerOutput)] = {
             Keep,
         ),
         ("Show versions", &["versions"], Keep),
+        ("Show bug report", &["report"], Keep),
         ("Check for updates", &["update", "--check"], Keep),
         ("Install update", &["update", "--install"], Keep),
         ("Show config path", &["config", "path"], Keep),
@@ -286,6 +287,14 @@ fn pick_and_run_command(inputs: &Inputs) -> Result<(i32, RunnerOutput), String> 
         unsafe { libc::signal(libc::SIGINT, previous_int) };
         status
             .map_err(|error| format!("cannot run eon update: {error}"))?
+            .code()
+            .unwrap_or(1)
+    } else if arguments[0] == "report" {
+        // The product answers `eon report`, as it does `eon update`.
+        Command::new("eon")
+            .args(arguments)
+            .status()
+            .map_err(|error| format!("cannot run eon report: {error}"))?
             .code()
             .unwrap_or(1)
     } else {
@@ -822,13 +831,7 @@ fn execute(inputs: &Inputs, arguments: Vec<OsString>) -> Result<i32, Error> {
             Ok(0)
         }
         [command] if command == "versions" => {
-            write_stdout(format!(
-                "eon {} {}\neonw {}\n{}\n",
-                inputs.version,
-                current_generation(inputs)?,
-                VERSION,
-                inputs.component_report()?
-            ))?;
+            write_stdout(versions(inputs)?)?;
             Ok(0)
         }
         [command, action] if command == "config" && action == "path" => print_config_path(true),
@@ -844,6 +847,17 @@ fn execute(inputs: &Inputs, arguments: Vec<OsString>) -> Result<i32, Error> {
         _ => return Err(Error::usage(EON_USAGE)),
     };
     Ok(result?)
+}
+
+/// `eon versions`'s output: Eon's version and generation, EONW's version and the components'.
+pub(super) fn versions(inputs: &Inputs) -> Result<String, String> {
+    Ok(format!(
+        "eon {} {}\neonw {}\n{}\n",
+        inputs.version,
+        current_generation(inputs)?,
+        VERSION,
+        inputs.component_report()?
+    ))
 }
 
 fn registry_command(arguments: &[OsString]) -> Result<i32, Error> {
@@ -1105,6 +1119,7 @@ const HELP_SECTIONS: &[(&str, &[(&str, &str)])] = &[
         &[
             ("anima [STYLE] [CHILD OPTIONS...]", "Play an animation here"),
             ("versions", "Show exact component versions"),
+            ("report", "Print a bug report to paste"),
             (
                 "update --check [--json]",
                 "Check this install for an update",

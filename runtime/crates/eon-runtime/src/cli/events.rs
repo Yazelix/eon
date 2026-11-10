@@ -641,6 +641,7 @@ fn state_json(snapshot: Option<&wire::WindowSnapshot>, tabs: &[wire::Tabs]) -> S
                 omitted: 0,
             })
             .as_ref(),
+        true,
     );
     let tabs = array(
         &tabs

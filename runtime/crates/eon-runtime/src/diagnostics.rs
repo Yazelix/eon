@@ -9,7 +9,7 @@ use super::{
 use std::{
     collections::HashSet,
     fs::{self, File},
-    io::{self, Read, Write},
+    io::{self, Read, Seek, SeekFrom, Write},
     os::unix::fs::{DirBuilderExt, MetadataExt, OpenOptionsExt, PermissionsExt},
     path::{Path, PathBuf},
     process,
@@ -302,15 +302,79 @@ fn prune_by<K: Ord>(
 /// Deletes all but the newest `keep` Eon logs, skipping logs a live supervisor holds.
 fn prune(directory: &Path, keep: usize) {
     prune_by(directory, keep, |entry| {
-        let name = entry.file_name();
-        let mut fields = name.to_str()?.strip_suffix(".log")?.rsplitn(3, '-');
-        let pid = fields.next()?.parse::<u32>().ok()?;
-        let seconds = fields.next()?.parse::<u64>().ok()?;
-        fields
-            .next()
-            .filter(|generation| valid_generation(generation))?;
+        let (_, seconds, pid) = log_fields(entry.file_name().to_str()?)?;
         Some((seconds, pid))
     });
+}
+
+/// The generation, start second and PID that an Eon log's name records.
+fn log_fields(name: &str) -> Option<(&str, u64, u32)> {
+    let mut fields = name.strip_suffix(".log")?.rsplitn(3, '-');
+    let pid = fields.next()?.parse().ok()?;
+    let seconds = fields.next()?.parse().ok()?;
+    let generation = fields
+        .next()
+        .filter(|generation| valid_generation(generation))?;
+    Some((generation, seconds, pid))
+}
+
+/// The newest of the Eon logs `names` that `generation` wrote, else the newest of all.
+fn newest_log_name<'a>(names: &[&'a str], generation: Option<&str>) -> Option<&'a str> {
+    let newest = |of: Option<&str>| {
+        names
+            .iter()
+            .filter_map(|name| Some((log_fields(name)?, *name)))
+            .filter(|((written, ..), _)| of.is_none_or(|of| of == *written))
+            .max_by_key(|((_, seconds, pid), _)| (*seconds, *pid))
+            .map(|(_, name)| name)
+    };
+    generation
+        .and_then(|generation| newest(Some(generation)))
+        .or_else(|| newest(None))
+}
+
+/// The last `lines` lines of `text`.
+fn tail(text: &str, lines: usize) -> String {
+    let all: Vec<&str> = text.lines().collect();
+    all[all.len().saturating_sub(lines)..]
+        .iter()
+        .map(|line| format!("{line}\n"))
+        .collect()
+}
+
+/// The newest supervisor log of `generation`, else the newest of any, with its last
+/// `lines` lines. It reads the log directory without creating or pruning anything.
+pub(super) fn newest_log(
+    generation: Option<&str>,
+    lines: usize,
+) -> Result<(PathBuf, String), String> {
+    let directory = state_directory()
+        .map(|state| state.join("logs"))
+        .ok_or("neither XDG_STATE_HOME nor HOME is an absolute path")?;
+    let entries = fs::read_dir(&directory)
+        .map_err(|error| format!("cannot list {}: {error}", directory.display()))?;
+    let names: Vec<String> = entries
+        .flatten()
+        .filter(|entry| entry.file_type().is_ok_and(|kind| kind.is_file()))
+        .filter_map(|entry| entry.file_name().into_string().ok())
+        .collect();
+    let names: Vec<&str> = names.iter().map(String::as_str).collect();
+    let path = directory.join(
+        newest_log_name(&names, generation)
+            .ok_or_else(|| format!("no supervisor log in {}", directory.display()))?,
+    );
+    let mut file = fs::OpenOptions::new()
+        .read(true)
+        .custom_flags(libc::O_NOFOLLOW | libc::O_NONBLOCK)
+        .open(&path)
+        .map_err(|error| format!("cannot open {}: {error}", path.display()))?;
+    let length = file.metadata().map_or(0, |metadata| metadata.len());
+    let mut bytes = Vec::new();
+    file.seek(SeekFrom::Start(length.saturating_sub(LOG_BYTES)))
+        .and_then(|_| file.take(LOG_BYTES).read_to_end(&mut bytes))
+        .map_err(|error| format!("cannot read {}: {error}", path.display()))?;
+    let text = tail(&String::from_utf8_lossy(&bytes), lines);
+    Ok((path, text))
 }
 
 fn prune_orbit(directory: &Path, keep: usize) {
@@ -420,7 +484,7 @@ pub fn bench_tracing() -> bool {
 
 #[cfg(test)]
 mod tests {
-    use super::{DiagnosticLog, LOG_BYTES, create, prune};
+    use super::{DiagnosticLog, LOG_BYTES, create, newest_log_name, prune, tail};
     use std::{
         fs::{self, File},
         os::unix::fs::{PermissionsExt, symlink},
@@ -492,6 +556,37 @@ mod tests {
         assert!(root.join("target").exists());
         drop(live);
         fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn report_reads_the_newest_log_of_the_generation_else_of_any() {
+        const OTHER: &str = "g1-fedcba9876543210fedcba9876543210";
+        let names = [
+            format!("{GENERATION}-100-7.log"),
+            format!("{GENERATION}-100-9.log"),
+            format!("{GENERATION}-99-50.log"),
+            format!("{OTHER}-200-1.log"),
+            "notes.log".to_string(),
+            format!("{GENERATION}-300-x.log"),
+        ];
+        let names: Vec<&str> = names.iter().map(String::as_str).collect();
+        let pick = |generation| newest_log_name(&names, generation);
+        assert_eq!(
+            pick(Some(GENERATION)),
+            Some(format!("{GENERATION}-100-9.log").as_str())
+        );
+        // A generation without logs, and no generation, take the newest of any.
+        let newest = format!("{OTHER}-200-1.log");
+        assert_eq!(
+            pick(Some("g1-00000000000000000000000000000000")),
+            Some(newest.as_str())
+        );
+        assert_eq!(pick(None), Some(newest.as_str()));
+        assert_eq!(newest_log_name(&["notes.log"], None), None);
+
+        assert_eq!(tail("a\nb\nc\n", 2), "b\nc\n");
+        assert_eq!(tail("a\nb", 5), "a\nb\n");
+        assert_eq!(tail("", 5), "");
     }
 
     #[test]

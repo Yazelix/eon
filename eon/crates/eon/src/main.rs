@@ -1,4 +1,5 @@
 mod product;
+mod report;
 mod update;
 
 use std::process::ExitCode;
@@ -6,14 +7,17 @@ use std::process::ExitCode;
 fn main() -> ExitCode {
     let inputs = product::inputs();
     let arguments: Vec<_> = std::env::args_os().collect();
+    let invoked = || update::Build {
+        version: Some(inputs.version.into()),
+        build: eon_runtime::build_identity(&inputs).ok(),
+        revision: None,
+        platform: eon_manifest::target().map(Into::into),
+    };
     if update::wanted(&arguments) {
-        let invoked = update::Build {
-            version: Some(inputs.version.into()),
-            build: eon_runtime::build_identity(&inputs).ok(),
-            revision: None,
-            platform: eon_manifest::target().map(Into::into),
-        };
-        return ExitCode::from(update::run(&arguments, invoked, &inputs.defaults));
+        return ExitCode::from(update::run(&arguments, invoked(), &inputs.defaults));
+    }
+    if report::wanted(&arguments) {
+        return ExitCode::from(report::run(&arguments, invoked(), &inputs));
     }
     let (product, result) = eon_runtime::run(inputs);
     match result {

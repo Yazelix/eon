@@ -4,21 +4,22 @@ body:
   - type: markdown
     attributes:
       value: |
-        Thanks for reporting. Before you submit, remove paths, environment
+        Thanks for reporting. Run `eon report` and paste its sections into
+        the fields below. Before you submit, remove paths, environment
         values, terminal content and credentials that should stay private.
   - type: textarea
     id: versions
     attributes:
       label: Eon version
-      description: Paste the full output of `eon versions`. It names every component.
+      description: Paste the lines of the Eon version block of `eon report`, or the full output of `eon versions`. It names every component.
       render: text
     validations:
       required: true
-  - type: input
+  - type: textarea
     id: generation
     attributes:
       label: Window
-      description: The relevant window from `eon window ls --json`, if the bug involves running work.
+      description: The Window section of `eon report`, or the relevant window from `eon window ls --json`, if the bug involves running work.
     validations:
       required: false
   - type: dropdown
@@ -28,6 +29,7 @@ body:
       options:
         - Nix profile (nix profile add)
         - Flake input (NixOS, Home Manager or another flake)
+        - Eon installer (eon-install)
         - Other
     validations:
       required: false

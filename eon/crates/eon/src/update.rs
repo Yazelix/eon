@@ -85,6 +85,7 @@ pub(crate) fn run(arguments: &[OsString], invoked: Build, defaults: &eon_runtime
         curl: env::var_os("EON_CURL")
             .map(PathBuf::from)
             .filter(|path| path.is_absolute()),
+        nix_diagnostics: true,
     };
     let report = match &request.selection {
         Ok(_) if config_error.is_some() => {
@@ -147,6 +148,29 @@ pub(crate) fn run(arguments: &[OsString], invoked: Build, defaults: &eon_runtime
         eprintln!("eon update: {}", error.message);
     }
     report.status()
+}
+
+/// The EON-C41 `install_kind` of this `eon`, started as `program`, by local inspection
+/// alone, or why inspection failed. `eon report` prints it; it never reaches the network.
+pub(crate) fn install_kind(program: &OsStr, invoked: Build) -> Result<&'static str, String> {
+    let system = System {
+        version: env!("CARGO_PKG_VERSION"),
+        curl: None,
+        // The report prints only what it redacts, so a warning Nix gives
+        // beside a listing it could read is dropped.
+        nix_diagnostics: false,
+    };
+    let report = inspect(
+        None,
+        invoked,
+        &Places::of_this_process(program),
+        &system,
+        SystemTime::now(),
+    );
+    match report.error {
+        Some(error) => Err(error.message),
+        None => Ok(report.install_kind),
+    }
 }
 
 struct Request {
@@ -379,6 +403,9 @@ struct System {
     version: &'static str,
     /// The composition's pinned curl, `EON_CURL`.
     curl: Option<PathBuf>,
+    /// Whether what Nix prints on stderr beside a successful listing goes to
+    /// stderr.
+    nix_diagnostics: bool,
 }
 
 fn curl_ca_configured(value: impl Fn(&str) -> Option<OsString>) -> bool {
@@ -404,7 +431,7 @@ impl Host for System {
         let diagnostics = String::from_utf8_lossy(&output.stderr);
         let diagnostics = diagnostics.trim();
         if output.status.success() {
-            if !diagnostics.is_empty() {
+            if self.nix_diagnostics && !diagnostics.is_empty() {
                 eprintln!("{diagnostics}");
             }
             Ok(output.stdout)
@@ -486,7 +513,7 @@ impl Host for System {
     }
 }
 
-enum Bounded {
+pub(crate) enum Bounded {
     Spawn(std::io::Error),
     Wait(std::io::Error),
     TimedOut(Duration),
@@ -496,7 +523,11 @@ enum Bounded {
 impl Bounded {
     /// The failure's reason: `missing` when the program cannot start,
     /// `timed_out` when it overran, `failed` when it could not be waited for.
-    fn trouble(self, [missing, timed_out, failed]: [&'static str; 3], program: &str) -> Trouble {
+    pub(crate) fn trouble(
+        self,
+        [missing, timed_out, failed]: [&'static str; 3],
+        program: &str,
+    ) -> Trouble {
         match self {
             Bounded::Interrupted => ("interrupted", format!("{program} interrupted")),
             Bounded::Spawn(error) => (missing, format!("cannot run {program}: {error}")),
@@ -511,7 +542,7 @@ impl Bounded {
 
 /// Runs `command` without input, collecting its output, and kills it once
 /// `limit` passes.
-fn bounded(mut command: Command, limit: Duration) -> Result<Output, Bounded> {
+pub(crate) fn bounded(mut command: Command, limit: Duration) -> Result<Output, Bounded> {
     let mut child = owned_child(&mut command)
         .stdin(Stdio::null())
         .stdout(Stdio::piped())
