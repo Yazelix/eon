@@ -142,6 +142,81 @@
             root = ./.;
             fileset = crateFiles;
           };
+          # Preserve the workspace graph, replacing only selected crates with real files.
+          packageSource =
+            paths:
+            if pkgs.stdenv.isLinux then
+              let
+                workspace = (builtins.fromTOML (builtins.readFile ./Cargo.toml)).workspace;
+                dependencyTables =
+                  cargo:
+                  map (kind: cargo.${kind} or { }) [
+                    "dependencies"
+                    "build-dependencies"
+                    "dev-dependencies"
+                  ];
+                pathDependencies =
+                  path:
+                  let
+                    cargo = builtins.fromTOML (builtins.readFile (path + "/Cargo.toml"));
+                    tables =
+                      dependencyTables cargo
+                      ++ lib.concatMap dependencyTables (builtins.attrValues (cargo.target or { }));
+                  in
+                  lib.concatMap (
+                    dependencies:
+                    lib.concatLists (
+                      lib.mapAttrsToList (
+                        name: dependency:
+                        let
+                          inherited = builtins.isAttrs dependency && (dependency.workspace or false);
+                          value = if inherited then workspace.dependencies.${name} else dependency;
+                          root = if inherited then ./. else path;
+                        in
+                        lib.optional (builtins.isAttrs value && value ? path) (root + "/${value.path}")
+                      ) dependencies
+                    )
+                  ) tables;
+                required = builtins.genericClosure {
+                  startSet = map (path: { key = path; }) paths;
+                  operator = entry: map (path: { key = path; }) (pathDependencies entry.key);
+                };
+                missing = builtins.filter (entry: !(builtins.elem entry.key paths)) required;
+                # An unused parent can contain a selected crate; remove only nested members.
+                unused = builtins.filter (
+                  path:
+                  !(builtins.elem path paths)
+                  && lib.any (selected: lib.hasPrefix "${toString selected}/" (toString path)) paths
+                ) (map (member: ./. + "/${member}") workspace.members);
+                realSource = lib.fileset.toSource {
+                  root = ./.;
+                  fileset = lib.fileset.difference (lib.fileset.intersection crateFiles (
+                    lib.fileset.unions (
+                      [
+                        ./Cargo.toml
+                        ./Cargo.lock
+                      ]
+                      ++ paths
+                    )
+                  )) (lib.fileset.unions unused);
+                };
+                source = craneLib.mkDummySrc {
+                  src = crateSource;
+                  extraDummyScript = ''
+                    chmod -R u+w "$out"
+                    cp -R ${realSource}/. "$out"
+                  '';
+                };
+              in
+              assert lib.assertMsg (missing == [ ])
+                "packageSource omits path dependencies: ${
+                  lib.concatMapStringsSep ", " (entry: toString entry.key) missing
+                }";
+              assert lib.assertMsg (source.name == "source") "packageSource must unpack to /build/source";
+              source
+            else
+              crateSource;
+          # Generation identity digests every component, so Eon retains the full source set.
           workspaceSource = lib.fileset.toSource {
             root = ./.;
             fileset = lib.fileset.unions [
@@ -394,7 +469,10 @@
             buildWorkspacePackage {
               pname = workspacePackages.orbit;
               inherit (orbitIdentity) version;
-              src = crateSource;
+              src = packageSource [
+                ./orbit
+                ./orbit/crates/protocol
+              ];
               cargoLock = workspaceCargoLock;
               outputs = [
                 "out"
@@ -509,7 +587,11 @@
             buildWorkspacePackage ({
               pname = workspacePackages.venus;
               inherit (venusIdentity) version;
-              src = crateSource;
+              src = packageSource [
+                ./venus
+                ./orbit/crates/protocol
+                ./runtime/crates/eon-workspace-protocol
+              ];
               cargoLock = workspaceCargoLock;
               cargoBuildFlags = [
                 "--package"
@@ -1158,7 +1240,10 @@
           macProof = rustPlatform.buildRustPackage {
             pname = "mac-proof";
             inherit ((builtins.fromTOML (builtins.readFile ./eon/tools/mac-proof/Cargo.toml)).package) version;
-            src = crateSource;
+            src = packageSource [
+              ./eon/tools/mac-proof
+              ./orbit/crates/protocol
+            ];
             cargoLock = workspaceCargoLock;
             cargoBuildFlags = [
               "--package"
@@ -1186,7 +1271,10 @@
           benchPackage = buildWorkspacePackage {
             pname = "eon-bench";
             inherit ((builtins.fromTOML (builtins.readFile ./eon/tools/eon-bench/Cargo.toml)).package) version;
-            src = crateSource;
+            src = packageSource [
+              ./eon/tools/eon-bench
+              ./orbit/crates/protocol
+            ];
             cargoLock = workspaceCargoLock;
             cargoBuildFlags = [
               "--package"

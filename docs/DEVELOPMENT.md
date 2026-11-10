@@ -873,8 +873,12 @@ Nix builds Orbit, Venus, Eon and eonbase from the in-tree crates with the root
 `Cargo.lock`. A workspace component's path must hold the expected Cargo package
 at its manifest version. Any in-tree change selects a new generation through
 Eon's [source-tree digest](ARCHITECTURE.md#in-tree-package-selection); a Cargo
-checkout also hashes its docs and assets. Cargo needs every workspace member,
-so Nix rebuilds Orbit and Venus after edits under `eon/` or `runtime/` too.
+checkout also hashes its docs and assets. On Linux, Nix gives Orbit and Venus
+their real crates and transitive workspace dependencies, with crane stand-ins
+for the other members. An Eon or runtime-library source edit leaves Orbit and
+Venus unchanged; EONW edits rebuild Venus. Manifest and target-structure changes
+can still invalidate the shared dependency cache. Eon retains the full source
+set for its generation digest, and Darwin retains its existing source path.
 
 `nix build .#manual-bundle` assembles the unpublished Linux direct candidate
 from the relinked tree described below. Its [manual delivery
