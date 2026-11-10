@@ -124,8 +124,12 @@ for one zero-payload semantic action without a new dependency or adapter.
 
 ### GPU and text
 
-- **Selected shape:** wgpu 30.0.0 with Vulkan and WGSL only; glyphon 0.12.0 with its
-  cosmic-text 0.19.0 re-export; pollster 1.0.1 for bounded initialization
+- **Selected shape:** wgpu 30.0.0 with WGSL shaders and only the Vulkan backend
+  (Metal on macOS) for rendering; glyphon 0.12.0 with its cosmic-text 0.19.0
+  re-export; pollster 1.0.1 for bounded initialization. wgpu's `noop` backend is
+  also compiled in, so tests reuse the release build's wgpu: wgpu uses it only when
+  it is enabled explicitly, which production Venus never does; the headless glyphon
+  preparation test in `src/render/tests/text_clip.rs` does
 - **Status:** Active on Linux/Vulkan
 - **Owner consequence:** Venus owns a small rectangle/decorations pipeline and a
   textured-quad pipeline for terminal images (VEN-C31), which draws each terminal's images
