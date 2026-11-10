@@ -13,6 +13,12 @@ installation, and proven contract changes.
   key or another command changes visibility at the same moment. With keyboard
   focus in the sidebar, Tab reaches Hide and Enter or Space activates it
   (`eon-5g0e5`).
+- The Nix-free Linux install is the README's first install route. From v0.2.0
+  each GitHub release carries the Linux archive, the `eon-install` installer,
+  `SHA256SUMS` signed with the Eon release key, and GitHub build attestations
+  for those three files. The README and the installer guide give the commands, the
+  checks and the limits of the published install; Nix stays supported
+  (`eon-igae.15.2`).
 
 - Untimed benchmark traces on macOS retry a full receiver instead of losing
   records. A stalled collector times out once, then drops with loss accounting

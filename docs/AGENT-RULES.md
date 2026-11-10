@@ -268,8 +268,11 @@ TypeScript of its own.
 
 ## Composition and Distribution
 
-Use Nix as the sole published installation and composition channel until the
-user approves publishing another. Keep runtime ownership distribution-neutral:
+Publish Eon through two channels: Nix, and for x86_64 Linux the signed
+Nix-free archive and installer on GitHub releases (approved by Lucca,
+2026-11-06). Publish no other channel until the user approves it. Nix stays
+the one composition channel: it builds the Nix-free archive from the same
+component graph. Keep runtime ownership distribution-neutral:
 Nix may supply store paths as opaque component launch inputs, but Eon code must
 not construct store paths, persist them as component identity, query the Nix
 store, or invoke a Nix evaluator during normal operation.
@@ -285,8 +288,8 @@ signatures, and attestations are the artifact authority.
 Treat x86_64 Linux on native Wayland as Eon's only proved product and
 distribution platform. `aarch64-darwin` is the only approved expansion and
 remains Nix-only during initial proof; `EON-C7` owns its support status.
-Additional Linux architectures, X11, Xwayland, Intel macOS, signing,
-notarization, direct bundles, and other release channels require separate
+Additional Linux architectures, X11, Xwayland, Intel macOS, macOS signing,
+notarization and direct bundles, and other release channels require separate
 scope and proof. Keep platform mechanics at the existing Orbit, Venus, Eon
 runtime, and Nix composition owners; do not add a second component graph or
 generic compatibility framework.

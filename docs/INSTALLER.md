@@ -1,9 +1,11 @@
 # Linux bundle installer
 
-`nix build .#installer` builds the static `eon-install` development bootstrap.
-The installer consumes the [manual Linux bundle](MANUAL-BUNDLE.md); it neither
-composes packages nor runs Nix. No public installer or release signer is published.
-Normal installation remains Nix-based.
+`eon-install` is Eon's static Linux installer. From v0.2.0 each
+[GitHub release](https://github.com/Yazelix/eon/releases) publishes it as
+`eon-install-x86_64-linux` beside the [Linux archive](MANUAL-BUNDLE.md) it
+installs; `nix build .#installer` builds the same program from source. The
+installer neither composes packages nor runs Nix. Eon also installs
+[through Nix](DISTRIBUTION.md#nix-channel).
 
 The target is x86_64 Linux on native Wayland, with the bundle's documented
 [host prerequisites](MANUAL-BUNDLE.md#execution-and-host-boundary).
@@ -15,45 +17,65 @@ check and kill its entire process group if it hangs. Rust, Nix, tar and zstd
 commands are unnecessary on the target machine. `ssh-keygen`, `curl` and
 `timeout` are found through PATH and execute as the same user as the installer.
 
-## Inspect and install
+## Install a release
 
-Inspect the source in `installer/src/`, then build the bootstrap and read its help:
+A release's directory, `https://github.com/Yazelix/eon/releases/download/vVERSION/`,
+holds the exact archive `eon-VERSION-x86_64-linux.tar.zst`, the installer,
+`SHA256SUMS` over both and its OpenSSH signature `SHA256SUMS.sig`
+([release assets](#release-assets)). The installer trusts one thing: the
+signer record you pass with `--signers`. It must authorize identity
+`eon-release` in signature namespace `eon-bundle`.
 
-```sh
-nix run .#installer -- --help
-```
-
-An approved release must supply an exact immutable archive URL, `SHA256SUMS`
-and its OpenSSH `SHA256SUMS.sig` in the same release directory. Obtain the
-approved `allowed_signers` record independently of those downloaded files.
-It must authorize identity `eon-release` in signature namespace `eon-bundle`.
-An accompanying downloaded public key alone is not a trust anchor.
-
-Create the signer record only after authenticating the release public key through
-an independent trusted channel. For example, with that authenticated key saved
-as `TRUSTED_RELEASE_KEY.pub`:
+Write that record from the Eon release public key, which is printed here and
+in the [README](../README.md#linux-without-nix):
 
 ```sh
 mkdir -p "$HOME/.config/eon"
-{ printf 'eon-release namespaces="eon-bundle" '; cat TRUSTED_RELEASE_KEY.pub; } \
-  > "$HOME/.config/eon/allowed_signers"
+echo 'eon-release namespaces="eon-bundle" ssh-ed25519 RELEASE_PUBLIC_KEY' > "$HOME/.config/eon/allowed_signers"
 chmod 600 "$HOME/.config/eon/allowed_signers"
 ```
 
-Pass its absolute path as `--signers "$HOME/.config/eon/allowed_signers"`.
+Take the key from this page or the README, never from a file downloaded beside
+the archive: an accompanying downloaded public key alone is not a trust
+anchor. Lucca holds the release signing key.
+
+Pass the record's absolute path as `--signers "$HOME/.config/eon/allowed_signers"`.
 The installer requires an absolute signer path and refuses a missing, unreadable,
 empty or invalid signer file before downloading anything or creating a prefix.
 OpenSSH parses the record and checks for `eon-release`; signature verification
-still authorizes the downloaded checksums. This setup never downloads or trusts a key
-alongside the archive; Lucca holds the release signing key.
+still authorizes the downloaded checksums. The installer never downloads or
+trusts a key alongside the archive.
 
-For a future approved release, replace `HTTPS_ARCHIVE` and `ALLOWED_SIGNERS`
-below with that exact HTTPS URL and your trusted local signer record:
+Download the installer, check it against the signed checksums, then install
+with a dry run first, as one chain:
 
 ```sh
-eon-install install HTTPS_ARCHIVE --signers ALLOWED_SIGNERS --dry-run
-eon-install install HTTPS_ARCHIVE --signers ALLOWED_SIGNERS
+v=0.2.0
+base=https://github.com/Yazelix/eon/releases/download/v$v
+curl -fL --remote-name-all "$base/eon-install-x86_64-linux" "$base/SHA256SUMS" "$base/SHA256SUMS.sig" &&
+  ssh-keygen -Y verify -f "$HOME/.config/eon/allowed_signers" -I eon-release -n eon-bundle -s SHA256SUMS.sig < SHA256SUMS &&
+  sha256sum -c --ignore-missing SHA256SUMS &&
+  chmod +x eon-install-x86_64-linux &&
+  ./eon-install-x86_64-linux install "$base/eon-$v-x86_64-linux.tar.zst" --signers "$HOME/.config/eon/allowed_signers" --dry-run &&
+  ./eon-install-x86_64-linux install "$base/eon-$v-x86_64-linux.tar.zst" --signers "$HOME/.config/eon/allowed_signers"
 ```
+
+From the download on, each step runs only if the one before it passed, so a
+download that fails either check is never executed. Keep the checks and the installer in one
+chain: the dry run executes the downloaded program too, and a repeated
+download keeps an earlier file's executable bit.
+
+The signature check shows that the release key signed the checksums, and
+`sha256sum -c` shows that the installer matches them; `--ignore-missing` skips
+the archive, which the installer downloads and checks itself. With the GitHub
+CLI, `gh attestation verify eon-install-x86_64-linux -R Yazelix/eon` also
+shows that this repository's release workflow built the file. That check needs
+network access, and the installer does not run it. To inspect before
+installing, read the source in `installer/src/`; run the downloaded
+installer's `--help` only after both checks pass.
+
+The commands later in this guide write `eon-install` for that downloaded
+file.
 
 Dry-run downloads and verifies the signed checksum and archive bytes without
 changing the installation prefix. Actual installation additionally validates
@@ -225,6 +247,37 @@ If interruption leaves a newly created prefix without its ownership marker,
 inspect that incomplete directory and remove it manually before retrying;
 the installer refuses to adopt an unmarked directory.
 
+## Limits of the published install
+
+The Nix-free install was qualified narrowly
+(`eon-qualify-nix-free-linux-public-beta-lm9p`; `eon-igae.15.3` for the
+v0.2.0 release assets):
+
+- **Machines:** checked only in QEMU virtual machines with software rendering
+  (Mesa lavapipe). A physical GPU is expected to work but is not yet tested
+  from the archive; proprietary NVIDIA drivers and hybrid graphics are not yet
+  tested.
+- **Desktops:** checked under Sway only. GNOME, KDE and COSMIC sessions are
+  expected to work but are not yet tested from the archive.
+- **Distributions:** the v0.2.0 release assets were checked on Fedora 44; an
+  earlier build was checked on Fedora 44 and Ubuntu 26.04.1. Other
+  distributions that meet the
+  [host prerequisites](MANUAL-BUNDLE.md#execution-and-host-boundary) are
+  expected to work but are not yet tested. Only x86_64 is built.
+- **glibc:** nothing checks the 2.39 floor at install or launch; on an older
+  glibc a program can fail when it starts.
+- **Screen readers:** Orca was not exercised from the archive.
+- **Agents:** the checks ran without agent accounts, so the Agent popup and
+  the quota chips were not exercised from the archive.
+- **eonbase:** the archive has no eonbase; it is available only through Nix.
+- **Interrupted install:** it can leave a `.eon-stage-*` directory in the
+  prefix ([Failure and recovery](#failure-and-recovery)).
+- **Restart:** restarting the machine ends live terminals, as in the Nix
+  channel.
+
+Reports from other machines are welcome:
+[open an issue](https://github.com/Yazelix/eon/issues/new).
+
 ## Retained development proof
 
 This proof used archives of the bundle's earlier Bubblewrap mechanism, which the
@@ -246,21 +299,23 @@ static bootstrap and signed installation under
 `~/.local/state/eon/proofs/eon-installer-review2-2026-10-11-2u3zxw74/`.
 It retains the earlier delivery/lifecycle proof for unchanged runtime behavior.
 
-## Website copy for an approved release
+## Website copy
 
-Draft for `eonterm.com`, pending publication and approval of the release trust anchor:
+Copy for `eonterm.com`, which `eon-7cf0y.23` applies:
 
-Download the reviewed Linux bootstrap `eon-install-x86_64-linux` and inspect
-its source. Use the independently approved Eon signer record to install an
-exact release from `https://github.com/Yazelix/eon/releases/download/APPROVED_TAG/`.
-That immutable release must provide `eon-VERSION-x86_64-linux.tar.zst`,
-`eon-install-x86_64-linux`, `SHA256SUMS` and `SHA256SUMS.sig`. Run the install
-command with `--dry-run` first. Run the installed `PREFIX/bin/eon` on native
-Wayland; Nix is unnecessary.
+Download the Linux installer `eon-install-x86_64-linux` from
+`https://github.com/Yazelix/eon/releases/download/vVERSION/` and check it
+against the release's signed `SHA256SUMS` with the Eon release public key.
+That immutable release provides `eon-VERSION-x86_64-linux.tar.zst`,
+`eon-install-x86_64-linux`, `SHA256SUMS` and `SHA256SUMS.sig`. The archive,
+the installer and `SHA256SUMS` each have a GitHub build attestation; the
+signature, which the maintainer adds afterwards, has none. Run the install
+command with `--dry-run` first. Run
+the installed `PREFIX/bin/eon` on native Wayland; Nix is unnecessary.
 Upgrades and removal keep old payloads and live terminals. Manual download,
 verification and extraction remain available.
 
-`APPROVED_TAG` and `VERSION` are placeholders, not published releases.
-Public release signing, redistribution obligations and Nix-free install
-qualification retain their separate gates. The development proof uses a
-disposable signer.
+`VERSION` names the release being installed. The published payload's
+redistribution obligations keep their
+[separate gate](MANUAL-BUNDLE.md#installer-and-publication-handoff). The
+retained development proof used a disposable signer.

@@ -79,10 +79,11 @@ test client before Venus exists. Venus can use recorded protocol fixtures and a
 reference Orbit server before Eon exists. Eon can use pinned component
 artifacts and command-line checks before it gains a polished installer.
 
-Eon currently uses Nix as its sole published composition and installation
-channel. Publishing a direct channel needs accepted delivery proof and a
-separate user decision, which keeps installer and archive maintenance off the
-published path.
+Nix is Eon's one composition channel and its first installation channel. From
+v0.2.0 Eon also publishes a signed Nix-free Linux archive and installer, which
+Nix builds from the same component graph
+([distribution](DISTRIBUTION.md#goals)). Publishing any other channel needs
+accepted delivery proof and a separate user decision.
 
 The Apple Silicon macOS expansion reuses the same frontier: Orbit proves
 `ORB-C14`, Venus extends `VEN-C16` against that exact revision, and Eon then

@@ -796,7 +796,7 @@ bundle_prefix = "/home/me/.local/share/eon/install"
 allowed_signers = "/home/me/.config/eon/allowed_signers"
 ```
 
-See [independent signer setup](INSTALLER.md#inspect-and-install).
+See [independent signer setup](INSTALLER.md#install-a-release).
 Checks run only when requested. Install requires consent; in JSON or without
 a terminal, pass `--yes` and set an explicit or configured target. Channel,
 automatic installation/restart and custom manager commands are fixed by the

@@ -37,9 +37,53 @@ where you left it.
 
 ## Get started
 
-You need **x86_64 Linux on native Wayland**, Git, and Nix with flakes enabled.
-From v0.2.0, an Apple Silicon Mac with macOS 14 or later also works, as a
-[preview](#status-and-limits). Install the latest release, 0.1.16:
+You need **x86_64 Linux on native Wayland**. From v0.2.0, an Apple Silicon Mac
+with macOS 14 or later also works, through Nix, as a
+[preview](#status-and-limits).
+
+### Linux, without Nix
+
+Every release publishes a Linux archive and a small static installer as
+[GitHub release assets](https://github.com/Yazelix/eon/releases), with SHA-256
+checksums signed by the Eon release key and GitHub build attestations for the
+archive, the installer and the checksum file. Your system needs glibc 2.39 or
+newer, a Vulkan driver, `curl`, and `ssh-keygen` from OpenSSH 8.9 or newer
+([all prerequisites](docs/MANUAL-BUNDLE.md#execution-and-host-boundary)).
+Install 0.2.0:
+
+```sh
+v=0.2.0
+base=https://github.com/Yazelix/eon/releases/download/v$v
+mkdir -p ~/.config/eon && cd "$(mktemp -d)"
+echo 'eon-release namespaces="eon-bundle" ssh-ed25519 RELEASE_PUBLIC_KEY' > ~/.config/eon/allowed_signers
+curl -fL --remote-name-all "$base/eon-install-x86_64-linux" "$base/SHA256SUMS" "$base/SHA256SUMS.sig"
+ssh-keygen -Y verify -f ~/.config/eon/allowed_signers -I eon-release -n eon-bundle -s SHA256SUMS.sig < SHA256SUMS &&
+  sha256sum -c --ignore-missing SHA256SUMS &&
+  chmod +x eon-install-x86_64-linux &&
+  ./eon-install-x86_64-linux install "$base/eon-$v-x86_64-linux.tar.zst" --signers ~/.config/eon/allowed_signers
+```
+
+The `echo` line saves the Eon release public key. The next lines check that
+the installer you downloaded matches the checksums that key signed, and the
+installer then checks the archive the same way before it installs anything.
+With the GitHub CLI, `gh attestation verify eon-install-x86_64-linux -R
+Yazelix/eon` also confirms that this repository's release workflow built the
+file.
+
+The installer ends by printing `Run PREFIX/bin/eon`. Start Eon with that
+path, or add that `bin` directory to your PATH; the installer changes no shell
+startup file. The prefix is `$XDG_DATA_HOME/eon/install` when `XDG_DATA_HOME`
+holds an absolute path, and `~/.local/share/eon/install` when it is unset,
+empty or relative. To update later, set the two `[updates]` keys shown in
+[Update](docs/USAGE.md#update), then run `eon update --install`. The
+[installer guide](docs/INSTALLER.md) covers a dry run, another prefix,
+rollback and removal; the [manual bundle guide](docs/MANUAL-BUNDLE.md) covers
+checking and extracting the archive by hand.
+
+### With Nix
+
+With Git and Nix with flakes enabled, on Linux or an Apple Silicon Mac,
+install the latest release, 0.1.16:
 
 ```sh
 nix profile add --refresh github:Yazelix/eon/main
@@ -55,6 +99,8 @@ Windows already running keep their version until you close them. Tags such as
 `v0.1.12` name one exact release and never update; if you installed from one,
 run `nix profile remove eon` once, then the install line above.
 
+### First run
+
 Run `eon`. After a short animation (most keys skip it), pick a directory: press
 Enter for a Zoxide match, or Tab to browse with Yazi and Alt+Enter to use a
 folder. A terminal opens there.
@@ -65,9 +111,10 @@ Drag that app to the Dock to keep it there. A plain `nix profile` install
 exposes the bundle in the profile; it does not copy it into `/Applications`.
 Home Manager and nix-darwin users can use their existing application
 integration; see [distribution](docs/DISTRIBUTION.md#nix-channel).
-The no-argument Finder/Dock launch and a click while Eon runs remain unproved;
-the [macOS proof](docs/DEVELOPMENT.md#macos-proof-harness) describes the pending
-native lifecycle work.
+Opening Eon from Finder or the Dock with no terminal, and clicking its Dock
+icon while it runs, are not yet tested; the
+[macOS proof](docs/DEVELOPMENT.md#macos-proof-harness) describes the work that
+remains.
 
 | Shortcut | Action |
 |---|---|
@@ -103,13 +150,22 @@ coverage.
 ## Status and limits
 
 Eon is in alpha: commands, configuration and behavior may still change between
-releases. v0.2.0 enters beta. It installs only through Nix for now. It was
-proved on COSMIC and private Sway before the move to one repository. Here,
-installed checks so far run on a private headless Sway, plus a brief COSMIC
-launch check; the full desktop proofs and the bounded Orca
+releases. v0.2.0 enters beta. On Linux it installs without Nix or through Nix;
+the Mac preview installs through Nix. It was proved on COSMIC and private Sway
+before the move to one repository. Here, installed checks so far run on a
+private headless Sway, plus a brief COSMIC launch check; the full desktop
+proofs and the bounded Orca
 [reader qualification](docs/CONTRACTS.md#eon-c8--durable-tab-and-pane-workspace)
 await re-proof. Other compositors, non-systemd hosts and proprietary NVIDIA
 drivers are unproved. Restarting the machine ends live terminals.
+
+**Linux without Nix:** this release was checked from its GitHub release on
+Fedora 44, and an earlier build on Ubuntu 26.04, both in virtual machines with
+software rendering under Sway. GNOME, KDE and COSMIC sessions, physical GPUs
+and other distributions with glibc 2.39 or newer are expected to work but are
+not yet tested from the archive; reports welcome. The archive leaves out
+eonbase, which stays Nix-only. The installer guide lists
+[every limit](docs/INSTALLER.md#limits-of-the-published-install).
 
 **Mac (preview):** From v0.2.0, Eon runs on Apple Silicon Macs as a preview,
 installed with the same Nix command; until v0.2.0 is out, install
@@ -139,7 +195,7 @@ welcome: [open an issue](https://github.com/Yazelix/eon/issues/new).
 - [Using Eon](docs/USAGE.md): session controls, commands, Anima, eonbase and troubleshooting.
 - [Configuration](docs/CONFIGURATION.md): terminal, shell, popups, agent quota and managed tools.
 - [Distribution](docs/DISTRIBUTION.md): Nix composition, the binary cache and release policy.
-- [Manual Linux bundle](docs/MANUAL-BUNDLE.md) and [Linux installer](docs/INSTALLER.md): unpublished Nix-free candidates.
+- [Linux installer](docs/INSTALLER.md) and [manual Linux bundle](docs/MANUAL-BUNDLE.md): the Nix-free install, its trust checks, rollback and removal.
 - [Changelog](CHANGELOG.md): accepted user-visible changes.
 
 ## Contributing

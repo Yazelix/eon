@@ -4,13 +4,18 @@ Orbit, Venus, Eon and Eon Runtime commit hashes from before 2026-10-14 in this
 file identify revisions outside this repository: history, not proof.
 Upstream project revisions keep their usual meaning.
 
-`nix build .#manual-bundle` produces the development archive
-`eon-VERSION-x86_64-linux.tar.zst`, where VERSION is the Eon package version;
-`nix build .#release` adds the installer and `SHA256SUMS` as a release carries
-them ([release assets](INSTALLER.md#release-assets)). Nix builds the artifact;
-the extracted entrypoint requires no installed Nix, store, daemon or evaluator.
-This unpublished candidate targets x86_64 Linux native Wayland. Normal
-installation remains Nix-based; Nix-free install qualification is separate.
+`eon-VERSION-x86_64-linux.tar.zst` is Eon's Nix-free Linux archive, where
+VERSION is the Eon package version. From v0.2.0 each
+[GitHub release](https://github.com/Yazelix/eon/releases) publishes it with
+the installer, `SHA256SUMS` and its signature
+([release assets](INSTALLER.md#release-assets)). `nix build .#manual-bundle`
+produces the same archive from source, and `nix build .#release` adds the
+installer and `SHA256SUMS`. Nix builds the artifact; the extracted entrypoint
+requires no installed Nix, store, daemon or evaluator. The archive targets
+x86_64 Linux native Wayland. The [installer](INSTALLER.md#install-a-release)
+is the usual way to install it and lists the
+[limits](INSTALLER.md#limits-of-the-published-install) of the published
+install; this page describes the archive itself and manual extraction.
 
 ## Execution and host boundary
 
@@ -58,14 +63,20 @@ Orbit's existing CLI requires UTF-8 child arguments in both delivery modes.
 The payload carries every other library its components link, plus their fonts,
 terminfo and data. It leaves out glibc, Mesa and Wayland's libraries, and what
 only they reach, such as LLVM. Hardware GPU compatibility, a minimum kernel,
-specific distros, X11/Xwayland and non-systemd qualification are not
-established.
+X11/Xwayland and non-systemd qualification are not established; the installer
+guide names the [distributions checked](INSTALLER.md#limits-of-the-published-install).
 
 ## Verification before extraction
 
-An approved release must supply an immutable archive, signed checksums, source
-receipt and independently trusted signer record. In a POSIX shell, verify the
-signature and files before extraction or execution:
+Each release directory,
+`https://github.com/Yazelix/eon/releases/download/vVERSION/`, holds the
+immutable archive, `SHA256SUMS` and its signature `SHA256SUMS.sig`; the source
+receipt is inside the archive. Write the signer record `allowed_signers` from
+the Eon release public key as the
+[installer guide](INSTALLER.md#install-a-release) shows; a key downloaded
+beside the archive is not a trust anchor. In a POSIX shell, download the three
+files, then verify the signature and the archive before extraction or
+execution:
 
 ```sh
 ssh-keygen -Y verify -f allowed_signers -I eon-release -n eon-bundle -s SHA256SUMS.sig < SHA256SUMS
@@ -75,9 +86,13 @@ tar --zstd -xf eon-VERSION-x86_64-linux.tar.zst
 ./eon-VERSION-x86_64-linux/eon
 ```
 
-The retained candidate uses a disposable proof key whose private part was
-removed. Its accompanying public key alone supplies no release authority.
-Lucca's approved release trust anchor remains a publication prerequisite.
+The signature check shows that the release key signed the checksums, and
+`sha256sum -c` shows that the archive matches them. With the GitHub CLI,
+`gh attestation verify eon-VERSION-x86_64-linux.tar.zst -R Yazelix/eon`
+additionally shows that this repository's release workflow built the archive.
+Published releases are signed with the release key Lucca holds. The retained
+development candidate used a disposable proof key whose private part was
+removed; it carries no release authority.
 
 Inside the archive, `component-manifest.json` and `flake.lock` are exact
 producer inputs. `provenance.json` schema 3 binds their SHA-256 values, the
@@ -149,16 +164,14 @@ installer no longer accepts.
 
 Existing component notices remain in the payload, and Eon's license is carried
 at the archive root. The payload's programs and libraries are modified builds:
-relinking changes their interpreter and library search paths. Publication still
-requires the exact payload's complete notice and source obligations, including
-for these modified files and the launcher's statically linked dependencies, to
-be resolved. An inventory and proof key do not establish public redistribution
-clearance.
+relinking changes their interpreter and library search paths. The published
+payload's complete notice and source obligations, including for these modified
+files and the launcher's statically linked dependencies, remain a separate
+open gate: the notices in the payload do not by themselves establish
+redistribution clearance.
 
-Draft manual-download copy for a separately approved release: Download the
-immutable Linux archive, signed checksums and source receipt from the approved
-release. Verify them with the trusted release signer before extracting. Run
-the extracted `eon` on native Wayland with glibc 2.39 or newer and a Vulkan
-driver; Nix, root and user namespaces are unnecessary. Keep the selected payload
-while its terminals are running.
-No website, release asset or installer is published by this development slice.
+Manual-download copy: Download the immutable Linux archive, `SHA256SUMS` and
+`SHA256SUMS.sig` from the release. Verify them with the Eon release public key
+before extracting. Run the extracted `eon` on native Wayland with glibc 2.39
+or newer and a Vulkan driver; Nix, root and user namespaces are unnecessary.
+Keep the selected payload while its terminals are running.

@@ -2,15 +2,17 @@
 
 ## Supported environment
 
-Eon is in alpha and installs only through Nix. The supported product
-target is **x86_64 Linux on native Wayland**. From v0.2.0, Apple Silicon Macs
+Eon is in alpha. On Linux it installs without Nix or through Nix. The
+supported product target is **x86_64 Linux on native Wayland**. From v0.2.0, Apple Silicon Macs
 with macOS 14 or later run Eon as a preview; the
 [README](../README.md#status-and-limits) lists its known issues.
 
 Before installing, you need:
 
-- Git and Nix with flakes enabled; and
-- on Linux, a native Wayland session.
+- on Linux, a native Wayland session; and
+- for a Nix install, Git and Nix with flakes enabled. The Nix-free Linux
+  install has its own
+  [host prerequisites](MANUAL-BUNDLE.md#execution-and-host-boundary).
 
 Venus draws with `wgpu` on Vulkan: a hardware adapter uses the GPU, and Mesa
 lavapipe can render in software.
@@ -26,13 +28,15 @@ Nix channel, makes no stability promise and is not full support.
 [EON-C7](CONTRACTS.md#eon-c7--native-linux-wayland-and-apple-silicon-macos)
 records what is proved there, and the README lists its
 [known issues](../README.md#status-and-limits).
-X11, Xwayland, ARM Linux, Intel macOS, direct bundles, Home Manager installation,
+X11, Xwayland, ARM Linux, Intel macOS, macOS direct bundles, Home Manager installation,
 background updates, and release automation are unsupported. Restarting the
 machine ends live terminal process state.
 
 ## Install and start
 
-Install the latest release, 0.1.16:
+On Linux, the [README](../README.md#linux-without-nix) and the
+[installer guide](INSTALLER.md#install-a-release) install Eon without Nix.
+With Nix, install the latest release, 0.1.16:
 
 ```sh
 nix profile add --refresh github:Yazelix/eon/main

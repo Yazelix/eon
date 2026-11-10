@@ -2,17 +2,18 @@
 
 ## Goals
 
-Eon currently uses Nix as its sole published installation and composition
-channel. This keeps installer and archive maintenance off the published path
-until the user approves another channel.
+Eon publishes through two channels. Nix is the first, and it also composes
+and builds every artifact. From v0.2.0 the second is the signed Nix-free Linux
+archive and [installer](INSTALLER.md) on GitHub releases, which Lucca approved
+on 2026-11-06. Any other channel needs the user's approval.
 
-The current accepted channel targets x86_64 Linux on native Wayland. Apple
+Both channels target x86_64 Linux on native Wayland. Apple
 Silicon macOS is the only approved expansion: from v0.2.0 it ships as a
-labelled preview through the same Nix-only channel, outside any stability
+labelled preview through the Nix channel only, outside any stability
 promise, as
 [EON-C7](CONTRACTS.md#eon-c7--native-linux-wayland-and-apple-silicon-macos)
-states. Another Linux architecture, X11, Xwayland, Intel macOS, signing,
-notarization, direct bundles, and macOS distribution outside Nix need
+states. Another Linux architecture, X11, Xwayland, Intel macOS, macOS signing
+and notarization, and macOS distribution outside Nix need
 separate scope and proof.
 
 Eon's Nix Orbit package explicitly selects `LIBGHOSTTY_VT_SYS_CPU=baseline`.
@@ -27,8 +28,8 @@ re-proof here, so non-systemd native Wayland remains unproved. Eon and Orbit req
 Linux lifecycle uses bounded PTY process-group shutdown and direct-child
 reaping; deliberately detached processes may survive terminal stop.
 
-Direct installation remains the long-term adoption path. It begins after Nix
-dogfood proves a useful product and the user approves distribution graduation.
+Direct installation remains the long-term adoption path. It began after Nix
+dogfood proved a useful product and the user approved distribution graduation.
 Every channel consumes the same component graph and preserves runtime semantics.
 
 ## Phase policy
@@ -127,19 +128,22 @@ manual Nix-free x86_64 Linux native-Wayland bundle, then its thin user-local
 installer, then qualify that Nix-free install. The accepted decision candidate
 predates this repository; `eon-p93` records its exact revisions and artifact,
 the exact graph, and scoped proof reuse including reader and lifecycle evidence.
-Normal installation remains Nix-only. The unpublished
-[manual bundle](MANUAL-BUNDLE.md) and [installer](INSTALLER.md) proved the
-unpublished direct-delivery lifecycle under EON-C5/C6 before consolidation;
-that proof awaits re-proof in this repository. Nix-free install
-qualification, release trust and redistribution clearance remain separate gates.
+The [manual bundle](MANUAL-BUNDLE.md) and [installer](INSTALLER.md) proved the
+direct-delivery lifecycle under EON-C5/C6 before consolidation and before
+publication; that proof awaits re-proof in this repository (`eon-igae.7.3`).
 
-On 2026-10-16 the user resumed `eon-qualify-nix-free-linux-public-beta-lm9p`,
-which qualifies the Nix-free Linux install. Accepted bundle and installer proof
-does not change the Nix channel or authorize publication.
+`eon-qualify-nix-free-linux-public-beta-lm9p` qualified the Nix-free Linux
+install and recorded a Go on 2026-10-21, with the
+[limits](INSTALLER.md#limits-of-the-published-install) the installer guide
+lists. On 2026-11-06 Lucca approved publishing it with the first beta release
+(`eon-igae.15`): GitHub release assets on Yazelix/eon, SHA-256 checksums signed
+with the release key, and GitHub artifact attestations. Redistribution
+clearance for the published payload remains a separate gate.
 
 Lucca Huguet owns manual releases when he chooses, using existing local locked
-Nix builds and Rust manifest validation. No additional release framework,
-composition graph or hosted job is selected. Additional hosted spending is $0,
+Nix builds and Rust manifest validation. No additional release framework or
+composition graph is selected; the one hosted job is the manually dispatched
+[release workflow](INSTALLER.md#release-assets). Additional hosted spending is $0,
 with no promised support response time. Failed staging leaves the prior
 installation usable. Upgrades retain executables and payloads needed by live
 work or defer replacement; no Orbit/machine restart persistence is promised.
@@ -152,7 +156,7 @@ bundle measurements. The manual bundle must measure actual costs and prove
 artifact verification and clean non-Nix execution. Material cost/capacity
 excess, paid services, added ownership, verification failure or portability
 failure reopens the decision; staying Nix-only is the fallback. Publication
-requires separate approval plus its delivery and qualification gates.
+was approved separately on 2026-11-06, after the qualification Go.
 
 On 2026-10-10 the user accepted the demonstrated
 [Orca #757](https://gitlab.gnome.org/GNOME/orca/-/work_items/757) Say All
@@ -356,8 +360,8 @@ assembles the product without copying subsystem behavior.
 
 ### Nix
 
-Nix supplies the first and sole published channel for reproducible composition,
-source builds, development, and dogfood. The flake consumes the canonical
+Nix supplies the first published channel and the one channel for reproducible
+composition, source builds, development, and dogfood. The flake consumes the canonical
 component manifest and owns no product behavior.
 
 The initial slice should support one installation path. Home Manager can follow
@@ -372,20 +376,20 @@ non-Nix native-Wayland environment.
 over that artifact, with a versioned user prefix, atomic `current` link,
 verified dry-run, active-work-safe upgrade/rollback and owned removal. It
 retains every payload and edits no shell profile. Both await re-proof with the
-relinked payload. Qualification of the Nix-free install and its publication
-follow separate gates.
+relinked payload. The Nix-free install was qualified separately and is
+published from v0.2.0 as GitHub release assets
+([installer](INSTALLER.md#install-a-release)).
 
 A manual download and extraction path remains available beside the installer.
 
-Nix remains supported when the direct channel arrives. Direct-install users do
+Nix remains supported beside the direct channel. Direct-install users do
 not need Nix, and Nix users receive the same accepted component set.
 
 ## Website
 
-Until a Nix-free install is published, `eonterm.com` can explain Eon and label
-Nix as the required path. After accepted delivery proof and publication
-approval, the site can publish direct Linux installation instructions. GitHub
-release assets or another immutable object store remain the authority for
+From v0.2.0 the Nix-free install is published, so `eonterm.com` can carry
+direct Linux installation instructions beside the Nix path. GitHub release
+assets remain the authority for
 binaries, checksums, signatures, attestations, and historical versions.
 
 The site should keep copy-and-paste install commands inspectable. A convenience

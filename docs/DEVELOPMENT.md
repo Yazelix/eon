@@ -883,8 +883,8 @@ Venus unchanged; EONW edits rebuild Venus. Manifest and target-structure changes
 can still invalidate the shared dependency cache. Eon retains the full source
 set for its generation digest, and Darwin retains its existing source path.
 
-`nix build .#manual-bundle` assembles the unpublished Linux direct candidate
-from the relinked tree described below. Its [manual delivery
+`nix build .#manual-bundle` assembles the Linux direct archive, the one each
+release publishes, from the relinked tree described below. Its [manual delivery
 contract](MANUAL-BUNDLE.md) records verification, host prerequisites, native
 proof and publication limits. `nix build .#release` (`nix/release.nix`) adds
 the static installer and one `SHA256SUMS` over both: the files the

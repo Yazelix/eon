@@ -355,8 +355,11 @@ names its socket. CLI JSON names a session `session` and a terminal
   owned selectors. All payloads remain at their original paths to preserve
   live work; no automatic pruning or runtime-liveness owner is introduced.
 - **Boundary:** `eon-p93` approves one Linux bundle and installer development
-  sequence. Normal installation remains Nix-based; public release trust,
-  qualification and publication retain separate gates and explicit approval.
+  sequence. Lucca approved publishing it on 2026-11-06 (`eon-igae.15`): from
+  v0.2.0 each release carries the archive, the installer, `SHA256SUMS`, its
+  OpenSSH signature and GitHub build attestations as GitHub release assets.
+  Nix remains a supported channel. Other platforms, architectures and package
+  formats keep separate gates and explicit approval.
 - **Proof:** Pending re-proof in this repository.
   - **Environment:** Not repeated after consolidation.
   - **Evidence:** Before consolidation, `eon-prove-manual-nix-free-linux-bundle-216b`
@@ -373,8 +376,8 @@ names its socket. CLI JSON names a session `session` and a terminal
     (`6818aee17b131b4156515c0cf3f0067020558b0f`). It is pre-Bend candidate
     evidence, not proof of the current component set. Later evidence below
     applies only to its named revision, platform, artifact and surface.
-- **Open gates:** Publication, release trust, exact redistribution obligations
-  and qualification of the Nix-free install remain separate.
+- **Open gates:** The published payload's exact redistribution obligations
+  remain a separate gate.
 - **Open proof:** The pre-Bend bundle evidence remains candidate evidence;
   eon-igae.7.3 owns its exact-revision assessment or beta-candidate
   re-proof.
@@ -390,8 +393,9 @@ names its socket. CLI JSON names a session `session` and a terminal
 - **Important failures:** A channel-specific compatibility graph or hidden
   component substitution is rejected.
 - **Owner:** Eon distribution composition consuming EON-C2.
-- **Boundary:** The manual and installed candidates remain unpublished;
-  ordinary installation uses Nix. Nix-free delivery retains its own proof.
+- **Boundary:** From v0.2.0 the Nix-free Linux archive and installer are
+  published as GitHub release assets beside the Nix channel. Nix-free delivery
+  retains its own proof.
 - **Host inputs:** The direct Linux bundle takes glibc (its loader,
   libraries, NSS modules and locales), `libgcc_s`, Venus's
   `libwayland-client` and the Vulkan driver from the host as declared
@@ -429,8 +433,9 @@ names its socket. CLI JSON names a session `session` and a terminal
 - **Result:** Eon uses native Wayland on x86_64 Linux and the native macOS host
   on `aarch64-darwin`, without requiring a particular init or service manager.
   Both consume the same component graph, orchestration path, session
-  contracts, and Nix-only channel while platform mechanics remain with
-  their existing owners. Each channel names its proved architectures and launch
+  contracts, and Nix channel while platform mechanics remain with
+  their existing owners. x86_64 Linux also has the Nix-free release channel
+  of EON-C5. Each channel names its proved architectures and launch
   environments.
   On Apple Silicon macOS, the Nix Eon package includes Eon.app. Opening that
   bundle from Finder or the Dock starts the same selected Eon composition as
