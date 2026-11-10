@@ -2865,13 +2865,14 @@ mod tests {
             || {},
         );
         let mut subscription = eon.subscription();
+        // Darwin rejects options once the subscription thread closes Venus's last socket descriptor.
+        subscription
+            .set_read_timeout(Some(Duration::from_secs(5)))
+            .unwrap();
         write_subscription(&mut subscription, &subscribed());
         eon.answer_refresh(&workspace_snapshot());
         drop(transport);
 
-        subscription
-            .set_read_timeout(Some(Duration::from_secs(5)))
-            .unwrap();
         let mut rest = Vec::new();
         subscription.read_to_end(&mut rest).unwrap();
         // The worker finishes an exchange already begun, then makes no more.
