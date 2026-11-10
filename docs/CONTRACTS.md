@@ -1315,6 +1315,9 @@ names its socket. CLI JSON names a session `session` and a terminal
   Amended on 2026-11-09 (approved by Lucca, relayed by eon-overseer) by
   `eon-cglv2.1`: `eon tab switch TAB [--json]` selects a tab as a click does,
   and `eon focus` takes a pane, not a tab.
+  Amended on 2026-11-10 (approved by eon-overseer under Lucca's standing
+  rule) by `eon-el45.1`: `tab create --worktree` and the `eon worktree`
+  commands are EON-C42's.
 - **Consumer:** One local CLI or approved composition controlling a live Eon
   supervisor.
 - **Trigger:** The client submits one versioned session or supervisor-lifecycle
@@ -1345,8 +1348,8 @@ names its socket. CLI JSON names a session `session` and a terminal
     and `eonbase` exit 0 on success, 1 when a command is refused or
     fails, 2 for invalid command lines and argument syntax (including
     `invalid-tab` and `malformed-action`), 3 when a named tab, pane, terminal,
-    popup, generation or window is missing or stale or a window ID prefix
-    matches several windows (EON-C23), 4 when the supervisor is
+    popup, generation, window or worktree is missing or stale or a window ID
+    prefix matches several windows (EON-C23), 4 when the supervisor is
     missing or unreachable, 5 when `eon pane send` is refused because a person
     is typing, with nothing sent (EON-C36), and 130 on interrupt, identically
     with and without `--json`. The CLI projection derives the status from the
@@ -1437,7 +1440,12 @@ names its socket. CLI JSON names a session `session` and a terminal
     selected pane, any shown popup and desktop focus stay as they are. The
     reply's tab list ends with the new tab. An unavailable DIR, the tab
     limit, or a command that cannot start refuses the command with exit 1 and
-    changes nothing. `--no-focus` and `-- COMMAND` require `--dir`.
+    changes nothing. `--no-focus` and `-- COMMAND` require `--dir` or
+    `--worktree`.
+  - `eon tab create --worktree NAME`, `eon worktree ls` and `eon worktree remove`
+    are EON-C42's. `tab create --worktree` sends the same request as
+    `tab create --dir` with the new worktree as DIR; the worktree commands send
+    no mutation. `--worktree` excludes `--dir`.
   - The JSON reply of `pane create`, `edit` and `tab create`, in every form
     above, names what it started in `created`: `{"tab": "tN", "pane": "pN"}`,
     the new pane and its tab, or the new tab and its one pane, with `pane`
@@ -2635,6 +2643,8 @@ names its socket. CLI JSON names a session `session` and a terminal
   by `eon-30skm` (S3): its prose says session for the product concept.
   Amended on 2026-11-09 (approved by Lucca on 2026-11-09, relayed by
   eon-overseer) by `eon-fv1j0`: a launch's `--dir` is t1's launch directory.
+  Amended on 2026-11-10 (approved by eon-overseer under Lucca's standing
+  rule) by `eon-el45.1`: the worktree tab pointer (EON-C42).
 - **Consumer:** One local Eon session user creating tabs and panes.
 - **Trigger:** Eon creates or recovers a session, creates a tab or pane, or an
   approved same-user client explicitly retargets one live tab.
@@ -2661,6 +2671,9 @@ names its socket. CLI JSON names a session `session` and a terminal
     exposing identity plus bounded path context to accessibility.
   - Same-boot recovery assigns synthetic `t1` the replacement supervisor's
     launch directory as fresh policy and never infers prior policy from a pane.
+  - A worktree tab (EON-C42) is a tab whose launch directory is the root of a Git
+    worktree. Runtime stores nothing else about it; the Boundary's "persistence"
+    is unchanged.
 - **Important failures:** Empty, relative, NUL-containing, oversized, missing,
   non-directory, unknown-tab, or stale-tab updates change nothing. Once a path
   passes validation, later disappearance leaves its policy value stored; a
@@ -2707,6 +2720,9 @@ names its socket. CLI JSON names a session `session` and a terminal
   Amended on 2026-11-09 (approved by Lucca on 2026-11-09, relayed by
   eon-overseer) by `eon-fv1j0`: launch flags `--dir` and `--no-anima`, and
   `tab create --dir` in place of `--directory`.
+  Amended on 2026-11-10 (approved by eon-overseer under Lucca's standing
+  rule) by `eon-el45.1`: `tab create --worktree` skips the pending
+  pair (EON-C42).
 - **Consumer:** One person starting or using full Eon.
 - **Trigger:** Eon needs the first pane for a new tab, or the person presses
   Alt+Z or Alt+Shift+Y.
@@ -2764,8 +2780,9 @@ names its socket. CLI JSON names a session `session` and a terminal
     without starting a pane; when it is the final tab, the close acts as
     EON-C8's final-tab close.
   - `eon tab create --dir DIR` skips the pending pair: its tab is
-    never pending and its first pane starts at DIR (EON-C10). A bare `eon
-    tab create` and Venus's new-tab action keep the pending pair.
+    never pending and its first pane starts at DIR (EON-C10).
+    `eon tab create --worktree NAME` (EON-C42) skips it the same way. A bare
+    `eon tab create` and Venus's new-tab action keep the pending pair.
   - `--dir DIR` on `eon`, `eon run` or `eon window new` starts a fresh window
     whose t1 is never pending: there is no pair and so no startup Anima, and
     its first pane starts at DIR. A relative DIR is made absolute against the
@@ -5644,3 +5661,235 @@ names its socket. CLI JSON names a session `session` and a terminal
     processes/layout/version/focus and retained payload remain, then launch B.
   - Configuration: parser/defaults fixtures cover unset/override/conflicting
     targets, relative paths and missing trust, with matching docs/defaults.
+
+## EON-C42 — Worktree tabs
+
+- **Status:** Planned (`eon-el45.1`), approved on 2026-11-10 by eon-overseer
+  under Lucca's standing rule to decide unless critical. Nothing is
+  implemented.
+- **Consumer:** A person, or an agent or script running as that person, who starts a piece
+  of work in its own Git worktree, lists the worktrees of a repository, and removes one.
+- **Trigger:**
+  - `eon tab create --worktree NAME [--base REF] [--no-focus] [--json] [-- COMMAND [ARGS...]]`;
+  - `eon worktree ls [--json]`;
+  - `eon worktree remove NAME|PATH [--ignored] [--yes] [--json]`.
+- **Result:**
+  - **Terms.**
+    - *Repository*: the Git repository whose work tree contains the caller's working
+      directory. Its *main worktree* is the first entry of Git's worktree list.
+    - *Worktree*: a linked worktree of that repository. The main worktree is never one.
+    - *Marker*: the file `eon-worktree` in a worktree's own Git directory (the path Git
+      gives for it there). Eon writes it once, when it creates the worktree. It holds four
+      lines: `version 1`, `branch <full ref name>`, `base <base>` and `created <Unix
+      seconds>`. Git deletes it with the worktree, and a worktree made any other way has
+      none.
+    - *Managed worktree*: a worktree with a marker Eon can read. Being managed does not
+      depend on what is checked out. Every other worktree is *unmanaged*: Eon lists it and
+      never removes it or its branch. A marker of another version makes its worktree
+      unmanaged and is never rewritten.
+    - *Base*: the full name of a branch or remote-tracking ref, or a commit ID.
+    - *Worktree tab*: a tab whose EON-C17 launch directory is the root of a worktree. The
+      two paths are compared after resolving symbolic links and `..`. A launch directory
+      is *in* a worktree when, resolved the same way, it is the root or lies under it. Eon stores nothing
+      about the tie: `eon tab create --dir` and `eon tab directory` onto a worktree make a
+      worktree tab as `--worktree` does.
+  - **Create** (`eon-el45.2`). `eon tab create --worktree NAME` does, in order:
+    1. It finds the repository and requires Git 2.38 or later and a main worktree that is
+       not bare.
+    2. It validates NAME: 1 to 64 bytes of `A-Z a-z 0-9 . _ -`, not starting with `.` or `-`,
+       not ending with `.` or `.lock`, and without `..`.
+    3. Before any Git change, it checks that the tab could be created: the supervisor
+       answers, it accepts the caller, and a COMMAND comes from a calling terminal
+       (EON-C10).
+    4. It resolves the start commit: `--base REF` when given, otherwise the HEAD of the
+       caller's working directory. Eon never fetches.
+    5. It asks Git for a new worktree on a new branch at that commit. The branch is
+       `[worktree] branch_prefix` followed by NAME. The directory is `[worktree] path` with
+       `{name}` replaced by NAME and `{repo}` by the leaf of the main worktree's directory;
+       a relative `path` resolves against the main worktree's directory, and `..` is
+       resolved before use. Eon never creates a detached worktree and never checks out an
+       existing branch.
+    6. It writes the marker. The base is the full name of the branch or remote-tracking ref
+       that `--base` named; without `--base`, the branch the caller's HEAD is on; in every
+       other case (a tag, a commit ID, an expression, a detached HEAD) the start commit's ID.
+    7. It creates the tab exactly as `eon tab create --dir <directory>` does (EON-C10), with
+       the same `--no-focus`, `-- COMMAND` and caller rules, and no EONW change.
+
+    `--worktree` excludes `--dir`; `--base` requires `--worktree`. The JSON reply is
+    `tab create --dir`'s reply plus `worktree`: `{name, path, branch, base, head}`, and,
+    from `eon-el45.6`, `stale_worktrees`: the number of stale managed worktrees of the
+    repository, or null when it could not be counted. The human output adds one line
+    naming the worktree and, when that number is above zero, one line that says so and
+    names `eon worktree ls`.
+  - **List** (`eon-el45.6`). `eon worktree ls` lists every worktree of the repository,
+    managed first. It needs no supervisor and changes nothing. A value Eon cannot
+    determine is null, never a guess. Each entry has:
+    - `name` (the leaf of its directory), `path`, `branch` (null when detached), `managed`
+      and `base` (null when unmanaged);
+    - `uncommitted`: the number of staged, modified, deleted, conflicted and untracked
+      files and changed submodules. Untracked files and submodule changes count whatever
+      the user's Git configuration says. Null when the directory is missing;
+    - `ignored`: the number of ignored entries Git reports there, a directory of ignored
+      files counting once. Null when the directory is missing;
+    - `unlanded`: 0 when its work is landed, otherwise the number of commits on its HEAD
+      that the base does not reach. For an unmanaged worktree the base is the branch
+      checked out in the main worktree. Null when there is no such base, the base does not
+      resolve, or the directory is missing;
+    - `created_at`: the marker's `created`; for an unmanaged worktree, the modification
+      time of its `.git` file, or null when that file is missing;
+    - `stale`: true when it is older than `[worktree] stale_after`; null when `created_at`
+      is null;
+    - `state`: what `eon worktree remove` would find now, by the Clean rule. It is one of
+      `clean`; `not-clean` with `reasons`; `missing`, when its directory is gone; and
+      `unmanaged`. It is a reading at that moment, not a promise that a removal succeeds;
+    - `tabs`: the tabs of the addressed window whose launch directory is in that worktree,
+      each as `{session, tab}`. An empty list means none; null means no window could be
+      asked. Other windows are not asked.
+
+    The human output prints one line per worktree with its name, branch, age, the counts
+    and a stale mark. This is where a worktree's age and unlanded commits are always
+    readable; the create reply is the moment Eon raises stale ones unasked.
+  - **Landed.** A worktree's work is landed when a trial merge of its HEAD into the base
+    produces exactly the base's tree. Nothing else decides it, and the same test applied
+    to a branch's tip decides whether that branch is landed. What follows from the test:
+    - it passes for work the base already contains, however it got there;
+    - it passes whenever the base reaches HEAD, even if the base later reverted that work,
+      because Git then has nothing to merge;
+    - it passes for commits that change nothing in sum, such as an empty commit or a
+      commit and its revert;
+    - it fails when the merge would change the base's tree or would conflict, as when the
+      base later rewrote the same lines.
+
+    Eon reads the base as this repository has it and never fetches. Whether a branch was
+    pushed is not part of this rule or of Clean.
+  - **Clean.** A managed worktree is clean when every one of these holds; anything Eon
+    cannot determine counts as not clean:
+    1. its HEAD is on the marker's branch (`branch-changed` otherwise), and no merge,
+       rebase, cherry-pick, revert or bisect is in progress (`operation-in-progress`);
+    2. `uncommitted` is 0 (`uncommitted`);
+    3. its work is landed (`unlanded`; `base-missing` when the base does not resolve);
+    4. it is not locked (`locked`).
+  - **Remove** (`eon-el45.4`). `eon worktree remove NAME|PATH` removes one managed worktree
+    of the repository, found by the leaf of its directory or by its path. It is the only
+    way Eon removes a worktree, and it always acts on a request that names it.
+    - *Locked:* it changes nothing and fails with `locked` before anything is listed or
+      asked, whatever the other reasons and whatever flags were given. The person unlocks
+      the worktree with Git first.
+    - *Clean, no ignored files:* Eon asks Git to remove the worktree without force.
+    - *Clean, with ignored files:* it changes nothing and fails with `ignored-files`,
+      giving the count and the first entries, unless `--ignored` was given. `--ignored`
+      is the request to delete the ignored files with the worktree, and nothing else.
+    - *Not clean, and not locked:* it lists the reasons, the uncommitted files, the unlanded commits and
+      the ignored entries, and asks, as EON-C10's CLI confirmation does: a yes proceeds,
+      any other answer at a terminal changes nothing and exits 0, input that is not a
+      terminal fails with `not-confirmed` unless it is a yes, and `--json` never asks and
+      fails with `not-confirmed` unless `--yes` was given. `--yes` is that yes in every
+      mode: with it nothing is asked. Once confirmed, Eon asks Git to
+      remove the worktree with force, which deletes everything the list named.
+    - *Branch.* After the worktree is gone, Eon deletes the marker's branch only when the
+      worktree's HEAD was on that branch, the branch's own tip is landed, and
+      `[worktree] delete_landed_branch` is true. The deletion names the tested commit and
+      fails, changing nothing, when the branch's tip is no longer that commit. In every
+      other case, `branch-changed` included, the branch stays.
+    - *What every removal discards.* The worktree's own HEAD reflog and private refs go
+      with it, as with `git worktree remove` itself, so a commit that only they reach,
+      such as one dropped by a reset, becomes unreachable. Stashes belong to the
+      repository and are never touched.
+    - *In use.* It refuses with `worktree-in-use`, naming the session and tab, when a tab
+      of the addressed window has its launch directory in the worktree. With no window to
+      ask, it proceeds, and the reply's `window_checked` is false. No window to ask means:
+      no supervisor answers for the addressed window, it runs another EONW version, or
+      it rejects the caller. A window of an older build therefore does not block a
+      removal made from outside it. The check and the removal are not one atomic step, as EON-C10's
+      inspect-then-close is not: a tab bound in between keeps a launch directory that no
+      longer exists, and EON-C17's rule for a vanished directory applies.
+    - *Outcome.* The reply reports what Eon found after acting, not what it intended:
+      `{name, path, branch, outcome, reasons, detail, remaining, window_checked}`. `outcome` is `removed`,
+      `kept` (nothing was attempted or Git refused before changing anything) or `partial`
+      (Git or the branch deletion failed after something changed). `remaining` is
+      `{directory, registered, branch}`, each true while that thing still exists, and
+      `detail` carries Git's message. A removed worktree whose branch could not be deleted
+      is `partial` with `remaining.branch` true.
+  - **Never.** Eon never: removes a worktree without a `worktree remove` that names it,
+    a failed create included;
+    removes or modifies an unmanaged worktree or the main worktree; forces a removal
+    without the confirmation above; overrides a Git lock; prunes worktree records,
+    collects garbage, stashes, resets, cleans or runs a network command; deletes a branch
+    whose tip is not landed or is no longer the tested commit; or edits a tracked file, `.gitignore`
+    or `.git/info/exclude`.
+  - **Configuration** (`docs/CONFIGURATION.md` and `eon config defaults`, `[worktree]`):
+    - `path = "../{repo}.worktrees/{name}"` (`eon-el45.2`). It must end in the component
+      `{name}`, so that a worktree tab's header leaf (EON-C8) is NAME; `~/` and absolute
+      paths are accepted; any other placeholder is rejected with the rest of `config.toml`;
+    - `branch_prefix = ""` (`eon-el45.2`);
+    - `stale_after = "24h"` (`eon-el45.6`): a positive number of `m`, `h` or `d`;
+    - `delete_landed_branch = true` (`eon-el45.4`): when false, Eon never deletes a
+      branch.
+
+    The CLI reads these at each command.
+- **Important failures:**
+  - Create, exit 2: `invalid-worktree-name`; `--worktree` with `--dir`; `--base` without
+    `--worktree`.
+  - Create, exit 1, before Git changed anything: `not-a-repository`, `bare-repository`,
+    `git-unavailable` (no `git` on the caller's PATH), `git-too-old`, `worktree-exists`
+    (the directory exists or Git has it registered), `branch-exists` and `unknown-base`.
+    Step 3's failures keep EON-C10's codes and statuses.
+  - Create, once Git was asked for the worktree: every failure reply carries `left`:
+    `{path, branch}`, each null when that thing does not exist afterwards, read after the
+    failure and not assumed. Git can fail after creating the branch, or after creating
+    the worktree when a hook fails, so `git-failed` does not mean nothing was created.
+    Eon removes nothing on any of these paths: a hook or another process may already
+    have written into the new worktree. The person or agent removes what was left.
+    - Git reports failure: `git-failed` with `left`.
+    - The marker cannot be written: `marker-failed` with `left`. The worktree has no
+      marker, so it is unmanaged and Eon will not remove it; the message names
+      `git worktree remove` and the path.
+    - The supervisor refuses the tab with a typed failure: the failure keeps its code and
+      status and carries `left`. The worktree is managed, and the message names
+      `eon worktree remove NAME`.
+    - The reply is lost or the supervisor becomes unreachable (exit 4): the tab may
+      exist, and `left` names the worktree.
+  - Remove, with nothing attempted: an unknown NAME exits 3 (`unknown-worktree`); a NAME
+    that matches two managed worktrees exits 1 (`ambiguous-worktree`, naming both paths; a
+    PATH selects one); `worktree-in-use`, `unmanaged-worktree`, `locked` (checked before `ignored-files`
+    and before any confirmation), `ignored-files` and `not-confirmed` exit 1.
+  - Remove, once Git was asked: a refusal that changed nothing is `kept` with reason
+    `git-refused` and Git's message, as for a clean worktree with initialised submodules;
+    only the confirmed remove uses force. A failure after something changed is `partial`,
+    exit 1, with `remaining`.
+  - A worktree whose directory vanished is listed as `missing`; Eon does not prune it.
+    When Git cannot resolve the links between the repository and a worktree, or the main
+    worktree's directory is unavailable, the command fails with Git's message and can be
+    retried after the person repairs them.
+  - Two tabs created at once with one NAME: one fails with `worktree-exists` or
+    `branch-exists` from Git's own check; Eon adds no lock.
+  - Every Git message Eon passes on is bounded to 4 KiB.
+- **Owner:** Git owns worktrees, branches, the index, the working files and their
+  registry. Eon Runtime owns the three commands, the marker and the Clean and Landed
+  rules, all in the CLI; the supervisor holds no worktree state and runs no Git. Eon
+  supplies the `[worktree]` defaults.
+- **Consumes:** EON-C10 (`tab create --dir`, session inspection, confirmation and exit
+  statuses), EON-C17 (the launch directory), and the `git` on the caller's PATH, 2.38 or
+  later. Eon does not package Git.
+- **Boundary:**
+  - No removal when a tab, session or window closes, by any route; no notice or event
+    about worktrees. `eon-el45.7` spikes that and drafts it as a later amendment.
+  - No Eon registry of worktrees, and no record of a tab's tie to one beyond the launch
+    directory; no restore of that tie after same-boot recovery, which gives its synthetic
+    `t1` a fresh launch directory (EON-C15).
+  - Eon sees a worktree's use only through the tab launch directories of the addressed
+    window. It does not see another window's tabs, a pane that changed directory, a
+    recovered `t1`, a process that outlived its terminal, or a program outside Eon. A
+    removal can take the directory from under any of them, and Eon makes no promise about
+    what such a process writes or loses.
+  - No pane-level worktrees; no checkout of an existing branch; no detached worktree; no
+    bare main repository; no submodule support beyond reporting Git's refusal.
+  - No fetch, push, pull request, merge, rebase or landing by Eon; no diff review or
+    restore (`eon-el45.5`).
+  - No setup file and no copy or symlink of ignored files.
+  - No count cap or age sweep; no security isolation (`eon-az9`, `eon-lhuqb`); no
+    copy-on-write checkouts; no platform beyond EON-C7's.
+  - Showing worktree state in the tab header or Eon Bar is a feature, not part of this
+    contract; a JSON field it needs amends EON-C10.
+- **Proof:** None; planned. Each child records its own.
+- **Open proof:** Everything.
