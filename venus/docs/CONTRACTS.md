@@ -667,6 +667,10 @@ re-proved when that platform or feature is next touched.
   Amended on 2026-11-10 by `eon-2ibdd`, approved by eon-overseer under Lucca's
   standing rule: one continuous pane header band, with title-span edge focus
   and rounded title hover; geometry, actions and other heading tabs retained.
+  Amended on 2026-11-10 by `eon-u5uv2`, approved by eon-overseer under Lucca's
+  standing rule (Lucca: "D plus the gap fix"): the band only on the expanded,
+  lone or zoomed pane, collapsed titles as compact gaps in their row's line,
+  and one tab rise of space between a collapsed title and the band below it.
 - **Consumer:** One Venus surface controlled by an Eon workspace.
 - **Trigger:** Outside visible `VEN-C18` popup presentation, Eon supplies
   durable topology, a workspace action changes tab, pane, focus, order,
@@ -743,19 +747,26 @@ re-proved when that platform or feature is next touched.
     label takes that position and the first pill follows it. Pill height follows VEN-C21; the gap between pills and
     header button width stay as before; on a short window the extra inset
     yields before the pills do. On a window too small for the gaps they
-    yield before a terminal cell does. Framed pane headers use one continuous
-    raised band, including first, lone and zoomed panes. The edge runs straight
+    yield before a terminal cell does. The expanded pane's framed header, a lone and a zoomed
+    pane's included, is one continuous raised band. The edge runs straight
     between its rounded outside corners over the title, empty middle and right action group, without inward returns
-    or a lower middle rule. Title and scrollback fitting, row allocation and
-    button targets keep their existing geometry. Interior collapsed edges mirror
-    this treatment toward their pane. The final collapsed title stays a compact
-    gap in the column's bottom edge; insufficient text/stroke clearance also
-    retains a compact gap. Each pane header carries Zoom (Restore while zoomed)
+    or a lower middle rule. Title and scrollback fitting, header rows and
+    button targets keep their existing geometry. A collapsed pane has no band:
+    its title and buttons are compact gaps in its row's line, and the final
+    collapsed title stays a compact gap in the column's bottom edge. Below a
+    collapsed title the band starts one tab rise lower, which keeps its edge out
+    of that title's row; with no collapsed title above it, that space follows
+    the expanded terminal, so a column's terminal height does not depend on
+    which of its panes is expanded; on a window too short for that space it
+    yields before a terminal cell does. Insufficient text/stroke clearance also
+    leaves the expanded title in a compact gap. Each pane header carries Zoom (Restore while zoomed)
     and Close at the right; the title and scrollback pill fit to their left.
     Where both buttons cannot fit at full size the header shows neither. Stack,
     Agents, popup and dialog headings carry no pane actions, nor does a header
     a popup covers. Decorative pixels outside a header row add no hit or
-    accessibility area and consume no terminal rows. Each column card's top line
+    accessibility area, and header decoration consumes no terminal rows; the
+    space before the expanded pane's band is reserved and can cost a column one
+    terminal row. Each column card's top line
     carries VEN-C18's shared framed-title tab, labelled
     `Stack` when the tab has one column and `Stack 1`, `Stack 2`, ... from left
     to right when it has several (the panes' one-based `column` in `eon session
@@ -785,7 +796,7 @@ re-proved when that platform or feature is next touched.
     column has a brighter label and, with pane frames enabled, its whole frame
     in the focus color at the focus border width. Eon supplies both widths in
     logical pixels. Hover fills the hovered title or button pill; keyboard title
-    focus colours the title's span of the continuous header edge, and button focus
+    focus colours the title's span of the expanded header's band edge, and button focus
     draws the accent pill outline around the focused button. Compact and
     frameless titles retain their hover pill and keyboard-focus accent pill outline. Header edges stay straight
     during scrolling; overflowing headers scroll within fixed allocated column
@@ -1492,7 +1503,9 @@ re-proved when that platform or feature is next touched.
   bands from the unchanged Stack, popup, Agents and dialog title tabs.
   Amended on 2026-11-10 by `eon-5g0e5`, approved by eon-overseer under Lucca's
   standing rule: popup and Agents headings carry a right action notch holding
-  a Hide button.
+  a Hide button. Amended on 2026-11-10 by `eon-u5uv2`, approved by eon-overseer
+  under Lucca's standing rule: the references to VEN-C8's pane band follow its
+  expanded-pane scope.
 - **Consumer:** One person using a Venus workspace supplied through EONW v5.
 - **Trigger:** The active tab selects a popup, its selection changes, or the
   person invokes an Eon-supplied catalog shortcut.
@@ -1527,8 +1540,9 @@ re-proved when that platform or feature is next touched.
   using the shared chrome title metric. Popup labels use Venus's shared
   framed-title treatment: the same rounded tab, shaping, fitting, padding and
   outline policy as each column's Stack tab, the Agents sidebar and native titled
-  dialogs. Pane headers use VEN-C8's continuous band and retain the same chrome
-  title metric. The outline rises seamlessly
+  dialogs. The expanded pane's header uses VEN-C8's continuous band, collapsed
+  pane titles use its compact gaps, and both retain the same chrome title
+  metric. The outline rises seamlessly
   from the left border over the label and returns tangentially into the top
   edge with an S curve spanning 1.5 times its rise, starting beside the fitted
   visible text. The tab uses its surface's background and opacity. Popup,
@@ -1550,8 +1564,8 @@ re-proved when that platform or feature is next touched.
   still sends what it sent when pressed: a popup shown in place of the
   pressed one is never dismissed by that release.
   AccessKit lists `Hide popup <label>` and `Hide agent sidebar` as buttons.
-  Pane headers keep VEN-C8's final
-  collapsed-title and clearance exceptions. Title hover/click targets and
+  Pane headers keep VEN-C8's
+  collapsed-title and clearance compact gaps. Title hover/click targets and
   accessibility names stay unchanged, and the Hide buttons are these
   headings' only input targets; decorative pane cap pixels outside a
   header row add no hit or accessibility area. Native dialog title ink stays

@@ -2653,7 +2653,6 @@ fn title_rules_leave_label_and_scrollback_gaps_inside_the_fixed_card() {
                         width: label.width,
                     },
                 },
-                flip: None,
             });
             batch.push_pane_outlines(
                 fill,
@@ -3884,8 +3883,24 @@ fn pane_headers_clear_adjacent_descenders_and_preserve_joined_focus_strokes() {
     use eon_workspace_protocol::v38::{Column, Pane};
     let mut fonts = clipping_test_fonts();
     let mut swash = SwashCache::new();
-    for scale in [1.0, 1.3, 4.0 / 3.0, 2.0] {
-        let metrics = CellMetrics::for_scale(scale);
+    // At 1.125 and 1.175 a collapsed row ends on half a pixel. The other font sizes give
+    // fractional title rows with a whole tab rise; at 1.75 the rows' sums round, and the space
+    // before the fourth pane's band reads a hair under that rise.
+    for (scale, font_size) in [
+        (1.0, 16.0),
+        (1.125, 16.0),
+        (1.175, 16.0),
+        (1.3, 16.0),
+        (4.0 / 3.0, 16.0),
+        (2.0, 16.0),
+        (1.25, 17.0),
+        (1.5, 17.0),
+        (1.75, 16.3),
+        (1.75, 16.8),
+    ] {
+        let mut metrics = CellMetrics::for_scale(scale);
+        metrics.font_size = font_size * scale as f32;
+        metrics.height = (metrics.font_size * 1.125).round();
         for selected in 0..4 {
             for width in [760, 1280] {
                 let mut snapshot = popup_title_snapshot("Popup", 4.0);
@@ -3937,9 +3952,17 @@ fn pane_headers_clear_adjacent_descenders_and_preserve_joined_focus_strokes() {
                 )
                 .remove(0);
                 assert_eq!(tabs.len(), workspace.panes.len());
-                for (index, (pane, notch)) in workspace.panes.iter().zip(&tabs).enumerate() {
-                    if index + 1 == tabs.len() && !pane.selected {
-                        assert!(notch.is_none(), "last collapsed title must stay compact");
+                if let Some(above) = selected.checked_sub(1) {
+                    assert!(
+                        tabs[selected].as_ref().unwrap().tab.top
+                            >= workspace.panes[above].rect.bottom(),
+                        "the band's cap must stay out of the collapsed title row above it \
+                         (scale {scale}, font {font_size}, pane {selected})"
+                    );
+                }
+                for (pane, notch) in workspace.panes.iter().zip(&tabs) {
+                    if !pane.selected {
+                        assert!(notch.is_none(), "a collapsed title must stay compact");
                     } else {
                         let fitted = &notch
                             .as_ref()
@@ -3960,12 +3983,12 @@ fn pane_headers_clear_adjacent_descenders_and_preserve_joined_focus_strokes() {
                                 "title fitting must clear the actual action slot"
                             );
                             let header = notch.as_ref().unwrap();
-                            let middle = header.reflect(SceneRect {
+                            let middle = SceneRect {
                                 left: fitted.start + fitted.return_run,
                                 top: fitted.top,
                                 width: 1.0,
                                 height: 1.0,
-                            });
+                            };
                             assert!(
                                 header.bands(0.0).iter().any(|band| {
                                     band.contains(middle.left + 0.5, middle.top + 0.5)
@@ -4066,12 +4089,12 @@ fn pane_headers_clear_adjacent_descenders_and_preserve_joined_focus_strokes() {
                     );
                 }
                 let notch = tabs[selected].as_ref().unwrap();
-                let point = notch.reflect(SceneRect {
+                let point = SceneRect {
                     left: notch.card.bounds.left + metrics.padding * 2.0,
                     top: notch.tab.top,
                     width: 1.0,
                     height: 1.0,
-                });
+                };
                 assert!(
                     strokes
                         .iter()

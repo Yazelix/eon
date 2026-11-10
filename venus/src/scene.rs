@@ -2401,6 +2401,18 @@ pub(crate) fn title_tab_rise(metrics: CellMetrics) -> f32 {
     metrics.padding / 3.0
 }
 
+/// The space a column of `panes` panes keeps for its expanded pane's band cap: one tab rise,
+/// rounded up to whole pixels so it moves no row off the pixel grid. The row above can still end
+/// on a fraction, so the renderer bounds the cap's snapped edge against that row. A lone pane's
+/// cap rises into the Stack band and needs none.
+fn band_cap_space(metrics: CellMetrics, panes: usize) -> f32 {
+    if panes < 2 {
+        0.0
+    } else {
+        title_tab_rise(metrics).ceil()
+    }
+}
+
 /// The space between the bar's pills and the card areas, which puts the title tabs' caps one card
 /// gap below the pills.
 fn bar_card_margin(metrics: CellMetrics) -> f32 {
@@ -3303,7 +3315,10 @@ impl WorkspaceScene {
                 .expect("EONW validates the active tab");
             let panes = presented_panes(tab).len();
             let stack = if panes == 0 { 0.0 } else { stack_band(metrics) };
-            (sides, above + stack + pane_height * panes as f32)
+            (
+                sides,
+                above + stack + pane_height * panes as f32 + band_cap_space(metrics, panes),
+            )
         }
     }
     #[must_use]
@@ -4048,8 +4063,21 @@ impl WorkspaceScene {
                     .position(|pane| pane.id == column.expanded)
                     .expect("EONW validates the expanded pane")
             };
-            let pane_headers_height =
-                if zoomed { 1 } else { column.panes.len() } as f32 * pane_height;
+            // The expanded pane's band cap rises one tab rise above its title row. Below a
+            // collapsed title that rise takes its own space, which keeps the cap's line out of
+            // that title's row. A first pane's cap rises into the Stack band instead, and the
+            // same space then follows its terminal, so a column's terminal keeps one height
+            // whichever of its panes is expanded. On a window too short for it the space
+            // yields before the terminal's last padded row does.
+            let title_rows = if zoomed { 1 } else { column.panes.len() } as f32 * pane_height;
+            let cap = if zoomed {
+                0.0
+            } else {
+                band_cap_space(metrics, column.panes.len())
+                    .min((header_viewport.height - title_rows - minimum_terminal_height).max(0.0))
+            };
+            let (cap_above, cap_below) = if expanded > 0 { (cap, 0.0) } else { (0.0, cap) };
+            let pane_headers_height = title_rows + cap;
             let terminal_height = (header_viewport.height - pane_headers_height)
                 .clamp(minimum_terminal_height, maximum_terminal_height);
             let pane_scroll_limit =
@@ -4075,8 +4103,9 @@ impl WorkspaceScene {
                         left,
                         top: header_viewport.top
                             + position as f32 * pane_height
+                            + if position >= expanded { cap_above } else { 0.0 }
                             + if position > expanded {
-                                terminal_height
+                                terminal_height + cap_below
                             } else {
                                 0.0
                             }
@@ -4112,7 +4141,8 @@ impl WorkspaceScene {
                 .collect::<Vec<_>>();
             let terminal = SceneRect {
                 left,
-                top: header_viewport.top + (expanded + 1) as f32 * pane_height - column_scroll,
+                top: header_viewport.top + (expanded + 1) as f32 * pane_height + cap_above
+                    - column_scroll,
                 width: column_width,
                 height: terminal_height,
             };

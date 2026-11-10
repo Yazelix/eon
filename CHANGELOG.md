@@ -30,12 +30,14 @@ installation, and proven contract changes.
   records. A stalled collector times out once, then drops with loss accounting
   so it cannot keep stalling Orbit (`eon-it2ye`).
 
-- Pane headers form one continuous band, with the fitted title at the left
-  and Zoom/Restore and Close at the right. Keyboard title focus colours its
+- The expanded pane's header forms one continuous band, with the fitted title
+  at the left and Zoom/Restore and Close at the right. Collapsed panes in a
+  Stack show their title and buttons on one thin line each, and the band below
+  them starts 4 px lower so its edge clears their text. Keyboard title focus colours its
   edge span; hover and button focus use rounded pills. Each button targets its
   own pane, Close retains the final-pane confirmation, and Zoom is disabled in
   a one-pane tab. Tab and Shift+Tab traverse the controls; Enter or Space
-  activates them (`eon-7xryp`, `eon-ipc6f`, `eon-2ibdd`).
+  activates them (`eon-7xryp`, `eon-ipc6f`, `eon-2ibdd`, `eon-u5uv2`).
 
 - `eon report` prints a Markdown bug report for the window it runs in: versions,
   the window, install route, distribution, compositor, configuration warnings

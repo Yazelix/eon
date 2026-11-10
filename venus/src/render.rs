@@ -585,8 +585,6 @@ struct FrameTitleTab {
 struct PaneTitleTab {
     card: CardFill,
     tab: FrameTitleTab,
-    /// Reflection about a lower pane edge; text itself stays upright.
-    flip: Option<f32>,
 }
 
 struct PaneTitleCache {
@@ -613,16 +611,6 @@ impl PaneTitleCache {
 }
 
 impl PaneTitleTab {
-    fn reflect(&self, rect: SceneRect) -> SceneRect {
-        match self.flip {
-            Some(axis) => SceneRect {
-                top: axis - rect.bottom(),
-                ..rect
-            },
-            None => rect,
-        }
-    }
-
     fn bands(&self, inset: f32) -> Vec<SceneRect> {
         let cut = self.card.bounds.top + rounded_radius(self.card.bounds, self.card.radius);
         title_tab_bands(self.card, &self.tab, inset)
@@ -633,7 +621,7 @@ impl PaneTitleTab {
                         - 2.0 * band.left)
                         .max(0.0);
                 }
-                self.reflect(band)
+                band
             })
             .collect()
     }
@@ -650,12 +638,12 @@ impl PaneTitleTab {
     }
 
     fn replacement(&self) -> SceneRect {
-        self.reflect(SceneRect {
+        SceneRect {
             top: self.tab.top,
             height: self.card.bounds.top + rounded_radius(self.card.bounds, self.card.radius)
                 - self.tab.top,
             ..self.card.bounds
-        })
+        }
     }
 }
 

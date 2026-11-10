@@ -362,7 +362,11 @@ fn eon_workspace_becomes_one_bounded_native_accordion() {
         pane.rect.top >= scene.pane_viewport.top
             && pane.rect.bottom() <= scene.pane_viewport.bottom()
     }));
-    assert_eq!(scene.panes[0].rect.bottom(), scene.panes[1].rect.top);
+    // The expanded pane's band cap takes one tab rise between it and the title above.
+    assert_eq!(
+        scene.panes[1].rect.top - scene.panes[0].rect.bottom(),
+        (metrics.padding / 3.0).ceil()
+    );
     assert!(scene.terminal.height > metrics.height);
     assert_eq!(scene.terminal.top, scene.panes[1].rect.bottom());
     assert_eq!(

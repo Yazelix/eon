@@ -1412,48 +1412,48 @@ impl PaneTitleTab {
         swash: &mut SwashCache,
         metrics: CellMetrics,
         pane: &crate::scene::WorkspacePane,
-        neighbour: Option<(&crate::scene::WorkspacePane, SceneRect)>,
+        above: Option<&crate::scene::WorkspacePane>,
         outline: &crate::scene::PaneOutline,
         viewport: SceneRect,
         right: f32,
         stroke: f32,
     ) -> Option<Self> {
-        let line = outline.title_y?;
-        let bottom = !outline.expanded && line > outline.bounds.top;
-        let flip = bottom.then_some(outline.bounds.bottom() + line);
-        let reflect = |rect: SceneRect| match flip {
-            Some(axis) => SceneRect {
-                top: axis - rect.bottom(),
-                ..rect
-            },
-            None => rect,
-        };
-        let row = reflect(pane.rect);
+        let row = pane.rect;
         let card = crate::scene::CardFill {
-            bounds: reflect(outline.bounds),
+            bounds: outline.bounds,
             radius: outline.radius,
         };
-        let ink = |fonts: &mut FontSystem,
-                   swash: &mut SwashCache,
-                   pane: &crate::scene::WorkspacePane,
-                   row: SceneRect| {
+        let mut ink = |pane: &crate::scene::WorkspacePane| {
             let (_, (_, top, _, bottom)) = status_glyph_ink(fonts, swash, metrics, pane.label());
-            reflect(SceneRect {
+            let row = pane.rect;
+            SceneRect {
                 top: (row.top + (row.height - chrome_title_metrics(metrics).text_height) / 2.0)
                     .trunc()
                     + top as f32,
                 height: (bottom - top) as f32,
-                ..pane.rect
-            })
+                ..row
+            }
         };
-        let own_ink = ink(fonts, swash, pane, pane.rect);
-        let limit = neighbour
-            .map(|(pane, row)| ink(fonts, swash, pane, row).bottom())
+        let own_ink = ink(pane);
+        let rise = crate::scene::title_tab_rise(metrics);
+        // The cap stays clear of the collapsed title above it, and of the Stack band. Where
+        // the column kept its tab rise of space the cap also stays out of that title's row,
+        // whose edge is fractional at some scales; a window too short for the space leaves
+        // only the ink to bound it. Fractional rows sum to a hair under a whole rise, so the
+        // kept space compares within a hundredth of a pixel.
+        let limit = above
+            .map(|above| {
+                let edge = above.rect.bottom();
+                let ink = ink(above).bottom();
+                if row.top - edge >= rise - 0.01 {
+                    ink.max(edge)
+                } else {
+                    ink
+                }
+            })
             .unwrap_or(f32::NEG_INFINITY)
-            .max(reflect(viewport).top);
-        let top = (row.top - crate::scene::title_tab_rise(metrics))
-            .floor()
-            .max(limit.ceil());
+            .max(viewport.top);
+        let top = (row.top - rise).floor().max(limit.ceil());
         let tab = FrameTitleTab::at(
             fonts,
             metrics,
@@ -1467,7 +1467,7 @@ impl PaneTitleTab {
             own_ink.top,
             stroke,
         )?;
-        Some(Self { card, tab, flip })
+        Some(Self { card, tab })
     }
 
     pub(super) fn workspace(
@@ -1498,14 +1498,14 @@ impl PaneTitleTab {
                     metrics,
                     border.max(focus),
                 );
-                let expanded = panes.iter().position(|pane| pane.selected).unwrap_or(0);
                 panes
                     .iter()
                     .zip(&outlines)
                     .enumerate()
                     .map(|(index, (pane, outline))| {
-                        // The last collapsed title closes the column on its fixed bottom line.
-                        if index + 1 == panes.len() && !pane.selected {
+                        // Only the expanded pane has a band; a collapsed title sits in its
+                        // row's line.
+                        if !pane.selected {
                             return None;
                         }
                         let current = column == 0 && pane.selected;
@@ -1516,24 +1516,7 @@ impl PaneTitleTab {
                         } else {
                             pane.header_content(metrics).right()
                         };
-                        let neighbour_index = if index > expanded {
-                            Some(index + 1)
-                        } else {
-                            index.checked_sub(1)
-                        };
-                        let neighbour = neighbour_index.and_then(|i| {
-                            let pane = panes.get(i)?;
-                            let row = if i + 1 == panes.len() && !pane.selected {
-                                bottom_title_row(
-                                    pane.rect,
-                                    outlines[i].bounds.bottom(),
-                                    chrome_title_metrics(metrics).text_height,
-                                )
-                            } else {
-                                pane.rect
-                            };
-                            Some((pane, row))
-                        });
+                        let above = index.checked_sub(1).and_then(|above| panes.get(above));
                         let top = (workspace.header_viewport.top
                             - crate::scene::title_tab_rise(metrics))
                         .max(fill.bounds.top);
@@ -1547,7 +1530,7 @@ impl PaneTitleTab {
                             swash,
                             metrics,
                             pane,
-                            neighbour,
+                            above,
                             outline,
                             viewport,
                             right,

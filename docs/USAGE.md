@@ -497,23 +497,28 @@ Each column card's top line carries a Stack tab, labelled `Stack` when the tab
 has one column and `Stack 1`, `Stack 2`, ... from left to right when it has
 several; Stack N holds the panes whose `column` is N in `eon session --json`.
 The first pane's top edge sits one stack band lower: one title row plus the
-tab's rise, a third of the title padding (24 px at the default font). Every
-framed pane header, the first, a lone and a zoomed pane's included, has one
+tab's rise, a third of the title padding (24 px at the default font). The
+expanded pane's framed header, a lone and a zoomed pane's included, has one
 continuous raised band: the edge runs straight over the fitted title, empty
-middle and right action group between rounded outer corners. Interior collapsed
-edges below the expanded pane mirror the band; the final collapsed title keeps
-a compact gap in the column's bottom edge. Insufficient text/stroke clearance
-also retains a compact gap. The column's sides run from the Stack line
+middle and right action group between rounded outer corners. A collapsed pane
+has no band: its title and buttons sit in gaps in its row's line, and the last
+collapsed title sits in the column's bottom edge. Below a collapsed title the
+band starts one tab rise lower (4 px at the default font), which keeps its edge
+out of that title's row. A first pane's band rises into the stack band
+instead, and the same space then follows its terminal, so a column's terminal
+keeps one height whichever pane is expanded. Insufficient text/stroke clearance
+leaves the expanded title in a compact gap too. The column's sides run from the Stack line
 down to the first pane's rounded top corners in the neutral border colour and
 width, even while that pane is selected. Headers scroll below the band. On a
 window too short for the band, a first header and one padded terminal row, the
 band yields whole and the label goes.
 
 Each pane header has a right action group: Zoom (`□`, Restore `▣` while zoomed)
-and Close (`×`). Framed headers keep both in the continuous band; frameless
-headers keep the controls inline. The title and scrollback indicator fit to its
-left. Both controls disappear together if two full targets cannot fit; collapsed
-bottom rows and tight clearances retain a compact gap. Stack, Agents, popup and
+and Close (`×`). The expanded pane's framed header keeps both in its band and a
+collapsed row keeps them in a gap in its line; frameless headers keep the
+controls inline. The title and scrollback indicator fit to its
+left. Both controls disappear together if two full targets cannot fit; tight
+clearances retain a compact gap. Stack, Agents, popup and
 dialog headings have no pane actions, and a popup covers the underlying headers.
 Popup and Agents headings have a Hide button of their own, described below.
 Hover and press highlight the individual button. A one-pane tab keeps a dimmed,
@@ -547,14 +552,17 @@ Most popups still hide on their own shortcut; Sessions' key confirms its
 selection instead, and quick search and Files switch to each other. Screen
 readers list `Hide popup <name>` and `Hide agent sidebar` as buttons.
 
-Pane headers use the continuous band above. Stack tabs, popups, Agents and
+The expanded pane's header uses the continuous band above; collapsed pane
+titles sit in their row's line. Stack tabs, popups, Agents and
 native titled dialogs share a fitted tab style. Their outline rises seamlessly
 from the left border over the fitted name,
 then returns into the top edge with a tangent S curve spanning 1.5 times its
 rise. The curve begins beside the visible text, including after truncation.
 Stack, popup and Agents tab tops sit one card gap (8 px) below the bar's pills.
 Popup, Agents and dialog tabs add no height or terminal rows inside their cards.
-Pane bands preserve the existing header allocation and terminal rows.
+A pane band adds no height to its header row. In a column of several panes the
+space before the band takes one tab rise (4 px at the default font) from the
+terminal.
 A tab keeps its stroke clear of text and neighbouring chrome; where that
 clearance cannot fit, the title keeps a compact gap in the top frame line.
 A title is omitted only when it cannot fit. A tab keeps full accessibility
