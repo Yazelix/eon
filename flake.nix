@@ -10,6 +10,7 @@
 
   inputs = {
     nixpkgs.url = "github:NixOS/nixpkgs/567a49d1913ce81ac6e9582e3553dd90a955875f";
+    crane.url = "github:ipetkov/crane/79fd63528501446749c09f08cad486a58c7d173e";
     rust-overlay = {
       url = "github:oxalica/rust-overlay/fe5aee0952e8e1525533d61defd9e36513db811b";
       inputs.nixpkgs.follows = "nixpkgs";
@@ -55,6 +56,7 @@
       nixpkgs,
       nixpkgs-zig,
       rust-overlay,
+      crane,
       anima,
       helix,
       yazi,
@@ -79,6 +81,7 @@
             cargo = rustToolchain;
             rustc = rustToolchain;
           };
+          craneLib = (crane.mkLib pkgs).overrideToolchain rustToolchain;
           zig = nixpkgs-zig.legacyPackages.${system}.zig_0_17;
           eonCargo = builtins.fromTOML (builtins.readFile ./eon/crates/eon/Cargo.toml);
           helixCargo = builtins.fromTOML (builtins.readFile "${helix}/Cargo.toml");
@@ -291,6 +294,95 @@
               install -Dm444 terminfo/*/eon "$out/share/terminfo/e/eon"
               ln -s e "$out/share/terminfo/65"
             '';
+          # nixpkgs copies vendors without preserving mtimes; build scripts otherwise
+          # see newer sources than crane's restored artifacts and rebuild dependencies.
+          cargoVendorTimestamps = ''
+            find "$cargoDepsCopy" -exec touch -h -d @1 {} +
+          '';
+          # Cache each package's existing feature selection, including test dependencies.
+          # One --workspace build would unify different features and miss these artifacts.
+          workspaceCargoArtifacts = craneLib.buildDepsOnly {
+            pname = "eon-workspace";
+            version = "0";
+            src = crateSource;
+            cargoVendorDir = null;
+            cargoDeps = rustPlatform.importCargoLock workspaceCargoLock;
+            postPatch = cargoVendorTimestamps;
+            installCargoArtifactsMode = "use-symlink";
+            # buildRustPackage installs every top-level executable, including cached dummies.
+            preInstall = ''
+              find target/${pkgs.stdenv.hostPlatform.rust.cargoShortTarget}/release -maxdepth 1 -type f -executable -delete
+              rm -rf target/${pkgs.stdenv.hostPlatform.rust.cargoShortTarget}/release/build/libghostty-vt-sys-*/out/{zig-cache,zig-global-cache}
+            '';
+            strictDeps = true;
+            doIncludeCrossToolchainEnv = false;
+            nativeBuildInputs = [
+              rustPlatform.cargoSetupHook
+              rustPlatform.cargoBuildHook
+              rustPlatform.cargoCheckHook
+              (pkgs.cargo-auditable-cargo-wrapper.override { cargo = rustToolchain; })
+              pkgs.pkg-config
+              zig.hook
+            ];
+            buildInputs = venusBuildInputs;
+            inherit (ghosttyBuildEnv) LIBGHOSTTY_VT_SYS_CPU GHOSTTY_SOURCE_DIR GHOSTTY_ZIG_SYSTEM_DIR;
+            dontUseZigBuild = true;
+            dontUseZigCheck = true;
+            dontUseZigInstall = true;
+            cargoBuildType = "release";
+            cargoCheckType = "release";
+            buildPhaseCargoCommand = ''
+              for package in yazelix-orbit yazelix-venus eon eon-bench; do
+                cargoBuildFlags=(--package "$package")
+                cargoBuildHook
+              done
+              checkFlags=()
+              cargoTestFlags=(--package yazelix-orbit --lib --no-run)
+              cargoCheckHook
+              checkFlags=()
+              cargoTestFlags=(--package yazelix-venus --no-run)
+              cargoCheckHook
+              checkFlags=()
+              cargoTestFlags=(--package eon --package eon-runtime --no-run)
+              cargoCheckHook
+            '';
+            doCheck = false;
+          };
+          # Eon's build identity hashes source files; crane's scratch list belongs outside them.
+          inheritCargoArtifactsHook = craneLib.inheritCargoArtifactsHook.overrideAttrs (old: {
+            buildCommand = old.buildCommand + ''
+              substituteInPlace "$out/nix-support/setup-hook" \
+                --replace-fail 'mktemp linkCandidatesXXXX.txt' 'mktemp -t linkCandidatesXXXX.txt'
+            '';
+          });
+          cargoArtifactInputs = [ inheritCargoArtifactsHook pkgs.rsync pkgs.zstd ];
+          # Snapshot only installable files before tests; deps/build trees are never installed.
+          cargoInstallHook = rustPlatform.cargoInstallHook.overrideAttrs (old: {
+            buildCommand = old.buildCommand + ''
+              substituteInPlace "$out/nix-support/setup-hook" \
+                --replace-fail 'cp -r ''${releaseDir}/* $tmpDir/' \
+                'find "$releaseDir" -mindepth 1 -maxdepth 1 ! -type d -exec cp -P -t "$tmpDir" {} +'
+            '';
+          });
+          # Keep Darwin's package path unchanged until native artifact-reuse proof.
+          # Cargo freshness misses package-local third-party inputs; put these in workspaceCargoArtifacts:
+          # pkg-config -sys libraries, undeclared build-script environment, and vendor patches.
+          buildWorkspacePackage =
+            args:
+            (
+              if pkgs.stdenv.isLinux then
+                rustPlatform.buildRustPackage.override { inherit cargoInstallHook; }
+              else
+                rustPlatform.buildRustPackage
+            ) (
+              args
+              // lib.optionalAttrs pkgs.stdenv.isLinux {
+                cargoArtifacts = workspaceCargoArtifacts;
+                postPatch = cargoVendorTimestamps + (args.postPatch or "");
+                nativeBuildInputs = (args.nativeBuildInputs or [ ]) ++ cargoArtifactInputs;
+              }
+            );
+
           # Orbit's host and its Bend worker (orbit/docs/HOST.md), which
           # orbit/build.rs compiles. The unit tests run here; the real-PTY test
           # binary, whose checks are ignored here, goes to the tests output for the
@@ -299,7 +391,7 @@
           orbitPackage =
             assert ghostty.rev == "0fa3d577a5614150ff8e2c152de5fb9d5c6d2dec";
             assert bend.rev == "624dd9f4607cd29b0871a9b96d413bfb11e92f52";
-            rustPlatform.buildRustPackage {
+            buildWorkspacePackage {
               pname = workspacePackages.orbit;
               inherit (orbitIdentity) version;
               src = crateSource;
@@ -414,7 +506,7 @@
             };
           };
           venusPackage =
-            rustPlatform.buildRustPackage ({
+            buildWorkspacePackage ({
               pname = workspacePackages.venus;
               inherit (venusIdentity) version;
               src = crateSource;
@@ -821,7 +913,7 @@
             assert helix.rev == helixIdentity.revision;
             assert lib.assertMsg (helixCargo.workspace.package.version == helixIdentity.version)
               "Helix manifest version does not match the selected Cargo workspace package";
-            rustPlatform.buildRustPackage {
+            buildWorkspacePackage {
               pname = "eon";
               inherit (eonCargo.package) version;
               src = workspaceSource;
@@ -1091,7 +1183,7 @@
           # the release Orbit, vtebench's scripts and their tools, kitty's
           # kitten, and memory's supervisor, reference servers and isolation.
           benchTerminals = import ./nix/bench-terminals.nix { inherit pkgs venusFonts venusFontsConf; };
-          benchPackage = rustPlatform.buildRustPackage {
+          benchPackage = buildWorkspacePackage {
             pname = "eon-bench";
             inherit ((builtins.fromTOML (builtins.readFile ./eon/tools/eon-bench/Cargo.toml)).package) version;
             src = crateSource;
