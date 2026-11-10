@@ -1,6 +1,6 @@
 use crate::{
-    CellMetrics, DialogKind, DialogScene, MAX_LINK_BYTES, Scene, SceneRect, WindowMenuAction,
-    WorkspaceFocus, WorkspaceHeaderControl, WorkspaceScene,
+    CellMetrics, DialogKind, DialogScene, MAX_LINK_BYTES, PaneHeaderAction, Scene, SceneRect,
+    WindowMenuAction, WorkspaceFocus, WorkspaceHeaderControl, WorkspaceScene,
     scene::{
         AccessiblePosition, AccessibleRow, AccessibleSelection, AccessibleText,
         QuotaWindowIdentity, SIDEBAR_EMPTY, WorkspaceQuota,
@@ -78,6 +78,7 @@ struct Snapshot {
     workspace_focus: WorkspaceFocus,
     tab_ids: HashMap<String, NodeId>,
     pane_ids: HashMap<String, NodeId>,
+    pane_action_ids: [HashMap<String, NodeId>; 2],
     /// Agent sidebar headings by tab id and rows by target; EONW identities never collide.
     sidebar_ids: HashMap<String, NodeId>,
     inbox_ids: HashMap<(String, String), NodeId>,
@@ -106,6 +107,7 @@ impl Snapshot {
             workspace_focus: WorkspaceFocus::Terminal,
             tab_ids: HashMap::new(),
             pane_ids: HashMap::new(),
+            pane_action_ids: Default::default(),
             sidebar_ids: HashMap::new(),
             inbox_ids: HashMap::new(),
             menu_ids: HashMap::new(),
@@ -169,6 +171,7 @@ impl Snapshot {
             self.workspace = None;
             self.tab_ids.clear();
             self.pane_ids.clear();
+            self.pane_action_ids.iter_mut().for_each(HashMap::clear);
             self.sidebar_ids.clear();
             return;
         };
@@ -180,6 +183,10 @@ impl Snapshot {
                 .column_panes()
                 .any(|(panes, _)| panes.iter().any(|pane| pane.id == *id))
         });
+        for action in PaneHeaderAction::ALL {
+            self.pane_action_ids[action.index()]
+                .retain(|id, _| workspace.pane_action(id, action).is_some());
+        }
         let sidebar_keys = workspace
             .sidebar_rows()
             .iter()
@@ -202,6 +209,15 @@ impl Snapshot {
         for (panes, _) in workspace.column_panes() {
             for pane in panes {
                 allocate_workspace_id(&mut self.pane_ids, &mut self.next_workspace_id, &pane.id);
+                for action in PaneHeaderAction::ALL {
+                    if workspace.pane_action(&pane.id, action).is_some() {
+                        allocate_workspace_id(
+                            &mut self.pane_action_ids[action.index()],
+                            &mut self.next_workspace_id,
+                            &pane.id,
+                        );
+                    }
+                }
             }
         }
         self.workspace = Some(workspace.clone());
@@ -751,6 +767,11 @@ impl Snapshot {
             for (panes, selected_column) in workspace.column_panes() {
                 for pane in panes {
                     children.push(self.pane_ids[pane.id.as_str()]);
+                    for action in PaneHeaderAction::ALL {
+                        if let Some(id) = self.pane_action_ids[action.index()].get(&pane.id) {
+                            children.push(*id);
+                        }
+                    }
                     if pane.selected && selected_column {
                         children.push(CONTENT);
                     }
@@ -777,6 +798,22 @@ impl Snapshot {
                 node.add_action(Action::Click);
                 node.add_action(Action::Focus);
                 nodes.push((self.pane_ids[pane.id.as_str()], node));
+                for action in PaneHeaderAction::ALL {
+                    if let Some((bounds, enabled)) = workspace.pane_action(&pane.id, action) {
+                        let mut button = Node::new(Role::Button);
+                        button.set_label(
+                            action.label(pane.label(), workspace.zoomed_pane().is_some()),
+                        );
+                        button.set_bounds(rect(bounds));
+                        if enabled {
+                            button.add_action(Action::Click);
+                            button.add_action(Action::Focus);
+                        } else {
+                            button.set_disabled();
+                        }
+                        nodes.push((self.pane_action_ids[action.index()][&pane.id], button));
+                    }
+                }
             }
         }
         if let Some(columns) = self.columns {
@@ -829,6 +866,14 @@ impl Snapshot {
                 let content = visible_terminal.map_or(selected_tab, |_| CONTENT);
                 match self.workspace_focus {
                     WorkspaceFocus::Terminal => content,
+                    WorkspaceFocus::PaneAction(action) => workspace
+                        .panes
+                        .iter()
+                        .find(|pane| pane.selected)
+                        .and_then(|pane| {
+                            self.pane_action_ids[action.index()].get(&pane.id).copied()
+                        })
+                        .unwrap_or(content),
                     WorkspaceFocus::Panes => workspace
                         .panes
                         .iter()
@@ -930,6 +975,21 @@ impl Snapshot {
                 target: row.target.clone(),
                 activate: action == Action::Click,
             });
+        }
+        for header_action in PaneHeaderAction::ALL {
+            if let Some((pane, _)) = self.pane_action_ids[header_action.index()]
+                .iter()
+                .find(|(_, node)| **node == target)
+            {
+                return workspace
+                    .pane_action(pane, header_action)
+                    .filter(|(_, enabled)| *enabled)
+                    .map(|_| AccessibilityTarget::PaneAction {
+                        pane: pane.clone(),
+                        action: header_action,
+                        activate: action == Action::Click,
+                    });
+            }
         }
         self.pane_ids
             .iter()
@@ -1074,6 +1134,11 @@ pub enum AccessibilityTarget {
     ReturnToLive,
     Tab(String),
     Pane(String),
+    PaneAction {
+        pane: String,
+        action: PaneHeaderAction,
+        activate: bool,
+    },
     /// An agent sidebar row by its target; `activate` jumps to it, otherwise it takes focus.
     SidebarRow {
         target: String,
@@ -1374,6 +1439,49 @@ mod tests {
             }],
             attention_rollup: None,
         }
+    }
+
+    #[test]
+    fn pane_buttons_are_independent_accessible_targets_with_disabled_zoom() {
+        let scene = workspace_scene("t1", vec![workspace_tab("t1", &["p1", "p2"], "p2")]);
+        let mut snapshot = Snapshot::new(PhysicalSize::new(800, 600));
+        snapshot.set_workspace(Some(&scene));
+        snapshot.workspace_focus = WorkspaceFocus::PaneAction(PaneHeaderAction::Close);
+        let tree = snapshot.tree();
+        let close = snapshot.pane_action_ids[1]["p2"];
+        let zoom = snapshot.pane_action_ids[0]["p1"];
+        assert_eq!(tree.focus, close);
+        assert_eq!(
+            node(&tree, close).label(),
+            Some("Close pane p2  unavailable")
+        );
+        assert_eq!(node(&tree, zoom).label(), Some("Zoom pane p1  unavailable"));
+        assert_eq!(
+            snapshot.action_target(close, Action::Click),
+            Some(AccessibilityTarget::PaneAction {
+                pane: "p2".into(),
+                action: PaneHeaderAction::Close,
+                activate: true,
+            })
+        );
+        assert_eq!(
+            snapshot.action_target(zoom, Action::Focus),
+            Some(AccessibilityTarget::PaneAction {
+                pane: "p1".into(),
+                action: PaneHeaderAction::Zoom,
+                activate: false,
+            })
+        );
+        let lone = workspace_scene("t1", vec![workspace_tab("t1", &["p1"], "p1")]);
+        snapshot.set_workspace(Some(&lone));
+        let tree = snapshot.tree();
+        let zoom = snapshot.pane_action_ids[0]["p1"];
+        assert!(node(&tree, zoom).is_disabled());
+        assert!(!node(&tree, zoom).supports_action(Action::Click));
+        assert_eq!(snapshot.action_target(zoom, Action::Click), None);
+        assert!(!snapshot.pane_action_ids[1].contains_key("p2"));
+        snapshot.set_workspace(None);
+        assert!(snapshot.pane_action_ids.iter().all(HashMap::is_empty));
     }
 
     fn workspace_scene(active_tab: &str, tabs: Vec<Tab>) -> WorkspaceScene {
@@ -4531,7 +4639,15 @@ mod tests {
         assert_eq!(node(&update, TAB_LIST).children(), &[tab_1, tab_2]);
         assert_eq!(
             node(&update, PANE_PANEL).children(),
-            &[pane_1, pane_2, CONTENT]
+            &[
+                pane_1,
+                snapshot.pane_action_ids[0]["p1"],
+                snapshot.pane_action_ids[1]["p1"],
+                pane_2,
+                snapshot.pane_action_ids[0]["p2"],
+                snapshot.pane_action_ids[1]["p2"],
+                CONTENT
+            ]
         );
         assert_eq!(node(&update, tab_1).role(), Role::Tab);
         assert_eq!(node(&update, tab_1).label(), Some("Tab 1 of 2  /tmp/eon"));
@@ -4607,7 +4723,15 @@ mod tests {
         assert_eq!(panel.label(), Some("Zoomed pane p2  unavailable"));
         assert!(workspace.tabs[0].label().ends_with(" \u{f00e}"));
         assert!(!workspace.tabs[0].label().contains(" · zoom"));
-        assert_eq!(panel.children(), &[snapshot.pane_ids["p2"], CONTENT]);
+        assert_eq!(
+            panel.children(),
+            &[
+                snapshot.pane_ids["p2"],
+                snapshot.pane_action_ids[0]["p2"],
+                snapshot.pane_action_ids[1]["p2"],
+                CONTENT
+            ]
+        );
         assert!(!snapshot.pane_ids.contains_key("p1"));
         assert!(!snapshot.pane_ids.contains_key("p3"));
         assert_eq!(
@@ -4785,7 +4909,15 @@ mod tests {
         let update = snapshot.tree();
 
         assert_eq!(node(&update, PANE_PANEL).label(), Some("Active tab panes"));
-        assert_eq!(node(&update, PANE_PANEL).children(), &[pane, CONTENT]);
+        assert_eq!(
+            node(&update, PANE_PANEL).children(),
+            &[
+                pane,
+                snapshot.pane_action_ids[0]["p2"],
+                snapshot.pane_action_ids[1]["p2"],
+                CONTENT
+            ]
+        );
         assert_eq!(update.focus, pane);
         assert!(node(&update, active_tab).supports_action(Action::Focus));
         assert_eq!(

@@ -3455,3 +3455,67 @@ fn quota_window_widgets_filter_order_and_reserve_only_selected_windows() {
         );
     }
 }
+
+#[test]
+fn pane_actions_have_disjoint_exact_targets_and_yield_together() {
+    let mut snapshot = one_pane_snapshot();
+    snapshot.sidebar = eon_workspace_protocol::v38::Sidebar::Off;
+    let project = |snapshot: &Snapshot, width, scale| {
+        WorkspaceScene::from_snapshot(
+            snapshot,
+            PhysicalSize::new(width, 800),
+            CellMetrics::for_scale(scale),
+            0.0,
+            0.0,
+            |_, text| (text.into(), text.len() as f32 * 10.0),
+        )
+    };
+    let lone = project(&snapshot, 1280, 1.0);
+    let pane = &lone.panes[0];
+    assert!(
+        !lone
+            .pane_action(&pane.id, PaneHeaderAction::Zoom)
+            .unwrap()
+            .1
+    );
+    let mut second = snapshot.tabs[0].columns[0].panes[0].clone();
+    second.id = "p2".into();
+    second.label = "p2  a long pane title".repeat(20);
+    snapshot.tabs[0].columns[0].panes.push(second);
+    for scale in [1.0, 1.3, 4.0 / 3.0, 2.0] {
+        for width in [80, 760, 1280] {
+            let scene = project(&snapshot, width, scale);
+            for pane in &scene.panes {
+                if let Some(actions) = pane.actions {
+                    assert!(
+                        actions[0].top >= scene.header_viewport.top
+                            && actions[0].bottom() <= scene.header_viewport.bottom()
+                    );
+                    assert!(actions[0].intersection(actions[1]).is_none());
+                    assert!(
+                        pane.header_content(CellMetrics::for_scale(scale)).right()
+                            < actions[0].left
+                    );
+                    for action in PaneHeaderAction::ALL {
+                        let target = actions[action.index()];
+                        assert_eq!(
+                            scene.hit_test(
+                                target.left + target.width / 2.0,
+                                target.top + target.height / 2.0
+                            ),
+                            Some(WorkspaceHit::PaneAction(&pane.id, action))
+                        );
+                        assert!(scene.pane_action(&pane.id, action).unwrap().1);
+                    }
+                } else {
+                    assert!(width == 80);
+                    assert!(
+                        scene
+                            .pane_action(&pane.id, PaneHeaderAction::Close)
+                            .is_none()
+                    );
+                }
+            }
+        }
+    }
+}

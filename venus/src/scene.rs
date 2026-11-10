@@ -432,7 +432,38 @@ pub struct WorkspacePane {
     pub live: bool,
     pub selected: bool,
     pub rect: SceneRect,
+    /// Full button targets, ordered Zoom then Close; omitted together when clipped or too narrow.
+    pub actions: Option<[SceneRect; 2]>,
+    pub zoom_enabled: bool,
     label: String,
+}
+
+/// Actions on one pane header, shared by drawing, input and accessibility.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub enum PaneHeaderAction {
+    Zoom,
+    Close,
+}
+
+impl PaneHeaderAction {
+    pub const ALL: [Self; 2] = [Self::Zoom, Self::Close];
+
+    #[must_use]
+    pub fn label(self, pane: &str, zoomed: bool) -> String {
+        match self {
+            Self::Zoom if zoomed => "Restore columns".into(),
+            Self::Zoom => format!("Zoom pane {pane}"),
+            Self::Close => format!("Close pane {pane}"),
+        }
+    }
+
+    #[must_use]
+    pub fn index(self) -> usize {
+        match self {
+            Self::Zoom => 0,
+            Self::Close => 1,
+        }
+    }
 }
 
 /// A column other than the selected one: its accordion headers and terminal area.
@@ -448,6 +479,17 @@ pub struct WorkspaceColumn {
 }
 
 impl WorkspacePane {
+    /// Title and scrollback stop before the action notch's return curve.
+    pub(crate) fn header_content(&self, metrics: CellMetrics) -> SceneRect {
+        let right = self.actions.map_or(self.rect.right(), |actions| {
+            actions[0].left - metrics.padding - title_tab_rise(metrics) * 1.5
+        });
+        SceneRect {
+            width: (right - self.rect.left).max(0.0),
+            ..self.rect
+        }
+    }
+
     /// Painted bounds before viewport clipping; input continues to use `rect`.
     pub(crate) fn frame(&self, terminal: SceneRect) -> SceneRect {
         let top = title_rule_y(self.rect.top, self.rect.height);
@@ -797,6 +839,7 @@ pub enum WorkspaceHit<'a> {
     /// An agent sidebar row, named by its target.
     SidebarRow(&'a str),
     Pane(&'a str),
+    PaneAction(&'a str, PaneHeaderAction),
     /// Another column's terminal area, named by that column's expanded pane.
     ColumnTerminal(&'a str),
     Terminal,
@@ -810,6 +853,7 @@ pub enum WorkspaceFocus {
     Tabs,
     Header(WorkspaceHeaderControl),
     Panes,
+    PaneAction(PaneHeaderAction),
     /// The agent sidebar's rows; the application keeps which one.
     Sidebar,
 }
@@ -4011,23 +4055,41 @@ impl WorkspaceScene {
                 .enumerate()
                 .map(|(position, pane)| {
                     let label = pane.label.clone();
+                    let rect = SceneRect {
+                        left,
+                        top: header_viewport.top
+                            + position as f32 * pane_height
+                            + if position > expanded {
+                                terminal_height
+                            } else {
+                                0.0
+                            }
+                            - column_scroll,
+                        width: column_width,
+                        height: pane_height,
+                    };
+                    let button = pane_height;
+                    let actions = (rect.width >= button * 2.0 + metrics.padding * 4.0
+                        && rect.left >= header_viewport.left
+                        && rect.right() <= header_viewport.right()
+                        && rect.top >= header_viewport.top
+                        && rect.bottom() <= header_viewport.bottom())
+                    .then(|| {
+                        let left = rect.right() - metrics.padding / 2.0 - button * 2.0;
+                        std::array::from_fn(|index| SceneRect {
+                            left: left + button * index as f32,
+                            top: rect.top,
+                            width: button,
+                            height: button,
+                        })
+                    });
                     WorkspacePane {
                         id: pane.id.clone(),
                         live: pane.live,
                         selected: position == expanded,
-                        rect: SceneRect {
-                            left,
-                            top: header_viewport.top
-                                + position as f32 * pane_height
-                                + if position > expanded {
-                                    terminal_height
-                                } else {
-                                    0.0
-                                }
-                                - column_scroll,
-                            width: column_width,
-                            height: pane_height,
-                        },
+                        rect,
+                        actions,
+                        zoom_enabled: active.panes().nth(1).is_some(),
                         label,
                     }
                 })
@@ -4161,6 +4223,20 @@ impl WorkspaceScene {
     /// Corner radius of every pane and popup card.
     pub(crate) fn card_radius(&self) -> f32 {
         self.card_radius
+    }
+
+    /// A visible header action and whether it can be activated.
+    #[must_use]
+    pub fn pane_action(&self, id: &str, action: PaneHeaderAction) -> Option<(SceneRect, bool)> {
+        if self.popup_label.is_some() {
+            return None;
+        }
+        let pane = self
+            .column_panes()
+            .flat_map(|(panes, _)| panes)
+            .find(|pane| pane.id == id)?;
+        let rect = pane.actions?[action.index()];
+        Some((rect, action != PaneHeaderAction::Zoom || pane.zoom_enabled))
     }
 
     /// The sole pane while window-local zoom is visible.
@@ -4304,6 +4380,13 @@ impl WorkspaceScene {
                     .intersection(self.header_viewport)
                     .is_some_and(|rect| rect.contains(x, y))
                 {
+                    if let Some(actions) = pane.actions {
+                        for action in PaneHeaderAction::ALL {
+                            if actions[action.index()].contains(x, y) {
+                                return Some(WorkspaceHit::PaneAction(&pane.id, action));
+                            }
+                        }
+                    }
                     return Some(WorkspaceHit::Pane(&pane.id));
                 }
             }

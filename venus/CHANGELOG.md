@@ -2,6 +2,12 @@
 
 ## Unreleased
 
+- VEN-C8: pane headers pair the left title notch with a right Zoom/Restore and
+  Close notch; title and scrollback reserve its space. Pointer release, Panes
+  keyboard traversal and separate AccessKit buttons share the same targets.
+  Zoom selects its named pane before using the local view toggle; Close reuses
+  Alt+W's exact-target/final-close path. No wire change (`eon-ipc6f`).
+
 - Codex and Claude quota chips show pace colour and hover/accessibility text
   from 1% used, with no elapsed-time gate. Windows with no quota used are
   neutral at any age and show no pace line (`eon-7aw48`).

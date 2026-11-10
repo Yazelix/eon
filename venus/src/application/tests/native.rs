@@ -2940,3 +2940,284 @@ fn run_quit_probe(name: &str, check: QuitCheck) {
     drop(probe);
     std::fs::remove_dir_all(root).unwrap();
 }
+
+#[test]
+#[cfg(target_os = "linux")]
+#[ignore = "requires an isolated native Wayland display and Vulkan renderer"]
+fn pane_actions_wait_for_selection_and_cancel_on_local_input() {
+    use eon_workspace_protocol::v38 as workspace;
+    use std::{fs, os::unix::net::UnixListener, sync::mpsc};
+    use winit::{
+        event::DeviceId, keyboard::ModifiersState, platform::wayland::EventLoopBuilderExtWayland,
+    };
+
+    struct Probe {
+        app: Application,
+        snapshot: Snapshot,
+        actions: mpsc::Receiver<WorkspaceAction>,
+        checked: bool,
+    }
+    impl ApplicationHandler<UserEvent> for Probe {
+        fn resumed(&mut self, event_loop: &ActiveEventLoop) {
+            self.app.create_window(event_loop).unwrap();
+        }
+        fn window_event(&mut self, event_loop: &ActiveEventLoop, id: WindowId, event: WindowEvent) {
+            self.app.window_event(event_loop, id, event);
+            if self.checked || !self.app.presentation.has_presented_geometry() {
+                return;
+            }
+            self.checked = true;
+            let app = &mut self.app;
+            let device_id = DeviceId::dummy();
+            // The real transport queues FocusId; replies are delivered explicitly in wire order.
+            for cancel in 0..5 {
+                app.set_shortcut_viewer(false);
+                app.input.set_modifiers(ModifiersState::empty());
+                app.zoom = None;
+                app.set_workspace_focus(WorkspaceFocus::Terminal);
+                app.handle_workspace(WorkspaceEvent::Response(workspace::Response::Snapshot(
+                    self.snapshot.clone(),
+                )));
+                app.render();
+                let (button, _) = app
+                    .workspace_scene()
+                    .unwrap()
+                    .pane_action("p2", PaneHeaderAction::Zoom)
+                    .unwrap();
+                app.window_event(
+                    event_loop,
+                    id,
+                    WindowEvent::CursorMoved {
+                        device_id,
+                        position: PhysicalPosition::new(
+                            f64::from(button.left + button.width / 2.0),
+                            f64::from(button.top + button.height / 2.0),
+                        ),
+                    },
+                );
+                app.window_event(
+                    event_loop,
+                    id,
+                    WindowEvent::MouseInput {
+                        device_id,
+                        state: ElementState::Pressed,
+                        button: MouseButton::Left,
+                    },
+                );
+                assert!(
+                    app.pending_pane.is_none(),
+                    "press alone cannot select or zoom"
+                );
+                app.render();
+                app.window_event(
+                    event_loop,
+                    id,
+                    WindowEvent::MouseInput {
+                        device_id,
+                        state: ElementState::Released,
+                        button: MouseButton::Left,
+                    },
+                );
+                assert_eq!(
+                    self.actions.recv_timeout(Duration::from_secs(2)).unwrap(),
+                    WorkspaceAction::Workspace(CommonAction::FocusId("p2".into()))
+                );
+                let ticket = app
+                    .pending_pane
+                    .as_ref()
+                    .expect("release queues delayed zoom")
+                    .ticket;
+                assert!(!app.zoomed());
+                match cancel {
+                    1 => app.set_workspace_focus(WorkspaceFocus::Tabs),
+                    2 => {
+                        app.input.set_modifiers(ModifiersState::ALT);
+                        assert!(press_shortcut(app, event_loop, KeyCode::Slash));
+                        assert!(app.shortcut_viewer.open);
+                        release_shortcut(app, event_loop, KeyCode::Slash);
+                    }
+                    3 => {
+                        assert!(
+                            !press_shortcut(app, event_loop, KeyCode::KeyA),
+                            "ordinary text goes past the shortcut chain to the terminal"
+                        );
+                        release_shortcut(app, event_loop, KeyCode::KeyA);
+                    }
+                    4 => {
+                        app.window_event(event_loop, id, WindowEvent::Ime(Ime::Commit("x".into())))
+                    }
+                    _ => {}
+                }
+                if cancel != 0 {
+                    assert!(app.pending_pane.is_none(), "local interaction {cancel}");
+                }
+                let mut selected = self.snapshot.clone();
+                selected.tabs[0].selected_pane = Some("p2".into());
+                selected.tabs[0].columns[0].expanded = "p2".into();
+                app.handle_workspace(WorkspaceEvent::Response(workspace::Response::Snapshot(
+                    selected,
+                )));
+                assert!(
+                    !app.zoomed(),
+                    "a snapshot alone does not accept our request"
+                );
+                app.handle_workspace(WorkspaceEvent::Answered {
+                    ticket,
+                    accepted: true,
+                });
+                assert_eq!(
+                    app.zoomed(),
+                    cancel == 0,
+                    "completion after local interaction {cancel}"
+                );
+                if cancel == 2 {
+                    assert!(app.shortcut_viewer.open);
+                }
+            }
+            app.set_shortcut_viewer(false);
+            app.input.set_modifiers(ModifiersState::empty());
+            app.handle_workspace(WorkspaceEvent::Response(workspace::Response::Snapshot(
+                self.snapshot.clone(),
+            )));
+            app.set_workspace_focus(WorkspaceFocus::PaneAction(PaneHeaderAction::Close));
+            app.render();
+            assert!(press_shortcut(app, event_loop, KeyCode::Enter));
+            release_shortcut(app, event_loop, KeyCode::Enter);
+            assert_eq!(
+                self.actions.recv_timeout(Duration::from_secs(2)).unwrap(),
+                WorkspaceAction::ClosePane { pane: "p1".into() }
+            );
+            assert_eq!(
+                app.workspace_focus,
+                WorkspaceFocus::Panes,
+                "Close must not leave Enter aimed at the next pane's Close"
+            );
+            let mut closed = self.snapshot.clone();
+            closed.tabs[0].columns[0].panes.remove(0);
+            closed.tabs[0].columns[0].expanded = "p2".into();
+            closed.tabs[0].selected_pane = Some("p2".into());
+            app.handle_workspace(WorkspaceEvent::Response(workspace::Response::Snapshot(
+                closed,
+            )));
+            assert!(press_shortcut(app, event_loop, KeyCode::Enter));
+            assert_eq!(app.workspace_focus, WorkspaceFocus::Panes);
+
+            let mut stacked = self.snapshot.clone();
+            for index in 3..=30 {
+                let mut pane = stacked.tabs[0].columns[0].panes[0].clone();
+                pane.id = format!("p{index}");
+                pane.session = format!("s{index}");
+                pane.label = format!("p{index}");
+                pane.endpoint.extend(index.to_string().bytes());
+                stacked.tabs[0].columns[0].panes.push(pane);
+            }
+            app.handle_workspace(WorkspaceEvent::Response(workspace::Response::Snapshot(
+                stacked,
+            )));
+            app.set_workspace_focus(WorkspaceFocus::PaneAction(PaneHeaderAction::Close));
+            app.render();
+            let metrics = app.window.as_ref().unwrap().renderer.metrics();
+            app.scroll_workspace(MouseScrollDelta::LineDelta(0.0, -1.0), false, metrics);
+            assert!(app.pane_scroll > 0.0);
+            assert!(
+                app.workspace_scene()
+                    .unwrap()
+                    .pane_action("p1", PaneHeaderAction::Close)
+                    .is_none()
+            );
+            assert_eq!(
+                app.workspace_focus,
+                WorkspaceFocus::Panes,
+                "scrolling a focused button away must return focus to its title"
+            );
+            event_loop.exit();
+        }
+    }
+    let root = std::env::temp_dir().join(format!("venus-pane-actions-{}", std::process::id()));
+    fs::create_dir(&root).unwrap();
+    let socket = root.join("workspace.sock");
+    let listener = UnixListener::bind(&socket).unwrap();
+    let mut snapshot = super::chrome::quit_snapshot();
+    snapshot.running = None;
+    snapshot.workspaces = vec![workspace::WorkspaceInfo {
+        id: "s1".into(),
+        persistent_id: Some("s1".into()),
+        registration_error: None,
+        name: None,
+        tab_count: 1,
+        attention: None,
+        recency: 0,
+    }];
+    snapshot.tabs = vec![Tab {
+        id: "t1".into(),
+        directory: b"/tmp".to_vec(),
+        pending: false,
+        selected_pane: Some("p1".into()),
+        selected_popup: None,
+        columns: vec![workspace::Column {
+            expanded: "p1".into(),
+            panes: (1..=2)
+                .map(|n| Pane {
+                    id: format!("p{n}"),
+                    label: format!("p{n}"),
+                    pinned_name: None,
+                    session: format!("s{n}"),
+                    endpoint: root.join(format!("p{n}.sock")).into_os_string().into_vec(),
+                    live: true,
+                    attention: None,
+                })
+                .collect(),
+        }],
+        popups: vec![],
+        attention_rollup: None,
+    }];
+    let response =
+        workspace::encode_response(&workspace::Response::Snapshot(snapshot.clone())).unwrap();
+    let (sender, actions) = mpsc::channel();
+    let server = thread::spawn(move || {
+        for _ in 0..6 {
+            loop {
+                let (mut stream, _) = listener.accept().unwrap();
+                let mut header = [0; workspace::HEADER_BYTES];
+                stream.read_exact(&mut header).unwrap();
+                let mut bytes = Vec::from(header);
+                bytes.resize(workspace::declared_message_len(&header).unwrap(), 0);
+                stream
+                    .read_exact(&mut bytes[workspace::HEADER_BYTES..])
+                    .unwrap();
+                let action = workspace::decode_request(&bytes).unwrap().action;
+                if matches!(action, WorkspaceAction::Subscribe { .. }) {
+                    continue;
+                }
+                stream.write_all(&response).unwrap();
+                if action != WorkspaceAction::Workspace(CommonAction::Inspect) {
+                    sender.send(action).unwrap();
+                    break;
+                }
+            }
+        }
+    });
+    let event_loop = EventLoop::<UserEvent>::with_user_event()
+        .with_wayland()
+        .with_any_thread(true)
+        .build()
+        .unwrap();
+    let arguments =
+        launch::launch_arguments([root.join("unused-orbit.sock").into_os_string()], None).unwrap();
+    let mut app = Application::new(arguments, event_loop.create_proxy());
+    app.initial_scale_pending = false;
+    app.workspace_model
+        .apply(workspace::Response::Snapshot(snapshot.clone()));
+    app.workspace_transport = Some(WorkspaceTransport::start(socket, || {}));
+    let mut probe = Probe {
+        app,
+        snapshot,
+        actions,
+        checked: false,
+    };
+    event_loop.run_app(&mut probe).unwrap();
+    assert!(probe.checked);
+    drop(probe);
+    server.join().unwrap();
+    fs::remove_dir_all(root).unwrap();
+}

@@ -843,7 +843,9 @@ pub(super) fn shortcut_hints_for(
             Action::TraverseChrome(Left | Right) if focus == WorkspaceFocus::Tabs => {
                 ("tabs", "tabs", 1)
             }
-            Action::TraverseChrome(Up | Down) if focus == WorkspaceFocus::Panes => {
+            Action::TraverseChrome(Up | Down)
+                if matches!(focus, WorkspaceFocus::Panes | WorkspaceFocus::PaneAction(_)) =>
+            {
                 ("panes", "panes", 1)
             }
             Action::TraverseChrome(Up | Down) if focus == WorkspaceFocus::Sidebar => {

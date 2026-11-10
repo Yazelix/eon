@@ -585,6 +585,7 @@ struct PaneTitleTab {
     tab: FrameTitleTab,
     /// Reflection about a lower pane edge; text itself stays upright.
     flip: Option<f32>,
+    action: Option<FrameTitleTab>,
 }
 
 struct PaneTitleCache {
@@ -622,9 +623,28 @@ impl PaneTitleTab {
     }
 
     fn bands(&self, inset: f32) -> Vec<SceneRect> {
-        title_tab_bands(self.card, &self.tab, inset)
+        let mut bands = title_tab_bands(self.card, &self.tab, inset);
+        if let Some(action) = &self.action {
+            for band in title_tab_bands(self.card, action, inset) {
+                let reflected = SceneRect {
+                    left: self.card.bounds.left + self.card.bounds.right() - band.right(),
+                    ..band
+                };
+                let pieces = uncovered(reflected, &bands);
+                bands.extend(pieces);
+            }
+        }
+        bands.into_iter().map(|band| self.reflect(band)).collect()
+    }
+
+    fn outline_rects(&self, width: f32) -> Vec<(SceneRect, f32)> {
+        let inner = self.bands(width);
+        let replacement = self.replacement();
+        self.bands(0.0)
             .into_iter()
-            .map(|band| self.reflect(band))
+            .filter_map(|band| band.intersection(replacement))
+            .flat_map(|band| uncovered(band, &inner))
+            .flat_map(|piece| span_rects(piece.left, piece.right(), piece.top))
             .collect()
     }
 
@@ -3088,9 +3108,8 @@ impl RectangleBatch {
                     target
                 };
                 // Caps may borrow an adjacent header's margin, but never its input bounds.
-                for (rect, alpha) in title_tab_outline_rects(tab.card, &tab.tab, width) {
-                    if let Some(rect) = tab
-                        .reflect(rect)
+                for (rect, alpha) in tab.outline_rects(width) {
+                    if let Some(rect) = rect
                         .intersection(viewport)
                         .and_then(|rect| rect.intersection(fill.bounds))
                     {

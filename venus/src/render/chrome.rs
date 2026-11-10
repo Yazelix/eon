@@ -354,6 +354,7 @@ pub(super) struct HeaderInteraction {
     disk_hovered: bool,
     clock_hovered: bool,
     pressed_header: Option<WorkspaceHeaderControl>,
+    pub(super) pressed_pane: Option<(String, crate::PaneHeaderAction)>,
 }
 
 impl HeaderInteraction {
@@ -1427,7 +1428,17 @@ impl PaneTitleTab {
             own_ink.top,
             stroke,
         )?;
-        Some(Self { card, tab, flip })
+        let action = pane.actions.map(|actions| FrameTitleTab {
+            start: card.bounds.left + card.bounds.right() - actions[0].left + metrics.padding / 2.0
+                - tab.left_radius,
+            ..tab.clone()
+        });
+        Some(Self {
+            card,
+            tab,
+            flip,
+            action,
+        })
     }
 
     pub(super) fn workspace(
@@ -1470,9 +1481,11 @@ impl PaneTitleTab {
                         }
                         let current = column == 0 && pane.selected;
                         let right = if current {
-                            right_limit.unwrap_or(pane.rect.right())
+                            right_limit
+                                .unwrap_or(pane.header_content(metrics).right())
+                                .min(pane.header_content(metrics).right())
                         } else {
-                            pane.rect.right()
+                            pane.header_content(metrics).right()
                         };
                         let neighbour_index = if index > expanded {
                             Some(index + 1)
@@ -1518,6 +1531,28 @@ impl PaneTitleTab {
     }
 }
 
+/// Raised notches replace the rule under their buttons; compact groups need a gap.
+pub(super) fn pane_rule_gaps(
+    title: SceneRect,
+    mut scrollback: SceneRect,
+    actions: Option<[SceneRect; 2]>,
+    notched: bool,
+) -> [SceneRect; 2] {
+    if !notched && let Some(actions) = actions {
+        let left = if scrollback.width > 0.0 {
+            scrollback.left
+        } else {
+            actions[0].left
+        };
+        scrollback = SceneRect {
+            left,
+            width: actions[1].right() - left,
+            ..actions[0]
+        };
+    }
+    [title, scrollback]
+}
+
 impl Renderer {
     pub(super) fn workspace_pane_tabs(
         &mut self,
@@ -1548,7 +1583,8 @@ impl Renderer {
                 self.scrollback_geometry(
                     SceneRect {
                         left: pane.rect.left + self.metrics.width * 4.0,
-                        width: (pane.rect.width - self.metrics.width * 4.0).max(0.0),
+                        width: (pane.header_content(self.metrics).width - self.metrics.width * 4.0)
+                            .max(0.0),
                         ..pane.rect
                     },
                     workspace.header_viewport,
@@ -1809,6 +1845,10 @@ impl Renderer {
         self.header.quota_hovered = hovered;
     }
 
+    pub fn set_pressed_pane_action(&mut self, action: Option<(String, crate::PaneHeaderAction)>) {
+        self.header.pressed_pane = action;
+    }
+
     pub fn set_pressed_header(&mut self, control: Option<WorkspaceHeaderControl>) {
         self.header.pressed_header = control;
     }
@@ -1995,7 +2035,24 @@ impl Renderer {
             .tabs
             .iter()
             .find(|tab| self.header.hovers(WorkspaceFocus::Tabs, &tab.id));
-        let (label, anchor) = if let Some(quota) = self
+        let hovered_pane = self.header.hovered_header.as_ref().and_then(|(focus, id)| {
+            let WorkspaceFocus::PaneAction(action) = focus else {
+                return None;
+            };
+            let (rect, enabled) = workspace.pane_action(id, *action)?;
+            let pane = workspace
+                .column_panes()
+                .flat_map(|(panes, _)| panes)
+                .find(|pane| pane.id == *id)?;
+            let mut label = action.label(pane.label(), workspace.zoomed_pane().is_some());
+            if !enabled {
+                label.push_str(" — unavailable in a one-pane tab");
+            }
+            Some((label, rect))
+        });
+        let (label, anchor) = if let Some((label, rect)) = &hovered_pane {
+            (label.as_str(), *rect)
+        } else if let Some(quota) = self
             .header
             .quota_hovered
             .and_then(|index| workspace.quotas.get(index))
@@ -2043,7 +2100,15 @@ impl Renderer {
         } else {
             return;
         };
-        let edge = tooltip_edge(workspace, anchor, padding);
+        let edge = if hovered_pane.is_some() {
+            if anchor.top > self.config.height as f32 / 2.0 {
+                TooltipEdge::Above(anchor.top - padding / 3.0)
+            } else {
+                TooltipEdge::Below(anchor.bottom() + padding / 3.0)
+            }
+        } else {
+            tooltip_edge(workspace, anchor, padding)
+        };
         let (width, height) = self.tooltip_room(workspace, edge);
         if width <= padding * 2.0 || height <= padding * 2.0 {
             return;
@@ -2958,7 +3023,9 @@ impl Renderer {
                     self.build_scrollback(
                         SceneRect {
                             left: pane.rect.left + self.metrics.width * 4.0,
-                            width: (pane.rect.width - self.metrics.width * 4.0).max(0.0),
+                            width: (pane.header_content(self.metrics).width
+                                - self.metrics.width * 4.0)
+                                .max(0.0),
                             ..pane.rect
                         },
                         workspace.header_viewport,
@@ -2969,7 +3036,9 @@ impl Renderer {
                 } else {
                     0.0
                 };
-                let width = (pane.rect.width - self.metrics.padding * 2.0 - scrollback_width)
+                let width = (pane.header_content(self.metrics).width
+                    - self.metrics.padding * 2.0
+                    - scrollback_width)
                     .max(0.0)
                     .floor();
                 let color = if current {
@@ -3035,15 +3104,16 @@ impl Renderer {
                         id_color,
                     );
                 }
-                let gaps = [
+                *rule_gaps = pane_rule_gaps(
                     pill,
                     if scrollback_width > 0.0 {
                         self.terminal.scrollback_rect.unwrap()
                     } else {
                         empty_gap
                     },
-                ];
-                *rule_gaps = gaps;
+                    pane.actions,
+                    notch.is_some(),
+                );
                 rectangles.clip = Some(rect);
                 if pill.width > self.metrics.padding {
                     if self.header.hovers(WorkspaceFocus::Panes, &pane.id) {
@@ -3082,6 +3152,88 @@ impl Renderer {
                             self.metrics.padding / 2.0,
                             palette::ACCENT,
                         );
+                    }
+                }
+                rectangles.clip = Some(rect);
+                if let Some(actions) = pane.actions {
+                    for action in crate::PaneHeaderAction::ALL {
+                        let target = actions[action.index()];
+                        let enabled = action != crate::PaneHeaderAction::Zoom || pane.zoom_enabled;
+                        let hovered = enabled
+                            && self
+                                .header
+                                .hovers(WorkspaceFocus::PaneAction(action), &pane.id);
+                        let pressed = self
+                            .header
+                            .pressed_pane
+                            .as_ref()
+                            .is_some_and(|(id, held)| id == &pane.id && *held == action);
+                        if hovered {
+                            rectangles.push_rounded(
+                                target,
+                                self.metrics.padding / 2.0,
+                                if pressed {
+                                    palette::ACCENT
+                                } else {
+                                    palette::CHROME_HIGHLIGHT
+                                },
+                            );
+                        }
+                        if current && focus == WorkspaceFocus::PaneAction(action) && enabled {
+                            rectangles.push_rounded_outline(
+                                target,
+                                self.metrics.padding / 2.0,
+                                palette::ACCENT,
+                            );
+                        }
+                        let glyph = match action {
+                            crate::PaneHeaderAction::Close => "×",
+                            crate::PaneHeaderAction::Zoom if workspace.zoomed_pane().is_some() => {
+                                "▣"
+                            }
+                            crate::PaneHeaderAction::Zoom => "□",
+                        };
+                        let (buffer, left, top) = ink_centred_glyph(
+                            &mut self.fonts.font_system,
+                            &mut self.swash_cache,
+                            self.metrics,
+                            glyph,
+                            (target.left + target.width / 2.0, row.top + row.height / 2.0),
+                        );
+                        self.text.push(PlacedText {
+                            buffer,
+                            custom_glyph: None,
+                            left,
+                            top,
+                            right: target.right().floor() as i32,
+                            bottom: rect.bottom().floor() as i32,
+                            bound_left: target.left.ceil() as i32,
+                            bound_top: rect.top.ceil() as i32,
+                            color: {
+                                let background = if hovered {
+                                    if pressed {
+                                        palette::ACCENT
+                                    } else {
+                                        palette::CHROME_HIGHLIGHT
+                                    }
+                                } else {
+                                    backgrounds
+                                        .get(column_index)
+                                        .copied()
+                                        .unwrap_or(palette::TERMINAL_FALLBACK)
+                                };
+                                let c = blend_to_contrast(
+                                    if enabled {
+                                        color
+                                    } else {
+                                        palette::DEAD_PANE_TEXT
+                                    },
+                                    background,
+                                    if enabled { 4.5 } else { 3.0 },
+                                );
+                                Color::rgb(c.r, c.g, c.b)
+                            },
+                        });
                     }
                 }
                 rectangles.clip = None;

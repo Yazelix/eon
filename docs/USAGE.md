@@ -504,6 +504,25 @@ width, even while that pane is selected. Headers scroll below the band. On a
 window too short for the band, a first header and one padded terminal row, the
 band yields whole and the label goes.
 
+Each pane header has a right action group: Zoom (`□`, Restore `▣` while zoomed)
+and Close (`×`). Framed headers give the group a mirrored notch; frameless
+headers keep the controls inline. The title and scrollback indicator fit to its
+left. Both controls disappear together if two full targets cannot fit; collapsed
+bottom rows and tight clearances retain a compact gap. Stack, Agents, popup and
+dialog headings have no pane actions, and a popup covers the underlying headers.
+Hover and press highlight the individual button. A one-pane tab keeps a dimmed,
+disabled Zoom button in its slot.
+
+F6 cycles to pane chrome. Tab and Shift+Tab cycle the selected pane's title, Zoom
+and Close, skipping disabled Zoom; Enter or Space activates a button. Up/Down
+select another pane and return focus to its title. Action focus uses a transient
+accent pill outline. Zoom first selects the named pane if necessary and then uses
+Alt+Shift+Z's local view behavior; another action or zoom toggle cancels a pending
+selection. Close targets its own pane exactly as Alt+W does, with the same
+final-pane confirmation. After a keyboard Close, focus returns to the selected
+pane's title. Escape cancels that prompt; Enter closes its held target.
+Agents can use `eon pane close PANE`; zoom is window-local view state.
+
 Pane notches, Stack tabs, popups, Agents and native titled dialogs use one shared
 title style. The outline rises seamlessly from the left border over the fitted name,
 then returns into the top edge with a tangent S curve spanning 1.5 times its

@@ -661,7 +661,9 @@ re-proved when that platform or feature is next touched.
   rule) by `eon-7cf0y.17`: Quit sends EON-C11's Reserved Stop.
   Amended on 2026-11-09 by `eon-whjhd`, approved by Lucca (delegated:
   'auto-decide'): a Stack tab above each column and plain titles on every
-  pane.
+  pane. Amended on 2026-11-10 by `eon-ipc6f`, approved by eon-overseer under
+  Lucca's standing approval: right pane action notches, selected-pane button
+  traversal and AccessKit actions, reusing existing zoom and final-close behavior.
 - **Consumer:** One Venus surface controlled by an Eon workspace.
 - **Trigger:** Outside visible `VEN-C18` popup presentation, Eon supplies
   durable topology, a workspace action changes tab, pane, focus, order,
@@ -701,22 +703,25 @@ re-proved when that platform or feature is next touched.
     than 40 terminal columns wide; with four, Eon's capacity refusal applies.
     Shrinking the window later narrows existing columns without removing
     them.
-  - Alt+Shift+Z toggles window-local zoom of the active tab's selected pane
-    once per press and sends no workspace action. While zoomed, Scene lays out
-    only that pane, as one rounded card under its column's Stack tab with its label
-    in its top edge, spanning the area all of the tab's columns cover; the other panes' attachments stay
-    open at their last size and are not resized, drawn, hit-tested or listed to
-    accessibility. An accepted snapshot that changes the active tab, its panes
-    or columns, or its selected pane ends the zoom, and unzooming sizes
-    every column for the current window again, resizing only where that size
-    changed. The active tab's label gains a zoom-in magnifier glyph (Nerd Font U+F00E)
-    after its name and its accessible name
-    `, zoomed`; the pane panel is named `Zoomed pane <label>` and lists only
-    that pane. In a tab with one pane the key is consumed with a
-    rejected-action notice. While a popup covers the tab it is consumed
-    without effect; the popup hides the zoomed layout and its marker, and both
-    return when the popup hides. A current Eon
-    popup on the key takes it (VEN-C20).
+  - Alt+Shift+Z toggles window-local zoom of the active tab's selected pane once
+    per press and sends no workspace action. A pane's Zoom button, released over
+    it, toggles the same zoom for that pane; for an unselected pane Venus first
+    sends `FocusId` and zooms only once an accepted snapshot selects it,
+    dropping the zoom if the request fails or another action, tab or popup
+    change comes first. In a one-pane tab the button is disabled. While zoomed,
+    Scene lays out only that pane, as one rounded card under its column's Stack
+    tab with its label in its top edge, spanning the area all of the tab's
+    columns cover; the other panes' attachments stay open at their last size and
+    are not resized, drawn, hit-tested or listed to accessibility. An accepted
+    snapshot that changes the active tab, its panes or columns, or its selected
+    pane ends the zoom, and unzooming sizes every column for the current window
+    again, resizing only where that size changed. The active tab's label gains a
+    zoom-in magnifier glyph (Nerd Font U+F00E) after its name and its accessible
+    name `, zoomed`; the pane panel is named `Zoomed pane <label>` and lists
+    only that pane. In a tab with one pane the key is consumed with a rejected-
+    action notice. While a popup covers the tab it is consumed without effect;
+    the popup hides the zoomed layout and its marker, and both return when the
+    popup hides. A current Eon popup on the key takes it (VEN-C20).
   - Pane frames draw each pane as its own rounded card at the border width,
     stacked without gaps in its column's allocated card area. A collapsed pane
     is one title row showing a rounded edge with its label in it; its corners turn
@@ -735,47 +740,57 @@ re-proved when that platform or feature is next touched.
     label takes that position and the first pill follows it. Pill height follows VEN-C21; the gap between pills and
     header button width stay as before; on a short window the extra inset
     yields before the pills do. On a window too small for the gaps they
-    yield before a terminal cell does. Framed pane titles use the shared left title notch, including
-    first, lone and zoomed panes; interior collapsed edges mirror it toward
-    their pane. The final collapsed title stays a compact gap in the column's
-    bottom edge. Insufficient text/stroke clearance retains a compact gap. Each column
-    card's top line carries VEN-C18's shared framed-title tab, labelled `Stack`
-    when the tab has one column and `Stack 1`, `Stack 2`, ... from left to right
-    when it has several (the panes' one-based `column` in `eon session --json`);
-    without pane frames the label shows plain. The first pane's top edge sits one
-    stack band below that line: one chrome title row plus the tab's rise, a third
-    of the title padding (24 logical pixels at default typography). The column's
-    sides run from that line down to where the first pane's rounded top corners
-    turn into them, as stacked cards meet; that segment and its tab keep the
-    neutral border colour and width. Headers scroll below the stack band. At the
-    unscrolled top, each column's top line, the popup card and
-    the agent sidebar card share one snapped top line, subject to VEN-C18's
-    tiny-window popup exception. Each column's fill starts at its Stack tab's
-    contour and follows it down to the column's rounded
-    bottom; inside it, title rows and the space between stacked pane cards share the
-    expanded terminal's background color/opacity under the surface-wide blur request,
-    so the stack has one background. In framed, unzoomed expanded panes, the band
-    below the title rule follows the top padding's color and opacity rules
-    (`padding_color` in
-    [Configuration behavior](../../docs/CONFIGURATION.md#configuration-behavior))
-    instead of the shared title-row background; title text, cutouts and outlines
-    stay above it, while collapsed rows, popups, zoom and frameless headers retain
-    their existing backgrounds. The Stack tab and the stack band keep the
-    uniform column background and opacity. Outside the shared
-    title contour and those outer corners, everything below the tab bar that the
-    column fills do not cover, including the gaps and footer band, takes the
-    header's opaque color, so header, gaps and footer form one frame. The selected pane in the selected column has a
-    brighter label and, with pane frames enabled, its whole frame in the focus
-    color at the focus border width. Eon supplies both
-    widths in logical pixels. Hover fills inside the pane notch;
-    keyboard focus colours its existing stroke. Compact and frameless titles
-    retain their hover pill and keyboard-focus accent pill outline. Title rules stay
-    straight during scrolling; overflowing headers scroll within fixed allocated
-    column card areas. `--pane-frames true|false` defaults to
-    `true`; `false` removes card borders and title rules, leaving label-only
-     pane headers with the selection, hover and keyboard-focus feedback
-    described above. Both modes preserve the same terminal grid, header hit
-    targets and AccessKit bounds.
+    yield before a terminal cell does. Framed pane titles use the shared left
+    title notch, including first, lone and zoomed panes; interior collapsed
+    edges mirror it toward their pane. The final collapsed title stays a compact
+    gap in the column's bottom edge. Insufficient text/stroke clearance retains
+    a compact gap. Each pane header, zoomed included, also carries a right
+    action notch mirroring the title notch, holding Zoom (Restore while zoomed)
+    and Close buttons; the title and scrollback pill fit to its left. Where both
+    buttons cannot fit at full size the header shows neither. Stack, Agents,
+    popup and dialog headings carry none, nor does a header a popup covers. Each
+    column card's top line carries VEN-C18's shared framed-title tab, labelled
+    `Stack` when the tab has one column and `Stack 1`, `Stack 2`, ... from left
+    to right when it has several (the panes' one-based `column` in `eon session
+    --json`); without pane frames the label shows plain. The first pane's top
+    edge sits one stack band below that line: one chrome title row plus the
+    tab's rise, a third of the title padding (24 logical pixels at default
+    typography). The column's sides run from that line down to where the first
+    pane's rounded top corners turn into them, as stacked cards meet; that
+    segment and its tab keep the neutral border colour and width. Headers scroll
+    below the stack band. At the unscrolled top, each column's top line, the
+    popup card and the agent sidebar card share one snapped top line, subject to
+    VEN-C18's tiny-window popup exception. Each column's fill starts at its
+    Stack tab's contour and follows it down to the column's rounded bottom;
+    inside it, title rows and the space between stacked pane cards share the
+    expanded terminal's background color/opacity under the surface-wide blur
+    request, so the stack has one background. In framed, unzoomed expanded
+    panes, the band below the title rule follows the top padding's color and
+    opacity rules (`padding_color` in [Configuration
+    behavior](../../docs/CONFIGURATION.md#configuration-behavior)) instead of
+    the shared title-row background; title text, cutouts and outlines stay above
+    it, while collapsed rows, popups, zoom and frameless headers retain their
+    existing backgrounds. The Stack tab and the stack band keep the uniform
+    column background and opacity. Outside the shared title contour and those
+    outer corners, everything below the tab bar that the column fills do not
+    cover, including the gaps and footer band, takes the header's opaque color,
+    so header, gaps and footer form one frame. The selected pane in the selected
+    column has a brighter label and, with pane frames enabled, its whole frame
+    in the focus color at the focus border width. Eon supplies both widths in
+    logical pixels. Hover fills inside the hovered notch or button; keyboard
+    focus colours the focused notch's stroke or draws the accent pill outline
+    around the focused button. Compact and frameless titles retain their hover
+    pill and keyboard-focus accent pill outline. Title rules stay straight
+    during scrolling; overflowing headers scroll within fixed allocated column
+    card areas. `--pane-frames true|false` defaults to `true`; `false` removes
+    card borders and title rules, leaving plain pane headers with inline actions
+    and the selection, hover and keyboard-focus feedback described above. Both
+    modes preserve the same terminal grid, header hit targets and AccessKit
+    bounds. In the Panes region Tab and Shift+Tab move among the selected pane's
+    title, Zoom and Close; Enter or Space activates the focused button; Up/Down
+    return focus to the title. After keyboard Close, focus returns to the selected
+    pane's title. AccessKit lists each visible header's buttons as
+    `Zoom pane <label>` (`Restore columns` while zoomed) and `Close pane <label>`.
     Initial requested grids include the card gaps in their window overhead;
     the gaps accept no pane or terminal input. Column width and the 40-column
     admission check both come from the allocated column card areas.
@@ -832,7 +847,9 @@ re-proved when that platform or feature is next touched.
     Venus applies Ctrl+Alt+M's 40-terminal-column refusal. Alt+Shift+W sends one
     non-repeating close naming the snapshot's active stable `tN`; Alt+W sends
     one EONW v11 close naming the active tab's selected `pN` and is consumed
-    without an action when the tab has none. Both may target the final tab and
+    without an action when the tab has none. A pane's Close button sends the
+    same close naming its `pN`, with the same final-close prompt. Both may
+    target the final tab and
     its last pane. Such a final close, whatever the session count, when the
     `--warning-close-last-tab` launch argument is true (its default), first
     shows the EON-C8 prompt, which Venus owns: Enter sends the held close

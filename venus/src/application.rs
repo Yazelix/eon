@@ -42,12 +42,12 @@ use yazelix_venus::{
     CellText, ClipboardEffect, Color, ConnectionState, CpuReadings, CpuTimes, CpuUse, DialogKind,
     DialogScene, DialogText, DiskUse, EonBar, FontSettings, FontSetup, HeaderText, Hyperlink,
     ImageKey, ImageResync, InputState, LoadLevels, LocalClock, LocalNoticeSource, MAX_LINK_BYTES,
-    ModelEffect, ModelError, Outgoing, PaddingColor, PresentOutcome, RamUse, Renderer, Scene,
-    SceneRect, SessionModel, ShortcutHintsScene, SidebarView, Transport, TransportEvent,
-    WindowMenuAction, WorkspaceEvent, WorkspaceFocus, WorkspaceHeaderControl, WorkspaceHit,
-    WorkspaceModel, WorkspaceScene, WorkspaceTransport, active_popup, attention_only_change,
-    bench_trace, bench_tracing, focused_terminal, labels_only_change, read_eon_icon,
-    shown_workspace, validate_copy_uri, validate_open_uri, wrapped_lines,
+    ModelEffect, ModelError, Outgoing, PaddingColor, PaneHeaderAction, PresentOutcome, RamUse,
+    Renderer, Scene, SceneRect, SessionModel, ShortcutHintsScene, SidebarView, Transport,
+    TransportEvent, WindowMenuAction, WorkspaceEvent, WorkspaceFocus, WorkspaceHeaderControl,
+    WorkspaceHit, WorkspaceModel, WorkspaceScene, WorkspaceTransport, active_popup,
+    attention_only_change, bench_trace, bench_tracing, focused_terminal, labels_only_change,
+    read_eon_icon, shown_workspace, validate_copy_uri, validate_open_uri, wrapped_lines,
 };
 
 mod geometry;
@@ -525,9 +525,10 @@ struct WindowState {
     window: Arc<Window>,
 }
 
-#[derive(Clone, Copy)]
+#[derive(Clone)]
 enum HeaderPress {
     Control(WorkspaceHeaderControl),
+    Pane(String, PaneHeaderAction),
     Drag,
 }
 
@@ -678,6 +679,48 @@ struct AttentionJump {
     target: String,
     /// The transport's ticket for the jump's `FocusAttention`.
     ticket: u64,
+}
+
+/// FocusId must be accepted before a header action can use the new selection.
+struct PendingPaneAction {
+    workspace: String,
+    tab: String,
+    pane: String,
+    ticket: u64,
+    accepted: bool,
+    action: PaneHeaderAction,
+    activate: bool,
+}
+
+impl PendingPaneAction {
+    /// None waits for this request's answer; false retires a failed or displaced target.
+    fn update(
+        &mut self,
+        snapshot: Option<&eon_workspace_protocol::v38::Snapshot>,
+        answer: Option<(u64, bool)>,
+    ) -> Option<bool> {
+        if let Some((_, accepted)) = answer.filter(|(ticket, _)| *ticket == self.ticket) {
+            if !accepted {
+                return Some(false);
+            }
+            self.accepted = true;
+        }
+        let Some(snapshot) = snapshot else {
+            return Some(false);
+        };
+        if snapshot.workspace != self.workspace
+            || snapshot.active_tab != self.tab
+            || active_popup(snapshot).is_some()
+            || !snapshot
+                .tabs
+                .iter()
+                .any(|tab| tab.id == self.tab && tab.panes().any(|pane| pane.id == self.pane))
+        {
+            return Some(false);
+        }
+        self.accepted
+            .then(|| focused_terminal(snapshot) == Some(self.pane.as_str()))
+    }
 }
 
 /// A final close, or a quit, that the prompt holds until Enter sends it.
@@ -1161,6 +1204,7 @@ struct Application {
     sidebar_row: Option<String>,
     /// A sidebar row's jump awaiting its result, which focus follows (VEN-C30).
     attention_jump: Option<AttentionJump>,
+    pending_pane: Option<PendingPaneAction>,
     /// When a sidebar row's age next changes its label.
     next_age: Option<Instant>,
     header_press: Option<HeaderPress>,
@@ -1289,6 +1333,7 @@ impl Application {
             workspace_focus: WorkspaceFocus::Terminal,
             sidebar_row: None,
             attention_jump: None,
+            pending_pane: None,
             next_age: None,
             header_press: None,
             shortcut_viewer: ShortcutViewerState::default(),
@@ -2019,6 +2064,7 @@ impl Application {
 
     /// Opens or closes a dialog, reporting the terminal's focus change with it.
     fn change_dialog(&mut self, change: impl FnOnce(&mut Self)) {
+        self.pending_pane = None;
         let was_terminal_focused =
             terminal_focused(self.window_focused, self.workspace_focus) && !self.dialog_open();
         self.cancel_terminal_scroll();
@@ -2186,6 +2232,9 @@ impl Application {
     /// Offers a key to Venus's own shortcuts in precedence order; true when one took it, so
     /// it reaches no terminal.
     fn handle_shortcut_key(&mut self, event_loop: &ActiveEventLoop, event: &ShortcutKey) -> bool {
+        if event.state == ElementState::Pressed {
+            self.pending_pane = None;
+        }
         self.input
             .suppresses_retired_key(event.physical_key, event.state, event.repeat)
             || self.handle_command_q(event_loop, event)
@@ -2555,6 +2604,18 @@ impl Application {
     /// width or loses the focused row, and to the tabs when the workspace label holds it but
     /// hides or turns inert.
     fn retain_chrome_focus(&mut self) {
+        if let WorkspaceFocus::PaneAction(action) = self.workspace_focus
+            && !self.workspace_scene().is_some_and(|scene| {
+                scene
+                    .panes
+                    .iter()
+                    .find(|pane| pane.selected)
+                    .and_then(|pane| scene.pane_action(&pane.id, action))
+                    .is_some_and(|(_, enabled)| enabled)
+            })
+        {
+            self.set_workspace_focus(WorkspaceFocus::Panes);
+        }
         if self.workspace_focus == WorkspaceFocus::Sidebar
             && !self.sidebar_row.as_deref().is_some_and(|row| {
                 self.workspace_scene()
@@ -2584,6 +2645,7 @@ impl Application {
         if self.workspace_focus == focus {
             return;
         }
+        self.pending_pane = None;
         // Focus left for somewhere other than the jump's row, so the jump no longer decides it.
         if focus != WorkspaceFocus::Sidebar {
             self.attention_jump = None;
@@ -2628,6 +2690,7 @@ impl Application {
     /// Show the selected pane alone across the tab, or restore its columns. Hidden
     /// attachments keep their last size.
     fn toggle_zoom(&mut self) {
+        self.pending_pane = None;
         let Some(snapshot) = self.workspace_model.snapshot() else {
             return;
         };
@@ -2659,6 +2722,74 @@ impl Application {
         self.presentation.invalidate();
         self.send_resize();
         self.refresh_client_view();
+    }
+
+    fn pane_button(&mut self, pane: &str, action: PaneHeaderAction, activate: bool) {
+        if !self.presentation.has_presented_geometry()
+            || self.dialog_open()
+            || !self.workspace_scene().is_some_and(|scene| {
+                scene
+                    .pane_action(pane, action)
+                    .is_some_and(|(_, enabled)| enabled)
+            })
+        {
+            return;
+        }
+        self.pending_pane = None;
+        if activate && action == PaneHeaderAction::Close {
+            self.request_workspace(WorkspaceAction::ClosePane { pane: pane.into() });
+            if self.workspace_focus == WorkspaceFocus::PaneAction(PaneHeaderAction::Close) {
+                self.set_workspace_focus(WorkspaceFocus::Panes);
+            }
+            return;
+        }
+        let Some(snapshot) = self.workspace_model.snapshot() else {
+            return;
+        };
+        if focused_terminal(snapshot) == Some(pane) {
+            self.set_workspace_focus(WorkspaceFocus::PaneAction(action));
+            if activate {
+                self.toggle_zoom();
+            }
+            return;
+        }
+        let workspace = snapshot.workspace.clone();
+        let tab = snapshot.active_tab.clone();
+        if let Some(ticket) = self.queue_workspace_ticket(WorkspaceAction::Workspace(
+            CommonAction::FocusId(pane.into()),
+        )) {
+            self.pending_pane = Some(PendingPaneAction {
+                workspace,
+                tab,
+                pane: pane.into(),
+                ticket,
+                accepted: false,
+                action,
+                activate,
+            });
+        }
+    }
+
+    fn settle_pane_action(&mut self, answer: Option<(u64, bool)>) {
+        let Some(pending) = &mut self.pending_pane else {
+            return;
+        };
+        let Some(ready) = pending.update(self.workspace_model.snapshot(), answer) else {
+            return;
+        };
+        let pending = self.pending_pane.take().unwrap();
+        if ready
+            && self.workspace_scene().is_some_and(|scene| {
+                scene
+                    .pane_action(&pending.pane, pending.action)
+                    .is_some_and(|(_, enabled)| enabled)
+            })
+        {
+            self.set_workspace_focus(WorkspaceFocus::PaneAction(pending.action));
+            if pending.activate {
+                self.toggle_zoom();
+            }
+        }
     }
 
     fn set_orbit_attachment(&mut self, endpoint: Option<Vec<u8>>, live: bool) {
@@ -3164,6 +3295,7 @@ impl Application {
             &event,
         );
         if let WorkspaceEvent::Answered { ticket, accepted } = event {
+            self.settle_pane_action(Some((ticket, accepted)));
             // A refused action's notice is new even when it repeats a poll's or an earlier one.
             let renewed = !accepted && self.workspace_model.renew_notice();
             if self.attention_jump.is_some() {
@@ -3330,10 +3462,12 @@ impl Application {
         }
         self.close_stale_prompt(unavailable);
         if received_snapshot {
+            self.settle_pane_action(None);
             self.settle_attention_jump(None);
         } else if unavailable {
             // Workspace loss ends a pending jump with focus on its row, beside the notice.
             self.attention_jump = None;
+            self.pending_pane = None;
         }
         self.retain_chrome_focus();
         if self.workspace_model.snapshot().is_some()
@@ -3427,6 +3561,7 @@ impl Application {
     /// Queues a presented action, unless it would close the final tab while the warning is
     /// on: then the close prompt holds it, and nothing is queued yet.
     fn request_workspace(&mut self, action: WorkspaceAction) -> bool {
+        self.pending_pane = None;
         if !self.presentation.has_presented_geometry() {
             bench_trace("input_rejected", "unpublished-request-geometry");
             return false;
@@ -3454,6 +3589,7 @@ impl Application {
 
     /// Queues `action`, returning the ticket its answer carries.
     fn queue_workspace_ticket(&mut self, action: impl Into<Outgoing>) -> Option<u64> {
+        self.pending_pane = None;
         let transport = self.workspace_transport.as_ref()?;
         bench_trace("workspace_queue", "attempt");
         match transport.send(action) {
@@ -3646,6 +3782,7 @@ impl Application {
                 || action.is_some(),
         ) {
             if event.state == ElementState::Pressed {
+                self.pending_pane = None;
                 if opens_window && !event.repeat {
                     self.open_new_window();
                 } else if quits && !event.repeat {
@@ -3699,6 +3836,26 @@ impl Application {
         if event.state == ElementState::Pressed {
             if !event.repeat
                 && code == KeyCode::Tab
+                && matches!(focus, WorkspaceFocus::Panes | WorkspaceFocus::PaneAction(_))
+                && (modifiers == session::Modifiers::empty()
+                    || modifiers == session::Modifiers::SHIFT)
+            {
+                if let Some(scene) = self.workspace_scene()
+                    && let Some(pane) = scene
+                        .panes
+                        .iter()
+                        .find(|pane| pane.selected && pane.actions.is_some())
+                {
+                    self.set_workspace_focus(cycle_pane_focus(
+                        focus,
+                        modifiers == session::Modifiers::SHIFT,
+                        pane.zoom_enabled,
+                    ));
+                }
+                return true;
+            }
+            if !event.repeat
+                && code == KeyCode::Tab
                 && (modifiers == session::Modifiers::empty()
                     || modifiers == session::Modifiers::SHIFT)
                 && let Some(next) = {
@@ -3724,6 +3881,18 @@ impl Application {
                 && matches!(code, KeyCode::Enter | KeyCode::Space)
                 && modifiers == session::Modifiers::empty()
             {
+                if let WorkspaceFocus::PaneAction(action) = focus {
+                    if let Some(id) = self.workspace_scene().and_then(|scene| {
+                        scene
+                            .panes
+                            .iter()
+                            .find(|pane| pane.selected)
+                            .map(|pane| pane.id.clone())
+                    }) {
+                        self.pane_button(&id, action, true);
+                    }
+                    return true;
+                }
                 if let WorkspaceFocus::Header(control) = focus {
                     self.activate_workspace_header(control);
                     return true;
@@ -3757,7 +3926,7 @@ impl Application {
                     )),
                 ) => Some(direction),
                 (
-                    WorkspaceFocus::Panes,
+                    WorkspaceFocus::Panes | WorkspaceFocus::PaneAction(_),
                     Some(NativeShortcutAction::TraverseChrome(
                         direction @ (WorkspaceDirection::Up | WorkspaceDirection::Down),
                     )),
@@ -3765,6 +3934,9 @@ impl Application {
                 _ => None,
             };
             if let Some(direction) = direction {
+                if matches!(focus, WorkspaceFocus::PaneAction(_)) {
+                    self.set_workspace_focus(WorkspaceFocus::Panes);
+                }
                 self.send_workspace(CommonAction::Focus(direction));
             }
         }
@@ -3802,6 +3974,7 @@ impl Application {
             changed
         };
         if changed {
+            self.retain_chrome_focus();
             self.presentation.invalidate();
             self.refresh_client_view();
         }
@@ -4783,6 +4956,9 @@ impl Application {
         let hovered_header = match hovered_hit {
             Some(WorkspaceHit::Tab(id)) => Some((WorkspaceFocus::Tabs, id.to_owned())),
             Some(WorkspaceHit::Pane(id)) => Some((WorkspaceFocus::Panes, id.to_owned())),
+            Some(WorkspaceHit::PaneAction(id, action)) => {
+                Some((WorkspaceFocus::PaneAction(action), id.to_owned()))
+            }
             Some(WorkspaceHit::SidebarRow(id)) => Some((WorkspaceFocus::Sidebar, id.to_owned())),
             Some(WorkspaceHit::Control(control)) => {
                 Some((WorkspaceFocus::Header(control), String::new()))
@@ -4825,8 +5001,14 @@ impl Application {
         state.renderer.set_ram_hovered(ram_hovered);
         state.renderer.set_disk_hovered(disk_hovered);
         state.renderer.set_clock_hovered(clock_hovered);
-        state.renderer.set_pressed_header(match self.header_press {
-            Some(HeaderPress::Control(control)) => Some(control),
+        state
+            .renderer
+            .set_pressed_pane_action(match &self.header_press {
+                Some(HeaderPress::Pane(id, action)) => Some((id.clone(), *action)),
+                _ => None,
+            });
+        state.renderer.set_pressed_header(match &self.header_press {
+            Some(HeaderPress::Control(control)) => Some(*control),
             _ => None,
         });
         match state.renderer.render(
@@ -4993,6 +5175,17 @@ impl ApplicationHandler<UserEvent> for Application {
         event: WindowEvent,
     ) {
         let _bench_input = BenchInput::start(&event);
+        if matches!(
+            &event,
+            WindowEvent::Ime(Ime::Commit(_))
+                | WindowEvent::MouseInput {
+                    state: ElementState::Pressed,
+                    ..
+                }
+                | WindowEvent::MouseWheel { .. }
+        ) {
+            self.pending_pane = None;
+        }
         let workspace = self.workspace_scene();
         let workspace_focus = self.workspace_focus;
         let dialog_open = self.dialog_open();
@@ -5228,6 +5421,7 @@ impl ApplicationHandler<UserEvent> for Application {
                             hit @ Some(
                                 WorkspaceHit::Tab(_)
                                 | WorkspaceHit::Pane(_)
+                                | WorkspaceHit::PaneAction(..)
                                 | WorkspaceHit::Quota(_)
                                 | WorkspaceHit::Version
                                 | WorkspaceHit::Cpu
@@ -5384,6 +5578,7 @@ impl ApplicationHandler<UserEvent> for Application {
                         Some(
                             WorkspaceHit::Tab(_)
                                 | WorkspaceHit::Pane(_)
+                                | WorkspaceHit::PaneAction(..)
                                 | WorkspaceHit::ColumnTerminal(_)
                                 | WorkspaceHit::Control(_)
                         )
@@ -5438,6 +5633,15 @@ impl ApplicationHandler<UserEvent> for Application {
                     && button_state == ElementState::Released
                     && let Some(press) = self.header_press.take()
                 {
+                    if let HeaderPress::Pane(id, action) = press {
+                        let activate = presentation_current
+                            && hit == Some(WorkspaceHit::PaneAction(&id, action));
+                        if activate {
+                            self.pane_button(&id, action, true);
+                        }
+                        self.refresh_client_view();
+                        return;
+                    }
                     let activate = match press {
                         HeaderPress::Control(control)
                             if presentation_current
@@ -5445,7 +5649,7 @@ impl ApplicationHandler<UserEvent> for Application {
                         {
                             Some(control)
                         }
-                        HeaderPress::Control(_) | HeaderPress::Drag => None,
+                        HeaderPress::Control(_) | HeaderPress::Drag | HeaderPress::Pane(..) => None,
                     };
                     self.refresh_client_view();
                     if let Some(control) = activate {
@@ -5474,6 +5678,12 @@ impl ApplicationHandler<UserEvent> for Application {
                             // Jump from the presented rows, then hold focus on the row.
                             self.activate_sidebar_row(&id);
                             self.focus_sidebar_row(id);
+                            return;
+                        }
+                        Some(WorkspaceHit::PaneAction(id, action)) => {
+                            let id = id.to_owned();
+                            self.header_press = Some(HeaderPress::Pane(id, action));
+                            self.refresh_client_view();
                             return;
                         }
                         Some(WorkspaceHit::Control(control)) => {
@@ -5588,7 +5798,8 @@ impl ApplicationHandler<UserEvent> for Application {
                     return;
                 }
                 // Header scrolling belongs to the selected column; other columns' headers ignore the wheel.
-                if let (Some(WorkspaceHit::Pane(id)), Some(scene)) = (hit, workspace.as_ref())
+                if let (Some(WorkspaceHit::Pane(id) | WorkspaceHit::PaneAction(id, _)), Some(scene)) =
+                    (hit, workspace.as_ref())
                     && scene.panes.iter().any(|pane| pane.id == id)
                 {
                     if presentation_current {
@@ -5713,6 +5924,7 @@ impl ApplicationHandler<UserEvent> for Application {
                 match event.window_event {
                     AccessKitWindowEvent::InitialTreeRequested => self.refresh_client_view(),
                     AccessKitWindowEvent::ActionRequested(request) => {
+                        self.pending_pane = None;
                         let target = state
                             .accessibility
                             .action_target(request.target_node, request.action);
@@ -5751,6 +5963,13 @@ impl ApplicationHandler<UserEvent> for Application {
                                 self.send(ClientMessage::ReturnToLive);
                             }
                             Some(AccessibilityTarget::ReturnToLive) => {}
+                            Some(AccessibilityTarget::PaneAction {
+                                pane,
+                                action,
+                                activate,
+                            }) => {
+                                self.pane_button(&pane, action, activate);
+                            }
                             Some(AccessibilityTarget::HeaderControl { control, activate }) => {
                                 self.set_workspace_focus(WorkspaceFocus::Header(control));
                                 if activate {
@@ -6412,7 +6631,8 @@ fn accessibility_workspace_focus(
         AccessibilityTarget::Terminal => return Some(WorkspaceFocus::Terminal),
         AccessibilityTarget::Tab(id) => (WorkspaceFocus::Tabs, id),
         AccessibilityTarget::Pane(id) => (WorkspaceFocus::Panes, id),
-        AccessibilityTarget::HeaderControl { .. }
+        AccessibilityTarget::PaneAction { .. }
+        | AccessibilityTarget::HeaderControl { .. }
         | AccessibilityTarget::WindowMenu { .. }
         | AccessibilityTarget::InboxFilter(_)
         | AccessibilityTarget::InboxRow { .. }
@@ -6544,6 +6764,20 @@ fn workspace_header_action(
             })
         }
     }
+}
+
+fn cycle_pane_focus(focus: WorkspaceFocus, backwards: bool, zoom_enabled: bool) -> WorkspaceFocus {
+    let mut order = vec![WorkspaceFocus::Panes];
+    if zoom_enabled {
+        order.push(WorkspaceFocus::PaneAction(PaneHeaderAction::Zoom));
+    }
+    order.push(WorkspaceFocus::PaneAction(PaneHeaderAction::Close));
+    let index = order.iter().position(|item| *item == focus).unwrap_or(0);
+    order[if backwards {
+        (index + order.len() - 1) % order.len()
+    } else {
+        (index + 1) % order.len()
+    }]
 }
 
 /// Tab and Shift+Tab traverse the visible header controls, including the icon menu.

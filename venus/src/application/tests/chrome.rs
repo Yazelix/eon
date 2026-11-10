@@ -257,6 +257,50 @@ fn zoom_names_the_tab_panes_columns_and_selected_pane() {
             ],
         )
     };
+    let waiting = || PendingPaneAction {
+        workspace: "s1".into(),
+        tab: "t1".into(),
+        pane: "p2".into(),
+        ticket: 7,
+        accepted: false,
+        action: PaneHeaderAction::Zoom,
+        activate: true,
+    };
+    let mut pending = waiting();
+    assert_eq!(pending.update(Some(&two("p1")), None), None);
+    assert_eq!(
+        pending.update(Some(&two("p2")), Some((8, true))),
+        None,
+        "another request's answer must not zoom"
+    );
+    assert_eq!(
+        pending.update(Some(&two("p2")), Some((7, true))),
+        Some(true)
+    );
+    assert_eq!(
+        waiting().update(Some(&two("p2")), Some((7, false))),
+        Some(false)
+    );
+    assert_eq!(
+        waiting().update(Some(&two("p1")), Some((7, true))),
+        Some(false),
+        "an accepted answer must still select the exact pane"
+    );
+    assert_eq!(waiting().update(None, None), Some(false));
+    let mut displaced = two("p1");
+    displaced.workspace = "s2".into();
+    assert_eq!(waiting().update(Some(&displaced), None), Some(false));
+    displaced = two("p1");
+    displaced.active_tab = "t2".into();
+    assert_eq!(waiting().update(Some(&displaced), None), Some(false));
+    displaced = two("p1");
+    show_test_popup(&mut displaced);
+    assert_eq!(waiting().update(Some(&displaced), None), Some(false));
+    displaced = two("p1");
+    displaced.tabs[0]
+        .columns
+        .retain(|column| column.expanded != "p2");
+    assert_eq!(waiting().update(Some(&displaced), None), Some(false));
     let zoom = zoom_target(&two("p2"));
     assert!(zoom.is_some());
     // Structural changes end zoom; a covering popup keeps its target.
@@ -1166,4 +1210,23 @@ fn window_menu_pointer_waits_for_matching_release_and_hover_never_scrolls() {
         ),
         None
     );
+}
+
+#[test]
+fn pane_button_focus_wraps_and_skips_disabled_zoom() {
+    use PaneHeaderAction::{Close, Zoom};
+    use WorkspaceFocus::{PaneAction, Panes};
+    assert_eq!(cycle_pane_focus(Panes, false, true), PaneAction(Zoom));
+    assert_eq!(
+        cycle_pane_focus(PaneAction(Zoom), false, true),
+        PaneAction(Close)
+    );
+    assert_eq!(cycle_pane_focus(PaneAction(Close), false, true), Panes);
+    assert_eq!(cycle_pane_focus(Panes, true, true), PaneAction(Close));
+    assert_eq!(
+        cycle_pane_focus(PaneAction(Close), true, true),
+        PaneAction(Zoom)
+    );
+    assert_eq!(cycle_pane_focus(Panes, false, false), PaneAction(Close));
+    assert_eq!(cycle_pane_focus(PaneAction(Close), true, false), Panes);
 }

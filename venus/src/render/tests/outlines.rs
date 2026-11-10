@@ -2601,7 +2601,7 @@ fn title_rules_leave_label_and_scrollback_gaps_inside_the_fixed_card() {
     let card = SceneRect {
         left: 10.0,
         top: 30.0,
-        width: 180.0,
+        width: 380.0,
         height: 160.0,
     };
     let label = SceneRect {
@@ -2617,7 +2617,7 @@ fn title_rules_leave_label_and_scrollback_gaps_inside_the_fixed_card() {
     };
     for top in [20.0, 70.0, 21.25, -10.0] {
         for notched in [false, true] {
-            let mut batch = RectangleBatch::new(200, 200);
+            let mut batch = RectangleBatch::new(400, 200);
             let viewport = SceneRect {
                 top: 20.0,
                 height: 180.0,
@@ -2635,6 +2635,17 @@ fn title_rules_leave_label_and_scrollback_gaps_inside_the_fixed_card() {
                 radius: 8.0,
             };
             let tab = notched.then(|| PaneTitleTab {
+                action: Some(FrameTitleTab {
+                    top: top - 14.0,
+                    start: 45.0,
+                    left_radius: 14.0,
+                    row: label,
+                    return_run: 21.0,
+                    title: FrameTitle {
+                        label: String::new(),
+                        width: 0.0,
+                    },
+                }),
                 card: CardFill {
                     bounds: frame,
                     radius: 8.0,
@@ -2663,7 +2674,23 @@ fn title_rules_leave_label_and_scrollback_gaps_inside_the_fixed_card() {
                         title_y: Some(top),
                         expanded: true,
                     },
-                    [label, scrollback],
+                    super::super::chrome::pane_rule_gaps(
+                        label,
+                        scrollback,
+                        Some([
+                            SceneRect {
+                                left: 330.0,
+                                width: 20.0,
+                                ..label
+                            },
+                            SceneRect {
+                                left: 350.0,
+                                width: 20.0,
+                                ..label
+                            },
+                        ]),
+                        notched,
+                    ),
                 )],
                 &[tab],
                 None,
@@ -2685,7 +2712,11 @@ fn title_rules_leave_label_and_scrollback_gaps_inside_the_fixed_card() {
                     notched
                 );
                 assert!(quads.iter().any(|rect| rect.contains(120.0, top + 0.5)));
-                assert!(quads.iter().any(|rect| rect.contains(180.0, top + 0.5)));
+                assert_eq!(
+                    quads.iter().any(|rect| rect.contains(180.0, top + 0.5)),
+                    notched,
+                    "the plain rule between scrollback and the action notch must survive"
+                );
                 assert!(!quads.iter().any(|rect| rect.contains(50.0, top + 0.5)));
             } else {
                 assert!(
@@ -3776,6 +3807,23 @@ fn pane_notches_clear_adjacent_descenders_and_preserve_joined_focus_strokes() {
                             fitted.start + fitted.return_run <= limit,
                             "notch curve enters the reserved right slot"
                         );
+                        if let Some(actions) = pane.actions {
+                            assert!(
+                                fitted.start + fitted.return_run < actions[0].left,
+                                "title notch must clear the actual action slot"
+                            );
+                            let header = notch.as_ref().unwrap();
+                            assert!(header.action.is_some());
+                            let bands = header.bands(0.0);
+                            for (i, band) in bands.iter().enumerate() {
+                                assert!(
+                                    bands[i + 1..]
+                                        .iter()
+                                        .all(|other| band.intersection(*other).is_none()),
+                                    "dual-notch fill must not blend a pixel twice"
+                                );
+                            }
+                        }
                     }
                 }
                 let mut ink = Vec::new();

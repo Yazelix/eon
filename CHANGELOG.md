@@ -5,6 +5,11 @@ installation, and proven contract changes.
 
 ## Unreleased
 
+- Pane headers have Zoom/Restore and Close buttons in a right action notch.
+  Each targets its own pane; Close keeps the existing final-pane confirmation.
+  Tab and Shift+Tab traverse the selected header's controls, with Enter or Space
+  to activate. Zoom is disabled in a one-pane tab (`eon-ipc6f`).
+
 - `eon report` prints a Markdown bug report for the window it runs in: versions,
   the window, install route, distribution, compositor, configuration warnings
   and the newest supervisor log's last 40 lines, with paths under your home as
