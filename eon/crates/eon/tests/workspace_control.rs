@@ -4052,6 +4052,11 @@ fn update_check_reports_a_profile_entry_as_one_json_object_without_changing_it()
     symlink(&environment, root.join("profiles/profile-1-link")).unwrap();
     symlink("profile-1-link", root.join("profiles/profile")).unwrap();
     let profile = root.join("profiles/profile");
+    // Eon hands the manager the profile link with its directory's aliases
+    // resolved (update.rs `profile_location`); on macOS /tmp is one.
+    let location = fs::canonicalize(root.join("profiles"))
+        .unwrap()
+        .join("profile");
     fs::create_dir(root.join("home")).unwrap();
     symlink(&profile, root.join("home/.nix-profile")).unwrap();
     let listing = serde_json::json!({"version": 3, "elements": {"eon": {
@@ -4566,7 +4571,7 @@ esac
                 fs::read_to_string(root.join("upgrade-argv")).unwrap(),
                 format!(
                     "profile\nupgrade\n--profile\n{}\n--refresh\n--\neon+x\n",
-                    profile.display()
+                    location.display()
                 )
             );
             fs::remove_file(root.join("upgrade-argv")).unwrap();
@@ -4654,7 +4659,7 @@ esac
         fs::read_to_string(root.join("upgrade-argv")).unwrap(),
         format!(
             "profile\nupgrade\n--profile\n{}\n--refresh\n--\neon+x\n",
-            profile.display()
+            location.display()
         )
     );
     assert!(String::from_utf8_lossy(&output.stderr).contains("manager output goes to stderr"));
